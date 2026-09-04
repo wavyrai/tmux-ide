@@ -52,10 +52,10 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
 "  ⌂  ●❯                live
  t╭──────────────────────╮
  m│ Command palette      │
- 2│ › F1 Home            │
- C│ F2 Terminals         │…
-  │ New terminal window  │
-  │ Split pane right     │
+ 2│ / Search commands…   │
+ C│ › F1 Home            │…
+  │   F2 Terminals       │
+  │   New terminal wind… │
   ╰──────────────────────╯
  main  Live              F5"
 `;
@@ -64,8 +64,8 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
 "  ⌂  ●❯        live
  t╭──────────────╮
  m│ Commands     │
- 2│ › F1 Home    │w
- C│ F2 Terminals │…
+ 2│ / Search co… │w
+ C│ › F1 Home    │…
   ╰──────────────╯…
   ○ Commands F5"
 `;

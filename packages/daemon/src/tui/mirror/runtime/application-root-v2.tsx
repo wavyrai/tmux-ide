@@ -25,10 +25,6 @@ import { ApplicationShellView, applicationShellKeyAction } from "./application-s
 import { createApplicationGenerationStarter } from "./application-generation-starter.ts";
 import { createApplicationInputReadiness } from "./application-input-readiness.ts";
 import { applyApplicationAppearanceToRenderer } from "./application-theme-repaint.ts";
-import {
-  applicationPaletteKeyboardDisposition,
-  applicationPaletteOwnsInput,
-} from "./application-palette-input.ts";
 import { createApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
 import {
   createApplicationHostFocusRecovery,
@@ -296,6 +292,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         });
         const { homeAgents, paneRename, paletteCommands, paletteCommandList, openAgent } =
           createApplicationHomeNavigationOwner({
+            focusedPane,
             catalog: homeCatalog,
             activeSurface,
             shell,
@@ -333,23 +330,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             if (!hostLocal.hosted) void lifecycle.shutdown("keyboard");
             return;
           }
-          const isPaletteOpen = applicationPaletteOwnsInput(
-            Boolean(shell().semantic?.focus.palette.open || shell().localPaletteOpen),
-          );
-          const paletteAction = applicationPaletteKeyboardDisposition(
-            event,
-            isPaletteOpen,
-            paletteCommands.selection(),
-            paletteCommandList(),
-          );
-          if (paletteAction) {
-            if (paletteAction.kind === "select") {
-              paletteCommands.select(paletteAction.index);
-            } else if (paletteAction.kind === "activate")
-              paletteCommands.activate(paletteAction.command, "keyboard");
-            else if (paletteAction.kind === "close") paletteCommands.setOpen(false, "keyboard");
-            return;
-          }
+          if (paletteCommands.handleKey(event)) return;
           const chromeAction = applicationShellKeyAction(event, false);
           if (chromeAction) {
             if (chromeAction === "home" || chromeAction === "terminals")
@@ -390,12 +371,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           noteHostInteraction();
           if (paneRename.handlePaste(event.bytes)) return;
           if (selectionOwner.blocksInput()) return;
-          if (
-            applicationPaletteOwnsInput(
-              Boolean(shell().semantic?.focus.palette.open || shell().localPaletteOpen),
-            )
-          )
-            return;
+          if (paletteCommands.handlePaste(event.bytes)) return;
           if (activeSurface() !== "terminals") return;
           if (homeAgents?.opening()) return;
           terminalInputIngress.routePaste(event.bytes);
@@ -427,6 +403,9 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               paletteOpen={() => shell().semantic?.focus.palette.open ?? shell().localPaletteOpen}
               paneRenameDialog={paneRename.draft}
               paletteSelection={paletteCommands.selection}
+              paletteQuery={paletteCommands.query}
+              paletteDisabledReason={paletteCommands.disabledReason}
+              onPaletteSelect={paletteCommands.select}
               paletteCloseArmed={paletteCommands.closeArmed}
               paletteCommands={paletteCommandList}
               terminalRendererSource={terminalRendererSource}
@@ -456,6 +435,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onCycleTheme={recoverHostFocus(cycleTheme)}
               onBeginPaneRename={recoverHostFocus(paneRename.begin)}
               onCancelPaneRename={recoverHostFocus(paneRename.cancel)}
+              onSubmitPaneRename={recoverHostFocus(paneRename.submit)}
               onDismissNotification={recoverHostFocus(() => setTransientNote(null))}
               onSelectPane={recoverHostFocus(interaction.selectPane)}
               onResizePreview={recoverHostFocus(interaction.previewPaneResize)}

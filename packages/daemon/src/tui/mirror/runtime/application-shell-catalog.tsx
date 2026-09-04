@@ -33,6 +33,9 @@ export interface ApplicationCatalogShellProps {
   readonly catalogNote?: Accessor<string | null>;
   readonly paletteOpen: Accessor<boolean>;
   readonly paletteSelection?: Accessor<number>;
+  readonly paletteQuery?: Accessor<string>;
+  readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
+  readonly onPaletteSelect?: (index: number) => void;
   readonly paletteCommands?: Accessor<readonly ApplicationPaletteCommand[]>;
   readonly paletteCloseArmed?: Accessor<boolean>;
   readonly theme: SemanticThemeSnapshot;
@@ -221,6 +224,9 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                 width={props.dimensions().width}
                 height={props.dimensions().height}
                 selected={props.paletteSelection?.() ?? 0}
+                query={props.paletteQuery?.() ?? ""}
+                disabledReason={props.paletteDisabledReason}
+                onSelect={props.onPaletteSelect}
                 closeArmed={props.paletteCloseArmed?.() ?? false}
                 commands={props.paletteCommands?.() ?? applicationPaletteCommands(null)}
                 theme={props.theme}

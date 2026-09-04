@@ -1,6 +1,6 @@
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
-import { useKeyboard, type JSX } from "@opentui/solid";
+import { useKeyboard, usePaste, type JSX } from "@opentui/solid";
 import { describe, expect, it } from "bun:test";
 import { batch, createSignal, onCleanup } from "solid-js";
 import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
@@ -34,6 +34,194 @@ import {
 } from "./application-terminal-workspace.tsx";
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
 import { projectFocusFramebufferRect } from "../../../../../../scripts/lib/product-focus.mjs";
+import { MinimalPalette, PaneRenameDialog } from "./application-shell-overlays.tsx";
+import { createApplicationPaletteCommandOwner } from "./application-palette-command-owner.ts";
+import { applicationPaletteCommands } from "./application-palette-input.ts";
+import { ApplicationShellOverlayStack } from "./application-shell-overlay-stack.tsx";
+import { createApplicationPaneRenameOwner } from "./application-pane-rename-owner.ts";
+
+describe("production command discovery flow", () => {
+  for (const mode of ["dark", "light"] as const) {
+    it(`${mode}: keyboard/paste search, mouse activation and cancel preserve focus ownership`, async () => {
+      const theme = createSemanticThemeSnapshot({ mode });
+      let owner!: ReturnType<typeof createApplicationPaletteCommandOwner>;
+      let setNote!: (value: string) => void;
+      const opened: string[] = [];
+      const restored: string[] = [];
+      const leaked: string[] = [];
+      const setup = await renderForTest(
+        () => {
+          const [open, setOpen] = createSignal(true);
+          const [note, updateNote] = createSignal("");
+          setNote = updateNote;
+          owner = createApplicationPaletteCommandOwner({
+            activeSurface: () => "terminals",
+            isOpen: open,
+            commands: () => applicationPaletteCommands(null, ["alpha", "beta workspace"]),
+            binding: {
+              setPaletteOpen: async (value) => {
+                setOpen(value);
+                return true;
+              },
+              openSurface: async () => true,
+              activatePaletteSurface: async () => true,
+            },
+            commandSource: (kind, surface) => ({ kind, surface }),
+            setSurface: () => {},
+            setNote: () => {},
+            newWindow: async () => "new",
+            splitPane: async () => "split",
+            closePane: async () => "closed",
+            openAgent: async () => true,
+            openSession: (name) => {
+              opened.push(name);
+            },
+          });
+          useKeyboard((event) => {
+            if (!owner.handleKey(event)) leaked.push(event.name);
+          });
+          usePaste((event) => {
+            if (!owner.handlePaste(event.bytes)) leaked.push("paste");
+          });
+          return (
+            <ApplicationShellOverlayStack
+              width={80}
+              height={24}
+              focusedOwner="pane-a"
+              isFocusMounted={() => true}
+              restoreFocus={(id) => restored.push(id)}
+              onIntent={() => owner.setOpen(false, "keyboard")}
+              layers={
+                open()
+                  ? [
+                      {
+                        id: "palette",
+                        render: () => (
+                          <MinimalPalette
+                            width={80}
+                            height={24}
+                            theme={theme}
+                            query={owner.query()}
+                            selected={owner.selection()}
+                            commands={owner.commands()}
+                            closeArmed={owner.closeArmed()}
+                            onSelect={owner.select}
+                            onActivate={(command) => owner.activate(command, "mouse")}
+                            onClose={() => owner.setOpen(false, "mouse")}
+                          />
+                        ),
+                      },
+                      ...(note()
+                        ? [{ id: "notice", modal: false, render: () => <text content={note()} /> }]
+                        : []),
+                    ]
+                  : []
+              }
+            />
+          );
+        },
+        { width: 80, height: 24 },
+      );
+      await setup.renderOnce();
+      setup.renderer.keyInput.emit("paste", { bytes: Buffer.from("beta") });
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("/ beta▏");
+      expect(setup.captureCharFrame()).toContain("Open session · beta workspace");
+      setNote("an unrelated notification");
+      await setup.renderOnce();
+      expect(restored).toEqual([]);
+      const lines = setup.captureCharFrame().split("\n");
+      const y = lines.findIndex((line) => line.includes("Open session · beta"));
+      await setup.mockMouse.click(lines[y]!.indexOf("Open session"), y, MouseButtons.LEFT);
+      await setup.renderOnce();
+      expect(opened).toEqual(["beta workspace"]);
+      expect(restored).toEqual(["pane-a"]);
+      owner.setOpen(true, "keyboard");
+      await setup.renderOnce();
+      setup.renderer.keyInput.emit("paste", { bytes: Buffer.from("no-such-command") });
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("No matches");
+      setup.renderer.keyInput.emit("keypress", {
+        name: "escape",
+        ctrl: false,
+        meta: false,
+        shift: false,
+      });
+      await setup.renderOnce();
+      expect(restored).toEqual(["pane-a", "pane-a"]);
+      expect(leaked).toEqual([]);
+      setup.renderer.keyInput.emit("keypress", {
+        name: "z",
+        ctrl: false,
+        meta: false,
+        shift: false,
+      });
+      expect(leaked).toEqual(["z"]);
+      setup.renderer.destroy();
+    });
+  }
+  it("scrolls the selected result into the single available row at 20x7", async () => {
+    const setup = await renderForTest(
+      () => (
+        <MinimalPalette
+          width={20}
+          height={7}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          selected={5}
+          commands={applicationPaletteCommands(null)}
+          query=""
+          closeArmed={false}
+          onActivate={() => {}}
+          onClose={() => {}}
+        />
+      ),
+      { width: 20, height: 7 },
+    );
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expectFrameBounds(frame, 20, 7);
+    expect(frame).toContain("› Close pan…");
+    setup.renderer.destroy();
+  });
+  it("renames by mouse and prevents an empty name or duplicate save", async () => {
+    const renamed: string[] = [];
+    let owner!: ReturnType<typeof createApplicationPaneRenameOwner>;
+    const setup = await renderForTest(
+      () => {
+        owner = createApplicationPaneRenameOwner(
+          async (_id, name) => {
+            renamed.push(name);
+            return "saved";
+          },
+          () => {},
+        );
+        owner.begin("pane-a", "Review");
+        return (
+          <PaneRenameDialog
+            draft={owner.draft() ?? { paneId: "pane-a", value: "" }}
+            width={80}
+            height={24}
+            theme={createSemanticThemeSnapshot({ mode: "dark" })}
+            onCancel={owner.cancel}
+            onSubmit={owner.submit}
+          />
+        );
+      },
+      { width: 80, height: 24 },
+    );
+    await setup.renderOnce();
+    const lines = setup.captureCharFrame().split("\n");
+    const y = lines.findIndex((line) => line.includes("Save"));
+    await setup.mockMouse.click(lines[y]!.indexOf("Save"), y, MouseButtons.LEFT);
+    owner.submit();
+    await Promise.resolve();
+    expect(renamed).toEqual(["Review"]);
+    owner.begin("pane-a", "");
+    owner.submit();
+    expect(owner.draft()).not.toBeNull();
+    setup.renderer.destroy();
+  });
+});
 
 function terminalLayout() {
   const current = {
@@ -1635,7 +1823,8 @@ describe("production ApplicationShellView", () => {
     const resized = setup.captureCharFrame();
     expectFrameBounds(resized, 20, 7);
     expect(resized).toContain("Commands");
-    expect(resized).toContain("F2 Terminals");
+    // A 20x7 viewport has room for query + one result; selection scrolls that slot.
+    expect(resized).toContain("F1 Home");
     expect(trimFrameRight(resized)).toMatchSnapshot();
     setup.renderer.destroy();
   });

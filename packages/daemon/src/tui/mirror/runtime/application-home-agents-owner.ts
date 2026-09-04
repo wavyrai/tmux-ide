@@ -1,11 +1,4 @@
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  untrack,
-  type Accessor,
-} from "solid-js";
+import { createEffect, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
 
 import {
   createApplicationHomeAgentObserver,
@@ -203,6 +196,7 @@ export function createApplicationHomeAgentsOwner(options: {
 
 /** Compose Home navigation with competing chrome intents; physical input stays in the root. */
 export function createApplicationHomeNavigationOwner(options: {
+  readonly focusedPane: Accessor<string | null>;
   readonly catalog: {
     readonly snapshot: Accessor<ApplicationHomeCatalogSnapshot>;
     readonly sessionNames: Accessor<string[]>;
@@ -261,6 +255,17 @@ export function createApplicationHomeNavigationOwner(options: {
     observer: options.observer,
   });
   const paletteCommands = createApplicationPaletteCommandOwner({
+    commands: () =>
+      applicationPaletteCommands(options.shell().semantic, options.catalog.sessionNames()),
+    isOpen: () =>
+      Boolean(options.shell().semantic?.focus.palette.open ?? options.shell().localPaletteOpen),
+    targetKey: () =>
+      `${applicationGenerationNavigationKey(options.sessionOwner()?.snapshot() ?? null)}:${options.focusedPane()}`,
+    disabledReason: (command) => {
+      if (typeof command === "object" || command === "home" || command === "terminals") return null;
+      if (options.sessionOwner()?.snapshot()?.status !== "live") return "Open a live session first";
+      return command !== "new-window" && !options.focusedPane() ? "Select a live pane first" : null;
+    },
     activeSurface: options.activeSurface,
     binding: options.binding,
     commandSource: applicationPaletteCommandSource,
@@ -273,8 +278,6 @@ export function createApplicationHomeNavigationOwner(options: {
     openSession: (name, source) => options.startGeneration(name, false, source),
     onNavigationIntent: homeAgents.cancel,
   });
-  const paletteCommandList = createMemo(() =>
-    applicationPaletteCommands(options.shell().semantic, options.catalog.sessionNames()),
-  );
+  const paletteCommandList = paletteCommands.commands;
   return { homeAgents, paneRename, paletteCommands, paletteCommandList, openAgent };
 }

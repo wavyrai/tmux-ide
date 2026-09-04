@@ -1,6 +1,5 @@
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "solid-js";
-import { For } from "solid-js";
 
 import { OverlayHost, type OverlayLayer } from "../ui/overlay-host.tsx";
 
@@ -24,19 +23,15 @@ export function ApplicationShellOverlayStack(
   props: ApplicationShellOverlayStackProps,
 ): JSX.Element {
   return (
-    <For each={props.layers.length > 0 ? [props.layers] : []}>
-      {(layers) => (
-        <OverlayHost
-          width={props.width}
-          height={props.height}
-          layers={layers}
-          ownsEscape={false}
-          captureFocus={() => props.focusedOwner}
-          isFocusMounted={props.isFocusMounted}
-          restoreFocus={props.restoreFocus}
-          onDismiss={(id) => props.onIntent({ type: "overlay.dismiss", id })}
-        />
-      )}
-    </For>
+    <OverlayHost
+      width={props.width}
+      height={props.height}
+      layers={props.layers}
+      ownsEscape={false}
+      captureFocus={() => props.focusedOwner}
+      isFocusMounted={props.isFocusMounted}
+      restoreFocus={props.restoreFocus}
+      onDismiss={(id) => props.onIntent({ type: "overlay.dismiss", id })}
+    />
   );
 }

@@ -82,6 +82,7 @@ export function applicationPaletteKeyAction(
   commands: readonly ApplicationPaletteCommand[] = BASE_COMMANDS,
 ): ApplicationPaletteKeyAction | null {
   if (!paletteOpen) return null;
+  if (key.name.toLowerCase() === "escape") return { kind: "close" };
   if (commands.length === 0) return null;
   const name = key.name.toLowerCase();
   if (name === "up")

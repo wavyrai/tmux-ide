@@ -68,6 +68,9 @@ export interface ApplicationShellViewProps {
   readonly paletteOpen: Accessor<boolean>;
   readonly paneRenameDialog?: Accessor<ApplicationPaneRenameDraft | null>;
   readonly paletteSelection?: Accessor<number>;
+  readonly paletteQuery?: Accessor<string>;
+  readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
+  readonly onPaletteSelect?: (index: number) => void;
   readonly paletteCommands?: Accessor<readonly ApplicationPaletteCommand[]>;
   readonly terminalRendererSource: Accessor<{
     readonly adapter: TerminalWorkspaceProps["adapter"];
@@ -93,6 +96,7 @@ export interface ApplicationShellViewProps {
   readonly onCycleTheme?: () => void;
   readonly onBeginPaneRename?: (paneId: string, currentName: string) => void;
   readonly onCancelPaneRename?: () => void;
+  readonly onSubmitPaneRename?: () => void;
   readonly onDismissNotification?: () => void;
   readonly paletteCloseArmed?: Accessor<boolean>;
   readonly onSelectPane: TerminalWorkspaceProps["onSelectPane"];
@@ -209,6 +213,9 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
           catalogNote={props.catalogNote}
           paletteOpen={props.paletteOpen}
           paletteSelection={props.paletteSelection}
+          paletteQuery={props.paletteQuery}
+          paletteDisabledReason={props.paletteDisabledReason}
+          onPaletteSelect={props.onPaletteSelect}
           paletteCommands={props.paletteCommands}
           paletteCloseArmed={props.paletteCloseArmed}
           theme={props.theme}
@@ -251,6 +258,9 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   width={props.dimensions().width}
                   height={props.dimensions().height}
                   selected={props.paletteSelection?.() ?? 0}
+                  query={props.paletteQuery?.() ?? ""}
+                  disabledReason={props.paletteDisabledReason}
+                  onSelect={props.onPaletteSelect}
                   closeArmed={props.paletteCloseArmed?.() ?? false}
                   commands={
                     props.paletteCommands?.() ?? applicationPaletteCommands(props.semantic())
@@ -280,6 +290,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   active={active}
                   zIndex={zIndex}
                   onCancel={() => props.onCancelPaneRename?.()}
+                  onSubmit={() => props.onSubmitPaneRename?.()}
                 />
               ),
             });
@@ -414,10 +425,12 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
               }
               isFocusMounted={(id) =>
                 !id.startsWith("pane:") ||
-                props.layout.current?.panes.some(({ pane }) => `pane:${pane}` === id) === true
+                props.layout().current?.panes.some(({ pane }) => `pane:${pane}` === id) === true
               }
               restoreFocus={(id) => {
-                if (id.startsWith("pane:")) props.onSelectPane(id.slice("pane:".length));
+                // An intentional agent/window navigation supersedes the saved return target.
+                if (id === `pane:${props.focusedPane()}`)
+                  props.onSelectPane(id.slice("pane:".length));
               }}
               onIntent={({ id }) => {
                 if (id === "pane-rename") props.onCancelPaneRename?.();

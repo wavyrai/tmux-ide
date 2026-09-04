@@ -26,6 +26,15 @@ describe("application pane rename input", () => {
   });
 
   it("sanitizes paste and enforces the pane-name bound", () => {
+    expect(applicationPaneRenamePaste("", Buffer.from("\u001b[31m研究\u001b[0m"))).toBe("研究");
+    expect(applicationPaneRenameKeyAction(key("space"), "hello")).toEqual({
+      kind: "update",
+      value: "hello ",
+    });
+    expect(applicationPaneRenameKeyAction(key("😀"), "")).toEqual({ kind: "update", value: "😀" });
+    expect(applicationPaneRenameKeyAction({ ...key("enter"), repeated: true }, "name")).toEqual({
+      kind: "block",
+    });
     const result = applicationPaneRenamePaste(
       "x".repeat(APPLICATION_PANE_NAME_MAX_LENGTH - 2),
       Buffer.from("ab\nignored"),

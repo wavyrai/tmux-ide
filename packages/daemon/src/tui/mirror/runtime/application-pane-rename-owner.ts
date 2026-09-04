@@ -14,7 +14,10 @@ export function createApplicationPaneRenameOwner(
   const [draft, setDraft] = createSignal<ApplicationPaneRenameDraft | null>(null);
   const submit = (current: ApplicationPaneRenameDraft): void => {
     setDraft(null);
-    void renamePane(current.paneId, current.value).then(setNote);
+    void Promise.resolve()
+      .then(() => renamePane(current.paneId, current.value))
+      .then(setNote)
+      .catch(() => setNote("Pane rename failed. Check the live pane and try again."));
   };
   return Object.freeze({
     draft,
@@ -24,7 +27,11 @@ export function createApplicationPaneRenameOwner(
     cancel() {
       setDraft(null);
     },
-    handleKey(event: Readonly<{ name: string; ctrl: boolean; meta: boolean; shift: boolean }>) {
+    submit() {
+      const current = draft();
+      if (current?.value.trim()) submit(current);
+    },
+    handleKey(event: Parameters<typeof applicationPaneRenameKeyAction>[0]) {
       const current = draft();
       if (!current) return false;
       const action = applicationPaneRenameKeyAction(event, current.value);
