@@ -136,6 +136,42 @@ function transport(
 }
 
 describe("OpenTUI canonical daemon connection", () => {
+  it("pins live session incarnation from the same V3 routing read", async () => {
+    const read = vi.fn(async () => ({
+      ...catalog,
+      version: 3 as const,
+      liveSessions: catalog.liveSessions.map((session) => ({
+        ...session,
+        liveSessionId: "live-session.aaaaaaaaaaaaaaaaaaaa",
+      })),
+    }));
+    const connection = await resolveOpenTuiApplicationShellConnection("alpha", {
+      readCanonicalDaemonInfo: () => daemon,
+      isCanonicalDaemonAlive: async () => true,
+      fetchCanonicalWorkspaceRouting: read,
+      createTransport: () => transport(),
+    });
+    expect(connection?.liveSessionId).toBe("live-session.aaaaaaaaaaaaaaaaaaaa");
+    expect(read).toHaveBeenCalledOnce();
+    const subscription = connection!.catalog.subscribe(connection!.target, () => undefined);
+    await expect(
+      connection!.catalog.read(connection!.target, new AbortController().signal),
+    ).resolves.toEqual(catalog);
+    subscription.close();
+    connection?.dispose();
+  });
+  it("does not create transport for a V3 route whose live incarnation disappeared", async () => {
+    const createTransport = vi.fn(() => transport());
+    await expect(
+      resolveOpenTuiApplicationShellConnection("alpha", {
+        readCanonicalDaemonInfo: () => daemon,
+        isCanonicalDaemonAlive: async () => true,
+        fetchCanonicalWorkspaceRouting: async () => ({ ...catalog, version: 3, liveSessions: [] }),
+        createTransport,
+      }),
+    ).resolves.toBeNull();
+    expect(createTransport).not.toHaveBeenCalled();
+  });
   it("derives an uncredentialed host descriptor", () => {
     expect(openTuiDaemonDescriptor(daemon)).toEqual({
       apiBaseUrl: "http://127.0.0.1:6060/",

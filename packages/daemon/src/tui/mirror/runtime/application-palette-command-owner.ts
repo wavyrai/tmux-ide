@@ -22,6 +22,8 @@ export function createApplicationPaletteCommandOwner(options: {
   readonly splitPane: (direction: "right" | "down") => Promise<string>;
   readonly closePane: () => Promise<string>;
   readonly openAgent: (sessionName: string, paneId: string, source: Source) => Promise<boolean>;
+  readonly openSession?: (sessionName: string, source: Source) => Promise<unknown> | void;
+  readonly onNavigationIntent?: () => void;
 }) {
   const [selection, setSelection] = createSignal(options.activeSurface() === "home" ? 0 : 1);
   const [closeArmed, setCloseArmed] = createSignal(false);
@@ -35,13 +37,33 @@ export function createApplicationPaletteCommandOwner(options: {
     source: Source,
     confirmed = false,
   ): void => {
+    if (typeof command === "object" && command.kind === "open-session") {
+      options.onNavigationIntent?.();
+      setCloseArmed(false);
+      setOpen(false, source);
+      if (!options.openSession) {
+        options.setNote("Session switching is unavailable.");
+        return;
+      }
+      try {
+        // Begin ingress ownership synchronously, before the next terminal key.
+        void Promise.resolve(options.openSession(command.sessionName, source)).catch(() => {
+          options.setNote("The selected session could not be opened.");
+        });
+      } catch {
+        options.setNote("The selected session could not be opened.");
+      }
+      return;
+    }
     if (typeof command === "object" && command.kind === "jump-agent") {
+      options.onNavigationIntent?.();
       setCloseArmed(false);
       setOpen(false, source);
       void options.openAgent(command.sessionName, command.paneId, source);
       return;
     }
     if (command === "home" || command === "terminals") {
+      options.onNavigationIntent?.();
       setCloseArmed(false);
       void options.binding
         .activatePaletteSurface(command, options.commandSource(source, "command-palette"))
@@ -73,6 +95,7 @@ export function createApplicationPaletteCommandOwner(options: {
     setOpen,
     activate,
     openSurface(surface: "home" | "terminals", source: Source) {
+      options.onNavigationIntent?.();
       void options.binding
         .openSurface(surface, options.commandSource(source, "application-bar"))
         .then((dispatched) => {

@@ -2,7 +2,9 @@ import {
   APPLICATION_SHELL_COMMAND_IDS,
   type ApplicationShellProjectionV1,
 } from "@tmux-ide/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createApplicationGenerationStarter } from "./application-generation-starter.ts";
+import type { OpenTuiSessionOwner } from "./open-tui-session-owner.ts";
 
 import { projectOpenTuiApplicationShell } from "../workspace/application-shell-controller.ts";
 import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-host.ts";
@@ -169,6 +171,91 @@ describe("application shell binding", () => {
       [APPLICATION_SHELL_COMMAND_IDS.activateMode, { mode: "terminals" }],
       [APPLICATION_SHELL_COMMAND_IDS.moveFocus, { target: { kind: "zone", zone: "canvas" } }],
     ]);
+  });
+
+  it("a cancelled real generation starter cannot reveal Terminals after delayed attach", async () => {
+    const fake = fakeClient(semantic("home"));
+    const binding = createApplicationShellBinding();
+    binding.adoptGeneration({ status: "live", client: fake.client });
+    let resolveOpen!: (opened: boolean) => void;
+    const opening = new Promise<boolean>((resolve) => {
+      resolveOpen = resolve;
+    });
+    let admitted = true;
+    const notes = vi.fn(),
+      focus = vi.fn(),
+      surface = vi.fn();
+    const owner = {
+      open: () => opening,
+      snapshot: () => ({ status: "live" }),
+    } as unknown as OpenTuiSessionOwner;
+    const start = createApplicationGenerationStarter({
+      binding,
+      sessionOwner: () => owner,
+      focusOwner: () => ({ request: focus, adopt: vi.fn(), dispose: vi.fn() }),
+      setNote: notes,
+      setSurface: surface,
+    });
+    const pending = start("main", false, "keyboard", false, () => admitted);
+    admitted = false; // User explicitly returns Home while attach is pending.
+    resolveOpen(true);
+    await expect(pending).resolves.toMatchObject({ opened: false, failure: "superseded" });
+    expect(fake.dispatched).toEqual([]);
+    expect(focus).not.toHaveBeenCalled();
+    expect(surface).not.toHaveBeenCalled();
+    expect(notes.mock.calls).toEqual([["opening main"]]);
+    binding.dispose();
+  });
+
+  it("does not activate a cancelled open when late semantic data becomes ready", async () => {
+    const fake = fakeClient(null, "loading");
+    const binding = createApplicationShellBinding();
+    binding.adoptGeneration({ status: "live", client: fake.client });
+    let admitted = true;
+    const pending = binding.openSession(
+      "main",
+      source,
+      async () => true,
+      () => admitted,
+    );
+    await Promise.resolve();
+    admitted = false;
+    fake.publishSemantic(semantic("home"));
+    await expect(pending).resolves.toEqual({ opened: false, activated: false });
+    expect(fake.dispatched).toEqual([]);
+    binding.dispose();
+  });
+
+  it("cancellation during mode activation suppresses the trailing generic focus command", async () => {
+    const fake = fakeClient(semantic("home"));
+    const original = fake.client.dispatch.bind(fake.client);
+    let settle!: () => void;
+    const delayed = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    fake.client.dispatch = async (command) => {
+      const result = await original(command);
+      await delayed;
+      return result;
+    };
+    const binding = createApplicationShellBinding();
+    binding.adoptGeneration({ status: "live", client: fake.client });
+    let admitted = true;
+    const pending = binding.openSession(
+      "main",
+      source,
+      async () => true,
+      () => admitted,
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    admitted = false;
+    settle();
+    await expect(pending).resolves.toEqual({ opened: true, activated: false });
+    expect(fake.dispatched.map((command) => command.invocation.id)).toEqual([
+      APPLICATION_SHELL_COMMAND_IDS.activateMode,
+    ]);
+    binding.dispose();
   });
 
   it("waits for authoritative V3 semantic readiness before opening Terminals", async () => {

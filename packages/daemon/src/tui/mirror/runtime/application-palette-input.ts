@@ -14,6 +14,12 @@ export interface ApplicationAgentPaletteCommand {
   readonly label: string;
 }
 
+export interface ApplicationSessionPaletteCommand {
+  readonly kind: "open-session";
+  readonly sessionName: string;
+  readonly label: string;
+}
+
 export type ApplicationPaletteCommand =
   | "home"
   | "terminals"
@@ -21,7 +27,8 @@ export type ApplicationPaletteCommand =
   | "split-right"
   | "split-down"
   | "close-pane"
-  | ApplicationAgentPaletteCommand;
+  | ApplicationAgentPaletteCommand
+  | ApplicationSessionPaletteCommand;
 
 const BASE_COMMANDS: readonly ApplicationPaletteCommand[] = [
   "home",
@@ -35,8 +42,14 @@ const BASE_COMMANDS: readonly ApplicationPaletteCommand[] = [
 /** Agent commands are derived from the same semantic rows as the sidebar. */
 export function applicationPaletteCommands(
   semantic: ApplicationShellProjectionV1 | null,
+  liveSessions: readonly string[] = [],
 ): readonly ApplicationPaletteCommand[] {
-  if (!semantic) return BASE_COMMANDS;
+  const sessions: ApplicationSessionPaletteCommand[] = [...new Set(liveSessions)].map((name) => ({
+    kind: "open-session",
+    sessionName: name,
+    label: name,
+  }));
+  if (!semantic) return [...BASE_COMMANDS, ...sessions];
   const sessionName =
     semantic.sidebar.sessions.find((session) => session.active)?.label ??
     semantic.sidebar.sessions.find((session) => session.id === semantic.sidebar.activeSessionId)
@@ -54,7 +67,7 @@ export function applicationPaletteCommands(
         ]
       : [],
   );
-  return [...BASE_COMMANDS, ...agents];
+  return [...BASE_COMMANDS, ...sessions, ...agents];
 }
 
 export type ApplicationPaletteKeyAction =

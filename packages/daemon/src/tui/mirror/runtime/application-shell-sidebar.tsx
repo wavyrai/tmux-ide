@@ -30,6 +30,8 @@ export type ApplicationSidebarIntent =
 export interface ApplicationShellSidebarProps {
   readonly shell: ReturnType<typeof projectApplicationShell>;
   readonly theme: SemanticThemeSnapshot;
+  /** Trusted live-catalog routes, including ordinary sessions not in this shell. */
+  readonly liveSessions?: readonly string[];
   readonly onIntent?: (intent: ApplicationSidebarIntent) => void;
 }
 
@@ -58,6 +60,29 @@ export function ApplicationShellSidebar(props: ApplicationShellSidebarProps): JS
     )
       ? props.shell.semantic.focus.appFocusedPaneId
       : null;
+  const sessions = () =>
+    props.liveSessions !== undefined
+      ? [...new Set(props.liveSessions)].map((name) => ({
+          id: `catalog:${name}`,
+          name,
+          // This match only decorates the current row. The action route ALWAYS
+          // comes from the trusted catalog, never from a semantic display label.
+          active: name === props.shell.activeSession,
+          status:
+            name === props.shell.activeSession
+              ? sessionStatus(
+                  props.shell.semantic.sidebar.sessions.find(
+                    (session) => session.id === props.shell.semantic.sidebar.activeSessionId,
+                  )?.state ?? "unknown",
+                )
+              : undefined,
+        }))
+      : props.shell.semantic.sidebar.sessions.map((session) => ({
+          id: session.id,
+          name: session.label,
+          active: session.id === props.shell.semantic.sidebar.activeSessionId,
+          status: sessionStatus(session.state),
+        }));
 
   return (
     <Surface
@@ -73,15 +98,15 @@ export function ApplicationShellSidebar(props: ApplicationShellSidebarProps): JS
       <text fg={props.theme.roles.text.link} bg={props.theme.roles.surfaces.panel}>
         <strong>{props.shell.layout.variant === "compact" ? " tmux" : " tmux-ide"}</strong>
       </text>
-      <For each={props.shell.semantic.sidebar.sessions}>
+      <For each={sessions()}>
         {(session) => {
-          const active = () => session.id === props.shell.semantic.sidebar.activeSessionId;
-          const status = () => sessionStatus(session.state);
+          const active = () => session.active;
+          const status = () => session.status;
           return (
             <NavigationRow
               theme={props.theme}
               id={`session:${session.id}`}
-              label={friendlySessionLabel(session.label)}
+              label={friendlySessionLabel(session.name)}
               width={rowWidth()}
               marker={active() ? "●" : "○"}
               selected={active()}
@@ -89,7 +114,7 @@ export function ApplicationShellSidebar(props: ApplicationShellSidebarProps): JS
               status={status()}
               attention={status() === "blocked"}
               onActivate={(source) =>
-                props.onIntent?.({ type: "session.open", sessionName: session.label, source })
+                props.onIntent?.({ type: "session.open", sessionName: session.name, source })
               }
             />
           );

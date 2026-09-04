@@ -74,11 +74,11 @@ exports[`production ApplicationShellView preserves canonical attention while pri
 "   tmux-ide   ⌂ Home  ●❯ Terminals                                                                                 live
   tmux-ide                  ! main    ! workin…                                                            + New window
  ● main                       ● Codex                   ● workin… ⋯   ! Scout                     ! idle  ⋯
- ○ website                  CANONICAL-CELL                          CANONICAL-CELL
-
+                            CANONICAL-CELL                          CANONICAL-CELL
  Agents
  • Codex [WORKING]
  ! Scout ! [IDLE]
+
 
 
 …

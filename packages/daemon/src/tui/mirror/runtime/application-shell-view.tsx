@@ -23,6 +23,7 @@ import type { OverlayLayer } from "../ui/overlay-host.tsx";
 import { ApplicationShellSidebar } from "./application-shell-sidebar.tsx";
 import { ApplicationShellOverlayStack } from "./application-shell-overlay-stack.tsx";
 import { ApplicationHomeSurface } from "./application-shell-home.tsx";
+import type { ApplicationHomeAgentPresentation } from "./application-home-agents-owner.ts";
 import {
   MinimalPalette,
   NotificationToast,
@@ -54,6 +55,7 @@ export function applicationShellKeyAction(
 }
 
 export interface ApplicationShellViewProps {
+  readonly homeAgents?: ApplicationHomeAgentPresentation;
   readonly dimensions: Accessor<{ readonly width: number; readonly height: number }>;
   readonly surface: Accessor<RootSurface>;
   readonly semantic: Accessor<ApplicationShellProjectionV1 | null>;
@@ -197,6 +199,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
       keyed
       fallback={
         <ApplicationCatalogShell
+          homeAgents={props.homeAgents}
           dimensions={props.dimensions}
           surface={props.surface}
           sessions={props.sessions}
@@ -304,6 +307,9 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
               sidebar={
                 <ApplicationShellSidebar
                   shell={shell}
+                  liveSessions={
+                    typeof props.sessions === "function" ? props.sessions() : props.sessions
+                  }
                   theme={appearance.theme}
                   onIntent={(intent) => {
                     if (intent.type === "session.open")
@@ -317,6 +323,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                 when={props.surface() === "terminals"}
                 fallback={
                   <ApplicationHomeSurface
+                    {...props.homeAgents}
                     project={shell.semantic.project.name}
                     status={props.generationStatus()}
                     note={props.bootstrapNote()}

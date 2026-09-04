@@ -1754,6 +1754,8 @@ describe("production ApplicationShellView", () => {
     expect(frame).toContain("[IDLE]");
     expect(frame).toContain("• Codex [WORKING]");
     expect(frame).toContain("! Scout ! [IDLE]");
+    // The trusted live catalog, not an unrelated semantic display label, owns session routes.
+    expect(frame).not.toContain("website");
     expect(shellChromeSnapshot(frame)).toMatchSnapshot();
     setup.renderer.destroy();
   });

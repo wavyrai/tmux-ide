@@ -16,12 +16,14 @@ import {
   type ApplicationPaletteCommand,
 } from "./application-palette-input.ts";
 import { ApplicationHomeSurface } from "./application-shell-home.tsx";
+import type { ApplicationHomeAgentPresentation } from "./application-home-agents-owner.ts";
 import { MinimalPalette } from "./application-shell-overlays.tsx";
 import { ApplicationShellOverlayStack } from "./application-shell-overlay-stack.tsx";
 
 export type ApplicationCatalogSurface = "home" | "terminals";
 export type ApplicationCatalogInputSource = "keyboard" | "mouse";
 export interface ApplicationCatalogShellProps {
+  readonly homeAgents?: ApplicationHomeAgentPresentation;
   readonly dimensions: Accessor<{ readonly width: number; readonly height: number }>;
   readonly surface: Accessor<ApplicationCatalogSurface>;
   readonly sessions: readonly string[] | Accessor<readonly string[]>;
@@ -323,6 +325,7 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
               }
             >
               <ApplicationHomeSurface
+                {...props.homeAgents}
                 project="tmux-ide"
                 status={homeStatus()}
                 note={note()}

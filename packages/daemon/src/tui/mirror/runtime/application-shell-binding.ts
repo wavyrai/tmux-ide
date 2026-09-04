@@ -136,6 +136,7 @@ export interface ApplicationShellBinding {
     sessionName: string,
     source: CommandSource,
     open: (sessionName: string) => Promise<boolean>,
+    isCurrent?: () => boolean,
   ): Promise<{ readonly opened: boolean; readonly activated: boolean }>;
   dispose(): void;
 }
@@ -247,16 +248,17 @@ export function createApplicationShellBinding(
   };
   const dispatch = async (
     invocations: readonly Parameters<ShellClient["dispatch"]>[0][],
+    isCurrent: () => boolean = () => true,
   ): Promise<boolean> => {
     const active = client;
     const fence = epoch;
     if (!active) return false;
     try {
       for (const command of invocations) {
-        if (active !== client || fence !== epoch) return false;
+        if (active !== client || fence !== epoch || !isCurrent()) return false;
         await active.dispatch(command);
       }
-      return true;
+      return isCurrent();
     } catch (error) {
       try {
         options.onDiagnostic?.("application-shell-command-rejected", {
@@ -268,13 +270,18 @@ export function createApplicationShellBinding(
       return false;
     }
   };
-  const openSurface = (surface: ProductSurfaceId, source: CommandSource): Promise<boolean> => {
+  const openSurface = (
+    surface: ProductSurfaceId,
+    source: CommandSource,
+    isCurrent?: () => boolean,
+  ): Promise<boolean> => {
     if (!retainedSemantic) return Promise.resolve(false);
     return dispatch(
       applicationShellSurfaceInvocations(retainedSemantic, surface, source).map((invocation) => ({
         kind: "application-shell" as const,
         invocation,
       })),
+      isCurrent,
     );
   };
 
@@ -348,12 +355,15 @@ export function createApplicationShellBinding(
         },
       ]);
     },
-    async openSession(sessionName, source, open) {
+    async openSession(sessionName, source, open, isCurrent = () => true) {
+      if (!isCurrent()) return { opened: false, activated: false };
       const opened = await open(sessionName);
+      if (!isCurrent()) return { opened: false, activated: false };
       if (!opened) return { opened: false, activated: false };
       if (!retainedSemantic && !(await waitForSemantic()))
         return { opened: true, activated: false };
-      return { opened: true, activated: await openSurface("terminals", source) };
+      if (!isCurrent()) return { opened: false, activated: false };
+      return { opened: true, activated: await openSurface("terminals", source, isCurrent) };
     },
     dispose() {
       unbind();

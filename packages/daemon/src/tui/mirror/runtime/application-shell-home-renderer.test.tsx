@@ -35,6 +35,62 @@ function homeProps(
 }
 
 describe("compact production Home presentation", () => {
+  it.each([
+    [80, 24],
+    [120, 40],
+  ])(
+    "composes fleet coverage and roster while keeping actions visible at %ix%i",
+    async (width, height) => {
+      const props = homeProps({
+        width,
+        height,
+        agentInputActive: true,
+        agentSelection: { selectedKey: "a", scrollOffset: 0 },
+        agentRoster: {
+          phase: "partial",
+          observedSessions: 1,
+          totalSessions: 3,
+          unavailableSessions: 1,
+          loadingSessions: 1,
+          truncatedSessions: 0,
+          refreshingSessionKeys: [],
+          unavailableSessionKeys: [],
+          note: null,
+          rows: [
+            {
+              key: "a",
+              sessionKey: "s",
+              sessionName: "other-workspace",
+              liveSessionId: "$2",
+              daemonInstanceId: "d",
+              agentId: "a",
+              paneId: "pane.a",
+              name: "quiet-otter",
+              harness: "codex",
+              activity: "waiting",
+              attention: true,
+              projectName: "tmux-ide",
+            },
+          ],
+        },
+      });
+      const setup = await renderForTest(() => <ApplicationHomeSurface {...props} />, {
+        width,
+        height,
+      });
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expectFrameBounds(frame, width, height);
+      expect(frame).toContain("1 observed agent");
+      expect(frame).toContain("Scope: 1 of 3 sessions observed · partial");
+      expect(frame).toContain("other-workspace");
+      expect(frame).toContain("quiet-otter");
+      expect(frame).toContain("Open terminals F2");
+      expect(frame).toContain("Commands F5");
+      expect(frame).not.toContain("Current session");
+      setup.renderer.destroy();
+    },
+  );
   for (const mode of ["dark", "light"] as const) {
     it.each([
       [80, 24],
@@ -52,7 +108,7 @@ describe("compact production Home presentation", () => {
       expect(lines[1]).toBe("  tmux-ide");
       expect(lines[3]).toBe("  research · live");
       expect(lines[4]).toBe("  2 sessions in view");
-      expect(lines[5]).toBe("  Current session · 1 working · 1 need attention");
+      expect(lines[5]).toBe("  Current session · 1 working · 1 needs attention");
       expect(frame).toContain("Open terminals F2");
       expect(frame).toContain("Commands F5");
       expect(frame).toContain(`Theme: ${mode}`);
