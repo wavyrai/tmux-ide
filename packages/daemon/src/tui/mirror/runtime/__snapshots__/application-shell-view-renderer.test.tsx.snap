@@ -50,10 +50,10 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 1`] = `
 "  ⌂  ●❯                live
-  ╭──────────────────────╮
-  │ Command palette      │
-  │ › F1 Home            │
-  │ F2 Terminals         │
+ t╭──────────────────────╮
+ m│ Command palette      │
+ 2│ › F1 Home            │
+ C│ F2 Terminals         │…
   │ New terminal window  │
   │ Split pane right     │
   ╰──────────────────────╯
@@ -62,12 +62,12 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 2`] = `
 "  ⌂  ●❯        live
-  ╭──────────────╮
-  │ Commands     │
-  │ › F1 Home    │
-  │ F2 Terminals │
- ●╰──────────────╯F2
-    ○ Commands F5"
+ t╭──────────────╮
+ m│ Commands     │
+ 2│ › F1 Home    │w
+ C│ F2 Terminals │…
+  ╰──────────────╯…
+  ○ Commands F5"
 `;
 
 exports[`production ApplicationShellView preserves canonical attention while prioritizing mixed window activity 1`] = `
