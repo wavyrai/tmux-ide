@@ -8,6 +8,25 @@ import {
 } from "./application-terminal-selection-owner.ts";
 
 describe("application terminal selection owner", () => {
+  it("exposes menu input ownership to the root paste gate and clears it on unmount", () => {
+    const owner = createApplicationTerminalSelectionOwner({
+      copyText: () => true,
+      diagnosticsEnabled: false,
+      generation: () => null,
+    });
+    let open = true;
+    const handler = vi.fn(() => open);
+    owner.registerKey(handler, () => open);
+    expect(owner.blocksInput()).toBe(true);
+    owner.handleKey("x", { ctrl: true });
+    expect(handler).toHaveBeenCalledWith("x", { ctrl: true });
+    open = false;
+    expect(owner.blocksInput()).toBe(false);
+    open = true;
+    owner.registerKey(null);
+    expect(owner.blocksInput()).toBe(false);
+    expect(owner.handleKey("x")).toBe(false);
+  });
   it("routes one exact typed application-mouse input and preserves its ingress", async () => {
     const sendInputToPane = vi.fn(async () => true);
     routeApplicationTerminalPointerInput({ sendInputToPane } as never, "pane-a", {

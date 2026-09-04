@@ -3,7 +3,7 @@
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 1`] = `
 "  ⌂  ●❯                                                                    live
   tmux              ● main    ● workin…                                       +
- ● main               ● Codex                   ● workin… ⋯
+ ● main               ● Codex                  ● working  ⋯
  ○ website          CANONICAL-CELL
 
  Agents
@@ -19,7 +19,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 2`] = `
 "   tmux-ide   ⌂ Home  ●❯ Terminals                                                                                 live
   tmux-ide                  ● main    ● workin…                                                            + New window
- ● main                       ● Codex                   ● workin… ⋯
+ ● main                       ● Codex                  ● working  ⋯
  ○ website                  CANONICAL-CELL
 
  Agents
@@ -35,7 +35,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 3`] = `
 "   tmux-ide  F1  ⌂ Home  F2 ●❯ Terminals                                                                                                                                                           live
   tmux-ide                  ● main    ● workin…                                                                                                                                            + New window
- ● main                       ● Codex                   ● workin… ⋯
+ ● main                       ● Codex                  ● working  ⋯
  ○ website                  CANONICAL-CELL
 
  Agents
@@ -73,7 +73,7 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
 exports[`production ApplicationShellView preserves canonical attention while prioritizing mixed window activity 1`] = `
 "   tmux-ide   ⌂ Home  ●❯ Terminals                                                                                 live
   tmux-ide                  ! main    ! workin…                                                            + New window
- ● main                       ● Codex                   ● workin… ⋯   ! Scout                     ! idle  ⋯
+ ● main                       ● Codex                  ● working  ⋯   ! Scout                     ! idle
                             CANONICAL-CELL                          CANONICAL-CELL
  Agents
  • Codex [WORKING]

@@ -1,0 +1,31 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`pane title hierarchy polish dark: pane menu hover and keyboard selection share stable rows with visible shortcuts 1`] = `
+"╭────────────────────────────╮
+│ Agent workspace            │
+│   Select text…             │
+│ › Rename pane…           R │
+│   Split pane right       → │
+│   Split pane down        D │
+│   Close pane…            X │
+│ ↑↓ choose · Enter run · Esc│
+╰────────────────────────────╯
+
+
+"
+`;
+
+exports[`pane title hierarchy polish light: pane menu hover and keyboard selection share stable rows with visible shortcuts 1`] = `
+"╭────────────────────────────╮
+│ Agent workspace            │
+│   Select text…             │
+│ › Rename pane…           R │
+│   Split pane right       → │
+│   Split pane down        D │
+│   Close pane…            X │
+│ ↑↓ choose · Enter run · Esc│
+╰────────────────────────────╯
+
+
+"
+`;

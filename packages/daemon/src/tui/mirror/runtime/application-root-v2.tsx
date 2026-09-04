@@ -328,7 +328,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           noteHostInteraction();
           const name = event.name.toLowerCase();
           if (paneRename.handleKey(event)) return;
-          if (selectionOwner.handleKey(name)) return;
+          if (selectionOwner.handleKey(name, event)) return;
           if (event.ctrl && name === "q") {
             if (!hostLocal.hosted) void lifecycle.shutdown("keyboard");
             return;
@@ -389,6 +389,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         usePaste((event) => {
           noteHostInteraction();
           if (paneRename.handlePaste(event.bytes)) return;
+          if (selectionOwner.blocksInput()) return;
           if (
             applicationPaletteOwnsInput(
               Boolean(shell().semantic?.focus.palette.open || shell().localPaletteOpen),

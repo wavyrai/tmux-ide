@@ -12,6 +12,9 @@ export interface OverlayListRowProps {
   readonly selected?: boolean;
   readonly disabled?: boolean;
   readonly danger?: boolean;
+  /** Fixed selection gutter for menus; compact palette callers retain their budget. */
+  readonly reserveMarker?: boolean;
+  readonly onHighlight?: () => void;
   readonly onPress: () => void;
 }
 
@@ -24,7 +27,7 @@ export function OverlayListRow(props: OverlayListRowProps) {
     );
   const content = () => {
     const shortcut = props.shortcut ? ` ${props.shortcut}` : "";
-    const prefix = props.selected ? "› " : "";
+    const prefix = props.selected ? "› " : props.reserveMarker ? "  " : "";
     const available = Math.max(
       1,
       props.width - terminalDisplayWidth(prefix) - terminalDisplayWidth(shortcut),
@@ -48,6 +51,12 @@ export function OverlayListRow(props: OverlayListRowProps) {
       content={content()}
       fg={palette().foreground}
       bg={palette().background}
+      onMouseOver={() => {
+        if (!props.disabled) props.onHighlight?.();
+      }}
+      onMouseMove={() => {
+        if (!props.disabled) props.onHighlight?.();
+      }}
       onMouseDown={(event) => {
         if (event.button !== 0 || props.disabled) return;
         event.preventDefault();

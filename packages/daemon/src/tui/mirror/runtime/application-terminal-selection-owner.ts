@@ -4,6 +4,7 @@ import type { ApplicationTerminalInteractionController } from "./application-ter
 import type { ApplicationTerminalWorkspaceProps } from "./application-terminal-workspace.tsx";
 import { randomUUID } from "node:crypto";
 import { tuiPerfCriticalMark, tuiPerfDiagnostics } from "./application-performance-log.ts";
+import type { PaneMenuKeyHandler } from "../workspace/pane-action-menu-model.ts";
 
 export interface TerminalSelectionCopyEvidence {
   readonly semanticPaneId: string;
@@ -152,7 +153,8 @@ export function createApplicationTerminalSelectionOwner(options: {
   readonly generation: () => OpenTuiGenerationHostSnapshot | null;
 }) {
   let copySelection: (() => boolean) | null = null;
-  let handleKey: ((name: string) => boolean) | null = null;
+  let handleKey: PaneMenuKeyHandler | null = null;
+  let ownsInput: (() => boolean) | undefined;
   let copyOrdinal = 0;
   let pointerGestureId: string | null = null;
   return Object.freeze({
@@ -207,12 +209,14 @@ export function createApplicationTerminalSelectionOwner(options: {
       return copied;
     },
     copyCurrent: () => copySelection?.() === true,
-    handleKey: (name: string) => handleKey?.(name) === true,
+    handleKey: (...args: Parameters<PaneMenuKeyHandler>) => handleKey?.(...args) === true,
+    blocksInput: () => ownsInput?.() === true,
     registerCopy(copy: (() => boolean) | null) {
       copySelection = copy;
     },
-    registerKey(next: ((name: string) => boolean) | null) {
+    registerKey(next: PaneMenuKeyHandler | null, isOpen?: () => boolean) {
       handleKey = next;
+      ownsInput = next ? isOpen : undefined;
     },
   });
 }

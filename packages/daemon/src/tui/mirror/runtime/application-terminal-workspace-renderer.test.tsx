@@ -19,6 +19,7 @@ import {
 } from "./application-terminal-workspace.tsx";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
+import type { PaneMenuKeyHandler } from "../workspace/pane-action-menu-model.ts";
 
 function layout(): OpenTuiWorkspaceLayoutSnapshot {
   const current = {
@@ -65,6 +66,83 @@ function adapter(
 }
 
 describe("ApplicationTerminalWorkspace", () => {
+  it("opens pane actions by keyboard, preserves the overlay tree and retires superseded menus", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    let handleKey: PaneMenuKeyHandler | null = null;
+    let ownsInput: (() => boolean) | undefined;
+    let setInteractive!: Setter<boolean>;
+    let setLayout!: Setter<OpenTuiWorkspaceLayoutSnapshot>;
+    const selected: string[] = [];
+    const actions: string[] = [];
+    const setup = await renderForTest(
+      () => {
+        const [interactive, updateInteractive] = createSignal(true);
+        const [currentLayout, updateLayout] = createSignal(layout());
+        setInteractive = updateInteractive;
+        setLayout = updateLayout;
+        return (
+          <ApplicationTerminalWorkspace
+            layout={currentLayout}
+            adapter={adapter({ "pane.a": "A", "pane.b": "B", "pane.c": "C" }, [])}
+            rendererEpoch={1}
+            width={30}
+            height={9}
+            focusedPane="pane.a"
+            interactive={interactive()}
+            theme={theme}
+            palette={createTerminalPaletteProjection(theme)}
+            onSelectPane={(id) => selected.push(id)}
+            onPaneContextAction={(_, action) => actions.push(action)}
+            onSelectionKeyOwner={(handler, blocks) => {
+              handleKey = handler;
+              ownsInput = blocks;
+            }}
+          />
+        );
+      },
+      { width: 30, height: 11 },
+    );
+    await setup.renderOnce();
+    expect(handleKey?.("f10")).toBe(false);
+    expect(handleKey?.("f10", { shift: true, eventType: "press" })).toBe(true);
+    await setup.renderOnce();
+    expect(selected).toEqual(["pane.a"]);
+    expect(ownsInput?.()).toBe(true);
+    const frame = setup.renderer.root.findDescendantById("ui-overlay-frame");
+    handleKey?.("down");
+    await setup.renderOnce();
+    expect(setup.renderer.root.findDescendantById("ui-overlay-frame")).toBe(frame);
+    expect(handleKey?.("z")).toBe(true);
+    expect(handleKey?.("x", { ctrl: true })).toBe(true);
+    expect(actions).toEqual([]);
+    handleKey?.("escape");
+    expect(ownsInput?.()).toBe(false);
+    await setup.renderOnce();
+    // Right click and keyboard opening converge on the same menu, without
+    // making hover select another terminal or remounting its framebuffer.
+    await setup.mockMouse.click(13, 2, MouseButtons.RIGHT);
+    await setup.renderOnce();
+    expect(selected.at(-1)).toBe("pane.b");
+    expect(ownsInput?.()).toBe(true);
+    setInteractive(false);
+    await setup.renderOnce();
+    expect(ownsInput?.()).toBe(false);
+    expect(handleKey?.("f10", { shift: true })).toBe(false);
+    setInteractive(true);
+    expect(ownsInput?.()).toBe(false);
+    handleKey?.("f10", { shift: true });
+    const withoutA = {
+      ...layout().current!,
+      panes: layout().current!.panes.filter((p) => p.pane !== "pane.a"),
+    };
+    setLayout({ current: withoutA, windows: [withoutA] });
+    await setup.renderOnce();
+    expect(ownsInput?.()).toBe(false);
+    expect(setup.captureCharFrame()).not.toContain("Rename pane");
+    setup.renderer.destroy();
+    expect(handleKey).toBeNull();
+  });
   it("samples application-mouse ingress fail-open and only when enabled", () => {
     let calls = 0;
     expect(

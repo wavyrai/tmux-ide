@@ -19,11 +19,9 @@ import {
   type TerminalWindowTab,
 } from "../workspace/terminal-window-strip.tsx";
 import { PaneTitleBar } from "../workspace/terminal-pane-header.tsx";
-import {
-  PANE_ACTION_MENU_ITEMS,
-  PaneActionMenu,
-  type PaneMenuActionId,
-} from "../workspace/pane-action-menu.tsx";
+import { PANE_ACTION_MENU_ITEMS, PaneActionMenu } from "../workspace/pane-action-menu.tsx";
+import type { PaneMenuKeyHandler } from "../workspace/pane-action-menu-model.ts";
+import { createApplicationPaneMenuOwner } from "./application-pane-menu-owner.ts";
 import {
   extractTerminalSelection,
   terminalMouseActionSupported,
@@ -81,15 +79,6 @@ export type ApplicationPaneContextAction =
   | "split-down"
   | "close-pane";
 
-interface ApplicationPaneContextMenuState {
-  readonly paneId: string;
-  readonly displayName: string;
-  readonly left: number;
-  readonly top: number;
-  readonly selected: number;
-  readonly closeArmed: boolean;
-}
-
 export interface ApplicationMousePointerIngress {
   readonly gestureId: string;
   readonly action: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down";
@@ -139,6 +128,8 @@ export interface ApplicationTerminalWorkspaceProps {
   readonly focusedPane: string | null;
   /** Physical host focus is independent from which retained window is current. */
   readonly rendererFocused?: boolean;
+  /** Higher-level palette/rename overlays suspend pane menu ownership. */
+  readonly interactive?: boolean;
   readonly theme: SemanticThemeSnapshot;
   readonly palette: TerminalPaletteProjection;
   /** Daemon-authored semantic agent state, keyed by durable pane identity. */
@@ -188,7 +179,10 @@ export interface ApplicationTerminalWorkspaceProps {
     }>,
   ) => boolean;
   readonly onSelectionCopyOwner?: (copy: (() => boolean) | null) => void;
-  readonly onSelectionKeyOwner?: (handle: ((name: string) => boolean) | null) => void;
+  readonly onSelectionKeyOwner?: (
+    handle: PaneMenuKeyHandler | null,
+    ownsInput?: () => boolean,
+  ) => void;
   readonly onWindowPresented?: (
     semanticWindowId: string,
     paneId: string,
@@ -198,7 +192,7 @@ export interface ApplicationTerminalWorkspaceProps {
 
 const EMPTY_AGENT_INDICATORS: ReadonlyMap<string, ApplicationTerminalAgentIndicator> = new Map();
 
-const PANE_CONTEXT_MENU_WIDTH = 30;
+const PANE_CONTEXT_MENU_WIDTH = 36;
 
 export const ACTIVE_RESIZE_GUIDE_CELL = Object.freeze({ cols: "╎", rows: "╌" });
 
@@ -313,8 +307,19 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     lease: TerminalGestureLease;
   }> | null>(null);
   const [selectModePane, setSelectModePane] = createSignal<string | null>(null);
-  const [paneContextMenu, setPaneContextMenu] =
-    createSignal<ApplicationPaneContextMenuState | null>(null);
+  const paneMenu = createApplicationPaneMenuOwner({
+    rendererEpoch: () => props.rendererEpoch,
+    paneVisible: (paneId) =>
+      props.interactive !== false && visibleFrames().some((frame) => frame.paneId === paneId),
+    onAction: (paneId, id, displayName) => {
+      if (id === "select-text") {
+        setSelectModePane(paneId);
+        setSelection(null);
+        setCommittedSelection(null);
+      } else props.onPaneContextAction?.(paneId, id, displayName);
+    },
+  });
+  const paneContextMenu = paneMenu.state;
   let selecting: {
     readonly paneId: string;
     readonly anchor: TerminalSelectionRange["start"];
@@ -340,11 +345,10 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     y: event.y - (props.originY ?? 0) - topOffset(),
   });
   const paneContextMenuWidth = () => Math.max(1, Math.min(PANE_CONTEXT_MENU_WIDTH, props.width));
-  const paneContextMenuHeight = () => PANE_ACTION_MENU_ITEMS.length + 3;
+  const paneContextMenuHeight = () => PANE_ACTION_MENU_ITEMS.length + 4;
   const openPaneContextMenu = (
     paneId: string,
     event: Pick<WorkspaceMouseEvent, "x" | "y">,
-    selected = 0,
   ): void => {
     props.onSelectPane(paneId);
     const pane = layout()
@@ -355,31 +359,12 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     const width = paneContextMenuWidth();
     const height = paneContextMenuHeight();
     const bottom = topOffset() + props.height;
-    setPaneContextMenu({
+    paneMenu.open({
       paneId,
       displayName: pane?.displayName?.trim() || paneId,
       left: Math.max(0, Math.min(localX, props.width - width)),
       top: localY + 1 + height <= bottom ? localY + 1 : Math.max(topOffset(), localY - height),
-      selected: Math.max(0, Math.min(PANE_ACTION_MENU_ITEMS.length - 1, selected)),
-      closeArmed: false,
     });
-  };
-  const activatePaneContextItem = (index: number): void => {
-    const menu = paneContextMenu();
-    const item = PANE_ACTION_MENU_ITEMS[index];
-    if (!menu || !item) return;
-    if (item.id === "close-pane" && !menu.closeArmed) {
-      setPaneContextMenu({ ...menu, selected: index, closeArmed: true });
-      return;
-    }
-    setPaneContextMenu(null);
-    if (item.id === "select-text") {
-      setSelectModePane(menu.paneId);
-      setSelection(null);
-      setCommittedSelection(null);
-      return;
-    }
-    props.onPaneContextAction?.(menu.paneId, item.id, menu.displayName);
   };
   const globalPreview = (preview: ApplicationPaneResizePreview): ApplicationPaneResizePreview =>
     Object.freeze({
@@ -584,39 +569,36 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     }
   });
   props.onSelectionCopyOwner?.(copySelection);
-  const handleSelectionKey = (name: string): boolean => {
-    const menu = paneContextMenu();
-    if (!menu) return false;
-    const activate = (id: PaneMenuActionId) =>
-      activatePaneContextItem(PANE_ACTION_MENU_ITEMS.findIndex((item) => item.id === id));
-    if (name === "escape") setPaneContextMenu(null);
-    else if (name === "up" || name === "k")
-      setPaneContextMenu({
-        ...menu,
-        selected:
-          (menu.selected - 1 + PANE_ACTION_MENU_ITEMS.length) % PANE_ACTION_MENU_ITEMS.length,
-        closeArmed: false,
-      });
-    else if (name === "down" || name === "j")
-      setPaneContextMenu({
-        ...menu,
-        selected: (menu.selected + 1) % PANE_ACTION_MENU_ITEMS.length,
-        closeArmed: false,
-      });
-    else if (name === "r") activate("rename-pane");
-    else if (name === "right") activate("split-right");
-    else if (name === "d") activate("split-down");
-    else if (name === "x") activate("close-pane");
-    else if (name === "return" || name === "enter") activatePaneContextItem(menu.selected);
-    else return false;
+  const handlePaneMenuKey: PaneMenuKeyHandler = (name, event) => {
+    if (paneMenu.handleKey(name, event)) return true;
+    if (
+      props.interactive === false ||
+      name !== "f10" ||
+      !event?.shift ||
+      event.ctrl ||
+      event.meta ||
+      event.repeated ||
+      (event.eventType && event.eventType !== "press")
+    )
+      return false;
+    const frame = visibleFrames().find((frame) => frame.paneId === props.focusedPane);
+    if (!frame) return false;
+    openPaneContextMenu(frame.paneId, {
+      x: (props.originX ?? 0) + frame.left + Math.max(0, frame.width - 1),
+      y: (props.originY ?? 0) + frame.top + topOffset(),
+    });
     return true;
   };
-  props.onSelectionKeyOwner?.(handleSelectionKey);
+  props.onSelectionKeyOwner?.(handlePaneMenuKey, paneMenu.ownsInput);
   onCleanup(() => {
     props.onSelectionCopyOwner?.(null);
     props.onSelectionKeyOwner?.(null);
   });
   const routePointer = (event: WorkspaceMouseEvent): void => {
+    if (paneMenu.ownsInput()) {
+      event.stopPropagation?.();
+      return;
+    }
     const applicationAction =
       event.type === "down"
         ? "down"
@@ -853,7 +835,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       if (event.type === "down") {
         event.stopPropagation?.();
         props.onSelectPane(hit.frame.paneId);
-        setPaneContextMenu(null);
+        paneMenu.dismiss();
         if (forward) {
           setSelection(null);
           setCommittedSelection(null);
@@ -1023,6 +1005,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                 selected={props.focusedPane === frame().paneId}
                 terminalFocused={terminalSurfaceFocused(frame())}
                 keyboardFocused={props.focusedPane === frame().paneId}
+                menuOpen={paneContextMenu()?.paneId === frame().paneId}
                 activity={indicator()?.activity}
                 attention={indicator()?.attention}
                 menuAnchor={{
@@ -1084,27 +1067,25 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           />
         )}
       </For>
-      <For each={paneContextMenu() ? [paneContextMenu()!] : []}>
+      <Show when={paneContextMenu()}>
         {(menu) => (
           <PaneActionMenu
             theme={props.theme}
-            left={menu.left}
-            top={menu.top}
+            left={menu().left}
+            top={menu().top}
             width={paneContextMenuWidth()}
             viewportWidth={props.width}
             viewportHeight={props.height + topOffset()}
-            paneTitle={menu.displayName}
+            paneTitle={menu().displayName}
             active
-            onDismiss={() => setPaneContextMenu(null)}
-            selectedId={PANE_ACTION_MENU_ITEMS[menu.selected]?.id ?? "select-text"}
-            closeArmed={menu.closeArmed}
-            onActionIntent={(id) => {
-              const index = PANE_ACTION_MENU_ITEMS.findIndex((item) => item.id === id);
-              if (index >= 0) activatePaneContextItem(index);
-            }}
+            onDismiss={paneMenu.dismiss}
+            selectedId={menu().selectedId}
+            closeArmed={menu().closeArmed}
+            onHighlight={paneMenu.highlight}
+            onActionIntent={paneMenu.activate}
           />
         )}
-      </For>
+      </Show>
       <For each={selectModePane() ? [selectModePane()!] : []}>
         {() => (
           <text

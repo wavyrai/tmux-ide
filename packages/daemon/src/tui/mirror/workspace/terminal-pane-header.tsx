@@ -1,5 +1,6 @@
 /* @jsxImportSource @opentui/solid */
 import type { AgentActivity } from "@tmux-ide/contracts";
+import { createSignal } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
@@ -27,6 +28,8 @@ export interface PaneTitleBarProps {
   /** Renderer-global anchor used by the keyboard-operable overflow control. */
   readonly menuAnchor: Readonly<{ x: number; y: number }>;
   readonly menuFocused?: boolean;
+  /** Keeps contextual actions visible while their menu owns input. */
+  readonly menuOpen?: boolean;
   readonly menuDisabled?: boolean;
   readonly onSelectIntent: () => void;
   readonly onMenuIntent: (anchor: Readonly<{ x: number; y: number }>) => void;
@@ -66,7 +69,7 @@ function agentStatus(activity: AgentActivity | undefined): AgentBadgeStatus | un
 }
 
 function badgeWidth(status: AgentBadgeStatus | undefined): number {
-  return status ? Math.min(10, terminalDisplayWidth(status) + 4) : 0;
+  return status ? terminalDisplayWidth(status) + 4 : 0;
 }
 
 /**
@@ -74,13 +77,24 @@ function badgeWidth(status: AgentBadgeStatus | undefined): number {
  * none of this component's hit targets extend into the pane body.
  */
 export function PaneTitleBar(props: PaneTitleBarProps) {
+  const [pointerInside, setPointerInside] = createSignal(false);
+  const hovered = () => props.hovered ?? pointerInside();
   const safeWidth = () => Math.max(1, Math.floor(props.width));
   const status = () => agentStatus(props.activity);
   // Keep the state glyph out of the first two inline cells. OpenTUI can repaint
   // those cells from the clipped parent during nested workspace composition.
   const markerGutterWidth = () => Math.min(2, safeWidth());
   const markerWidth = () => Math.min(2, safeWidth());
-  const actionWidth = () => (safeWidth() >= 6 && !props.menuDisabled ? 3 : 0);
+  // Reserve these cells even when the control is quiet or unavailable. Hover
+  // and menu lifetime must never change title clipping or terminal geometry.
+  const actionWidth = () => (safeWidth() >= 7 ? 3 : 0);
+  const actionsVisible = () =>
+    props.selected ||
+    props.keyboardFocused ||
+    props.terminalFocused ||
+    hovered() ||
+    props.menuFocused ||
+    props.menuOpen;
   const showBadge = () =>
     Boolean(
       status() &&
@@ -99,7 +113,7 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
     componentPalette(props.theme, {
       selected: props.selected,
       focused: props.keyboardFocused || props.terminalFocused,
-      hovered: props.hovered,
+      hovered: hovered(),
       attention: props.attention,
       status: status(),
     });
@@ -107,11 +121,18 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
   // quieter, while selection or either input focus keeps its name prominent.
   const titleEmphasized = () => props.selected || props.keyboardFocused || props.terminalFocused;
   const titleForeground = () =>
-    titleEmphasized() || props.hovered || props.attention
+    titleEmphasized() || hovered() || props.attention
       ? palette().foreground
       : props.theme.roles.text.secondary;
-  const activateMenu = () => {
-    if (!props.menuDisabled) props.onMenuIntent(props.menuAnchor);
+  const activateMenu = (anchor = props.menuAnchor) => {
+    if (!props.menuDisabled) props.onMenuIntent(anchor);
+  };
+  const selectOrOpenMenu = (event: PaneHeaderPointerEvent) => {
+    if (event.button !== 0 && event.button !== 2) return;
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    if (event.button === 2) activateMenu({ x: event.x, y: event.y });
+    else props.onSelectIntent();
   };
 
   return (
@@ -126,34 +147,16 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
       flexDirection="row"
       overflow="hidden"
       backgroundColor={palette().background}
-      onMouseDown={(event) => {
-        if (event.button === 2) {
-          event.preventDefault();
-          event.stopPropagation();
-          props.onMenuIntent({ x: event.x, y: event.y });
-          return;
-        }
-        if (event.button !== 0) return;
-        event.stopPropagation();
-        props.onSelectIntent();
-      }}
+      onMouseOver={() => setPointerInside(true)}
+      onMouseOut={() => setPointerInside(false)}
+      onMouseDown={selectOrOpenMenu}
     >
       <text
         width={markerGutterWidth()}
         height={1}
         flexShrink={0}
         bg={palette().background}
-        onMouseDown={(event) => {
-          if (event.button === 2) {
-            event.preventDefault();
-            event.stopPropagation();
-            props.onMenuIntent({ x: event.x, y: event.y });
-            return;
-          }
-          if (event.button !== 0) return;
-          event.stopPropagation();
-          props.onSelectIntent();
-        }}
+        onMouseDown={selectOrOpenMenu}
       >
         {" ".repeat(markerGutterWidth())}
       </text>
@@ -190,21 +193,25 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
           width={badgeWidth(status())}
           selected={props.selected}
           focused={props.keyboardFocused || props.terminalFocused}
-          hovered={props.hovered}
+          hovered={hovered()}
           attention={props.attention}
         />
       ) : null}
       {actionWidth() > 0 ? (
-        <IconButton
-          theme={props.theme}
-          icon="⋯"
-          label="Pane actions"
-          variant="ghost"
-          width={actionWidth()}
-          focused={props.menuFocused}
-          background={palette().background}
-          onPress={activateMenu}
-        />
+        <box width={actionWidth()} height={1} flexShrink={0}>
+          <IconButton
+            theme={props.theme}
+            icon={actionsVisible() ? "⋯" : " "}
+            label="Pane actions"
+            variant="ghost"
+            width={actionWidth()}
+            focused={props.menuFocused}
+            selected={props.menuOpen}
+            disabled={props.menuDisabled}
+            background={palette().background}
+            onPress={() => activateMenu()}
+          />
+        </box>
       ) : null}
     </box>
   );

@@ -370,6 +370,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                         layout={props.layout}
                         adapter={source.adapter}
                         rendererEpoch={source.rendererEpoch}
+                        interactive={!props.paletteOpen() && !props.paneRenameDialog?.()}
                         width={shell.content.width}
                         height={Math.max(2, shell.content.height - 1)}
                         topOffset={1}

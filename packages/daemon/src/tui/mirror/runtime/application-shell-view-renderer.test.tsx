@@ -661,7 +661,7 @@ describe("production ApplicationShellView", () => {
       expect(frame).toContain("Codex");
       expect(frame).toContain("main");
       expect(frame.split("\n")[2]).toContain("Codex");
-      expect(frame.split("\n")[2]).toContain("● workin…");
+      expect(frame.split("\n")[2]).toContain("● working");
       expect(frame).toContain("[WORKING]");
       expect(frame.split("\n")[1]).toContain("main");
       expect(frame.split("\n")[1]).toContain("workin…");
@@ -1749,7 +1749,7 @@ describe("production ApplicationShellView", () => {
     expect(frame.split("\n")[1]).toContain("main");
     expect(frame.split("\n")[1]).toContain("workin…");
     expect(frame.split("\n")[2]).toContain("Codex");
-    expect(frame.split("\n")[2]).toContain("● workin…");
+    expect(frame.split("\n")[2]).toContain("● working");
     expect(frame).toContain("! Scout");
     expect(frame).toContain("[IDLE]");
     expect(frame).toContain("• Codex [WORKING]");
