@@ -203,6 +203,8 @@ describe("production OpenTUI v2 data path", () => {
 
   it("keeps pure renderer composition free of host IO and authority owners", () => {
     for (const path of [
+      "packages/daemon/src/tui/mirror/runtime/terminal-copy-cursor.ts",
+      "packages/daemon/src/tui/mirror/runtime/terminal-copy-selection.ts",
       "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
       "packages/daemon/src/tui/mirror/runtime/application-terminal-workspace.tsx",
       "packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface.tsx",
@@ -219,14 +221,29 @@ describe("production OpenTUI v2 data path", () => {
   });
 
   it("keeps the production root reviewable as a small renderer client", () => {
-    // Includes the one root-owned keyboard/paste ingress and its provider boundary.
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(510);
+    // Includes the one root-owned keyboard/paste ingress and the three-line
+    // composition seam for shared receipt presence (no new transport owner).
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(513);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.
     const authorityDataPathFiles = productionGraph.files.filter(
       (path) => !PURE_PRESENTATION_MODULE.test(path),
     );
-    expect(authorityDataPathFiles.length).toBeLessThan(110);
+    // Includes two pure copy-coordinate/extraction helpers, checked above for
+    // host IO and ingress ownership. No new daemon or transport owner is added.
+    const nativeIntegration = [
+      "packages/daemon/src/terminal/protocol/native-backing-client.ts",
+      "packages/daemon/src/terminal/mirror/native-grid-capture.ts",
+      "packages/daemon/src/terminal/mirror/native-grid-projection.ts",
+      "packages/daemon/src/terminal/mirror/native-grid-reflow.ts",
+      "packages/daemon/src/terminal/mirror/native-frozen-grid.ts",
+      "packages/daemon/src/tui/mirror/runtime/application-pane-activity-owner.ts",
+    ];
+    // Bounded physical-grid transport and reflow are renderer-neutral helpers.
+    // Keep these explicit and retain a fixed bound on the complete runtime graph;
+    // the singular replica/transport ownership checks above remain unchanged.
+    for (const path of nativeIntegration) expect(authorityDataPathFiles).toContain(path);
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(119);
   });
 });

@@ -20,6 +20,8 @@ export function createApplicationPaletteCommandOwner(options: {
   ) => CommandSource;
   readonly setSurface: (surface: "home" | "terminals") => void;
   readonly setNote: (note: string | null) => void;
+  readonly openAppearance?: () => void;
+  readonly zoomPane?: () => Promise<string>;
   readonly newWindow: () => Promise<string>;
   readonly splitPane: (direction: "right" | "down") => Promise<string>;
   readonly closePane: () => Promise<string>;
@@ -56,6 +58,11 @@ export function createApplicationPaletteCommandOwner(options: {
     confirmed = false,
   ): void => {
     if (busy()) return;
+    if (command === "appearance") {
+      setOpen(false, source);
+      options.openAppearance?.();
+      return;
+    }
     const unavailable = options.disabledReason?.(command);
     if (unavailable) {
       setCloseArmed(false);
@@ -116,11 +123,13 @@ export function createApplicationPaletteCommandOwner(options: {
     let operation: Promise<string>;
     try {
       operation =
-        command === "close-pane"
-          ? options.closePane()
-          : command === "new-window"
-            ? options.newWindow()
-            : options.splitPane(command === "split-right" ? "right" : "down");
+        command === "zoom-pane"
+          ? (options.zoomPane?.() ?? Promise.resolve("Zoom unavailable"))
+          : command === "close-pane"
+            ? options.closePane()
+            : command === "new-window"
+              ? options.newWindow()
+              : options.splitPane(command === "split-right" ? "right" : "down");
     } catch {
       setBusy(false);
       options.setNote("Command failed. Check the live session and try again.");

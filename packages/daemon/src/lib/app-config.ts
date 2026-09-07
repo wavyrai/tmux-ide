@@ -20,6 +20,7 @@
  * per-concern readers ({@link ../tui/chrome/notify.ts}, {@link ../restore.ts})
  * now delegate here.
  */
+import { findVisualThemePreset } from "@tmux-ide/contracts";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -85,6 +86,7 @@ export interface AppThemeGlyphs {
 export interface AppTheme {
   /** Explicit palette mode or terminal-following mode. Default keeps legacy dark visuals. */
   mode: ThemeModeSetting;
+  preset?: string;
   /** Primary/brand accent (default `colour75`). */
   accent: string;
   /** Muted/secondary foreground for dim text (default `colour240`). */
@@ -394,6 +396,7 @@ export function parseAppConfig(input: unknown): AppConfig {
     },
     theme: {
       mode: pickChoice(theme.mode, ["dark", "light", "system"], D.theme.mode),
+      ...(findVisualThemePreset(theme.preset) ? { preset: String(theme.preset) } : {}),
       accent: pickString(theme.accent, D.theme.accent),
       muted: pickString(theme.muted, D.theme.muted),
       fg: pickString(theme.fg, D.theme.fg),

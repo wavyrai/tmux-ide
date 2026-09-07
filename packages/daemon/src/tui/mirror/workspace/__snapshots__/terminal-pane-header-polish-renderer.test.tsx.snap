@@ -7,10 +7,10 @@ exports[`pane title hierarchy polish dark: pane menu hover and keyboard selectio
 │ › Rename pane…           R │
 │   Split pane right       → │
 │   Split pane down        D │
+│   Zoom / unzoom pane     Z │
 │   Close pane…            X │
 │ ↑↓ choose · Enter run · Esc│
 ╰────────────────────────────╯
-
 
 "
 `;
@@ -22,10 +22,10 @@ exports[`pane title hierarchy polish light: pane menu hover and keyboard selecti
 │ › Rename pane…           R │
 │   Split pane right       → │
 │   Split pane down        D │
+│   Zoom / unzoom pane     Z │
 │   Close pane…            X │
 │ ↑↓ choose · Enter run · Esc│
 ╰────────────────────────────╯
-
 
 "
 `;

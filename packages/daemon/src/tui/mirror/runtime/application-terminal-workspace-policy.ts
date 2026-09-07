@@ -37,6 +37,7 @@ export interface ApplicationPaneSeparator {
   readonly paneId: string;
   readonly initialCells: number;
   readonly siblingCells: number;
+  readonly nativeCellsPerDisplayCell?: number;
 }
 
 export function terminalAgentStatusLabel(activity: AgentActivity): string {
@@ -50,7 +51,7 @@ export function terminalAgentStatusLabel(activity: AgentActivity): string {
     case "failed":
       return "FAILED";
     case "disconnected":
-      return "UNKNOWN";
+      return "DISCONNECTED";
     case "idle":
       return "IDLE";
   }
@@ -156,6 +157,16 @@ export function terminalWindowAgentIndicator(
   return selected ? { activity: selected, attention } : undefined;
 }
 
+function resizeScale(before: OpenTuiPaneFrame, after: OpenTuiPaneFrame, axis: "x" | "y") {
+  const native =
+    axis === "x"
+      ? (before.nativeWidth ?? before.width) + (after.nativeWidth ?? after.width)
+      : (before.nativeHeight ?? before.contentHeight) + (after.nativeHeight ?? after.contentHeight);
+  const displayed =
+    axis === "x" ? before.width + after.width : before.contentHeight + after.contentHeight;
+  return native === displayed ? {} : { nativeCellsPerDisplayCell: native / displayed };
+}
+
 export function terminalPaneSeparatorAt(
   frames: readonly OpenTuiPaneFrame[],
   paneBorderStatus: "top" | "bottom" | "off",
@@ -176,20 +187,28 @@ export function terminalPaneSeparatorAt(
         start: Math.max(before.top, after.top),
         end: Math.min(before.top + before.height, after.top + after.height),
         paneId: before.paneId,
-        initialCells: before.width,
-        siblingCells: after.width,
+        initialCells: before.nativeWidth ?? before.width,
+        siblingCells: after.nativeWidth ?? after.width,
+        ...resizeScale(before, after, "x"),
       });
   }
   for (const before of frames) {
     const after = frames.find(
       (candidate) =>
-        candidate.top === before.top + before.height + 1 &&
+        candidate.top ===
+          before.top + before.height + (before.nativeHeight === undefined ? 1 : 0) &&
         x >= Math.max(before.left, candidate.left) &&
         x < Math.min(before.left + before.width, candidate.left + candidate.width),
     );
-    if (after && y === before.top + before.height) {
-      const initialCells = nativePaneResizeCells(before, "rows", paneBorderStatus);
-      const siblingCells = nativePaneResizeCells(after, "rows", paneBorderStatus);
+    if (
+      after &&
+      y === before.top + before.height &&
+      (before.nativeHeight === undefined || x === Math.max(before.left, after.left))
+    ) {
+      const initialCells =
+        before.nativeHeight ?? nativePaneResizeCells(before, "rows", paneBorderStatus);
+      const siblingCells =
+        after.nativeHeight ?? nativePaneResizeCells(after, "rows", paneBorderStatus);
       if (initialCells === null || siblingCells === null) return null;
       return Object.freeze({
         axis: "y",
@@ -199,6 +218,7 @@ export function terminalPaneSeparatorAt(
         paneId: before.paneId,
         initialCells,
         siblingCells,
+        ...resizeScale(before, after, "y"),
       });
     }
   }
@@ -224,20 +244,24 @@ export function terminalPaneSeparators(
         start: Math.max(before.top, after.top),
         end: Math.min(before.top + before.height, after.top + after.height),
         paneId: before.paneId,
-        initialCells: before.width,
-        siblingCells: after.width,
+        initialCells: before.nativeWidth ?? before.width,
+        siblingCells: after.nativeWidth ?? after.width,
+        ...resizeScale(before, after, "x"),
       });
   }
   for (const before of frames) {
     const after = frames.find(
       (candidate) =>
-        candidate.top === before.top + before.height + 1 &&
+        candidate.top ===
+          before.top + before.height + (before.nativeHeight === undefined ? 1 : 0) &&
         Math.max(before.left, candidate.left) <
           Math.min(before.left + before.width, candidate.left + candidate.width),
     );
     if (!after) continue;
-    const initialCells = nativePaneResizeCells(before, "rows", paneBorderStatus);
-    const siblingCells = nativePaneResizeCells(after, "rows", paneBorderStatus);
+    const initialCells =
+      before.nativeHeight ?? nativePaneResizeCells(before, "rows", paneBorderStatus);
+    const siblingCells =
+      after.nativeHeight ?? nativePaneResizeCells(after, "rows", paneBorderStatus);
     if (initialCells !== null && siblingCells !== null)
       separators.push({
         axis: "y",
@@ -247,6 +271,7 @@ export function terminalPaneSeparators(
         paneId: before.paneId,
         initialCells,
         siblingCells,
+        ...resizeScale(before, after, "y"),
       });
   }
   return Object.freeze(separators);
@@ -257,12 +282,13 @@ export function terminalPaneResizePreview(
   pointer: number,
   origin: number,
 ): ApplicationPaneResizePreview {
+  const scale = separator.nativeCellsPerDisplayCell ?? 1;
   const total = separator.initialCells + separator.siblingCells;
   const cells = Math.max(
     MIN_PANE,
-    Math.min(total - MIN_PANE, separator.initialCells + pointer - origin),
+    Math.min(total - MIN_PANE, separator.initialCells + Math.round((pointer - origin) * scale)),
   );
-  const delta = cells - separator.initialCells;
+  const delta = Math.round((cells - separator.initialCells) / scale);
   return Object.freeze({
     semanticPaneId: separator.paneId,
     axis: separator.axis === "x" ? "cols" : "rows",

@@ -159,7 +159,7 @@ function canonicalText(
   return snapshot.grid.map((row) =>
     row.cells
       .filter((cell) => cell.width !== 0)
-      .map((cell) => cell.grapheme)
+      .map((cell) => cell.grapheme || " ")
       .join(""),
   );
 }
@@ -170,7 +170,7 @@ function canonicalBufferText(
   return [...snapshot.history, ...snapshot.grid].map((row) =>
     row.cells
       .filter((cell) => cell.width !== 0)
-      .map((cell) => cell.grapheme)
+      .map((cell) => cell.grapheme || " ")
       .join("")
       .trimEnd(),
   );

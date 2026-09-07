@@ -1,3 +1,4 @@
+import { decodeNativeGridCapture } from "../../../terminal/mirror/native-grid-capture.ts";
 import { describe, expect, it, spyOn } from "bun:test";
 import type {
   CanonicalTerminalReplicaUpdate,
@@ -13,6 +14,8 @@ import {
   hashTerminalReplicaTombstone,
 } from "@tmux-ide/core";
 
+import * as viewport from "../terminal-viewport.ts";
+import { createTerminalScrollback } from "../workspace/terminal-scrollback.ts";
 import { TerminalFastLaneRendererAdapter } from "./terminal-fast-lane-renderer-adapter.ts";
 import { installTuiPerformanceEventSink } from "../performance-events.ts";
 
@@ -108,6 +111,507 @@ function paintViewport(
 }
 
 describe("TerminalFastLaneRendererAdapter", () => {
+  it.each([false, true])(
+    "fences asynchronous native backing to the retained view (released: %s)",
+    async (released) => {
+      const source = new Source();
+      const lane = createTerminalFastLane({
+        address: { workspaceName, generation },
+        source,
+        repair: { request: () => undefined },
+        control: {
+          owns: () => true,
+          request: async () => true,
+          write: async () => "ok",
+          resize: async () => "ok",
+        },
+      });
+      const backing = decodeNativeGridCapture(
+        JSON.stringify({
+          version: 1,
+          cols: 4,
+          rows: 2,
+          history: 0,
+          hscrolled: 0,
+          limit: 100,
+          cursor: [0, 0],
+        }) +
+          "\n" +
+          JSON.stringify({
+            row: 0,
+            flags: 0,
+            used: 4,
+            cells: [
+              [0, 1, "41", 0, 8, 8, 8, 0, 0],
+              ...Array.from({ length: 3 }, () => [0, 1, "20", 0, 8, 8, 8, 0, 0]),
+            ],
+          }) +
+          "\n" +
+          JSON.stringify({
+            row: 1,
+            flags: 0,
+            used: 4,
+            cells: Array.from({ length: 4 }, () => [0, 1, "20", 0, 8, 8, 8, 0, 0]),
+          }) +
+          "\n",
+      )!;
+      let finish!: (value: typeof backing) => void;
+      let calls = 0;
+      let signal: AbortSignal | undefined;
+      const pending = new Promise<typeof backing>((resolve) => {
+        finish = resolve;
+      });
+      const adapter = new TerminalFastLaneRendererAdapter(
+        lane,
+        1,
+        null,
+        null,
+        async (_pane, expected, requestSignal) => {
+          calls++;
+          signal = requestSignal;
+          expect(expected.revision).toBe(0);
+          return await pending;
+        },
+      );
+      const peer = new TerminalFastLaneRendererAdapter(lane);
+      const stop = adapter.subscribePaneVersion("pane.editor", () => undefined);
+      const stopPeer = peer.subscribePaneVersion("pane.editor", () => undefined);
+      try {
+        source.emit("pane.editor", seed("pane.editor", "A"));
+        const release = adapter.retainPaneView("pane.editor")!;
+        expect(adapter.paneRetainedBackingStatus("pane.editor")).toBe("pending");
+        adapter.setNativePaneGeometries([{ paneId: "pane.editor", cols: 2, rows: 2 }]);
+        const update = seed("pane.editor", "B");
+        source.emit("pane.editor", { ...update, revision: 1 });
+        if (released) release();
+        finish(backing);
+        await pending;
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(calls).toBe(1);
+        expect(signal?.aborted).toBe(released);
+        expect(adapter.paneRetainedBackingStatus("pane.editor")).toBe(released ? null : "native");
+        const heldSnapshot = adapter.paneSelectionSnapshot("pane.editor")!;
+        expect([...heldSnapshot.history, ...heldSnapshot.grid][0]?.cells[0]?.grapheme).toBe(
+          released ? "B" : "A",
+        );
+        expect(peer.paneSelectionSnapshot("pane.editor")?.grid[0]?.cells[0]?.grapheme).toBe("B");
+        if (!released) release();
+      } finally {
+        stop();
+        stopPeer();
+        adapter.dispose();
+        peer.dispose();
+        lane.dispose();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "uses native layout for a held view despite parser minimum width (layout first: %s)",
+    (layoutFirst) => {
+      const source = new Source();
+      const lane = createTerminalFastLane({
+        address: { workspaceName, generation },
+        source,
+        repair: { request: () => undefined },
+        control: {
+          owns: () => true,
+          request: async () => true,
+          write: async () => "ok",
+          resize: async () => "ok",
+        },
+      });
+      const held = new TerminalFastLaneRendererAdapter(lane);
+      const peer = new TerminalFastLaneRendererAdapter(lane);
+      const releaseHeld = held.subscribePaneVersion("pane.editor", () => undefined);
+      const releasePeer = peer.subscribePaneVersion("pane.editor", () => undefined);
+      try {
+        const update = seed("pane.editor", "H");
+        if (update.type !== "terminal.seed") throw new Error("expected seed");
+        const snapshot = {
+          ...update.snapshot,
+          grid: [
+            {
+              ...update.snapshot.grid[0]!,
+              cells: [..."HOLD"].map((grapheme, index) => ({
+                ...update.snapshot.grid[0]!.cells[index]!,
+                grapheme,
+              })),
+            },
+            {
+              ...update.snapshot.grid[1]!,
+              cells: update.snapshot.grid[1]!.cells.map((cell) => ({ ...cell, grapheme: "" })),
+            },
+          ],
+        };
+        source.emit("pane.editor", {
+          ...update,
+          snapshot,
+          stateHash: hashTerminalReplicaSnapshot(snapshot),
+        });
+        const native = [{ paneId: "pane.editor", cols: 1, rows: 2 }];
+        if (layoutFirst) held.setNativePaneGeometries(native);
+        const release = held.retainPaneView("pane.editor")!;
+        if (!layoutFirst) held.setNativePaneGeometries(native);
+        const frozen = held.paneSelectionSnapshot("pane.editor")!;
+        expect(frozen.cols).toBe(1);
+        expect(
+          [...frozen.history, ...frozen.grid]
+            .flatMap((row) => row.cells.map((cell) => cell.grapheme))
+            .join(""),
+        ).toBe("HOLD");
+        const version = held.paneVersion("pane.editor");
+        held.setNativePaneGeometries(native);
+        expect(held.paneVersion("pane.editor")).toBe(version);
+
+        const parsed = blankTerminalReplicaSnapshot(2, 2);
+        source.emit("pane.editor", {
+          ...update,
+          revision: 1,
+          cols: 2,
+          snapshot: parsed,
+          stateHash: hashTerminalReplicaSnapshot(parsed),
+        });
+        expect(held.paneSelectionSnapshot("pane.editor")).toBe(frozen);
+        expect(held.paneVersion("pane.editor")).toBe(version);
+        expect(peer.paneSelectionSnapshot("pane.editor")!.cols).toBe(2);
+        expect(lane.paneState("pane.editor")!.snapshot!.cols).toBe(2);
+        expect(held.paneCanonicalIdentity("pane.editor")?.cols).toBe(4);
+        expect(held.paneCanonicalIdentity("pane.editor")?.viewCols).toBe(1);
+
+        held.setNativePaneGeometries([{ paneId: "pane.editor", cols: 4, rows: 2 }]);
+        const restored = held.paneSelectionSnapshot("pane.editor")!;
+        expect(
+          [...restored.history, ...restored.grid][0]!.cells.map((cell) => cell.grapheme).join(""),
+        ).toBe("HOLD");
+        release();
+        expect(held.paneSelectionSnapshot("pane.editor")!.cols).toBe(2);
+      } finally {
+        releaseHeld();
+        releasePeer();
+        held.dispose();
+        peer.dispose();
+        lane.dispose();
+      }
+    },
+  );
+  it.each([1, 2000])(
+    "does not repeat a retained resize at width %i for each live publication",
+    (targetWidth) => {
+      const source = new Source();
+      const lane = createTerminalFastLane({
+        address: { workspaceName, generation },
+        source,
+        repair: { request: () => undefined },
+        control: {
+          owns: () => true,
+          request: async () => true,
+          write: async () => "ok",
+          resize: async () => "ok",
+        },
+      });
+      const adapter = new TerminalFastLaneRendererAdapter(lane);
+      const peer = new TerminalFastLaneRendererAdapter(lane);
+      adapter.subscribePaneVersion("pane.editor", () => undefined);
+      peer.subscribePaneVersion("pane.editor", () => undefined);
+      const initial = seed("pane.editor", "A");
+      if (initial.type !== "terminal.seed") throw new Error("expected seed");
+      const wide = {
+        ...initial.snapshot,
+        grid: initial.snapshot.grid.map((row, index) =>
+          index
+            ? row
+            : {
+                ...row,
+                cells: [
+                  { ...row.cells[0]!, grapheme: "界", width: 2 as const },
+                  { ...row.cells[1]!, grapheme: "", width: 0 as const },
+                  ...row.cells.slice(2),
+                ],
+              },
+        ),
+      };
+      wide.history = Array.from({ length: 1000 }, () => wide.grid[0]!);
+      source.emit("pane.editor", {
+        ...initial,
+        snapshot: wide,
+        stateHash: hashTerminalReplicaSnapshot(wide),
+      });
+      const release = adapter.retainPaneView("pane.editor")!;
+      const retained = adapter.paneSelectionSnapshot("pane.editor");
+      const reflow = spyOn(viewport, "reflowRetainedTerminalSnapshot");
+      let revision = 0;
+      const publish = (cols: number) => {
+        const snapshot = blankTerminalReplicaSnapshot(cols, 2);
+        source.emit("pane.editor", {
+          ...initial,
+          revision: ++revision,
+          cols,
+          snapshot,
+          stateHash: hashTerminalReplicaSnapshot(snapshot),
+        });
+      };
+      try {
+        for (let i = 0; i < 20; i++) publish(targetWidth);
+        expect(reflow).toHaveBeenCalledTimes(1);
+        if (targetWidth === 1) expect(adapter.paneSelectionSnapshot("pane.editor")?.cols).toBe(1);
+        else expect(adapter.paneSelectionSnapshot("pane.editor")).toBe(retained);
+        expect(peer.paneSelectionSnapshot("pane.editor")?.cols).toBe(targetWidth);
+        expect(lane.paneState("pane.editor")?.revision).toBe(20);
+        publish(2);
+        expect(reflow).toHaveBeenCalledTimes(2);
+        expect(adapter.paneSelectionSnapshot("pane.editor")?.cols).toBe(2);
+        const resized = adapter.paneSelectionSnapshot("pane.editor")!;
+        expect(
+          [...resized.history, ...resized.grid]
+            .flatMap((row) => row.cells)
+            .some((cell) => cell.grapheme === "界"),
+        ).toBe(true);
+        publish(targetWidth);
+        expect(reflow).toHaveBeenCalledTimes(3);
+        publish(targetWidth);
+        expect(reflow).toHaveBeenCalledTimes(3);
+        release();
+        expect(adapter.paneSelectionSnapshot("pane.editor")?.cols).toBe(targetWidth);
+      } finally {
+        reflow.mockRestore();
+        adapter.dispose();
+        peer.dispose();
+        lane.dispose();
+      }
+    },
+  );
+
+  it("retains one client view while its peer and canonical delivery stay live", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCanonicalHostFrame: () => undefined,
+      terminalFrameFence: () => undefined,
+    });
+    const held = new TerminalFastLaneRendererAdapter(lane);
+    const peer = new TerminalFastLaneRendererAdapter(lane);
+    let heldPublications = 0;
+    let peerPublications = 0;
+    const releaseHeld = held.subscribePaneVersion("pane.editor", () => heldPublications++);
+    const releasePeer = peer.subscribePaneVersion("pane.editor", () => peerPublications++);
+    try {
+      const initial = seed("pane.editor", "A");
+      source.emit("pane.editor", initial);
+      const release = held.retainPaneView("pane.editor")!;
+      const heldVersion = held.paneVersion("pane.editor");
+      const heldBeforeOutput = heldPublications;
+      const peerBeforeOutput = peerPublications;
+      expect(release).toBeFunction();
+      expect(held.retainPaneView("pane.editor")).toBeNull();
+      const next = seed("pane.editor", "B");
+      if (next.type !== "terminal.seed") throw new Error("expected seed");
+      source.emit("pane.editor", { ...next, revision: 1 });
+      expect(heldPublications).toBe(heldBeforeOutput);
+      expect(held.paneVersion("pane.editor")).toBe(heldVersion);
+      expect(peerPublications).toBe(peerBeforeOutput + 1);
+      expect(held.paneSelectionSnapshot("pane.editor")!.grid[0]!.cells[0]!.grapheme).toBe("A");
+      expect(peer.paneSelectionSnapshot("pane.editor")!.grid[0]!.cells[0]!.grapheme).toBe("B");
+      expect(lane.paneState("pane.editor")!.revision).toBe(1);
+      expect(held.renderSource.paneCanonicalIdentity?.("pane.editor")?.revision).toBe(0);
+      const buffers = {
+        char: new Uint32Array(8),
+        fg: new Uint16Array(32),
+        bg: new Uint16Array(32),
+        attributes: new Uint32Array(8),
+      };
+      held.renderSource.blitPane("pane.editor", buffers, 4, 2, 0, 0xffffff, 0, {
+        full: true,
+        dirtyRows: [],
+      });
+      expect(buffers.char[0]).toBe("A".codePointAt(0)!);
+      held.renderSource.acknowledgePresentation?.("pane.editor", 4, 2);
+      expect(held.drainCanonicalHostFrameIdentities().identities).toHaveLength(0);
+      release();
+      expect(heldPublications).toBe(heldBeforeOutput + 1);
+      expect(held.paneSelectionSnapshot("pane.editor")!.grid[0]!.cells[0]!.grapheme).toBe("B");
+      held.renderSource.blitPane("pane.editor", buffers, 4, 2, 0, 0xffffff, 0, {
+        full: false,
+        dirtyRows: [],
+      });
+      expect(buffers.char[0]).toBe("B".codePointAt(0)!);
+      held.renderSource.acknowledgePresentation?.("pane.editor", 4, 2);
+      expect(
+        held.drainCanonicalHostFrameIdentities().identities.map((value) => value.revision),
+      ).toEqual([1]);
+      const releaseSecond = held.retainPaneView("pane.editor")!;
+      release(); // A stale release cannot cancel a newer retained view.
+      const third = seed("pane.editor", "C");
+      if (third.type !== "terminal.seed") throw new Error("expected seed");
+      source.emit("pane.editor", { ...third, revision: 2 });
+      expect(held.paneSelectionSnapshot("pane.editor")!.grid[0]!.cells[0]!.grapheme).toBe("B");
+      releaseSecond();
+      expect(held.paneSelectionSnapshot("pane.editor")!.grid[0]!.cells[0]!.grapheme).toBe("C");
+      const releaseBeforeResize = held.retainPaneView("pane.editor")!;
+      const resized = blankTerminalReplicaSnapshot(6, 3);
+      source.emit("pane.editor", {
+        ...third,
+        revision: 3,
+        cols: 6,
+        rows: 3,
+        snapshot: resized,
+        stateHash: hashTerminalReplicaSnapshot(resized),
+      });
+      expect(held.paneSelectionSnapshot("pane.editor")!.cols).toBe(6);
+      expect(held.paneSelectionSnapshot("pane.editor")!.grid[0]!.cells[0]!.grapheme).toBe("C");
+      expect(held.renderSource.paneCanonicalIdentity?.("pane.editor")).toMatchObject({
+        cols: 4,
+        rows: 2,
+        viewCols: 6,
+        viewRows: 3,
+        revision: 2,
+        stateHash: third.stateHash,
+      });
+      expect(held.retainPaneView("pane.editor")).toBeNull();
+      releaseBeforeResize();
+      const releaseBeforeReplacement = held.retainPaneView("pane.editor")!;
+      releaseBeforeResize();
+      source.emit("pane.editor", {
+        ...third,
+        revision: 4,
+        incarnation: `${generation}:1`,
+      });
+      expect(held.renderSource.paneCanonicalIdentity?.("pane.editor")?.incarnation).toBe(
+        `${generation}:1`,
+      );
+      releaseBeforeReplacement();
+      const releaseBeforeClose = held.retainPaneView("pane.editor")!;
+      source.emit("pane.editor", {
+        type: "terminal.tombstone",
+        workspaceName,
+        semanticPaneId: "pane.editor",
+        generation,
+        incarnation: `${generation}:1`,
+        baseRevision: 4,
+        revision: 5,
+        cols: 4,
+        rows: 2,
+        stateHash: hashTerminalReplicaTombstone("pane-closed"),
+        hashAlgorithm: "fnv1a64-v1",
+        tombstone: { reason: "pane-closed" },
+      });
+      expect(held.paneSelectionSnapshot("pane.editor")).toBeNull();
+      releaseBeforeClose();
+    } finally {
+      uninstall();
+      releaseHeld();
+      releasePeer();
+      held.dispose();
+      peer.dispose();
+      lane.dispose();
+    }
+  });
+
+  it.each(["unchanged", "append", "trim", "trim-patch"])(
+    "keeps a reader anchored after a capture with %s history follows history trimming",
+    (mode) => {
+      const source = new Source();
+      const lane = createTerminalFastLane({
+        address: { workspaceName, generation },
+        source,
+        repair: { request: () => undefined },
+        control: {
+          owns: () => true,
+          request: async () => true,
+          write: async () => "ok",
+          resize: async () => "ok",
+        },
+      });
+      const adapter = new TerminalFastLaneRendererAdapter(lane, 7);
+      const unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+      const reading = createTerminalScrollback(adapter);
+      const peer = createTerminalScrollback(adapter);
+      const oldest = createTerminalScrollback(adapter);
+      try {
+        const initial = seed("pane.editor", "S");
+        if (initial.type !== "terminal.seed") throw new Error("expected seed");
+        const row = (text: string) => ({
+          ...initial.snapshot.grid[0]!,
+          cells: initial.snapshot.grid[0]!.cells.map((cell, index) =>
+            index === 0 ? { ...cell, grapheme: text } : cell,
+          ),
+        });
+        const snapshot = { ...initial.snapshot, history: [row("A"), row("B"), row("C"), row("D")] };
+        source.emit("pane.editor", {
+          ...initial,
+          snapshot,
+          stateHash: hashTerminalReplicaSnapshot(snapshot),
+        });
+        const next = { ...snapshot, history: [...snapshot.history.slice(1), row("E")] };
+        source.emit("pane.editor", {
+          ...initial,
+          type: "terminal.patch",
+          baseRevision: 0,
+          revision: 1,
+          patch: { rows: [], historyDelta: { trim: 1, append: [row("E")] } },
+          stateHash: hashTerminalReplicaSnapshot(next),
+        });
+        expect(adapter.renderSource.paneCanonicalIdentity?.("pane.editor")?.historyTrim).toBe(1);
+        reading.move("pane.editor", 2);
+        peer.move("pane.editor", 1);
+        oldest.move("pane.editor", 4);
+        expect(reading.origin("pane.editor")).toEqual({ x: 0, y: -2 });
+        const captured =
+          mode === "append"
+            ? { ...next, history: [...next.history, row("F")] }
+            : mode.startsWith("trim")
+              ? { ...next, history: next.history.slice(2) }
+              : next;
+        source.emit(
+          "pane.editor",
+          mode === "trim-patch"
+            ? {
+                ...initial,
+                type: "terminal.patch",
+                baseRevision: 1,
+                revision: 2,
+                patch: { rows: [], history: structuredClone(captured.history) },
+                stateHash: hashTerminalReplicaSnapshot(captured),
+              }
+            : {
+                ...initial,
+                revision: 2,
+                snapshot: structuredClone(captured),
+                stateHash: hashTerminalReplicaSnapshot(captured),
+              },
+        );
+        const offset = mode === "append" ? 3 : 2;
+        expect(reading.origin("pane.editor")).toEqual({ x: 0, y: -offset });
+        expect(reading.offset("pane.editor")).toBe(offset);
+        expect(peer.offset("pane.editor")).toBe(offset - 1);
+        expect(oldest.offset("pane.editor")).toBe(mode.startsWith("trim") ? 2 : offset + 2);
+        reading.live("pane.editor");
+        expect(peer.offset("pane.editor")).toBe(offset - 1);
+      } finally {
+        oldest.dispose();
+        peer.dispose();
+        reading.dispose();
+        unsubscribe();
+        adapter.dispose();
+        lane.dispose();
+      }
+    },
+  );
+
   it("projects the exact retained canonical identity through the production render source", () => {
     const source = new Source();
     const lane = createTerminalFastLane({
@@ -900,60 +1404,76 @@ describe("TerminalFastLaneRendererAdapter", () => {
     }
   });
 
-  it("publishes cursor-only canonical changes through the presentation lane without dirty rows", () => {
-    const source = new Source();
-    const lane = createTerminalFastLane({
-      address: { workspaceName, generation },
-      source,
-      repair: { request: () => undefined },
-      control: {
-        owns: () => true,
-        request: async () => true,
-        write: async () => "ok",
-        resize: async () => "ok",
-      },
-    });
-    const adapter = new TerminalFastLaneRendererAdapter(lane);
-    const notifications: Array<readonly [number, number, string]> = [];
-    adapter.subscribePaneVersion(
-      "pane.editor",
-      (version, _sourceEpoch, presentationVersion, kind) =>
-        notifications.push([version, presentationVersion, kind]),
-    );
-    try {
-      const initial = seed("pane.editor", "E");
-      source.emit("pane.editor", initial);
-      paint(adapter, "pane.editor");
-      notifications.length = 0;
-      const snapshot = {
-        ...initial.snapshot,
-        cursor: { ...initial.snapshot.cursor, x: 2, style: "bar" as const, blink: true },
-      };
-      source.emit(
-        "pane.editor",
-        {
-          ...initial,
-          type: "terminal.patch",
-          baseRevision: 0,
-          revision: 1,
-          stateHash: hashTerminalReplicaSnapshot(snapshot),
-          patch: { rows: [], cursor: snapshot.cursor },
+  it.each([false, true])(
+    "routes cursor-only changes without waking a frozen view (retained: %s)",
+    (retainView) => {
+      const source = new Source();
+      const lane = createTerminalFastLane({
+        address: { workspaceName, generation },
+        source,
+        repair: { request: () => undefined },
+        control: {
+          owns: () => true,
+          request: async () => true,
+          write: async () => "ok",
+          resize: async () => "ok",
         },
-        { performanceTraceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
-      );
-      expect(notifications).toEqual([[1, 1, "presentation"]]);
-      expect(adapter.paneVersion("pane.editor")).toBe(1);
-      expect(adapter.panePresentationVersion("pane.editor")).toBe(1);
-      expect(adapter.renderSource.cursorState("pane.editor")).toEqual(snapshot.cursor);
-      expect(adapter.renderSource.cursorPresentationTrace?.("pane.editor")).toMatchObject({
-        traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        revision: 1,
       });
-    } finally {
-      adapter.dispose();
-      lane.dispose();
-    }
-  });
+      const adapter = new TerminalFastLaneRendererAdapter(lane);
+      const notifications: Array<readonly [number, number, string]> = [];
+      adapter.subscribePaneVersion(
+        "pane.editor",
+        (version, _sourceEpoch, presentationVersion, kind) =>
+          notifications.push([version, presentationVersion, kind]),
+      );
+      try {
+        const initial = seed("pane.editor", "E");
+        source.emit("pane.editor", initial);
+        paint(adapter, "pane.editor");
+        notifications.length = 0;
+        const release = retainView ? adapter.retainPaneView("pane.editor") : null;
+        const snapshot = {
+          ...initial.snapshot,
+          cursor: { ...initial.snapshot.cursor, x: 2, style: "bar" as const, blink: true },
+        };
+        source.emit(
+          "pane.editor",
+          {
+            ...initial,
+            type: "terminal.patch",
+            baseRevision: 0,
+            revision: 1,
+            stateHash: hashTerminalReplicaSnapshot(snapshot),
+            patch: { rows: [], cursor: snapshot.cursor },
+          },
+          { performanceTraceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+        );
+        if (retainView) {
+          expect(notifications).toEqual([]);
+          expect(adapter.paneVersion("pane.editor")).toBe(1);
+          expect(adapter.panePresentationVersion("pane.editor")).toBe(0);
+          expect(adapter.renderSource.cursorState("pane.editor")).toEqual(initial.snapshot.cursor);
+          expect(adapter.renderSource.cursorPresentationTrace?.("pane.editor")).toBeNull();
+          expect(lane.paneState("pane.editor")!.revision).toBe(1);
+          release!();
+          expect(notifications).toEqual([[2, 0, "content"]]);
+          expect(adapter.renderSource.cursorState("pane.editor")).toEqual(snapshot.cursor);
+          return;
+        }
+        expect(notifications).toEqual([[1, 1, "presentation"]]);
+        expect(adapter.paneVersion("pane.editor")).toBe(1);
+        expect(adapter.panePresentationVersion("pane.editor")).toBe(1);
+        expect(adapter.renderSource.cursorState("pane.editor")).toEqual(snapshot.cursor);
+        expect(adapter.renderSource.cursorPresentationTrace?.("pane.editor")).toMatchObject({
+          traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          revision: 1,
+        });
+      } finally {
+        adapter.dispose();
+        lane.dispose();
+      }
+    },
+  );
 
   it("fences a coalesced cursor acknowledgment to the latest exact canonical revision", () => {
     const uninstall = installTuiPerformanceEventSink({
@@ -1382,4 +1902,60 @@ describe("TerminalFastLaneRendererAdapter", () => {
     remounted.dispose();
     lane.dispose();
   });
+});
+
+it("does not repaint unchanged history when a scrolled pane is invalidated", () => {
+  const source = new Source();
+  const lane = createTerminalFastLane({
+    address: { workspaceName, generation },
+    source,
+    repair: { request: () => undefined },
+    control: {
+      owns: () => true,
+      request: async () => true,
+      write: async () => "ok",
+      resize: async () => "ok",
+    },
+  });
+  const adapter = new TerminalFastLaneRendererAdapter(lane);
+  const stop = adapter.subscribePaneVersion("pane.editor", () => undefined);
+  const initial = seed("pane.editor", "S");
+  if (initial.type !== "terminal.seed") throw new Error("expected seed");
+  const snapshot = {
+    ...initial.snapshot,
+    history: [initial.snapshot.grid[0]!, initial.snapshot.grid[1]!],
+  };
+  source.emit("pane.editor", {
+    ...initial,
+    snapshot,
+    stateHash: hashTerminalReplicaSnapshot(snapshot),
+  });
+  const buffers = {
+    char: new Uint32Array(8),
+    fg: new Uint16Array(32),
+    bg: new Uint16Array(32),
+    attributes: new Uint32Array(8),
+  };
+  const first: number[] = [];
+  adapter.renderSource.blitPane("pane.editor", buffers, 4, 2, 2, 0xffffff, 0, {
+    full: true,
+    dirtyRows: first,
+  });
+  expect(first).toEqual([0, 1]);
+  const unchanged: number[] = [];
+  adapter.renderSource.blitPane("pane.editor", buffers, 4, 2, 2, 0xffffff, 0, {
+    full: false,
+    dirtyRows: unchanged,
+  });
+  expect(unchanged).toEqual([]);
+  const forced: number[] = [];
+  adapter.renderSource.blitPane("pane.editor", buffers, 4, 2, 2, 0xffffff, 0, {
+    full: false,
+    forceRows: [1],
+    dirtyRows: forced,
+  });
+  expect(forced).toEqual([1]);
+  stop();
+  adapter.dispose();
+  lane.dispose();
 });

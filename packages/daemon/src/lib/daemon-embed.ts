@@ -1,3 +1,5 @@
+import { mountTerminalNativeBackingRoute } from "../command-center/resources/terminal-native-backing-route.ts";
+import { startOwnedEmbeddedDaemon } from "./embedded-daemon-lifecycle.ts";
 /**
  * Programmatic tmux-ide daemon entrypoint.
  *
@@ -14,6 +16,9 @@ import type { Socket } from "node:net";
 import { performance } from "node:perf_hooks";
 import { WebSocket, WebSocketServer } from "ws";
 import { ownerBearerMatches } from "../command-center/owner-authority.ts";
+import { createTmuxAuthorityReplacementProbe } from "./tmux-authority-replacement.ts";
+import { createNamedSocketFence } from "./tmux-named-socket-fence.ts";
+import { fleetSessionIdForName } from "../command-center/resources/fleet-catalog.ts";
 import {
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
@@ -42,7 +47,10 @@ import {
   setFleetFactsTmuxRunner,
   shutdownWsEventObservation,
 } from "../command-center/ws-events.ts";
-import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
+import {
+  setRemoteAccessRestartBackend,
+  type RemoteAccessRestartRequest,
+} from "../command-center/actions/handlers/app-set-remote-access.ts";
 import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
 import type { WorkspaceMultiplexerBackend } from "../command-center/actions/handlers/workspace-multiplexer.ts";
 import { readAppSettings } from "./app-settings.ts";
@@ -146,6 +154,10 @@ export function resolveDaemonProductVersion(
 }
 
 export interface EmbeddedDaemonOptions {
+  /** @internal Let the foreground lifecycle owner serialize settings restarts. */
+  requestRestart?: (request: RemoteAccessRestartRequest) => Promise<void>;
+  /** @internal Reconcile existing intent after a retired tmux server generation. */
+  restoreTmuxWorkspaces?: boolean;
   sessionName?: string;
   port?: number;
   bindHostname?: string;
@@ -160,6 +172,8 @@ export interface EmbeddedDaemonOptions {
 }
 
 export interface EmbeddedDaemonHandle {
+  /** Evidence that this generation must retire before accepting a new tmux server. */
+  tmuxAuthorityReplaced?(): Promise<boolean>;
   readonly instanceId: string;
   readonly pid: number;
   readonly port: number;
@@ -728,6 +742,7 @@ async function startHttpServer({
   paneStreamRuntime,
   catalogLiveSessions,
   catalogFleet,
+  sessionRuntimeRegistry,
 }: {
   sessionName: string;
   requestedPort: number;
@@ -751,6 +766,7 @@ async function startHttpServer({
   appWindowMutationBackend: AppWindowMutationAuthority;
   workspaceMultiplexerBackend: WorkspaceMultiplexerBackend;
   workspaceRegistry: WorkspaceRegistry;
+  sessionRuntimeRegistry: SessionRuntimeRegistry;
   terminalInventoryRuntime: WorkspaceTerminalInventoryRuntime;
   getTerminalAttachmentRuntime: () => NativeTerminalAttachmentRuntime;
   peekTerminalAttachmentRuntime: () => NativeTerminalAttachmentRuntime | null;
@@ -817,6 +833,12 @@ async function startHttpServer({
     startupReadinessAttachmentBackend: terminalInventoryRuntime,
     catalogLiveSessions,
     catalogFleet,
+  });
+  mountTerminalNativeBackingRoute(app, {
+    ownerToken: localBypassToken ?? null,
+    generation: daemonIdentity.instanceId,
+    resolveSession: (workspace) => workspaceRegistry.get(workspace)?.sessionName ?? null,
+    capture: (session, pane) => sessionRuntimeRegistry.captureNativeBacking(session, pane),
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({
@@ -915,6 +937,14 @@ async function startHttpServer({
 export async function startEmbeddedDaemon(
   opts: EmbeddedDaemonOptions,
 ): Promise<EmbeddedDaemonHandle> {
+  return opts.requestRestart
+    ? startEmbeddedDaemonGeneration(opts)
+    : startOwnedEmbeddedDaemon(opts, startEmbeddedDaemonGeneration);
+}
+
+async function startEmbeddedDaemonGeneration(
+  opts: EmbeddedDaemonOptions,
+): Promise<EmbeddedDaemonHandle> {
   const sessionName = opts.sessionName ?? EMBEDDED_SESSION_NAME;
   const sessionless = opts.sessionName == null;
   const appSettings = readAppSettings();
@@ -986,6 +1016,10 @@ export async function startEmbeddedDaemon(
     // caller's ambient TMUX/PATH happens to select.
     const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
     const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
+    const tmuxAuthorityReplaced = createTmuxAuthorityReplacementProbe(
+      tmuxAuthority,
+      catalogTmuxRunner,
+    );
     const registryTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority, {
       timeoutMs: WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS,
     });
@@ -1061,6 +1095,15 @@ export async function startEmbeddedDaemon(
       registry: workspaceRegistry,
       tmuxAuthority,
     });
+    if (opts.restoreTmuxWorkspaces) {
+      for (const workspace of workspaceRegistry.list()) {
+        await workspacePromotion.promote({
+          expectedDaemonInstanceId: instanceId,
+          operationId: randomUUID(),
+          intent: { sessionId: fleetSessionIdForName(workspace.sessionName) },
+        });
+      }
+    }
     const fleetLifecycle = new FleetLifecycleAuthority({
       daemonInstanceId: instanceId,
       productVersion,
@@ -1212,6 +1255,7 @@ export async function startEmbeddedDaemon(
         },
         mirror: {
           executable: tmuxAuthority.executablePath,
+          resolveSocketPath: () => catalogTmuxRunner(["display-message", "-p", "#{socket_path}"]),
           internalReadHookEmission: (runtimePaneId, marker) =>
             externalInteractionObserver.internalReadHookEmission(runtimePaneId, marker),
           ...(selector.kind === "path" ? { socketPath: selector.path } : {}),
@@ -1289,6 +1333,15 @@ export async function startEmbeddedDaemon(
           executablePath: tmuxAuthority.executablePath,
           socketSelector: tmuxAuthority.socketSelector,
           trustedCwd: dir,
+          ...(tmuxAuthority.socketSelector.kind === "name"
+            ? {
+                namedSocketFence: createNamedSocketFence(
+                  tmuxAuthority,
+                  tmuxAuthority.executablePath,
+                  { TERM: "xterm-256color" },
+                ),
+              }
+            : {}),
         },
         agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
         onInventory: (snapshot) => workspaceMultiplexer.adoptPaneInventory(snapshot.panes),
@@ -1354,6 +1407,7 @@ export async function startEmbeddedDaemon(
         paneStreamRuntime,
         catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
         catalogFleet: () => readAdoptedFleet(workspaceRegistry, catalogTmuxRunner),
+        sessionRuntimeRegistry,
       });
     } catch (error) {
       setFleetFactsTmuxRunner(null);
@@ -1595,6 +1649,7 @@ export async function startEmbeddedDaemon(
     const wsUrl = canonicalDaemonUrl("ws", bindHostname, port, "/ws/events");
 
     const handle: EmbeddedDaemonHandle = {
+      tmuxAuthorityReplaced,
       instanceId,
       pid: process.pid,
       port,
@@ -1690,47 +1745,13 @@ export async function startEmbeddedDaemon(
     setRemoteAccessRestartBackend((request) => {
       setTimeout(() => {
         void (async () => {
-          const restartPort = request.port ?? port;
-          try {
-            await handle.stop({ gracefulMs: 500 });
-          } catch (err) {
-            console.error("[daemon] Remote access stop before restart failed:", err);
-          }
-
-          for (let attempt = 0; attempt < 2; attempt++) {
-            try {
-              const nextHandle = await startEmbeddedDaemon({
-                sessionName: sessionless ? undefined : sessionName,
-                port: restartPort,
-                bindHostname: request.bindHostname,
-                authToken: request.token,
-                localBypassToken,
-              });
-              const mutableHandle = handle as {
-                stop: EmbeddedDaemonHandle["stop"];
-                activateProject: EmbeddedDaemonHandle["activateProject"];
-              };
-              mutableHandle.stop = nextHandle.stop;
-              mutableHandle.activateProject = nextHandle.activateProject;
-              return;
-            } catch (err) {
-              if (
-                err instanceof DaemonStartupError &&
-                err.reason === "port_in_use" &&
-                attempt === 0
-              ) {
-                await delay(150);
-                continue;
-              }
-              throw err;
-            }
-          }
+          await opts.requestRestart!(request);
         })().catch((err) => {
           console.error("[daemon] Remote access restart failed:", err);
         });
       }, 50).unref?.();
       return { port };
-    });
+    }, port);
     stopSelf = () => void handle.stop();
     void sessionMonitor?.runOnce();
 

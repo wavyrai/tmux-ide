@@ -1,0 +1,100 @@
+import { describe, expect, it } from "vitest";
+import { decodeNativeGridCapture } from "./native-grid-capture.ts";
+
+function records() {
+  return [
+    { version: 1, cols: 2, rows: 1, history: 1, hscrolled: 1, limit: 2000, cursor: [1, 0] },
+    { row: 0, flags: 3, used: 1, cells: [[8, 2, "e7958c", 0, 8, 8, 8, 0, 8]] },
+    {
+      row: 1,
+      flags: 2,
+      used: 2,
+      cells: [
+        [4, 1, "21", 0, 8, 8, 8, 0, 4],
+        [8, 1, "65cc81", 0, 8, 8, 8, 0, 8],
+      ],
+    },
+  ];
+}
+const encode = (value: unknown[]) => value.map((row) => JSON.stringify(row)).join("\n") + "\n";
+
+describe("decodeNativeGridCapture", () => {
+  it("preserves detached padding, native widths and scroll provenance without renderer normalization", () => {
+    const result = decodeNativeGridCapture(encode(records()))!;
+    expect(result).not.toBeNull();
+    expect(result.hscrolled).toBe(1);
+    expect(result.grid[0]!.cells).toHaveLength(1);
+    expect(result.grid[0]!.cells[0]).toMatchObject({ text: "界", width: 2 });
+    expect(result.grid[1]!.cells[0]).toMatchObject({ flags: 4, width: 1, storageFlags: 4 });
+    expect(result.grid[1]!.cells[1]!.text).toBe("é");
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.grid[1]!.cells[0])).toBe(true);
+    expect(decodeNativeGridCapture(encode(records()).trimEnd())).toEqual(result);
+  });
+
+  it("preserves empty zero-width padding and an end-column cursor", () => {
+    const value = records();
+    value[0]!.cursor = [2, 0];
+    value[2]!.cells![0] = [4, 0, "", 0, 8, 8, 8, 0, 8];
+    expect(decodeNativeGridCapture(encode(value))?.grid[1]!.cells[0]).toMatchObject({
+      flags: 4,
+      width: 0,
+      bytesHex: "",
+      text: "",
+      storageFlags: 8,
+    });
+  });
+
+  it.each([
+    { version: 2 },
+    { cols: 0 },
+    { rows: 0 },
+    { history: -1 },
+    { hscrolled: 2 },
+    { cursor: [3, 0] },
+    { cursor: [0, 1] },
+    { history: 262144 },
+    { limit: 1.5 },
+  ])("rejects invalid metadata %j", (change) => {
+    const value = records();
+    value[0] = { ...value[0]!, ...change };
+    expect(decodeNativeGridCapture(encode(value))).toBeNull();
+  });
+
+  it.each([
+    { row: 2 },
+    { used: 3 },
+    { used: -1 },
+    { used: 1_000_001 },
+    { flags: -1 },
+    { cells: null },
+  ])("rejects incomplete or malformed rows %j", (change) => {
+    const value: unknown[] = records();
+    value[2] = { ...(value[2] as object), ...change };
+    expect(decodeNativeGridCapture(encode(value))).toBeNull();
+  });
+
+  it.each([
+    [0, -1],
+    [1, 256],
+    [2, "abc"],
+    [2, "zz"],
+    [2, "ff"],
+    [3, 65536],
+    [4, 0x80000000],
+    [7, -1],
+    [8, 256],
+  ])("rejects invalid cell field %s=%s", (field, replacement) => {
+    const value = records();
+    value[2]!.cells![0]![Number(field)] = replacement;
+    expect(decodeNativeGridCapture(encode(value))).toBeNull();
+  });
+
+  it("rejects unsupported commands, truncated grids, trailing records and excessive bytes", () => {
+    expect(decodeNativeGridCapture("unknown flag -R")).toBeNull();
+    expect(decodeNativeGridCapture(encode(records().slice(0, 2)))).toBeNull();
+    expect(decodeNativeGridCapture(encode([...records(), {}]))).toBeNull();
+    expect(decodeNativeGridCapture(encode(records()) + "\n")).toBeNull();
+    expect(decodeNativeGridCapture(" ".repeat(16 * 1024 * 1024 + 1))).toBeNull();
+  });
+});

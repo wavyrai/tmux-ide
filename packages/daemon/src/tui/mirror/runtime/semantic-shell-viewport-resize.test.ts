@@ -22,6 +22,25 @@ function live(resize: ReturnType<typeof vi.fn>, overrides = {}) {
 }
 
 describe("semantic shell viewport resize owner", () => {
+  it("reserves an outer header row only when tmux has no pane status row", async () => {
+    let status: "top" | "off" | "bottom" = "off";
+    const resize = vi.fn(async () => ({ status: "applied" as const }));
+    const owner = createSemanticShellViewportResizeOwner(() => ({
+      current: { paneBorderStatus: status },
+    }));
+    const generation = live(resize);
+    owner.adopt({ width: 160, height: 44 }, {} as never, generation);
+    expect(resize).toHaveBeenLastCalledWith({ cols: 132, rows: 40 });
+    await Promise.resolve();
+    status = "top";
+    owner.adopt({ width: 160, height: 44 }, {} as never, generation);
+    expect(resize).toHaveBeenLastCalledWith({ cols: 132, rows: 41 });
+    await Promise.resolve();
+    status = "bottom";
+    owner.adopt({ width: 160, height: 44 }, {} as never, generation);
+    expect(resize).toHaveBeenCalledTimes(2);
+    owner.dispose();
+  });
   it("waits for semantic authority, dedupes dimensions, and fences generation replacement", () => {
     const firstResize = vi.fn(async () => ({ status: "applied" as const }));
     const secondResize = vi.fn(async () => ({ status: "applied" as const }));

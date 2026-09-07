@@ -62,7 +62,7 @@ export function createApplicationTerminalInputIngress(
 
   return {
     wrapStarter(starter: GenerationStarter): GenerationStarter {
-      return async (...args) => {
+      const start = async (...args: Parameters<GenerationStarter>) => {
         const [sessionName] = args;
         const identity = pending.begin(sessionName);
         const result = await starter(...args);
@@ -74,6 +74,12 @@ export function createApplicationTerminalInputIngress(
         flush();
         return result;
       };
+      return Object.assign(start, {
+        cancel() {
+          pending.dispose();
+          starter.cancel();
+        },
+      });
     },
     adopt(): void {
       flush();

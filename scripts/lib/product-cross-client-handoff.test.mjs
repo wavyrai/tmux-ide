@@ -267,7 +267,8 @@ const slowSamples = () =>
       processHmac: "1".repeat(64),
       clockHmac: HMAC,
       atMicros: 10_000 + ordinal,
-      resourceEpochIdentityHmac: (ordinal + 161).toString(16).padStart(64, "0"),
+      resourceEpochBound: true,
+      resourceEpochIdentityHmac: "a".repeat(64),
       canonicalIdentityHmac: (ordinal + 129).toString(16).padStart(64, "0"),
       rssBytes: 256 * 1_048_576 + ordinal,
       heapUsedBytes: 128 * 1_048_576 + ordinal,
@@ -423,6 +424,11 @@ function evidence() {
         ownerCount: 1,
         passiveCount: 2,
         geometryFightCount: 0,
+        nativeWindowCols: 120,
+        nativeWindowRows: 40,
+        nativePaneLeft: 0,
+        nativePaneTop: 0,
+        nativePaneBorderStatus: "off",
         nativeCols: 120,
         nativeRows: 40,
         topologyHmac: HMAC,
@@ -485,6 +491,11 @@ function evidence() {
           ownerCount: 1,
           passiveCount: 2,
           geometryFightCount: 0,
+          nativeWindowCols: 120,
+          nativeWindowRows: 40,
+          nativePaneLeft: 0,
+          nativePaneTop: 0,
+          nativePaneBorderStatus: "off",
           nativeCols: 120,
           nativeRows: 40,
           topologyHmac: HMAC,
@@ -611,6 +622,59 @@ test("Card5 cross-client evidence passes only at every inclusive policy boundary
     result.boundaries.map(({ id, status }) => [id, status]),
     CARD5_CROSS_CLIENT_BOUNDARIES.map((id) => [id, "passed"]),
   );
+});
+
+test("resize receipts describe the native window while split panes retain their own content dimensions", () => {
+  const value = evidence();
+  value.geometry.challenge.cols = 156;
+  value.geometry.challenge.rows = 50;
+  for (const sample of value.geometry.samples) {
+    Object.assign(sample, {
+      nativeWindowCols: 156,
+      nativeWindowRows: 50,
+      nativeCols: 77,
+      nativeRows: 49,
+      nativePaneLeft: 0,
+      nativePaneTop: 1,
+      nativePaneBorderStatus: "top",
+    });
+    for (const client of sample.clients) Object.assign(client, { cols: 77, rows: 49 });
+  }
+  assert.equal(
+    assessCard5CrossClientEvidence({ evidence: value, correlationComplete: true }).qualified,
+    true,
+  );
+  for (const change of [
+    (x) => {
+      x.geometry.challenge.cols = 77;
+    },
+    (x) => {
+      x.geometry.challenge.rows = 49;
+    },
+    (x) => {
+      x.geometry.samples[1].nativeWindowCols = 155;
+    },
+    (x) => {
+      x.geometry.samples[0].nativePaneTop = 2;
+    },
+    (x) => {
+      x.geometry.samples[0].nativePaneLeft = 80;
+    },
+    (x) => {
+      x.geometry.samples[0].nativePaneBorderStatus = "unknown";
+    },
+    (x) => {
+      x.geometry.samples[0].clients[2].rows = 50;
+    },
+  ]) {
+    const invalid = structuredClone(value);
+    change(invalid);
+    assert.equal(
+      assessCard5CrossClientEvidence({ evidence: invalid, correlationComplete: true })
+        .firstBrokenBoundary,
+      "cross-client-passive-geometry",
+    );
+  }
 });
 
 test("Card5 native observer is bound to the accepted pane and exact handoff marker", () => {
@@ -835,6 +899,8 @@ test("Card5 handoff and slow-client proof reject inferred or incomplete records"
     (value) => (value.slowWeb.samples[12].ackSettled = false),
     (value) => (value.slowWeb.samples[13].deliveryFenceSettled = false),
     (value) => (value.slowWeb.samples[14].writerHealth.pendingCriticalRecords = 1),
+    (value) => (value.slowWeb.samples[14].resource.resourceEpochBound = false),
+    (value) => (value.slowWeb.samples[14].resource.resourceEpochIdentityHmac = "f".repeat(64)),
     (value) => (value.slowWeb.samples[15].resource.eventLoopDelayMicros = 33_001),
     (value) => (value.slowWeb.samples[16].resource.eventLoopDelayPeakMicros = 100_001),
     (value) => (value.slowWeb.samples[17].resource.clockId = "foreign-clock"),

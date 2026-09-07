@@ -583,6 +583,7 @@ interface PaneChannel {
   readonly pane: string;
   /** Last server seq received for this pane; the wire increments by exactly one. */
   receivedSeq: number;
+  inputSequence: number;
   /** Highest seq whose event settled successfully at the consumer. */
   appliedSeq: number;
   /** Highest seq acknowledged to the daemon with a cumulative `consumed`. */
@@ -615,7 +616,7 @@ class PaneStreamSession {
   #endNotified = false;
   #rateWindowStartedAt: number;
   #inboundFrames = 0;
-  #clientSequence = 0;
+  #viewportSequence = 0;
   #authorityRuntimeSession: string | null = null;
   #connectionClientId: string | null = null;
   #layoutTopologyEpoch = -1;
@@ -638,7 +639,7 @@ class PaneStreamSession {
       }) => void;
     }
   >();
-  readonly #inputWaiters = new Map<number, (accepted: boolean) => void>();
+  readonly #inputWaiters = new Map<string, (accepted: boolean) => void>();
   readonly #viewportWaiters = new Map<
     number,
     {
@@ -678,6 +679,7 @@ class PaneStreamSession {
       this.#panes.set(pane, {
         pane,
         receivedSeq: 0,
+        inputSequence: 0,
         appliedSeq: 0,
         consumedSeq: 0,
         pendingApplies: 0,
@@ -765,10 +767,13 @@ class PaneStreamSession {
 
   async #writeNow(pane: string, input: string | SessionRuntimeTerminalInput): Promise<boolean> {
     if (!(await this.#ensureAuthority("input"))) return false;
-    const seq = ++this.#clientSequence;
+    const channel = this.#panes.get(pane);
+    if (!channel || channel.closed) return false;
+    const seq = ++channel.inputSequence;
+    const inputKey = JSON.stringify([pane, seq]);
     const accepted = new Promise<boolean>((resolve) => {
       const cancel = this.#schedule(() => {
-        this.#inputWaiters.delete(seq);
+        this.#inputWaiters.delete(inputKey);
         recordCard5InputOperation({
           stage: "input-ack",
           outcome: "ack-timeout",
@@ -780,7 +785,7 @@ class PaneStreamSession {
         });
         resolve(false);
       }, 2_000);
-      this.#inputWaiters.set(seq, (didAccept) => {
+      this.#inputWaiters.set(inputKey, (didAccept) => {
         cancel();
         resolve(didAccept);
       });
@@ -796,8 +801,8 @@ class PaneStreamSession {
       seq,
     });
     if (!this.#sendControl({ type: "input", pane, seq, ...typed })) {
-      this.#inputWaiters.get(seq)?.(false);
-      this.#inputWaiters.delete(seq);
+      this.#inputWaiters.get(inputKey)?.(false);
+      this.#inputWaiters.delete(inputKey);
       recordCard5InputOperation({
         stage: "input-send",
         outcome: "send-failed",
@@ -849,7 +854,7 @@ class PaneStreamSession {
     }
     const authorityLease = this.#authorityLeases.get("geometry");
     if (!authorityLease) return "geometry-authority-conflict";
-    const seq = ++this.#clientSequence;
+    const seq = ++this.#viewportSequence;
     const accepted = new Promise<
       "ok" | "geometry-authority-conflict" | "viewport-timeout" | "stream-closed"
     >((resolve) => {
@@ -1320,12 +1325,13 @@ class PaneStreamSession {
     }
 
     if (frame.type === "input-ack") {
-      const settle = this.#inputWaiters.get(frame.seq);
+      const inputKey = JSON.stringify([frame.pane, frame.seq]);
+      const settle = this.#inputWaiters.get(inputKey);
       if (!settle) {
         this.#protocolFailure();
         return;
       }
-      this.#inputWaiters.delete(frame.seq);
+      this.#inputWaiters.delete(inputKey);
       recordCard5InputOperation({
         stage: "input-ack",
         outcome: "ok",

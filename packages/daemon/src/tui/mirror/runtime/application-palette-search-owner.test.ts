@@ -46,14 +46,14 @@ describe("command discovery", () => {
       owner.handleKey(key("enter"));
       expect(activate).toHaveBeenCalledTimes(1);
       owner.handleKey({ ...key("u"), ctrl: true });
-      owner.handleKey(key("z"));
+      owner.handleKey(key("q"));
       expect(owner.commands()).toHaveLength(0);
       owner.handleKey(key("enter"));
       expect(activate).toHaveBeenCalledTimes(1);
       owner.handleKey(key("escape"));
       expect(close).toHaveBeenCalledTimes(1);
       setOpen(false);
-      expect(owner.handleKey(key("z"))).toBe(false);
+      expect(owner.handleKey(key("q"))).toBe(false);
       expect(owner.handlePaste(Buffer.from("x"))).toBe(false);
       dispose();
     }));
@@ -68,7 +68,7 @@ describe("command discovery", () => {
         close: vi.fn(),
         onChange: vi.fn(),
       });
-      owner.select(7);
+      owner.select(9);
       setSessions(["new", "beta", "alpha"]);
       expect(owner.commands()[owner.selection()]).toMatchObject({ sessionName: "beta" });
       owner.handleKey({ ...key("enter"), repeated: true });

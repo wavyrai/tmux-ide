@@ -40,7 +40,7 @@ export function createApplicationGenerationStarter(
   }>,
 ) {
   let startToken = 0;
-  return async (
+  const start = async (
     sessionName: string,
     workspacePrepared = false,
     source: Source = "keyboard",
@@ -86,6 +86,13 @@ export function createApplicationGenerationStarter(
       failure: result.opened ? "generation-not-ready" : "attach-rejected",
     };
   };
+  return Object.assign(start, {
+    cancel() {
+      startToken++;
+      options.sessionOwner().cancelPending?.();
+      options.setNote(null);
+    },
+  });
 }
 
 export function createApplicationAgentNavigator(options: {

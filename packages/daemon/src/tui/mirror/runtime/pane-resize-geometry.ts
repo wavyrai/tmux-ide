@@ -2,6 +2,7 @@ export interface SemanticPaneResizeGeometry {
   readonly width: number;
   /** Visible-layout leaf height; a configured pane status row is included. */
   readonly height: number;
+  readonly top?: number;
 }
 
 /**
@@ -13,10 +14,16 @@ export function nativePaneResizeCells(
   pane: SemanticPaneResizeGeometry,
   axis: "cols" | "rows",
   paneBorderStatus: "top" | "bottom" | "off",
+  windowRows?: number,
 ): number | null {
   if (axis !== "cols" && axis !== "rows") return null;
   if (paneBorderStatus !== "top" && paneBorderStatus !== "bottom" && paneBorderStatus !== "off")
     return null;
-  const cells = axis === "cols" ? pane.width : pane.height - (paneBorderStatus === "off" ? 0 : 1);
+  const statusRow =
+    paneBorderStatus !== "off" &&
+    (pane.top === undefined ||
+      windowRows === undefined ||
+      (paneBorderStatus === "top" ? pane.top === 0 : pane.top + pane.height === windowRows));
+  const cells = axis === "cols" ? pane.width : pane.height - (statusRow ? 1 : 0);
   return Number.isSafeInteger(cells) && cells > 0 && cells <= 4_096 ? cells : null;
 }

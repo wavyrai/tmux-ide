@@ -1,5 +1,6 @@
 /** One pane-action vocabulary for labels, accelerators and runtime dispatch. */
 export type PaneMenuActionId =
+  | "zoom-pane"
   | "select-text"
   | "rename-pane"
   | "split-right"
@@ -11,6 +12,7 @@ export const PANE_ACTION_MENU_ITEMS = Object.freeze([
   { id: "rename-pane", label: "Rename pane…", shortcut: "R", key: "r" },
   { id: "split-right", label: "Split pane right", shortcut: "→", key: "right" },
   { id: "split-down", label: "Split pane down", shortcut: "D", key: "d" },
+  { id: "zoom-pane", label: "Zoom / unzoom pane", shortcut: "Z", key: "z" },
   { id: "close-pane", label: "Close pane…", shortcut: "X", key: "x" },
 ] satisfies readonly {
   id: PaneMenuActionId;

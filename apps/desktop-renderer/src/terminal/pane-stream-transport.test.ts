@@ -958,6 +958,67 @@ describe("pane-stream transport demultiplexing", () => {
     await expect(pending).resolves.toBe(true);
   });
 
+  it("keeps viewport and each pane input sequence independent across interleaved operations", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    for (const authority of ["input", "geometry"] as const) {
+      const pending = h.result.session.requestAuthority!(authority);
+      await flushMicrotasks();
+      const request = JSON.parse(h.socket.sent.at(-1)!);
+      h.socket.serverSends({
+        type: "authority-receipt",
+        requestId: request.requestId,
+        authority,
+        status: "granted",
+        lease: {
+          generation: DAEMON_INSTANCE_ID,
+          session: "workspace-a",
+          clientId: "client-a",
+          authority,
+          token: globalThis.crypto.randomUUID(),
+          revision: 2,
+        },
+        snapshot: {
+          generation: DAEMON_INSTANCE_ID,
+          session: "workspace-a",
+          revision: 2,
+          owners: { input: "client-a", focus: null, geometry: "client-a" },
+          nativeGeometryYieldUntilMs: 0,
+          clients: [],
+        },
+      });
+      expect(await pending).not.toBeNull();
+    }
+    for (const [pane, seq] of [
+      [PANE_A, 1],
+      [PANE_B, 1],
+      [PANE_A, 2],
+      [PANE_B, 2],
+    ] as const) {
+      const write = h.result.session.write!(pane, "hello");
+      await flushMicrotasks();
+      const input = h.socket.sent
+        .map((raw) => JSON.parse(raw))
+        .reverse()
+        .find((f) => f.type === "input");
+      expect(input).toMatchObject({ pane, seq });
+      h.socket.serverSends({ type: "input-ack", pane, seq });
+      await expect(write).resolves.toBe(true);
+      const resize = h.result.session.resize!(140, 46);
+      await flushMicrotasks();
+      const viewports = h.socket.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((f) => f.type === "viewport");
+      const viewport = viewports.at(-1)!;
+      expect(viewport.seq).toBe(viewports.length);
+      h.socket.serverSends({ ...viewport, type: "viewport-ack", outcome: "ok" });
+      await expect(resize).resolves.toBe("ok");
+    }
+    expect(h.ends).toEqual([]);
+  });
+
   it("retires immediately when an input authority control send throws", async () => {
     const h = await liveHarness({
       viewerMode: "interactive",

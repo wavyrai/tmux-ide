@@ -27,6 +27,18 @@ export interface ControlReply {
   lines: string[];
 }
 
+export interface ControlReplyLimits {
+  readonly maxBytes: number;
+  readonly maxLines: number;
+}
+
+interface ReplyBudget {
+  limits: ControlReplyLimits;
+  bytes: number;
+  overflowed: boolean;
+  lines: string[];
+}
+
 export type AtomicPaneSnapshotFailureReason =
   | "busy"
   | "channel-exit"
@@ -81,7 +93,10 @@ export interface AtomicPaneSnapshotCollector {
 }
 
 const ATOMIC_CAPTURE_BYTE_HARD_CAP = 16 * 1024 * 1024;
-const ATOMIC_CAPTURE_LINE_HARD_CAP = 8_192;
+// Budget row bookkeeping separately from wire bytes (64 bytes per retained
+// line). A fixed 8192-row ceiling rejected small captures of ordinary history.
+// Both the wire-byte cap and this finite allocation bound remain enforced.
+const ATOMIC_CAPTURE_LINE_HARD_CAP = ATOMIC_CAPTURE_BYTE_HARD_CAP / 64;
 const ATOMIC_CURSOR_BYTE_HARD_CAP = 1_024;
 
 export interface MirrorChannelHandlers {
@@ -121,12 +136,24 @@ export interface MirrorChannelIo {
   /** Reply-matched command whose callback fires SYNCHRONOUSLY in channel read
    *  order — the seed recipe's primitive. */
   commandInline(cmd: string, onReply: (reply: ControlReply) => void): void;
+  commandBoundedInline?(
+    cmd: string,
+    limits: ControlReplyLimits,
+    onReply: (reply: ControlReply) => void,
+  ): void;
   /** Atomic command-list with one reply block per command; selects the block
    *  delivered to the synchronous callback and discards the rest. */
   commandListInline(
     cmd: string,
     replyCount: number,
     resultIndex: number,
+    onReply: (reply: ControlReply) => void,
+  ): void;
+  commandListBoundedInline?(
+    cmd: string,
+    replyCount: number,
+    resultIndex: number,
+    limits: ControlReplyLimits,
     onReply: (reply: ControlReply) => void,
   ): void;
   /** Arm the single raw hook-body collector before invoking its hook. Raw
@@ -141,6 +168,14 @@ export interface MirrorChannelIo {
 
 type ReplySink =
   | {
+      kind: "bounded";
+      limits: ControlReplyLimits;
+      bytes: number;
+      overflowed: boolean;
+      lines: string[];
+      onReply: (reply: ControlReply) => void;
+    }
+  | {
       kind: "promise";
       resolve: (lines: string[]) => void;
       reject: (err: Error) => void;
@@ -154,6 +189,7 @@ type ReplySink =
         readonly onReply: (reply: ControlReply) => void;
         readonly lines: string[];
         settled: boolean;
+        budget?: ReplyBudget;
       };
       readonly index: number;
     }
@@ -168,6 +204,7 @@ type ReplySink =
  */
 export class ControlChannelCore {
   private buffer = "";
+  private droppingOversizedReplyLine = false;
   private bufferReceivedAtMicros: number | null = null;
   private inReply = false;
   private currentReplyNum: number | null = null;
@@ -206,14 +243,66 @@ export class ControlChannelCore {
     this.pending.push(sink);
   }
 
+  pushBounded(limits: ControlReplyLimits, onReply: (reply: ControlReply) => void): boolean {
+    if (
+      this.failed ||
+      !Number.isSafeInteger(limits.maxBytes) ||
+      limits.maxBytes < 1 ||
+      limits.maxBytes > ATOMIC_CAPTURE_BYTE_HARD_CAP ||
+      !Number.isSafeInteger(limits.maxLines) ||
+      limits.maxLines < 1 ||
+      limits.maxLines > ATOMIC_CAPTURE_LINE_HARD_CAP
+    )
+      return false;
+    this.pending.push({
+      kind: "bounded",
+      limits: { ...limits },
+      bytes: 0,
+      overflowed: false,
+      lines: [],
+      onReply,
+    });
+    return true;
+  }
+
   pushCommandList(
     replyCount: number,
     resultIndex: number,
     onReply: (reply: ControlReply) => void,
+    budget?: ReplyBudget,
   ): void {
-    const state = { resultIndex, onReply, lines: [], settled: false };
+    const state = { resultIndex, onReply, lines: budget?.lines ?? [], settled: false, budget };
     for (let index = 0; index < replyCount; index += 1)
       this.pending.push({ kind: "command-list", state, index });
+  }
+
+  pushBoundedCommandList(
+    count: number,
+    index: number,
+    limits: ControlReplyLimits,
+    onReply: (reply: ControlReply) => void,
+  ): boolean {
+    if (
+      !Number.isSafeInteger(count) ||
+      count < 1 ||
+      count > 64 ||
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      index >= count
+    )
+      return false;
+    if (!this.pushBounded(limits, onReply)) return false;
+    const budget = this.pending.pop() as Extract<ReplySink, { kind: "bounded" }>;
+    this.pushCommandList(count, index, onReply, budget);
+    return true;
+  }
+
+  private currentBudget(): ReplyBudget | undefined {
+    const head = this.currentReplyConsumesPending ? this.pending[0] : undefined;
+    if (head?.kind === "bounded") return head;
+    if (head?.kind === "command-list" && head.index <= head.state.resultIndex)
+      return head.state.budget;
+    return undefined;
   }
 
   get inputErrorCount(): number {
@@ -287,6 +376,12 @@ export class ControlChannelCore {
   }
 
   feed(chunk: string, receivedAtMicros?: number): void {
+    if (this.droppingOversizedReplyLine) {
+      const newline = chunk.indexOf("\n");
+      if (newline < 0) return;
+      chunk = chunk.slice(newline + 1);
+      this.droppingOversizedReplyLine = false;
+    }
     if (this.buffer.length === 0 && receivedAtMicros !== undefined)
       this.bufferReceivedAtMicros = receivedAtMicros;
     this.buffer += chunk;
@@ -299,6 +394,19 @@ export class ControlChannelCore {
       this.bufferReceivedAtMicros = this.buffer.length > 0 ? (receivedAtMicros ?? null) : null;
       this.handleLine(line, lineReceivedAtMicros);
     }
+    const head = this.currentBudget();
+    // Protocol terminators may themselves exceed a tiny payload budget and
+    // arrive fragmented. Reserve bounded framing space before dropping a line.
+    const partialLimit = head
+      ? Math.max(head.limits.maxBytes, this.buffer.startsWith("%") ? 1024 : 0)
+      : 0;
+    if (head && this.buffer.length > partialLimit) {
+      head.overflowed = true;
+      head.lines.length = 0;
+      this.buffer = "";
+      this.bufferReceivedAtMicros = null;
+      this.droppingOversizedReplyLine = true;
+    }
   }
 
   /** The stream died: settle every pending sink so no caller hangs. */
@@ -309,7 +417,8 @@ export class ControlChannelCore {
       this.retireAtomicPaneSnapshotCollector(this.atomicCollector.spec.nonce, "channel-exit");
     for (const sink of this.pending.splice(0)) {
       if (sink.kind === "promise") sink.reject(new Error(reason));
-      else if (sink.kind === "inline") sink.onReply({ ok: false, lines: [reason] });
+      else if (sink.kind === "inline" || sink.kind === "bounded")
+        sink.onReply({ ok: false, lines: [reason] });
       else if (sink.kind === "command-list" && !sink.state.settled) {
         sink.state.settled = true;
         sink.state.onReply({ ok: false, lines: [reason] });
@@ -336,7 +445,19 @@ export class ControlChannelCore {
         break;
       case "reply-line": {
         const head = this.currentReplyConsumesPending ? this.pending[0] : undefined;
-        if (head?.kind === "promise" || head?.kind === "inline") head.lines.push(event.line);
+        const budget = this.currentBudget();
+        if (budget) {
+          if (!budget.overflowed) {
+            budget.bytes += event.line.length + 1;
+            if (
+              budget.bytes > budget.limits.maxBytes ||
+              budget.lines.length >= budget.limits.maxLines
+            ) {
+              budget.overflowed = true;
+              budget.lines.length = 0;
+            } else budget.lines.push(event.line);
+          }
+        } else if (head?.kind === "promise" || head?.kind === "inline") head.lines.push(event.line);
         else if (head?.kind === "command-list" && head.index === head.state.resultIndex)
           head.state.lines.push(event.line);
         break;
@@ -355,6 +476,10 @@ export class ControlChannelCore {
         const sink = this.pending.shift();
         if (!sink) break; // unsolicited block (greeting after a race)
         if (sink.kind === "command-list") {
+          if (event.kind === "end" && sink.index < sink.state.resultIndex && sink.state.budget) {
+            sink.state.lines.length = 0;
+            sink.state.budget.bytes = 0;
+          }
           if (event.kind === "error" && sink.index !== sink.state.resultIndex)
             this.discardedErrors += 1;
           if (event.kind === "error" && sink.index === 0) {
@@ -366,7 +491,10 @@ export class ControlChannelCore {
             }
           } else if (sink.index === sink.state.resultIndex && !sink.state.settled) {
             sink.state.settled = true;
-            sink.state.onReply({ ok: event.kind === "end", lines: sink.state.lines });
+            sink.state.onReply({
+              ok: event.kind === "end" && !sink.state.budget?.overflowed,
+              lines: sink.state.lines,
+            });
           }
           break;
         }
@@ -377,6 +505,10 @@ export class ControlChannelCore {
         }
         if (sink.kind === "inline") {
           sink.onReply({ ok: event.kind === "end", lines: sink.lines });
+          break;
+        }
+        if (sink.kind === "bounded") {
+          sink.onReply({ ok: event.kind === "end" && !sink.overflowed, lines: sink.lines });
           break;
         }
         if (event.kind === "error") {
@@ -590,6 +722,8 @@ export class ControlChannelCore {
 }
 
 export interface MirrorControlChannelOptions {
+  /** Resolve through the owning daemon's generation fence before each spawn. */
+  resolveSocketPath?: () => string;
   session: string;
   handlers: MirrorChannelHandlers;
   /** `tmux -L <name>` — isolated servers in tests; omit for the default. */
@@ -654,7 +788,18 @@ export class MirrorControlChannel implements MirrorChannelIo {
 
   start(): Promise<void> {
     const pauseAfter = this.opts.pauseAfterSeconds ?? DEFAULT_PAUSE_AFTER_SECONDS;
-    const args = mirrorControlAttachArgs(this.opts, pauseAfter);
+    let args: string[];
+    try {
+      const socketPath = this.opts.resolveSocketPath?.();
+      args = mirrorControlAttachArgs(
+        socketPath ? { ...this.opts, socketPath } : this.opts,
+        pauseAfter,
+      );
+      if (this.opts.resolveSocketPath && !socketPath)
+        throw new Error("Tmux socket authority is unavailable");
+    } catch (error) {
+      return Promise.reject(error);
+    }
     const proc = spawn(this.opts.executable ?? "tmux", args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, TMUX: "" },
@@ -705,6 +850,19 @@ export class MirrorControlChannel implements MirrorChannelIo {
     proc.stdin.write(`${cmd}\n`);
   }
 
+  commandBoundedInline(
+    cmd: string,
+    limits: ControlReplyLimits,
+    onReply: (reply: ControlReply) => void,
+  ): void {
+    const proc = this.proc;
+    if (!proc?.stdin?.writable || !this.core.pushBounded(limits, onReply)) {
+      onReply({ ok: false, lines: [] });
+      return;
+    }
+    proc.stdin.write(`${cmd}\n`);
+  }
+
   commandListInline(
     cmd: string,
     replyCount: number,
@@ -721,6 +879,24 @@ export class MirrorControlChannel implements MirrorChannelIo {
       return;
     }
     this.core.pushCommandList(replyCount, resultIndex, onReply);
+    proc.stdin.write(`${cmd}\n`);
+  }
+
+  commandListBoundedInline(
+    cmd: string,
+    count: number,
+    index: number,
+    limits: ControlReplyLimits,
+    onReply: (reply: ControlReply) => void,
+  ): void {
+    const proc = this.proc;
+    if (
+      !proc?.stdin?.writable ||
+      !this.core.pushBoundedCommandList(count, index, limits, onReply)
+    ) {
+      onReply({ ok: false, lines: [] });
+      return;
+    }
     proc.stdin.write(`${cmd}\n`);
   }
 

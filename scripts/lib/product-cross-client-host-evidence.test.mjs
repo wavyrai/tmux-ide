@@ -3071,6 +3071,11 @@ test("host failure evidence distinguishes semantic authority from ambient mutati
       {
         a: first,
         b: second,
+        connections: [
+          { phase: "stale", targetCurrent: false, authorityMatchesTarget: true, raw: "private" },
+          { phase: "private", targetCurrent: "private", authorityMatchesTarget: false },
+          { phase: "private" },
+        ],
         semanticEqual: true,
         revisionMonotonic: true,
         activityA: {
@@ -3144,6 +3149,10 @@ test("host failure evidence distinguishes semantic authority from ambient mutati
   assert.equal(observed.authorityViews[0].activityA.events.length, 3);
   assert.equal(observed.authorityViews[0].activityA.geometrySettlements.length, 1);
   assert.equal(JSON.stringify(observed.authorityViews).includes("private"), false);
+  assert.deepEqual(observed.authorityViews[0].connections, [
+    { phase: "stale", targetCurrent: false, authorityMatchesTarget: true },
+    { phase: null, targetCurrent: false, authorityMatchesTarget: false },
+  ]);
 });
 
 test("Card5 authority seal rejection is exact, bounded, and identity opaque", () => {
@@ -3414,6 +3423,65 @@ test("Card5 post-handoff authority accepts an exact Web transfer", () => {
   });
   assert.equal(result.valid, true);
   assert.equal(result.relation, "retained-owner");
+});
+
+test("Card5 post-handoff geometry transfer requires an exact later grant and receipt", () => {
+  const authority = focusAuthorityFixture();
+  authority.clients.find((client) => client.clientId === "client-a").state = "background";
+  for (const client of authority.clients.filter((client) => client.surface === "web"))
+    client.state = "foreground";
+  authority.owners = { input: "client-b", focus: null, geometry: "client-c" };
+  authority.revision = 16;
+  const record = (ordinal, revision, geometryOwner) => ({
+    ordinal,
+    revision,
+    generation: authority.generation,
+    session: authority.session,
+    nativeGeometryYieldUntilMs: authority.nativeGeometryYieldUntilMs,
+    inputOwner: "client-b",
+    focusOwner: null,
+    geometryOwner,
+    clients: structuredClone(authority.clients),
+  });
+  const input = {
+    authority,
+    authorityRecords: [record(3, 15, null), record(4, 16, "client-c")],
+    generation: authority.generation,
+    expectedClientId: "client-b",
+    expectedSurface: "web",
+    grantRevision: 15,
+    inputProofHmac: HMAC,
+    evidenceKey: KEY,
+    geometryTransfer: { clientId: "client-c", revision: 16, receiptHmac: HMAC },
+  };
+  assert.equal(assessCard5PostHandoffAuthority(input).valid, true);
+  for (const change of [
+    (value) => {
+      delete value.geometryTransfer;
+    },
+    (value) => {
+      value.geometryTransfer.receiptHmac = "missing";
+    },
+    (value) => {
+      value.geometryTransfer.revision = 17;
+    },
+    (value) => {
+      value.geometryTransfer.clientId = "client-b";
+    },
+    (value) => {
+      value.authorityRecords[0].geometryOwner = "client-c";
+    },
+    (value) => {
+      value.authorityRecords[1].inputOwner = "client-c";
+    },
+    (value) => {
+      value.authority.owners.focus = "client-c";
+    },
+  ]) {
+    const invalid = structuredClone(input);
+    change(invalid);
+    assert.equal(assessCard5PostHandoffAuthority(invalid).valid, false);
+  }
 });
 
 test("Card5 post-handoff authority collapses only bounded byte-exact revision replays", () => {
@@ -3893,5 +3961,94 @@ test("replacement evidence requires seed-first G2 and typed retirement with no l
       }).passed,
       false,
     );
+  }
+});
+
+test("post-input join verifies independent focus and geometry owners exactly", () => {
+  const exact = card5PostInputPreconditionFixture();
+  exact.expectedFocusOwner = null;
+  exact.expectedGeometryOwner = null;
+  for (const result of exact.webResults) {
+    result.value.workspaceEvidence.authority.owners.focus = null;
+    result.value.workspaceEvidence.authority.owners.geometry = null;
+  }
+  exact.expectedGrantRecord.focusOwner = null;
+  exact.expectedGrantRecord.geometryOwner = null;
+  for (const record of exact.authorityRecords) {
+    record.focusOwner = null;
+    record.geometryOwner = null;
+  }
+  assert.equal(boundedCard5PostInputAuthorityPreconditionObservation(exact).reason, null);
+  for (const kind of ["focus", "geometry"]) {
+    const stolen = structuredClone(exact);
+    for (const result of stolen.webResults)
+      result.value.workspaceEvidence.authority.owners[kind] = "web-a";
+    assert.equal(
+      boundedCard5PostInputAuthorityPreconditionObservation(stolen).reason,
+      `${kind}-owner-mismatch`,
+    );
+  }
+  assert.equal(
+    boundedCard5PostInputAuthorityPreconditionObservation({
+      ...exact,
+      expectedFocusOwner: undefined,
+    }).reason,
+    "focus-owner-mismatch",
+  );
+  assert.equal(
+    boundedCard5PostInputAuthorityPreconditionObservation({ ...exact, expectedGeometryOwner: 12 })
+      .reason,
+    "selector-contract-invalid",
+  );
+});
+
+test("blurred TUI uses fresh rendered content while retaining pane identity", () => {
+  const input = tuiFocusedPaneFixture();
+  input.backgroundClientId = "tui-a";
+  input.expectedAuthority = {
+    generation: input.expectedCanonical.generation,
+    clients: [{ clientId: "tui-a", surface: "opentui", state: "background" }],
+  };
+  const revision = input.expectedCanonical.revision + 1;
+  input.expectedCanonical = {
+    ...input.expectedCanonical,
+    revision,
+    canonicalStateHash: "abcdef0123456789",
+  };
+  const host = {
+    ...input.records[1],
+    type: "performance.terminal-canonical-host-frame",
+    revision,
+    acceptedRevision: revision,
+    stateHash: input.expectedCanonical.canonicalStateHash,
+    atMicros: 1000,
+  };
+  const fence = { ...host, type: "performance.terminal-frame-fence", atMicros: 1010 };
+  input.records.push(host, fence);
+  assert.equal(assessCard5TuiFocusedPane(input).passed, true);
+  assert.equal(assessCard5TuiFocusedPane({ ...input, backgroundClientId: null }).passed, false);
+  for (const mutate of [
+    (v) => {
+      v.expectedAuthority.clients[0].state = "foreground";
+    },
+    (v) => {
+      v.records[0].semanticPaneId = "another-pane";
+    },
+    (v) => {
+      v.records[2].revision -= 1;
+    },
+    (v) => {
+      v.records[3].writerHealth.droppedRecords = 1;
+    },
+    (v) => {
+      v.records.pop();
+    },
+    (v) => {
+      v.backgroundClientId = "another-client";
+    },
+  ]) {
+    const invalid = structuredClone(input);
+    mutate(invalid);
+    assert.equal(assessCard5TuiFocusedPane(invalid).passed, false);
   }
 });

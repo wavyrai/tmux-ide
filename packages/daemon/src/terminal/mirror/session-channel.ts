@@ -35,6 +35,7 @@ import {
 } from "@tmux-ide/contracts";
 import { textToHexKeys } from "../protocol/control.ts";
 import { InputCoalescer } from "../protocol/input-coalescer.ts";
+import { NativeGridCaptureReader, type NativeGridReadResult } from "./native-grid-reader.ts";
 import type { InputAction } from "../protocol/input-coalescer.ts";
 import {
   parseLayout,
@@ -102,7 +103,6 @@ const NATIVE_CLIENT_NOTIFICATIONS = new Set([
 ]);
 const NATIVE_CLIENT_SUBSCRIPTION = "tmux-ide-native-clients";
 
-const DEFAULT_HISTORY_LINES = 2000;
 const SYNC_DEBOUNCE_MS = 40;
 /** Foreground-command labels follow output, but never turn a busy pane into a probe loop. */
 const DISPLAY_NAME_SYNC_INTERVAL_MS = 750;
@@ -112,7 +112,10 @@ const RECOVERY_NO_PROGRESS_DEADLINE_MS = 3_000;
 const RECOVERY_ABSOLUTE_DEADLINE_MS = 5_000;
 const RECOVERY_MAX_ATTEMPTS = 4;
 const RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
-const RECOVERY_CAPTURE_MAX_LINES = 8_192;
+// Budget row bookkeeping separately from wire bytes (64 bytes per retained
+// line). A fixed 8192-row ceiling rejected small captures of ordinary history.
+// Both the wire-byte cap and this finite allocation bound remain enforced.
+const RECOVERY_CAPTURE_MAX_LINES = RECOVERY_CAPTURE_MAX_BYTES / 64;
 const RECOVERY_CURSOR_MAX_BYTES = 1_024;
 const MAX_CONTINUE_NOTIFICATION_QUEUE = 32;
 const MAX_CONTINUE_NOTIFICATION_DEBT = 65_536;
@@ -131,6 +134,14 @@ const RECOVERY_CURSOR_PROBE_FORMAT = [
   "#{mouse_standard_flag}",
   "#{origin_flag}",
   "#{wrap_flag}",
+  "#{history_size}",
+  "#{history_limit}",
+  "#{bracket_paste_flag}",
+  "#{mouse_all_flag}",
+  "#{mouse_sgr_flag}",
+  "#{mouse_utf8_flag}",
+  "#{scroll_region_upper}",
+  "#{scroll_region_lower}",
 ].join(" ");
 
 export type MirrorFlowRecoveryPhase =
@@ -179,6 +190,7 @@ export interface MirrorFlowRecoveryObservation {
 export interface SessionChannelOptions {
   session: string;
   createIo: (handlers: MirrorChannelHandlers) => MirrorChannelIo;
+  /** Explicit capture tail override. Omitted captures all retained native history. */
   historyLines?: number;
   generatePaneId?: () => string;
   generateWindowId?: () => string;
@@ -212,6 +224,8 @@ export interface SessionChannelOptions {
 }
 
 export interface PaneSubscriptionHandle {
+  readHistorySize(): Promise<number | null>;
+  captureNativeBacking(): Promise<NativeGridReadResult>;
   readonly semanticPaneId: string;
   freeze(): void;
   thaw(): void;
@@ -226,6 +240,7 @@ export interface LayoutSubscriptionHandle {
 }
 
 interface SubRecord {
+  cancelCapture?: (() => void) | null;
   readonly feed: PaneFeed;
   readonly onEvent: (event: MirrorPaneEvent) => void;
   readonly onLayout: ((event: MirrorLayoutEvent) => void) | null;
@@ -235,6 +250,7 @@ interface SubRecord {
 }
 
 interface PaneRecord {
+  historySize?: number;
   runtimeId: string;
   semanticId: string;
   descriptor: SessionPaneDescriptor | null;
@@ -316,8 +332,10 @@ function snapshotFingerprint(
   return hash.digest("hex");
 }
 
+// tmux concatenates adjacent quoted/unquoted fragments; doubled single quotes
+// do not escape a quote. Preserve nested commands across both parser passes.
 function tmuxSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 interface ContinueNotificationOwner {
@@ -338,11 +356,12 @@ interface WindowRecord {
   semanticId: string | null;
   name: string | null;
   paneBorderStatus: "top" | "bottom" | "off";
+  modeKeys?: "emacs" | "vi";
 }
 
 interface WindowSyncStage {
   readonly windows: Map<string, WindowRecord>;
-  readonly layouts: Map<string, ParsedLayout & { zoomed: boolean }>;
+  readonly layouts: Map<string, ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }>;
   readonly currentWindow: string;
   readonly repairedIdentity: boolean;
 }
@@ -363,7 +382,10 @@ export class SessionChannel {
   private readonly panesByRuntime = new Map<string, PaneRecord>();
   private readonly panesBySemantic = new Map<string, PaneRecord>();
   private readonly windowsByRuntime = new Map<string, WindowRecord>();
-  private readonly layoutByWindow = new Map<string, ParsedLayout & { zoomed: boolean }>();
+  private readonly layoutByWindow = new Map<
+    string,
+    ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }
+  >();
   private readonly activePaneByWindow = new Map<string, string>();
   private readonly layoutSubscribers = new Set<(event: MirrorLayoutEvent) => void>();
   private readonly layoutAuthoritySubscribers = new Set<
@@ -381,11 +403,26 @@ export class SessionChannel {
   private cancelSync: (() => void) | null = null;
   private lastDisplayNameSyncAtMs = 0;
   private disposed = false;
+  private readonly nativeGrid: NativeGridCaptureReader;
   private nativeClientProbePending = false;
   private windowAuthorityOrdinal = 0;
   private paneIncarnation = 0;
   private recoveryOrdinal = 0;
   private readonly outputOrdinals = new Map<string, number>();
+  private readonly pendingLayoutOutput = new Map<
+    string,
+    {
+      layout: ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout };
+      bytes: number;
+      overflowed: boolean;
+      records: Array<{
+        pane: string;
+        data: Uint8Array;
+        ageMs: number | null;
+        timing?: MirrorOutputTiming;
+      }>;
+    }
+  >();
   private readonly recoveries = new Map<string, RecoveryRecord>();
   private readonly continueNotificationQueues = new Map<string, ContinueNotificationEntry[]>();
   private trustedInventoryFlight: Promise<TrustedMirrorSessionInventory> | null = null;
@@ -410,6 +447,11 @@ export class SessionChannel {
           `send-keys -t ${action.pane} -H ${textToHexKeys(action.text).join(" ")}`,
           onReply,
         );
+      } else if (action.kind === "bytes") {
+        this.io.send(
+          `send-keys -t ${action.pane} -H ${Array.from(action.data, (byte) => byte.toString(16).padStart(2, "0")).join(" ")}`,
+          onReply,
+        );
       } else {
         this.io.send(`send-keys -t ${action.pane} ${action.key}`, onReply);
       }
@@ -430,6 +472,28 @@ export class SessionChannel {
       onOutput: (pane, data, ageMs, timing) => this.onOutput(pane, data, ageMs, timing),
       onNotify: (name, rest) => this.onNotify(name, rest),
       onExit: () => this.onChannelExit(),
+    });
+    this.nativeGrid = new NativeGridCaptureReader({
+      commandBoundedInline: this.io.commandListBoundedInline
+        ? (command, limits, onReply) => {
+            const runtime = /-t (%(?:0|[1-9][0-9]*))$/.exec(command)?.[1];
+            if (!runtime) {
+              onReply({ ok: false, lines: [] });
+              return;
+            }
+            const marker = registerInternalReadOperation(runtime);
+            this.io.commandListBoundedInline!(
+              `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${marker} ; ${command}`,
+              2,
+              1,
+              limits,
+              (reply) => {
+                if (!reply.ok) this.retireInternalReadMarker(runtime, marker);
+                onReply(reply);
+              },
+            );
+          }
+        : undefined,
     });
     this.discovery = new SessionDescriptorDiscovery({
       query: () =>
@@ -457,6 +521,11 @@ export class SessionChannel {
   async start(): Promise<void> {
     await this.io.start();
     await this.captureAttachedSessionIdentity();
+    // Changing border placement can resize PTYs without changing the layout
+    // string, so tmux emits no layout-change. Subscribe to this window option.
+    this.io.send("refresh-client -B 'tmux-ide-pane-borders:@*:#{pane-border-status}'");
+    this.io.send("refresh-client -B 'tmux-ide-copy-keys:@*:#{mode-keys}'");
+    this.io.send("refresh-client -B 'tmux-ide-pane-history:%*:#{history_size}'");
     if (this.opts.onNativeClientActivity) {
       // tmux does not guarantee `%client-attached` is broadcast to an
       // existing control client. A format subscription is the documented,
@@ -560,6 +629,37 @@ export class SessionChannel {
     this.attachedIdentity = Object.freeze({ sessionName, runtimeSessionId });
   }
 
+  /** Optional native backing, addressed through the verified semantic binding. */
+  captureNativeBacking(
+    semanticPaneId: string,
+    ownsSubscription: () => boolean = () => true,
+  ): Promise<NativeGridReadResult> {
+    const pane = this.panesBySemantic.get(semanticPaneId);
+    if (!pane || this.disposed || !ownsSubscription())
+      return Promise.resolve({ status: "retired" });
+    const { runtimeId, incarnation } = pane;
+    this.input.flush();
+    const outputOrdinal = this.outputOrdinals.get(runtimeId) ?? 0;
+    const topologyEpoch = this.layoutTopologyEpoch;
+    const authorityOrdinal = this.windowAuthorityOrdinal;
+    return this.nativeGrid.read(
+      runtimeId,
+      () =>
+        !this.disposed &&
+        ownsSubscription() &&
+        this.panesBySemantic.get(semanticPaneId) === pane &&
+        this.panesByRuntime.get(runtimeId) === pane &&
+        pane.runtimeId === runtimeId &&
+        pane.incarnation === incarnation,
+      // This remains raw backing, not a canonical revision. Reject observed
+      // output/layout crossings before an owner can try to qualify it.
+      () =>
+        (this.outputOrdinals.get(runtimeId) ?? 0) === outputOrdinal &&
+        this.layoutTopologyEpoch === topologyEpoch &&
+        this.windowAuthorityOrdinal === authorityOrdinal,
+    );
+  }
+
   subscribePane(
     semanticPaneId: string,
     onEvent: (event: MirrorPaneEvent) => void,
@@ -590,6 +690,36 @@ export class SessionChannel {
     this.emitLayoutSnapshot(sub);
     return {
       semanticPaneId,
+      captureNativeBacking: () =>
+        this.captureNativeBacking(
+          semanticPaneId,
+          () =>
+            !sub.closed && sub.pane === pane && this.panesBySemantic.get(semanticPaneId) === pane,
+        ),
+      readHistorySize: () =>
+        new Promise((resolve) => {
+          const current = () =>
+            !this.disposed &&
+            !sub.closed &&
+            !sub.frozen &&
+            this.panesByRuntime.get(pane.runtimeId) === pane;
+          if (!current()) {
+            resolve(null);
+            return;
+          }
+          this.io.commandInline(
+            `display-message -p -t ${pane.runtimeId} "#{history_size}"`,
+            (reply) => {
+              const value = reply.lines[0]?.trim() ?? "";
+              const size = Number(value);
+              resolve(
+                current() && reply.ok && /^[0-9]+$/u.test(value) && Number.isSafeInteger(size)
+                  ? size
+                  : null,
+              );
+            },
+          );
+        }),
       freeze: () => this.freeze(sub),
       thaw: () => this.thaw(sub),
       reseed: () => this.reseedPlain(sub),
@@ -672,7 +802,7 @@ export class SessionChannel {
       );
       if (
         observed.length !== event.panes.length ||
-        observed.length !== expectedPanes.size ||
+        (event.zoomed ? observed.length !== 1 : observed.length !== expectedPanes.size) ||
         new Set(observed).size !== observed.length ||
         observed.some((pane) => !expectedPanes.has(pane))
       ) {
@@ -707,6 +837,13 @@ export class SessionChannel {
     if (isolated) this.input.flush();
     this.input.literal(pane.runtimeId, text, performanceTraceId);
     if (isolated) this.input.flush();
+  }
+
+  sendBytes(semanticPaneId: string, data: Uint8Array, performanceTraceId?: string): void {
+    const pane = this.panesBySemantic.get(semanticPaneId);
+    if (!pane)
+      throw new Error(`unknown semantic pane ${semanticPaneId} in session ${this.opts.session}`);
+    this.input.bytes(pane.runtimeId, data, performanceTraceId);
   }
 
   sendKey(semanticPaneId: string, key: string, performanceTraceId?: string): void {
@@ -761,6 +898,7 @@ export class SessionChannel {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.nativeGrid.dispose();
     this.settleFirstJoin();
     this.cancelSync?.();
     this.cancelSync = null;
@@ -772,11 +910,13 @@ export class SessionChannel {
       for (const sub of pane.subs) {
         if (!sub.closed) {
           sub.closed = true;
+          sub.cancelCapture?.();
           sub.onEvent({ type: "closed" });
         }
       }
       pane.subs.clear();
     }
+    this.pendingLayoutOutput.clear();
     this.layoutSubscribers.clear();
     this.layoutAuthoritySubscribers.clear();
     await this.io.dispose();
@@ -790,6 +930,18 @@ export class SessionChannel {
     ageMs: number | null,
     timing?: MirrorOutputTiming,
   ): void {
+    const windowId = this.panesByRuntime.get(runtimePane)?.windowRuntimeId;
+    const pending = windowId ? this.pendingLayoutOutput.get(windowId) : undefined;
+    if (pending) {
+      if (!pending.overflowed) {
+        pending.bytes += data.byteLength;
+        if (pending.bytes > 1024 * 1024 || pending.records.length >= 1024) {
+          pending.overflowed = true;
+          pending.records = [];
+        } else pending.records.push({ pane: runtimePane, data: data.slice(), ageMs, timing });
+      }
+      return;
+    }
     const now = Date.now();
     if (now - this.lastDisplayNameSyncAtMs >= DISPLAY_NAME_SYNC_INTERVAL_MS) {
       this.lastDisplayNameSyncAtMs = now;
@@ -825,32 +977,53 @@ export class SessionChannel {
       onSettled?.(FAILED_RESEED_RESULT);
       return;
     }
+    sub.cancelCapture?.();
     const runtime = sub.pane.runtimeId;
     const epoch = sub.feed.beginReseed();
     let settled = false;
     let captureSucceeded = false;
     let markerRetired = false;
     let captureLines: readonly string[] | null = null;
+    let cancelDeadline: (() => void) | null = null;
     const settle = (result: ReseedResult) => {
       if (settled) return;
       settled = true;
+      cancelDeadline?.();
+      sub.cancelCapture = null;
       onSettled?.(result);
     };
     // Keystroke ordering: pending coalesced input leaves before the probes.
     this.input.flush();
-    const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
+    const history = this.opts.historyLines ?? "";
     const internalReadMarker = registerInternalReadOperation(runtime);
     const retireMarker = (): void => {
       if (markerRetired) return;
       markerRetired = true;
       this.retireInternalReadMarker(runtime, internalReadMarker);
     };
+    sub.cancelCapture = () => {
+      if (settled) return;
+      settled = true;
+      cancelDeadline?.();
+      sub.cancelCapture = null;
+      sub.feed.abort(epoch);
+      if (!captureSucceeded) retireMarker();
+    };
+    cancelDeadline = this.scheduleRecovery(() => {
+      if (settled) return;
+      sub.feed.abort(epoch);
+      if (!captureSucceeded) retireMarker();
+      settle(FAILED_RESEED_RESULT);
+    }, RECOVERY_ABSOLUTE_DEADLINE_MS);
+    // Keep retired reply slots in the control FIFO; their callbacks become
+    // no-ops so late responses cannot publish or consume a newer capture.
     // Both probes ride one write burst; the FIFO reply order is the seam.
     this.io.commandListInline(
       `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
       2,
       1,
       (reply) => {
+        if (settled) return;
         if (!reply.ok) {
           // Successful captures consume the marker atomically inside the tmux
           // after-capture-pane hook. The command-list also prevents a concurrent
@@ -873,6 +1046,7 @@ export class SessionChannel {
     this.io.commandInline(
       `display-message -p -t ${runtime} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
       (reply) => {
+        if (settled) return;
         if (sub.closed || sub.frozen || this.disposed) {
           sub.feed.abort(epoch);
           settle(FAILED_RESEED_RESULT);
@@ -885,6 +1059,9 @@ export class SessionChannel {
           return;
         }
         const cursorLine = reply.lines[0] ?? "";
+        const historySize = Number(cursorLine.trim().split(/\s+/)[14]);
+        if (Number.isSafeInteger(historySize) && historySize >= 0)
+          sub.pane.historySize = historySize;
         const fallbackSize = this.layoutSizeFor(runtime);
         const events = sub.feed.cursorReply(epoch, cursorLine, fallbackSize);
         let published = false;
@@ -952,6 +1129,7 @@ export class SessionChannel {
   private freeze(sub: SubRecord): void {
     if (sub.frozen || sub.closed) return;
     sub.frozen = true;
+    sub.cancelCapture?.();
     sub.onEvent({ type: "flow", state: "paused", reason: "requested" });
     const pane = sub.pane;
     const allFrozen = [...pane.subs].every((candidate) => candidate.frozen || candidate.closed);
@@ -994,27 +1172,31 @@ export class SessionChannel {
       RECOVERY_ABSOLUTE_DEADLINE_MS * 1_000,
       Math.max(0, Math.floor((this.recoveryNowMs() - recovery.startedAtMs) * 1_000)),
     );
-    this.opts.onFlowRecoveryObserved?.(
-      Object.freeze({
-        semanticPaneId: pane.semanticId,
-        phase,
-        recoveryOrdinal: recovery.ordinal,
-        paneIncarnation: recovery.paneIncarnation,
-        outputOrdinal: this.outputOrdinals.get(recovery.runtimeId) ?? 0,
-        failureReason,
-        elapsedMicros,
-        fingerprintExact,
-        confirmationOrdinal: recovery.confirmationOrdinal,
-        collectorStarted: recovery.collectorStarted,
-        collectorLastCompletedOrdinal: recovery.collectorLastCompletedOrdinal,
-        collectorCaptureLineCount: recovery.collectorCaptureLineCount,
-        collectorCaptureByteCount: recovery.collectorCaptureByteCount,
-        collectorContinueObserved: recovery.collectorContinueObserved,
-        collectorStatusObserved: recovery.collectorStatusObserved,
-        collectorObserverEmissionObserved: recovery.collectorObserverEmissionObserved,
-        collectorFailureReason: recovery.collectorFailureReason,
-      }),
-    );
+    try {
+      this.opts.onFlowRecoveryObserved?.(
+        Object.freeze({
+          semanticPaneId: pane.semanticId,
+          phase,
+          recoveryOrdinal: recovery.ordinal,
+          paneIncarnation: recovery.paneIncarnation,
+          outputOrdinal: this.outputOrdinals.get(recovery.runtimeId) ?? 0,
+          failureReason,
+          elapsedMicros,
+          fingerprintExact,
+          confirmationOrdinal: recovery.confirmationOrdinal,
+          collectorStarted: recovery.collectorStarted,
+          collectorLastCompletedOrdinal: recovery.collectorLastCompletedOrdinal,
+          collectorCaptureLineCount: recovery.collectorCaptureLineCount,
+          collectorCaptureByteCount: recovery.collectorCaptureByteCount,
+          collectorContinueObserved: recovery.collectorContinueObserved,
+          collectorStatusObserved: recovery.collectorStatusObserved,
+          collectorObserverEmissionObserved: recovery.collectorObserverEmissionObserved,
+          collectorFailureReason: recovery.collectorFailureReason,
+        }),
+      );
+    } catch {
+      // Optional diagnostics cannot prevent recovery or failure delivery.
+    }
   }
 
   private recoveryNowMs(): number {
@@ -1051,6 +1233,7 @@ export class SessionChannel {
   }
 
   private beginRecovery(pane: PaneRecord, reason: "backpressure" | "requested"): void {
+    for (const sub of pane.subs) sub.cancelCapture?.();
     const runtime = pane.runtimeId;
     this.cancelRecovery(runtime);
     const recovery: RecoveryRecord = {
@@ -1122,6 +1305,7 @@ export class SessionChannel {
   }
 
   private beginLocalOverflowRecovery(pane: PaneRecord): void {
+    for (const sub of pane.subs) sub.cancelCapture?.();
     const runtime = pane.runtimeId;
     this.cancelRecovery(runtime);
     const recovery: RecoveryRecord = {
@@ -1235,7 +1419,7 @@ export class SessionChannel {
     // epochs still independently fence delivery, while membership is frozen
     // across both FIFO replies so no subscriber can join half a snapshot.
     this.input.flush();
-    const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
+    const history = this.opts.historyLines ?? "";
     const internalReadMarker = registerInternalReadOperation(pane.runtimeId);
     const participantsExact = (): boolean => {
       if (
@@ -1439,18 +1623,18 @@ export class SessionChannel {
       return;
     }
     const sentinel = (kind: string): string =>
-      `display-message -p -t ${pane.runtimeId} ` + `"%tmux-ide-atomic-v1 ${nonce} ${kind}"`;
+      `display-message -p -l -t ${pane.runtimeId} ` + `"%tmux-ide-atomic-v1 ${nonce} ${kind}"`;
     const observerCommands =
-      ` ; set-buffer -a -b ${observer!.bufferName} ${observer!.record}` +
+      ` ; set-buffer -a -b ${observer!.bufferName} ${tmuxSingleQuote(observer!.record)}` +
       ` ; wait-for -S ${observer!.signalChannel}`;
     const body =
       `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker}` +
       ` ; ${sentinel("start")}` +
-      ` ; capture-pane -p -e -J -S -${this.opts.historyLines ?? DEFAULT_HISTORY_LINES} -t ${pane.runtimeId}` +
+      ` ; capture-pane -p -e -J -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId}` +
       ` ; ${sentinel("capture-end")}` +
       ` ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}"` +
       ` ; ${sentinel("cursor-end")}` +
-      ` ; refresh-client -A ${pane.runtimeId}:continue` +
+      ` ; refresh-client -A ${tmuxSingleQuote(`${pane.runtimeId}:continue`)}` +
       observerCommands +
       ` ; if-shell -t ${pane.runtimeId} -F ` +
       `"#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` +
@@ -1770,6 +1954,15 @@ export class SessionChannel {
     this.retireContinueNotificationOwner(recovery);
     for (const sub of pane.subs) sub.feed.abortCurrent();
     this.observeRecovery(pane, recovery, "nonconverged", failureReason);
+    for (const sub of pane.subs) {
+      sub.cancelCapture?.();
+      if (sub.closed || sub.frozen) continue;
+      try {
+        sub.onEvent({ type: "fault", reason: "native-recovery-failed" });
+      } catch {
+        // A consumer must not prevent sibling subscribers from retiring.
+      }
+    }
   }
 
   private removeContinueNotificationOwner(recovery: RecoveryRecord): void {
@@ -1828,6 +2021,7 @@ export class SessionChannel {
   private closeSub(sub: SubRecord): void {
     if (sub.closed) return;
     sub.closed = true;
+    sub.cancelCapture?.();
     const pane = sub.pane;
     pane.subs.delete(sub);
     if ([...pane.subs].every((candidate) => candidate.closed || candidate.frozen))
@@ -1843,6 +2037,36 @@ export class SessionChannel {
   // ── Notifications (channel order is the invariant) ──────────────────────
 
   private onNotify(name: string, rest: string): void {
+    if (name === "subscription-changed") {
+      const history =
+        /^tmux-ide-pane-history\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([0-9]+)\s*$/u.exec(
+          rest,
+        );
+      if (history) {
+        const pane = this.panesByRuntime.get(history[1]!);
+        const size = Number(history[2]);
+        if (pane && Number.isSafeInteger(size)) {
+          const cleared = size === 0 && (pane.historySize ?? 0) > 0;
+          pane.historySize = size;
+          // A quiet native clear writes no PTY bytes. Reuse the ordered seed path.
+          if (cleared && !this.recoveries.has(pane.runtimeId)) {
+            for (const sub of pane.subs) if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
+          }
+        }
+        return;
+      }
+    }
+    if (
+      name === "subscription-changed" &&
+      (/^tmux-ide-pane-borders\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+-\s*:\s*(top|bottom|off)\s*$/u.test(
+        rest,
+      ) ||
+        /^tmux-ide-copy-keys\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+-\s*:\s*(emacs|vi)\s*$/u.test(rest))
+    ) {
+      this.windowAuthorityOrdinal += 1;
+      this.scheduleSync();
+      return;
+    }
     if (
       name === "layout-change" ||
       name === "window-pane-changed" ||
@@ -1908,21 +2132,77 @@ export class SessionChannel {
         this.scheduleSync(); // never guess from a failed parse
         return;
       }
-      this.layoutByWindow.set(change.windowId, { ...parsed, zoomed: change.zoomed });
+      const pendingLayout = {
+        ...parsed,
+        zoomed: change.zoomed,
+        unzoomed: parseLayout(change.layout) ?? undefined,
+      };
       // Resync on BOTH structural deltas: an unknown leaf (new pane) and a
       // known pane of this window missing from the leaves (a killed pane in a
       // surviving window emits only %layout-change — without this, its
       // subscribers never receive `closed`). Closure itself still comes only
       // from the truth reply; a probe failure never reads as absence.
-      const leafIds = new Set(parsed.leaves.map((leaf) => leaf.id));
+      // Structural membership comes from the full tmux layout. Zoom only
+      // changes visible geometry and must not look like sibling deletion.
+      const membership = change.zoomed ? parseLayout(change.layout) : parsed;
+      if (!membership) {
+        this.scheduleSync();
+        return;
+      }
+      const leafIds = new Set(membership.leaves.map((leaf) => leaf.id));
       const knownPaneVanished = [...this.panesByRuntime.values()].some(
         (pane) => pane.windowRuntimeId === change.windowId && !leafIds.has(pane.runtimeId),
       );
-      if (parsed.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id)) || knownPaneVanished) {
+      if (
+        membership.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id)) ||
+        knownPaneVanished
+      ) {
         this.scheduleSync();
       }
-      this.emitLayout(change.windowId);
-      this.emitLayoutAuthority();
+      // %layout-change omits pane-border-status. Pairing fresh geometry with
+      // the old cached option can reject every native capture after a border
+      // change (for example 41 layout rows versus 40 content rows).
+      // Keep the last qualified window visible in authority snapshots. A
+      // pending option query is not evidence that the window disappeared.
+      const held = this.pendingLayoutOutput.get(change.windowId);
+      if (held) held.layout = pendingLayout;
+      else
+        this.pendingLayoutOutput.set(change.windowId, {
+          layout: pendingLayout,
+          bytes: 0,
+          overflowed: false,
+          records: [],
+        });
+      this.io.commandInline(
+        `display-message -p -t ${change.windowId} "#{pane-border-status}"`,
+        (reply) => {
+          if (
+            this.disposed ||
+            this.pendingLayoutOutput.get(change.windowId)?.layout !== pendingLayout
+          )
+            return;
+          const border = reply.lines[0];
+          const window = this.windowsByRuntime.get(change.windowId);
+          if (
+            !reply.ok ||
+            !window ||
+            (border !== "top" && border !== "bottom" && border !== "off")
+          ) {
+            this.scheduleSync();
+            return;
+          }
+          if (window.paneBorderStatus !== border) {
+            // A query can observe an intermediate option between tmux's 1s
+            // subscription samples. Reset its last-value cache so a return to
+            // the previous value still produces a final authoritative refresh.
+            this.io.send("refresh-client -B 'tmux-ide-pane-borders:@*:#{pane-border-status}'");
+          }
+          this.windowsByRuntime.set(change.windowId, { ...window, paneBorderStatus: border });
+          this.layoutByWindow.set(change.windowId, pendingLayout);
+          this.releasePendingLayout(change.windowId);
+          this.emitLayoutAuthority();
+        },
+      );
       return;
     }
     if (name === "window-pane-changed") {
@@ -1981,6 +2261,20 @@ export class SessionChannel {
       });
   }
 
+  private releasePendingLayout(windowRuntimeId: string): void {
+    const pending = this.pendingLayoutOutput.get(windowRuntimeId);
+    this.pendingLayoutOutput.delete(windowRuntimeId);
+    this.emitLayout(windowRuntimeId);
+    if (pending?.overflowed) {
+      for (const pane of this.panesByRuntime.values()) {
+        if (pane.windowRuntimeId === windowRuntimeId) this.restartRecoveryAfterOutputOverflow(pane);
+      }
+    } else {
+      for (const record of pending?.records ?? [])
+        this.onOutput(record.pane, record.data, record.ageMs, record.timing);
+    }
+  }
+
   private emitLayout(windowRuntimeId: string): void {
     const event = this.layoutEventFor(windowRuntimeId);
     if (!event) return;
@@ -1988,7 +2282,8 @@ export class SessionChannel {
     for (const pane of this.panesByRuntime.values()) {
       if (pane.windowRuntimeId !== windowRuntimeId) continue;
       for (const sub of pane.subs) {
-        if (!sub.closed && sub.onLayout) sub.onLayout(event);
+        if (!sub.closed && sub.onLayout)
+          sub.onLayout(this.layoutEventFor(windowRuntimeId, pane.runtimeId) ?? event);
       }
     }
   }
@@ -2028,13 +2323,25 @@ export class SessionChannel {
     if (!sub.onLayout) return;
     const windowRuntimeId = sub.pane.windowRuntimeId;
     if (windowRuntimeId === null) return;
-    const event = this.layoutEventFor(windowRuntimeId);
+    const event = this.layoutEventFor(windowRuntimeId, sub.pane.runtimeId);
     if (!sub.closed && event) sub.onLayout(event);
   }
 
-  private layoutEventFor(windowRuntimeId: string): MirrorLayoutEvent | null {
-    const layout = this.layoutByWindow.get(windowRuntimeId);
-    if (!layout) return null;
+  private layoutEventFor(
+    windowRuntimeId: string,
+    subscriberPane?: string,
+  ): MirrorLayoutEvent | null {
+    const visible = this.layoutByWindow.get(windowRuntimeId);
+    if (!visible) return null;
+    // Hidden terminal owners still need their real saved geometry to qualify
+    // atomic seeds. Global layout subscribers receive only visible geometry.
+    const layout =
+      subscriberPane &&
+      visible.zoomed &&
+      visible.unzoomed &&
+      !visible.leaves.some((leaf) => leaf.id === subscriberPane)
+        ? { ...visible.unzoomed, zoomed: true }
+        : visible;
     const windowRecord = this.windowsByRuntime.get(windowRuntimeId) ?? null;
     const activePane = this.activePaneByWindow.get(windowRuntimeId) ?? "";
     const event: MirrorLayoutEvent = {
@@ -2047,6 +2354,7 @@ export class SessionChannel {
       rows: layout.height,
       zoomed: layout.zoomed,
       paneBorderStatus: windowRecord?.paneBorderStatus ?? "off",
+      modeKeys: windowRecord?.modeKeys,
       panes: layout.leaves.map((leaf) => {
         const pane = this.panesByRuntime.get(leaf.id) ?? null;
         const display = pane
@@ -2157,6 +2465,7 @@ export class SessionChannel {
       for (const sub of pane.subs) {
         if (!sub.closed) {
           sub.closed = true;
+          sub.cancelCapture?.();
           sub.onEvent({ type: "closed" });
         }
       }
@@ -2247,11 +2556,12 @@ export class SessionChannel {
     let stagedPaneCount = 0;
     let stagedPaneMembershipExact = true;
     for (const [runtimeWindowId, layout] of confirmedWindowStage.layouts) {
-      if (layout.leaves.length !== computedWindowCounts.get(runtimeWindowId)) {
+      const membership = layout.zoomed ? layout.unzoomed : layout;
+      if (!membership || membership.leaves.length !== computedWindowCounts.get(runtimeWindowId)) {
         stagedPaneMembershipExact = false;
         break;
       }
-      for (const leaf of layout.leaves) {
+      for (const leaf of membership.leaves) {
         stagedPaneCount += 1;
         if (stagedPaneIds.has(leaf.id) || descriptorWindowByPane.get(leaf.id) !== runtimeWindowId) {
           stagedPaneMembershipExact = false;
@@ -2377,8 +2687,10 @@ export class SessionChannel {
         previous.name !== record.name ||
         previous.semanticId !== record.semanticId ||
         previous.paneBorderStatus !== record.paneBorderStatus ||
+        previous.modeKeys !== record.modeKeys ||
         !previousLayout ||
         previousLayout.zoomed !== nextLayout.zoomed ||
+        JSON.stringify(previousLayout.unzoomed) !== JSON.stringify(nextLayout.unzoomed) ||
         previousLayout.width !== nextLayout.width ||
         previousLayout.height !== nextLayout.height ||
         previousLayout.leaves.length !== nextLayout.leaves.length ||
@@ -2410,11 +2722,13 @@ export class SessionChannel {
     const layoutEmits = windowSetChanged
       ? new Set(stage.windows.keys())
       : new Set(
-          [...changedWindows, ...requiredLayoutEmits].filter((runtimeId) =>
-            stage.windows.has(runtimeId),
+          [...changedWindows, ...requiredLayoutEmits, ...this.pendingLayoutOutput.keys()].filter(
+            (runtimeId) => stage.windows.has(runtimeId),
           ),
         );
-    for (const runtimeId of layoutEmits) this.emitLayout(runtimeId);
+    for (const runtimeId of this.pendingLayoutOutput.keys())
+      if (!stage.windows.has(runtimeId)) this.pendingLayoutOutput.delete(runtimeId);
+    for (const runtimeId of layoutEmits) this.releasePendingLayout(runtimeId);
     this.emitLayoutAuthority();
   }
 
@@ -2437,7 +2751,9 @@ export class SessionChannel {
         leftWindow.semanticId !== rightWindow.semanticId ||
         leftWindow.name !== rightWindow.name ||
         leftWindow.paneBorderStatus !== rightWindow.paneBorderStatus ||
+        leftWindow.modeKeys !== rightWindow.modeKeys ||
         leftLayout.zoomed !== rightLayout.zoomed ||
+        JSON.stringify(leftLayout.unzoomed) !== JSON.stringify(rightLayout.unzoomed) ||
         leftLayout.width !== rightLayout.width ||
         leftLayout.height !== rightLayout.height ||
         leftLayout.leaves.length !== rightLayout.leaves.length ||
@@ -2461,7 +2777,7 @@ export class SessionChannel {
 
   private async stageWindows(target = this.opts.session): Promise<WindowSyncStage> {
     const lines = await this.io.request(
-      `list-windows -t "${target}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}"`,
+      `list-windows -t "${target}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}\t#{window_layout}\t#{mode-keys}"`,
     );
     interface Row {
       runtimeId: string;
@@ -2469,8 +2785,10 @@ export class SessionChannel {
       name: string | null;
       active: boolean;
       visible: string;
+      full: string;
       zoomed: boolean;
       paneBorderStatus: "top" | "bottom" | "off";
+      modeKeys?: "emacs" | "vi";
     }
     const rows: Row[] = [];
     const seenRuntimeIds = new Set<string>();
@@ -2478,7 +2796,7 @@ export class SessionChannel {
       // Replies are latin1 byte strings; recover UTF-8 window names first.
       const line = Buffer.from(raw, "latin1").toString("utf8");
       const parts = line.split("\t");
-      if (parts.length !== 7) {
+      if (parts.length !== 7 && parts.length !== 8 && parts.length !== 9) {
         throw new Error(`window layout truth for ${this.opts.session} is malformed`);
       }
       const [
@@ -2489,13 +2807,16 @@ export class SessionChannel {
         visible = "",
         zoomed = "",
         borderStatus = "off",
+        full = visible,
+        modeKeys,
       ] = parts;
       if (
         !/^@[0-9]+$/u.test(runtimeId) ||
         seenRuntimeIds.has(runtimeId) ||
         (active !== "0" && active !== "1") ||
         (zoomed !== "0" && zoomed !== "1") ||
-        (borderStatus !== "top" && borderStatus !== "bottom" && borderStatus !== "off")
+        (borderStatus !== "top" && borderStatus !== "bottom" && borderStatus !== "off") ||
+        (modeKeys !== undefined && modeKeys !== "emacs" && modeKeys !== "vi")
       ) {
         throw new Error(`window layout truth for ${this.opts.session} is malformed`);
       }
@@ -2508,8 +2829,10 @@ export class SessionChannel {
         name: name.length > 0 ? name : null,
         active: active === "1",
         visible,
+        full,
         zoomed: zoomed === "1",
         paneBorderStatus: borderStatus,
+        modeKeys,
       });
     }
     if (rows.length === 0) {
@@ -2521,13 +2844,18 @@ export class SessionChannel {
         `window layout truth for ${this.opts.session} has inconsistent active window`,
       );
     }
-    const nextLayoutByWindow = new Map<string, ParsedLayout & { zoomed: boolean }>();
+    const nextLayoutByWindow = new Map<
+      string,
+      ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }
+    >();
     for (const row of rows) {
       const parsed = parseLayout(row.visible);
       if (!parsed) {
         throw new Error(`window layout truth for ${this.opts.session} is malformed`);
       }
-      nextLayoutByWindow.set(row.runtimeId, { ...parsed, zoomed: row.zoomed });
+      const unzoomed = parseLayout(row.full);
+      if (!unzoomed) throw new Error(`full window layout for ${this.opts.session} is malformed`);
+      nextLayoutByWindow.set(row.runtimeId, { ...parsed, zoomed: row.zoomed, unzoomed });
     }
     // Valid unique stamps are identity; missing/invalid/duplicated stamps are
     // ALL regenerated and stamped back (the pane policy, applied to windows).
@@ -2581,6 +2909,7 @@ export class SessionChannel {
         semanticId,
         name: row.name,
         paneBorderStatus: row.paneBorderStatus,
+        modeKeys: row.modeKeys,
       });
     }
     return {
@@ -2677,6 +3006,7 @@ export class SessionChannel {
         for (const sub of existingByRuntime.subs) {
           if (sub.closed) continue;
           sub.closed = true;
+          sub.cancelCapture?.();
           sub.feed.abortCurrent();
           sub.onEvent({ type: "closed" });
         }
@@ -2734,7 +3064,7 @@ export class SessionChannel {
 
   private async repairTrustedPaneIdentity(
     descriptors: readonly SessionPaneDescriptor[],
-    layouts: ReadonlyMap<string, ParsedLayout & { zoomed: boolean }>,
+    layouts: ReadonlyMap<string, ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }>,
   ): Promise<boolean> {
     const rectForRuntime = (runtimePaneId: string): WorkspacePaneRect => {
       for (const layout of layouts.values()) {
@@ -2803,6 +3133,7 @@ export class SessionChannel {
 
   private onChannelExit(): void {
     if (this.disposed) return;
+    this.nativeGrid.dispose();
     this.settleFirstJoin();
     for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
     this.continueNotificationQueues.clear();
@@ -2810,6 +3141,7 @@ export class SessionChannel {
       for (const sub of pane.subs) {
         if (!sub.closed) {
           sub.closed = true;
+          sub.cancelCapture?.();
           sub.onEvent({ type: "closed" });
         }
       }

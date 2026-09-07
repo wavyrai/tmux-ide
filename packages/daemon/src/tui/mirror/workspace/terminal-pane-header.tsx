@@ -1,4 +1,6 @@
 /* @jsxImportSource @opentui/solid */
+import { paneInteractionPresence, type PaneInteractionProjection } from "@tmux-ide/core";
+import { Badge } from "../ui/badge.tsx";
 import type { AgentActivity } from "@tmux-ide/contracts";
 import { createSignal } from "solid-js";
 
@@ -23,7 +25,10 @@ export interface PaneTitleBarProps {
   readonly terminalFocused: boolean;
   readonly keyboardFocused: boolean;
   readonly hovered?: boolean;
+  readonly zoomed?: boolean;
+  readonly onRestoreIntent?: () => void;
   readonly activity?: AgentActivity;
+  readonly interaction?: PaneInteractionProjection;
   readonly attention?: boolean;
   /** Renderer-global anchor used by the keyboard-operable overflow control. */
   readonly menuAnchor: Readonly<{ x: number; y: number }>;
@@ -61,6 +66,7 @@ function agentStatus(activity: AgentActivity | undefined): AgentBadgeStatus | un
     case "idle":
       return "idle";
     case "failed":
+      return "blocked";
     case "disconnected":
       return "unknown";
     default:
@@ -68,7 +74,7 @@ function agentStatus(activity: AgentActivity | undefined): AgentBadgeStatus | un
   }
 }
 
-function badgeWidth(status: AgentBadgeStatus | undefined): number {
+function badgeWidth(status: string | undefined): number {
   return status ? terminalDisplayWidth(status) + 4 : 0;
 }
 
@@ -81,6 +87,23 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
   const hovered = () => props.hovered ?? pointerInside();
   const safeWidth = () => Math.max(1, Math.floor(props.width));
   const status = () => agentStatus(props.activity);
+  const statusLabel = () =>
+    props.activity === "failed"
+      ? "failed"
+      : props.activity === "disconnected"
+        ? "disconnected"
+        : status();
+  const presence = () => (props.interaction ? paneInteractionPresence(props.interaction) : null);
+  const activityLabel = () =>
+    presence()
+      ? `${presence()!.badge}${props.interaction?.origin === "external" ? " · External tmux" : ""}`
+      : "";
+  const activityWidth = () => {
+    const available =
+      safeWidth() - markerGutterWidth() - markerWidth() - actionWidth() - zoomWidth() - 4;
+    if (!presence() || available < presence()!.badge.length + 2) return 0;
+    return Math.min(available, terminalDisplayWidth(activityLabel()) + 2);
+  };
   // Keep the state glyph out of the first two inline cells. OpenTUI can repaint
   // those cells from the clipped parent during nested workspace composition.
   const markerGutterWidth = () => Math.min(2, safeWidth());
@@ -95,10 +118,30 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
     hovered() ||
     props.menuFocused ||
     props.menuOpen;
+  const zoomLabel = () =>
+    !props.zoomed
+      ? ""
+      : safeWidth() >= 32
+        ? " Zoomed · Restore "
+        : safeWidth() >= 16
+          ? " Zoomed "
+          : " Z ";
+  const zoomWidth = () =>
+    Math.min(
+      terminalDisplayWidth(zoomLabel()),
+      Math.max(0, safeWidth() - markerGutterWidth() - markerWidth() - actionWidth()),
+    );
   const showBadge = () =>
     Boolean(
       status() &&
-      safeWidth() >= markerGutterWidth() + markerWidth() + actionWidth() + badgeWidth(status()) + 4,
+      safeWidth() >=
+        markerGutterWidth() +
+          markerWidth() +
+          actionWidth() +
+          zoomWidth() +
+          activityWidth() +
+          badgeWidth(statusLabel()) +
+          4,
     );
   const titleWidth = () =>
     Math.max(
@@ -107,7 +150,9 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
         markerGutterWidth() -
         markerWidth() -
         actionWidth() -
-        (showBadge() ? badgeWidth(status()) : 0),
+        zoomWidth() -
+        activityWidth() -
+        (showBadge() ? badgeWidth(statusLabel()) : 0),
     );
   const palette = () =>
     componentPalette(props.theme, {
@@ -185,12 +230,45 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
           )}
         </text>
       ) : null}
+      {zoomWidth() > 0 ? (
+        <text
+          width={zoomWidth()}
+          height={1}
+          flexShrink={0}
+          fg={palette().accent}
+          bg={palette().background}
+          onMouseDown={(event: PaneHeaderPointerEvent) => {
+            if (event.button !== 0) return;
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            props.onRestoreIntent?.();
+          }}
+        >
+          {clipTerminal(zoomLabel(), zoomWidth())}
+        </text>
+      ) : null}
+      {activityWidth() > 0 ? (
+        <Badge
+          theme={props.theme}
+          label={activityLabel()}
+          width={activityWidth()}
+          tone={
+            presence()!.tone === "danger"
+              ? "destructive"
+              : presence()!.tone === "info"
+                ? "accent"
+                : "done"
+          }
+          selected={props.selected}
+          focused={props.keyboardFocused || props.terminalFocused}
+        />
+      ) : null}
       {showBadge() ? (
         <AgentBadge
           theme={props.theme}
-          label={status()!}
+          label={statusLabel()!}
           status={status()!}
-          width={badgeWidth(status())}
+          width={badgeWidth(statusLabel())}
           selected={props.selected}
           focused={props.keyboardFocused || props.terminalFocused}
           hovered={hovered()}

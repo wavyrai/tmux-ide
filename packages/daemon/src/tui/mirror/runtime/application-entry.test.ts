@@ -148,9 +148,11 @@ describe("production OpenTUI entry boundary", () => {
   it("does not install generation diagnostics when the performance stream is disabled", () => {
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
     const host = read("packages/daemon/src/tui/mirror/runtime/open-tui-generation-host.ts");
-    expect(root).toMatch(
-      /createOpenTuiGenerationHost[\s\S]*\.\.\.\(tuiPerfStream[\s\S]*onDiagnostic/u,
+    const feedback = read("packages/daemon/src/tui/mirror/workspace/connection-feedback.ts");
+    expect(root).toContain(
+      "connectionProgress.hostOptions(sessionName, tuiPerfStream, tuiPerfMark)",
     );
+    expect(feedback).toMatch(/performanceEnabled[\s\S]*onDiagnostic/u);
     expect(host).not.toContain("onDiagnostic: () => undefined");
     expect(host).toContain("const diagnose = overrides.onDiagnostic");
     expect(host).toContain('diagnose?.("host-internal-snapshot-publication"');
@@ -158,7 +160,7 @@ describe("production OpenTUI entry boundary", () => {
 
   it("delegates viewport resize to the semantic-ready generation owner", () => {
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
-    expect(root).toContain("createSemanticShellViewportResizeOwner()");
+    expect(root).toContain("createSemanticShellViewportResizeOwner(");
     expect(root).toContain(
       "semanticViewportResize.adopt(dimensions(), currentShell.semantic, generation())",
     );

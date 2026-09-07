@@ -8,6 +8,191 @@ import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
 const generation = "00000000-0000-4000-8000-000000000001";
 
 describe("SessionRuntimeTerminalReplicaOwner", () => {
+  it.each(["stable", "output", "layout", "content", "dimensions", "disposal"])(
+    "admits native backing only for matching canonical state: %s",
+    async (change) => {
+      let request!: MirrorSubscribeRequest;
+      let release!: (value: import("../mirror/native-grid-reader.ts").NativeGridReadResult) => void;
+      let rawCurrent = true;
+      const captureNativeBacking = vi.fn(
+        () =>
+          new Promise<import("../mirror/native-grid-reader.ts").NativeGridReadResult>((resolve) => {
+            release = resolve;
+          }),
+      );
+      const mirror = {
+        subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+          request = candidate;
+          queueMicrotask(() => {
+            candidate.onLayout?.(layout(4, 1));
+            candidate.onEvent({ type: "reset", cols: 4, rows: 1 });
+            candidate.onEvent({ type: "seed", data: new TextEncoder().encode("BOOT") });
+            candidate.onEvent({ type: "cursor", x: 0, y: 0 });
+          });
+          return { ...subscription(candidate), captureNativeBacking };
+        },
+      };
+      const owner = new SessionRuntimeTerminalReplicaOwner(
+        generation,
+        "workspace",
+        "pane-a",
+        mirror as never,
+        { incarnation: `${generation}:0`, initialRevision: 0 },
+      );
+      try {
+        await owner.subscribe(() => undefined);
+        const before = owner.qualificationSnapshot();
+        const pending = owner.captureNativeBacking();
+        await vi.waitFor(() => expect(captureNativeBacking).toHaveBeenCalledOnce());
+        if (change === "output")
+          request.onEvent({ type: "delta", data: new TextEncoder().encode("X") });
+        if (change === "layout") request.onLayout?.(layout(5, 1));
+        if (change === "disposal") await owner.dispose();
+        release({
+          status: "captured",
+          isCurrent: () => rawCurrent,
+          snapshot: {
+            cols: change === "dimensions" ? 3 : 4,
+            rows: 1,
+            history: 0,
+            hscrolled: 0,
+            limit: 2000,
+            cursor: [0, 0],
+            grid: [
+              {
+                flags: 0,
+                cells: [...(change === "content" ? "WRNG" : "BOOT")].map((text) => ({
+                  flags: 0,
+                  width: 1,
+                  bytesHex: Buffer.from(text).toString("hex"),
+                  text,
+                  attributes: 0,
+                  foreground: 8,
+                  background: 8,
+                  underline: 8,
+                  link: 0,
+                  storageFlags: 0,
+                })),
+              },
+            ],
+          },
+        });
+        const result = await pending;
+        if (change === "stable") {
+          expect(result.status).toBe("captured");
+          if (result.status !== "captured") throw new Error("Missing qualified backing");
+          expect(result.authority).toEqual({
+            generation,
+            workspaceName: "workspace",
+            semanticPaneId: "pane-a",
+            incarnation: before.incarnation,
+            revision: before.revision,
+            stateHash: before.stateHash,
+          });
+          expect(result.isCurrent()).toBe(true);
+          rawCurrent = false;
+          expect(result.isCurrent()).toBe(false);
+        } else
+          expect(result.status).toBe(
+            change === "content" || change === "dimensions" ? "mismatch" : "changed",
+          );
+      } finally {
+        await owner.dispose();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "reports native recovery faults to the lifecycle owner (bootstrapped: %s)",
+    async (bootstrapped) => {
+      let request!: MirrorSubscribeRequest;
+      const onFault = vi.fn();
+      const mirror = {
+        subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+          request = candidate;
+          queueMicrotask(() => {
+            candidate.onLayout?.(layout(4, 1));
+            if (bootstrapped) {
+              candidate.onEvent({ type: "reset", cols: 4, rows: 1 });
+              candidate.onEvent({ type: "seed", data: new TextEncoder().encode("BOOT") });
+              candidate.onEvent({ type: "cursor", x: 0, y: 0 });
+            } else candidate.onEvent({ type: "fault", reason: "native-recovery-failed" });
+          });
+          return subscription(candidate);
+        },
+      };
+      const owner = new SessionRuntimeTerminalReplicaOwner(
+        generation,
+        "workspace",
+        "pane-a",
+        mirror as never,
+        { incarnation: `${generation}:0`, initialRevision: 0, onFault },
+      );
+      try {
+        const opening = owner.subscribe(() => undefined);
+        if (bootstrapped) {
+          await opening;
+          request.onEvent({ type: "fault", reason: "native-recovery-failed" });
+        } else await expect(opening).rejects.toThrow("Native terminal recovery failed");
+        expect(onFault).toHaveBeenCalledOnce();
+        expect(onFault.mock.calls[0]![0]).toBeInstanceOf(Error);
+      } finally {
+        await owner.dispose();
+      }
+    },
+  );
+
+  it("shares history checks and ignores counts overtaken by output or disposal", async () => {
+    let request!: MirrorSubscribeRequest;
+    const replies: Array<(size: number | null) => void> = [];
+    const readHistorySize = vi.fn(
+      () => new Promise<number | null>((resolve) => replies.push(resolve)),
+    );
+    const reseed = vi.fn();
+    const mirror = {
+      subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+        request = candidate;
+        queueMicrotask(() => {
+          candidate.onLayout?.(layout(4, 1));
+          candidate.onEvent({ type: "reset", cols: 4, rows: 1 });
+          candidate.onEvent({ type: "seed", data: new TextEncoder().encode("BOOT") });
+          candidate.onEvent({ type: "cursor", x: 0, y: 0 });
+        });
+        return { ...subscription(candidate), readHistorySize, reseed };
+      },
+    };
+    const owner = new SessionRuntimeTerminalReplicaOwner(
+      generation,
+      "workspace",
+      "pane-a",
+      mirror as never,
+      { incarnation: `${generation}:0`, initialRevision: 0 },
+    );
+    try {
+      await owner.subscribe(() => undefined);
+      await owner.subscribe(() => undefined);
+      const output = () => request.onEvent({ type: "delta", data: new TextEncoder().encode("x") });
+      output();
+      output();
+      await vi.waitFor(() => expect(readHistorySize).toHaveBeenCalledTimes(1));
+      output();
+      replies.shift()!(999);
+      await vi.waitFor(() => expect(readHistorySize).toHaveBeenCalledTimes(2));
+      expect(reseed).not.toHaveBeenCalled();
+      replies.shift()!(999);
+      await vi.waitFor(() => expect(reseed).toHaveBeenCalledTimes(1));
+      output();
+      await vi.waitFor(() => expect(readHistorySize).toHaveBeenCalledTimes(3));
+      await owner.dispose();
+      replies.shift()!(999);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(reseed).toHaveBeenCalledTimes(1);
+      expect(readHistorySize).toHaveBeenCalledTimes(3);
+    } finally {
+      await owner.dispose();
+    }
+  });
+
   it("delegates interactive write priority synchronously", async () => {
     const delegated = vi.spyOn(TerminalReplicaInterpreter.prototype, "prioritizeNextWrite");
     const mirror = {
@@ -124,7 +309,7 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     expect(firstUpdates.map((update) => [update.type, update.revision])).toEqual([
       ["terminal.seed", 0],
     ]);
-    expect(firstUpdates[0]).toMatchObject({ cols: 12, rows: 3 });
+    expect(firstUpdates[0]).toMatchObject({ cols: 12, rows: 2 });
     await first.close();
 
     const throwing = await owner.subscribe(() => {
@@ -140,7 +325,7 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     await owner.dispose();
   });
 
-  it("atomically projects a native top-border capture into canonical visible geometry", async () => {
+  it("atomically projects a native top-border capture into canonical native content geometry", async () => {
     const updates: CanonicalTerminalReplicaUpdate[] = [];
     const mirror = {
       subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
@@ -162,7 +347,7 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     );
     await owner.subscribe((update) => updates.push(update));
     expect(updates).toHaveLength(1);
-    expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 12, rows: 3 });
+    expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 12, rows: 2 });
     expect(
       updates[0]?.type === "terminal.seed" && updates[0].snapshot.grid[0]?.cells[0]?.grapheme,
     ).toBe("p");
@@ -174,7 +359,7 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     ["top", 3, 4],
     ["bottom", 3, 4],
   ] as const)(
-    "publishes exactly one %s-border seed at the leased visible geometry",
+    "publishes exactly one %s-border seed at the native content geometry",
     async (status, nativeRows, visibleRows) => {
       const updates: CanonicalTerminalReplicaUpdate[] = [];
       const mirror = {
@@ -205,7 +390,7 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
         type: "terminal.seed",
         revision: 0,
         cols: 8,
-        rows: visibleRows,
+        rows: nativeRows,
         snapshot: { cursor: { x: 3, y: 1 } },
       });
       await owner.dispose();
@@ -245,34 +430,40 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     },
   );
 
-  it("normalizes tmux's right-margin cursor state into the final canonical column", async () => {
-    const updates: CanonicalTerminalReplicaUpdate[] = [];
-    const mirror = {
-      subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
-        queueMicrotask(() => {
-          candidate.onLayout?.(layout(8, 4, "top"));
-          candidate.onEvent({ type: "reset", cols: 8, rows: 3 });
-          candidate.onEvent({ type: "seed", data: new TextEncoder().encode("wrapped!") });
-          candidate.onEvent({ type: "cursor", x: 8, y: 0 });
-        });
-        return subscription(candidate);
-      },
-    };
-    const owner = new SessionRuntimeTerminalReplicaOwner(
-      generation,
-      "workspace",
-      "pane-a",
-      mirror as never,
-      { incarnation: `${generation}:0`, initialRevision: 0 },
-    );
-    await owner.subscribe((update) => updates.push(update));
-    expect(updates).toHaveLength(1);
-    expect(updates[0]).toMatchObject({
-      type: "terminal.seed",
-      snapshot: { cursor: { x: 7, y: 0 } },
-    });
-    await owner.dispose();
-  });
+  it.each([
+    ["right-margin wrap pending", 8, 8],
+    ["cursor retained after a non-reflow width shrink", 106, 118],
+  ] as const)(
+    "normalizes tmux %s into the final canonical column",
+    async (_label, cols, cursorX) => {
+      const updates: CanonicalTerminalReplicaUpdate[] = [];
+      const mirror = {
+        subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+          queueMicrotask(() => {
+            candidate.onLayout?.(layout(cols, 4, "top"));
+            candidate.onEvent({ type: "reset", cols, rows: 3 });
+            candidate.onEvent({ type: "seed", data: new TextEncoder().encode("wrapped!") });
+            candidate.onEvent({ type: "cursor", x: cursorX, y: 0 });
+          });
+          return subscription(candidate);
+        },
+      };
+      const owner = new SessionRuntimeTerminalReplicaOwner(
+        generation,
+        "workspace",
+        "pane-a",
+        mirror as never,
+        { incarnation: `${generation}:0`, initialRevision: 0 },
+      );
+      await owner.subscribe((update) => updates.push(update));
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).toMatchObject({
+        type: "terminal.seed",
+        snapshot: { cursor: { x: cols - 1, y: 0 } },
+      });
+      await owner.dispose();
+    },
+  );
 
   it("retries one crossed layout epoch and commits only the current capture", async () => {
     let request: MirrorSubscribeRequest | undefined;
@@ -311,7 +502,7 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     expect(request).toBeDefined();
     expect(reseeds).toBe(1);
     expect(updates).toHaveLength(1);
-    expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 8, rows: 5 });
+    expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 8, rows: 4 });
     expect(
       updates[0]?.type === "terminal.seed" && updates[0].snapshot.grid[0]?.cells[0]?.grapheme,
     ).toBe("c");
@@ -347,7 +538,7 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     await owner.subscribe((update) => updates.push(update));
     expect(reseeds).toBe(0);
     expect(updates).toHaveLength(1);
-    expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 8, rows: 4 });
+    expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 8, rows: 3 });
     await owner.dispose();
   });
 
@@ -398,6 +589,61 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     },
   );
 
+  it("recaptures quiet native rows after a width shrink instead of reflowing the painted seed", async () => {
+    let request: MirrorSubscribeRequest | undefined;
+    let reseeds = 0;
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const mirror = {
+      subscribe: async (candidate: MirrorSubscribeRequest) => {
+        request = candidate;
+        const emit = (cols: number) => {
+          candidate.onEvent({ type: "reset", cols, rows: 3 });
+          candidate.onEvent({
+            type: "seed",
+            data: new TextEncoder().encode(
+              ["AAAAAAAA", "BBBBBBBB", "CCCCCCCC"].map((row) => row.slice(0, cols)).join("\r\n"),
+            ),
+          });
+          candidate.onEvent({ type: "cursor", x: 0, y: 0 });
+        };
+        queueMicrotask(() => {
+          candidate.onLayout?.(layout(8, 4, "top"));
+          emit(8);
+        });
+        return {
+          ...subscription(candidate),
+          reseed: () => {
+            reseeds++;
+            emit(4);
+          },
+        };
+      },
+    };
+    const owner = new SessionRuntimeTerminalReplicaOwner(
+      generation,
+      "workspace",
+      "pane-a",
+      mirror as never,
+      { incarnation: `${generation}:0`, initialRevision: 0 },
+    );
+    try {
+      await owner.subscribe((update) => updates.push(update));
+      request!.onLayout?.(layout(4, 4, "top"));
+      await vi.waitFor(() => expect(reseeds).toBe(1));
+      await vi.waitFor(() => expect(updates.at(-1)?.type).toBe("terminal.seed"));
+      const seed = updates.at(-1)!;
+      expect(
+        seed.type === "terminal.seed" &&
+          seed.snapshot.grid
+            .slice(0, 3)
+            .map((row) => row.cells.map((cell) => cell.grapheme).join("")),
+      ).toEqual(["AAAA", "BBBB", "CCCC"]);
+      expect(updates.map((update) => update.type)).toEqual(["terminal.seed", "terminal.seed"]);
+    } finally {
+      await owner.dispose();
+    }
+  });
+
   it("fences an old owning window after a pane move and admits the new window lease", async () => {
     let request: MirrorSubscribeRequest | undefined;
     const updates: CanonicalTerminalReplicaUpdate[] = [];
@@ -426,18 +672,18 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     request!.onEvent({ type: "reset", cols: 10, rows: 4 });
     request!.onEvent({ type: "seed", data: new TextEncoder().encode("b") });
     request!.onEvent({ type: "cursor", x: 1, y: 0 });
-    await vi.waitFor(() => expect(updates).toHaveLength(3));
+    await vi.waitFor(() => expect(updates).toHaveLength(2));
     expect(updates.map((update) => [update.type, update.cols, update.rows])).toEqual([
-      ["terminal.seed", 8, 4],
-      ["terminal.patch", 10, 5],
-      ["terminal.seed", 10, 5],
+      ["terminal.seed", 8, 3],
+      ["terminal.seed", 10, 4],
     ]);
     await owner.dispose();
   });
 
-  it("suppresses identical layout leases and patches only a true later geometry change", async () => {
+  it("suppresses identical layout leases and recaptures only a true later geometry change", async () => {
     let request: MirrorSubscribeRequest | undefined;
     const updates: CanonicalTerminalReplicaUpdate[] = [];
+    let reseeds = 0;
     const mirror = {
       subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
         request = candidate;
@@ -447,7 +693,12 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
           candidate.onEvent({ type: "seed", data: new TextEncoder().encode("stable") });
           candidate.onEvent({ type: "cursor", x: 1, y: 0 });
         });
-        return subscription(candidate);
+        return {
+          ...subscription(candidate),
+          reseed: () => {
+            reseeds++;
+          },
+        };
       },
     };
     const owner = new SessionRuntimeTerminalReplicaOwner(
@@ -461,9 +712,16 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     request!.onLayout?.(layout(8, 4, "top"));
     await Promise.resolve();
     expect(updates.map((update) => update.type)).toEqual(["terminal.seed"]);
+    expect(reseeds).toBe(0);
     request!.onLayout?.(layout(9, 4, "top"));
+    request!.onLayout?.(layout(10, 4, "top"));
+    await vi.waitFor(() => expect(reseeds).toBe(1));
+    expect(updates).toHaveLength(1);
+    request!.onEvent({ type: "reset", cols: 10, rows: 3 });
+    request!.onEvent({ type: "seed", data: new TextEncoder().encode("native") });
+    request!.onEvent({ type: "cursor", x: 1, y: 0 });
     await vi.waitFor(() => expect(updates).toHaveLength(2));
-    expect(updates[1]).toMatchObject({ type: "terminal.patch", cols: 9, rows: 4 });
+    expect(updates[1]).toMatchObject({ type: "terminal.seed", cols: 10, rows: 3 });
     await owner.dispose();
   });
 
@@ -500,14 +758,16 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     await owner.subscribe((update) => updates.push(update));
     expect(reseeds).toBe(0);
     expect(updates).toHaveLength(1);
-    expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 8, rows: 4 });
+    expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 8, rows: 3 });
     await owner.dispose();
   });
 
   it.each([
     ["column mismatch", layout(9, 4, "top"), { cols: 8, rows: 3, x: 1, y: 0 }],
     ["off-row mismatch", layout(8, 4, "off"), { cols: 8, rows: 3, x: 1, y: 0 }],
-    ["cursor overflow", layout(8, 4, "top"), { cols: 8, rows: 3, x: 9, y: 0 }],
+    ["negative cursor", layout(8, 4, "top"), { cols: 8, rows: 3, x: -1, y: 0 }],
+    ["non-integer cursor", layout(8, 4, "top"), { cols: 8, rows: 3, x: 1.5, y: 0 }],
+    ["cursor row overflow", layout(8, 4, "top"), { cols: 8, rows: 3, x: 1, y: 3 }],
     [
       "duplicate pane identity",
       {

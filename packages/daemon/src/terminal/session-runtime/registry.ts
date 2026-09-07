@@ -56,6 +56,7 @@ import {
   SessionRuntimeTerminalReplicaOwner,
   type TerminalReplicaQualificationSnapshot,
   type TerminalReplicaSubscription,
+  type TerminalReplicaNativeBackingResult,
 } from "./terminal-replica-owner.ts";
 import {
   SessionRuntimeTerminalDeliveryHub,
@@ -690,6 +691,17 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return await this.#runtime(session).describe();
   }
 
+  async captureNativeBacking(
+    session: string,
+    semanticPaneId: string,
+  ): Promise<TerminalReplicaNativeBackingResult> {
+    const runtime = this.#sessions.get(session);
+    if (this.#disposed || !runtime) return { status: "unavailable" };
+    const result = await runtime.captureNativeBacking(semanticPaneId);
+    if (this.#disposed || this.#sessions.get(session) !== runtime) return { status: "retired" };
+    return result;
+  }
+
   async describeSessionAuthority(session: string): Promise<{
     readonly description: MirrorSessionDescription;
     readonly runtimeSessionId: string;
@@ -1063,6 +1075,7 @@ class SessionRuntime {
     this.#consumers.add(consumer);
     this.#consumersByClientId.set(clientId, consumer);
     this.#authority.connect(clientId, surface);
+    this.#publishAuthority();
     return consumer;
   }
 
@@ -1352,6 +1365,13 @@ class SessionRuntime {
           performanceTraceId,
           causalProbe !== null,
         );
+      else if (input.kind === "bytes")
+        this.#mirror.sendBytes(
+          this.session,
+          semanticPaneId,
+          Buffer.from(input.data, "hex"),
+          performanceTraceId,
+        );
       else this.#mirror.sendKey(this.session, semanticPaneId, input.data, performanceTraceId);
       // Admission succeeded. Arm one product write independently of optional
       // qualification traces; rejected control writes must never affect the
@@ -1559,6 +1579,12 @@ class SessionRuntime {
       await owner.dispose("session-restarted");
       throw error;
     }
+  }
+
+  async captureNativeBacking(semanticPaneId: string): Promise<TerminalReplicaNativeBackingResult> {
+    const owner = this.#terminalReplicas.get(semanticPaneId);
+    if (!owner) return { status: "unavailable" };
+    return await owner.captureNativeBacking();
   }
 
   async openTerminalDelivery(

@@ -7,6 +7,7 @@ import { colorToThemeBytes, createSemanticThemeSnapshot } from "../theme.ts";
 import { expectFrameBounds, renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
 import {
   projectCommandPalette,
+  commandPaletteHitTest,
   type CommandPaletteDescriptor,
   type CommandPalettePhase,
 } from "./command-palette-surface.ts";
@@ -226,6 +227,45 @@ describe("CommandPaletteSurface OpenTUI renderer", () => {
     expect(colorKey(icon!.fg)).not.toBe(colorKey(theme.colors.focus));
     expect(colorKey(label!.fg)).toBe(colorKey(disabledPalette.foreground));
     expect(colorKey(label!.bg)).toBe(colorKey(disabledPalette.background));
+  });
+
+  it.each([1, 2, 3])("keeps the selected command visible at %s rows", async (height) => {
+    const { setup, projection, frame } = await renderPalette(32, height);
+    try {
+      expectFrameBounds(frame(), 32, height);
+      expect(frame()).toContain("Open Termi");
+      expect(frame()).not.toContain("╭");
+      const selected = projection.rows.find((row) => row.kind === "command" && row.selected);
+      expect(selected).toBeDefined();
+      expect(commandPaletteHitTest(projection, selected!.rect.x, selected!.rect.y)).toMatchObject({
+        kind: "command",
+        commandId: "workspace.terminals.open",
+      });
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  it("shows an error instead of a blank one-row palette", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const projection = projectCommandPalette({
+      width: 32,
+      height: 1,
+      query: "",
+      commands: [],
+      phase: "error",
+      errorMessage: "Catalog unavailable",
+    });
+    const setup = await renderForTest(
+      () => <CommandPaletteSurface theme={theme} projection={projection} />,
+      { width: 32, height: 1 },
+    );
+    try {
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("Commands unavailable");
+    } finally {
+      setup.renderer.destroy();
+    }
   });
 
   it("clips safely in a narrow viewport", async () => {

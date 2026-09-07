@@ -25,7 +25,7 @@ test("npm release workflow keeps Electron outside both beta and GM gates", () =>
     "utf8",
   );
 
-  assert.match(workflow, /needs: build_macos_notifier/u);
+  assert.match(workflow, /needs: \[build_macos_notifier, build_macos_tmux\]/u);
   assert.match(workflow, /always\(\).*build_macos_notifier\.result == 'skipped'/u);
   const focusedGate = workflow.indexOf("name: Run focused OpenTUI release checks");
   const buildDaemon = workflow.indexOf("name: Build daemon");

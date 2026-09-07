@@ -383,6 +383,62 @@ describe("PaletteFeatureSession", () => {
     session.dispose();
   });
 
+  it("keeps a resized buffer selection visible and pastes the row under the pointer", async () => {
+    const [height, setHeight] = createSignal(40);
+    const fx = fixture({
+      width: () => 12,
+      height,
+      loadBuffers: async () =>
+        Array.from({ length: 15 }, (_, i) => ({ name: `b${i}`, preview: "界é" })),
+    });
+    const session = createPaletteFeatureSession(fx.host);
+    try {
+      session.openPalette();
+      session.openBufferPicker();
+      await Promise.resolve();
+      await Promise.resolve();
+      for (let i = 0; i < 12; i++) session.handleKey(key("down"));
+      expect(session.snapshot().selectedBufferIndex).toBe(12);
+      setHeight(2);
+      await Promise.resolve();
+      expect(session.snapshot().scrollTop).toBe(12);
+      session.handlePointer({ kind: "down", x: 3, y: 1, button: 0 });
+      expect(fx.intents).toContainEqual({ kind: "paste-buffer", bufferName: "b12" });
+    } finally {
+      session.dispose();
+    }
+  });
+
+  it("does not paste stale buffers while a refreshed list is unavailable", async () => {
+    let calls = 0;
+    const reload = deferred<readonly { name: string; preview: string }[]>();
+    const fx = fixture({
+      loadBuffers: async () =>
+        ++calls === 1 ? [{ name: "old", preview: "stale" }] : reload.promise,
+    });
+    const session = createPaletteFeatureSession(fx.host);
+    try {
+      session.openPalette();
+      session.openBufferPicker();
+      await Promise.resolve();
+      await Promise.resolve();
+      session.retryBuffers();
+      session.handleKey(key("return"));
+      expect(fx.intents.some((intent) => intent.kind === "paste-buffer")).toBe(false);
+      reload.reject(new Error("buffers unavailable"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(session.snapshot().buffers.phase).toBe("error");
+      session.handleKey(key("return"));
+      const { left, top } = palettePos(120, 40, 64);
+      session.handlePointer({ kind: "down", x: left + 2, y: top + 3, button: 0 });
+      expect(fx.intents.some((intent) => intent.kind === "paste-buffer")).toBe(false);
+    } finally {
+      session.dispose();
+    }
+  });
+
   it("aborts in-flight work and rejects all input after dispose", () => {
     const repo = deferred<readonly string[]>();
     let capturedSignal: AbortSignal | null = null;

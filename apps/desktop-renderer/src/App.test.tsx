@@ -21,6 +21,7 @@ import {
 } from "@tmux-ide/contracts";
 
 import { App } from "./App.tsx";
+import type { WebWorkspaceClient } from "./runtime/web-workspace-client.ts";
 import { createDefaultDomShellInput } from "./experience/dom-shell.ts";
 import styles from "./styles.css?raw";
 
@@ -1105,6 +1106,72 @@ describe("desktop App live composition", () => {
     expect(root.textContent).not.toContain("Late old-generation callback");
     dispose();
   });
+
+  it.each([false, true])(
+    "rediscovers an external daemon after a live disconnect (gap=%s)",
+    async (gap) => {
+      installLightMediaPreference();
+      const harness = createHostHarness();
+      harness.setWorkspaces("alpha");
+      harness.setShell("alpha", shellInput("Before restart"));
+      const clients: WebWorkspaceClient[] = [];
+      const { root, dispose } = mount(() => (
+        <App
+          host={harness.host}
+          onWorkspaceClientChanged={(client) => {
+            if (client) clients.push(client);
+          }}
+        />
+      ));
+      try {
+        await markLive(harness, []);
+        await markLive(harness, ["alpha"]);
+        await vi.waitFor(() => expect(clients.at(-1)?.getSnapshot().phase).toBe("live"));
+        if (gap)
+          vi.mocked(harness.host.daemon.refreshConnection).mockResolvedValueOnce({
+            outcome: "authority-retired",
+            previousIdentity: DAEMON_A,
+            daemon: { status: "unavailable", code: "process-not-running", reason: "Restarting" },
+          });
+        vi.mocked(harness.host.daemon.refreshConnection).mockImplementationOnce(async () => {
+          harness.setDaemon(DAEMON_B);
+          harness.setShell("alpha", shellInput("After restart"));
+          return {
+            outcome: "generation-replaced",
+            previousIdentity: DAEMON_A,
+            daemon: { status: "connected", identity: DAEMON_B },
+          };
+        });
+        harness.emit(["alpha"], {
+          type: "connection.changed",
+          state: "degraded",
+          error: { code: "event-unavailable", reason: "Socket lost" },
+        });
+        await vi.waitFor(
+          () => expect(harness.host.daemon.refreshConnection).toHaveBeenCalledTimes(gap ? 2 : 1),
+          { timeout: 3_000 },
+        );
+        if (gap) await markLive(harness, []);
+        await markLive(harness, ["alpha"]);
+        await vi.waitFor(() => {
+          expect(clients.at(-1)?.getSnapshot().target?.daemon.instanceId).toBe(DAEMON_B.instanceId);
+          expect(clients.at(-1)?.getSnapshot().phase).toBe("live");
+          expect(root.textContent).toContain("After restart");
+        });
+        harness.emit(["alpha"], {
+          type: "daemon-generation.changed",
+          previousIdentity: DAEMON_A,
+          daemon: { status: "connected", identity: DAEMON_B },
+        });
+        await Promise.resolve();
+        expect(clients.at(-1)?.getSnapshot().phase).toBe("live");
+        expect(harness.host.daemon.refreshConnection).toHaveBeenCalledTimes(gap ? 2 : 1);
+        expect(harness.host.bootstrap).toHaveBeenCalledOnce();
+      } finally {
+        dispose();
+      }
+    },
+  );
 
   it("leaves same-generation refresh in an honest retryable recovery state", async () => {
     installLightMediaPreference();

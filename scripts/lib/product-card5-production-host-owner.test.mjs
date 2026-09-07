@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { prepareNativePaste } from "./product-native-paste.mjs";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -21,9 +22,134 @@ import {
   launchCard5ProductionWebHosts,
   observeCard5WebCanonical,
   observeCard5WebAuthorityReceipt,
+  requalifyCard5ReplacementSurface,
 } from "./product-card5-production-host-owner.mjs";
 import { PRODUCT_JOURNEY_REGISTRY } from "../product-test-rig-journeys.mjs";
 import { card5AuthorityActivityWithinCap } from "./product-cross-client-host-evidence.mjs";
+
+test("daemon replacement requalification fences the native pane, generation and physical owner", async () => {
+  const globals = [
+    "document",
+    "__TMUX_IDE_CARD5_QUALIFIED_TERMINAL__",
+    "__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__",
+    "__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__",
+  ];
+  const prior = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  const expected = {
+    previousGeneration: "11111111-1111-4111-8111-111111111111",
+    generation: "22222222-2222-4222-8222-222222222222",
+    workspaceName: "workspace-a",
+    semanticPaneId: "pane-a",
+  };
+  const attributes = {
+    "data-phase": "connected",
+    "data-preserves-frame": "true",
+    "data-workspace-name": expected.workspaceName,
+    "data-semantic-pane-id": expected.semanticPaneId,
+  };
+  const document = { defaultView: globalThis };
+  const surface = {
+    isConnected: true,
+    ownerDocument: document,
+    getAttribute: (key) => attributes[key],
+  };
+  const snapshot = {
+    phase: "live",
+    target: { daemon: { instanceId: expected.generation }, workspaceName: expected.workspaceName },
+    authority: {
+      generation: expected.generation,
+      session: "runtime-session",
+      clients: [{ clientId: "client-a", surface: "web" }],
+    },
+  };
+  const binding = {
+    generation: expected.generation,
+    workspaceName: expected.workspaceName,
+    runtimeSession: "runtime-session",
+    stage: "first-seed",
+    semanticPaneIds: [expected.semanticPaneId],
+    clientId: "client-a",
+  };
+  const handles = [];
+  const page = {
+    on() {},
+    evaluateHandle: async () => {
+      const handle = {
+        element: surface,
+        disposed: false,
+        async dispose() {
+          this.disposed = true;
+        },
+      };
+      handles.push(handle);
+      return handle;
+    },
+    evaluate: async (callback, input) =>
+      callback({ ...input, exactSurface: input.exactSurface.element }),
+  };
+  try {
+    Object.defineProperty(globalThis, "document", { configurable: true, value: document });
+    globalThis.__TMUX_IDE_CARD5_QUALIFIED_TERMINAL__ = () => surface;
+    globalThis.__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__ = () => ({ snapshot });
+    globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ = () => ({ currentPhysicalBinding: binding });
+    await assert.rejects(
+      requalifyCard5ReplacementSurface(page, "a".repeat(64), {
+        ...expected,
+        generation: expected.previousGeneration,
+      }),
+      /malformed/,
+    );
+    assert.equal(await requalifyCard5ReplacementSurface(page, "a".repeat(64), expected), true);
+    const accepted = handles.at(-1);
+    for (const [object, key, wrong] of [
+      [surface, "isConnected", false],
+      [surface, "ownerDocument", {}],
+      [attributes, "data-phase", "connecting"],
+      [attributes, "data-preserves-frame", "false"],
+      [attributes, "data-semantic-pane-id", "pane-other"],
+      [attributes, "data-workspace-name", "workspace-other"],
+      [snapshot, "phase", "stale"],
+      [snapshot.target.daemon, "instanceId", expected.previousGeneration],
+      [snapshot.authority, "generation", expected.previousGeneration],
+      [binding, "generation", expected.previousGeneration],
+      [binding, "runtimeSession", "other-session"],
+      [binding, "stage", "connecting"],
+      [binding, "semanticPaneIds", ["pane-other"]],
+      [binding, "clientId", "other-client"],
+      [
+        snapshot.authority,
+        "clients",
+        [...snapshot.authority.clients, ...snapshot.authority.clients],
+      ],
+    ]) {
+      const original = object[key];
+      object[key] = wrong;
+      assert.equal(
+        await requalifyCard5ReplacementSurface(page, "a".repeat(64), expected),
+        false,
+        key,
+      );
+      assert.equal(handles.at(-1).disposed, true, key);
+      assert.equal(accepted.disposed, false, key);
+      object[key] = original;
+    }
+    await assert.rejects(
+      requalifyCard5ReplacementSurface(page, "a".repeat(64), {
+        ...expected,
+        semanticPaneId: "other",
+      }),
+      /retain the qualified/,
+    );
+    assert.equal(await requalifyCard5ReplacementSurface(page, "a".repeat(64), expected), true);
+    assert.equal(accepted.disposed, true);
+    assert.equal(handles.at(-1).disposed, false);
+  } finally {
+    globals.forEach((key, index) => {
+      if (prior[index]) Object.defineProperty(globalThis, key, prior[index]);
+      else delete globalThis[key];
+    });
+  }
+});
 
 function pageHarness(events, name) {
   const listeners = new Map();
@@ -297,16 +423,31 @@ test("pointer dispatch diagnostics are fixed, bounded, raw-free, and prioritized
     ),
     mutationTail: [
       { type: "childList", attribute: null, relevanceHmac: "a".repeat(64) },
-      { type: "attributes", attribute: "data-pane", relevanceHmac: "b".repeat(64) },
-      { type: "raw-private", attribute: "x".repeat(33), relevanceHmac: "raw" },
+      {
+        type: "attributes",
+        attribute: "data-pane",
+        targetRole: ".terminal-surface__viewer-status",
+        relevanceHmac: "b".repeat(64),
+      },
+      {
+        type: "raw-private",
+        attribute: "x".repeat(33),
+        targetRole: "raw-private",
+        relevanceHmac: "raw",
+      },
     ],
   });
   assert.equal(capped.eventCount, 8);
   assert.equal(capped.mutationCount, 64);
   assert.deepEqual(Object.values(capped.mutationCategories), [64, 64, 64, 64, 64, 64]);
   assert.deepEqual(capped.mutationTail, [
-    { type: "attributes", attribute: "data-pane", relevanceHmac: "b".repeat(64) },
-    { type: "invalid", attribute: null, relevanceHmac: null },
+    {
+      type: "attributes",
+      attribute: "data-pane",
+      targetRole: ".terminal-surface__viewer-status",
+      relevanceHmac: "b".repeat(64),
+    },
+    { type: "invalid", attribute: null, targetRole: null, relevanceHmac: null },
   ]);
   const prioritized = boundedCard5PointerDispatchAxes({
     ...passing,
@@ -425,15 +566,24 @@ function launchInput(overrides = {}) {
     signalCode: null,
     kill: () => false,
   };
+  let electronVisible = true;
   const electronApp = {
     process: () => electronProcess,
     firstWindow: async () => electronPage,
     evaluate: async (callback) => {
       const window = {
-        hide: () => events.push(["electron", "hide"]),
-        show: () => events.push(["electron", "show"]),
+        isVisible: () => electronVisible,
+        isFocused: () => false,
+        hide: () => {
+          electronVisible = false;
+          events.push(["electron", "hide"]);
+        },
+        show: () => {
+          electronVisible = true;
+          events.push(["electron", "show"]);
+        },
       };
-      await callback({ BrowserWindow: { getAllWindows: () => [window] } });
+      return await callback({ BrowserWindow: { getAllWindows: () => [window] } });
     },
     close: async () => {
       electronPage.markClosed();
@@ -512,7 +662,9 @@ test("launches Chromium and the production Electron main/preload broker with own
   assert.equal(slow.hidden, true);
   assert.deepEqual(await owner.setElectronSinkBlocked(true), { blocked: true });
   assert.deepEqual(await owner.observeElectronSink(), { blocked: true });
+  assert.equal(await owner.observeElectronHidden(), true);
   await owner.restoreElectron(slow);
+  assert.equal(await owner.observeElectronHidden(), false);
   const receipt = await owner.close();
   assert.equal(receipt.chromiumReason, "graceful-retirement");
   assert.equal(receipt.electronReason, "graceful-retirement");
@@ -1253,6 +1405,15 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
             "physicalBindingStable",
             "probeSurfaceExact",
             "qualifiedSurfaceExact",
+            "transportTail",
+            "retainedFailureCode",
+            "retainedResizeOutcome",
+            "retainedSurfaceConnected",
+            "retainedPhase",
+            "retainedFramePreserved",
+            "retainedRectNonempty",
+            "surfaceCount",
+            "connectedSurfaceCount",
             "workspaceExact",
             "workspaceHmac",
             "workspaceSnapshotStable",
@@ -1491,6 +1652,8 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     getAttribute(name) {
       if (name === "data-semantic-pane-id") return this.pane;
       if (name === "data-phase") return this.phase;
+      if (name === "data-size-passive") return this.sizePassive ?? null;
+      if (name === "data-geometry-ownership") return this.geometryOwnership ?? null;
       if (name === "data-workspace-name") return "workspace-b";
       return null;
     }
@@ -1554,6 +1717,7 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
   })();
   surface.areaRef = area;
   body.areaRef = area;
+  otherBody.areaRef = area;
   let nodes = [surface];
   let hitTarget = surface;
   let clickCount = 0;
@@ -2052,8 +2216,62 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     compositor = true;
     composedBodies = [otherBody, body];
     hitTarget = bodyHit;
+    beforeHandleClick = () => {
+      const row = new ElementStub();
+      row.closest = (selector) =>
+        selector === ".xterm-rows,.xterm-accessibility-tree"
+          ? {
+              closest: (ownerSelector) => (ownerSelector === ".pane-tile__body" ? otherBody : null),
+            }
+          : null;
+      for (let index = 0; index < 40; index += 1) recordIdentityMutation(row);
+      deliverIdentityMutations();
+    };
     await activate();
     assert.equal(clickedNode, body, "compositor activation must click the latched exact pane body");
+    const liveRegion = new ElementStub();
+    liveRegion.matches = (selector) => selector === ".xterm > .xterm-accessibility > .live-region";
+    liveRegion.getAttribute = (name) => (name === "aria-live" ? "assertive" : null);
+    liveRegion.closest = (selector) => (selector === ".pane-tile__body" ? otherBody : null);
+    const originalAreaContains = area.contains.bind(area);
+    area.contains = (value) => value === liveRegion || originalAreaContains(value);
+    try {
+      beforeHandleClick = () => {
+        recordIdentityMutation(liveRegion, [{ nodeType: 3, textContent: "announcement" }]);
+        deliverIdentityMutations();
+      };
+      await activate();
+      const clicksBeforeLiveRegionInsertion = clickCount;
+      beforeHandleClick = () => {
+        recordIdentityMutation(liveRegion, [new ElementStub()]);
+        deliverIdentityMutations();
+      };
+      await assert.rejects(
+        activate(),
+        (error) => error.observation?.reason === "trusted-pointer-topology-rejected",
+      );
+      assert.equal(
+        clickCount,
+        clicksBeforeLiveRegionInsertion,
+        "live-region element insertion remains guarded",
+      );
+      liveRegion.matches = () => false;
+      beforeHandleClick = () => {
+        recordIdentityMutation(liveRegion, [{ nodeType: 3, textContent: "visible output" }]);
+        deliverIdentityMutations();
+      };
+      await assert.rejects(
+        activate(),
+        (error) => error.observation?.reason === "trusted-pointer-topology-rejected",
+      );
+      assert.equal(
+        clickCount,
+        clicksBeforeLiveRegionInsertion,
+        "ordinary text outside the exact live region remains guarded",
+      );
+    } finally {
+      area.contains = originalAreaContains;
+    }
     const clicksBeforeReorder = clickCount;
     beforeHandleClick = () => {
       composedBodies = [body, otherBody];
@@ -3076,6 +3294,22 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     );
     assert.equal(clickCount, clicksBeforeInputPreconditionFailures);
     assert.equal(insertCount, insertsBeforeInputPreconditionFailures);
+    // Cursor-following xterm textarea positioning must not invalidate a
+    // retained, focused input target or its pending exact receipt.
+    beforeKeyboardInsert = () => {
+      recordIdentityMutation(textarea, [], [], { type: "attributes", attributeName: "style" });
+      surface.sizePassive = "true";
+      surface.geometryOwnership = "passive";
+      recordIdentityMutation(surface, [], [], {
+        type: "attributes",
+        attributeName: "data-size-passive",
+      });
+      recordIdentityMutation(surface, [], [], {
+        type: "attributes",
+        attributeName: "data-geometry-ownership",
+      });
+      deliverIdentityMutations();
+    };
     const inserted = await activate(
       [requestBinding, requestBinding, requestBinding, requestBinding, requestBinding, afterInput],
       {
@@ -4861,7 +5095,7 @@ test("ProductRig routes enabled Card5 executors through real hosts before the sy
   );
   assert.match(
     source,
-    /if \(card5Journey\) prepareIsolatedTargetedTuiCwd\(state\.tui\.runtimeDir\);\s*const launchedTui = JSON\.parse\(\s*tuiCommand\(state, \["start"/u,
+    /prepareIsolatedTargetedTuiCwd\(state\.tui\.runtimeDir\);\s*const launchedTui = JSON\.parse\(\s*tuiCommand\(state, \["start"/u,
   );
   assert.match(source, /runCrossClientHandoffOwnerBoot/u);
   assert.match(source, /runDaemonRestartOwnerBoot/u);
@@ -5047,5 +5281,145 @@ test("ProductRig routes enabled Card5 executors through real hosts before the sy
       PRODUCT_JOURNEY_REGISTRY.find((entry) => entry.id === id)?.implementation,
       "implemented",
     );
+  }
+});
+
+test("native paste guard requires one trusted paste with exact binding", () => {
+  const outcome = {
+    inputMethod: "paste",
+    pasteCount: 1,
+    beforeInputCount: 1,
+    inputCount: 1,
+    eventCount: 3,
+    eventOverflow: false,
+    mutationCount: 0,
+    mutationOverflow: false,
+    trusted: true,
+    exactTarget: true,
+    exactData: true,
+    exactInputType: true,
+    cancelableBeforeInput: true,
+    restorationExact: true,
+    rejected: false,
+    exact: true,
+  };
+  const check = (changes = {}) =>
+    card5InputGuardFailureReason(boundedCard5InputGuardAxes({ ...outcome, ...changes }));
+  assert.equal(check(), null);
+  for (const changes of [
+    { pasteCount: 0 },
+    { pasteCount: 2 },
+    { inputCount: 0 },
+    { beforeInputCount: 0 },
+    { trusted: false },
+    { exactTarget: false },
+    { exactData: false },
+    { exact: false },
+    { mutationCount: 1 },
+    { eventCount: 2 },
+  ])
+    assert.notEqual(check(changes), null);
+});
+
+test("trusted native paste reaches xterm once with screen reader mode and restores clipboard", async (t) => {
+  const { chromium } = await import(
+    new URL("../../apps/desktop-renderer/node_modules/playwright/index.mjs", import.meta.url)
+  );
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route("http://localhost:18888/**", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<div id='terminal'></div>" }),
+  );
+  await page.goto("http://localhost:18888/");
+  await page.addScriptTag({
+    path: new URL(
+      "../../apps/desktop-renderer/node_modules/@xterm/xterm/lib/xterm.js",
+      import.meta.url,
+    ).pathname,
+  });
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(async () => {
+    const terminal = new globalThis.Terminal({ screenReaderMode: true });
+    terminal.open(globalThis.document.querySelector("#terminal"));
+    terminal.focus();
+    globalThis.pasteEvidence = { output: [], events: [] };
+    terminal.onData((data) => globalThis.pasteEvidence.output.push(data));
+    for (const type of ["paste", "beforeinput", "input"])
+      globalThis.document.addEventListener(
+        type,
+        (event) => {
+          globalThis.pasteEvidence.events.push({
+            type,
+            trusted: event.isTrusted,
+            exactTarget: event.target.classList.contains("xterm-helper-textarea"),
+          });
+        },
+        true,
+      );
+    await navigator.clipboard.writeText("retained-test-clipboard");
+  });
+  const paste = await prepareNativePaste(page, "handoff-exact-paste");
+  try {
+    await paste.dispatch();
+    assert.deepEqual(await page.evaluate(() => globalThis.pasteEvidence), {
+      output: ["handoff-exact-paste"],
+      events: [
+        { type: "paste", trusted: true, exactTarget: true },
+        { type: "beforeinput", trusted: true, exactTarget: true },
+        { type: "input", trusted: true, exactTarget: true },
+      ],
+    });
+  } finally {
+    await paste.dispose();
+  }
+  assert.equal(
+    await page.evaluate(() => navigator.clipboard.readText()),
+    "retained-test-clipboard",
+  );
+});
+
+test("pointer mutation diagnostics expose only bounded node categories", () => {
+  const result = boundedCard5PointerDispatchAxes({
+    mutationTail: [
+      {
+        type: "childList",
+        targetRole: ".terminal-surface__viewport",
+        addedRoles: ["xterm-root", "canvas", "private-class", "text", "comment"],
+        removedRoles: ["terminal-surface", "private-content"],
+        targetPane: "sibling",
+      },
+    ],
+  });
+  assert.deepEqual(result.mutationTail[0].addedRoles, ["xterm-root", "canvas", "other", "text"]);
+  assert.deepEqual(result.mutationTail[0].removedRoles, ["terminal-surface", "other"]);
+  assert.equal(result.mutationTail[0].targetPane, "sibling");
+  assert.equal(JSON.stringify(result).includes("private"), false);
+});
+
+test("pointer diagnostics distinguish empty placeholders without exposing text", () => {
+  const result = boundedCard5PointerDispatchAxes({
+    mutationTail: [
+      {
+        type: "childList",
+        addedRoles: ["empty-text", "whitespace-text", "text"],
+        removedRoles: [],
+        targetPane: "selected",
+      },
+    ],
+  });
+  assert.deepEqual(result.mutationTail[0].addedRoles, ["empty-text", "whitespace-text", "text"]);
+});
+
+test("pointer mutation target tags are a fixed vocabulary", () => {
+  for (const [tag, expected] of [
+    ["style", "style"],
+    ["span", "span"],
+    ["private-name", "other"],
+  ]) {
+    const result = boundedCard5PointerDispatchAxes({
+      mutationTail: [{ type: "childList", targetTag: tag }],
+    });
+    assert.equal(result.mutationTail[0].targetTag, expected);
   }
 });

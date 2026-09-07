@@ -1,5 +1,28 @@
 import { PANE_ACTION_MENU_ITEMS } from "./pane-action-menu-model.ts";
-import type { ApplicationPaletteCommand } from "../runtime/application-palette-input.ts";
+export interface ApplicationAgentPaletteCommand {
+  readonly kind: "jump-agent";
+  readonly sessionName: string;
+  readonly paneId: string;
+  readonly label: string;
+}
+
+export interface ApplicationSessionPaletteCommand {
+  readonly kind: "open-session";
+  readonly sessionName: string;
+  readonly label: string;
+}
+
+export type ApplicationPaletteCommand =
+  | "home"
+  | "terminals"
+  | "appearance"
+  | "zoom-pane"
+  | "new-window"
+  | "split-right"
+  | "split-down"
+  | "close-pane"
+  | ApplicationAgentPaletteCommand
+  | ApplicationSessionPaletteCommand;
 
 /** Presentation only: execution remains in the existing application owners. */
 export function applicationCommandDescription(command: ApplicationPaletteCommand) {
@@ -22,6 +45,11 @@ export function applicationCommandDescription(command: ApplicationPaletteCommand
     id: command,
     label:
       pane?.label ??
+      (command === "appearance"
+        ? "Appearance…"
+        : command === "zoom-pane"
+          ? "Zoom / unzoom pane"
+          : undefined) ??
       (command === "home"
         ? "F1 Home"
         : command === "terminals"

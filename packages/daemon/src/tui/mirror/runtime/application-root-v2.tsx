@@ -1,3 +1,5 @@
+import { createApplicationPaneActivityOwner } from "./application-pane-activity-owner.ts";
+import { createApplicationConnectionFeedback } from "../workspace/connection-feedback.ts";
 /* @jsxImportSource @opentui/solid */
 import { batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { useKeyboard, usePaste } from "@opentui/solid";
@@ -143,6 +145,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const [generation, setGeneration] = createSignal<ReturnType<
           ReturnType<typeof createOpenTuiGenerationHost>["getSnapshot"]
         > | null>(null, { equals: openTuiGenerationRenderEqual });
+        const connectionProgress = createApplicationConnectionFeedback();
+        const connectionFeedback = connectionProgress.snapshot;
         const shellBinding = createApplicationShellBinding({ onDiagnostic: tuiPerfMark });
         const [shell, setShell] = createSignal(shellBinding.getSnapshot());
         const stopShell = shellBinding.subscribe(setShell);
@@ -161,11 +165,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           createHost: (sessionName, initialConnection) =>
             createOpenTuiGenerationHost(sessionName, presentation, {
               initialConnection,
-              ...(tuiPerfStream
-                ? {
-                    onDiagnostic: (phase, details) => tuiPerfMark(`generation-${phase}`, details),
-                  }
-                : {}),
+              ...connectionProgress.hostOptions(sessionName, tuiPerfStream, tuiPerfMark),
             }),
           onSnapshot: (snapshot) => {
             let clientGeneration: number | null = null;
@@ -218,13 +218,14 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           isThemeModeUnlocked: () => appearance.theme().setting === "system",
         });
         appearance = createAppearanceOwner(config.app, renderer, terminalPaletteOwner);
-        const { theme, palette, setTransientNote, cycleTheme } = appearance;
-        const semanticViewportResize = createSemanticShellViewportResizeOwner();
+        const { theme, palette, setTransientNote } = appearance;
+        const semanticViewportResize = createSemanticShellViewportResizeOwner(layoutSnapshot);
         const activeSurface = createMemo<"home" | "terminals">(
           () => shell().semantic?.workspaceCanvas.activeMode ?? surface(),
         );
         const { terminalRendererSource, terminalGestureRuntime, focusRendererSource } =
           createApplicationTerminalRendererSources(generation);
+        const paneInteractions = createApplicationPaneActivityOwner(generation);
         getTerminalRendererSource = focusRendererSource;
         interaction = createApplicationTerminalInteractionController({
           generation,
@@ -263,7 +264,10 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           binding: shellBinding,
           sessionOwner: () => sessionOwner!,
           focusOwner: () => sessionFocusOwner,
-          setNote: appearance.setNote,
+          setNote: (note) => {
+            connectionProgress.note(note);
+            appearance.setNote(note);
+          },
           setSurface,
         });
         const terminalInputIngress = createApplicationTerminalInputIngress(
@@ -281,6 +285,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           setNote: appearance.setNote,
         });
         onCleanup(() => {
+          connectionProgress.dispose();
           terminalInputIngress.dispose();
           semanticViewportResize.dispose();
           stopLayout();
@@ -301,6 +306,9 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             generationStarter,
             startGeneration,
             interaction,
+            openAppearance: appearance.openPicker,
+            appearanceOpen: appearance.pickerOpen,
+            zoomPane: interaction.zoomPane,
             rendererFocused,
             setSurface,
             setNote: setTransientNote,
@@ -324,6 +332,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         useKeyboard((event) => {
           noteHostInteraction();
           const name = event.name.toLowerCase();
+          if (appearance.handlePickerKey(event)) return;
           if (paneRename.handleKey(event)) return;
           if (selectionOwner.handleKey(name, event)) return;
           if (event.ctrl && name === "q") {
@@ -331,14 +340,19 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             return;
           }
           if (paletteCommands.handleKey(event)) return;
+          if (connectionFeedback() && name === "escape") {
+            startGeneration.cancel();
+            setSurface("home");
+            return;
+          }
           const chromeAction = applicationShellKeyAction(event, false);
           if (chromeAction) {
+            if (chromeAction === "home") startGeneration.cancel();
             if (chromeAction === "home" || chromeAction === "terminals")
               paletteCommands.openSurface(chromeAction, "keyboard");
             else paletteCommands.setOpen(chromeAction === "palette-open", "keyboard");
             return;
           }
-          // Exact-agent admission must settle before any keys reach a PTY.
           if (homeAgents?.opening()) return;
           if (
             activeSurface() === "terminals" &&
@@ -365,15 +379,17 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           )
             return;
           if (activeSurface() !== "terminals") return;
+          selectionOwner.prepareInput();
           terminalInputIngress.routeKey(event);
         });
         usePaste((event) => {
           noteHostInteraction();
+          if (appearance.pickerOpen()) return;
           if (paneRename.handlePaste(event.bytes)) return;
           if (selectionOwner.blocksInput()) return;
           if (paletteCommands.handlePaste(event.bytes)) return;
-          if (activeSurface() !== "terminals") return;
-          if (homeAgents?.opening()) return;
+          if (activeSurface() !== "terminals" || homeAgents?.opening()) return;
+          selectionOwner.prepareInput();
           terminalInputIngress.routePaste(event.bytes);
         });
         onMount(() => {
@@ -390,6 +406,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         return (
           <KeyboardRouteProvider owner={componentKeyboardRoutes}>
             <ApplicationShellView
+              appearanceOwner={appearance}
               homeAgents={homeAgents.presentation}
               dimensions={dimensions}
               surface={activeSurface}
@@ -397,7 +414,13 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               generationStatus={() => shell().status}
               sessions={homeCatalog.sessionNames}
               selectedSession={homeCatalog.selectedSessionIndex}
-              bootstrapNote={appearance.note}
+              bootstrapNote={() => connectionProgress.text() ?? appearance.note()}
+              connectionFeedback={connectionFeedback}
+              onCancelOpen={() => {
+                startGeneration.cancel();
+                setSurface("home");
+              }}
+              onCopyConnectionDetails={() => connectionProgress.copy(hostLocal.copyText)}
               catalogPhase={homeCatalog.phase}
               catalogNote={homeCatalog.note}
               paletteOpen={() => shell().semantic?.focus.palette.open ?? shell().localPaletteOpen}
@@ -408,6 +431,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onPaletteSelect={paletteCommands.select}
               paletteCloseArmed={paletteCommands.closeArmed}
               paletteCommands={paletteCommandList}
+              paneInteractions={paneInteractions}
               terminalRendererSource={terminalRendererSource}
               terminalGestureRuntime={terminalGestureRuntime}
               onApplicationMousePointerIngress={focusedApplicationMouseIngress}
@@ -417,7 +441,10 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               hostFocusTransitionOwner={hostFocusTransitionOwner ?? undefined}
               theme={theme()}
               palette={palette()}
-              onOpenSurface={recoverHostFocus(paletteCommands.openSurface)}
+              onOpenSurface={recoverHostFocus((surface, source) => {
+                if (surface === "home") startGeneration.cancel();
+                paletteCommands.openSurface(surface, source);
+              })}
               onOpenSession={recoverHostFocus((sessionName, source) => {
                 homeAgents?.cancel();
                 void startGeneration(sessionName, false, source);
@@ -428,11 +455,14 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               })}
               onSetPaletteOpen={recoverHostFocus(paletteCommands.setOpen)}
               onPaletteActivate={recoverHostFocus(paletteCommands.activate)}
+              onZoomPane={recoverHostFocus((paneId) => {
+                void interaction.zoomPane(paneId).then(setTransientNote);
+              })}
               onCreateWindow={recoverHostFocus(() =>
                 paletteCommands.activate("new-window", "mouse"),
               )}
               onCreateSession={recoverHostFocus(() => void homeCatalog.createLocalSession())}
-              onCycleTheme={recoverHostFocus(cycleTheme)}
+              onCycleTheme={recoverHostFocus(appearance.openPicker)}
               onBeginPaneRename={recoverHostFocus(paneRename.begin)}
               onCancelPaneRename={recoverHostFocus(paneRename.cancel)}
               onSubmitPaneRename={recoverHostFocus(paneRename.submit)}

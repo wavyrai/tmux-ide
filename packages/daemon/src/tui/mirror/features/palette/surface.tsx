@@ -2,9 +2,10 @@
 import { For, Show } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../../theme.ts";
-import { palettePos } from "../../palette.ts";
+import { clipTerminal } from "../../terminal-text.ts";
 import { CommandPaletteSurface } from "../../workspace/command-palette-surface-view.tsx";
 import type { PaletteFeatureSession } from "./contract.ts";
+import { bufferPickerGeometry } from "./buffer-geometry.ts";
 
 export interface PaletteFeatureSurfaceProps {
   readonly session: PaletteFeatureSession;
@@ -13,13 +14,21 @@ export interface PaletteFeatureSurfaceProps {
 
 export function PaletteFeatureSurface(props: PaletteFeatureSurfaceProps) {
   const snapshot = () => props.session.snapshot();
-  const bufferError = () => {
+  const geometry = () =>
+    bufferPickerGeometry(
+      snapshot().projection.width,
+      snapshot().projection.height,
+      snapshot().buffers.phase === "ready" ? snapshot().buffers.value.length : 0,
+      snapshot().scrollTop,
+    );
+  const message = () => {
     const state = snapshot().buffers;
-    return state.phase === "error" ? state.message : "";
+    return state.phase === "loading"
+      ? "Loading tmux buffers…"
+      : state.phase === "error"
+        ? state.message
+        : "No tmux buffers";
   };
-  const bufferWidth = () => Math.min(64, Math.max(12, snapshot().projection.width - 4));
-  const position = () =>
-    palettePos(snapshot().projection.width, snapshot().projection.height, bufferWidth());
   return (
     <Show
       when={snapshot().level === "buffers"}
@@ -29,60 +38,92 @@ export function PaletteFeatureSurface(props: PaletteFeatureSurfaceProps) {
     >
       <box
         position="absolute"
-        left={position().left}
-        top={position().top}
-        width={bufferWidth()}
-        flexDirection="column"
+        left={geometry().left}
+        top={geometry().top}
+        width={geometry().width}
+        height={geometry().height}
         backgroundColor={props.theme.roles.surfaces.command}
-        border
+        border={geometry().bordered ? true : []}
         borderColor={props.theme.roles.borders.focused}
-        paddingLeft={1}
-        paddingRight={1}
+        overflow="hidden"
       >
-        <box flexDirection="row">
-          <text fg={props.theme.roles.text.link} attributes={1}>
-            {"⎘ Paste buffer"}
+        <Show when={geometry().headerRows > 0}>
+          <text
+            position="absolute"
+            left={0}
+            top={0}
+            width={geometry().contentWidth}
+            height={1}
+            overflow="hidden"
+            fg={props.theme.roles.text.link}
+            attributes={1}
+          >
+            {clipTerminal(
+              snapshot().buffers.phase === "error"
+                ? "r retry · esc back"
+                : "⎘ Paste buffer · esc back",
+              geometry().contentWidth,
+            )}
           </text>
-          <box flexGrow={1} />
-          <text fg={props.theme.roles.text.muted}>{"esc back"}</text>
-        </box>
-        <text fg={props.theme.roles.borders.subtle}>
-          {"─".repeat(Math.max(0, bufferWidth() - 4))}
-        </text>
-        <Show when={snapshot().buffers.phase === "loading"}>
-          <text fg={props.theme.roles.text.muted}>Loading tmux buffers…</text>
         </Show>
-        <Show when={snapshot().buffers.phase === "error"}>
-          <text fg={props.theme.roles.statusTone.danger}>{bufferError()}</text>
-          <text fg={props.theme.roles.text.muted}>r retry · esc back</text>
+        <Show when={geometry().bordered}>
+          <text
+            position="absolute"
+            left={0}
+            top={1}
+            width={geometry().contentWidth}
+            height={1}
+            fg={props.theme.roles.borders.subtle}
+          >
+            {"─".repeat(geometry().contentWidth)}
+          </text>
         </Show>
-        <For each={snapshot().buffers.value.slice(snapshot().scrollTop, snapshot().scrollTop + 10)}>
+        <Show when={snapshot().buffers.phase !== "ready" || snapshot().buffers.value.length === 0}>
+          <text
+            position="absolute"
+            left={0}
+            top={geometry().headerRows - geometry().inset}
+            width={geometry().contentWidth}
+            height={1}
+            overflow="hidden"
+            fg={props.theme.roles.text.secondary}
+          >
+            {clipTerminal(message(), geometry().contentWidth)}
+          </text>
+        </Show>
+        <For
+          each={(snapshot().buffers.phase === "ready" ? snapshot().buffers.value : []).slice(
+            geometry().scrollTop,
+            geometry().scrollTop + geometry().capacity,
+          )}
+        >
           {(buffer, index) => {
             const selected = () =>
-              snapshot().scrollTop + index() === snapshot().selectedBufferIndex;
+              geometry().scrollTop + index() === snapshot().selectedBufferIndex;
             return (
-              <box
+              <text
+                position="absolute"
+                left={0}
+                top={geometry().headerRows - geometry().inset + index()}
+                width={geometry().contentWidth}
                 height={1}
-                flexDirection="row"
-                backgroundColor={
+                overflow="hidden"
+                bg={
                   selected()
                     ? props.theme.roles.selection.selection
                     : props.theme.roles.surfaces.command
                 }
+                fg={
+                  selected()
+                    ? props.theme.roles.selection.selectionText
+                    : props.theme.roles.text.secondary
+                }
               >
-                <text
-                  fg={
-                    selected()
-                      ? props.theme.roles.selection.selectionText
-                      : props.theme.roles.text.secondary
-                  }
-                >
-                  {`${selected() ? "›" : " "} ${buffer.name}  ${buffer.preview}`.slice(
-                    0,
-                    Math.max(0, bufferWidth() - 4),
-                  )}
-                </text>
-              </box>
+                {clipTerminal(
+                  `${selected() ? "›" : " "} ${buffer.name}  ${buffer.preview}`,
+                  geometry().contentWidth,
+                )}
+              </text>
             );
           }}
         </For>

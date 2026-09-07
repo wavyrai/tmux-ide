@@ -40,6 +40,41 @@ function splitLayout(): OpenTuiWorkspaceLayoutSnapshot {
 }
 
 describe("application terminal interaction controller", () => {
+  it("uses exact native pane zoom state and rejects missing targets", async () => {
+    const dispatch = vi.fn(async (_command: unknown) => ({
+      kind: "owner-action",
+      result: { zoomed: true },
+    }));
+    let current = splitLayout();
+    const generation = {
+      status: "live",
+      connection: { workspaceName: "workspace.alpha" },
+      client: { dispatch },
+    };
+    const controller = createApplicationTerminalInteractionController({
+      generation: () => generation as never,
+      layout: () => current,
+      focusedPane: () => "pane.main",
+      setFocusedPane: () => undefined,
+      diagnosticsEnabled: false,
+      diagnose: () => undefined,
+      createOperationId: () => "zoom-test",
+    });
+    await expect(controller.zoomPane("pane.peer")).resolves.toBe("zoomed pane");
+    expect(dispatch).toHaveBeenLastCalledWith({
+      kind: "owner-action",
+      name: "workspace.pane.zoom.toggle",
+      input: { workspaceName: "workspace.alpha", semanticPaneId: "pane.peer", desired: "zoomed" },
+      operationId: "zoom-test",
+    });
+    const zoomed = { ...current.current!, zoomed: true, panes: [current.current!.panes[1]!] };
+    current = { current: zoomed, windows: [zoomed] };
+    await expect(controller.zoomPane("pane.peer")).resolves.toBe("restored pane layout");
+    expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ input: { desired: "unzoomed" } });
+    await expect(controller.zoomPane("pane.missing")).resolves.toContain("unavailable");
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  });
+
   it("routes Ctrl+O through canonical pane selection", async () => {
     const dispatch = vi.fn(async (command) => ({
       kind: "semantic-intent",
@@ -1134,90 +1169,104 @@ describe("application terminal interaction controller", () => {
     expect(diagnostics).not.toHaveBeenCalledWith("window-switch-settled", expect.anything());
   });
 
-  it("coalesces resize previews and does no timing work when diagnostics are disabled", () => {
-    let micros = 10;
-    const enabledDiagnostics = vi.fn();
-    const resizeGeneration = {
-      status: "live",
-      daemonGeneration: "generation-a",
-      rendererEpoch: 7,
-      connection: { workspaceName: "workspace.alpha" },
-      client: { getSnapshot: () => ({ generation: 4 }) },
-      adapter: {
-        paneCanonicalIdentity: () => ({
-          sourceEpoch: 2,
-          generation: "generation-a",
-          incarnation: "incarnation-a",
-          revision: 9,
-          stateHash: "0123456789abcdef",
-          cols: 20,
-          rows: 8,
-        }),
-      },
-    };
-    const enabled = createApplicationTerminalInteractionController({
-      generation: () => resizeGeneration as never,
-      layout: () => layout(),
-      setFocusedPane: () => undefined,
-      diagnosticsEnabled: true,
-      diagnose: enabledDiagnostics,
-      createTraceId: () => "resize-trace",
-      nowMicros: () => micros,
-    });
-    const preview = {
-      semanticPaneId: "pane.main",
-      axis: "cols" as const,
-      cells: 12,
-      guide: { x: 12, y: 0, width: 1, height: 8 },
-    };
-    enabled.previewPaneResize(preview);
-    enabled.previewPaneResize({
-      ...preview,
-      cells: 13,
-      guide: { x: 13, y: 0, width: 1, height: 8 },
-    });
-    micros = 40;
-    enabled.settleResizeGuideFrame();
-    expect(enabledDiagnostics).toHaveBeenCalledTimes(3);
-    expect(enabledDiagnostics).toHaveBeenCalledWith(
-      "resize-guide-settled",
-      expect.objectContaining({
-        traceId: "resize-trace",
+  it.each(["off", "top", "bottom"] as const)(
+    "coalesces resize previews with %s pane status and skips disabled timing",
+    (paneBorderStatus) => {
+      const base = layout();
+      const window = {
+        ...base.current!,
+        paneBorderStatus,
+        rows: paneBorderStatus === "off" ? 8 : 9,
+        panes: base.current!.panes.map((pane) => ({
+          ...pane,
+          height: paneBorderStatus === "off" ? 8 : 9,
+        })),
+      };
+      const resizeLayout = { current: window, windows: [window] };
+      let micros = 10;
+      const enabledDiagnostics = vi.fn();
+      const resizeGeneration = {
+        status: "live",
+        daemonGeneration: "generation-a",
+        rendererEpoch: 7,
+        connection: { workspaceName: "workspace.alpha" },
+        client: { getSnapshot: () => ({ generation: 4 }) },
+        adapter: {
+          paneCanonicalIdentity: () => ({
+            sourceEpoch: 2,
+            generation: "generation-a",
+            incarnation: "incarnation-a",
+            revision: 9,
+            stateHash: "0123456789abcdef",
+            cols: 20,
+            rows: 8,
+          }),
+        },
+      };
+      const enabled = createApplicationTerminalInteractionController({
+        generation: () => resizeGeneration as never,
+        layout: () => resizeLayout,
+        setFocusedPane: () => undefined,
+        diagnosticsEnabled: true,
+        diagnose: enabledDiagnostics,
+        createTraceId: () => "resize-trace",
+        nowMicros: () => micros,
+      });
+      const preview = {
         semanticPaneId: "pane.main",
-        axis: "cols",
+        axis: "cols" as const,
+        cells: 12,
+        guide: { x: 12, y: 0, width: 1, height: 8 },
+      };
+      enabled.previewPaneResize(preview);
+      enabled.previewPaneResize({
+        ...preview,
         cells: 13,
         guide: { x: 13, y: 0, width: 1, height: 8 },
-        guideDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
-        presentationDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
-        presentationChanged: true,
-        identityExact: true,
-        durationMicros: 30,
-      }),
-    );
-    enabled.previewPaneResize(preview);
-    resizeGeneration.rendererEpoch = 8;
-    enabled.settleResizeGuideFrame();
-    expect(enabledDiagnostics).toHaveBeenCalledWith(
-      "resize-guide-settled",
-      expect.objectContaining({ identityExact: false }),
-    );
+      });
+      micros = 40;
+      enabled.settleResizeGuideFrame();
+      expect(enabledDiagnostics).toHaveBeenCalledTimes(3);
+      expect(enabledDiagnostics).toHaveBeenCalledWith(
+        "resize-guide-settled",
+        expect.objectContaining({
+          traceId: "resize-trace",
+          semanticPaneId: "pane.main",
+          axis: "cols",
+          cells: 13,
+          guide: { x: 13, y: 0, width: 1, height: 8 },
+          guideDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          presentationDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          presentationChanged: true,
+          identityExact: true,
+          durationMicros: 30,
+        }),
+      );
+      enabled.previewPaneResize(preview);
+      resizeGeneration.rendererEpoch = 8;
+      enabled.settleResizeGuideFrame();
+      expect(enabledDiagnostics).toHaveBeenCalledWith(
+        "resize-guide-settled",
+        expect.objectContaining({ identityExact: false }),
+      );
 
-    const nowMicros = vi.fn(() => {
-      throw new Error("disabled diagnostics must not read the clock");
-    });
-    const disabled = createApplicationTerminalInteractionController({
-      generation: () => null,
-      layout: () => layout(),
-      setFocusedPane: () => undefined,
-      diagnosticsEnabled: false,
-      diagnose: vi.fn(),
-      nowMicros,
-    });
-    disabled.previewPaneResize(preview);
-    disabled.settleResizeGuideFrame();
-    expect(disabled.observeDiagnosticWindowFrame()).toBeNull();
-    expect(nowMicros).not.toHaveBeenCalled();
-  });
+      const nowMicros = vi.fn(() => {
+        throw new Error("disabled diagnostics must not read the clock");
+      });
+      const disabled = createApplicationTerminalInteractionController({
+        generation: () => null,
+        layout: () => layout(),
+        setFocusedPane: () => undefined,
+        diagnosticsEnabled: false,
+        diagnose: vi.fn(),
+        nowMicros,
+      });
+      disabled.previewPaneResize(preview);
+      disabled.settleResizeGuideFrame();
+      expect(disabled.observeDiagnosticWindowFrame()).toBeNull();
+      expect(nowMicros).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not credit a guide frame after pointer release removed the guide", async () => {
     const diagnostics = vi.fn();

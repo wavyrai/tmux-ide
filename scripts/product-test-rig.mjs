@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { ApplicationShellResourceV3SchemaZ } from "../packages/contracts/src/application-shell-resource.ts";
+import { observeRestartDocumentBoundary } from "./lib/product-restart-document-boundary.mjs";
 
 /**
  * One real-product test rig: private tmux + one daemon + real TUI + real Web.
@@ -32,6 +34,7 @@ import {
   startDaemon,
   waitForReadinessLadder,
 } from "../apps/desktop-renderer/e2e/fixtures/daemon.ts";
+import { verifyDaemonRetirement } from "../apps/desktop-renderer/e2e/fixtures/daemon-retirement.ts";
 import { shellChromeLayout } from "../packages/daemon/src/tui/mirror/shell-chrome.ts";
 import { startDevServer } from "../apps/desktop-renderer/e2e/fixtures/dev-server.ts";
 import {
@@ -278,6 +281,7 @@ import {
   issueCard5PredecessorDescriptor,
   observeCard5WebAuthorityReceipt,
   observeCard5WebCanonical,
+  requalifyCard5ReplacementSurface,
   releaseCard5WebOwnedAuthorities,
   rejectCard5PredecessorDescriptor,
 } from "./lib/product-card5-production-host-owner.mjs";
@@ -296,7 +300,7 @@ import {
   assessCard5TuiRetainedFocus,
   assessCard5TuiFocusTransition,
   assessCard5TuiHandoffInput,
-  assessCard5ReplacementEnvelopeEvidence,
+  assessCard5DaemonRestartEnvelopeEvidence,
   boundedCard5PostInputAuthorityPreconditionObservation,
   boundedCard5TuiFocusFailureObservation,
   boundedCard5TuiBlurTransitionObservation,
@@ -359,6 +363,7 @@ import {
 } from "../packages/daemon/src/terminal/protocol/pane-display-name.ts";
 import { decodeTmuxArgument } from "../packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts";
 import {
+  activeCanonicalIdentity,
   assessFirstKeyPasteBoundaries,
   assessProductFirstInput,
   assessProductInputDistribution,
@@ -623,7 +628,9 @@ function card5ArtifactCorrelation(state, captureEvidence, journeyEvidence, evide
       host?.workspaceRow?.sessionName === state?.session &&
       host?.workspaceRow?.availability === "live" &&
       host?.shellFleetSessionId === identity?.fleetSessionId &&
-      host?.shellWorkspaceName === state?.workspace,
+      typeof identity?.shellWorkspaceId === "string" &&
+      host?.shellWorkspaceId === identity.shellWorkspaceId &&
+      host?.shellWorkspaceName === identity.shellWorkspaceName,
     terminal: exactTerminal?.length === 1,
     native:
       captureEvidence?.truth?.session === state?.session &&
@@ -3070,10 +3077,27 @@ async function card5ArtifactIdentity(daemon, label, semanticPaneId) {
   ) {
     throw new Error("Card5 artifact identity was unavailable or ambiguous");
   }
+  const shellResponse = await fetch(
+    `${daemon.baseUrl}/api/project/${encodeURIComponent(label)}/application-shell?version=3`,
+    {
+      headers: { Authorization: `Bearer ${daemon.record.authToken}` },
+      signal: AbortSignal.timeout(5_000),
+    },
+  );
+  if (!shellResponse.ok) throw new Error(`application-shell answered ${shellResponse.status}`);
+  const shell = ApplicationShellResourceV3SchemaZ.parse(await shellResponse.json());
+  if (
+    shell.daemon.instanceId !== daemon.record.instanceId ||
+    shell.resource.fleetSessionId !== session[0].sessionId
+  ) {
+    throw new Error("Card5 artifact shell belongs to a different generation or fleet session");
+  }
   return Object.freeze({
     fleetSessionId: session[0].sessionId,
     catalogRevision: body.catalogRevision,
     semanticPaneId,
+    shellWorkspaceId: shell.resource.workspace.id,
+    shellWorkspaceName: shell.resource.workspace.name,
   });
 }
 
@@ -3434,7 +3458,12 @@ async function waitForCard5ProductionClientConvergence(
   evidenceKey,
   tuiEvidence,
   timeoutMs,
-  { expectedPane = undefined, onStablePane = undefined, postHandoff = null } = {},
+  {
+    expectedPane = undefined,
+    onStablePane = undefined,
+    postHandoff = null,
+    replacement = null,
+  } = {},
 ) {
   if (expectedPane !== undefined && (typeof expectedPane !== "string" || expectedPane.length < 1)) {
     throw new TypeError("Card5 expected convergence pane is malformed");
@@ -3467,16 +3496,40 @@ async function waitForCard5ProductionClientConvergence(
   const candidateSummaries = [];
   const focusCandidates = [];
   const authorityViews = [];
+  const qualifiedReplacementPages = new Set();
+  const observeWeb = async (page, processIdentity) => {
+    if (replacement !== null && !qualifiedReplacementPages.has(page)) {
+      const qualified = await requalifyCard5ReplacementSurface(page, evidenceKey, {
+        ...replacement,
+        workspaceName: state.workspace,
+        semanticPaneId: expectedPane,
+      });
+      if (!qualified) throw new Error("Card5 replacement surface is not yet generation-qualified");
+      qualifiedReplacementPages.add(page);
+    }
+    return observeCard5WebCanonical(page, evidenceKey, processIdentity);
+  };
   while (performance.now() < deadline) {
     attempts += 1;
     const observed = await observeCard5WithinDeadline(
       () =>
         Promise.all([
-          observeCard5WebCanonical(hosts.chromiumPage, evidenceKey, hosts.chromiumProcessIdentity),
-          observeCard5WebCanonical(hosts.electronPage, evidenceKey, hosts.electronProcessIdentity),
+          observeWeb(hosts.chromiumPage, hosts.chromiumProcessIdentity),
+          observeWeb(hosts.electronPage, hosts.electronProcessIdentity),
         ]),
       { deadline },
     );
+    // Runtime replacement can briefly make the page's canonical observation
+    // unavailable. It invalidates a stability sample, not the remaining
+    // convergence budget. Never join samples across that interruption.
+    if (observed.status === "source-unavailable" && performance.now() < deadline) {
+      previousDigest = null;
+      stableSamples = 0;
+      await new Promise((resolveWait) =>
+        setTimeout(resolveWait, Math.min(40, Math.max(0, deadline - performance.now()))),
+      );
+      continue;
+    }
     if (observed.status !== "ok" || performance.now() >= deadline) break;
     const [webA, webB] = observed.value;
     const tuiAuthorityActivity = tuiEvidence.authorityActivitySnapshot();
@@ -3517,6 +3570,16 @@ async function waitForCard5ProductionClientConvergence(
       webPhysicalLifecycleEvidence?.chromium !== null &&
       webPhysicalLifecycleEvidence?.electron !== null;
     if (performance.now() >= deadline) break;
+    const backgroundClientId =
+      postHandoff !== null &&
+      webA?.workspaceEvidence?.authority?.clients?.some(
+        (client) =>
+          client.clientId === postHandoff.expectedTuiClientId &&
+          client.surface === "opentui" &&
+          client.state === "background",
+      )
+        ? postHandoff.expectedTuiClientId
+        : null;
     const canonicalAssessmentA =
       tui === null
         ? null
@@ -3525,7 +3588,10 @@ async function waitForCard5ProductionClientConvergence(
             expectedPane: exactPaneId,
             expectedCanonical: tui,
             expectedAuthority:
-              postHandoff === null ? webA?.workspaceEvidence?.authority : undefined,
+              postHandoff === null || backgroundClientId !== null
+                ? webA?.workspaceEvidence?.authority
+                : undefined,
+            backgroundClientId,
             evidenceKey,
           });
     const canonicalAssessmentB =
@@ -3536,7 +3602,10 @@ async function waitForCard5ProductionClientConvergence(
             expectedPane: exactPaneId,
             expectedCanonical: tui,
             expectedAuthority:
-              postHandoff === null ? webB?.workspaceEvidence?.authority : undefined,
+              postHandoff === null || backgroundClientId !== null
+                ? webB?.workspaceEvidence?.authority
+                : undefined,
+            backgroundClientId,
             evidenceKey,
           });
     const authorityAssessmentA =
@@ -3555,6 +3624,7 @@ async function waitForCard5ProductionClientConvergence(
             expectedSurface: postHandoff.expectedSurface,
             grantRevision: postHandoff.grantRevision,
             inputProofHmac: postHandoff.inputProofHmac,
+            geometryTransfer: postHandoff.geometryTransfer ?? null,
             evidenceKey,
           });
     const authorityAssessmentB =
@@ -3573,6 +3643,7 @@ async function waitForCard5ProductionClientConvergence(
             expectedSurface: postHandoff.expectedSurface,
             grantRevision: postHandoff.grantRevision,
             inputProofHmac: postHandoff.inputProofHmac,
+            geometryTransfer: postHandoff.geometryTransfer ?? null,
             evidenceKey,
           });
     const bindingAssessment =
@@ -3641,6 +3712,13 @@ async function waitForCard5ProductionClientConvergence(
       Object.freeze({
         a: authorityAssessmentA,
         b: authorityAssessmentB,
+        connections: [webA, webB].map((web) => ({
+          phase: web?.workspaceEvidence?.phase,
+          targetCurrent: web?.workspaceEvidence?.target?.daemon?.instanceId === tui?.generation,
+          authorityMatchesTarget:
+            web?.workspaceEvidence?.authority?.generation ===
+            web?.workspaceEvidence?.target?.daemon?.instanceId,
+        })),
         activityA: webA?.workspaceEvidence?.authorityActivity ?? null,
         activityB: webB?.workspaceEvidence?.authorityActivity ?? null,
         activityTui: tuiAuthorityActivity,
@@ -3812,6 +3890,22 @@ async function waitForCard5ProductionClientConvergence(
     authorityViews,
     candidateSummaries,
   });
+  if (observedClients === 0) {
+    mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
+    const captureId = Date.now();
+    await Promise.allSettled(
+      [
+        ["chromium", hosts.chromiumPage],
+        ["electron", hosts.electronPage],
+      ].map(([host, page]) =>
+        page.screenshot({
+          path: join(artifactDir, `card5-convergence-${captureId}-${host}.png`),
+          fullPage: false,
+          timeout: 2_000,
+        }),
+      ),
+    );
+  }
   throw error;
 }
 
@@ -3926,6 +4020,7 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
         ? {}
         : {
             inputText: input.text,
+            inputMethod: "paste",
             inputSha256: input.sha256,
             inputHostRole:
               page === hosts.chromiumPage
@@ -4041,6 +4136,7 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
   }
   const transitions = [];
   const ownerReleaseEvidence = [];
+  let retainedTuiBinding = null;
   for (const [ordinal, step] of steps.entries()) {
     const marker = `CARD5_HANDOFF_${ordinal}_${randomBytes(4).toString("hex")}`;
     const priorOwnerPage = ordinal === 2 ? hosts.chromiumPage : hosts.electronPage;
@@ -4372,6 +4468,10 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
         bindingEpoch: bindingSelection.binding.bindingEpoch,
         processId: tuiCanonicalBeforeInput.processId,
       });
+      // The third handoff starts with an already-background TUI and needs no
+      // new blur. Retain the original binding; convergence revalidates it
+      // against live lifecycle evidence instead of accepting a new epoch.
+      retainedTuiBinding ??= hostFocusBinding;
       hostFocusBindingHmac = card5EvidenceHmac(
         "host-focus-control-binding",
         JSON.stringify(hostFocusBinding),
@@ -4601,7 +4701,26 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
         releaseRevisions,
         evidenceKey,
       });
-      nullCandidates.push(nullAssessment.observation);
+      nullCandidates.push({
+        ...nullAssessment.observation,
+        clients: samples.map((sample) => ({
+          activity: sample?.workspaceEvidence?.authorityActivity ?? null,
+          transitions: (sample?.workspaceEvidence?.authorityRecords ?? [])
+            .slice(-8)
+            .map((record) => ({
+              revision: record.revision,
+              owners: [record.inputOwner, record.focusOwner, record.geometryOwner].map((owner) =>
+                owner === null ? null : card5EvidenceHmac("release-owner", owner, evidenceKey),
+              ),
+              states: record.clients.map((client) => ({
+                clientHmac: card5EvidenceHmac("release-owner", client.clientId, evidenceKey),
+                surface: client.surface,
+                state: client.state,
+                activityRevision: client.activityRevision,
+              })),
+            })),
+        })),
+      });
       if (nullCandidates.length > 2) nullCandidates.shift();
       const candidate = JSON.stringify({
         blur: blurObservation,
@@ -5122,9 +5241,12 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
           currentAuthority !== undefined &&
           JSON.stringify(currentAuthorities[0]) === JSON.stringify(currentAuthorities[1]) &&
           expectedWebClient !== null &&
-          ["input", "focus", "geometry"].every(
-            (kind) => currentAuthority.owners?.[kind] === expectedWebClient,
-          ) &&
+          currentAuthority.owners?.input === expectedWebClient &&
+          // This step explicitly releases focus/geometry, then pastes without
+          // a foreground transition or viewport request. Those owners must
+          // remain at the captured baseline; input is a separate capability.
+          currentAuthority.owners?.focus === nullAuthoritySnapshot.owners.focus &&
+          currentAuthority.owners?.geometry === nullAuthoritySnapshot.owners.geometry &&
           currentAuthority.clients?.some(
             ({ clientId, surface }) => clientId === expectedWebClient && surface === "web",
           );
@@ -5161,6 +5283,12 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
         expectedGeneration: nullAuthoritySnapshot.generation,
         expectedBaselineAuthority: nullAuthoritySnapshot,
         expectedClientId: expectedGrantClient || null,
+        ...(ordinal > 0
+          ? {
+              expectedFocusOwner: nullAuthoritySnapshot.owners.focus,
+              expectedGeometryOwner: nullAuthoritySnapshot.owners.geometry,
+            }
+          : {}),
         expectedSurface: ordinal === 0 ? "opentui" : "web",
         expectedGrantRecord,
         authorityRecords,
@@ -5325,6 +5453,25 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
         postInputRecordCount: postInputMark.recordCount,
       });
     }
+    const postHandoff = {
+      expectedClientId: grantRecord.inputOwner,
+      expectedSurface: ordinal === 0 ? "opentui" : "web",
+      grantRevision: grantRecord.revision,
+      inputProofHmac: card5EvidenceHmac(
+        "post-handoff-input-proof",
+        ordinal === 0
+          ? [tuiInputTrace.hostReceiptHmac, tuiInputTrace.traceHmac, inputSha256].join("\0")
+          : [
+              exactInputReceipt.requestId,
+              exactInputReceipt.seq,
+              exactInputReceipt.authorityClientId,
+              inputSha256,
+            ].join("\0"),
+        evidenceKey,
+      ),
+      expectedBinding: retainedTuiBinding,
+      expectedTuiClientId: ownerTuiClientId,
+    };
     const rendered = await waitForCard5ProductionClientConvergence(
       state,
       hosts,
@@ -5333,25 +5480,7 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
       5_000,
       {
         expectedPane,
-        postHandoff: {
-          expectedClientId: grantRecord.inputOwner,
-          expectedSurface: ordinal === 0 ? "opentui" : "web",
-          grantRevision: grantRecord.revision,
-          inputProofHmac: card5EvidenceHmac(
-            "post-handoff-input-proof",
-            ordinal === 0
-              ? [tuiInputTrace.hostReceiptHmac, tuiInputTrace.traceHmac, inputSha256].join("\0")
-              : [
-                  exactInputReceipt.requestId,
-                  exactInputReceipt.seq,
-                  exactInputReceipt.authorityClientId,
-                  inputSha256,
-                ].join("\0"),
-            evidenceKey,
-          ),
-          expectedBinding: hostFocusBinding,
-          expectedTuiClientId: ownerTuiClientId,
-        },
+        postHandoff,
       },
     );
     const renderedMarkerCount = (
@@ -5452,6 +5581,7 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
             }),
       tuiInputTrace,
     };
+    hosts.onVerifiedHandoff?.(postHandoff);
     transitions.push(
       Object.freeze({
         ...transition,
@@ -5485,7 +5615,7 @@ async function proveCard5PassiveGeometry(
   state,
   hosts,
   evidenceKey,
-  { activeChallenge = true, semanticPaneId } = {},
+  { activeChallenge = true, semanticPaneId, postHandoff = null } = {},
 ) {
   if (typeof semanticPaneId !== "string" || semanticPaneId.length < 1) {
     throw new Error("Card5 geometry proof requires the accepted convergence pane");
@@ -5494,9 +5624,10 @@ async function proveCard5PassiveGeometry(
     "list-panes",
     "-a",
     "-F",
-    "#{session_id}\t#{window_id}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{pane_width}\t#{pane_height}",
+    "#{session_id}\t#{window_id}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{pane_width}\t#{pane_height}\t#{window_width}\t#{window_height}\t#{pane_left}\t#{pane_top}\t#{pane-border-status}",
   ]);
   let geometryReceipt = null;
+  let geometryTransfer = null;
   if (activeChallenge) {
     const geometryBefore = await observeCard5WebCanonical(
       hosts.chromiumPage,
@@ -5528,17 +5659,74 @@ async function proveCard5PassiveGeometry(
           generation === observed.generation &&
           authorityClientId === observed.workspaceEvidence?.authority?.owners?.geometry,
       );
-      if (geometryReceipt) break;
+      if (geometryReceipt) {
+        const grant = observed.workspaceEvidence.authorityRecords.find(
+          (record) =>
+            record.revision > geometryBefore.workspaceEvidence.authority.revision &&
+            record.geometryOwner === geometryReceipt.authorityClientId,
+        );
+        if (!grant) throw new Error("Card5 geometry receipt has no causal authority grant");
+        geometryTransfer = {
+          clientId: geometryReceipt.authorityClientId,
+          revision: grant.revision,
+          receiptHmac: card5EvidenceHmac(
+            "geometry-transfer-receipt",
+            JSON.stringify(geometryReceipt),
+            evidenceKey,
+          ),
+        };
+        break;
+      }
       await new Promise((resolveWait) => setTimeout(resolveWait, 10));
     }
-    if (!geometryReceipt) throw new Error("Card5 geometry challenge had no exact viewport receipt");
+    if (!geometryReceipt) {
+      const observed = await observeCard5WebCanonical(
+        hosts.chromiumPage,
+        evidenceKey,
+        hosts.chromiumProcessIdentity,
+      );
+      const geometryDom = await hosts.chromiumPage.evaluate(() => {
+        const surface = globalThis.__TMUX_IDE_CARD5_QUALIFIED_TERMINAL__?.("observation");
+        const viewport = surface?.querySelector(".terminal-surface__viewport");
+        const rect = (node) => {
+          const box = node?.getBoundingClientRect();
+          return box ? [box.width, box.height] : null;
+        };
+        return {
+          surface: rect(surface),
+          viewport: rect(viewport),
+          phase: surface?.getAttribute("data-phase"),
+          passive: surface?.getAttribute("data-size-passive"),
+          ownership: surface?.getAttribute("data-geometry-ownership"),
+          outcome: surface?.getAttribute("data-resize-outcome"),
+          clientViewport: surface?.getAttribute("data-client-viewport"),
+          sourceGrid: surface?.getAttribute("data-source-grid"),
+        };
+      });
+      const error = new Error("Card5 geometry challenge had no exact viewport receipt");
+      error.observation = {
+        operation: "card5-passive-geometry",
+        reason: "viewport-receipt-missing",
+        beforeViewport: viewport,
+        afterViewport: hosts.chromiumPage.viewportSize(),
+        geometryDom,
+        beforeOwnerNull: geometryBefore.workspaceEvidence.authority.owners.geometry === null,
+        afterOwnerNull: observed.workspaceEvidence.authority.owners.geometry === null,
+        beforeActivity: geometryBefore.workspaceEvidence.authorityActivity,
+        afterActivity: observed.workspaceEvidence.authorityActivity,
+      };
+      throw error;
+    }
     await waitForCard5ProductionClientConvergence(
       state,
       hosts,
       evidenceKey,
       hosts.tuiEvidence,
       5_000,
-      { expectedPane: semanticPaneId },
+      {
+        expectedPane: semanticPaneId,
+        postHandoff: postHandoff ? { ...postHandoff, geometryTransfer } : null,
+      },
     );
   }
   const samples = [];
@@ -5615,7 +5803,24 @@ async function proveCard5PassiveGeometry(
         !Number.isSafeInteger(identity.observed?.cols) ||
         !Number.isSafeInteger(identity.observed?.rows)
       ) {
-        throw new Error("Card5 geometry client observation was incomplete or contradictory");
+        const error = new Error(
+          "Card5 geometry client observation was incomplete or contradictory",
+        );
+        error.observation = Object.freeze({
+          operation: "card5-passive-geometry",
+          reason: "client-observation-invalid",
+          client: identity.client,
+          axes: {
+            clientIdentity: !identity.clientId,
+            authorityClient: !authorityClient,
+            passive: identity.passive !== null && identity.passive !== passive,
+            geometryOwner:
+              identity.geometryOwner !== null && identity.geometryOwner !== geometryOwner,
+            cols: !Number.isSafeInteger(identity.observed?.cols),
+            rows: !Number.isSafeInteger(identity.observed?.rows),
+          },
+        });
+        throw error;
       }
       return Object.freeze({
         client: identity.client,
@@ -5650,6 +5855,11 @@ async function proveCard5PassiveGeometry(
       .find((fields) => fields[3] === tui.semanticPaneId);
     const nativeCols = Number(nativePane?.[4]);
     const nativeRows = Number(nativePane?.[5]);
+    const nativeWindowCols = Number(nativePane?.[6]);
+    const nativeWindowRows = Number(nativePane?.[7]);
+    const nativePaneLeft = Number(nativePane?.[8]);
+    const nativePaneTop = Number(nativePane?.[9]);
+    const nativePaneBorderStatus = nativePane?.[10];
     if (
       !nativePane ||
       !Number.isSafeInteger(nativeCols) ||
@@ -5669,6 +5879,11 @@ async function proveCard5PassiveGeometry(
           clients.filter(({ geometryOwner }) => geometryOwner).length === 1 ? 0 : 1,
         nativeCols,
         nativeRows,
+        nativeWindowCols,
+        nativeWindowRows,
+        nativePaneLeft,
+        nativePaneTop,
+        nativePaneBorderStatus,
         topologyHmac: card5EvidenceHmac(
           "topology",
           JSON.stringify({
@@ -5711,6 +5926,49 @@ async function proveCard5PassiveGeometry(
   });
 }
 
+async function startCard5CausalFixture(state, semanticPaneId) {
+  const pane = activeTmuxPane(state);
+  if (pane.semanticPaneId !== semanticPaneId)
+    throw new Error("Card5 causal fixture pane identity changed");
+  const tmux = (...args) =>
+    execFileSync("tmux", ["-S", state.runtimeNamespace.tmuxSocketPath, ...args], {
+      encoding: "utf8",
+    });
+  const retained = tmux("capture-pane", "-p", "-S", "-100", "-t", pane.paneId).trimEnd();
+  const command = `${shellSingleQuote(process.execPath)} ${shellSingleQuote(join(repoRoot, "scripts/lib/product-rig-causal-cell-fixture.mjs"))} --alternate-screen`;
+  const ready = () =>
+    tmux("show-options", "-pqv", "-t", pane.paneId, "@tmux_ide_causal_fixture").trim();
+  const close = async () => {
+    if (ready()) tmux("send-keys", "-t", pane.paneId, "C-c");
+    const deadline = performance.now() + 3_000;
+    while (performance.now() < deadline) {
+      if (
+        !ready() &&
+        tmux("display-message", "-p", "-t", pane.paneId, "#{alternate_on}").trim() === "0"
+      ) {
+        const restored = tmux("capture-pane", "-p", "-S", "-200", "-t", pane.paneId);
+        if (!restored.includes(retained))
+          throw new Error("Card5 fixture did not retain the original handoff screen");
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("Card5 causal fixture did not restore the primary screen");
+  };
+  // Handoff types literal text without Enter. Cancel that pending shell line
+  // before setup; the already-visible handoff marker remains in the screen.
+  tmux("send-keys", "-t", pane.paneId, "C-c");
+  tmux("send-keys", "-l", "-t", pane.paneId, command);
+  tmux("send-keys", "-t", pane.paneId, "Enter");
+  const deadline = performance.now() + 3_000;
+  while (performance.now() < deadline) {
+    if (ready() === "ready-v1") return { pane, close };
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  await close();
+  throw new Error("Card5 causal fixture did not become ready");
+}
+
 async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence, semanticPaneId) {
   const requireExpectedWeb = (observed) => {
     if (observed?.semanticPaneId !== semanticPaneId) {
@@ -5723,7 +5981,49 @@ async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence
   if (!/^opentui:[1-9]\d*$/u.test(expectedTuiProcessId ?? "")) {
     throw new Error("Card5 slow-client OpenTUI process identity was unavailable");
   }
+  const binding = hosts.tuiFocusBinding;
+  if (
+    !binding ||
+    binding.semanticPaneId !== semanticPaneId ||
+    binding.generation !== expectedTuiIdentity.generation ||
+    binding.processId !== expectedTuiProcessId
+  )
+    throw new Error("Card5 slow-client TUI focus binding was not retained");
+  const fixture = await startCard5CausalFixture(state, semanticPaneId);
+  let fixtureClosed = false;
   const slow = await hosts.setElectronSlowHidden(4);
+  await invokeCard5TuiHostFocusControl({ state, action: "focus", expected: binding, evidenceKey });
+  let inputOwned = false;
+  const ownershipDeadline = performance.now() + 3_000;
+  while (performance.now() < ownershipDeadline) {
+    const observed = requireExpectedWeb(
+      await observeCard5WebCanonical(
+        hosts.chromiumPage,
+        evidenceKey,
+        hosts.chromiumProcessIdentity,
+      ),
+    );
+    const authority = observed.workspaceEvidence?.authority;
+    inputOwned =
+      authority?.generation === binding.generation &&
+      authority?.session === binding.runtimeSession &&
+      authority.owners.input === binding.clientId &&
+      authority.clients.some(
+        (client) =>
+          client.clientId === binding.clientId &&
+          client.surface === "opentui" &&
+          client.state === "foreground",
+      );
+    if (inputOwned) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  if (!inputOwned) throw new Error("Card5 slow-client TUI input authority did not settle");
+  // Establish an actual painted fixed-cell baseline before the measured batch.
+  // The initially blank alternate screen may not require a post-focus frame.
+  tuiCommand(state, ["input", JSON.stringify({ version: 1, kind: "paste", text: "baseline_" })]);
+  await waitForCard5ProductionClientConvergence(state, hosts, evidenceKey, tuiEvidence, 5_000, {
+    expectedPane: semanticPaneId,
+  });
   const reader = tuiEvidence.reader;
   tuiEvidence.drain();
   const mark = reader.mark();
@@ -5742,8 +6042,10 @@ async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence
     for (let ordinal = 0; ordinal < 30; ordinal += 1) {
       tuiEvidence.drain();
       const resourceBefore = tuiEvidence.resourceSnapshot().count;
-      const marker = `CARD5_SLOW_${ordinal}_${randomBytes(3).toString("hex")}`;
-      const payload = `${marker}\n`;
+      const marker = `probe${ordinal}_${"ABCDEFGHIJKLMNOPQRSTUVWXYZabcd"[ordinal]}`;
+      const payload = marker;
+      const expectedCell = marker.at(-1);
+      const probeMark = reader.mark();
       const ackBoundary = requireExpectedWeb(
         await observeCard5WebCanonical(
           hosts.electronPage,
@@ -5769,11 +6071,114 @@ async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence
         throw new Error("Card5 slow input host pane identity changed");
       const deadline = performance.now() + 3_000;
       while (performance.now() < deadline) {
-        if (tuiCommand(state, ["capture", "--history", "20"]).includes(marker)) break;
+        tuiEvidence.drain();
+        const painted = reader
+          .recordsSince(probeMark)
+          .filter(
+            (record) =>
+              record.type === "performance.stage" &&
+              record.operation === "causal-cell-painted" &&
+              record.causalAttribution === true &&
+              record.dirtyRowProved === true &&
+              record.semanticPaneId === semanticPaneId &&
+              record.generation === expectedTuiIdentity.generation &&
+              record.processId === expectedTuiProcessId &&
+              record.afterGrapheme === expectedCell,
+          );
+        if (painted.length === 1) {
+          const native = execFileSync(
+            "tmux",
+            [
+              "-S",
+              state.runtimeNamespace.tmuxSocketPath,
+              "capture-pane",
+              "-p",
+              "-t",
+              fixture.pane.paneId,
+            ],
+            { encoding: "utf8" },
+          );
+          if (native.split("\n")[painted[0].row]?.[painted[0].column] === expectedCell) break;
+        }
         await new Promise((resolveWait) => setTimeout(resolveWait, 5));
       }
-      if (performance.now() >= deadline)
-        throw new Error("Card5 OpenTUI input stalled behind hidden Web client");
+      if (performance.now() >= deadline) {
+        const tmuxRows = execFileSync(
+          "tmux",
+          [
+            "-S",
+            state.runtimeNamespace.tmuxSocketPath,
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pane_id}\t#{@tmux_ide_pane_id}\t#{pane_width}\t#{pane_height}\t#{cursor_x}\t#{cursor_y}",
+          ],
+          { encoding: "utf8" },
+        )
+          .trim()
+          .split("\n");
+        const native = tmuxRows.map((row) => {
+          const [pane, semantic, cols, rows, cursorX, cursorY] = row.split("\t");
+          const output = execFileSync(
+            "tmux",
+            [
+              "-S",
+              state.runtimeNamespace.tmuxSocketPath,
+              "capture-pane",
+              "-p",
+              "-t",
+              pane,
+              "-S",
+              "-100",
+            ],
+            { encoding: "utf8", maxBuffer: 1024 * 1024 },
+          );
+          return {
+            expectedPane: semantic === semanticPaneId,
+            markerPresent: output.includes(marker),
+            cols: Number(cols),
+            rows: Number(rows),
+            cursorX: Number(cursorX),
+            cursorY: Number(cursorY),
+            markerRowsFromBottom: output
+              .trimEnd()
+              .split("\n")
+              .reverse()
+              .findIndex((line) => line.includes(marker)),
+          };
+        });
+        tuiEvidence.drain();
+        const trace = reader
+          .recordsSince(mark)
+          .filter(
+            (record) =>
+              typeof record.type === "string" && record.type.startsWith("performance.input"),
+          )
+          .slice(-8)
+          .map((record) => ({ type: record.type, outcome: record.outcome ?? null }));
+        const error = new Error("Card5 OpenTUI input stalled behind hidden Web client");
+        error.observation = {
+          operation: "card5-slow-input",
+          reason: "marker-not-rendered",
+          ordinal,
+          native,
+          tuiCanonical: latestCard5TuiCanonical(tuiEvidence, semanticPaneId),
+          cursorPresentation: reader
+            .recordsSince(mark)
+            .filter(
+              (record) =>
+                record.type === "performance.terminal-cursor-presentation" &&
+                record.semanticPaneId === semanticPaneId,
+            )
+            .slice(-1),
+          paint: reader
+            .recordsSince(mark)
+            .filter((record) => typeof record.type === "string" && record.type.includes("paint"))
+            .slice(-2),
+          trace,
+        };
+        throw error;
+      }
       let observed = null;
       const deliveryDeadline = performance.now() + 3_000;
       while (performance.now() < deliveryDeadline) {
@@ -5889,7 +6294,51 @@ async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence
         throw new Error("Card5 slow input marker did not map to one exact trace");
       }
       const paint = paintsByTrace.get(matchingOrigins[0].traceId);
-      if (!paint) throw new Error("Card5 slow input trace had no exact paint endpoint");
+      const causalPaints = records.filter(
+        (record) =>
+          record.type === "performance.stage" &&
+          record.operation === "causal-cell-painted" &&
+          record.traceId === matchingOrigins[0].traceId &&
+          record.causalAttribution === true &&
+          record.dirtyRowProved === true &&
+          record.afterGrapheme === delivery.marker.at(-1),
+      );
+      if (
+        !paint ||
+        causalPaints.length !== 1 ||
+        causalPaints[0].revision !== paint.revision ||
+        causalPaints[0].stateHash !== paint.stateHash ||
+        causalPaints[0].incarnation !== paint.incarnation
+      ) {
+        const error = new Error("Card5 slow input trace had no exact paint endpoint");
+        error.observation = {
+          operation: "card5-slow-input-timing",
+          ordinal,
+          visibleMarkerCount: deliverySamples.length,
+          daemonOperations: daemonRecords
+            .filter(
+              (record) =>
+                record.traceId === matchingOrigins[0].traceId &&
+                record.type === "performance.stage",
+            )
+            .slice(-32)
+            .map(({ stage, operation }) => ({ stage, operation })),
+          stages: records
+            .filter(
+              (record) =>
+                record.traceId === matchingOrigins[0].traceId &&
+                record.type === "performance.stage",
+            )
+            .map((record) => ({
+              stage: record.stage,
+              processId: record.processId,
+              clockId: record.clockId,
+              startedAtMicros: record.startedAtMicros,
+              endedAtMicros: record.endedAtMicros,
+            })),
+        };
+        throw error;
+      }
       const fence = fences.get(paint.traceId);
       if (
         matchingOrigins[0].generation !== expectedTuiIdentity.generation ||
@@ -5936,11 +6385,11 @@ async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence
           record.incarnation === fence?.incarnation &&
           record.revision === fence?.revision &&
           record.stateHash === fence?.stateHash &&
-          record.resourceEpochIdentity?.semanticPaneId === fence?.semanticPaneId &&
+          record.resourceEpochArmed === true &&
+          record.resourceEpochIdentity?.processId === expectedTuiProcessId &&
+          record.resourceEpochIdentity?.clockId === expectedTuiIdentity.clockId &&
           record.resourceEpochIdentity?.generation === fence?.generation &&
-          record.resourceEpochIdentity?.incarnation === fence?.incarnation &&
-          record.resourceEpochIdentity?.revision === fence?.revision &&
-          record.resourceEpochIdentity?.stateHash === fence?.stateHash,
+          record.resourceEpochIdentity?.rendererEpoch === record.rendererEpoch,
       );
       const resource = matchingResources.length === 1 ? matchingResources[0] : null;
       const canonicalIdentity = (value) =>
@@ -6016,6 +6465,7 @@ async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence
               processHmac: card5EvidenceHmac("process", resource.processId, evidenceKey),
               clockHmac: card5EvidenceHmac("clock", resource.clockId, evidenceKey),
               atMicros: resource.atMicros,
+              resourceEpochBound: true,
               resourceEpochIdentityHmac: card5EvidenceHmac(
                 "resource-epoch",
                 JSON.stringify(resource.resourceEpochIdentity),
@@ -6044,6 +6494,8 @@ async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence
       });
     });
     await hosts.setElectronSinkBlocked(false);
+    await fixture.close();
+    fixtureClosed = true;
     const caughtUp = await waitForCard5ProductionClientConvergence(
       state,
       hosts,
@@ -6060,8 +6512,17 @@ async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence
         hosts.electronProcessIdentity,
       ),
     );
-    if (!observed || observed.presence !== "background") {
-      throw new Error("Card5 slow Electron client was not observably hidden");
+    const electronClient = observed?.workspaceEvidence?.authority?.clients?.find(
+      (client) =>
+        card5EvidenceHmac("authority-client", client.clientId, evidenceKey) ===
+        observed?.runtimeReplacement?.currentLifecycleRequest?.bindingClientHmac,
+    );
+    if (
+      !observed ||
+      !(await hosts.observeElectronHidden()) ||
+      electronClient?.state !== "background"
+    ) {
+      throw new Error("Card5 slow Electron client was not natively hidden and daemon-background");
     }
     return Object.freeze({
       hidden: true,
@@ -6095,7 +6556,11 @@ async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence
       samples: Object.freeze(samples),
     });
   } finally {
-    await hosts.restoreElectron(slow);
+    try {
+      if (!fixtureClosed) await fixture.close();
+    } finally {
+      await hosts.restoreElectron(slow);
+    }
   }
 }
 
@@ -6171,6 +6636,13 @@ async function start(json, quiet = false, planEntry = null) {
   mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
   chmodSync(rigRoot, 0o700);
   const log = openSync(ownerLogPath, "a", 0o600);
+  // The supervisor and owner are separate processes. Retain the same private
+  // key in both; never publish it to shared state or diagnostic artifacts.
+  const card5EvidenceKey = ["cross-client-handoff", "daemon-restart"].includes(
+    planEntry?.journey?.id,
+  )
+    ? randomBytes(32).toString("hex")
+    : null;
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "__owner"], {
     cwd: repoRoot,
     env: {
@@ -6182,6 +6654,7 @@ async function start(json, quiet = false, planEntry = null) {
             ...(planEntry.variant ? { TMUX_IDE_PRODUCT_JOURNEY_VARIANT: planEntry.variant } : {}),
           }
         : {}),
+      ...(card5EvidenceKey ? { TMUX_IDE_PRODUCT_CARD5_PRIVATE_KEY: card5EvidenceKey } : {}),
       TMUX_IDE_PRODUCT_TIMELINE_ORIGIN_MS: String(attemptTimelineOriginMs),
       ...(diagnosticFrozenProvenance
         ? {
@@ -6200,10 +6673,12 @@ async function start(json, quiet = false, planEntry = null) {
   // Web, and the 10.1s idle proof remain below this journey-specific owner cap.
   // Other ProductRig journeys retain the normal 90s readiness boundary.
   const readinessTimeoutMs = planEntry?.journey?.id === "ansi-cursor-alt-screen" ? 900_000 : 90_000;
-  const state = await waitForState(
-    (candidate) => candidate?.status === "ready",
-    readinessTimeoutMs,
-  );
+  const state = await waitForState((candidate) => {
+    if (candidate?.ownerPid === child.pid && candidate.tui?.runtimeDir && card5EvidenceKey) {
+      productInputFingerprintKeys.set(candidate.tui.runtimeDir, card5EvidenceKey);
+    }
+    return candidate?.ownerPid === child.pid && candidate.status === "ready";
+  }, readinessTimeoutMs);
   if (!quiet)
     emit(
       json ? publicRigStatus(state) : `Product rig ready: ${state.session} · ${state.web.pageUrl}`,
@@ -6991,6 +7466,10 @@ async function conditionExactResizeTmuxFixture(socketPath, session, seed, timeou
   const deadline = performance.now() + timeoutMs;
   const target = `=${session}:=one`;
   const run = (args) => runBoundedFocusTmux({ socketPath, args, deadline });
+  // Both fixture processes are node. A supported manual pane name makes the
+  // target's rendered chrome unique before daemon promotion and measurement.
+  await run(["set-option", "-p", "-t", seed.paneId, "@ide_name", "resize-target"]);
+  await run(["set-option", "-p", "-t", seed.paneId, "@tmux_ide_name_source", "manual"]);
   await run(["set-option", "-w", "-t", target, "pane-border-status", "top"]);
   await run(["resize-window", "-t", target, "-x", "132", "-y", "41"]);
   await run(["select-layout", "-t", target, "even-horizontal"]);
@@ -7654,7 +8133,7 @@ async function provePreseededPanePublication(state, seed, canonicalResources, ti
       semanticPaneId: sample.semanticPaneId,
       sourceEpoch: 1,
       canonicalCols: sample.geometry.width,
-      canonicalRows: sample.geometry.height + 1,
+      canonicalRows: sample.geometry.height,
       viewportCols: sample.bodyRect.width,
       viewportRows: sample.geometry.height,
     },
@@ -7808,7 +8287,7 @@ async function provePreseededPanePublication(state, seed, canonicalResources, ti
         : null,
       canonicalGeometryExact:
         seedObservation?.canonicalGeometry?.cols === sample.geometry.width &&
-        seedObservation?.canonicalGeometry?.rows === sample.geometry.height + 1,
+        seedObservation?.canonicalGeometry?.rows === sample.geometry.height,
       viewportGeometryExact:
         seedObservation?.viewportGeometry?.cols === sample.bodyRect.width &&
         seedObservation?.viewportGeometry?.rows === sample.geometry.height,
@@ -7835,7 +8314,7 @@ async function provePreseededPanePublication(state, seed, canonicalResources, ti
     {
       resizedPresentation: {
         canonicalCols: sample.geometry.width,
-        canonicalRows: sample.geometry.height + 1,
+        canonicalRows: sample.geometry.height,
         viewportCols: sample.bodyRect.width,
         viewportRows: sample.geometry.height,
       },
@@ -8068,7 +8547,7 @@ async function diagnoseRuntimeQualification(planEntry) {
       state,
       tracePath,
       "post-reattach-and-daemon-restart",
-      3_100,
+      30_100,
     ),
   );
   const windowSwitchSamples = [];
@@ -8262,6 +8741,18 @@ async function diagnoseRuntimeQualification(planEntry) {
       ]);
     };
     const resetFixtureBaseline = async (ordinal) => {
+      const identityRecords = readJsonLines(tracePath);
+      const processId = identityRecords.findLast(
+        (record) => record?.type === "performance.trace.header",
+      )?.processId;
+      const canonical = activeCanonicalIdentity(identityRecords, {
+        processId,
+        semanticPaneId: fixturePane.semanticPaneId,
+        generation: state.daemon.instanceId,
+      });
+      if (causalProbeIncarnation !== null && causalProbeIncarnation !== canonical.incarnation)
+        throw new Error("causal-cell fixture incarnation changed before reset");
+      causalProbeIncarnation = canonical.incarnation;
       const token = `probe-${ordinal}`;
       sendLiteralLine(`reset-v1;${token}`);
       const expectedOption = `ready-v1:${token}`;
@@ -8804,7 +9295,7 @@ async function diagnoseRuntimeQualification(planEntry) {
       state,
       tracePath,
       "post-resize-and-workload",
-      10_100,
+      30_100,
     );
     idleProcessObservations.push(settledIdle);
     idleObservation = Object.freeze({
@@ -10186,30 +10677,6 @@ async function waitForDirectCausalFixture(state, paneId) {
   throw new Error("direct causal fixture did not become ready before TUI input");
 }
 
-function activeCanonicalIdentity(records, expected) {
-  const paint = records.findLast(
-    (record) =>
-      record?.type === "performance.terminal-canonical-paint" &&
-      record.processId === expected.processId &&
-      record.semanticPaneId === expected.semanticPaneId &&
-      record.generation === expected.generation,
-  );
-  if (
-    !paint ||
-    typeof paint.incarnation !== "string" ||
-    !Number.isSafeInteger(paint.revision) ||
-    typeof paint.stateHash !== "string"
-  )
-    throw new Error("first-input lane has no exact canonical paint identity");
-  return Object.freeze({
-    ...expected,
-    clockId: paint.clockId,
-    incarnation: paint.incarnation,
-    revision: paint.revision,
-    stateHash: paint.stateHash,
-  });
-}
-
 async function waitForInputEpoch(tracePath, baseline, processId) {
   return waitForProductInputPersistenceFence({
     readRecords: () => readJsonLines(tracePath),
@@ -10227,7 +10694,12 @@ async function owner() {
   );
   const journeyId = process.env.TMUX_IDE_PRODUCT_JOURNEY ?? "runtime-qualification";
   const card5Journey = ["cross-client-handoff", "daemon-restart"].includes(journeyId);
-  const card5InputFingerprintKey = card5Journey ? randomBytes(32).toString("hex") : null;
+  const inheritedCard5Key = process.env.TMUX_IDE_PRODUCT_CARD5_PRIVATE_KEY;
+  delete process.env.TMUX_IDE_PRODUCT_CARD5_PRIVATE_KEY;
+  if (card5Journey && !/^[0-9a-f]{64}$/u.test(inheritedCard5Key ?? "")) {
+    throw new Error("Card5 owner did not receive the supervisor's private correlation key");
+  }
+  const card5InputFingerprintKey = card5Journey ? inheritedCard5Key : null;
   const slug = randomBytes(3).toString("hex");
   const ownerToken = randomBytes(24).toString("hex");
   let sleepAssertion = null;
@@ -10236,6 +10708,7 @@ async function owner() {
   let devServer = null;
   let browser = null;
   let card5WebHosts = null;
+  let restartDocumentBoundaries = [];
   let card5WebHostLease = null;
   let card5TuiEvidence = null;
   let card5NativeExpectedMarker = null;
@@ -10287,6 +10760,7 @@ async function owner() {
     cleanupPromise = (async () => {
       closing = true;
       ownerAbort.abort();
+      for (const boundary of restartDocumentBoundaries) boundary.dispose();
       const attempt = Number.isInteger(request.attempt) ? request.attempt : 1;
       const requestId = request.requestId ?? `internal-${Date.now()}`;
       event("cleanup-start", { requestId, attempt });
@@ -10935,7 +11409,21 @@ async function owner() {
             terminalCellAt(nativeAfter, row, column) !== afterGrapheme ||
             terminalCellAt(bodyAfter, row, column) !== afterGrapheme
           )
-            throw new Error("first input changed-cell evidence disagreed with native/TUI cells");
+            throw new Error(
+              `first input changed-cell evidence disagreed with native/TUI cells: ${JSON.stringify({
+                paneMatched: activeAfter.paneId === namespace.paneId,
+                geometryBefore: paneGeometryIdentity([baseline.active]),
+                geometryAfter: paneGeometryIdentity([activeAfter]),
+                row,
+                column,
+                beforeGrapheme,
+                afterGrapheme,
+                nativeBefore: terminalCellAt(nativeBefore, row, column),
+                tuiBefore: terminalCellAt(bodyBefore, row, column),
+                nativeAfter: terminalCellAt(nativeAfter, row, column),
+                tuiAfter: terminalCellAt(bodyAfter, row, column),
+              })}`,
+            );
           const evidence = Object.freeze({
             variant,
             passed: true,
@@ -11447,21 +11935,39 @@ async function owner() {
             throw new Error("selection baseline terminal resource revision was unavailable");
           const tmux = await exactWindowTmuxSnapshot(state, resources);
           const seedPaint = publication.canonicalSeedPaint;
+          const currentRecords = readJsonLines(namespace.tui.performanceTracePath);
+          const currentCanonical = activeCanonicalIdentity(currentRecords, {
+            processId: seedPaint.publication.processId,
+            semanticPaneId: selected.semanticPaneId,
+            generation: seedPaint.publication.generation,
+          });
+          const currentHostFrame = currentRecords.findLast(
+            (record) =>
+              record.type === "performance.terminal-canonical-host-frame" &&
+              record.processId === currentCanonical.processId &&
+              record.semanticPaneId === currentCanonical.semanticPaneId &&
+              record.generation === currentCanonical.generation &&
+              record.incarnation === currentCanonical.incarnation &&
+              record.revision === currentCanonical.revision &&
+              record.stateHash === currentCanonical.stateHash,
+          );
+          if (!currentHostFrame)
+            throw new Error("selection baseline has no current canonical host frame");
           const modeExpected = Object.freeze({
             processId: seedPaint.publication.processId,
             clockId: seedPaint.publication.clockId,
             daemonGeneration: runningDaemon.record.instanceId,
             semanticPaneId: selected.semanticPaneId,
             canonicalGeneration: seedPaint.publication.generation,
-            canonicalIncarnation: seedPaint.publication.incarnation,
-            beforeStateHash: seedPaint.publication.stateHash,
-            afterRevision: seedPaint.publication.revision,
-            sourceEpoch: seedPaint.publication.sourceEpoch,
-            rendererEpoch: publication.frameCausality.hostFrame.rendererEpoch,
-            canonicalCols: seedPaint.publication.cols,
-            canonicalRows: seedPaint.publication.rows,
-            viewportCols: seedPaint.paint.viewportCols,
-            viewportRows: seedPaint.paint.viewportRows,
+            canonicalIncarnation: currentCanonical.incarnation,
+            beforeStateHash: currentCanonical.stateHash,
+            afterRevision: currentCanonical.revision,
+            sourceEpoch: currentHostFrame.sourceEpoch,
+            rendererEpoch: currentHostFrame.rendererEpoch,
+            canonicalCols: currentHostFrame.cols,
+            canonicalRows: currentHostFrame.rows,
+            viewportCols: currentHostFrame.viewportCols,
+            viewportRows: currentHostFrame.viewportRows,
           });
           let conditioning;
           let frame;
@@ -11536,6 +12042,8 @@ async function owner() {
             canonicalGeneration: publication.canonicalSeedPaint.publication.generation,
             canonicalIncarnation: publication.canonicalSeedPaint.publication.incarnation,
             canonicalStateHash: publication.canonicalSeedPaint.publication.stateHash,
+            canonicalCols: modeExpected.canonicalCols,
+            canonicalRows: modeExpected.canonicalRows,
             terminalResourceRevision,
             clientId: processId,
             resources,
@@ -12009,6 +12517,8 @@ async function owner() {
           canonicalGeneration: selectionBoot.baseline.canonicalGeneration,
           canonicalIncarnation: selectionBoot.baseline.canonicalIncarnation,
           canonicalStateHash: selectionBoot.baseline.canonicalStateHash,
+          canonicalCols: selectionBoot.baseline.canonicalCols,
+          canonicalRows: selectionBoot.baseline.canonicalRows,
           terminalResourceRevision: selectionBoot.baseline.terminalResourceRevision,
         }),
         baseline: selectionBoot.baseline,
@@ -16774,6 +17284,26 @@ async function owner() {
             resources: release.resources,
             web: true,
             exactTerminalResourceRevision: baseline.terminalResourceRevision,
+          }).catch(async (error) => {
+            const semantic = await page.evaluate(captureFocusWebSemanticDocument);
+            const records = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"));
+            const latest = records.findLast(
+              (record) => record.phase === "generation-workspace-client-state",
+            );
+            error.observation = {
+              ...error.observation,
+              webSemantic: semantic,
+              watermark,
+              latestWorkspaceRecord: latest
+                ? {
+                    processId: latest.processId,
+                    daemonGeneration: latest.daemonGeneration,
+                    monotonicMicros: latest.monotonicMicros,
+                    authority: latest.workspaceClient?.committed?.authority,
+                  }
+                : null,
+            };
+            throw error;
           });
           publish({ web: { pageUrl: devServer.pageUrl, startedAfterResizeBoundary: true } });
           event("resize-web-correlation", { windows: ready.semantic.windowNodeCount });
@@ -18960,6 +19490,7 @@ async function owner() {
             sessions: 1,
             slug,
             initialPaneMarker: marker,
+            windowsPerSession: 1,
           });
           const cleanupToken = `product-test-rig:${slug}`;
           fleet = {
@@ -19650,12 +20181,26 @@ async function owner() {
             "Card5 could not issue predecessor descriptors through both host brokers",
           );
         }
+        restartDocumentBoundaries = [card5WebHosts.chromiumPage, card5WebHosts.electronPage].map(
+          observeRestartDocumentBoundary,
+        );
+        const predecessorWeb = await observeInitialWeb();
+        restartDocumentBoundaries.forEach((boundary, ordinal) =>
+          boundary.capture(predecessorWeb[ordinal], before.generation),
+        );
         card5TuiEvidence.drain();
         restartTuiMark = card5TuiEvidence.reader.mark();
         const previousDaemonGeneration = daemon.record.instanceId;
         const startedAt = Date.now();
         restartStartedAt = startedAt;
+        const predecessorDaemon = {
+          instanceId: daemon.record.instanceId,
+          pid: daemon.record.pid,
+          port: daemon.record.port,
+        };
         await daemon.stop();
+        const predecessorRetirement = await verifyDaemonRetirement(predecessorDaemon);
+        publish({ predecessorDaemonRetirement: predecessorRetirement });
         publish({ daemonLifecycle: "starting" });
         daemon = await startDaemon(fleet);
         publish({ daemonLifecycle: "started", daemon: daemon.record });
@@ -19683,6 +20228,10 @@ async function owner() {
           card5TuiEvidence,
           5_000,
           {
+            replacement: {
+              previousGeneration: before.generation,
+              generation: daemon.record.instanceId,
+            },
             expectedPane: acceptedConvergencePaneId,
             onStablePane: (semanticPaneId) => {
               acceptedConvergencePaneId = semanticPaneId;
@@ -19767,15 +20316,25 @@ async function owner() {
           acceptedOrdinal: 0,
         };
         const staleResults = await Promise.all([
-          rejectCard5PredecessorDescriptor(card5WebHosts.chromiumPage, predecessorDescriptors[0]),
-          rejectCard5PredecessorDescriptor(card5WebHosts.electronPage, predecessorDescriptors[1]),
+          rejectCard5PredecessorDescriptor(
+            card5WebHosts.chromiumPage,
+            predecessorDescriptors[0],
+            after.generation,
+          ),
+          rejectCard5PredecessorDescriptor(
+            card5WebHosts.electronPage,
+            predecessorDescriptors[1],
+            after.generation,
+          ),
         ]);
-        const replacement = assessCard5ReplacementEnvelopeEvidence({
+        const replacement = assessCard5DaemonRestartEnvelopeEvidence({
           predecessorGeneration: before.generation,
           replacementGeneration: after.generation,
+          retirement: state.predecessorDaemonRetirement,
           staleRedemptions: staleResults,
           lanes: raw
-            .map((entry) => ({
+            .map((entry, ordinal) => ({
+              document: restartDocumentBoundaries[ordinal].evidence(entry),
               events: entry?.envelopes ?? [],
               replacementBoundary: entry?.runtimeReplacement?.replacementBoundary ?? null,
               predecessorAcceptedAfterReplacement:
@@ -19793,22 +20352,45 @@ async function owner() {
             }),
         });
         if (!replacement.passed) {
-          throw new Error("Card5 replacement was not seed-first or accepted stale G1 output");
+          const lanes = raw.map((entry) => ({
+            boundaryPresent:
+              entry?.runtimeReplacement?.replacementBoundary !== null &&
+              entry?.runtimeReplacement?.replacementBoundary !== undefined,
+            replacementCount: entry?.runtimeReplacement?.replacementCount ?? null,
+            predecessorAcceptedAfterReplacement:
+              entry?.runtimeReplacement?.predecessorAcceptedAfterReplacement ?? null,
+            oldClosed:
+              entry?.runtimeReplacement?.socketEvents?.some(
+                ({ generation, outcome }) =>
+                  generation === before.generation && outcome === "closed",
+              ) === true,
+            newOpened:
+              entry?.runtimeReplacement?.socketEvents?.some(
+                ({ generation, outcome }) => generation === after.generation && outcome === "open",
+              ) === true,
+            newSeedObserved:
+              entry?.envelopes?.some(
+                ({ generation, type }) =>
+                  generation === after.generation && type === "terminal.seed",
+              ) === true,
+          }));
+          throw new Error(
+            `Card5 replacement evidence failed: ${replacement.reason}; ${JSON.stringify({ lanes, staleResults })}`,
+          );
         }
         if (staleResults.some(({ rejected, typed }) => rejected !== true || typed !== true)) {
           throw new Error("Card5 predecessor descriptor remained redeemable after replacement");
         }
-        const predecessorSocketOutcomes = raw.map((entry) => ({
-          outcome: entry?.runtimeReplacement?.socketEvents?.some(
-            ({ generation, outcome, ordinal }) =>
-              generation === before.generation &&
-              outcome === "closed" &&
-              ordinal >=
-                (entry?.runtimeReplacement?.replacementBoundary?.socketOrdinal ?? Infinity),
-          )
-            ? "predecessor-closed"
-            : "predecessor-open",
+        // A retired daemon and destroyed document prove the old socket cannot
+        // survive; do not invent a close event in the new document's recorder.
+        const predecessorSocketOutcomes = raw.map((entry, ordinal) => ({
+          outcome: "predecessor-closed",
+          evidence:
+            restartDocumentBoundaries[ordinal].evidence(entry).navigationCount > 0
+              ? "daemon-retired-and-document-replaced"
+              : "observed-socket-close",
         }));
+        for (const boundary of restartDocumentBoundaries) boundary.dispose();
         const authorityClients = raw[0]?.workspaceEvidence?.authority?.clients ?? [];
         const physicalClientIds = authorityClients.map(({ clientId }) => clientId);
         const replacementAuthority = raw[0]?.workspaceEvidence?.authority ?? null;
@@ -19932,6 +20514,7 @@ async function owner() {
         });
       };
       if (journeyId === "cross-client-handoff") {
+        let verifiedHandoff = null;
         const proof = await runCrossClientHandoffOwnerBoot({
           onBoundary: (boundary) => {
             publish({ currentJourneyBoundary: boundary });
@@ -19959,6 +20542,9 @@ async function owner() {
               tuiEvidence: card5TuiEvidence,
               hostIdentity: launchedTui.hostIdentity,
               expectedPane: acceptedConvergencePaneId,
+              onVerifiedHandoff: (handoff) => {
+                verifiedHandoff = handoff;
+              },
               focusedPaneEvidence: initial.focusedPaneEvidence,
               webPhysicalLifecycleEvidence: initial.webPhysicalLifecycleEvidence,
               inputFingerprintKey: card5InputFingerprintKey,
@@ -19971,12 +20557,16 @@ async function owner() {
               state,
               { ...card5WebHosts, tuiEvidence: card5TuiEvidence },
               evidenceKey,
-              { semanticPaneId: acceptedConvergencePaneId },
+              { semanticPaneId: acceptedConvergencePaneId, postHandoff: verifiedHandoff },
             ),
           proveSlowWebIsolation: async () =>
             proveCard5SlowWebIsolation(
               state,
-              { ...card5WebHosts, inputFingerprintKey: card5InputFingerprintKey },
+              {
+                ...card5WebHosts,
+                inputFingerprintKey: card5InputFingerprintKey,
+                tuiFocusBinding: verifiedHandoff?.expectedBinding,
+              },
               evidenceKey,
               card5TuiEvidence,
               acceptedConvergencePaneId,

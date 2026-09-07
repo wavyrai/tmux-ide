@@ -9,7 +9,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -62,6 +62,8 @@ export interface ScratchFleet {
 }
 
 export interface CreateScratchFleetOptions {
+  /** Exercise -L through a unique owned name instead of the usual private -S path. */
+  readonly namedSocket?: boolean;
   /** How many adopted sessions to stand up. Zero is a legitimate empty fleet. */
   readonly sessions: number;
   /** Distinguishes concurrent fleets in tmux session names and temp paths. */
@@ -135,7 +137,8 @@ export async function createScratchFleet(
   const registryDir = join(root, "registry");
   const settingsDir = join(root, "settings");
   const stateDir = join(root, "state");
-  const socketPath = join(root, "t.sock");
+  let socketPath = join(root, "t.sock");
+  const socketName = options.namedSocket ? basename(root) : null;
   const resolvedLength = realpathSync(root).length + "/t.sock".length;
   if (resolvedLength > MAX_UNIX_SOCKET_PATH) {
     throw new Error(
@@ -164,7 +167,7 @@ export async function createScratchFleet(
     TMUX_IDE_CONFIG: join(stateDir, "config.json"),
   };
   const runTmux = (argv: readonly string[]): string =>
-    execFileSync(tmuxBin, ["-S", socketPath, ...argv], {
+    execFileSync(tmuxBin, [...(socketName ? ["-L", socketName] : ["-S", socketPath]), ...argv], {
       cwd: root,
       encoding: "utf8",
       env: sharedEnvironment,
@@ -263,6 +266,8 @@ export async function createScratchFleet(
     serverPid = Number(runTmux(["display-message", "-p", "-t", "_e2e-holder", "#{pid}"]));
   }
 
+  if (socketName) socketPath = runTmux(["display-message", "-p", "#{socket_path}"]);
+
   return {
     root,
     projectDir,
@@ -338,10 +343,13 @@ export async function createScratchFleet(
     },
     environment: {
       ...sharedEnvironment,
-      TMUX: `${socketPath},${serverPid},0`,
+      ...(socketName
+        ? { TMUX: "", TMUX_IDE_TMUX_SOCKET_NAME: socketName }
+        : { TMUX: `${socketPath},${serverPid},0` }),
     },
     dispose: async () => {
       await execFileAsync(tmuxBin, ["-S", socketPath, "kill-server"]).catch(() => undefined);
+      if (socketName) await rm(socketPath, { force: true });
       await rm(root, { recursive: true, force: true });
     },
   };

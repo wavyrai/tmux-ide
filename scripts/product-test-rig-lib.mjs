@@ -1322,7 +1322,7 @@ export function resolvePaneBodyRect(frame, pane) {
     });
   }
 
-  const chromeMatches = (identity) => {
+  const chromeMatches = (identity, markerGutter = 0) => {
     if (typeof identity !== "string" || identity.length === 0) return [];
     const matches = [];
     for (let row = 0; row < lines.length; row += 1) {
@@ -1332,7 +1332,7 @@ export function resolvePaneBodyRect(frame, pane) {
         const prefix = line.slice(Math.max(0, index - 2), index);
         const suffix = line[index + identity.length];
         if ((prefix === "● " || prefix === "○ ") && (suffix === undefined || suffix === " "))
-          matches.push({ row, left: index - 2 });
+          matches.push({ row, left: Math.max(0, index - 2 - markerGutter) });
         index = line.indexOf(identity, index + 1);
       }
     }
@@ -1347,10 +1347,13 @@ export function resolvePaneBodyRect(frame, pane) {
   const displayIdentities = [pane.displayName, ...(pane.canonicalDisplayNames ?? [])]
     .map((identity) => identity?.trim())
     .filter((identity, index, identities) => identity && identities.indexOf(identity) === index);
+  // PaneTitleBar places its marker after a two-cell gutter. The body starts
+  // at the header origin, not at the marker; otherwise the last two columns
+  // are silently read from outside the pane. Legacy semantic-id chrome had no gutter.
   const displayMatches = [
     ...new Map(
       displayIdentities
-        .flatMap(chromeMatches)
+        .flatMap((identity) => chromeMatches(identity, 2))
         .map((match) => [`${match.row}:${match.left}`, match]),
     ).values(),
   ];

@@ -63,9 +63,10 @@ function aborted(): Error {
 
 function eventToHandler(
   event: DesktopDaemonEvent,
-  workspaceName: string,
+  target: DesktopApplicationShellTarget,
   handlers: DaemonEventHandlers,
 ): void {
+  const workspaceName = target.workspaceName;
   if (event.type === "workspaces.changed") {
     handlers.onInvalidate();
     return;
@@ -94,6 +95,11 @@ function eventToHandler(
     return;
   }
   if (event.type === "daemon-generation.changed") {
+    if (
+      event.daemon.status === "connected" &&
+      sameDaemonGeneration(target.daemon, event.daemon.identity)
+    )
+      return;
     handlers.onPeerMismatch("The desktop daemon generation changed.");
     return;
   }
@@ -185,7 +191,7 @@ export function createHostDaemonTransport(
             ],
           },
           (event) => {
-            if (!closed) eventToHandler(event, safeTarget.workspaceName, handlers);
+            if (!closed) eventToHandler(event, safeTarget, handlers);
           },
         )
         .then((result) => {

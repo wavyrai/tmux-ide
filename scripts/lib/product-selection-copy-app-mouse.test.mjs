@@ -191,6 +191,8 @@ const expected = Object.freeze({
   canonicalGeneration: "00000000-0000-4000-8000-000000000002",
   canonicalIncarnation: "00000000-0000-4000-8000-000000000002:0",
   canonicalStateHash: "fedcba9876543210",
+  canonicalCols: 132,
+  canonicalRows: 41,
   terminalResourceRevision: 3,
 });
 const clipboard = selectionClipboardEvidence("select me", Buffer.alloc(32, 7));
@@ -1598,5 +1600,21 @@ test("mouse causal samples exact-join typed ingress, application receipt, change
       appMouseExpectedPoint,
     ).qualified,
     false,
+  );
+});
+
+test("copy fences use native content dimensions, excluding the pane header", () => {
+  const evidence = fixture();
+  const nativeExpected = { ...expected, canonicalRows: 40 };
+  for (const gesture of [evidence.selection, evidence.copy, evidence.localMode])
+    gesture.copyFence.canonicalIdentity.rows = 40;
+  assert.equal(
+    assessProductSelectionCopyAppMouse({ evidence, expected: nativeExpected }).qualified,
+    true,
+  );
+  evidence.selection.copyFence.canonicalIdentity.rows = 41;
+  assert.equal(
+    assessProductSelectionCopyAppMouse({ evidence, expected: nativeExpected }).firstFailedPredicate,
+    "selectionFenceHealthy",
   );
 });

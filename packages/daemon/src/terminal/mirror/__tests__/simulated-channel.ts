@@ -16,6 +16,8 @@ import {
   ControlChannelCore,
   type MirrorChannelHandlers,
   type MirrorChannelIo,
+  type ControlReplyLimits,
+  type ControlReply,
 } from "../control-channel.ts";
 
 export type AutoReply = (cmd: string) => string[] | null;
@@ -75,6 +77,23 @@ export class SimulatedChannel implements MirrorChannelIo {
   send(cmd: string, onReply?: (reply: { ok: boolean; lines: string[] }) => void): void {
     this.core.push({ kind: "discard", ...(onReply ? { onReply } : {}) });
     this.record(cmd);
+  }
+
+  commandListBoundedInline(
+    cmd: string,
+    count: number,
+    index: number,
+    limits: ControlReplyLimits,
+    onReply: (reply: ControlReply) => void,
+  ): void {
+    if (!this.core.pushBoundedCommandList(count, index, limits, onReply)) {
+      onReply({ ok: false, lines: [] });
+      return;
+    }
+    this.written.push(cmd);
+    this.reply([]);
+    const auto = this.autoReply(cmd);
+    if (auto) for (let i = 1; i < count; i++) this.reply(i === index ? auto : []);
   }
 
   dispose(): Promise<void> {
@@ -148,6 +167,7 @@ export function fixtureAutoReply(state: FixtureState): AutoReply {
     if (cmd.startsWith("if-shell -t")) return [];
     if (cmd.startsWith("set-option")) return [];
     if (cmd.startsWith("send-keys") || cmd.startsWith("refresh-client")) return [];
+    if (/^display-message -p -t @[0-9]+ "#\{pane-border-status\}"$/u.test(cmd)) return ["off"];
     return null; // capture-pane / display-message: manual
   };
 }

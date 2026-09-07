@@ -11,6 +11,7 @@ export interface ScriptedChannelDriverOptions {
   readonly state?: FixtureState;
   readonly seedLines?: readonly string[];
   readonly cursorLine?: string;
+  readonly cursorLinesByPane?: Readonly<Record<string, string>>;
   readonly maxTurns?: number;
 }
 
@@ -23,6 +24,7 @@ export class ScriptedChannelDriver {
   readonly channel: SimulatedChannel;
   readonly #seedLines: readonly string[];
   readonly #cursorLine: string;
+  readonly #cursorLinesByPane: Readonly<Record<string, string>>;
   readonly #maxTurns: number;
   #handledWrites = 0;
   readonly deferredCommands: string[] = [];
@@ -31,6 +33,7 @@ export class ScriptedChannelDriver {
     const state = options.state ?? fixtureState();
     this.#seedLines = options.seedLines ?? ["ready"];
     this.#cursorLine = options.cursorLine ?? "0 0 100 50";
+    this.#cursorLinesByPane = options.cursorLinesByPane ?? {};
     this.#maxTurns = options.maxTurns ?? 100;
     const basic = fixtureAutoReply(state);
     this.channel = new SimulatedChannel(handlers, (command) => {
@@ -55,7 +58,12 @@ export class ScriptedChannelDriver {
     while (this.deferredCommands.length > 0) {
       const command = this.deferredCommands.shift()!;
       if (command.includes("capture-pane")) this.channel.reply([...this.#seedLines]);
-      else this.channel.reply([this.#cursorLine]);
+      else {
+        const pane = /-t (%\d+)/u.exec(command)?.[1];
+        this.channel.reply([
+          pane ? (this.#cursorLinesByPane[pane] ?? this.#cursorLine) : this.#cursorLine,
+        ]);
+      }
     }
   }
 

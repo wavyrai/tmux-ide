@@ -77,10 +77,46 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build_macos_tmux:
+    name: Build bundled macOS tmux
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install native build dependencies
+        run: brew install automake autoconf pkg-config libevent ncurses utf8proc
+      - name: Checkout pinned tmux source
+        uses: actions/checkout@v4
+        with:
+          repository: tmux/tmux
+          ref: e476c1230b958df0cb12977517d24b3dc931375b
+          path: .native-tmux-source
+      - name: Build private tmux with bundled libraries
+        run: |
+          export PKG_CONFIG_PATH="$(brew --prefix libevent)/lib/pkgconfig:$(brew --prefix ncurses)/lib/pkgconfig:$(brew --prefix utf8proc)/lib/pkgconfig"
+          node scripts/build-bundled-tmux.mjs --source .native-tmux-source
+          tar -C packages/daemon/dist/native -czf "$RUNNER_TEMP/tmux-ide-native-tmux.tar.gz" tmux
+      - uses: pnpm/action-setup@v4
+      - name: Install qualification dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Qualify native grid and daemon client transport
+        run: |
+          bundle="$PWD/packages/daemon/dist/native/tmux/$(node -p 'process.platform + "-" + process.arch')"
+          PATH="$bundle:$PATH" pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts src/tui/mirror/runtime/terminal-native-content-live.test.ts
+          TMUX_IDE_NATIVE_GRID_TMUX="$bundle/tmux" pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts src/terminal/session-runtime/native-backing-owner-live.test.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tmux-ide-native-tmux
+          path: ${{ runner.temp }}/tmux-ide-native-tmux.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   publish_npm:
     name: Publish to npm
-    needs: build_macos_notifier
-    if: ${{ always() && (needs.build_macos_notifier.result == 'success' || needs.build_macos_notifier.result == 'skipped') }}
+    needs: [build_macos_notifier, build_macos_tmux]
+    if: ${{ always() && needs.build_macos_tmux.result == 'success' && (needs.build_macos_notifier.result == 'success' || needs.build_macos_notifier.result == 'skipped') }}
     runs-on: ubuntu-24.04
     environment: npm
 
@@ -140,6 +176,16 @@ jobs:
           tag="$(node scripts/lib/npm-release-tag.mjs "${{ steps.release.outputs.version }}")"
           echo "Publishing ${{ steps.release.outputs.version }} on npm dist-tag '$tag'."
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download bundled tmux
+        uses: actions/download-artifact@v4
+        with:
+          name: tmux-ide-native-tmux
+          path: ${{ runner.temp }}/tmux-ide-native-tmux
+      - name: Include bundled tmux in npm payload
+        run: |
+          mkdir -p packages/daemon/dist/native
+          tar -xzf "$RUNNER_TEMP/tmux-ide-native-tmux/tmux-ide-native-tmux.tar.gz" -C packages/daemon/dist/native
 
       - name: Download native macOS notifier for stable release
         if: steps.npm.outputs.tag == 'latest'

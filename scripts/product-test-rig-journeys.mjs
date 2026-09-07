@@ -2439,11 +2439,28 @@ export function productRigCleanupAcknowledgesRequest(state, requestId) {
   );
 }
 
-export async function collectProductRigCleanupFailures(steps, { detailLimit = 4_000 } = {}) {
+export async function collectProductRigCleanupFailures(
+  steps,
+  { detailLimit = 4_000, stepTimeoutMs = 5_000 } = {},
+) {
+  if (!Number.isSafeInteger(stepTimeoutMs) || stepTimeoutMs < 1 || stepTimeoutMs > 30_000)
+    throw new TypeError("invalid cleanup step timeout");
   const failures = [];
   for (const step of steps) {
+    let timer;
     try {
-      await step.run();
+      // A timeout is a failed cleanup receipt, never proof of retirement. Keep
+      // attempting independent cleanup so one stuck browser cannot retain the
+      // daemon, private tmux server and sleep assertion indefinitely.
+      await Promise.race([
+        Promise.resolve().then(() => step.run()),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`cleanup step timed out after ${stepTimeoutMs}ms`)),
+            stepTimeoutMs,
+          );
+        }),
+      ]);
     } catch (error) {
       const detail = String(error instanceof Error ? error.message : error);
       failures.push(
@@ -2452,6 +2469,8 @@ export async function collectProductRigCleanupFailures(steps, { detailLimit = 4_
           detail: detail.length <= detailLimit ? detail : detail.slice(-detailLimit),
         }),
       );
+    } finally {
+      clearTimeout(timer);
     }
   }
   return Object.freeze(failures);

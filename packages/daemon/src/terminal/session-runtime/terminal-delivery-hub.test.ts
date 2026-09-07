@@ -194,6 +194,72 @@ function commitMessages(
 }
 
 describe("SessionRuntimeTerminalDeliveryHub", () => {
+  it("retains only live delivery baselines through redraw pressure and releases them on convergence", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const offer = {
+      protocolVersions: [1],
+      encodings: ["semantic-compact-v1"],
+      richPlacements: false,
+    } as const;
+    const messages = Array.from({ length: 3 }, () => [] as TerminalDeliveryServerMessage[]);
+    const clients = await Promise.all(
+      messages.map((output, index) =>
+        hub.open(`reader-${index}`, "pane-a", offer, (message) => {
+          output.push(message);
+        }),
+      ),
+    );
+    const latest = (index: number) =>
+      messages[index]!.findLast(
+        (message): message is TerminalDeliveryEnvelope => message.type === "terminal.delivery",
+      )!;
+    owner.emit(seed());
+    await settle();
+    clients[0]!.ack(ack(latest(0)));
+    clients[2]!.ack(ack(latest(2)));
+    owner.emit(patch(1, 1));
+    await settle();
+    clients[0]!.ack(ack(latest(0)));
+    clients[2]!.ack(ack(latest(2)));
+    clients[2]!.setVisibility("hidden");
+    for (let revision = 2; revision <= 160; revision += 1) {
+      owner.emit(patch(revision, revision % 2));
+      await settle();
+      expect(latest(0).frame).toBe("patch");
+      clients[0]!.ack(ack(latest(0)));
+      expect(hub.metrics().canonicalRevisions).toBeLessThanOrEqual(3);
+      messages[0]!.length = 0;
+    }
+    // The stalled initial transaction and hidden reader retain distinct
+    // baselines, but none of the intervening 159 screen revisions survive.
+    expect(hub.metrics().canonicalRevisions).toBe(3);
+    clients[1]!.ack(ack(latest(1)));
+    await settle();
+    expect(latest(1)).toMatchObject({ frame: "seed", canonicalRevision: 160 });
+    clients[1]!.ack(ack(latest(1)));
+    expect(hub.metrics().canonicalRevisions).toBe(2);
+    clients[2]!.setVisibility("visible");
+    await settle();
+    expect(latest(2)).toMatchObject({ frame: "seed", canonicalRevision: 160 });
+    clients[2]!.ack(ack(latest(2)));
+    expect(hub.metrics().canonicalRevisions).toBe(1);
+    await Promise.all(clients.map((client) => client.close()));
+    expect(hub.metrics()).toMatchObject({ canonicalRevisions: 0, clients: 0, inFlight: 0 });
+    const reopened: TerminalDeliveryServerMessage[] = [];
+    const reconnect = await hub.open("reconnect", "pane-a", offer, (message) => {
+      reopened.push(message);
+    });
+    owner.emit(seed(160));
+    await settle();
+    expect(reopened.find((message) => message.type === "terminal.delivery")).toMatchObject({
+      frame: "seed",
+      canonicalRevision: 160,
+    });
+    await reconnect.close();
+    expect(hub.metrics().canonicalRevisions).toBe(0);
+  });
+
   it("prunes ACK-superseded representations only after divergent clients advance", async () => {
     const owner = new FakeOwner();
     const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);

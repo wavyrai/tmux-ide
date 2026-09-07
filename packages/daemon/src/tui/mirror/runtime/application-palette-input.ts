@@ -7,28 +7,15 @@ export function applicationPaletteCommandSource(
   return { kind: source, surface };
 }
 
-export interface ApplicationAgentPaletteCommand {
-  readonly kind: "jump-agent";
-  readonly sessionName: string;
-  readonly paneId: string;
-  readonly label: string;
-}
-
-export interface ApplicationSessionPaletteCommand {
-  readonly kind: "open-session";
-  readonly sessionName: string;
-  readonly label: string;
-}
-
-export type ApplicationPaletteCommand =
-  | "home"
-  | "terminals"
-  | "new-window"
-  | "split-right"
-  | "split-down"
-  | "close-pane"
-  | ApplicationAgentPaletteCommand
-  | ApplicationSessionPaletteCommand;
+import type {
+  ApplicationPaletteCommand,
+  ApplicationSessionPaletteCommand,
+} from "../workspace/application-command-description.ts";
+export type {
+  ApplicationPaletteCommand,
+  ApplicationSessionPaletteCommand,
+  ApplicationAgentPaletteCommand,
+} from "../workspace/application-command-description.ts";
 
 const BASE_COMMANDS: readonly ApplicationPaletteCommand[] = [
   "home",
@@ -37,6 +24,8 @@ const BASE_COMMANDS: readonly ApplicationPaletteCommand[] = [
   "split-right",
   "split-down",
   "close-pane",
+  "appearance",
+  "zoom-pane",
 ];
 
 /** Agent commands are derived from the same semantic rows as the sidebar. */

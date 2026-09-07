@@ -1,5 +1,6 @@
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { execFile } from "node:child_process";
+import type { createNamedSocketFence } from "../../lib/tmux-named-socket-fence.ts";
 import { isAbsolute } from "node:path";
 
 import {
@@ -118,6 +119,8 @@ export function getNativeTerminalAttachmentRuntimeConstructionCount(): number {
 }
 
 export interface NativeTerminalAttachmentTmuxAuthority {
+  /** Shared with the canonical daemon's named command runners. */
+  readonly namedSocketFence?: ReturnType<typeof createNamedSocketFence>;
   readonly executablePath: string;
   readonly socketSelector: DaemonTmuxSocketSelector;
   readonly trustedCwd: string;
@@ -160,6 +163,7 @@ export interface NativeTerminalInventoryReadRunner {
 }
 
 interface CanonicalTmuxAuthority {
+  readonly namedSocketFence: ReturnType<typeof createNamedSocketFence> | null;
   readonly executablePath: string;
   readonly socketSelector: DaemonTmuxSocketSelector;
   readonly socketArgv: readonly string[];
@@ -204,6 +208,7 @@ function canonicalAuthority(input: NativeTerminalAttachmentTmuxAuthority): Canon
       socketArgv = ["-L", input.socketSelector.name];
     }
     return Object.freeze({
+      namedSocketFence: socketSelector.kind === "name" ? (input.namedSocketFence ?? null) : null,
       executablePath,
       socketSelector: Object.freeze(socketSelector),
       socketArgv: Object.freeze([...socketArgv]),
@@ -219,7 +224,7 @@ function canonicalAuthority(input: NativeTerminalAttachmentTmuxAuthority): Canon
 function currentSocketArgv(authority: CanonicalTmuxAuthority): readonly string[] {
   return authority.socketIdentity
     ? ["-S", revalidateUnixSocketIdentity(authority.socketIdentity)]
-    : authority.socketArgv;
+    : (authority.namedSocketFence?.resolve() ?? authority.socketArgv);
 }
 
 function defaultCommandExecutor(
@@ -265,6 +270,15 @@ function defaultReadCommandExecutor(
   });
 }
 
+function absentNamedServer(error: TmuxError): boolean {
+  const cause = error.cause as { stderr?: string | Buffer } | undefined;
+  const detail = String(cause?.stderr ?? "").toLowerCase();
+  return (
+    detail.includes("no server running") ||
+    (detail.includes("error connecting to") && detail.includes("no such file or directory"))
+  );
+}
+
 function pinnedRunner(
   authority: CanonicalTmuxAuthority,
   execute: NativeTerminalAttachmentCommandExecutor,
@@ -285,6 +299,8 @@ function pinnedRunner(
           },
         );
         const value = String(stdout);
+        if (authority.namedSocketFence && !authority.namedSocketFence.isPinned())
+          authority.namedSocketFence.resolve();
         if (value.includes("\0") || Buffer.byteLength(value, "utf8") > MAX_TMUX_OUTPUT_BYTES) {
           return { status: "failed" };
         }
@@ -298,16 +314,16 @@ function pinnedRunner(
           error.code === "TMUX_UNAVAILABLE" &&
           startupPolicy.allowUnavailableDefaultEnumeration &&
           authority.socketSelector.kind === "name" &&
-          authority.socketSelector.name === "default" &&
+          (authority.socketSelector.name === "default" || absentNamedServer(error)) &&
           command.argv.length === 3 &&
           command.argv[0] === "list-sessions" &&
           command.argv[1] === "-F" &&
           command.argv[2] === "#{session_name}|tmux-ide-view-field-v1|#{session_id}"
         ) {
-          // The daemon may cold-start before the default tmux server even when
+          // The daemon may cold-start before a named tmux server even when
           // durable workspace intent exists. This one construction-time orphan
           // enumeration means zero LIVE sessions; every other command and
-          // every explicit socket remains strict.
+          // inaccessible named sockets and every explicit path remain strict.
           return { status: "not-found" };
         }
         if (error instanceof TmuxError && error.code === "ENVIRONMENT_VARIABLE_NOT_FOUND") {
@@ -354,7 +370,12 @@ function pinnedReadRunner(
       try {
         const stdout = await execute(
           authority.executablePath,
-          [...currentSocketArgv(authority), ...command.argv],
+          [
+            ...(authority.namedSocketFence
+              ? await authority.namedSocketFence.resolveAsync(signal)
+              : currentSocketArgv(authority)),
+            ...command.argv,
+          ],
           {
             cwd: authority.trustedCwd,
             env: authority.environment,
@@ -364,6 +385,8 @@ function pinnedReadRunner(
           },
         );
         const value = String(stdout);
+        if (authority.namedSocketFence && !authority.namedSocketFence.isPinned())
+          await authority.namedSocketFence.resolveAsync(signal);
         if (value.includes("\0") || Buffer.byteLength(value, "utf8") > MAX_TMUX_OUTPUT_BYTES)
           return { status: "failed" };
         return { status: "ok", stdout: value };
@@ -764,7 +787,7 @@ function parsePaneSnapshot(
 /**
  * One bounded, old-tmux-safe discovery path for both live attachment and the
  * application-shell inventory. Names are resolved exactly to `$session_id`
- * before any pane query, and a byte-identical second snapshot closes races.
+ * before any pane query, and a second identity/topology snapshot closes races.
  */
 export async function discoverWorkspaceRegistryTerminalInventory(
   registry: WorkspaceRegistry,
@@ -791,11 +814,29 @@ export async function discoverWorkspaceRegistryTerminalInventory(
     if (before === null) continue;
     const panes = parsePaneSnapshot(before, identity);
     const after = await requiredTmuxResult(runner, argv, signal);
-    if (after === null || before !== after) {
+    if (after === null) throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    const latest = parsePaneSnapshot(after, identity);
+    // Foreground commands, titles, focus and paths can change while the same
+    // pane remains valid. Fence binding/topology only, then publish one complete
+    // latest snapshot rather than mixing presentation values across reads.
+    const proofKeys = [
+      "sessionName",
+      "sessionId",
+      "windowId",
+      "runtimePaneId",
+      "windowPaneCount",
+      "sessionWindowCount",
+      "semanticPaneId",
+      "windowStamp",
+      "index",
+    ] as const;
+    if (
+      panes.length !== latest.length ||
+      panes.some((pane, index) => proofKeys.some((key) => pane[key] !== latest[index]![key]))
+    ) {
       throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
     }
-    parsePaneSnapshot(after, identity);
-    bySessionName.set(sessionName, panes);
+    bySessionName.set(sessionName, latest);
   }
 
   const panes: NativeTerminalInventoryPaneSnapshot[] = [];
@@ -1750,8 +1791,7 @@ export class NativeTerminalAttachmentRuntime {
     const execute = options.commandExecutor ?? defaultCommandExecutor;
     const executeRead = options.readCommandExecutor ?? defaultReadCommandExecutor;
     const startupPolicy = {
-      allowUnavailableDefaultEnumeration:
-        authority.socketSelector.kind === "name" && authority.socketSelector.name === "default",
+      allowUnavailableDefaultEnumeration: authority.socketSelector.kind === "name",
     };
     const runner =
       options.inventoryRuntime?.runner ?? pinnedRunner(authority, execute, startupPolicy);

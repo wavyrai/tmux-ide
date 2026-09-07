@@ -368,14 +368,24 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
    */
   const [viewerMode, setViewerMode] = createSignal<TerminalAttachmentViewerMode>("interactive");
   const [geometryPassive, setGeometryPassive] = createSignal(false);
+  const [geometryAuthority, setGeometryAuthority] = createSignal<
+    "owner" | "passive" | "available" | null
+  >(null);
   const [resizeOutcome, setResizeOutcome] = createSignal<TerminalSurfaceResizeOutcome>("none");
   const [resizeOrdinal, setResizeOrdinal] = createSignal(0);
   const effectiveGeometryOwnership = (): TerminalAttachmentGeometryOwnership =>
-    geometryPassive() || viewerMode() === "read-only"
+    geometryPassive() ||
+    viewerMode() === "read-only" ||
+    (geometryAuthority() !== null && geometryAuthority() !== "owner")
       ? "passive"
       : (props.geometryOwnership ?? "passive");
   const ownsGeometry = (): boolean => effectiveGeometryOwnership() === "owner";
   const sizePassive = (): boolean => !ownsGeometry();
+  const canRequestGeometry = (): boolean =>
+    props.geometryOwnership === "owner" &&
+    viewerMode() === "interactive" &&
+    !geometryPassive() &&
+    geometryAuthority() !== "passive";
   const [phase, setPhase] = createSignal<TerminalSurfacePhase>(
     terminalTransport() ? "measuring" : "unavailable",
   );
@@ -412,6 +422,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let currentViewport: TerminalAttachmentViewport | null = null;
   let latestMeasuredViewport: TerminalAttachmentViewport | null = null;
   let pendingResize: TerminalAttachmentViewport | null = null;
+  let availableGeometryBox: { width: number; height: number } | null = null;
   let resizeFlight: Promise<void> | null = null;
   let lastAcknowledgedResize: TerminalAttachmentViewport | null = null;
   let resizeDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -558,6 +569,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   };
 
   const disposeAttachment = (): void => {
+    setGeometryAuthority(null);
     const active = attachment;
     attachment = null;
     if (resizeDebounce !== null) clearTimeout(resizeDebounce);
@@ -616,34 +628,18 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     }
   };
 
-  const reconnectReadOnlyAfterGeometryConflict = (
-    activeAttachment: NativeTerminalAttachment,
-  ): void => {
+  const yieldGeometryAfterConflict = (activeAttachment: NativeTerminalAttachment): void => {
     if (disposed || attachment !== activeAttachment) return;
-    generation += 1;
-    disposeAttachment();
-    cancelConflictRetry();
-    cancelReconnectRetry();
-    conflictAttempt = 0;
-    reconnectAttempt = 0;
-    lifecycleRetiredResizeRetryUsed = false;
     pendingResize = null;
     setGeometryPassive(true);
     setFailureCode("geometry-authority-conflict");
     setReason("Another client controls terminal geometry. Using its authoritative size.");
-    resetAttachTrace(true);
-    setPhase("measuring");
-    const readOnlyGeneration = generation;
-    queueMicrotask(() => {
-      if (disposed || readOnlyGeneration !== generation || !terminalTransport()) return;
-      const nextViewport = latestMeasuredViewport ?? SIZE_PASSIVE_CONNECT_VIEWPORT;
-      latestMeasuredViewport = nextViewport;
-      connect(nextViewport);
-    });
+    const grid = sourceGrid();
+    if (grid) resizePassiveGrid(grid);
   };
 
   const flushResize = (): void => {
-    if (!attachment || !pendingResize || resizeFlight || disposed || geometryPassive()) return;
+    if (!attachment || !pendingResize || resizeFlight || disposed || !canRequestGeometry()) return;
     const next = pendingResize;
     pendingResize = null;
     if (lastAcknowledgedResize && sameViewport(lastAcknowledgedResize, next)) return;
@@ -651,7 +647,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     const activeGeneration = generation;
     if (
       disposed ||
-      geometryPassive() ||
+      !canRequestGeometry() ||
       attachment !== activeAttachment ||
       activeGeneration !== generation
     ) {
@@ -664,7 +660,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           disposed ||
           attachment !== activeAttachment ||
           activeGeneration !== generation ||
-          geometryPassive()
+          !canRequestGeometry()
         ) {
           return;
         }
@@ -685,7 +681,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         }
         setResizeOutcome(resizeOutcomeForError(result.error.code));
         if (result.error.code === "geometry-authority-conflict") {
-          reconnectReadOnlyAfterGeometryConflict(activeAttachment);
+          yieldGeometryAfterConflict(activeAttachment);
           return;
         }
         if (
@@ -768,7 +764,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         let written = false;
         try {
           if (canonical) {
-            activeRenderer.resizeGrid({ cols: canonical.cols, rows: canonical.rows });
+            const grid = { cols: canonical.cols, rows: canonical.rows };
+            setSourceGrid(grid);
+            activeRenderer.resizeGrid(grid);
           }
           const outcome = await Promise.race([
             activeRenderer.write(payload).then(() => "written" as const),
@@ -889,6 +887,21 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           recordAttachPhase("live");
         }
       });
+    }
+    if (event.type === "geometry-authority") {
+      setGeometryAuthority(event.ownership);
+      const box = mount?.parentElement?.getBoundingClientRect();
+      availableGeometryBox =
+        event.ownership === "available" && box ? { width: box.width, height: box.height } : null;
+      setGeometryPassive(false);
+      if (!canRequestGeometry()) {
+        pendingResize = null;
+        const grid = sourceGrid();
+        if (grid) resizePassiveGrid(grid);
+      } else if (event.ownership === "owner") {
+        scheduleFit();
+      }
+      return;
     }
     if (event.type === "geometry") {
       currentViewport = event.clientViewport;
@@ -1053,7 +1066,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         }
         const latestViewport = latestMeasuredViewport;
         if (currentViewport && latestViewport && !sameViewport(currentViewport, latestViewport)) {
-          if (!sizePassive()) {
+          if (canRequestGeometry()) {
             pendingResize = latestViewport;
             flushResize();
           }
@@ -1071,7 +1084,13 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const fit = (): void => {
     animationFrame = null;
     if (disposed) return;
-    if (sizePassive()) {
+    const box = mount?.parentElement?.getBoundingClientRect();
+    const onlyOwnershipPresentationChanged =
+      geometryAuthority() === "available" &&
+      availableGeometryBox !== null &&
+      box?.width === availableGeometryBox.width &&
+      box?.height === availableGeometryBox.height;
+    if (!canRequestGeometry() || onlyOwnershipPresentationChanged) {
       // Size-passive card: the origin window owns its size, so a DOM measurement
       // must never reflow tmux. Re-assert the window grid on an existing
       // attachment; otherwise open one with a provisional (ignored) viewport.
@@ -1087,7 +1106,15 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       return;
     }
     updateReadOnlyFitScale();
-    const viewport = usableViewport(renderer?.fit() ?? null);
+    // A passive grid is letterboxed at its canonical size. Temporarily use
+    // the full pane box for measurement without resizing or replacing the grid.
+    mount?.classList.add("terminal-surface__viewport--measure");
+    let viewport: TerminalAttachmentViewport | null;
+    try {
+      viewport = usableViewport(renderer?.fit() ?? null);
+    } finally {
+      mount?.classList.remove("terminal-surface__viewport--measure");
+    }
     if (!viewport) {
       if (!attachment && terminalTransport()) {
         setPhase("measuring");
@@ -1302,6 +1329,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       if (activeLoad === rendererLoadGeneration && renderer === nextRenderer) scheduleFit();
     });
     observer.observe(mount);
+    if (mount.parentElement) observer.observe(mount.parentElement);
     scheduleFit();
   };
 

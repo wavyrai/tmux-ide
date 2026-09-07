@@ -323,6 +323,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   >();
   let nextSubscriptionId = 0;
   let identity: DaemonInstanceIdentity | null = null;
+  let verifiedEventIdentity: DaemonInstanceIdentity | null = null;
   // The session-name → workspace-name map the event projection needs. Refreshed
   // by every catalog read; an empty cache simply projects fewer shell events
   // until the first read lands.
@@ -1114,6 +1115,19 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           lastAckedInterestRevision = 0;
           unavailableInterestKeys.clear();
           helloVerified = true;
+          const previousIdentity = verifiedEventIdentity;
+          verifiedEventIdentity = frame.data.daemon;
+          if (previousIdentity && !sameIdentity(previousIdentity, frame.data.daemon)) {
+            // Reconnecting the physical socket does not retarget workspace
+            // stores. Notify their existing verified recovery path before
+            // delivering any events from the replacement generation.
+            emit({
+              type: "daemon-generation.changed",
+              previousIdentity,
+              daemon: { status: "connected", identity: frame.data.daemon },
+            });
+            if (signal.aborted || disposed || attemptEpoch !== eventSocketEpoch) return;
+          }
           sendEventSubscriptionDelta();
           if (lastSentInterestRevision === 0) finishConnected();
           return;

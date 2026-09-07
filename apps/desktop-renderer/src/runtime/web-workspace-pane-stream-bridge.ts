@@ -1,4 +1,8 @@
-import type { SessionRuntimeActivityKind, SessionRuntimePresenceState } from "@tmux-ide/contracts";
+import type {
+  SessionRuntimeAuthoritySnapshot,
+  SessionRuntimeActivityKind,
+  SessionRuntimePresenceState,
+} from "@tmux-ide/contracts";
 
 import type {
   PaneMirrorEvent,
@@ -49,6 +53,7 @@ type Card5SinkGlobals = typeof globalThis & {
 
 /** Local compositor view of the one WorkspaceClient-owned physical stream. */
 export interface WebWorkspacePaneStreamBridge extends PaneStreamTransport {
+  publishAuthority(snapshot: SessionRuntimeAuthoritySnapshot): void;
   publishPane(pane: string, event: PaneMirrorEvent): void;
   publishLayout(layout: PaneStreamLayoutEvent): void;
   publishLayoutSnapshot(snapshot: PaneStreamLayoutSnapshotEvent): void;
@@ -109,6 +114,7 @@ export function createWebWorkspacePaneStreamBridge(
   const connections = new Set<BridgeConnection>();
   const latest = new Map<string, Extract<PaneMirrorEvent, { type: "seed-batch" | "output" }>>();
   let layout: PaneStreamLayoutEvent | null = null;
+  let authority: SessionRuntimeAuthoritySnapshot | null = null;
   let layoutSnapshot: PaneStreamLayoutSnapshotEvent | null = null;
   let session: PaneStreamSessionHandle | null = null;
   let boundWorkspaceName = initialWorkspaceName;
@@ -275,6 +281,7 @@ export function createWebWorkspacePaneStreamBridge(
     unsubscribePhysicalBinding = null;
     recordCard5PhysicalBridgeBinding(null);
     sessionEpoch += 1;
+    authority = null;
     const retired: BridgeConnection[] = [];
     if (workspaceName !== boundWorkspaceName) {
       targetEpoch += 1;
@@ -347,6 +354,7 @@ export function createWebWorkspacePaneStreamBridge(
         epoch: 0,
       };
       connections.add(connection);
+      if (authority) listeners.onAuthoritySnapshot?.(authority);
       if (layout) {
         const replayLayout = layout;
         queueMicrotask(() => {
@@ -628,6 +636,17 @@ export function createWebWorkspacePaneStreamBridge(
           },
         },
       };
+    },
+    publishAuthority(snapshot) {
+      authority = snapshot;
+      for (const connection of connections) {
+        if (
+          connection.active &&
+          connection.targetEpoch === targetEpoch &&
+          connection.workspaceName === boundWorkspaceName
+        )
+          connection.listeners.onAuthoritySnapshot?.(snapshot);
+      }
     },
     publishPane(pane, event) {
       publishPane(pane, event);

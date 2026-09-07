@@ -32,6 +32,21 @@ class CanonicalFnv64 {
   }
 
   string(value: string): number {
+    // Most terminal cells are empty or ASCII. Their UTF-8 bytes are already
+    // the code units; avoid allocating a Uint8Array for every history cell.
+    let ascii = true;
+    for (let index = 0; index < value.length; index += 1) {
+      if (value.charCodeAt(index) > 0x7f) {
+        ascii = false;
+        break;
+      }
+    }
+    if (ascii) {
+      this.ascii(`s${value.length}:`);
+      this.ascii(value);
+      this.#byte(0x3b);
+      return value.length;
+    }
     const bytes = UTF8_ENCODER.encode(value);
     this.ascii(`s${bytes.byteLength}:`);
     for (const byte of bytes) this.#byte(byte);
@@ -78,12 +93,6 @@ class CanonicalFnv64 {
       this.string(key);
       this.value(record[key]);
     }
-    this.ascii(";");
-  }
-
-  array(length: number, entries: () => void): void {
-    this.ascii(`a${length}:`);
-    entries();
     this.ascii(";");
   }
 
@@ -167,26 +176,19 @@ export async function hashCanonicalTerminalValueCooperatively(
 }
 
 function writeColor(hash: CanonicalFnv64, color: TerminalReplicaColor): void {
-  const keys =
-    color.kind === "default"
-      ? (["kind"] as const)
-      : color.kind === "indexed"
-        ? (["index", "kind"] as const)
-        : (["kind", "value"] as const);
-  hash.ascii(`o${keys.length}:`);
-  for (const key of keys) {
-    hash.string(key);
-    if (key === "kind") hash.string(color.kind);
-    else
-      hash.number(
-        key === "index" && color.kind === "indexed"
-          ? color.index
-          : color.kind === "rgb"
-            ? color.value
-            : 0,
-      );
+  // Field order and byte tags are fixed by the canonical color schema.
+  // Avoid allocating/sorting field lists or re-encoding their names per cell.
+  if (color.kind === "default") {
+    hash.ascii("o1:s4:kind;s7:default;;");
+  } else if (color.kind === "indexed") {
+    hash.ascii("o2:s5:index;");
+    hash.number(color.index);
+    hash.ascii("s4:kind;s7:indexed;;");
+  } else {
+    hash.ascii("o2:s4:kind;s3:rgb;s5:value;");
+    hash.number(color.value);
+    hash.ascii(";");
   }
-  hash.ascii(";");
 }
 
 interface PreparedCanonicalCell {
@@ -250,20 +252,19 @@ export function hashTerminalReplicaRowCached(row: TerminalReplicaRow, onMiss?: (
   if (cached) return cached;
   onMiss?.();
   const hash = new CanonicalFnv64();
-  hash.array(2, () => {
-    hash.boolean(row.wrapped);
-    hash.array(row.cells.length, () => {
-      for (const cell of row.cells) {
-        hash.array(5, () => {
-          hash.string(cell.grapheme);
-          hash.number(cell.width);
-          writeColor(hash, cell.foreground);
-          writeColor(hash, cell.background);
-          hash.number(cell.attributes);
-        });
-      }
-    });
-  });
+  hash.ascii("a2:");
+  hash.boolean(row.wrapped);
+  hash.ascii(`a${row.cells.length}:`);
+  for (const cell of row.cells) {
+    hash.ascii("a5:");
+    hash.string(cell.grapheme);
+    hash.number(cell.width);
+    writeColor(hash, cell.foreground);
+    writeColor(hash, cell.background);
+    hash.number(cell.attributes);
+    hash.ascii(";");
+  }
+  hash.ascii(";;");
   const digest = hash.digest();
   if (isTerminalReplicaRowDeeplyFrozen(row)) {
     DEEPLY_FROZEN_ROWS.add(row);

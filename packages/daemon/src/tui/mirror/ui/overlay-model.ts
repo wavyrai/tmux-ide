@@ -42,7 +42,7 @@ export function overlayFrameSize(input: {
   return Object.freeze({
     width: Math.max(1, Math.min(Math.floor(input.preferredWidth), viewportWidth - horizontalInset)),
     height: Math.max(
-      3,
+      1,
       Math.min(Math.floor(input.preferredHeight), viewportHeight - verticalInset),
     ),
   });

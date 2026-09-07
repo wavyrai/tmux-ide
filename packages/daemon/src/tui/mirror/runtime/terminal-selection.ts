@@ -1,6 +1,13 @@
+import type { SessionRuntimeTerminalInput } from "@tmux-ide/contracts";
 import type { TerminalReplicaRow, TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 
 import { orderCells, rowSelectionRange, type Cell } from "../selection.ts";
+import { retainedTerminalCell } from "../terminal-retained-row.ts";
+import {
+  terminalViewportCell,
+  type TerminalViewportOrigin,
+  type TerminalViewportSize,
+} from "../terminal-viewport.ts";
 
 export const MAX_TERMINAL_SELECTION_BYTES = 1_000_000;
 
@@ -77,6 +84,8 @@ export function terminalGestureLeaseMatches(
     identity.rows === lease.canonicalIdentity.rows &&
     identity.sourceEpoch === lease.sourceEpoch &&
     snapshot &&
+    snapshot.cols === lease.snapshot.cols &&
+    snapshot.rows === lease.snapshot.rows &&
     snapshot.history.length === lease.historyLength &&
     identity.historyTrim === lease.historyTrim &&
     snapshot.modes.mouseProtocol === lease.mouseProtocol &&
@@ -91,11 +100,11 @@ export function terminalGestureLeaseMatches(
 }
 
 function semanticOwnerColumn(row: TerminalReplicaRow, column: number): number | null {
-  const cell = row.cells[column];
+  const cell = retainedTerminalCell(row, column);
   if (!cell) return null;
   if (cell.width !== 0) return column;
   for (let owner = column - 1; owner >= 0; owner -= 1) {
-    const candidate = row.cells[owner];
+    const candidate = retainedTerminalCell(row, owner);
     if (!candidate) return null;
     if (candidate.width === 2 && owner + 1 === column) return owner;
     if (candidate.width !== 0) return null;
@@ -107,24 +116,40 @@ export function terminalSelectionCell(
   snapshot: TerminalReplicaSnapshot,
   column: number,
   row: number,
+  scrollOffset = 0,
+  viewport?: TerminalViewportSize & { readonly origin: TerminalViewportOrigin },
 ): Cell | null {
+  if (viewport) {
+    const source = terminalViewportCell(viewport, viewport.origin, column, row);
+    if (!source) return null;
+    column = source.col;
+    row = source.row;
+  }
   if (
     !Number.isSafeInteger(column) ||
     !Number.isSafeInteger(row) ||
     column < 0 ||
-    row < 0 ||
+    row < (viewport ? -snapshot.history.length : 0) ||
     column >= snapshot.cols ||
     row >= snapshot.rows
   )
     return null;
-  const owner = semanticOwnerColumn(snapshot.grid[row]!, column);
-  return owner === null ? null : Object.freeze({ row: snapshot.history.length + row, col: owner });
+  const absolute = viewport
+    ? snapshot.history.length + row
+    : snapshot.history.length - Math.max(0, Math.min(snapshot.history.length, scrollOffset)) + row;
+  const source =
+    absolute < snapshot.history.length
+      ? snapshot.history[absolute]
+      : snapshot.grid[absolute - snapshot.history.length];
+  if (!source) return null;
+  const owner = semanticOwnerColumn(source, column);
+  return owner === null ? null : Object.freeze({ row: absolute, col: owner });
 }
 
 function rowCells(row: TerminalReplicaRow, cols: number): readonly string[] {
   const cells: string[] = [];
   for (let column = 0; column < cols; column += 1) {
-    const cell = row.cells[column];
+    const cell = retainedTerminalCell(row, column);
     cells.push(!cell || cell.width === 0 ? "" : cell.grapheme || " ");
   }
   return cells;
@@ -160,8 +185,12 @@ export function extractTerminalSelection(
   for (let index = start.row; index <= end.row; index += 1) {
     const cells = rowCells(rows[index]!, snapshot.cols);
     const range = rowSelectionRange(index, snapshot.cols, start, end);
-    let segment = range ? cells.slice(range.from, range.to + 1).join("") : "";
-    segment = segment.replace(/\s+$/u, "");
+    // tmux clips a hard line at its last non-space cell before selecting;
+    // it preserves the full width of a wrapped line. Trimming the selected
+    // substring would erase intentional separators and Unicode whitespace.
+    let lineEnd = cells.length;
+    if (!rows[index + 1]?.wrapped) while (lineEnd > 0 && cells[lineEnd - 1] === " ") lineEnd--;
+    const segment = range ? cells.slice(range.from, Math.min(range.to + 1, lineEnd)).join("") : "";
     const joinsWrappedRow = selected.length > 0 && rows[index]!.wrapped;
     const separatorBytes = selected.length === 0 || joinsWrappedRow ? 0 : 1;
     const segmentBytes = Buffer.byteLength(segment, "utf8");
@@ -203,15 +232,46 @@ export function terminalSgrMouse(input: {
   return `\x1b[<${code};${input.column + 1};${input.row + 1}${input.action === "up" ? "m" : "M"}`;
 }
 
+/** Encode native pane input without treating legacy protocol bytes as UTF-8 text. */
+export function terminalMouseInput(
+  input: Parameters<typeof terminalSgrMouse>[0],
+  encoding: TerminalReplicaSnapshot["modes"]["mouseEncoding"],
+): SessionRuntimeTerminalInput | null {
+  const sgr = terminalSgrMouse(input);
+  if (!sgr) return null;
+  if (encoding === "sgr") return { kind: "text", data: sgr };
+  if (encoding !== "default" && encoding !== "utf8") return null;
+  const button =
+    input.action === "wheel-up" ? 64 : input.action === "wheel-down" ? 65 : (input.button ?? 0);
+  const modifiers = (input.shift ? 4 : 0) + (input.alt ? 8 : 0) + (input.ctrl ? 16 : 0);
+  const code =
+    (input.action === "up"
+      ? 3
+      : input.action === "move"
+        ? 35
+        : input.action === "drag"
+          ? 32 + button
+          : button) + modifiers;
+  // Native input-keys.c clamps legacy positions and rejects overflowing UTF-8 reports.
+  const values = [code + 32, input.column + 33, input.row + 33];
+  if (encoding === "utf8" && values.some((value) => value > 2047)) return null;
+  const payload =
+    encoding === "utf8"
+      ? Buffer.from(String.fromCharCode(...values), "utf8")
+      : Buffer.from(values.map((value) => Math.min(255, value)));
+  return { kind: "bytes", data: Buffer.concat([Buffer.from("\x1b[M"), payload]).toString("hex") };
+}
+
 export function terminalMouseActionSupported(
   snapshot: TerminalReplicaSnapshot,
   action: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down",
 ): boolean {
-  if (snapshot.modes.mouseEncoding !== "sgr") return false;
+  if (!["sgr", "default", "utf8"].includes(snapshot.modes.mouseEncoding ?? "")) return false;
   const protocol = snapshot.modes.mouseProtocol;
   if (!protocol) return false;
   if (protocol === "none") return false;
-  if (action === "down" || action === "wheel-up" || action === "wheel-down") return true;
+  if (action === "down") return true;
+  if (action === "wheel-up" || action === "wheel-down") return protocol !== "x10";
   if (action === "up") return protocol !== "x10";
   if (action === "drag") return protocol === "drag" || protocol === "any";
   return protocol === "any";

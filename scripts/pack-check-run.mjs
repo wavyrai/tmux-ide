@@ -240,6 +240,70 @@ async function waitForChild(child, timeoutMs = 20_000) {
   return { ...exit, ...childOutput.get(child) };
 }
 
+function createInstalledRuntimeCleanup(downloadedTui, readyPath) {
+  const processIdentity = (pid) => {
+    const observed = spawnSync("ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const identity = observed.status === 0 ? observed.stdout.trim() : "";
+    return identity && identity.includes(downloadedTui) ? identity : null;
+  };
+  const launchedTuiPids = () => {
+    const observed = spawnSync("ps", ["-axo", "pid=,command="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    if (observed.status !== 0) return [];
+    return observed.stdout
+      .split("\n")
+      .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
+      .filter((match) => match?.[2]?.includes(downloadedTui))
+      .map((match) => Number(match[1]))
+      .filter((pid) => Number.isSafeInteger(pid) && pid > 1);
+  };
+  const terminateExactTui = async (pid) => {
+    const identity = processIdentity(pid);
+    if (!identity) return;
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      return;
+    }
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+      const currentIdentity = processIdentity(pid);
+      if (!currentIdentity || currentIdentity !== identity) return;
+    }
+    if (processIdentity(pid) !== identity) return;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // The exact hosted TUI exited between the final probe and escalation.
+    }
+  };
+  return async () => {
+    const pids = new Set(launchedTuiPids());
+    if (readyPath && existsSync(readyPath)) {
+      try {
+        const readiness = JSON.parse(readFileSync(readyPath, "utf8"));
+        if (
+          readiness?.version === 1 &&
+          readiness.phase === "input-ready" &&
+          readiness.surface === "app" &&
+          Number.isSafeInteger(readiness.pid) &&
+          readiness.pid > 1
+        ) {
+          pids.add(readiness.pid);
+        }
+      } catch {
+        // A partial readiness write must not prevent exact-binary cleanup.
+      }
+    }
+    await Promise.all([...pids].map(terminateExactTui));
+  };
+}
+
 async function runInstalledTuiGate(installedCli) {
   if (!new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]).has(platformTag)) {
     throw new Error(`Installed TUI gate has no release binary for ${platformTag}`);
@@ -362,67 +426,7 @@ async function runInstalledTuiGate(installedCli) {
       `stderr:\n${stderr || "(empty)"}`,
     ].join("\n");
   };
-  const processIdentity = (pid) => {
-    const observed = spawnSync("ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const identity = observed.status === 0 ? observed.stdout.trim() : "";
-    return identity && identity.includes(downloadedTui) ? identity : null;
-  };
-  const launchedTuiPids = () => {
-    const observed = spawnSync("ps", ["-axo", "pid=,command="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (observed.status !== 0) return [];
-    return observed.stdout
-      .split("\n")
-      .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
-      .filter((match) => match?.[2]?.includes(downloadedTui))
-      .map((match) => Number(match[1]))
-      .filter((pid) => Number.isSafeInteger(pid) && pid > 1);
-  };
-  const terminateExactTui = async (pid) => {
-    const identity = processIdentity(pid);
-    if (!identity) return;
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      return;
-    }
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
-      const currentIdentity = processIdentity(pid);
-      if (!currentIdentity || currentIdentity !== identity) return;
-    }
-    if (processIdentity(pid) !== identity) return;
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // The exact hosted TUI exited between the final probe and escalation.
-    }
-  };
-  const terminateLaunchedTui = async () => {
-    const pids = new Set(launchedTuiPids());
-    if (existsSync(readyPath)) {
-      try {
-        const readiness = JSON.parse(readFileSync(readyPath, "utf8"));
-        if (
-          readiness?.version === 1 &&
-          readiness.phase === "input-ready" &&
-          readiness.surface === "app" &&
-          Number.isSafeInteger(readiness.pid) &&
-          readiness.pid > 1
-        ) {
-          pids.add(readiness.pid);
-        }
-      } catch {
-        // A partial readiness write must not prevent exact-binary cleanup.
-      }
-    }
-    await Promise.all([...pids].map(terminateExactTui));
-  };
+  const terminateLaunchedTui = createInstalledRuntimeCleanup(downloadedTui, readyPath);
 
   for (const forbidden of ["bunfig.toml", "node_modules", join(".tmux-ide", "workspace.yml")]) {
     if (existsSync(join(launchDir, forbidden))) {
@@ -1217,10 +1221,18 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     "split pane UI publication settles",
     10_000,
     () => {
-      // Every pane retains the component header's menu trigger at compact
-      // widths. The shadcn-style header intentionally drops the old brackets.
-      const paneMenus = capture(one.targetPane).match(/⋯/gu) ?? [];
-      if (paneMenus.length < 2) {
+      // Idle headers hide action buttons until focus/hover. Check both pane
+      // names as well as the focused header's menu, rather than requiring
+      // hidden buttons to be painted during the steady-state frame.
+      const frame = capture(one.targetPane);
+      const names = tmuxResult(["list-panes", "-t", "=journey-beta", "-F", "#{@ide_name}"])
+        .stdout.trim()
+        .split("\n");
+      if (
+        names.length !== 2 ||
+        names.some((name) => !name || !frame.includes(name)) ||
+        !frame.includes("⋯")
+      ) {
         stableSplitFrames = 0;
         return false;
       }
@@ -1659,7 +1671,13 @@ try {
   while (!existsSync(daemonInfo) && Date.now() < deadline) {
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
   }
-  if (!existsSync(daemonInfo)) throw new Error("Headless daemon did not write daemon.json");
+  if (!existsSync(daemonInfo)) {
+    const diagnostics = contenders.map((child) => {
+      const output = childOutput.get(child);
+      return `pid ${child.pid}, exit ${child.exitCode}, signal ${child.signalCode}:\n${output?.stderr ?? ""}`;
+    });
+    throw new Error(`Headless daemon did not write daemon.json\n${diagnostics.join("\n")}`);
+  }
 
   const info = JSON.parse(readFileSync(daemonInfo, "utf-8"));
   const owner = contenders.find((candidate) => candidate.pid === info.pid);
@@ -1745,6 +1763,11 @@ try {
   journeyObservations = await runPackedGoldenJourney(installedCli, owner);
   proofCompleted = true;
 } finally {
+  // A failed golden journey may leave its compiled app alive after tmux dies.
+  // Reuse exact-binary/PID-identity cleanup for every app in this private run.
+  await createInstalledRuntimeCleanup(
+    join(homeDir, ".tmux-ide", "bin", `tmux-ide-tui-${platformTag}-${packageVersion}`),
+  )();
   spawnSync("tmux", ["-S", installedTmuxSocketPath, "kill-server"], {
     env: { ...process.env, TMUX: "" },
     stdio: "ignore",

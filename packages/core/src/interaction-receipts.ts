@@ -81,7 +81,8 @@ export function paneInteractionPresence(
   const failed = interaction.phase === "rejected" || interaction.phase === "timed-out";
   let badge: string;
   if (failed) badge = "FAILED";
-  else if (kind === "read") badge = endpoint === "source" ? "READING" : "READ";
+  else if (kind === "read")
+    badge = endpoint === "source" && interaction.phase === "accepted" ? "READING" : "READ";
   else if (interaction.phase === "accepted") badge = endpoint === "source" ? "SENDING" : "INPUT";
   else badge = endpoint === "source" ? "SENT" : "RECEIVED";
   return {

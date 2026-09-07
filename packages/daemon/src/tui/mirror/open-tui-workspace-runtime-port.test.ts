@@ -314,6 +314,27 @@ function rig(
 }
 
 describe("OpenTUI WorkspaceClient runtime port", () => {
+  it("accepts native zoom visibility while retaining hidden pane subscriptions", async () => {
+    const test = rig(true);
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const original = port.getLayout()!;
+    test
+      .options()
+      .onLayout?.({ ...original, zoomed: true, panes: [{ ...original.panes[0]!, width: 120 }] });
+    expect(port.getLayout()?.zoomed).toBe(true);
+    expect(port.getLayout()?.panes).toHaveLength(1);
+    expect(
+      await port.subscribeTerminal({ workspaceName: WORKSPACE, semanticPaneId: PANE_B }),
+    ).toBeDefined();
+    test.options().onLayout?.(original);
+    expect(port.getLayout()?.zoomed).toBe(false);
+    expect(port.getLayout()?.panes).toHaveLength(2);
+    await port.close();
+  });
+
   it("retains one current window across tmux false-then-true switch frames", async () => {
     const test = rig(true);
     const port = await connectOpenTuiWorkspaceRuntimePort({

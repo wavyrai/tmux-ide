@@ -444,6 +444,8 @@ export const PaneStreamLayoutFrameSchemaZ = z
     zoomed: z.boolean(),
     /** Backward-compatible while older daemons are still in the reconnect window. */
     paneBorderStatus: z.enum(["top", "bottom", "off"]).default("off"),
+    /** Effective native window copy key mode; older daemons may omit it. */
+    modeKeys: z.enum(["emacs", "vi"]).optional(),
     panes: z
       .array(
         z

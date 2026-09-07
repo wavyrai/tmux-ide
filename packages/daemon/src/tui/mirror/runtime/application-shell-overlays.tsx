@@ -270,3 +270,112 @@ export function NotificationToast(props: {
     </OverlayFrame>
   );
 }
+
+import type { ApplicationAppearanceOwner } from "./application-appearance-owner.ts";
+import type { OverlayLayer } from "../ui/overlay-host.tsx";
+
+export function appearanceDialogLayer(
+  owner: ApplicationAppearanceOwner | undefined,
+  width: number,
+  height: number,
+): OverlayLayer[] {
+  if (!owner?.pickerOpen()) return [];
+  return [
+    {
+      id: "appearance",
+      render: ({ active, zIndex }) => (
+        <AppearanceDialog
+          owner={owner}
+          width={width}
+          height={height}
+          active={active}
+          zIndex={zIndex}
+        />
+      ),
+    },
+  ];
+}
+
+export function AppearanceDialog(props: {
+  owner: ApplicationAppearanceOwner;
+  width: number;
+  height: number;
+  active?: boolean;
+  zIndex?: number;
+}) {
+  const width = () => Math.max(1, Math.min(48, props.width - (props.width >= 8 ? 4 : 0)));
+  return (
+    <Dialog
+      theme={props.owner.theme()}
+      viewportWidth={props.width}
+      viewportHeight={props.height}
+      width={width()}
+      height={Math.min(18, props.height)}
+      title="Appearance"
+      footer={width() < 40 ? "Enter save · Esc back" : "↑↓ preview · Enter save · Esc cancel"}
+      active={props.active}
+      zIndex={props.zIndex}
+      onDismiss={props.owner.cancelPicker}
+    >
+      <text
+        height={1}
+        fg={props.owner.theme().roles.text.primary}
+        content={`Search: ${props.owner.pickerQuery() || "type to filter"}`}
+      />
+      <For
+        each={(() => {
+          const options = props.owner.pickerOptions();
+          const count = Math.max(1, Math.min(10, props.height - 8));
+          const index = options.findIndex((p) => p.id === props.owner.pickerSelection());
+          const start = Math.max(
+            0,
+            Math.min(index - Math.floor(count / 2), options.length - count),
+          );
+          return options.slice(start, start + count);
+        })()}
+      >
+        {(option) => (
+          <OverlayListRow
+            theme={props.owner.theme()}
+            id={option.id}
+            label={option.name}
+            width={Math.max(1, width() - 4)}
+            selected={props.owner.pickerSelection() === option.id}
+            disabled={props.active === false}
+            onPress={() => props.owner.preview(option.id)}
+          />
+        )}
+      </For>
+      <text
+        height={1}
+        fg={props.owner.theme().roles.text.muted}
+        content={
+          props.owner.pickerError()
+            ? width() < 40
+              ? "Save failed · retry"
+              : props.owner.pickerError()!
+            : width() < 40
+              ? "↑↓ preview"
+              : "Preview now · Save to remember"
+        }
+      />
+      <box height={1} flexDirection="row" gap={1}>
+        <TuiButton
+          theme={props.owner.theme()}
+          label="Save"
+          size="compact"
+          variant="primary"
+          disabled={props.active === false}
+          onPress={props.owner.savePicker}
+        />
+        <TuiButton
+          theme={props.owner.theme()}
+          label="Cancel"
+          size="compact"
+          disabled={props.active === false}
+          onPress={props.owner.cancelPicker}
+        />
+      </box>
+    </Dialog>
+  );
+}

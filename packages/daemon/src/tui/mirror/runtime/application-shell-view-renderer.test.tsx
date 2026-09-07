@@ -1,4 +1,8 @@
 /* @jsxImportSource @opentui/solid */
+import { EventEmitter } from "node:events";
+import { createAppearanceOwner } from "./application-appearance-owner.ts";
+import { appearanceDialogLayer } from "./application-shell-overlays.tsx";
+import { parseAppConfig } from "../../../lib/app-config.ts";
 import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard, usePaste, type JSX } from "@opentui/solid";
 import { describe, expect, it } from "bun:test";
@@ -606,7 +610,7 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
-  it("repaints terminal chrome and default terminal cells across a live theme switch", async () => {
+  it("repaints terminal chrome and default terminal cells without retiring the workspace across a live theme switch", async () => {
     registerPaneSurface();
     const dark = createSemanticThemeSnapshot({ mode: "dark" });
     const light = createSemanticThemeSnapshot({ mode: "light" });
@@ -687,7 +691,7 @@ describe("production ApplicationShellView", () => {
     expect(colorKey(footerMessage!.bg)).toBe(colorKey(light.roles.surfaces.header));
     expect(colorKey(terminalCell!.bg)).toBe(colorKey(light.roles.surfaces.terminal));
     expect(colorKey(blankSidebarCell!)).toBe(colorKey(light.roles.surfaces.panel));
-    expect(terminal.lifecycle).toEqual({ subscriptions: 2, unsubscriptions: 1, fullBlits: 2 });
+    expect(terminal.lifecycle).toMatchObject({ subscriptions: 1, unsubscriptions: 0 });
     setup.renderer.destroy();
   });
 
@@ -1169,28 +1173,28 @@ describe("production ApplicationShellView", () => {
     };
     await run(
       [
-        { pane: "pane.main", left: 0, top: 1, width: 65, height: 40, active: true },
-        { pane: "pane.side", left: 66, top: 1, width: 66, height: 40, active: false },
+        { pane: "pane.main", left: 0, top: 0, width: 65, height: 41, active: true },
+        { pane: "pane.side", left: 66, top: 0, width: 66, height: 41, active: false },
       ],
       { down: [93, 10], move: [95, 10] },
       {
         semanticPaneId: "pane.main",
         axis: "cols",
         cells: 67,
-        guide: { x: 67, y: 1, width: 1, height: 40 },
-        globalGuide: { x: 95, y: 3, width: 1, height: 40 },
+        guide: { x: 67, y: 0, width: 1, height: 41 },
+        globalGuide: { x: 95, y: 2, width: 1, height: 41 },
       },
     );
     await run(
       [
-        { pane: "pane.main", left: 0, top: 1, width: 132, height: 19, active: true },
+        { pane: "pane.main", left: 0, top: 0, width: 132, height: 20, active: true },
         { pane: "pane.lower", left: 0, top: 21, width: 132, height: 20, active: false },
       ],
-      { down: [40, 22], move: [40, 24] },
+      { down: [28, 22], move: [28, 24] },
       {
         semanticPaneId: "pane.main",
         axis: "rows",
-        cells: 20,
+        cells: 21,
         guide: { x: 0, y: 22, width: 132, height: 1 },
         globalGuide: { x: 28, y: 24, width: 132, height: 1 },
       },
@@ -1386,6 +1390,7 @@ describe("production ApplicationShellView", () => {
     const palette = createTerminalPaletteProjection(theme);
     const first = trackedAdapter();
     const second = trackedAdapter();
+    let setSurface!: (value: "home" | "terminals") => void;
     let setSemantic!: (value: ReturnType<typeof semantic>) => void;
     let setStatus!: (value: string) => void;
     let setRendererFocused!: (value: boolean) => void;
@@ -1394,6 +1399,8 @@ describe("production ApplicationShellView", () => {
     ) => void;
     const setup = await renderForTest(
       () => {
+        const [surface, updateSurface] = createSignal<"home" | "terminals">("terminals");
+        setSurface = updateSurface;
         const [semanticProjection, setSemanticProjection] = createSignal(semantic());
         const [status, setStatusSignal] = createSignal("live");
         const [rendererFocused, setRendererFocusedSignal] = createSignal(true);
@@ -1408,7 +1415,7 @@ describe("production ApplicationShellView", () => {
         return (
           <ApplicationShellView
             dimensions={() => ({ width: 120, height: 40 })}
-            surface={() => "terminals"}
+            surface={surface}
             semantic={semanticProjection}
             generationStatus={status}
             sessions={["main"]}
@@ -1454,7 +1461,7 @@ describe("production ApplicationShellView", () => {
       {
         full: true,
         forceRows: null,
-        writtenRows: Array.from({ length: 11 }, (_, row) => row),
+        writtenRows: Array.from({ length: 12 }, (_, row) => row),
       },
     ]);
 
@@ -1481,6 +1488,16 @@ describe("production ApplicationShellView", () => {
     await setup.renderOnce();
     expect(first.lifecycle.unsubscriptions).toBe(2);
     expect(second.lifecycle).toEqual({ subscriptions: 1, unsubscriptions: 0, fullBlits: 1 });
+
+    setSurface("home");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toContain("CANONICAL-CELL");
+    expect(second.lifecycle.unsubscriptions).toBe(0);
+    setSurface("terminals");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("CANONICAL-CELL");
+    expect(second.lifecycle.subscriptions).toBe(1);
+    expect(second.lifecycle.unsubscriptions).toBe(0);
 
     setSource(null);
     await setup.renderOnce();
@@ -1684,7 +1701,14 @@ describe("production ApplicationShellView", () => {
     );
     await setup.renderOnce();
     expect(setup.captureCharFrame()).toContain("› F2 Terminals");
-    await setup.mockMouse.click(33, 17, MouseButtons.LEFT);
+    await setup.mockMouse.click(
+      33,
+      setup
+        .captureCharFrame()
+        .split("\n")
+        .findIndex((line) => line.includes("› F2 Terminals")),
+      MouseButtons.LEFT,
+    );
     expect(activated).toEqual(["mouse:terminals"]);
     setup.renderer.destroy();
   });
@@ -1704,7 +1728,7 @@ describe("production ApplicationShellView", () => {
           selectedSession={() => 0}
           bootstrapNote={() => null}
           paletteOpen={() => true}
-          paletteSelection={() => 6}
+          paletteSelection={() => 8}
           terminalRendererSource={() => null}
           layout={() => ({ current: null, windows: [] })}
           focusedPane={() => null}
@@ -1727,7 +1751,14 @@ describe("production ApplicationShellView", () => {
     await setup.renderOnce();
 
     expect(setup.captureCharFrame()).toContain("› Jump to Codex · main");
-    await setup.mockMouse.click(33, 22, MouseButtons.LEFT);
+    await setup.mockMouse.click(
+      33,
+      setup
+        .captureCharFrame()
+        .split("\n")
+        .findIndex((line) => line.includes("› Jump to Codex")),
+      MouseButtons.LEFT,
+    );
     expect(opened).toEqual(["mouse:main:pane.main"]);
     setup.renderer.destroy();
   });
@@ -1846,7 +1877,7 @@ describe("production ApplicationShellView", () => {
     });
     expect(applicationPaletteKeyAction({ name: "up" }, true, 0)).toEqual({
       kind: "select",
-      index: 5,
+      index: 7,
     });
     expect(applicationPaletteKeyAction({ name: "enter" }, true, 1)).toEqual({
       kind: "activate",
@@ -1861,7 +1892,7 @@ describe("production ApplicationShellView", () => {
     expect(terminalAgentStatusLabel("waiting")).toBe("BLOCKED");
     expect(terminalAgentStatusLabel("complete")).toBe("DONE");
     expect(terminalAgentStatusLabel("failed")).toBe("FAILED");
-    expect(terminalAgentStatusLabel("disconnected")).toBe("UNKNOWN");
+    expect(terminalAgentStatusLabel("disconnected")).toBe("DISCONNECTED");
     expect(
       terminalPaneChromeLabel("pane.main", true, 22, {
         name: "Codex",
@@ -1875,7 +1906,7 @@ describe("production ApplicationShellView", () => {
         activity: "disconnected",
         attention: false,
       }),
-    ).toBe("○ UNKNOWN");
+    ).toBe("○ DISCON…");
   });
 
   it("preserves canonical attention while prioritizing mixed window activity", async () => {
@@ -2024,4 +2055,117 @@ describe("production ApplicationShellView", () => {
     expect(createdWindows).toBe(1);
     setup.renderer.destroy();
   });
+});
+
+describe("production appearance picker", () => {
+  for (const mode of ["dark", "light"] as const)
+    for (const width of [80, 28]) {
+      it(`${mode} ${width}: mouse preview, keyboard cancel, and modal focus`, async () => {
+        let owner!: ReturnType<typeof createAppearanceOwner>;
+        const restored: string[] = [];
+        const leaked: string[] = [];
+        const setup = await renderForTest(
+          () => {
+            owner = createAppearanceOwner(
+              parseAppConfig({ theme: { mode } }),
+              Object.assign(new EventEmitter(), { themeMode: "dark" as const }),
+              {
+                getSnapshot: () => ({ availability: "unavailable" }) as never,
+                subscribe: () => () => {},
+                dispose: () => {},
+                refresh: async () => {},
+                ready: Promise.resolve(),
+              },
+            );
+            owner.openPicker();
+            onCleanup(owner.dispose);
+            useKeyboard((event) => {
+              if (!owner.handlePickerKey(event)) leaked.push(event.name);
+            });
+            usePaste(() => {
+              if (!owner.pickerOpen()) leaked.push("paste");
+            });
+            return (
+              <ApplicationShellOverlayStack
+                width={width}
+                height={18}
+                focusedOwner="pane-a"
+                isFocusMounted={() => true}
+                restoreFocus={(id) => restored.push(id)}
+                onIntent={owner.cancelPicker}
+                layers={appearanceDialogLayer(owner, width, 18)}
+              />
+            );
+          },
+          { width, height: 18 },
+        );
+        await setup.renderOnce();
+        expect(setup.captureCharFrame()).toContain("Appearance");
+        const lines = setup.captureCharFrame().split("\n");
+        const y = lines.findIndex((line) => line.includes("Light"));
+        await setup.mockMouse.click(lines[y]!.indexOf("Light"), y, MouseButtons.LEFT);
+        await setup.renderOnce();
+        expect(owner.theme().setting).toBe("light");
+        expect(restored).toEqual([]);
+        setup.renderer.keyInput.emit("paste", { bytes: Buffer.from("DO_NOT_SEND") });
+        setup.renderer.keyInput.emit("keypress", {
+          name: "escape",
+          ctrl: false,
+          meta: false,
+          shift: false,
+        });
+        await setup.renderOnce();
+        expect(owner.theme().setting).toBe(mode);
+        expect(owner.pickerOpen()).toBe(false);
+        expect(restored).toEqual(["pane-a"]);
+        expect(leaked).toEqual([]);
+        setup.renderer.destroy();
+      });
+    }
+});
+
+describe("theme library viewport", () => {
+  for (const height of [10, 18])
+    it(`keeps every selected preset visible at height ${height}`, async () => {
+      let owner!: ReturnType<typeof createAppearanceOwner>;
+      const setup = await renderForTest(
+        () => {
+          owner = createAppearanceOwner(
+            parseAppConfig({}),
+            Object.assign(new EventEmitter(), { themeMode: "dark" as const }),
+            {
+              getSnapshot: () => ({ availability: "unavailable" }) as never,
+              subscribe: () => () => {},
+              dispose: () => {},
+              refresh: async () => {},
+              ready: Promise.resolve(),
+            },
+          );
+          owner.openPicker();
+          onCleanup(owner.dispose);
+          return (
+            <ApplicationShellOverlayStack
+              width={48}
+              height={height}
+              focusedOwner="pane-a"
+              isFocusMounted={() => true}
+              restoreFocus={() => {}}
+              onIntent={owner.cancelPicker}
+              layers={appearanceDialogLayer(owner, 48, height)}
+            />
+          );
+        },
+        { width: 48, height },
+      );
+      try {
+        for (const option of owner.pickerOptions()) {
+          owner.preview(option.id);
+          await setup.renderOnce();
+          expect(setup.captureCharFrame()).toContain(option.name);
+          expectFrameBounds(setup.captureCharFrame(), 48, height);
+        }
+      } finally {
+        setup.renderer.destroy();
+      }
+    });
 });

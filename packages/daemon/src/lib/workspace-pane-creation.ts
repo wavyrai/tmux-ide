@@ -12,6 +12,8 @@ import {
   type WorkspacePaneCreatedResource,
 } from "@tmux-ide/contracts";
 import { runTmuxBinary, TmuxError } from "@tmux-ide/tmux-bridge";
+import { createNamedSocketFence } from "./tmux-named-socket-fence.ts";
+import { resolveBundledTmux } from "./bundled-tmux.ts";
 
 import { probeProjectReadiness } from "./project-readiness-probe.ts";
 import { agentHintForCommand } from "./agent-kind.ts";
@@ -219,6 +221,10 @@ function assertEffectiveConfigProvenance(
 
 function resolveTmuxExecutable(): string {
   const configured = process.env.TMUX_IDE_TMUX_BIN;
+  if (!configured) {
+    const bundled = resolveBundledTmux();
+    if (bundled) return bundled;
+  }
   const candidates = configured
     ? [configured]
     : (process.env.PATH ?? "")
@@ -328,11 +334,15 @@ export function createPinnedWorkspaceTmuxRunner(
     ? ["-S", socketIdentity.path]
     : ["-L", authority.socketSelector.kind === "name" ? authority.socketSelector.name : ""];
   const environment = Object.freeze(tmuxClientEnvironment(process.env));
+  const namedFence =
+    authority.socketSelector.kind === "name"
+      ? createNamedSocketFence(authority, executablePath, environment)
+      : null;
   return (args) => {
     const selector = socketIdentity
       ? ["-S", revalidateUnixSocketIdentity(socketIdentity)]
-      : socketArgv;
-    return String(
+      : (namedFence?.resolve() ?? socketArgv);
+    const output = String(
       runTmuxBinary(executablePath, [...selector, ...args], {
         encoding: "utf8",
         env: environment,
@@ -341,6 +351,9 @@ export function createPinnedWorkspaceTmuxRunner(
         ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
       }),
     ).replace(/(?:\r?\n)+$/u, "");
+    // A cold named authority may create its first server with this command.
+    if (namedFence && !namedFence.isPinned()) namedFence.resolve();
+    return output;
   };
 }
 
@@ -367,28 +380,41 @@ export function createPinnedWorkspaceTmuxAsyncRunner(
     ? ["-S", socketIdentity.path]
     : ["-L", authority.socketSelector.kind === "name" ? authority.socketSelector.name : ""];
   const environment = Object.freeze(tmuxClientEnvironment(process.env));
+  const namedFence =
+    authority.socketSelector.kind === "name"
+      ? createNamedSocketFence(authority, executablePath, environment)
+      : null;
   return (args, signal) => {
     const selector = socketIdentity
       ? ["-S", revalidateUnixSocketIdentity(socketIdentity)]
       : socketArgv;
-    return new Promise<string>((resolve, reject) => {
-      execFile(
-        executablePath,
-        [...selector, ...args],
-        {
-          encoding: "utf8",
-          env: environment,
-          maxBuffer: TMUX_OUTPUT_BYTES,
-          timeout: 5_000,
-          ...(signal ? { signal } : {}),
-          windowsHide: true,
-        },
-        (error, stdout) => {
-          if (error) reject(error);
-          else resolve(stdout.replace(/(?:\r?\n)+$/u, ""));
-        },
-      );
-    });
+    const execute = (selector: string[]) =>
+      new Promise<string>((resolve, reject) => {
+        execFile(
+          executablePath,
+          [...selector, ...args],
+          {
+            encoding: "utf8",
+            env: environment,
+            maxBuffer: TMUX_OUTPUT_BYTES,
+            timeout: 5_000,
+            ...(signal ? { signal } : {}),
+            windowsHide: true,
+          },
+          (error, stdout) => {
+            if (error) reject(error);
+            else resolve(stdout.replace(/(?:\r?\n)+$/u, ""));
+          },
+        );
+      });
+    if (!namedFence) return execute(selector);
+    return namedFence
+      .resolveAsync(signal)
+      .then(execute)
+      .then(async (output) => {
+        if (!namedFence.isPinned()) await namedFence.resolveAsync(signal);
+        return output;
+      });
   };
 }
 

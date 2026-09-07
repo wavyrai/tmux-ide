@@ -105,6 +105,7 @@ interface CoreServiceInternal {
 
 /** Per-call inputs for the incremental {@link PaneMirror.blit} (M21.4). */
 export interface BlitOptions {
+  viewportOrigin?: { readonly x: number; readonly y: number };
   /** Stable retained surface identity. Semantic replicas permit one painter so
    * row dirtiness cannot be consumed by a sibling framebuffer. */
   consumerId?: object;

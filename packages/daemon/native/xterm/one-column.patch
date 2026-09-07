@@ -1,0 +1,50 @@
+diff --git a/src/common/InputHandler.ts b/src/common/InputHandler.ts
+index ba53941..3890603 100644
+--- a/src/common/InputHandler.ts
++++ b/src/common/InputHandler.ts
+@@ -554,10 +554,14 @@ export class InputHandler extends Disposable implements IInputHandler {
+         this._oscLinkService.addLineToLink(this._getCurrentLinkId(), this._activeBuffer.ybase + this._activeBuffer.y);
+       }
+ 
++      // tmux stores oversized glyph backing even in a one-column pane.
++      // Retain the owner and continuation together; viewport projection clips it.
++      if (chWidth > cols) {
++        if (!wraparoundMode) continue;
++        bufferRow.resize(this._activeBuffer.x + chWidth, this._activeBuffer.getNullCell(curAttr));
++      }
+       // goto next line if ch would overflow
+-      // NOTE: To avoid costly width checks here,
+-      // the terminal does not allow a cols < 2.
+-      if (this._activeBuffer.x + chWidth - oldWidth > cols) {
++      if (chWidth <= cols && this._activeBuffer.x + chWidth - oldWidth > cols) {
+         // autowrap - DECAWM
+         // automatically wraps to the beginning of the next line
+         if (wraparoundMode) {
+diff --git a/src/common/buffer/Buffer.ts b/src/common/buffer/Buffer.ts
+index 81ab156..26fbcc9 100644
+--- a/src/common/buffer/Buffer.ts
++++ b/src/common/buffer/Buffer.ts
+@@ -302,7 +302,9 @@ export class Buffer implements IBuffer {
+   }
+ 
+   private _reflow(newCols: number, newRows: number): void {
+-    if (this._cols === newCols) {
++    // A tmux owner reseeds one-column transitions from the native grid.
++    // Avoid xterm reflow here: a wide cell cannot fit and yields zero progress.
++    if (this._cols === newCols || this._cols === 1 || newCols === 1) {
+       return;
+     }
+ 
+diff --git a/src/common/services/BufferService.ts b/src/common/services/BufferService.ts
+index 4cba3c1..bb15ebc 100644
+--- a/src/common/services/BufferService.ts
++++ b/src/common/services/BufferService.ts
+@@ -10,7 +10,7 @@ import { IBuffer, IBufferSet } from 'common/buffer/Types';
+ import { IBufferService, IOptionsService, type IBufferResizeEvent } from 'common/services/Services';
+ import { Emitter } from 'vs/base/common/event';
+ 
+-export const MINIMUM_COLS = 2; // Less than 2 can mess with wide chars
++export const MINIMUM_COLS = 1; // tmux permits single-column panes
+ export const MINIMUM_ROWS = 1;
+ 
+ export class BufferService extends Disposable implements IBufferService {

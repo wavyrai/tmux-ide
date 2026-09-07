@@ -1,3 +1,6 @@
+import { createApplicationPaneActivityOwner } from "../runtime/application-pane-activity-owner.ts";
+import type { OpenTuiGenerationHostSnapshot } from "../runtime/open-tui-generation-host.ts";
+import type { InteractionReceipt } from "@tmux-ide/contracts";
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard, type JSX } from "@opentui/solid";
@@ -246,5 +249,163 @@ describe("pane title hierarchy polish", () => {
     ]);
     expect(selected).toBe(1);
     setup.renderer.destroy();
+  });
+});
+
+describe("persistent native zoom state", () => {
+  it("shows zoom and restores from an unfocused pane bar", async () => {
+    let restores = 0;
+    const { setup } = await header("dark", { zoomed: true, onRestoreIntent: () => restores++ });
+    try {
+      const line = stableFrame(setup.captureCharFrame()).split("\n")[0]!;
+      expect(line).toContain("Zoomed · Restore");
+      await setup.mockMouse.click(line.indexOf("Restore"), 0, MouseButtons.LEFT);
+      expect(restores).toBe(1);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+  it("keeps a compact zoom indication at narrow widths", async () => {
+    const { setup } = await header("dark", { zoomed: true, width: 12 });
+    try {
+      expect(stableFrame(setup.captureCharFrame()).split("\n")[0]).toContain(" Z");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+});
+
+describe("receipt presence lifetime", () => {
+  it("expires badges without polling and clears subscriptions on generation replacement", async () => {
+    let receipt: InteractionReceipt | null = null;
+    const subscribers = new Set<() => void>();
+    const client = {
+      getSnapshot: () => ({ generation: 1, operations: { lastObservedReceipt: receipt } }),
+      subscribe: (_scope: string, callback: () => void) => {
+        subscribers.add(callback);
+        return () => subscribers.delete(callback);
+      },
+    };
+    const [host, setHost] = createSignal({
+      status: "live",
+      client,
+    } as unknown as OpenTuiGenerationHostSnapshot | null);
+    let visible!: ReturnType<typeof createApplicationPaneActivityOwner>;
+    const setup = await renderForTest(
+      () => {
+        visible = createApplicationPaneActivityOwner(host);
+        return <text>{visible().get("pane.alpha")?.phase ?? "quiet"}</text>;
+      },
+      { width: 20, height: 1 },
+    );
+    await setup.renderOnce();
+    const notify = () => {
+      for (const listener of subscribers) listener();
+    };
+    receipt = {
+      type: "interaction.receipt",
+      sequence: 1,
+      operationId: "10000000-0000-4000-8000-000000000001",
+      origin: "external",
+      workspaceName: "alpha",
+      sourceSemanticPaneId: null,
+      target: { kind: "pane", semanticPaneId: "pane.alpha" },
+      operationKind: "workspace.pane.send",
+      phase: "observed",
+      summary: { operationKind: "workspace.pane.send", observedOnly: true },
+      proof: { operationKind: "workspace.pane.send", observed: true, semanticPaneId: "pane.alpha" },
+      at: new Date(Date.now() - 3100).toISOString(),
+      resourceRevision: null,
+    };
+    notify();
+    expect(visible().get("pane.alpha")?.phase).toBe("observed");
+    await new Promise((resolve) => setTimeout(resolve, 130));
+    expect(visible().size).toBe(0);
+    notify();
+    expect(visible().size).toBe(0);
+    receipt = {
+      ...receipt,
+      sequence: 2,
+      operationId: "10000000-0000-4000-8000-000000000002",
+      at: new Date().toISOString(),
+    };
+    notify();
+    expect(visible().size).toBe(1);
+    setHost(null);
+    expect(visible().size).toBe(0);
+    expect(subscribers.size).toBe(0);
+    setup.renderer.destroy();
+  });
+});
+
+describe("pane activity labels", () => {
+  it("shows receipt-backed external input alongside lifecycle and zoom without consuming body rows", async () => {
+    const setup = await renderForTest(
+      () => (
+        <PaneTitleBar
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          paneId="pane.alpha"
+          title="Shell"
+          width={80}
+          selected={false}
+          terminalFocused={false}
+          keyboardFocused={false}
+          zoomed
+          activity="failed"
+          interaction={{
+            paneId: "pane.alpha",
+            direction: "incoming",
+            sourcePaneId: null,
+            destinationPaneId: "pane.alpha",
+            operationKind: "workspace.pane.send",
+            operationId: "op",
+            phase: "observed",
+            origin: "external",
+            label: "input observed",
+            sequence: 1,
+            at: new Date().toISOString(),
+          }}
+          menuAnchor={{ x: 79, y: 0 }}
+          onSelectIntent={() => {}}
+          onMenuIntent={() => {}}
+        />
+      ),
+      { width: 80, height: 2 },
+    );
+    await setup.renderOnce();
+    const rows = setup.captureCharFrame().split("\n");
+    expect(rows[0]).toContain("RECEIVED · External tmux");
+    expect(rows[0]).toContain("failed");
+    expect(rows[0]).toContain("Zoomed");
+    expect(rows[1]!.trim()).toBe("");
+    setup.renderer.destroy();
+  });
+
+  it("names disconnected agents and keeps narrow activity badges within one row", async () => {
+    for (const width of [1, 7, 16, 40]) {
+      const setup = await renderForTest(
+        () => (
+          <PaneTitleBar
+            theme={createSemanticThemeSnapshot({ mode: "dark" })}
+            paneId="pane.alpha"
+            title="Shell"
+            width={width}
+            selected={false}
+            terminalFocused={false}
+            keyboardFocused={false}
+            activity="disconnected"
+            menuAnchor={{ x: width - 1, y: 0 }}
+            onSelectIntent={() => {}}
+            onMenuIntent={() => {}}
+          />
+        ),
+        { width, height: 2 },
+      );
+      await setup.renderOnce();
+      const rows = setup.captureCharFrame().split("\n");
+      if (width === 40) expect(rows[0]).toContain("disconnected");
+      expect(rows[1]!.trim()).toBe("");
+      setup.renderer.destroy();
+    }
   });
 });

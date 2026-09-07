@@ -401,6 +401,52 @@ describe("CausalCellClientLedger", () => {
     expect(input.failures).toEqual([[traceId, "geometry-drift"]]);
   });
 
+  it("qualifies a shifted viewport only when the translated target row was painted", () => {
+    for (const [origin, writtenRow, accepted] of [
+      [{ x: 1, y: 1 }, 0, true],
+      [{ x: 1, y: 1 }, 1, false],
+      [{ x: 0, y: 1 }, 0, false],
+      [{ x: -1, y: 1 }, 0, false],
+      [{ x: 1, y: 2 }, 0, false],
+      [{ x: NaN, y: 1 }, 0, false],
+    ] as const) {
+      const input = clippedRig();
+      const request = { ...input.request, geometry: { ...input.request.geometry, row: 1 } };
+      const snapshot = {
+        ...input.delivery.snapshot,
+        grid: [
+          {
+            ...input.delivery.snapshot.grid[0]!,
+            cells: [input.delivery.snapshot.grid[0]!.cells[0]!, request.before],
+          },
+          {
+            ...input.delivery.snapshot.grid[1]!,
+            cells: [input.delivery.snapshot.grid[1]!.cells[0]!, request.after],
+          },
+        ],
+      };
+      const stateHash = hashTerminalReplicaSnapshot(snapshot);
+      input.ledger.arm(request, 10);
+      input.ledger.noteProof({
+        ...input.proof,
+        geometry: request.geometry,
+        committedStateHash: stateHash,
+      });
+      input.ledger.noteDelivery({ ...input.delivery, snapshot, stateHash });
+      input.ledger.notePaint({
+        ...input.paint,
+        snapshot,
+        stateHash,
+        viewport: { cols: 1, rows: 1 },
+        viewportOrigin: origin,
+        activePaneRect: { x: 0, y: 0, width: 1, height: 1 },
+        writtenRows: new Set([writtenRow]),
+      });
+      expect(input.finalized).toHaveLength(accepted ? 1 : 0);
+      expect(input.failures).toEqual(accepted ? [] : [[traceId, "geometry-drift"]]);
+    }
+  });
+
   it("admits only one pending diagnostic probe per pane", () => {
     const input = rig();
     expect(input.ledger.arm(input.request, 10)).toBe(true);

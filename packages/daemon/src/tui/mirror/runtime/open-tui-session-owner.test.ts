@@ -371,3 +371,47 @@ describe("OpenTUI session owner", () => {
     await owner.dispose();
   });
 });
+
+it("bounds opening a nonresponsive host and permits an explicit retry", async () => {
+  const hosts: FakeHost[] = [];
+  const owner = createOpenTuiSessionOwner({
+    openTimeoutMs: 20,
+    prepareConnection: async () => null,
+    createHost: (name) => {
+      const host = new FakeHost(name);
+      hosts.push(host);
+      return host;
+    },
+    onSnapshot: () => undefined,
+  });
+  try {
+    expect(await owner.open("main")).toBe(false);
+    expect(hosts[0]!.dispose).toHaveBeenCalledOnce();
+    const retry = owner.open("main");
+    await flush();
+    hosts[1]!.finish(true);
+    expect(await retry).toBe(true);
+  } finally {
+    await owner.dispose();
+  }
+});
+
+it("cancels pending preparation and disposes a late connection without starting a host", async () => {
+  const preparation = deferred<OpenTuiApplicationShellConnection | null>();
+  const createHost = vi.fn(() => new FakeHost("main"));
+  const owner = createOpenTuiSessionOwner({
+    prepareConnection: () => preparation.promise,
+    createHost,
+    onSnapshot: () => undefined,
+  });
+  const opened = owner.open("main");
+  await flush();
+  owner.cancelPending?.();
+  expect(await opened).toBe(false);
+  const late = connection("main");
+  preparation.resolve(late);
+  await flush();
+  expect(late.dispose).toHaveBeenCalledOnce();
+  expect(createHost).not.toHaveBeenCalled();
+  await owner.dispose();
+});

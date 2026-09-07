@@ -23,7 +23,7 @@ describe("pane menu interaction owner", () => {
     const f = fixture();
     try {
       expect(f.owner.ownsInput()).toBe(true);
-      expect(f.owner.handleKey("z")).toBe(true);
+      expect(f.owner.handleKey("y")).toBe(true);
       expect(f.owner.handleKey("x", { ctrl: true })).toBe(true);
       expect(f.owner.handleKey("r", { meta: true })).toBe(true);
       expect(f.owner.handleKey("x", { eventType: "release" })).toBe(true);

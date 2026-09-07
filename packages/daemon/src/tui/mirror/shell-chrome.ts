@@ -89,11 +89,11 @@ export function shellOverlayWidth(
   variant: ShellChromeVariant,
   kind: "palette" | "dialog",
 ): number {
-  const safe = Math.max(20, Math.floor(terminalWidth));
+  const safe = Math.max(0, Math.floor(terminalWidth));
   const margin = variant === "compact" ? 2 : 4;
   const preferred =
     kind === "palette" ? (variant === "wide" ? 72 : 60) : variant === "wide" ? 72 : 60;
-  return Math.max(32, Math.min(preferred, safe - margin));
+  return Math.min(safe, Math.max(1, Math.min(preferred, safe - margin)));
 }
 
 export function shellSidebarWidth(
@@ -101,9 +101,10 @@ export function shellSidebarWidth(
   preferredWidth: number,
   variant = shellChromeVariant(terminalWidth, 24),
 ): number {
-  const safe = Math.max(20, Math.floor(terminalWidth));
+  const safe = Math.max(0, Math.floor(terminalWidth));
   const preferred = Math.max(16, Math.min(48, Math.floor(preferredWidth)));
-  if (variant === "compact") return Math.min(preferred, Math.max(16, Math.min(20, safe - 48)));
+  if (variant === "compact")
+    return Math.min(preferred, Math.floor(safe / 3), Math.max(16, Math.min(20, safe - 48)));
   if (variant === "standard") return Math.min(preferred, 32);
   return preferred;
 }

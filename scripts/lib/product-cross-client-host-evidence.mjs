@@ -1183,8 +1183,13 @@ export function assessCard5TuiFocusedPane({
   expectedPane,
   expectedCanonical,
   expectedAuthority = undefined,
+  backgroundClientId = null,
   evidenceKey,
 }) {
+  const background = backgroundClientId !== null;
+  const presentationDomain = background
+    ? "background-content-presentation"
+    : "focused-cursor-presentation";
   const hmac = (domain, value) =>
     createHmac("sha256", Buffer.from(evidenceKey, "hex"))
       .update(`${domain}\0${value}`)
@@ -1261,8 +1266,11 @@ export function assessCard5TuiFocusedPane({
     !HMAC.test(evidenceKey ?? "")
   )
     return fail("focus-contract-invalid");
-  const presentations = records.filter(
-    (record) => record?.type === "performance.terminal-cursor-presentation",
+  const presentations = records.filter((record) =>
+    background
+      ? record?.type === "performance.terminal-canonical-host-frame" &&
+        record.semanticPaneId === expectedPane
+      : record?.type === "performance.terminal-cursor-presentation",
   );
   if (presentations.length === 0) return fail("focus-presentation-missing");
   if (presentations.some(({ atMicros }) => !Number.isSafeInteger(atMicros) || atMicros < 0))
@@ -1275,11 +1283,29 @@ export function assessCard5TuiFocusedPane({
     return fail("focus-presentation-ambiguous");
   const presentation = presentations.at(-1);
   const authorityEvidence =
-    expectedAuthority === undefined
+    background || expectedAuthority === undefined
       ? null
       : sealCard5TuiFocusAuthority(expectedAuthority, expectedCanonical.generation, evidenceKey);
+  const retainedSelection = records
+    .filter((record) => record?.type === "performance.terminal-cursor-presentation")
+    .at(-1);
+  const backgroundExact =
+    !background ||
+    (typeof backgroundClientId === "string" &&
+      expectedAuthority?.generation === expectedCanonical.generation &&
+      expectedAuthority?.clients?.filter(
+        (client) =>
+          client.clientId === backgroundClientId &&
+          client.surface === "opentui" &&
+          client.state === "background",
+      ).length === 1 &&
+      retainedSelection?.semanticPaneId === expectedPane &&
+      retainedSelection.generation === expectedCanonical.generation &&
+      retainedSelection.incarnation === expectedCanonical.incarnation &&
+      retainedSelection.processId === expectedCanonical.processId &&
+      retainedSelection.clockId === expectedCanonical.clockId);
   const axes = {
-    pane: presentation.semanticPaneId !== expectedPane,
+    pane: presentation.semanticPaneId !== expectedPane || !backgroundExact,
     generation: presentation.generation !== expectedCanonical.generation,
     incarnation: presentation.incarnation !== expectedCanonical.incarnation,
     revision: presentation.revision !== expectedCanonical.revision,
@@ -1297,11 +1323,14 @@ export function assessCard5TuiFocusedPane({
       !Number.isSafeInteger(presentation.viewportRows) ||
       presentation.viewportRows < 1 ||
       presentation.viewportRows > 65_535,
-    presentationCount:
-      !Number.isSafeInteger(presentation.presentationCount) || presentation.presentationCount < 1,
+    presentationCount: background
+      ? presentation.acceptedRevision !== presentation.revision
+      : !Number.isSafeInteger(presentation.presentationCount) || presentation.presentationCount < 1,
     followingFrame: true,
     frameHealth: true,
-    authority: expectedAuthority !== undefined && authorityEvidence === null,
+    authority: background
+      ? !backgroundExact
+      : expectedAuthority !== undefined && authorityEvidence === null,
   };
   const presentationOrdinal = records.indexOf(presentation);
   const frame = records
@@ -1373,8 +1402,11 @@ export function assessCard5TuiFocusedPane({
         ].join("\0"),
       ),
       presentationHmac: hmac(
-        "focused-cursor-presentation",
-        [presentation.atMicros, presentation.presentationCount].join("\0"),
+        presentationDomain,
+        [
+          presentation.atMicros,
+          background ? presentation.revision : presentation.presentationCount,
+        ].join("\0"),
       ),
       frameHmac: hmac(
         "focused-frame-fence",
@@ -1913,6 +1945,7 @@ export function assessCard5PostHandoffAuthority({
   grantRevision,
   inputProofHmac,
   evidenceKey,
+  geometryTransfer = null,
 }) {
   const exactKeys = (value, keys) =>
     value !== null &&
@@ -1972,6 +2005,21 @@ export function assessCard5PostHandoffAuthority({
       ({ clientId, surface }) => clientId === expectedClientId && surface === expectedSurface,
     ).length === 1;
   if (!validAuthority)
+    return Object.freeze({ valid: false, reason: "post-handoff-contract-invalid", evidence: null });
+  if (
+    geometryTransfer !== null &&
+    (!exactKeys(geometryTransfer, ["clientId", "revision", "receiptHmac"]) ||
+      !validClientId(geometryTransfer.clientId) ||
+      !Number.isSafeInteger(geometryTransfer.revision) ||
+      geometryTransfer.revision <= grantRevision ||
+      !HMAC.test(geometryTransfer.receiptHmac ?? "") ||
+      !clients.some(
+        (client) =>
+          client.clientId === geometryTransfer.clientId &&
+          client.surface === "web" &&
+          client.state === "foreground",
+      ))
+  )
     return Object.freeze({ valid: false, reason: "post-handoff-contract-invalid", evidence: null });
   const records = Array.isArray(authorityRecords) ? authorityRecords : [];
   const recordClientExact = (client) =>
@@ -2080,6 +2128,19 @@ export function assessCard5PostHandoffAuthority({
     )
   )
     return Object.freeze({ valid: false, reason: "post-handoff-grant-missing", evidence: null });
+  if (
+    geometryTransfer !== null &&
+    !sequence.some(
+      (record) =>
+        record.revision === geometryTransfer.revision &&
+        record.geometryOwner === geometryTransfer.clientId,
+    )
+  )
+    return Object.freeze({ valid: false, reason: "post-handoff-contract-invalid", evidence: null });
+  const geometryOwnerAllowed = (owner, revision) =>
+    geometryTransfer !== null && revision >= geometryTransfer.revision
+      ? owner === geometryTransfer.clientId
+      : owner === null || owner === expectedClientId;
   const grantClients = new Map(grant.clients.map((client) => [client.clientId, client]));
   let release = null;
   let sequenceValid = true;
@@ -2110,7 +2171,7 @@ export function assessCard5PostHandoffAuthority({
       release !== null ||
       record.inputOwner !== expectedClientId ||
       ![null, expectedClientId].includes(record.focusOwner) ||
-      ![null, expectedClientId].includes(record.geometryOwner) ||
+      !geometryOwnerAllowed(record.geometryOwner, record.revision) ||
       expected?.state !== "foreground"
     ) {
       sequenceValid = false;
@@ -2131,7 +2192,10 @@ export function assessCard5PostHandoffAuthority({
   const retained =
     release === null &&
     authority.owners.input === expectedClientId &&
-    currentOwners.every((owner) => owner === null || owner === expectedClientId) &&
+    [authority.owners.input, authority.owners.focus].every(
+      (owner) => owner === null || owner === expectedClientId,
+    ) &&
+    geometryOwnerAllowed(authority.owners.geometry, authority.revision) &&
     currentExpected?.state === "foreground";
   const released =
     release !== null &&
@@ -2206,6 +2270,7 @@ export function assessCard5PostHandoffAuthority({
           release?.revision ?? authority.revision,
           inputProofHmac,
           sequenceHmac,
+          ...(geometryTransfer === null ? [] : [JSON.stringify(geometryTransfer)]),
         ].join("\0"),
       ),
       authoritySequenceHmac: sequenceHmac,
@@ -2661,6 +2726,8 @@ export function boundedCard5PostInputAuthorityPreconditionObservation({
   expectedGeneration,
   expectedBaselineAuthority,
   expectedClientId,
+  expectedFocusOwner = expectedClientId,
+  expectedGeometryOwner = expectedClientId,
   expectedSurface,
   expectedGrantRecord,
   authorityRecords,
@@ -2779,6 +2846,9 @@ export function boundedCard5PostInputAuthorityPreconditionObservation({
   };
   const expectedBaseline = normalizeAuthority(expectedBaselineAuthority);
   const contractValid =
+    [expectedFocusOwner, expectedGeometryOwner].every(
+      (owner) => owner === null || safeIdentity(owner),
+    ) &&
     Array.isArray(webResults) &&
     webResults.length === 2 &&
     ["none", "chromium", "electron"].includes(receiptPage) &&
@@ -2903,9 +2973,9 @@ export function boundedCard5PostInputAuthorityPreconditionObservation({
   const currentAllExpected =
     current !== null &&
     expectedClientId !== null &&
-    [current.owners.input, current.owners.focus, current.owners.geometry].every(
-      (owner) => owner === expectedClientId,
-    );
+    current.owners.input === expectedClientId &&
+    current.owners.focus === expectedFocusOwner &&
+    current.owners.geometry === expectedGeometryOwner;
   const axes = Object.freeze({
     selectorContractInvalid:
       !contractValid ||
@@ -2947,9 +3017,11 @@ export function boundedCard5PostInputAuthorityPreconditionObservation({
     inputOwnerMismatch:
       current !== null && expectedClientId !== null && current.owners.input !== expectedClientId,
     focusOwnerMismatch:
-      current !== null && expectedClientId !== null && current.owners.focus !== expectedClientId,
+      current !== null && expectedClientId !== null && current.owners.focus !== expectedFocusOwner,
     geometryOwnerMismatch:
-      current !== null && expectedClientId !== null && current.owners.geometry !== expectedClientId,
+      current !== null &&
+      expectedClientId !== null &&
+      current.owners.geometry !== expectedGeometryOwner,
     currentRevisionMismatch:
       current !== null &&
       (current.revision <= (expectedBaseline?.revision ?? Number.MAX_SAFE_INTEGER) ||
@@ -4547,6 +4619,23 @@ export function boundedCard5HostFailureObservation(input) {
             return Object.freeze({
               a: project(pair?.a),
               b: project(pair?.b),
+              connections: Array.isArray(pair?.connections)
+                ? pair.connections.slice(0, 2).map((connection) => ({
+                    phase: [
+                      "loading",
+                      "live",
+                      "stale",
+                      "degraded",
+                      "unavailable",
+                      "error",
+                      "disposed",
+                    ].includes(connection?.phase)
+                      ? connection.phase
+                      : null,
+                    targetCurrent: connection?.targetCurrent === true,
+                    authorityMatchesTarget: connection?.authorityMatchesTarget === true,
+                  }))
+                : [],
               activityA: projectActivity(pair?.activityA),
               activityB: projectActivity(pair?.activityB),
               activityTui: projectActivity(pair?.activityTui),
@@ -4590,6 +4679,145 @@ export function boundedCard5HostFailureObservation(input) {
           )
         : [],
     ),
+  });
+}
+
+/** Crash replacement spans independent document ordinal spaces after a reload. */
+export function assessCard5DaemonRestartEnvelopeEvidence(input) {
+  const {
+    predecessorGeneration: before,
+    replacementGeneration: after,
+    retirement,
+    lanes,
+  } = input ?? {};
+  const fail = (reason, lane = null) => Object.freeze({ passed: false, reason, lane });
+  if (
+    typeof before !== "string" ||
+    typeof after !== "string" ||
+    before === after ||
+    !Array.isArray(lanes) ||
+    lanes.length !== 3
+  )
+    return fail("generation-identity");
+  if (
+    retirement?.generation !== before ||
+    retirement.processAbsent !== true ||
+    retirement.connectionRefused !== true ||
+    !Number.isSafeInteger(retirement.pid) ||
+    retirement.pid < 1 ||
+    !Number.isSafeInteger(retirement.port) ||
+    retirement.port < 1 ||
+    retirement.port > 65535
+  )
+    return fail("daemon-retirement-unproven");
+  for (const [ordinal, lane] of lanes.entries()) {
+    const events = lane?.events;
+    if (!Array.isArray(events) || events.length === 0 || events.length > 4096)
+      return fail("envelope-history-missing", ordinal);
+    let start;
+    let acceptedCount;
+    let reloaded = false;
+    if (ordinal < 2) {
+      const baseline = lane.document?.before;
+      const current = lane.document?.after;
+      if (
+        !Number.isFinite(baseline?.epoch) ||
+        baseline.epoch <= 0 ||
+        !Number.isFinite(current?.epoch) ||
+        current.epoch <= 0 ||
+        !Number.isSafeInteger(lane.document.navigationCount) ||
+        lane.document.navigationCount < 0 ||
+        lane.document.navigationCount > 8
+      )
+        return fail("document-identity", ordinal);
+      if (baseline.generation !== before || current.generation !== after)
+        return fail("document-generation", ordinal);
+      if (
+        !Number.isSafeInteger(baseline.acceptedCount) ||
+        baseline.acceptedCount < 0 ||
+        !Number.isSafeInteger(baseline.socketEventCount) ||
+        baseline.socketEventCount < 0
+      )
+        return fail("document-boundary", ordinal);
+      reloaded = baseline.epoch !== current.epoch;
+      if (reloaded !== lane.document.navigationCount > 0)
+        return fail("document-retirement-unproven", ordinal);
+      start = reloaded ? 0 : baseline.acceptedCount;
+      acceptedCount = current.acceptedCount;
+      const sockets = lane.socketEvents;
+      if (
+        !Array.isArray(sockets) ||
+        !sockets.some(
+          (event) =>
+            event.generation === after &&
+            event.outcome === "open" &&
+            Number.isSafeInteger(event.ordinal) &&
+            event.ordinal >= (reloaded ? 0 : baseline.socketEventCount),
+        )
+      )
+        return fail("replacement-socket-missing", ordinal);
+      if (
+        !reloaded &&
+        !sockets.some(
+          (event) =>
+            event.generation === before &&
+            event.outcome === "closed" &&
+            Number.isSafeInteger(event.ordinal) &&
+            event.ordinal >= baseline.socketEventCount,
+        )
+      )
+        return fail("predecessor-socket-missing", ordinal);
+    } else {
+      if (
+        lane.replacementBoundary?.predecessorGeneration !== before ||
+        lane.replacementBoundary?.replacementGeneration !== after ||
+        lane.predecessorAcceptedAfterReplacement !== 0
+      )
+        return fail("replacement-boundary", ordinal);
+      start = lane.replacementBoundary.acceptedOrdinal;
+      acceptedCount = events.at(-1)?.acceptedOrdinal + 1;
+    }
+    if (
+      !Number.isSafeInteger(start) ||
+      start < 0 ||
+      !Number.isSafeInteger(acceptedCount) ||
+      acceptedCount <= start
+    )
+      return fail("admission-boundary", ordinal);
+    const suffix = events.filter((event) => event.acceptedOrdinal >= start);
+    if (
+      suffix.length !== acceptedCount - start ||
+      suffix.some((event, index) => event.acceptedOrdinal !== start + index)
+    )
+      return fail("envelope-history-incomplete", ordinal);
+    const firstNew = suffix.findIndex((event) => event.generation === after);
+    if (reloaded && firstNew !== 0) return fail("reloaded-document-stale-admission", ordinal);
+    if (firstNew < 0 || suffix[firstNew].type !== "terminal.seed")
+      return fail("replacement-not-seed-first", ordinal);
+    if (
+      suffix.slice(0, firstNew).some((event) => event.generation !== before) ||
+      suffix.slice(firstNew).some((event) => event.generation !== after)
+    )
+      return fail("predecessor-accepted-after-replace", ordinal);
+  }
+  if (
+    !Array.isArray(input.staleRedemptions) ||
+    input.staleRedemptions.length !== 2 ||
+    input.staleRedemptions.some(
+      (result) =>
+        result?.rejected !== true ||
+        result.typed !== true ||
+        !["redemption-rejected", "ticket-expired"].includes(result.reason),
+    )
+  )
+    return fail("retirement-not-typed");
+  return Object.freeze({
+    passed: true,
+    reason: null,
+    staleGenerationError: "generation-replaced",
+    replacementFirstEnvelope: "seed",
+    replacementSeedGeneration: after,
+    predecessorEnvelopeAcceptedAfterReplace: false,
   });
 }
 

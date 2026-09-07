@@ -3,6 +3,25 @@ import test from "node:test";
 
 import { createCausalFixtureGeometry } from "./product-rig-causal-fixture-geometry.mjs";
 
+test("alternate-screen geometry resets never erase the retained primary history", () => {
+  const writes = [];
+  const geometry = createCausalFixtureGeometry({
+    clearHistory: false,
+    readColumns: () => 40,
+    write: (value, callback) => {
+      writes.push(value);
+      callback();
+    },
+    markReady: () => {},
+    subscribeResize: () => () => {},
+  });
+  geometry.start();
+  geometry.reset("probe");
+  assert.equal(writes.length, 2);
+  assert.ok(writes.every((value) => value.includes("\x1b[2J") && !value.includes("\x1b[3J")));
+  geometry.dispose();
+});
+
 test("causal fixture follows terminal resize before measured input", () => {
   let columns = 80;
   let resize;
@@ -42,4 +61,35 @@ test("causal fixture follows terminal resize before measured input", () => {
   assert.equal(geometry.columns(), 132);
   geometry.dispose();
   assert.equal(resize, null);
+});
+
+test("resize retains the acknowledged reset and stale writes cannot overwrite it", () => {
+  let resize;
+  let columns = 80;
+  const callbacks = [];
+  const ready = [];
+  const geometry = createCausalFixtureGeometry({
+    readColumns: () => columns,
+    write: (_value, callback) => callbacks.push(callback),
+    markReady: (value) => ready.push(value),
+    subscribeResize: (listener) => {
+      resize = listener;
+    },
+  });
+  geometry.start();
+  geometry.reset("probe-0");
+  columns = 132;
+  resize();
+  callbacks[2]();
+  callbacks[0]();
+  callbacks[1]();
+  assert.deepEqual(ready, ["ready-v1:probe-0"]);
+  assert.equal(geometry.columns(), 132);
+  resize();
+  callbacks[3]();
+  assert.deepEqual(ready, ["ready-v1:probe-0", "ready-v1:probe-0"]);
+  geometry.reset("probe-1");
+  geometry.dispose();
+  callbacks[4]();
+  assert.equal(ready.length, 2);
 });

@@ -518,10 +518,8 @@ describe("WorkspaceClient", () => {
     });
     lateV2.resolve(shellResource("alpha", ["pane.a"]));
     await settle();
-    expect(inventories.map((inventory) => inventory.semanticPaneIds)).toEqual([
-      ["pane.a"],
-      ["pane.b"],
-    ]);
+    // The obsolete first inventory is coalesced before physical connection.
+    expect(inventories.map((inventory) => inventory.semanticPaneIds)).toEqual([["pane.b"]]);
     expect(
       client.adoptTerminalRuntimeInventory({
         ...base,
@@ -750,6 +748,44 @@ describe("WorkspaceClient", () => {
       false,
     );
     expect(refreshes).toBe(1);
+    await client.dispose();
+  });
+
+  it("measures a burst of topology replacements without connecting obsolete inventories", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", []) });
+    const inventories: WorkspaceClientRuntimeInventory[] = [];
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      ports: {
+        shell: shell.transport,
+        actions,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push(inventory);
+          return new FakeRuntime(ALPHA_DAEMON.instanceId);
+        },
+      },
+    });
+    const start = performance.now();
+    for (let revision = 1; revision <= 8; revision++)
+      client.adoptTerminalRuntimeInventory({
+        workspaceName: "alpha",
+        workspaceId: "workspace.alpha",
+        sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+        resourceRevision: revision,
+        semanticPaneIds: Array.from({ length: revision }, (_, i) => `pane.${i}`),
+      });
+    await settle();
+    console.log(
+      "REBIND_BURST",
+      JSON.stringify({
+        revisions: 8,
+        connections: inventories.length,
+        elapsedMs: performance.now() - start,
+      }),
+    );
+    expect(inventories.at(-1)?.semanticPaneIds).toHaveLength(8);
+    expect(inventories).toHaveLength(1);
     await client.dispose();
   });
 
@@ -2021,6 +2057,40 @@ describe("WorkspaceClient", () => {
       authority: "input",
     });
     client.dispose();
+    await settle();
+  });
+
+  it("delivers external receipt observations to independent clients without creating local operations", async () => {
+    const clients = [];
+    for (let index = 0; index < 2; index++) {
+      const shell = shellBroker({ alpha: shellResource("alpha") });
+      const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+      const client = createWorkspaceClient({
+        target: target("alpha"),
+        ports: { shell: shell.transport, connectRuntime: async () => runtime, actions },
+      });
+      shell.connections[0]!.handlers.onVerifiedOpen();
+      await settle();
+      clients.push({ client, runtime });
+    }
+    const external = {
+      ...receipt("15000000-0000-4000-8000-000000000015", "observed"),
+      origin: "external" as const,
+    };
+    for (const { client, runtime } of clients) {
+      let publications = 0;
+      client.subscribe("operations", () => publications++);
+      runtime.emitReceipt(external);
+      const observed = publications;
+      runtime.emitReceipt(external);
+      expect(publications).toBe(observed);
+      expect(client.getSnapshot().operations).toMatchObject({
+        lastObservedReceipt: external,
+        pending: [],
+        lastReceipt: null,
+      });
+      client.dispose();
+    }
     await settle();
   });
 

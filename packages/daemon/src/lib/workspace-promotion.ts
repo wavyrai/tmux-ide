@@ -742,22 +742,26 @@ export class WorkspacePromotionAuthority {
               SEMANTIC_WINDOW_OPTION,
               windowStamp,
             ]);
+            // Initialize chrome only when adopting a previously unstamped
+            // window. Reopening an existing workspace must preserve native
+            // border choices and PTY dimensions, even while stamping new panes.
+            this.#io.runTmux([
+              "set-option",
+              "-w",
+              "-t",
+              pane.windowId,
+              "pane-border-status",
+              "top",
+            ]);
+            this.#io.runTmux([
+              "set-option",
+              "-w",
+              "-t",
+              pane.windowId,
+              "pane-border-format",
+              PANE_CHROME_BORDER_FORMAT,
+            ]);
           }
-
-          // Promotion is the point at which an arbitrary tmux window becomes
-          // browser-renderable workspace UI. Reserve the same one-row panel
-          // chrome used by the native TUI immediately; relying on the optional
-          // background updater leaves a transparent drag target over row zero
-          // during startup (and forever in isolated/headless runtimes).
-          this.#io.runTmux(["set-option", "-w", "-t", pane.windowId, "pane-border-status", "top"]);
-          this.#io.runTmux([
-            "set-option",
-            "-w",
-            "-t",
-            pane.windowId,
-            "pane-border-format",
-            PANE_CHROME_BORDER_FORMAT,
-          ]);
         }
       }
     } catch (error) {

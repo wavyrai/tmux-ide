@@ -1,3 +1,4 @@
+import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import { Terminal } from "@tmux-ide/xterm-headless";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import type {
@@ -24,6 +25,9 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   #lastViewportY = 0;
   #lastBufferType = "normal";
   #hasProjected = false;
+  #mouseUtf8 = false;
+  #capturedAlternate = false;
+  #nativeReseedRequired = false;
 
   constructor(options: TerminalInterpreterBackendFactoryOptions) {
     this.#terminal = new Terminal({
@@ -34,8 +38,29 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     });
     this.#terminal.loadAddon(new Unicode11Addon());
     this.#terminal.unicode.activeVersion = "11";
+    this.#terminal.buffer.onBufferChange((buffer) => {
+      if (this.#capturedAlternate && buffer.type === "normal") this.#nativeReseedRequired = true;
+    });
+    // Stock tmux retains DECSET 1005 independently of SGR. xterm no longer
+    // interprets it; retain the flag for renderer-neutral mouse encoding truth.
+    for (const [final, enabled] of [
+      ["h", true],
+      ["l", false],
+    ] as const) {
+      this.#terminal.parser.registerCsiHandler({ prefix: "?", final }, (params) => {
+        if (params.includes(1005)) this.#mouseUtf8 = enabled;
+        return false;
+      });
+    }
+    this.#terminal.parser.registerEscHandler({ final: "c" }, () => {
+      this.#mouseUtf8 = false;
+      return false;
+    });
     this.#terminal.onScroll(() => {
-      this.#scrollEpoch += 1;
+      // Captured native history stays in normal while alternate rows scroll
+      // without adding history. Do not turn those scrolls into history trims.
+      if (!this.#capturedAlternate || this.#terminal.buffer.active.type === "normal")
+        this.#scrollEpoch += 1;
     });
     const core = (
       this.#terminal as unknown as {
@@ -70,6 +95,9 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   }
 
   resize(cols: number, rows: number): void {
+    // Native tmux is authoritative for transitions through one column. The
+    // parser deliberately skips its incompatible wide-cell reflow in this case.
+    if (cols !== this.cols && (cols === 1 || this.cols === 1)) this.#nativeReseedRequired = true;
     this.#terminal.resize(cols, rows);
   }
 
@@ -86,8 +114,116 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
       buffer._rows !== this.#terminal.rows
     )
       throw new Error("Unsupported @tmux-ide/xterm-headless 6.0.0 cursor adapter shape");
-    buffer.x = Math.max(0, Math.min(x, this.#terminal.cols - 1));
+    // x === cols is parser state: the next printable character must wrap.
+    // Only the published cursor is clamped to an addressable cell below.
+    buffer.x = Math.max(0, Math.min(x, this.#terminal.cols));
     buffer.y = Math.max(0, Math.min(y, this.#terminal.rows - 1));
+  }
+
+  setAuthoritativeWraparound(enabled: boolean): void {
+    const core = (
+      this.#terminal as unknown as {
+        _core: { coreService: { decPrivateModes: { wraparound: boolean } } };
+      }
+    )._core;
+    core.coreService.decPrivateModes.wraparound = enabled;
+  }
+
+  requiresNativeReseed(): boolean {
+    return this.#nativeReseedRequired;
+  }
+
+  #restoreCapturedAlternate(): void {
+    if (this.#terminal.buffer.active.type === "normal") {
+      type Line = { clone(): Line };
+      const core = (
+        this.#terminal as unknown as {
+          _core: {
+            buffers: {
+              normal: { ybase: number; lines: { get(index: number): Line | undefined } };
+              alt: { lines: { set(index: number, line: Line): void } };
+              activateAltBuffer(): void;
+            };
+          };
+        }
+      )._core;
+      const buffers = core.buffers;
+      const lines = Array.from({ length: this.rows }, (_, row) => {
+        const line = buffers.normal.lines.get(buffers.normal.ybase + row);
+        if (!line || typeof line.clone !== "function")
+          throw new Error("Unsupported xterm captured-buffer shape");
+        return line.clone();
+      });
+      buffers.activateAltBuffer();
+      for (let row = 0; row < lines.length; row++) buffers.alt.lines.set(row, lines[row]!);
+    }
+    // The normal buffer retains captured native history, but its visible grid
+    // is not the saved shell. Returning to it requires a fresh native capture.
+    this.#capturedAlternate = true;
+  }
+
+  setAuthoritativeModes(modes: MirrorObservedTerminalModes): void {
+    if (modes.alternateScreen === true) this.#restoreCapturedAlternate();
+    const core = (
+      this.#terminal as unknown as {
+        _core: {
+          coreService: {
+            decPrivateModes: {
+              applicationCursorKeys: boolean;
+              applicationKeypad: boolean;
+              bracketedPasteMode: boolean;
+              origin: boolean;
+            };
+            modes: { insertMode: boolean };
+            isCursorHidden: boolean;
+          };
+          coreMouseService: { activeProtocol: string; activeEncoding: string };
+        };
+      }
+    )._core;
+    const service = core.coreService;
+    if (modes.scrolling) {
+      const { top, bottom, origin } = modes.scrolling;
+      if (
+        !Number.isSafeInteger(top) ||
+        !Number.isSafeInteger(bottom) ||
+        top < 0 ||
+        top > bottom ||
+        bottom >= this.rows
+      )
+        throw new RangeError("Native scrolling region is outside the interpreter grid");
+      const buffer = (
+        this.#terminal.buffer.active as unknown as {
+          _buffer?: { scrollTop: number; scrollBottom: number };
+        }
+      )._buffer;
+      if (
+        !buffer ||
+        typeof buffer.scrollTop !== "number" ||
+        typeof buffer.scrollBottom !== "number"
+      )
+        throw new Error("Unsupported @tmux-ide/xterm-headless scrolling-region adapter shape");
+      // Never replay DECSTBM/DECOM here: both commands move the cursor and can
+      // corrupt the capture seam's pending-wrap or absolute cursor position.
+      buffer.scrollTop = top;
+      buffer.scrollBottom = bottom;
+      service.decPrivateModes.origin = origin;
+    }
+    if (modes.applicationCursor !== undefined)
+      service.decPrivateModes.applicationCursorKeys = modes.applicationCursor;
+    if (modes.applicationKeypad !== undefined)
+      service.decPrivateModes.applicationKeypad = modes.applicationKeypad;
+    if (modes.insert !== undefined) service.modes.insertMode = modes.insert;
+    if (modes.cursorVisible !== undefined) service.isCursorHidden = !modes.cursorVisible;
+    if (modes.bracketedPaste !== undefined)
+      service.decPrivateModes.bracketedPasteMode = modes.bracketedPaste;
+    if (modes.mouseProtocol !== undefined) {
+      const protocols = { none: "NONE", vt200: "VT200", drag: "DRAG", any: "ANY" };
+      core.coreMouseService.activeProtocol = protocols[modes.mouseProtocol];
+    }
+    if (modes.mouseSgr !== undefined)
+      core.coreMouseService.activeEncoding = modes.mouseSgr ? "SGR" : "DEFAULT";
+    if (modes.mouseUtf8 !== undefined) this.#mouseUtf8 = modes.mouseUtf8;
   }
 
   modes(): TerminalReplicaModes {
@@ -130,7 +266,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
           ? "sgr"
           : encoding === "SGR_PIXELS"
             ? "sgr-pixels"
-            : encoding === "UTF8"
+            : encoding === "UTF8" || this.#mouseUtf8
               ? "utf8"
               : "default",
       synchronizedOutput: dec.synchronizedOutput === true,
@@ -153,13 +289,14 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     dirty?: { start: number; end: number },
   ): TerminalInterpreterBackendProjection {
     const buffer = this.#terminal.buffer.active;
+    const historyBuffer = this.#capturedAlternate ? this.#terminal.buffer.normal : buffer;
     // A newly constructed xterm and the interpreter's blank snapshot already
     // describe the same zero-history geometry. Requiring a prior projection
     // turns the first dirty write into an unnecessary full-grid walk.
     const ownsPrevious = this.#hasProjected || isCanonicalBlankSnapshot(previous);
     const geometryStable =
       ownsPrevious &&
-      buffer.viewportY === this.#lastViewportY &&
+      historyBuffer.viewportY === this.#lastViewportY &&
       buffer.type === this.#lastBufferType &&
       previous.cols === this.#terminal.cols;
     const canReuseHistory = geometryStable && this.#scrollEpoch === this.#lastScrollEpoch;
@@ -168,7 +305,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     let historyDelta: TerminalInterpreterBackendProjection["historyDelta"] = null;
     const scrolls = this.#scrollEpoch - this.#lastScrollEpoch;
     const previousLength = previous.history.length;
-    const nextLength = buffer.viewportY;
+    const nextLength = historyBuffer.viewportY;
     const incrementalHistory =
       !canReuseHistory &&
       this.#lastBufferType === buffer.type &&
@@ -181,13 +318,17 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
       const retained = previousLength - trim;
       const nextHistory = previous.history.slice(trim);
       for (let index = retained; index < nextLength; index += 1)
-        nextHistory.push(this.#readRow(buffer, index, this.#terminal.cols, "history", stats));
+        nextHistory.push(
+          this.#readRow(historyBuffer, index, this.#terminal.cols, "history", stats),
+        );
       history = nextHistory;
       historyDelta = { trim, append: nextHistory.slice(retained) };
-    } else if (!canReuseHistory && buffer.viewportY > 0) {
+    } else if (!canReuseHistory && historyBuffer.viewportY > 0) {
       const nextHistory: TerminalReplicaRow[] = [];
-      for (let index = 0; index < buffer.viewportY; index += 1)
-        nextHistory.push(this.#readRow(buffer, index, this.#terminal.cols, "history", stats));
+      for (let index = 0; index < historyBuffer.viewportY; index += 1)
+        nextHistory.push(
+          this.#readRow(historyBuffer, index, this.#terminal.cols, "history", stats),
+        );
       history = nextHistory;
     }
     const grid: TerminalReplicaRow[] = [];
@@ -201,7 +342,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
           this.#readRow(buffer, buffer.viewportY + row, this.#terminal.cols, "grid", stats),
         );
     }
-    this.#lastViewportY = buffer.viewportY;
+    this.#lastViewportY = historyBuffer.viewportY;
     this.#lastBufferType = buffer.type;
     this.#lastScrollEpoch = this.#scrollEpoch;
     this.#hasProjected = true;
@@ -267,7 +408,7 @@ function isCanonicalBlankSnapshot(snapshot: TerminalReplicaSnapshot): boolean {
       row.cells.length === snapshot.cols &&
       row.cells.every(
         (cell) =>
-          cell.grapheme === " " &&
+          (cell.grapheme || " ") === " " &&
           cell.width === 1 &&
           cell.attributes === 0 &&
           cell.foreground.kind === "default" &&
@@ -307,8 +448,11 @@ function projectRowCached(
   for (let column = 0; column < cols; column += 1) {
     line?.getCell(column, cell);
     cells.push({
-      grapheme: line ? cell.getChars() || (cell.getWidth() === 0 ? "" : " ") : " ",
-      width: line ? (cell.getWidth() as 0 | 1 | 2) : 1,
+      // Empty width-one cells are unused storage; literal spaces are content.
+      // Both paint as blanks, but preserving the distinction is necessary for
+      // reflow and for recognizing padding before a wrapped wide glyph.
+      grapheme: line && column + cell.getWidth() <= cols ? cell.getChars() : "",
+      width: line && column + cell.getWidth() <= cols ? (cell.getWidth() as 0 | 1 | 2) : 1,
       foreground: line ? cellColor(cell, "foreground") : { kind: "default" },
       background: line ? cellColor(cell, "background") : { kind: "default" },
       attributes: line ? cellAttributes(cell) : 0,

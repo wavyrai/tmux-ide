@@ -11,6 +11,20 @@ import {
 import { InteractionReceiptSchemaZ } from "../interaction-receipts.ts";
 
 describe("session runtime architecture contract", () => {
+  it("bounds exact binary input and rejects ambiguous or executable encodings", () => {
+    expect(SessionRuntimeTerminalInputSchemaZ.parse({ kind: "bytes", data: "00aAFF" })).toEqual({
+      kind: "bytes",
+      data: "00aAFF",
+    });
+    expect(
+      SessionRuntimeTerminalInputSchemaZ.safeParse({ kind: "bytes", data: "ff".repeat(1024) })
+        .success,
+    ).toBe(true);
+    for (const data of ["", "f", "0x01", "ff zz", "ff; kill-server", "ff".repeat(1025)])
+      expect(SessionRuntimeTerminalInputSchemaZ.safeParse({ kind: "bytes", data }).success).toBe(
+        false,
+      );
+  });
   it("keeps terminal text and named keys as one closed canonical input union", () => {
     expect(SessionRuntimeTerminalInputSchemaZ.parse({ kind: "text", data: "paste界" })).toEqual({
       kind: "text",

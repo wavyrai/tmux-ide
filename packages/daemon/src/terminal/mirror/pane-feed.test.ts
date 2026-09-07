@@ -7,6 +7,155 @@ import type { MirrorPaneEvent } from "./events.ts";
 
 const dec = new TextDecoder();
 
+describe("observed wrap flag", () => {
+  it.each([
+    ["1", "1", "5", { top: 1, bottom: 5, origin: true }],
+    ["0", "0", "23", { top: 0, bottom: 23, origin: false }],
+    ["1", "4", "4", { top: 4, bottom: 4, origin: true }],
+    ["1", "5", "1", undefined],
+    ["1", "0", "24", undefined],
+    ["invalid", "0", "5", undefined],
+    ["1", "-1", "5", undefined],
+    ["1", "0", "1.5", undefined],
+    ["1", "0", "", undefined],
+  ])("validates coupled scrolling observation %s %s %s", (origin, top, bottom, scrolling) => {
+    const feed = new PaneFeed();
+    const epoch = feed.beginReseed();
+    feed.captureReply(epoch, ["AB"]);
+    const fields = [
+      "1",
+      "0",
+      "80",
+      "24",
+      "0",
+      "1",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      origin,
+      "1",
+      "0",
+      "2000",
+      "0",
+      "0",
+      "0",
+      "0",
+      top,
+      bottom,
+    ];
+    const cursor = feed.cursorReply(epoch, fields.join(" ")).at(-1);
+    if (cursor?.type !== "cursor") throw new Error("Missing cursor event");
+    expect(cursor.observedModes?.scrolling).toEqual(scrolling);
+  });
+
+  it.each([
+    ["0 0 0 0", "none"],
+    ["1 1 0 0", "vt200"],
+    ["1 0 1 0", "drag"],
+    ["1 0 0 1", "any"],
+    ["1 0 0 0", undefined],
+    ["0 1 0 0", undefined],
+    ["1 1 1 0", undefined],
+    ["1 0 0 invalid", undefined],
+  ])("decodes consistent mouse observations %s", (flags, mouseProtocol) => {
+    const [any, standard, button, all] = flags!.split(" ");
+    const feed = new PaneFeed();
+    const epoch = feed.beginReseed();
+    feed.captureReply(epoch, ["AB"]);
+    const fields = [
+      "1",
+      "0",
+      "80",
+      "24",
+      "0",
+      "1",
+      "0",
+      "0",
+      "0",
+      any,
+      button,
+      standard,
+      "0",
+      "1",
+      "0",
+      "2000",
+      "1",
+      all,
+      "1",
+      "0",
+    ];
+    const cursor = feed.cursorReply(epoch, fields.join(" ")).at(-1);
+    expect(cursor?.type).toBe("cursor");
+    if (cursor?.type !== "cursor") throw new Error("Missing cursor event");
+    expect(cursor.observedModes).toEqual({
+      alternateScreen: false,
+      cursorVisible: true,
+      insert: false,
+      applicationCursor: false,
+      applicationKeypad: false,
+      bracketedPaste: true,
+      mouseSgr: true,
+      mouseUtf8: false,
+      ...(mouseProtocol === undefined ? {} : { mouseProtocol }),
+    });
+  });
+  it.each(["0", "1", "invalid", "2"])("validates scalar observations independently: %s", (flag) => {
+    const feed = new PaneFeed();
+    const epoch = feed.beginReseed();
+    feed.captureReply(epoch, ["AB"]);
+    const fields = ["1", "0", "80", "24", flag, flag, flag, flag, flag, "0", "0", "0", "0", "1"];
+    const cursor = feed.cursorReply(epoch, fields.join(" ")).at(-1);
+    expect(cursor).toEqual({
+      type: "cursor",
+      x: 1,
+      y: 0,
+      wraparound: true,
+      ...(flag === "0" || flag === "1"
+        ? {
+            observedModes: {
+              alternateScreen: flag === "1",
+              cursorVisible: flag === "1",
+              insert: flag === "1",
+              applicationCursor: flag === "1",
+              applicationKeypad: flag === "1",
+            },
+          }
+        : {}),
+    });
+  });
+  it.each(["0", "1", "invalid", "2"])(
+    "carries only a valid wrap flag %s at the cursor seam",
+    (flag) => {
+      const feed = new PaneFeed();
+      const epoch = feed.beginReseed();
+      feed.captureReply(epoch, ["ABC"]);
+      const held = new TextEncoder().encode("D");
+      feed.delta(held);
+      const fields = ["1", "0", "80", "24", ...Array(9).fill("0"), flag, "0", "2000"];
+      const events = feed.cursorReply(epoch, fields.join(" "));
+      expect(events.at(-2)).toEqual({ type: "delta", data: held });
+      expect(events.at(-1)).toEqual({
+        type: "cursor",
+        x: 1,
+        y: 0,
+        historySize: 0,
+        historyLimit: 2000,
+        observedModes: {
+          alternateScreen: false,
+          cursorVisible: false,
+          insert: false,
+          applicationCursor: false,
+          applicationKeypad: false,
+        },
+        ...(flag === "0" || flag === "1" ? { wraparound: flag === "1" } : {}),
+      });
+    },
+  );
+});
+
 function text(event: MirrorPaneEvent | undefined): string {
   if (!event || (event.type !== "delta" && event.type !== "seed")) return "";
   return dec.decode(event.data);
@@ -44,6 +193,32 @@ describe("seedBytesFromCapture", () => {
 describe("PaneFeed", () => {
   const delta = (feed: PaneFeed, s: string): MirrorPaneEvent[] =>
     feed.delta(new TextEncoder().encode(s));
+
+  it.each(["0", "10000", "", "-1", "1.5", "NaN", "9007199254740992"])(
+    "carries only valid native history limits from the capture probe: %s",
+    (value) => {
+      const feed = new PaneFeed();
+      const epoch = feed.beginReseed();
+      feed.captureReply(epoch, ["screen"]);
+      const events = feed.cursorReply(epoch, `0 0 80 24 0 1 0 0 0 0 0 0 0 1 12 ${value}`);
+      const cursor = events.at(-1);
+      expect(cursor).toEqual({
+        type: "cursor",
+        x: 0,
+        y: 0,
+        historySize: 12,
+        wraparound: true,
+        observedModes: {
+          alternateScreen: false,
+          cursorVisible: true,
+          insert: false,
+          applicationCursor: false,
+          applicationKeypad: false,
+        },
+        ...(value === "0" || value === "10000" ? { historyLimit: Number(value) } : {}),
+      });
+    },
+  );
 
   it("passes deltas through while live", () => {
     const feed = new PaneFeed();

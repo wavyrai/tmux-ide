@@ -3088,6 +3088,18 @@ kbd {
   height: auto;
 }
 
+/* Measure an eligible resize against the pane, not its letterboxed grid. */
+.terminal-surface[data-size-passive="true"][data-phase="connected"]
+  > .terminal-surface__viewport.terminal-surface__viewport--measure {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  padding: 6px 7px;
+}
+
 /*
  * A read-only client must show the whole shared grid.
  *
@@ -6152,7 +6164,9 @@ kbd {
   border: 1px solid var(--tmux-ide-border-default);
   border-radius: var(--tmi-radius-control);
   background: var(--tmux-ide-terminal-background);
-  overflow: hidden;
+  /* Focusing a terminal must not scroll the shared pane canvas. Hidden
+   * creates a programmatically scrollable box; clip keeps this viewport fixed. */
+  overflow: clip;
 }
 
 .tiled-pane-area__empty {

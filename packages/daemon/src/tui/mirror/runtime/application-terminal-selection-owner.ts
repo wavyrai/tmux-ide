@@ -93,13 +93,14 @@ export function routeApplicationTerminalPointerInput(
   paneId: string,
   input: Parameters<NonNullable<ApplicationTerminalWorkspaceProps["onTerminalInput"]>>[1],
 ): void {
+  const binary = input.kind === "application-mouse" && input.dataEncoding === "hex";
   const routed = interaction.sendInputToPane(
     paneId,
-    { kind: "text", data: input.data },
+    { kind: binary ? "bytes" : "text", data: input.data },
     input.kind === "application-mouse" && input.ingress
       ? {
           origin: "application-mouse",
-          payload: Buffer.from(input.data),
+          payload: Buffer.from(input.data, binary ? "hex" : "utf8"),
           ingressAtMicros: input.ingress.atMicros,
           gestureId: input.ingress.gestureId,
           pointerAction: input.action,
@@ -155,6 +156,7 @@ export function createApplicationTerminalSelectionOwner(options: {
   let copySelection: (() => boolean) | null = null;
   let handleKey: PaneMenuKeyHandler | null = null;
   let ownsInput: (() => boolean) | undefined;
+  let beforeTerminalInput: (() => void) | undefined;
   let copyOrdinal = 0;
   let pointerGestureId: string | null = null;
   return Object.freeze({
@@ -211,12 +213,14 @@ export function createApplicationTerminalSelectionOwner(options: {
     copyCurrent: () => copySelection?.() === true,
     handleKey: (...args: Parameters<PaneMenuKeyHandler>) => handleKey?.(...args) === true,
     blocksInput: () => ownsInput?.() === true,
+    prepareInput: () => beforeTerminalInput?.(),
     registerCopy(copy: (() => boolean) | null) {
       copySelection = copy;
     },
-    registerKey(next: PaneMenuKeyHandler | null, isOpen?: () => boolean) {
+    registerKey(next: PaneMenuKeyHandler | null, isOpen?: () => boolean, prepare?: () => void) {
       handleKey = next;
       ownsInput = next ? isOpen : undefined;
+      beforeTerminalInput = next ? prepare : undefined;
     },
   });
 }

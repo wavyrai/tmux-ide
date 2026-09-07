@@ -1,10 +1,16 @@
+import type { ReadNativeBacking } from "../../../terminal/protocol/native-backing-client.ts";
 import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 import type {
   TerminalFastLane,
   TerminalFastLanePublication,
 } from "@tmux-ide/daemon-client/terminal-fast-lane";
-import type { TerminalReplicaState } from "@tmux-ide/core";
+import { terminalReplicaRowsEqual, type TerminalReplicaState } from "@tmux-ide/core";
 
+import {
+  reflowTerminalPosition,
+  reflowRetainedTerminalSnapshot,
+  retainNativeTerminalBacking,
+} from "../terminal-viewport.ts";
 import type { CellArrays } from "../blit.ts";
 import type { BlitOptions, CursorState } from "../pane-mirror.ts";
 import type { TerminalPaintTrace, TerminalPaneRenderSource } from "../pane-surface.tsx";
@@ -33,6 +39,16 @@ interface PaneRendererInterest {
   readonly dirtyRows: Set<number>;
   release: (() => void) | null;
   state: TerminalReplicaState | null;
+  retainedView?: {
+    state: TerminalReplicaState;
+    snapshot: TerminalReplicaSnapshot;
+    historyTrim: number;
+    rejectedResize?: { cols: number; rows: number };
+    capture?: AbortController;
+    backingStatus: "pending" | "native" | "compatible";
+    pendingSizes: { cols: number; rows: number }[];
+    backingRevision: number;
+  };
   version: number;
   presentationVersion: number;
   pendingHostFrame: Readonly<{
@@ -50,6 +66,7 @@ interface PaneRendererInterest {
   pendingSeedDiagnostic: TuiTerminalCanonicalPublicationEvent | null;
   lastAcceptedUpdateType: "terminal.seed" | "terminal.patch" | null;
   historyTrim: number;
+  paintedRows?: (TerminalReplicaSnapshot["grid"][number] | undefined)[];
 }
 
 /**
@@ -63,6 +80,7 @@ interface PaneRendererInterest {
 export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapter {
   readonly #lane: TerminalFastLane;
   readonly #panes = new Map<string, PaneRendererInterest>();
+  #nativePaneGeometries = new Map<string, { cols: number; rows: number }>();
   readonly #sourceEpoch: number;
   readonly #causalCellLedger: CausalCellClientLedger | null;
   readonly #resourceSampler: OpenTuiTerminalResourceSampler | null;
@@ -75,6 +93,29 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   #droppedCanonicalHostFrames = 0;
 
   readonly renderSource: TerminalPaneRenderSource = {
+    supportsViewportOrigin: true,
+    captureReadPosition: (paneId, origin) => {
+      const previous = this.#snapshot(paneId);
+      const identity = this.paneCanonicalIdentity(paneId);
+      if (!previous || !identity) return null;
+      return () => {
+        const next = this.#snapshot(paneId);
+        const current = this.paneCanonicalIdentity(paneId);
+        if (
+          this.#disposed ||
+          !next ||
+          current?.generation !== identity.generation ||
+          current?.incarnation !== identity.incarnation
+        )
+          return null;
+        return reflowTerminalPosition(
+          previous,
+          next,
+          origin,
+          Boolean(this.#panes.get(paneId)?.retainedView),
+        );
+      };
+    },
     scrollbackDepth: (paneId) => this.#snapshot(paneId)?.history.length ?? 0,
     cursorState: (paneId) => {
       const cursor = this.#snapshot(paneId)?.cursor;
@@ -83,7 +124,10 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     blitPane: (paneId, buffers, width, height, scrollOffset, defaultFg, defaultBg, options) =>
       this.#blit(paneId, buffers, width, height, scrollOffset, defaultFg, defaultBg, options),
     paneCanonicalIdentity: (paneId) => this.paneCanonicalIdentity(paneId),
-    cursorPresentationTrace: (paneId) => this.#panes.get(paneId)?.pendingCursorTrace ?? null,
+    cursorPresentationTrace: (paneId) =>
+      this.#panes.get(paneId)?.retainedView
+        ? null
+        : (this.#panes.get(paneId)?.pendingCursorTrace ?? null),
     acknowledgePresentation: (paneId, viewportCols, viewportRows) =>
       this.#acknowledgePresentation(paneId, viewportCols, viewportRows),
   };
@@ -93,6 +137,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     sourceEpoch = 1,
     causalCellLedger: CausalCellClientLedger | null = null,
     resourceSampler: OpenTuiTerminalResourceSampler | null = null,
+    private readonly readNativeBacking: ReadNativeBacking | null = null,
   ) {
     this.#lane = lane;
     this.#sourceEpoch = sourceEpoch;
@@ -117,10 +162,160 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     return this.#lane.requestRepair(paneId, "missing-state");
   }
 
-  paneSelectionSnapshot(paneId: string): TerminalReplicaSnapshot | null {
-    return (
-      this.#panes.get(paneId)?.state?.snapshot ?? this.#lane.paneState(paneId)?.snapshot ?? null
+  setNativePaneGeometries(
+    panes: readonly { readonly paneId: string; readonly cols: number; readonly rows: number }[],
+  ): void {
+    if (this.#disposed) return;
+    this.#nativePaneGeometries = new Map(
+      panes
+        .filter(
+          ({ cols, rows }) =>
+            Number.isSafeInteger(cols) && cols > 0 && Number.isSafeInteger(rows) && rows > 0,
+        )
+        .map(({ paneId, cols, rows }) => [paneId, { cols, rows }]),
     );
+    for (const interest of this.#panes.values()) {
+      if (!this.#resizeRetainedView(interest)) continue;
+      interest.paintedRows = [];
+      interest.version++;
+      for (const listener of [...interest.listeners]) {
+        try {
+          listener(interest.version, this.#sourceEpoch, interest.presentationVersion, "content");
+        } catch {
+          // A renderer observer cannot prevent sibling invalidation.
+        }
+      }
+    }
+  }
+
+  #resizeRetainedView(
+    interest: PaneRendererInterest,
+    fallback = interest.state?.snapshot,
+  ): boolean {
+    const retained = interest.retainedView;
+    const geometry = this.#nativePaneGeometries.get(interest.paneId) ?? fallback;
+    if (!retained || !geometry) return false;
+    const { cols, rows } = geometry;
+    if (
+      (retained.snapshot.cols === cols && retained.snapshot.rows === rows) ||
+      (retained.rejectedResize?.cols === cols && retained.rejectedResize.rows === rows)
+    )
+      return false;
+    if (retained.backingStatus === "pending") {
+      if (retained.pendingSizes.length >= 128) {
+        retained.capture?.abort();
+        retained.backingStatus = "compatible";
+      } else retained.pendingSizes.push({ cols, rows });
+    }
+    const resized = reflowRetainedTerminalSnapshot(retained.snapshot, cols, rows);
+    if (!resized) {
+      retained.rejectedResize = { cols, rows };
+      return false;
+    }
+    retained.snapshot = resized;
+    delete retained.rejectedResize;
+    return true;
+  }
+
+  /** Hold this client's presentation; canonical delivery continues in the lane. */
+  retainPaneView(paneId: string): (() => void) | null {
+    const interest = this.#panes.get(paneId);
+    if (this.#disposed || !interest?.state?.snapshot || interest.retainedView) return null;
+    const retained: NonNullable<PaneRendererInterest["retainedView"]> = {
+      backingStatus: this.readNativeBacking ? "pending" : "compatible",
+      pendingSizes: [],
+      backingRevision: 0,
+      state: interest.state,
+      snapshot: interest.state.snapshot,
+      historyTrim: interest.historyTrim,
+    };
+    interest.retainedView = retained;
+    const original = retained.snapshot;
+    if (this.readNativeBacking) {
+      const capture = new AbortController();
+      retained.capture = capture;
+      void this.readNativeBacking(
+        paneId,
+        {
+          generation: retained.state.generation,
+          incarnation: retained.state.incarnation,
+          revision: retained.state.revision,
+          stateHash: retained.state.hash,
+        },
+        capture.signal,
+      )
+        .then((backing) => {
+          if (
+            capture.signal.aborted ||
+            this.#disposed ||
+            this.#panes.get(paneId) !== interest ||
+            interest.retainedView !== retained
+          )
+            return;
+          retained.backingStatus = "compatible";
+          if (!backing || !retainNativeTerminalBacking(original, backing)) return;
+          let snapshot = original;
+          for (const size of retained.pendingSizes) {
+            const next = reflowRetainedTerminalSnapshot(snapshot, size.cols, size.rows);
+            if (!next) return;
+            snapshot = next;
+          }
+          retained.snapshot = snapshot;
+          retained.backingStatus = "native";
+          retained.backingRevision++;
+          retained.pendingSizes = [];
+          delete retained.rejectedResize;
+          interest.paintedRows = [];
+          interest.version++;
+          for (const listener of [...interest.listeners]) {
+            try {
+              listener(
+                interest.version,
+                this.#sourceEpoch,
+                interest.presentationVersion,
+                "content",
+              );
+            } catch {
+              /* Isolate observers. */
+            }
+          }
+        })
+        .catch(() => {
+          if (interest.retainedView === retained) retained.backingStatus = "compatible";
+        });
+    }
+    this.#resizeRetainedView(interest);
+    return () => {
+      if (
+        this.#disposed ||
+        this.#panes.get(paneId) !== interest ||
+        interest.retainedView !== retained
+      )
+        return;
+      interest.retainedView?.capture?.abort();
+      delete interest.retainedView;
+      // A held screen cannot satisfy pending live paint diagnostics. The next
+      // full repaint owns those live cells and the latest host-frame fence.
+      for (let row = 0; row < (interest.state?.snapshot?.rows ?? 0); row++)
+        interest.dirtyRows.add(row);
+      interest.paintedRows = [];
+      interest.version++;
+      for (const listener of [...interest.listeners]) {
+        try {
+          listener(interest.version, this.#sourceEpoch, interest.presentationVersion, "content");
+        } catch {
+          /* Observers cannot prevent release. */
+        }
+      }
+    };
+  }
+
+  paneRetainedBackingStatus(paneId: string): "pending" | "native" | "compatible" | null {
+    return this.#panes.get(paneId)?.retainedView?.backingStatus ?? null;
+  }
+
+  paneSelectionSnapshot(paneId: string): TerminalReplicaSnapshot | null {
+    return this.#snapshot(paneId) ?? this.#lane.paneState(paneId)?.snapshot ?? null;
   }
 
   /** True only after the shared reducer has published a canonical framebuffer. */
@@ -217,6 +412,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       active = false;
       interest.listeners.delete(listener);
       if (interest.listeners.size !== 0) return;
+      interest.retainedView?.capture?.abort();
       interest.release?.();
       this.#panes.delete(paneId);
     };
@@ -225,8 +421,12 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
-    for (const interest of this.#panes.values()) interest.release?.();
+    for (const interest of this.#panes.values()) {
+      interest.retainedView?.capture?.abort();
+      interest.release?.();
+    }
     this.#panes.clear();
+    this.#nativePaneGeometries.clear();
     this.#pendingCanonicalHostFrames = null;
     this.#seenCanonicalHostFrameKeys = null;
     this.#canonicalModeKeys = null;
@@ -235,7 +435,8 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   }
 
   paneCanonicalIdentity(paneId: string) {
-    const state = this.#panes.get(paneId)?.state ?? this.#lane.paneState(paneId);
+    const interest = this.#panes.get(paneId);
+    const state = interest?.retainedView?.state ?? interest?.state ?? this.#lane.paneState(paneId);
     const snapshot = state?.snapshot;
     if (!state || !snapshot) return null;
     return {
@@ -245,8 +446,15 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       stateHash: state.hash,
       cols: snapshot.cols,
       rows: snapshot.rows,
+      ...(interest?.retainedView
+        ? {
+            viewBackingRevision: interest.retainedView.backingRevision,
+            viewCols: interest.retainedView.snapshot.cols,
+            viewRows: interest.retainedView.snapshot.rows,
+          }
+        : {}),
       sourceEpoch: this.#sourceEpoch,
-      historyTrim: this.#panes.get(paneId)?.historyTrim ?? 0,
+      historyTrim: interest?.retainedView?.historyTrim ?? interest?.historyTrim ?? 0,
     } as const;
   }
 
@@ -310,13 +518,59 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   #publish(interest: PaneRendererInterest, publication: TerminalFastLanePublication): void {
     if (this.#disposed || publication.address.semanticPaneId !== interest.paneId) return;
     const previous = interest.state?.snapshot ?? null;
+    const previousRetained = interest.retainedView?.snapshot;
     const next = publication.state.snapshot;
     if (publication.update.type !== "terminal.seed") interest.pendingSeedDiagnostic = null;
     else if (next)
       this.#noteSeedDiagnostic(interest, publication.state, publication.address.semanticPaneId);
+    const replacesHistory =
+      publication.update.type === "terminal.seed" ||
+      (publication.update.type === "terminal.patch" &&
+        publication.update.patch.history !== undefined);
+    const comparableCapture =
+      replacesHistory &&
+      previous !== null &&
+      next !== null &&
+      interest.state?.generation === publication.state.generation &&
+      interest.state?.incarnation === publication.state.incarnation &&
+      previous.cols === next.cols;
+    const retainedHistoryCoordinates =
+      comparableCapture &&
+      previous.history.length <= next.history.length &&
+      (previous.history === next.history ||
+        previous.history.every((row, index) => terminalReplicaRowsEqual(next.history[index], row)));
+    const removedRows = comparableCapture ? previous.history.length - next.history.length : 0;
+    const retainedSuffix =
+      comparableCapture &&
+      removedRows > 0 &&
+      next.history.length > 0 &&
+      previous.rows === next.rows &&
+      previous.modes.alternateScreen === next.modes.alternateScreen &&
+      next.grid.every((row, index) => terminalReplicaRowsEqual(previous.grid[index], row)) &&
+      next.history.every((row, index) =>
+        terminalReplicaRowsEqual(previous.history[index + removedRows], row),
+      );
+    if (
+      interest.retainedView &&
+      (!next ||
+        interest.retainedView.state.generation !== publication.state.generation ||
+        interest.retainedView.state.incarnation !== publication.state.incarnation)
+    ) {
+      interest.retainedView.capture?.abort();
+      delete interest.retainedView;
+    }
+    // Layout owns native geometry. Parser dimensions may differ (for example,
+    // xterm clamps a one-column pane to two). A held copy is independent of
+    // live parsing and must keep following the native pane's actual size.
+    if (interest.retainedView && next) this.#resizeRetainedView(interest, next);
     interest.state = publication.state;
-    if (publication.update.type === "terminal.seed") interest.historyTrim = 0;
-    else if (publication.update.type === "terminal.patch")
+    // Preserve coordinates for an unchanged prefix or an exact retained suffix.
+    // The suffix offset is fixed by the length difference; never search repeated
+    // log lines for a guessed overlap. Changed grids/reflow need a separate map.
+    if (replacesHistory) {
+      if (retainedSuffix) interest.historyTrim += removedRows;
+      else if (!retainedHistoryCoordinates) interest.historyTrim = 0;
+    } else if (publication.update.type === "terminal.patch")
       interest.historyTrim += publication.update.patch.historyDelta?.trim ?? 0;
     if (publication.update.type !== "terminal.tombstone")
       interest.lastAcceptedUpdateType = publication.update.type;
@@ -445,8 +699,13 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         stateHash: publication.state.hash,
       });
     }
-    if (changed) interest.version += 1;
-    else if (presentationOnly) interest.presentationVersion += 1;
+    // Accept and track live canonical delivery above, but only wake a reader
+    // when its displayed buffer changes. Release explicitly repaints live state.
+    const visibleContentChanged =
+      changed && (!interest.retainedView || interest.retainedView.snapshot !== previousRetained);
+    const visiblePresentationChanged = presentationOnly && !interest.retainedView;
+    if (visibleContentChanged) interest.version += 1;
+    else if (visiblePresentationChanged) interest.presentationVersion += 1;
     const frameSink = currentTuiPerformanceEventSink();
     if (
       (changed || presentationOnly || interest.pendingHostFrame) &&
@@ -465,14 +724,14 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         acceptedRevision: publication.state.revision,
       });
     }
-    if (!changed && !presentationOnly) return;
+    if (!visibleContentChanged && !visiblePresentationChanged) return;
     for (const listener of [...interest.listeners]) {
       try {
         listener(
           interest.version,
           this.#sourceEpoch,
           interest.presentationVersion,
-          changed ? "content" : "presentation",
+          visibleContentChanged ? "content" : "presentation",
         );
       } catch {
         // A renderer observer cannot prevent sibling invalidation.
@@ -556,7 +815,8 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   }
 
   #snapshot(paneId: string): TerminalReplicaSnapshot | null {
-    return this.#panes.get(paneId)?.state?.snapshot ?? null;
+    const interest = this.#panes.get(paneId);
+    return interest?.retainedView?.snapshot ?? interest?.state?.snapshot ?? null;
   }
 
   #blit(
@@ -570,7 +830,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     options: BlitOptions,
   ): TerminalPaintTrace | null {
     const interest = this.#panes.get(paneId);
-    const snapshot = interest?.state?.snapshot ?? null;
+    const snapshot = interest?.retainedView?.snapshot ?? interest?.state?.snapshot ?? null;
     if (snapshot === null) {
       // Never replace a formerly coherent framebuffer with semantic blanks
       // merely because retained canonical state is temporarily unavailable.
@@ -581,18 +841,36 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     }
     const seedPaintDiagnostic = currentTuiPerformanceEventSink()?.terminalCanonicalPaint;
     const forced = options.forceRows ? new Set(options.forceRows) : null;
-    const full = options.full || scrollOffset > 0;
+    const full = options.full || scrollOffset > 0 || Boolean(interest?.retainedView);
     let paintedCanonicalChange = false;
     const writtenRows =
       this.#causalCellLedger || (seedPaintDiagnostic && interest?.pendingSeedDiagnostic)
         ? new Set<number>()
         : null;
+    const paintedRows = interest ? (interest.paintedRows ??= []) : [];
     for (let row = 0; row < height; row += 1) {
-      if (!full && !interest?.dirtyRows.has(row) && !forced?.has(row)) continue;
+      const canonicalRow = options.viewportOrigin ? options.viewportOrigin.y + row : row;
+      const absoluteRow = snapshot.history.length + canonicalRow;
+      const sourceRow = options.viewportOrigin
+        ? absoluteRow < snapshot.history.length
+          ? snapshot.history[absoluteRow]
+          : snapshot.grid[canonicalRow]
+        : visibleTerminalRowAt(snapshot, scrollOffset, row);
+      // While reading history, live output can invalidate the pane without
+      // changing a single visible row. Keep those framebuffer cells untouched.
+      if (
+        scrollOffset > 0 &&
+        !options.full &&
+        !forced?.has(row) &&
+        row < paintedRows.length &&
+        paintedRows[row] === sourceRow
+      )
+        continue;
+      if (!full && !interest?.dirtyRows.has(canonicalRow) && !forced?.has(row)) continue;
       writtenRows?.add(row);
-      if (interest?.dirtyRows.has(row)) paintedCanonicalChange = true;
+      if (interest?.dirtyRows.has(canonicalRow)) paintedCanonicalChange = true;
       blitSemanticRow(
-        visibleTerminalRowAt(snapshot, scrollOffset, row),
+        sourceRow,
         buffers,
         row,
         width,
@@ -600,9 +878,13 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         defaultBg,
         options.graphemes,
         options.palette,
+        options.viewportOrigin?.x ?? 0,
       );
       options.dirtyRows.push(row);
+      paintedRows[row] = sourceRow;
     }
+    paintedRows.length = height;
+    if (interest?.retainedView) return null;
     interest?.dirtyRows.clear();
     const trace =
       paintedCanonicalChange && interest?.pendingTrace && interest.state
@@ -663,6 +945,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
             stateHash: interest.state!.hash,
             snapshot,
             viewport: { cols: width, rows: height },
+            viewportOrigin: options.viewportOrigin,
             activePaneRect: { x: 0, y: 0, width, height },
             writtenRows,
             scrollOffset,
@@ -679,7 +962,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   #acknowledgePresentation(paneId: string, viewportCols: number, viewportRows: number): void {
     const interest = this.#panes.get(paneId);
     const pendingIdentity = interest?.pendingHostFrame;
-    if (!interest || !pendingIdentity) return;
+    if (!interest || interest.retainedView || !pendingIdentity) return;
     interest.pendingHostFrame = null;
     interest.pendingCursorTrace = null;
     (this.#presentedCanonicalKeys ??= new Map()).set(

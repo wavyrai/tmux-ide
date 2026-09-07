@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  activeCanonicalIdentity,
   assessProductFirstInput,
   assessProductInputDistribution,
   launchAndWaitForExactProductTui,
@@ -1728,4 +1729,46 @@ test("malformed daemon stage evidence is enum-normalized before observation", ()
     },
   );
   assert.ok(JSON.stringify(assessment.predicates).length < 4_096);
+});
+
+test("first input baseline follows accepted patches after the initial seed paint", () => {
+  const expected = { processId: "opentui:1", semanticPaneId: "pane:1", generation: "g1" };
+  const paint = {
+    ...expected,
+    type: "performance.terminal-canonical-paint",
+    clockId: "opentui-performance-now",
+    incarnation: "g1:0",
+    revision: 1,
+    stateHash: "seed",
+  };
+  const patch = {
+    ...paint,
+    type: "performance.terminal-canonical-update",
+    revision: 2,
+    stateHash: "cursor-mode-patch",
+  };
+  for (const type of [
+    "performance.terminal-canonical-update",
+    "performance.terminal-canonical-mode",
+  ]) {
+    const current = { ...patch, type };
+    const result = activeCanonicalIdentity(
+      [
+        paint,
+        current,
+        { ...current, processId: "opentui:2", revision: 90 },
+        { ...current, semanticPaneId: "pane:2", revision: 91 },
+        { ...current, generation: "g2", revision: 92 },
+      ],
+      expected,
+    );
+    assert.equal(result.revision, 2);
+    assert.equal(result.stateHash, "cursor-mode-patch");
+  }
+  assert.equal(activeCanonicalIdentity([paint], expected).revision, 1);
+  assert.throws(() => activeCanonicalIdentity([patch], expected), /no exact canonical paint/);
+  assert.throws(
+    () => activeCanonicalIdentity([paint, { ...patch, incarnation: "g1:1" }], expected),
+    /no exact canonical paint/,
+  );
 });

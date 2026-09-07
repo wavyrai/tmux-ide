@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } fr
 import { createServer, request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { connect as connectTcp } from "node:net";
 import { dirname } from "node:path";
+import type { Duplex } from "node:stream";
 
 import { CanonicalDaemonInfoSchema, type CanonicalDaemonInfo } from "@tmux-ide/contracts";
 
@@ -35,6 +36,12 @@ export async function startGenerationGateway(
   expected: GenerationGatewayExpectation,
 ): Promise<GenerationGateway> {
   const bearer = randomUUID();
+  const sockets = new Set<Duplex>();
+  const retainSocket = <T extends Duplex>(socket: T): T => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    return socket;
+  };
   const server = createServer((incoming, response) => {
     if (!authorized(incoming.headers.authorization, bearer)) {
       response.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -56,16 +63,27 @@ export async function startGenerationGateway(
       path: incoming.url,
       headers: forwardedHeaders(incoming.headers, daemon),
     });
+    upstream.on("socket", retainSocket);
     upstream.on("response", (source) => {
+      // An interrupted SSE response must close the browser stream so its
+      // connection supervisor can discover the replacement daemon generation.
+      // pipe() forwards a normal end, but does not forward an aborted source.
+      source.on("error", () => response.destroy());
+      source.once("close", () => {
+        if (!source.complete) response.destroy();
+      });
       response.writeHead(source.statusCode ?? 502, source.headers);
       source.pipe(response);
     });
+    response.once("close", () => upstream.destroy());
+    incoming.once("aborted", () => upstream.destroy());
     upstream.on("error", () => {
       if (!response.headersSent) response.writeHead(502);
       response.end();
     });
     incoming.pipe(upstream);
   });
+  server.on("connection", retainSocket);
 
   server.on("upgrade", (incoming, downstream, head) => {
     if (!authorized(incoming.headers.authorization, bearer)) {
@@ -79,7 +97,7 @@ export async function startGenerationGateway(
       downstream.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
       return;
     }
-    const upstream = connectTcp(daemon.port, "127.0.0.1");
+    const upstream = retainSocket(connectTcp(daemon.port, "127.0.0.1"));
     upstream.once("connect", () => {
       const headers = forwardedHeaders(incoming.headers, daemon);
       upstream.write(`${incoming.method ?? "GET"} ${incoming.url ?? "/"} HTTP/1.1\r\n`);
@@ -93,6 +111,12 @@ export async function startGenerationGateway(
     });
     upstream.on("error", () => downstream.destroy());
     downstream.on("error", () => upstream.destroy());
+    // EOF/close is normal during daemon replacement; it must reach the client
+    // so its reconnect state machine can acquire the new generation.
+    upstream.once("close", () => downstream.destroy());
+    downstream.once("close", () => upstream.destroy());
+    upstream.once("end", () => downstream.destroy());
+    downstream.once("end", () => upstream.destroy());
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -101,10 +125,18 @@ export async function startGenerationGateway(
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("generation gateway did not bind");
+  let stopping: Promise<void> | null = null;
   return {
     origin: `http://127.0.0.1:${address.port}`,
     bearer,
-    stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    stop: () => {
+      stopping ??= new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        // HTTP server.close does not retire upgraded sockets.
+        for (const socket of sockets) socket.destroy();
+      });
+      return stopping;
+    },
   };
 }
 

@@ -211,6 +211,9 @@ export function createApplicationHomeNavigationOwner(options: {
     ReturnType<typeof createApplicationTerminalInteractionController>,
     "selectPane" | "renamePane" | "newWindow" | "splitPane" | "closePane"
   >;
+  readonly openAppearance?: () => void;
+  readonly zoomPane?: () => Promise<string>;
+  readonly appearanceOpen?: () => boolean;
   readonly rendererFocused: Accessor<boolean>;
   readonly setSurface: (surface: "home" | "terminals") => void;
   readonly setNote: (note: string | null) => void;
@@ -231,6 +234,7 @@ export function createApplicationHomeNavigationOwner(options: {
     inputActive: () =>
       options.activeSurface() === "home" &&
       !paneRename.draft() &&
+      !options.appearanceOpen?.() &&
       !options.shell().semantic?.focus.palette.open &&
       !options.shell().localPaletteOpen &&
       options.rendererFocused(),
@@ -262,7 +266,13 @@ export function createApplicationHomeNavigationOwner(options: {
     targetKey: () =>
       `${applicationGenerationNavigationKey(options.sessionOwner()?.snapshot() ?? null)}:${options.focusedPane()}`,
     disabledReason: (command) => {
-      if (typeof command === "object" || command === "home" || command === "terminals") return null;
+      if (
+        typeof command === "object" ||
+        command === "home" ||
+        command === "terminals" ||
+        command === "appearance"
+      )
+        return null;
       if (options.sessionOwner()?.snapshot()?.status !== "live") return "Open a live session first";
       return command !== "new-window" && !options.focusedPane() ? "Select a live pane first" : null;
     },
@@ -271,6 +281,8 @@ export function createApplicationHomeNavigationOwner(options: {
     commandSource: applicationPaletteCommandSource,
     setSurface: options.setSurface,
     setNote: options.setNote,
+    openAppearance: options.openAppearance,
+    zoomPane: options.zoomPane,
     newWindow: options.interaction.newWindow,
     splitPane: options.interaction.splitPane,
     closePane: options.interaction.closePane,

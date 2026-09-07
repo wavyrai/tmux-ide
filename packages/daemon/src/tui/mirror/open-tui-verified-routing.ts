@@ -6,6 +6,11 @@ import {
 } from "@tmux-ide/daemon-client/pane-stream-client";
 
 import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
+import {
+  readNativeBacking,
+  type ReadNativeBacking,
+  type NativeBackingIdentity,
+} from "../../terminal/protocol/native-backing-client.ts";
 
 export interface OpenTuiVerifiedRoutingIdentity {
   readonly daemonInstanceId: string;
@@ -24,6 +29,7 @@ export type OpenTuiVerifiedPaneStreamOptions = Omit<
  * downstream render/runtime code can use the route but cannot inspect its token.
  */
 export interface OpenTuiVerifiedRoutingContext extends OpenTuiVerifiedRoutingIdentity {
+  readNativeBacking?: ReadNativeBacking;
   assertCurrent(expected: OpenTuiVerifiedRoutingIdentity): void;
   openPaneStream(
     expected: OpenTuiVerifiedRoutingIdentity,
@@ -61,6 +67,23 @@ export function createOpenTuiVerifiedRoutingContext(
   return Object.freeze({
     ...identity,
     assertCurrent,
+    readNativeBacking: async (
+      paneId: string,
+      expected: NativeBackingIdentity,
+      signal: AbortSignal,
+    ) => {
+      assertCurrent({ ...identity, daemonInstanceId: expected.generation });
+      const result = await readNativeBacking({
+        baseUrl: canonicalDaemonUrl("http", daemon.bindHostname, daemon.port),
+        ownerToken,
+        workspaceName,
+        paneId,
+        expected,
+        signal,
+      });
+      assertCurrent({ ...identity, daemonInstanceId: expected.generation });
+      return result;
+    },
     openPaneStream: async (
       expected: OpenTuiVerifiedRoutingIdentity,
       options: OpenTuiVerifiedPaneStreamOptions,

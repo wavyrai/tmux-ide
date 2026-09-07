@@ -36,7 +36,9 @@ export function OverlayFrame(props: OverlayFrameProps) {
     });
   const width = () => size().width;
   const height = () => size().height;
-  const innerWidth = () => Math.max(1, width() - 2);
+  // Empty border sides below keep OpenTUI border styling from enabling a frame.
+  const bordered = () => width() >= 4 && height() >= 3;
+  const innerWidth = () => Math.max(1, width() - (bordered() ? 2 : 0));
   const left = () => {
     if (props.placement === "anchor")
       return Math.max(0, Math.min(props.anchor?.x ?? 0, viewportWidth() - width()));
@@ -58,19 +60,19 @@ export function OverlayFrame(props: OverlayFrameProps) {
       width={width()}
       height={height()}
       zIndex={props.zIndex ?? 100}
-      border
+      border={bordered() ? true : []}
       borderStyle="rounded"
       borderColor={props.theme.roles.borders.focused}
       backgroundColor={props.theme.roles.surfaces.panelRaised}
       flexDirection="column"
-      paddingLeft={1}
+      paddingLeft={bordered() ? 1 : 0}
       overflow="hidden"
       onMouseDown={(event) => {
         event.preventDefault();
         event.stopPropagation();
       }}
     >
-      {props.title ? (
+      {props.title && height() >= 4 ? (
         <text
           width={innerWidth()}
           fg={props.theme.roles.text.primary}
@@ -81,7 +83,7 @@ export function OverlayFrame(props: OverlayFrameProps) {
         </text>
       ) : null}
       {props.children}
-      {props.footer ? (
+      {props.footer && height() >= 5 ? (
         <text
           width={innerWidth()}
           fg={props.theme.roles.text.muted}

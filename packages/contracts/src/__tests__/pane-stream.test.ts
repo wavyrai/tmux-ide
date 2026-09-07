@@ -146,6 +146,28 @@ describe("pane-stream lease contracts", () => {
     ).toBe(false);
   });
 
+  it("preserves effective copy key modes and leaves older observations unknown", () => {
+    const layout = {
+      type: "layout",
+      semanticWindowId: "window.one",
+      windowName: "main",
+      currentWindow: true,
+      cols: 80,
+      rows: 24,
+      zoomed: false,
+      paneBorderStatus: "off",
+      panes: [{ pane: "pane.one", left: 0, top: 0, width: 80, height: 24, active: true }],
+    };
+    for (const modeKeys of ["emacs", "vi", undefined]) {
+      expect(PaneStreamServerFrameSchemaZ.parse({ ...layout, modeKeys })).toMatchObject({
+        modeKeys,
+      });
+    }
+    expect(PaneStreamServerFrameSchemaZ.safeParse({ ...layout, modeKeys: "unknown" }).success).toBe(
+      false,
+    );
+  });
+
   it("requires layout authority snapshots to be complete and bijective", () => {
     const layout = (window: string | null, pane: string | null, currentWindow: boolean) => ({
       type: "layout" as const,

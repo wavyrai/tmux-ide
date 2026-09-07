@@ -9,11 +9,16 @@ type Dimensions = Readonly<{ width: number; height: number }>;
  * Owns the one semantic-shell viewport resize for the current generation.
  * Provisional local chrome is intentionally not terminal geometry authority.
  */
-export function createSemanticShellViewportResizeOwner(): Readonly<{
+export function createSemanticShellViewportResizeOwner(
+  getLayout: () => {
+    readonly current: { readonly paneBorderStatus: "off" | "top" | "bottom" } | null;
+  } = () => ({ current: { paneBorderStatus: "top" } }),
+): Readonly<{
   adopt(
     dimensions: Dimensions,
     semantic: ApplicationShellProjectionV1 | null,
     generation: OpenTuiGenerationHostSnapshot | null,
+    paneBorderStatus?: "off" | "top" | "bottom",
   ): void;
   dispose(): void;
 }> {
@@ -35,7 +40,12 @@ export function createSemanticShellViewportResizeOwner(): Readonly<{
     left.rows === right.rows;
 
   return Object.freeze({
-    adopt(dimensions, semantic, generation) {
+    adopt(
+      dimensions,
+      semantic,
+      generation,
+      paneBorderStatus = getLayout().current?.paneBorderStatus ?? "off",
+    ) {
       if (disposed) return;
       if (
         semantic === null ||
@@ -54,11 +64,11 @@ export function createSemanticShellViewportResizeOwner(): Readonly<{
         daemonGeneration: generation.daemonGeneration,
         rendererEpoch: generation.rendererEpoch,
         cols: viewport.width,
-        rows: viewport.height,
+        rows: Math.max(2, viewport.height - (paneBorderStatus === "off" ? 1 : 0)),
       });
       if (same(applied, target) || same(pending, target)) return;
       pending = target;
-      void lane.lane.resize({ cols: viewport.width, rows: viewport.height }).then(
+      void lane.lane.resize({ cols: target.cols, rows: target.rows }).then(
         (outcome) => {
           if (disposed || pending !== target) return;
           pending = null;

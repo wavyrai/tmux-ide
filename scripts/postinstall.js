@@ -1,6 +1,28 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, symlinkSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  symlinkSync,
+} from "node:fs";
 import { resolve, dirname, relative } from "node:path";
 import { homedir } from "node:os";
+
+// npm strips executable bits from non-bin payloads. Restore the private tmux
+// before a privileged global install becomes read-only to its eventual user.
+// Runtime selection independently verifies the complete checksummed bundle.
+try {
+  const executable = resolve(
+    dirname(import.meta.dirname),
+    "packages/daemon/dist/native/tmux",
+    `${process.platform}-${process.arch}`,
+    "tmux",
+  );
+  if (existsSync(executable)) chmodSync(executable, 0o755);
+} catch {
+  // User-owned installs can also restore permissions during verified selection.
+}
 
 // ---------------------------------------------------------------------------
 // Workspace-package links — MUST run before the Claude gate below.

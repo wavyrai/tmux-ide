@@ -16,6 +16,7 @@ dashboard/out
 
 # local package artifacts
 *.tgz
+!packages/daemon/native/xterm/tmux-ide-xterm-headless-*.tgz
 
 # local OS files
 .DS_Store

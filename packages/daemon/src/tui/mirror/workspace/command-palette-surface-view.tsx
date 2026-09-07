@@ -270,7 +270,7 @@ export function CommandPaletteSurface(props: CommandPaletteSurfaceProps) {
         top={props.projection.overlay.y}
         width={props.projection.overlay.width}
         height={props.projection.overlay.height}
-        border={props.projection.bordered}
+        border={props.projection.bordered ? true : []}
         borderStyle="rounded"
         borderColor={props.theme.colors.focusBorder}
         backgroundColor={props.theme.colors.surface}
