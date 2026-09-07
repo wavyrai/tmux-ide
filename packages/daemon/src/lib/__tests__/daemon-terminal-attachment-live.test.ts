@@ -15,6 +15,7 @@ import {
 import { inspectCanonicalDaemonInfo } from "../canonical-daemon.ts";
 import { startEmbeddedDaemon, type EmbeddedDaemonHandle } from "../daemon-embed.ts";
 import { _setDefaultWorkspaceRegistryForTests, WorkspaceRegistry } from "../workspace-registry.ts";
+import { appSetRemoteAccessHandler } from "../../command-center/actions/handlers/app-set-remote-access.ts";
 
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 
@@ -84,6 +85,45 @@ describe
         else process.env[name] = value;
       }
       rmSync(root, { recursive: true, force: true });
+    });
+
+    it("keeps the standalone handle current across two real settings restarts", async () => {
+      handle = await startEmbeddedDaemon({
+        bindHostname: "127.0.0.1",
+        authToken: null,
+        localBypassToken: ownerToken,
+        silent: true,
+      });
+      const callerHandle = handle;
+      const originalPort = callerHandle.port;
+      const nativePid = run(["display-message", "-p", "#{pid}"]);
+      const identities = new Set([callerHandle.instanceId]);
+      for (let cycle = 0; cycle < 2; cycle++) {
+        const oldIdentity = callerHandle.instanceId;
+        await appSetRemoteAccessHandler(
+          { enabled: false },
+          { deferRestart: (restart) => restart() },
+        );
+        await vi.waitFor(() => expect(callerHandle.instanceId).not.toBe(oldIdentity), {
+          timeout: 10_000,
+        });
+        expect(callerHandle.port).toBe(originalPort);
+        expect(callerHandle.apiBaseUrl).toBe(`http://127.0.0.1:${originalPort}`);
+        expect(callerHandle.wsUrl).toBe(`ws://127.0.0.1:${originalPort}/ws/events`);
+        expect(callerHandle.localBypassToken).toBe(ownerToken);
+        expect(identities.has(callerHandle.instanceId)).toBe(false);
+        identities.add(callerHandle.instanceId);
+        const canonical = inspectCanonicalDaemonInfo();
+        expect(canonical.status).toBe("valid");
+        if (canonical.status === "valid")
+          expect(canonical.info.instanceId).toBe(callerHandle.instanceId);
+        expect(await callerHandle.tmuxAuthorityReplaced!()).toBe(false);
+        expect(run(["display-message", "-p", "#{pid}"])).toBe(nativePid);
+      }
+      await callerHandle.stop({ gracefulMs: 100 });
+      handle = null;
+      expect(inspectCanonicalDaemonInfo().status).toBe("missing");
+      expect(run(["list-sessions", "-F", "#{session_name}"])).toBe(sessionName);
     });
 
     it("issues over HTTP, redeems over the direct boundary, launches node-pty, and drains before canonical retirement", async () => {

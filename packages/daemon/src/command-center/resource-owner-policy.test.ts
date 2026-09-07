@@ -41,9 +41,12 @@ async function get(
   path: string,
   options: { readonly ownerToken: string | null; readonly bearer?: string },
 ): Promise<Response> {
-  const app = createApp(
-    options.ownerToken === null ? {} : { remoteAccess: { ownerToken: options.ownerToken } },
-  );
+  const app = createApp({
+    // This suite checks authorization against healthy resources. Host tmux
+    // availability is a separate route contract, including its 503 response.
+    catalogFleet: () => [],
+    ...(options.ownerToken === null ? {} : { remoteAccess: { ownerToken: options.ownerToken } }),
+  });
   return app.request(`http://localhost${path}`, {
     headers: options.bearer === undefined ? {} : { Authorization: `Bearer ${options.bearer}` },
   });

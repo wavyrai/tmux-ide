@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -248,4 +248,93 @@ describe("createAppearanceOwner", () => {
     expect(light.palette.searchCurrent).not.toBe(dark.palette.searchCurrent);
     owner.dispose();
   });
+});
+
+describe("appearance picker", () => {
+  it("previews without writing, cancels, and saves through the existing config", () => {
+    const configPath = useTemporaryConfig();
+    const owner = createAppearanceOwner(
+      parseAppConfig({ theme: { mode: "dark" } }),
+      new ThemeRenderer(),
+      new PaletteOwner(),
+    );
+    owner.openPicker();
+    owner.preview("light");
+    expect(owner.theme().setting).toBe("light");
+    expect(() => readFileSync(configPath)).toThrow();
+    expect(owner.handlePickerKey({ name: "escape" })).toBe(true);
+    expect(owner.theme().setting).toBe("dark");
+    expect(owner.pickerOpen()).toBe(false);
+    owner.openPicker();
+    owner.preview("system");
+    owner.savePicker();
+    expect(JSON.parse(readFileSync(configPath, "utf8")).theme.mode).toBe("system");
+    expect(owner.pickerOpen()).toBe(false);
+    owner.dispose();
+  });
+  it("keeps a failed save open and Escape restores the original mode", () => {
+    const configPath = useTemporaryConfig();
+    const owner = createAppearanceOwner(
+      parseAppConfig({ theme: { mode: "dark" } }),
+      new ThemeRenderer(),
+      new PaletteOwner(),
+    );
+    process.env.TMUX_IDE_CONFIG = configPath + "/missing/config.json";
+    // A file as the parent forces a deterministic write failure.
+    writeFileSync(configPath, "{}");
+    owner.openPicker();
+    owner.preview("light");
+    owner.savePicker();
+    expect(owner.pickerOpen()).toBe(true);
+    expect(owner.pickerError()).toContain("Could not save");
+    expect(owner.handlePickerKey({ name: "x" })).toBe(true);
+    owner.cancelPicker();
+    expect(owner.theme().setting).toBe("dark");
+    owner.dispose();
+  });
+});
+
+describe("named theme picker", () => {
+  it("searches presets, previews locally, restores on cancel and persists selection", () => {
+    const path = useTemporaryConfig();
+    const owner = createAppearanceOwner(
+      parseAppConfig({ theme: { preset: "nord" } }),
+      new ThemeRenderer(),
+      new PaletteOwner(),
+    );
+    owner.openPicker();
+    for (const name of "dracula") owner.handlePickerKey({ name });
+    expect(owner.pickerOptions().map((p) => p.id)).toEqual(["dracula"]);
+    owner.handlePickerKey({ name: "down" });
+    expect(owner.pickerSelection()).toBe("dracula");
+    expect(() => readFileSync(path)).toThrow();
+    owner.cancelPicker();
+    expect(owner.pickerSelection()).toBe("nord");
+    owner.openPicker();
+    expect(owner.pickerQuery()).toBe("");
+    owner.preview("dracula");
+    owner.savePicker();
+    expect(parseAppConfig(JSON.parse(readFileSync(path, "utf8"))).theme.preset).toBe("dracula");
+    owner.dispose();
+  });
+});
+
+it("starts at last filtered result on Up and cycles every preset", () => {
+  useTemporaryConfig();
+  const owner = createAppearanceOwner(parseAppConfig({}), new ThemeRenderer(), new PaletteOwner());
+  owner.openPicker();
+  for (const name of "phosphor") owner.handlePickerKey({ name });
+  const matches = owner.pickerOptions();
+  expect(matches.length).toBeGreaterThan(1);
+  owner.handlePickerKey({ name: "up" });
+  expect(owner.pickerSelection()).toBe(matches.at(-1)!.id);
+  owner.cancelPicker();
+  owner.openPicker();
+  const visited = new Set<string>();
+  for (let i = 0; i < owner.pickerOptions().length; i++) {
+    owner.handlePickerKey({ name: "down" });
+    visited.add(owner.pickerSelection());
+  }
+  expect(visited.size).toBe(25);
+  owner.dispose();
 });

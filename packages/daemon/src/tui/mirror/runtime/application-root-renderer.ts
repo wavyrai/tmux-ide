@@ -5,10 +5,19 @@ import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 
 /** Renderer construction boundary kept outside the application composition root. */
 export async function createApplicationRootRenderer(kittyKeys: boolean) {
+  // tmux consumes OSC 66 instead of displaying its payload. Early echoed input
+  // can make OpenTUI's cursor-position probe falsely detect explicit-width
+  // support, erasing Unicode chrome. Use ordinary Unicode under this host;
+  // preserve an explicit user override and direct-terminal capability detection.
+  if (process.env.TMUX && process.env.OPENTUI_FORCE_EXPLICIT_WIDTH === undefined)
+    process.env.OPENTUI_FORCE_EXPLICIT_WIDTH = "false";
   tuiPerfMark("renderer-create-start");
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
     autoFocus: false,
+    // Explicitly forward the JS-side default (and user overrides) to the
+    // native renderer before terminal setup.
+    forwardEnvKeys: ["OPENTUI_FORCE_EXPLICIT_WIDTH"],
     ...TUI_RENDERER_CADENCE,
     useKittyKeyboard: kittyKeys ? {} : null,
     consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",

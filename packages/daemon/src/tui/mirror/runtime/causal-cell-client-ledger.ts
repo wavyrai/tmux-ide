@@ -14,6 +14,7 @@ export interface CausalCellPaintEvidenceV1 {
   readonly stateHash: string;
   readonly snapshot: TerminalReplicaSnapshot;
   readonly viewport: { readonly cols: number; readonly rows: number };
+  readonly viewportOrigin?: { readonly x: number; readonly y: number };
   readonly activePaneRect: {
     readonly x: number;
     readonly y: number;
@@ -64,6 +65,7 @@ interface CompactDeliveryEvidence {
 
 interface CompactPaintEvidence extends CompactDeliveryEvidence {
   readonly viewport: { readonly cols: number; readonly rows: number };
+  readonly viewportOrigin?: { readonly x: number; readonly y: number };
   readonly activePaneRect: {
     readonly x: number;
     readonly y: number;
@@ -236,7 +238,8 @@ export class CausalCellClientLedger {
         targetCell,
         viewport: Object.freeze({ ...input.viewport }),
         activePaneRect: Object.freeze({ ...input.activePaneRect }),
-        targetRowWritten: input.writtenRows.has(row),
+        viewportOrigin: Object.freeze({ ...(input.viewportOrigin ?? { x: 0, y: 0 }) }),
+        targetRowWritten: input.writtenRows.has(row - (input.viewportOrigin?.y ?? 0)),
         scrollOffset: input.scrollOffset,
         atMicros: input.atMicros,
       }),
@@ -310,14 +313,23 @@ export class CausalCellClientLedger {
       JSON.stringify(delivery.targetCell) !== JSON.stringify(proof.after)
     )
       return this.fail(traceId, "baseline-drift");
-    const visibleRow = row;
+    const origin = paint.viewportOrigin ?? { x: 0, y: 0 };
+    const visibleRow = row - origin.y;
+    const visibleColumn = column - origin.x;
     if (
       paint.scrollOffset !== 0 ||
+      !Number.isSafeInteger(origin.x) ||
+      !Number.isSafeInteger(origin.y) ||
+      origin.x < 0 ||
+      origin.y < 0 ||
+      origin.x > Math.max(0, cols - paint.viewport.cols) ||
+      origin.y > Math.max(0, rows - paint.viewport.rows) ||
       paint.activePaneRect.width !== paint.viewport.cols ||
       paint.activePaneRect.height !== paint.viewport.rows ||
       visibleRow < 0 ||
       visibleRow >= paint.viewport.rows ||
-      column >= paint.viewport.cols ||
+      visibleColumn < 0 ||
+      visibleColumn >= paint.viewport.cols ||
       !paint.targetRowWritten ||
       paint.cols !== cols ||
       paint.rows !== rows ||

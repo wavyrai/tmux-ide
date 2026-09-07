@@ -27,6 +27,11 @@ import {
   type RenderableOptions,
 } from "@opentui/core";
 import { extend } from "@opentui/solid";
+import {
+  clampTerminalViewportOrigin,
+  terminalLiveViewportOrigin,
+  type TerminalViewportOrigin,
+} from "./terminal-viewport.ts";
 import type { CursorState } from "./pane-mirror.ts";
 import type { BlitOptions } from "./pane-mirror.ts";
 import {
@@ -60,14 +65,17 @@ export function projectPaneFramebufferCells(
 ): readonly Readonly<Record<string, unknown>>[] {
   const overrides = new Map(graphemes.map((value) => [`${value.x}:${value.y}`, value.chars]));
   const projection: Readonly<Record<string, unknown>>[] = [];
+  // Direct cell blits use zero; drawText uses OpenTUI's interned continuation.
+  const isContinuation = (value: number | undefined) =>
+    value === CHAR_CONTINUATION || (value !== undefined && value >>> 30 === 3);
   for (let row = 0; row < height; row += 1) {
     for (let column = 0; column < width; column += 1) {
       const index = row * width + column;
       const codepoint = buffers.char[index]!;
       const continuation =
-        codepoint === CHAR_CONTINUATION && column > 0 && buffers.char[index - 1] !== 0x20;
-      if (codepoint === 0x20 || (codepoint === CHAR_CONTINUATION && !continuation)) continue;
-      const nextContinuation = column + 1 < width && buffers.char[index + 1] === CHAR_CONTINUATION;
+        isContinuation(codepoint) && column > 0 && buffers.char[index - 1] !== 0x20;
+      if (codepoint === 0x20 || (isContinuation(codepoint) && !continuation)) continue;
+      const nextContinuation = column + 1 < width && isContinuation(buffers.char[index + 1]);
       const chars = continuation
         ? ""
         : (overrides.get(`${column}:${row}`) ?? String.fromCodePoint(codepoint));
@@ -113,6 +121,7 @@ export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRendera
   searchHl: number;
   searchCur: number;
   scrollOffset?: number;
+  viewportOrigin?: TerminalViewportOrigin | null;
   paneFocused?: boolean;
   /** Bumps (coalesced, once per state tick) when this pane's content changed. */
   contentVersion?: number;
@@ -134,6 +143,8 @@ export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRendera
    *  visible rows per-frame against the pane's live baseY (depth − offset), so
    *  the highlight stays glued to its content while the view scrolls. */
   selRange?: { start: Cell; end: Cell } | null;
+  /** Client-local keyboard copy cursor, in absolute retained buffer cells. */
+  copyCursor?: Cell | null;
   search?: PaneSearchHighlight | null;
 }
 
@@ -143,7 +154,13 @@ export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRendera
  * replica snapshots from entering Solid.
  */
 export interface TerminalPaneRenderSource {
+  readonly supportsViewportOrigin?: boolean;
   scrollbackDepth(paneId: string): number;
+  /** Opaque client-local read position; no snapshot or transport enters Solid. */
+  captureReadPosition?(
+    paneId: string,
+    origin: TerminalViewportOrigin,
+  ): (() => TerminalViewportOrigin | null) | null;
   cursorState(paneId: string): CursorState | null;
   blitPane(
     paneId: string,
@@ -167,6 +184,9 @@ export interface TerminalPaneRenderSource {
     cols: number;
     rows: number;
     sourceEpoch: number;
+    /** Client-local retained presentation size; canonical identity stays unchanged. */
+    viewCols?: number;
+    viewRows?: number;
     /** Generation-local count of canonical history rows trimmed after the retained seed. */
     historyTrim?: number;
   }> | null;
@@ -396,8 +416,11 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   private _terminalPalette: TerminalPaletteProjection | undefined;
   private _searchHl = 0;
   private _searchCur = 0;
+  private _copyCursor: Cell | null = null;
   private _cursorMarker = 0x3b4250;
   private _scrollOffset = 0;
+  private _viewportOrigin: TerminalViewportOrigin | null = null;
+  private _lastViewportOrigin: TerminalViewportOrigin = { x: 0, y: 0 };
   private _focusedPane = false;
   private _contentVersion = -1;
   private _presentationVersion = -1;
@@ -413,6 +436,8 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   private _fullWalkTotal = 0;
   private _presentationCount = 0;
   private readonly _graphemes: GraphemeOverride[] = [];
+  /** Native interned characters survive partial paints; their diagnostic names must too. */
+  private readonly _paintedGraphemes = new Map<number, GraphemeOverride[]>();
   // ── Incremental walk state (M21.4) ─────────────────────────────────────────
   /** Force a full repaint next walk (first frame, resize — the framebuffer is
    *  blank so the mirror's shadow must be refilled). */
@@ -490,6 +515,53 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   }
 
   // ── Reactive props: a change flips _needsWalk so the next paint re-blits. ──
+  set viewportOrigin(v: TerminalViewportOrigin | null | undefined) {
+    if (this._viewportOrigin?.x === v?.x && this._viewportOrigin?.y === v?.y) return;
+    this._viewportOrigin = v ?? null;
+    this._forceFull = true;
+    this.invalidate();
+  }
+  private resolvedViewportOrigin(): TerminalViewportOrigin {
+    if (!this._mirror?.supportsViewportOrigin) return { x: 0, y: 0 };
+    const identity = this._mirror.paneCanonicalIdentity?.(this._paneId);
+    const size = identity
+      ? { cols: identity.viewCols ?? identity.cols, rows: identity.viewRows ?? identity.rows }
+      : null;
+    if (this._viewportOrigin && size)
+      return clampTerminalViewportOrigin(
+        size,
+        { cols: this.frameBuffer.width, rows: this.frameBuffer.height },
+        this._viewportOrigin,
+        this._mirror.scrollbackDepth(this._paneId),
+      );
+    const cursor = this._mirror.cursorState(this._paneId);
+    return size && cursor
+      ? terminalLiveViewportOrigin(
+          { ...size, cursor },
+          { cols: this.frameBuffer.width, rows: this.frameBuffer.height },
+        )
+      : { x: 0, y: 0 };
+  }
+  set copyCursor(value: Cell | null | undefined) {
+    if (this._copyCursor?.col === value?.col && this._copyCursor?.row === value?.row) return;
+    this._copyCursor = value ?? null;
+    this.invalidate();
+  }
+  private projectedCursor(): CursorState | null {
+    if (this._copyCursor && this._mirror) {
+      const origin = this.resolvedViewportOrigin();
+      return {
+        x: this._copyCursor.col - origin.x,
+        y: this._copyCursor.row - this._mirror.scrollbackDepth(this._paneId) - origin.y,
+        hidden: false,
+        style: "block",
+        blink: false,
+      };
+    }
+    const cursor = this._mirror?.cursorState(this._paneId);
+    const origin = this.resolvedViewportOrigin();
+    return cursor ? { ...cursor, x: cursor.x - origin.x, y: cursor.y - origin.y } : null;
+  }
   set scrollOffset(v: number) {
     if (v === this._scrollOffset) return;
     this._scrollOffset = v;
@@ -592,6 +664,11 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
 
   protected override renderSelf(buffer: OptimizedBuffer): void {
     if (!this.visible || this.isDestroyed) return;
+    const origin = this.resolvedViewportOrigin();
+    if (origin.x !== this._lastViewportOrigin.x || origin.y !== this._lastViewportOrigin.y) {
+      this._forceFull = true;
+      this._needsWalk = true;
+    }
     if (this._needsWalk) {
       this._needsWalk = false;
       this.walk();
@@ -619,6 +696,8 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     // job. Focus is deliberately NOT view-wide: the old/new cursor-marker rows
     // below are the only framebuffer cells it can change, while pane chrome and
     // the hardware cursor live outside the terminal cell buffer.
+    const origin = this.resolvedViewportOrigin();
+    this._lastViewportOrigin = origin;
     const full = this._forceFull || this._scrollOffset !== this._lastScroll;
     this._forceFull = false;
     this._lastScroll = this._scrollOffset;
@@ -629,14 +708,23 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     // pushing the depth — moves the highlights with their text. Same clamping as
     // the blit's own offset math (depth here == viewportY there).
     const depth = this._mirror.scrollbackDepth(this._paneId);
-    const baseY = depth - Math.min(Math.max(0, this._scrollOffset), depth);
+    const baseY = this._mirror.supportsViewportOrigin
+      ? depth + origin.y
+      : depth - Math.min(Math.max(0, this._scrollOffset), depth);
     const newSelRows = this.selRows(h, baseY);
     const newSearchRows = this.searchRows(h);
     // The live cursor (M21.6): the focused pane drives the hardware cursor; an
     // unfocused pane paints a quiet marker on its cursor cell. Read once.
-    const cur = this._mirror.cursorState(this._paneId);
+    const cur = this.projectedCursor();
     const markerRow =
-      cur && !this._focusedPane && !cur.hidden && this._scrollOffset === 0 && cur.x < w && cur.y < h
+      cur &&
+      !this._focusedPane &&
+      !cur.hidden &&
+      (this._copyCursor !== null || this._scrollOffset === 0) &&
+      cur.x >= 0 &&
+      cur.y >= 0 &&
+      cur.x < w &&
+      cur.y < h
         ? cur.y
         : -1;
     // Rows that must repaint so their swap/highlight/marker is cleared then
@@ -664,6 +752,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
       this._defaultBg,
       {
         consumerId: this,
+        ...(this._mirror.supportsViewportOrigin ? { viewportOrigin: origin } : {}),
         full,
         forceRows,
         dirtyRows: this._dirtyRows,
@@ -677,13 +766,18 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     }
 
     // Multi-codepoint graphemes (ZWJ/flag emoji, combining marks) — the native
-    // setCell handles the full string + its width; rare, so the RGBA is fine.
+    // drawText interns the complete grapheme; setCell accepts only its first code point.
+    if (full) this._paintedGraphemes.clear();
+    else for (const row of this._dirtyRows) this._paintedGraphemes.delete(row);
     for (let i = 0; i < this._graphemes.length; i++) {
       const g = this._graphemes[i]!;
-      fb.setCell(
+      let row = this._paintedGraphemes.get(g.y);
+      if (!row) this._paintedGraphemes.set(g.y, (row = []));
+      row.push(g);
+      fb.drawText(
+        g.chars,
         g.x,
         g.y,
-        g.chars,
         g.fg === null ? this._defaultFgRgba : packedRgba(g.fg),
         g.bg === null ? this._defaultBgRgba : packedRgba(g.bg),
         g.attrs,
@@ -695,14 +789,14 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     if (s && s.len > 0) {
       for (let i = 0; i < s.matches.length; i++) {
         const m = s.matches[i]!;
-        const row = m.line - s.baseY;
+        const row = m.line - (this._mirror.supportsViewportOrigin ? baseY : s.baseY);
         if (row < 0 || row >= h) continue;
         paintBg(
           buffers,
           w,
           row,
-          m.col,
-          m.col + s.len - 1,
+          m.col - origin.x,
+          m.col + s.len - 1 - origin.x,
           i === s.current ? this._searchCur : this._searchHl,
         );
       }
@@ -711,8 +805,15 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     if (sel) {
       for (let i = 0; i < newSelRows.length; i++) {
         const y = newSelRows[i]!;
-        const r = rowSelectionRange(baseY + y, w, sel.start, sel.end);
-        if (r) swapCells(buffers, w, y, r.from, r.to);
+        const r = rowSelectionRange(baseY + y, w + origin.x, sel.start, sel.end);
+        if (r)
+          swapCells(
+            buffers,
+            w,
+            y,
+            Math.max(0, r.from - origin.x),
+            Math.min(w - 1, r.to - origin.x),
+          );
       }
     }
     // Unfocused quiet cursor marker — a muted block on the cursor cell (its row
@@ -728,12 +829,12 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     if (framebufferProjectionSink) {
       try {
         const identity = this._mirror.paneCanonicalIdentity?.(this._paneId);
-        if (identity) {
+        if (identity && identity.viewCols === undefined) {
           const projection = projectPaneFramebufferCells(
             buffers,
             w,
             h,
-            this._graphemes,
+            [...this._paintedGraphemes.values()].flat(),
             this._defaultFg,
             this._defaultBg,
           );
@@ -892,7 +993,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
       return;
     }
     const inBounds = c.x >= 0 && c.x < w && c.y >= 0 && c.y < h;
-    const live = this._scrollOffset === 0;
+    const live = this._copyCursor !== null || this._scrollOffset === 0;
     const visible = live && inBounds && !c.hidden;
     // Absolute screen position of the pane's cursor cell. setCursorPosition is
     // 1-based (matches OpenTUI's own editor: screenX + visualCol + 1).
@@ -913,7 +1014,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     const startedAt = trace ? performance.now() : 0;
     const w = this.frameBuffer.width;
     const h = this.frameBuffer.height;
-    const cursor = this._mirror.cursorState(this._paneId);
+    const cursor = this.projectedCursor();
     this.updateHardwareCursor(cursor, w, h);
     this.publishCursorPresentation(cursor, w, h, 0, false, trace?.traceId ?? null);
     if (trace) {
@@ -969,10 +1070,10 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     traceId: string | null = null,
   ): void {
     const sink = currentTuiPerformanceEventSink()?.terminalCursorPresentation;
-    if (!sink || !cursor || !this._focusedPane || !this._mirror) return;
+    if (!sink || !cursor || !this._focusedPane || !this._mirror || this._copyCursor) return;
     try {
       const identity = this._mirror.paneCanonicalIdentity?.(this._paneId);
-      if (!identity) return;
+      if (!identity || identity.viewCols !== undefined) return;
       const inBounds = cursor.x >= 0 && cursor.x < width && cursor.y >= 0 && cursor.y < height;
       const visible = this._scrollOffset === 0 && inBounds && !cursor.hidden;
       this._presentationCount += 1;
@@ -1030,6 +1131,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   }
 
   override destroy(): void {
+    this._paintedGraphemes.clear();
     this.releaseHardwareCursor();
     this.cancelPendingFocusTransition();
     try {
@@ -1056,7 +1158,11 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     if (!s || s.len === 0) return [];
     const out: number[] = [];
     for (let i = 0; i < s.matches.length; i++) {
-      const row = s.matches[i]!.line - s.baseY;
+      const row =
+        s.matches[i]!.line -
+        (this._mirror?.supportsViewportOrigin
+          ? this._mirror.scrollbackDepth(this._paneId) + this.resolvedViewportOrigin().y
+          : s.baseY);
       if (row >= 0 && row < height && !out.includes(row)) out.push(row);
     }
     return out;

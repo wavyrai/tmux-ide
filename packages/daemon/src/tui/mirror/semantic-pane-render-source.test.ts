@@ -12,6 +12,7 @@ import {
 
 import type { CellArrays } from "./blit.ts";
 import {
+  blitSemanticRow,
   SemanticPaneReplica,
   SemanticTerminalRenderSource,
   extractTerminalCellText,
@@ -744,4 +745,37 @@ describe("SemanticPaneReplica", () => {
       "e\u0301",
     );
   });
+});
+
+it("clears clipped wide glyphs at both client viewport edges without orphan padding", () => {
+  const blank = blankTerminalReplicaSnapshot(5, 1).grid[0]!;
+  const base = blank.cells[0]!;
+  const row = {
+    ...blank,
+    cells: [
+      {
+        ...base,
+        grapheme: "界",
+        width: 2 as const,
+        background: { kind: "rgb" as const, value: 0xff0000 },
+      },
+      { ...base, grapheme: "", width: 0 as const },
+      { ...base, grapheme: "A", width: 1 as const },
+      { ...base, grapheme: "語", width: 2 as const },
+      { ...base, grapheme: "", width: 0 as const },
+    ],
+  };
+  const buffers: CellArrays = {
+    char: new Uint32Array(3),
+    fg: new Uint16Array(12),
+    bg: new Uint16Array(12),
+    attributes: new Uint32Array(3),
+  };
+  blitSemanticRow(row, buffers, 0, 3, 0xffffff, 0, [], undefined, 1);
+  expect([...buffers.char]).toEqual([32, 65, 32]);
+  expect(buffers.bg[0]).toBeGreaterThan(0);
+  expect(buffers.bg[1]).toBe(0);
+  expect(buffers.bg[2]).toBe(0);
+  expect(row.cells[0]!.grapheme).toBe("界");
+  expect(row.cells[3]!.grapheme).toBe("語");
 });

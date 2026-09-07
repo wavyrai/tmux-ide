@@ -116,6 +116,29 @@ describe.skipIf(!hasTmux)("MirrorControlChannel live: session death", () => {
     expect(runTmux(["list-sessions", "-F", "#{session_name}"]).split("\n")).toEqual([keepalive]);
   });
 
+  it("attaches through the resolved daemon socket instead of the configured fallback", async () => {
+    const target = "zz-chan-resolved";
+    runTmux(["new-session", "-d", "-s", target, "sh"]);
+    const socketPath = runTmux(["display-message", "-p", "#{socket_path}"]);
+    const resolveSocketPath = vi.fn(() => socketPath);
+    const channel = new MirrorControlChannel({
+      session: target,
+      socketName: `zz-no-such-socket-${process.pid}`,
+      resolveSocketPath,
+      handlers: { onOutput: () => {}, onNotify: () => {}, onExit: () => {} },
+    });
+    try {
+      await channel.start();
+      await expect(channel.request('display-message -p "#{socket_path}"')).resolves.toEqual([
+        socketPath,
+      ]);
+      expect(resolveSocketPath).toHaveBeenCalledOnce();
+    } finally {
+      await channel.dispose();
+      runTmux(["kill-session", "-t", target]);
+    }
+  });
+
   it("treats a pipe error on any channel stream as inert", async () => {
     const target = "zz-chan-pipe";
     runTmux(["new-session", "-d", "-s", target, "sh"]);

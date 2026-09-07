@@ -312,6 +312,28 @@ describe("terminal delivery client", () => {
     expect(encoded).toContain("\u001b[3J");
   });
 
+  it("paints unused width-one cells as spaces in ANSI seeds and patches", () => {
+    const baseline = blankTerminalReplicaSnapshot(4, 2);
+    const row = {
+      ...baseline.grid[0]!,
+      cells: baseline.grid[0]!.cells.map((cell, index) => ({
+        ...cell,
+        grapheme: ["A", "", "B", ""][index]!,
+      })),
+    };
+    const target = { ...baseline, grid: [row, baseline.grid[1]!] };
+    for (const bytes of [
+      encodeAnsiTerminalRepresentation(null, target),
+      encodeAnsiTerminalPatchRepresentation({ rows: [{ index: 0, row }] }, target, baseline),
+    ]) {
+      const ansi = new TextDecoder()
+        .decode(bytes)
+        .replaceAll("\u001b", "")
+        .replace(/\[[0-9;]*m/gu, "");
+      expect(ansi).toContain("A B ");
+    }
+  });
+
   it("encodes ordinary ANSI deltas from dirty rows without inspecting the full grid", () => {
     const snapshot = blankTerminalReplicaSnapshot(4, 3);
     const inaccessibleGrid = new Proxy(snapshot.grid, {

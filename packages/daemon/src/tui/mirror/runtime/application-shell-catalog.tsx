@@ -1,3 +1,6 @@
+import type { ApplicationConnectionFeedback } from "../workspace/connection-feedback.ts";
+import { appearanceDialogLayer } from "./application-shell-overlays.tsx";
+import type { ApplicationAppearanceOwner } from "./application-appearance-owner.ts";
 /* @jsxImportSource @opentui/solid */
 import type { Accessor, JSX } from "solid-js";
 import { For, Show, createMemo } from "solid-js";
@@ -23,16 +26,23 @@ import { ApplicationShellOverlayStack } from "./application-shell-overlay-stack.
 export type ApplicationCatalogSurface = "home" | "terminals";
 export type ApplicationCatalogInputSource = "keyboard" | "mouse";
 export interface ApplicationCatalogShellProps {
+  readonly appearanceOwner?: ApplicationAppearanceOwner;
   readonly homeAgents?: ApplicationHomeAgentPresentation;
   readonly dimensions: Accessor<{ readonly width: number; readonly height: number }>;
   readonly surface: Accessor<ApplicationCatalogSurface>;
   readonly sessions: readonly string[] | Accessor<readonly string[]>;
   readonly selectedSession: Accessor<number>;
   readonly bootstrapNote: Accessor<string | null>;
+  readonly connectionFeedback?: Accessor<ApplicationConnectionFeedback | null>;
+  readonly onCancelOpen?: () => void;
+  readonly onCopyConnectionDetails?: () => void;
   readonly catalogPhase?: Accessor<"loading" | "live" | "unavailable">;
   readonly catalogNote?: Accessor<string | null>;
   readonly paletteOpen: Accessor<boolean>;
   readonly paletteSelection?: Accessor<number>;
+  readonly paletteQuery?: Accessor<string>;
+  readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
+  readonly onPaletteSelect?: (index: number) => void;
   readonly paletteCommands?: Accessor<readonly ApplicationPaletteCommand[]>;
   readonly paletteCloseArmed?: Accessor<boolean>;
   readonly theme: SemanticThemeSnapshot;
@@ -65,6 +75,10 @@ function CatalogTerminalSurface(props: {
   readonly phase: "loading" | "live" | "unavailable";
   readonly sessionCount: number;
   readonly note: string | null;
+  readonly connection?: ApplicationConnectionFeedback | null;
+  readonly onCancelOpen?: () => void;
+  readonly onRetryOpen?: () => void;
+  readonly onCopyConnectionDetails?: () => void;
   readonly width: number;
   readonly height: number;
   readonly theme: SemanticThemeSnapshot;
@@ -102,6 +116,19 @@ function CatalogTerminalSurface(props: {
           <text fg={props.theme.roles.text.muted}>{clipTerminal(message, props.width - 4)}</text>
         )}
       </For>
+      <Show when={props.connection}>
+        <box flexDirection="column" gap={1}>
+          <Show when={props.connection?.failed}>
+            <Button theme={props.theme} label="Retry" onPress={() => props.onRetryOpen?.()} />
+          </Show>
+          <Button theme={props.theme} label="Back to Home" onPress={() => props.onCancelOpen?.()} />
+          <Button
+            theme={props.theme}
+            label={props.width < 40 ? "Copy details" : "Copy connection details"}
+            onPress={() => props.onCopyConnectionDetails?.()}
+          />
+        </box>
+      </Show>
       <For
         each={
           props.phase === "live" && props.sessionCount === 0 && props.onCreateSession
@@ -208,11 +235,13 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
     if (phase() === "unavailable") return " ! reconnecting ";
     return sessions().length === 0 ? " ○ no sessions " : ` ● ${sessions().length} live `;
   };
-  const showCatalogSidebar = () => props.surface() === "terminals";
+  const showCatalogSidebar = () =>
+    props.surface() === "terminals" &&
+    !(props.connectionFeedback?.() && props.dimensions().width < 60);
   const catalogContentWidth = () =>
     showCatalogSidebar() ? chrome().main.width : props.dimensions().width;
-  const overlayLayers = (): readonly OverlayLayer[] =>
-    props.paletteOpen()
+  const overlayLayers = (): readonly OverlayLayer[] => [
+    ...(props.paletteOpen()
       ? [
           {
             id: "palette",
@@ -221,6 +250,9 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                 width={props.dimensions().width}
                 height={props.dimensions().height}
                 selected={props.paletteSelection?.() ?? 0}
+                query={props.paletteQuery?.() ?? ""}
+                disabledReason={props.paletteDisabledReason}
+                onSelect={props.onPaletteSelect}
                 closeArmed={props.paletteCloseArmed?.() ?? false}
                 commands={props.paletteCommands?.() ?? applicationPaletteCommands(null)}
                 theme={props.theme}
@@ -236,7 +268,13 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
             ),
           },
         ]
-      : [];
+      : []),
+    ...appearanceDialogLayer(
+      props.appearanceOwner,
+      props.dimensions().width,
+      props.dimensions().height,
+    ),
+  ];
   return (
     <Surface
       theme={props.theme}
@@ -317,6 +355,13 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                   phase={phase()}
                   sessionCount={sessions().length}
                   note={note()}
+                  connection={props.connectionFeedback?.()}
+                  onCancelOpen={props.onCancelOpen}
+                  onRetryOpen={() => {
+                    const session = props.connectionFeedback?.()?.session;
+                    if (session) props.onOpenSession(session, "mouse");
+                  }}
+                  onCopyConnectionDetails={props.onCopyConnectionDetails}
                   width={catalogContentWidth()}
                   height={Math.max(1, chrome().main.height - chrome().status.height)}
                   theme={props.theme}

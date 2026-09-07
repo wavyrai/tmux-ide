@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { createPinnedWorkspaceTmuxRunner } from "./workspace-pane-creation.ts";
+import { createTmuxAuthorityReplacementProbe } from "./tmux-authority-replacement.ts";
 import { readWorkspaceRegistrySessionInventory, WorkspaceRegistry } from "./workspace-registry.ts";
 
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
@@ -53,6 +54,14 @@ describe.skipIf(!hasTmux).sequential("workspace registry tmux authority", () => 
       executablePath,
       socketSelector: { kind: "path", path: privateSocket },
     });
+    const replacementProbe = createTmuxAuthorityReplacementProbe(
+      {
+        executablePath,
+        socketSelector: { kind: "path", path: privateSocket },
+      },
+      originalRunner,
+    );
+    expect(await replacementProbe()).toBe(false);
     await expect(
       registry.load(() => readWorkspaceRegistrySessionInventory(originalRunner)),
     ).resolves.toEqual({
@@ -64,6 +73,7 @@ describe.skipIf(!hasTmux).sequential("workspace registry tmux authority", () => 
     // Losing the private server must not fall through to the unrelated server,
     // even though it advertises the same session name.
     run(privateSocket, ["kill-server"]);
+    expect(await replacementProbe()).toBe(false);
     expect(readWorkspaceRegistrySessionInventory(originalRunner)).toMatchObject({
       status: "unavailable",
     });
@@ -76,6 +86,7 @@ describe.skipIf(!hasTmux).sequential("workspace registry tmux authority", () => 
     // generation is inode-fenced and must preserve, never adopt, that server.
     run(privateSocket, ["new-session", "-d", "-s", workspaceName, "exec sleep 300"]);
     run(privateSocket, ["new-session", "-d", "-s", "replacement-keeper", "exec sleep 300"]);
+    await expect.poll(replacementProbe).toBe(true);
     expect(readWorkspaceRegistrySessionInventory(originalRunner)).toMatchObject({
       status: "ambiguous",
       detail: expect.stringMatching(/socket authority changed/u),

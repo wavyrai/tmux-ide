@@ -16,6 +16,21 @@
  * tmux's truth. Everything after is a live delta.
  */
 
+/** Modes observed at the native capture seam; omitted fields stay unknown. */
+export interface MirrorObservedTerminalModes {
+  readonly alternateScreen?: boolean;
+  readonly applicationCursor?: boolean;
+  readonly applicationKeypad?: boolean;
+  readonly insert?: boolean;
+  readonly cursorVisible?: boolean;
+  readonly bracketedPaste?: boolean;
+  readonly mouseProtocol?: "none" | "vt200" | "drag" | "any";
+  readonly mouseSgr?: boolean;
+  readonly mouseUtf8?: boolean;
+  /** Zero-based inclusive margins, coupled with DECOM to keep cursor addressing coherent. */
+  readonly scrolling?: { readonly top: number; readonly bottom: number; readonly origin: boolean };
+}
+
 /** One pane-scoped stream event. `seed`/`delta` bytes are raw VT output. */
 export type MirrorPaneEvent =
   | {
@@ -30,8 +45,15 @@ export type MirrorPaneEvent =
       data: Uint8Array;
     }
   | {
-      /** tmux's cursor truth (0-based cells, viewport-relative — CUP food). */
+      /** Native cursor truth; x may equal cols to represent wrap pending. */
       type: "cursor";
+      /** Native pane retention limit, when supplied by the capture probe. */
+      historyLimit?: number;
+      /** Actual retained rows; resize reflow may exceed the configured limit. */
+      historySize?: number;
+      /** Observed DECAWM state at the cursor probe seam, when supplied. */
+      wraparound?: boolean;
+      observedModes?: MirrorObservedTerminalModes;
       x: number;
       y: number;
     }
@@ -47,6 +69,11 @@ export type MirrorPaneEvent =
       type: "flow";
       state: "paused" | "resumed";
       reason: "backpressure" | "requested";
+    }
+  | {
+      /** Native recovery exhausted its bounds; this is not evidence of pane deletion. */
+      type: "fault";
+      reason: "native-recovery-failed";
     }
   | {
       /** The pane is gone from tmux truth (a successful list-panes reply that
@@ -87,6 +114,8 @@ export interface MirrorLayoutEvent {
   zoomed: boolean;
   /** Where tmux reserves its pane-border title row for this window. */
   paneBorderStatus: "top" | "bottom" | "off";
+  /** Effective native window copy key mode; absent from older observations. */
+  modeKeys?: "emacs" | "vi";
   panes: MirrorLayoutPane[];
 }
 

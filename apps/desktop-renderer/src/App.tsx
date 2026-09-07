@@ -27,6 +27,7 @@ import {
   type DesktopDaemonRecoveryPhase,
 } from "./runtime/live-app-composition.tsx";
 import type { WebWorkspaceClient } from "./runtime/web-workspace-client.ts";
+import { createDaemonReconnectRecovery } from "./runtime/daemon-reconnect-recovery.ts";
 import {
   recoveryForDaemonCapability,
   startupReadinessDiagnostics,
@@ -137,8 +138,9 @@ export function App(props: AppProps = {}) {
       });
   };
 
-  const refreshDaemonConnection = (): void => {
-    if (!host || disposed || !bootstrap() || daemonRefreshFlight) return;
+  const refreshDaemonConnection = (): Promise<void> => {
+    if (!host || disposed || !bootstrap()) return Promise.resolve();
+    if (daemonRefreshFlight) return daemonRefreshFlight;
     setDaemonRecovery("refreshing");
     const operation = host.daemon
       .refreshConnection()
@@ -173,6 +175,25 @@ export function App(props: AppProps = {}) {
         if (daemonRefreshFlight === operation) daemonRefreshFlight = null;
       });
     daemonRefreshFlight = operation;
+    return operation;
+  };
+
+  const reconnectRecovery = createDaemonReconnectRecovery(refreshDaemonConnection);
+  let unsubscribeWorkspaceLifecycle: (() => void) | null = null;
+  const workspaceClientChanged = (client: WebWorkspaceClient | null): void => {
+    unsubscribeWorkspaceLifecycle?.();
+    unsubscribeWorkspaceLifecycle = null;
+    props.onWorkspaceClientChanged?.(client);
+    if (client === null) {
+      // A failed canonical probe may temporarily retire the workspace. Keep
+      // discovering through that gap; an ordinary workspace exit cancels it.
+      if (bootstrap()?.daemon.status === "connected") reconnectRecovery.stop();
+      return;
+    }
+    unsubscribeWorkspaceLifecycle = client.subscribe("lifecycle", (state) => {
+      if (state.target) reconnectRecovery.observe(state.target.daemon.instanceId, state.phase);
+      else reconnectRecovery.stop();
+    });
   };
 
   onMount(() => {
@@ -184,6 +205,8 @@ export function App(props: AppProps = {}) {
       stopTheme();
       stopWindow();
       disposed = true;
+      reconnectRecovery.dispose();
+      unsubscribeWorkspaceLifecycle?.();
       bootstrapRequest += 1;
       daemonRefreshFlight = null;
     });
@@ -400,7 +423,7 @@ export function App(props: AppProps = {}) {
                             onCommand={props.onCommand}
                             introPending={introPending()}
                             onAcknowledgeIntro={acknowledgeIntro}
-                            onWorkspaceClientChanged={props.onWorkspaceClientChanged}
+                            onWorkspaceClientChanged={workspaceClientChanged}
                           />
                         </Show>
                       )}

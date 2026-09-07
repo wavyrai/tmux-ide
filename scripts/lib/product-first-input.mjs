@@ -1544,3 +1544,40 @@ export function assessFirstKeyPasteBoundaries({ timeline, evidence, correlationC
     boundaries: Object.freeze(boundaries),
   });
 }
+
+// Seed paint proves initial presentation. Later patches can update cursor or
+// modes without another seed paint; input is bound to that accepted revision.
+export function activeCanonicalIdentity(records, expected) {
+  const matches = (record) =>
+    record?.processId === expected.processId &&
+    record.semanticPaneId === expected.semanticPaneId &&
+    record.generation === expected.generation;
+  const paint = records.findLast(
+    (record) => record?.type === "performance.terminal-canonical-paint" && matches(record),
+  );
+  if (!paint) throw new Error("first-input lane has no exact canonical paint identity");
+  const current = records.findLast(
+    (record) =>
+      matches(record) &&
+      [
+        "performance.terminal-canonical-paint",
+        "performance.terminal-canonical-update",
+        "performance.terminal-canonical-mode",
+      ].includes(record.type),
+  );
+  if (
+    typeof current.incarnation !== "string" ||
+    !Number.isSafeInteger(current.revision) ||
+    typeof current.stateHash !== "string" ||
+    current.clockId !== paint.clockId ||
+    current.incarnation !== paint.incarnation
+  )
+    throw new Error("first-input lane has no exact canonical paint identity");
+  return Object.freeze({
+    ...expected,
+    clockId: current.clockId,
+    incarnation: current.incarnation,
+    revision: current.revision,
+    stateHash: current.stateHash,
+  });
+}

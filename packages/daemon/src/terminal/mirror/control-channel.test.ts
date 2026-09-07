@@ -1,7 +1,37 @@
 import { describe, expect, it, vi } from "vitest";
-import { ControlChannelCore, mirrorControlAttachArgs } from "./control-channel.ts";
+import {
+  ControlChannelCore,
+  MirrorControlChannel,
+  mirrorControlAttachArgs,
+} from "./control-channel.ts";
 
 describe("retained control client attach policy", () => {
+  it("refuses to spawn when the owning daemon rejects its socket authority", async () => {
+    const resolveSocketPath = vi.fn(() => {
+      throw new Error("retired daemon socket authority");
+    });
+    const channel = new MirrorControlChannel({
+      session: "owned",
+      executable: "/nonexistent/test-only-tmux",
+      resolveSocketPath,
+      handlers: { onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() },
+    });
+    await expect(channel.start()).rejects.toThrow("retired daemon socket authority");
+    expect(resolveSocketPath).toHaveBeenCalledOnce();
+    await expect(channel.request("list-panes")).rejects.toThrow("not running");
+    await channel.dispose();
+  });
+
+  it("does not fall back to an ambient socket when the resolver returns no authority", async () => {
+    const channel = new MirrorControlChannel({
+      session: "owned",
+      executable: "/nonexistent/test-only-tmux",
+      resolveSocketPath: () => "",
+      handlers: { onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() },
+    });
+    await expect(channel.start()).rejects.toThrow("Tmux socket authority is unavailable");
+    await channel.dispose();
+  });
   it("starts passive, flow-controlled, and active-pane aware", () => {
     expect(
       mirrorControlAttachArgs({
@@ -138,6 +168,39 @@ describe("ControlChannelCore atomic pane snapshot collector", () => {
     ...block(11),
     ...block(12, `%tmux-ide-atomic-v1 ${nonce} complete`),
   ];
+
+  it.each([
+    {
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 1,
+      lines: ["one", "two"],
+      reason: "capture-line-cap",
+    },
+    { maxCaptureBytes: 3, maxCaptureLines: 16, lines: ["oversized"], reason: "capture-byte-cap" },
+  ])("rejects $reason without publishing a partial recovery snapshot", (fixture) => {
+    const settled = vi.fn();
+    const output = vi.fn();
+    const core = new ControlChannelCore({ onOutput: output, onNotify: vi.fn(), onExit: vi.fn() });
+    expect(
+      core.armAtomicPaneSnapshotCollector({
+        nonce,
+        runtimePaneId: "%7",
+        maxCaptureBytes: fixture.maxCaptureBytes,
+        maxCaptureLines: fixture.maxCaptureLines,
+        maxCursorBytes: 256,
+        observerCommandCount: 2,
+        onSettled: settled,
+      }),
+    ).toBe(true);
+    core.feed(
+      [...guardedSnapshot(fixture.lines, "0 0 80 24"), "%output %7 subsequent", ""].join("\n"),
+    );
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(settled.mock.calls[0]?.[0]).toMatchObject({ ok: false, failureReason: fixture.reason });
+    expect(settled.mock.calls[0]?.[0].captureLines).toEqual([]);
+    expect(output).toHaveBeenCalledTimes(1);
+    expect(new TextDecoder().decode(output.mock.calls[0]?.[1])).toBe("subsequent");
+  });
 
   it("consumes raw capture rows before notification parsing and returns one framed snapshot", () => {
     const onOutput = vi.fn();
@@ -578,5 +641,91 @@ describe("ControlChannelCore atomic pane snapshot collector", () => {
     expect(rejectedCleanup).toHaveBeenCalledWith({ ok: false, lines: [] });
     expect(afterLoss).toHaveBeenCalledWith({ ok: true, lines: ["later-result"] });
     expect(coreWithLostTarget.pendingCount).toBe(0);
+  });
+});
+
+describe("bounded native capture replies", () => {
+  const create = () => {
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() });
+    core.feed("%begin 1 0 0\n%end 1 0 0\n");
+    return core;
+  };
+  it("keeps fragmented protocol terminators outside the payload budget", () => {
+    const core = create();
+    const result = vi.fn();
+    core.pushBounded({ maxBytes: 4, maxLines: 1 }, result);
+    core.feed("%begin 1 1 1\nabc\n%end 1");
+    core.feed(" 1 1\n");
+    expect(result).toHaveBeenCalledExactlyOnceWith({ ok: true, lines: ["abc"] });
+  });
+  it("retains exact-budget replies and preserves the next command after overflow", () => {
+    const core = create();
+    const first = vi.fn();
+    const second = vi.fn();
+    core.pushBounded({ maxBytes: 4, maxLines: 1 }, first);
+    core.pushBounded({ maxBytes: 4, maxLines: 1 }, second);
+    core.feed("%begin 1 1 1\nabc\nextra\n%end 1 1 1\n%begin 1 2 1\nxyz\n%end 1 2 1\n");
+    expect(first).toHaveBeenCalledExactlyOnceWith({ ok: false, lines: [] });
+    expect(second).toHaveBeenCalledExactlyOnceWith({ ok: true, lines: ["xyz"] });
+  });
+  it("drains an oversized unterminated line across chunks without losing FIFO alignment", () => {
+    const core = create();
+    const first = vi.fn();
+    const second = vi.fn();
+    core.pushBounded({ maxBytes: 16, maxLines: 2 }, first);
+    core.pushBounded({ maxBytes: 16, maxLines: 2 }, second);
+    core.feed("%begin 1 1 1\n" + "x".repeat(17));
+    for (let i = 0; i < 100; i++) core.feed("x".repeat(1024));
+    expect(first).not.toHaveBeenCalled();
+    core.feed("tail\n%end 1 1 1\n%begin 1 2 1\nokay\n%end 1 2 1\n");
+    expect(first).toHaveBeenCalledExactlyOnceWith({ ok: false, lines: [] });
+    expect(second).toHaveBeenCalledExactlyOnceWith({ ok: true, lines: ["okay"] });
+  });
+  it("bounds row bookkeeping separately and settles channel failure once", () => {
+    const core = create();
+    const result = vi.fn();
+    core.pushBounded({ maxBytes: 1024, maxLines: 1 }, result);
+    core.feed("%begin 1 1 1\na\nb\n%end 1 1 1\n");
+    expect(result).toHaveBeenCalledExactlyOnceWith({ ok: false, lines: [] });
+    const exit = vi.fn();
+    core.pushBounded({ maxBytes: 1024, maxLines: 1 }, exit);
+    core.fail("closed");
+    core.fail("closed again");
+    expect(exit).toHaveBeenCalledExactlyOnceWith({ ok: false, lines: ["closed"] });
+    expect(core.pushBounded({ maxBytes: Infinity, maxLines: 1 }, vi.fn())).toBe(false);
+  });
+});
+
+describe("bounded marked capture command lists", () => {
+  const setup = () => {
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() });
+    core.feed("%begin 1 0 0\n%end 1 0 0\n");
+    return core;
+  };
+  it("discards successful prefix output and bounds the capture before the next reply", () => {
+    const core = setup();
+    const capture = vi.fn();
+    const next = vi.fn();
+    core.pushBoundedCommandList(2, 1, { maxBytes: 8, maxLines: 2 }, capture);
+    core.pushBounded({ maxBytes: 8, maxLines: 2 }, next);
+    core.feed("%begin 1 1 1\nprefix\n%end 1 1 1\n%begin 1 2 1\n" + "x".repeat(9));
+    core.feed("more\n%end 1 2 1\n%begin 1 3 1\nnext\n%end 1 3 1\n");
+    expect(capture).toHaveBeenCalledExactlyOnceWith({ ok: false, lines: [] });
+    expect(next).toHaveBeenCalledExactlyOnceWith({ ok: true, lines: ["next"] });
+  });
+  it("preserves a bounded parse error and removes the unexecuted capture slot", () => {
+    const core = setup();
+    const capture = vi.fn();
+    const next = vi.fn();
+    core.pushBoundedCommandList(2, 1, { maxBytes: 1024, maxLines: 2 }, capture);
+    core.pushBounded({ maxBytes: 8, maxLines: 2 }, next);
+    core.feed(
+      "%begin 1 1 1\nparse error: command capture-pane: unknown flag -R\n%error 1 1 1\n%begin 1 2 1\nnext\n%end 1 2 1\n",
+    );
+    expect(capture).toHaveBeenCalledExactlyOnceWith({
+      ok: false,
+      lines: ["parse error: command capture-pane: unknown flag -R"],
+    });
+    expect(next).toHaveBeenCalledExactlyOnceWith({ ok: true, lines: ["next"] });
   });
 });

@@ -69,7 +69,7 @@ describe("Home agent row projection", () => {
 
   it("keeps failed and unknown distinct from idle", () => {
     expect(homeAgentStatusLabel("failed")).toBe("FAILED");
-    expect(homeAgentStatusLabel("disconnected")).toBe("UNKNOWN");
+    expect(homeAgentStatusLabel("disconnected")).toBe("DISCONNECTED");
     expect(homeAgentStatusLabel("idle")).toBe("IDLE");
   });
 });

@@ -314,6 +314,27 @@ function rig(
 }
 
 describe("OpenTUI WorkspaceClient runtime port", () => {
+  it("accepts native zoom visibility while retaining hidden pane subscriptions", async () => {
+    const test = rig(true);
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const original = port.getLayout()!;
+    test
+      .options()
+      .onLayout?.({ ...original, zoomed: true, panes: [{ ...original.panes[0]!, width: 120 }] });
+    expect(port.getLayout()?.zoomed).toBe(true);
+    expect(port.getLayout()?.panes).toHaveLength(1);
+    expect(
+      await port.subscribeTerminal({ workspaceName: WORKSPACE, semanticPaneId: PANE_B }),
+    ).toBeDefined();
+    test.options().onLayout?.(original);
+    expect(port.getLayout()?.zoomed).toBe(false);
+    expect(port.getLayout()?.panes).toHaveLength(2);
+    await port.close();
+  });
+
   it("retains one current window across tmux false-then-true switch frames", async () => {
     const test = rig(true);
     const port = await connectOpenTuiWorkspaceRuntimePort({
@@ -1047,91 +1068,110 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     }
   }, 35_000);
 
-  it("reuses authenticated history rows across 24 compact endpoint workload cycles", () => {
-    const fixture = fileURLToPath(
-      new URL("../../../test-support/open-tui-compact-sub64-process.ts", import.meta.url),
-    );
-    const tsx = fileURLToPath(new URL("../../../../../node_modules/.bin/tsx", import.meta.url));
-    const result = spawnSync(tsx, [fixture, "workload"], {
-      encoding: "utf8",
-      timeout: 90_000,
-    });
-    expect(result.status, result.stderr).toBe(0);
-    const measurement = JSON.parse(result.stdout.trim()) as {
-      workloadMinBytes: number;
-      workloadMaxBytes: number;
-      workloadCycles: number;
-      explicitGcAvailable: boolean;
-      maxHeartbeatDelayMs: number;
-      peakRssBytes: number;
-      peakHeapBytes: number;
-      rssSlopeBytesPerSample: number;
-      heapSlopeBytesPerSample: number;
-      rssGrowthBytes: number;
-      heapGrowthBytes: number;
-      measuredExternalBytes: readonly number[];
-      measuredArrayBufferBytes: readonly number[];
-      deliveryCount: number;
-      ackCount: number;
-      finalHashExact: boolean;
-      applyProfiles: readonly {
-        readonly trustedCompactAdoption: boolean;
-        readonly phaseMicros: Readonly<Record<string, number>>;
-        readonly counts: Readonly<Record<string, number>>;
-      }[];
-      decodeProfiles: readonly {
-        readonly reusedCompactPayload: boolean;
-        readonly expandedRuns: number;
-        readonly expandedCells: number;
-        readonly reusedRows: number;
-        readonly allocatedCells: number;
-        readonly canonicalUtf8Allocations: number;
-        readonly canonicalUtf8Bytes: number;
-        readonly validatedCellAllocations: number;
-      }[];
-    };
-    expect(measurement.workloadCycles).toBe(24);
-    expect(measurement.explicitGcAvailable).toBe(false);
-    expect(measurement.workloadMinBytes).toBeGreaterThan(512 * 1_024);
-    expect(measurement.workloadMaxBytes).toBeLessThan(1_024 * 1_024);
-    // Keep the same narrow host-scheduling allowance as the compact delivery
-    // case above. The zero-work adoption profiles below remain deterministic.
-    expect(measurement.maxHeartbeatDelayMs).toBeLessThanOrEqual(60);
-    expect(measurement.peakRssBytes).toBeLessThan(1_073_741_824);
-    expect(measurement.peakHeapBytes).toBeLessThan(536_870_912);
-    expect(measurement.rssSlopeBytesPerSample).toBeLessThanOrEqual(262_144);
-    expect(measurement.heapSlopeBytesPerSample).toBeLessThanOrEqual(131_072);
-    expect(measurement.rssGrowthBytes).toBeLessThanOrEqual(67_108_864);
-    expect(measurement.heapGrowthBytes).toBeLessThanOrEqual(33_554_432);
-    expect(
-      Math.max(...measurement.measuredExternalBytes) -
-        Math.min(...measurement.measuredExternalBytes),
-    ).toBeLessThanOrEqual(262_144);
-    expect(
-      Math.max(...measurement.measuredArrayBufferBytes) -
-        Math.min(...measurement.measuredArrayBufferBytes),
-    ).toBeLessThanOrEqual(262_144);
-    expect(measurement.deliveryCount).toBe(28);
-    expect(measurement.ackCount).toBe(28);
-    expect(measurement.finalHashExact).toBe(true);
-    expect(measurement.applyProfiles).toHaveLength(28);
-    expect(measurement.decodeProfiles).toHaveLength(28);
-    for (const profile of measurement.applyProfiles) {
-      expect(profile.trustedCompactAdoption).toBe(true);
-      expect(Object.values(profile.phaseMicros).every((value) => value === 0)).toBe(true);
-      expect(Object.values(profile.counts).every((value) => value === 0)).toBe(true);
-    }
-    for (const profile of measurement.decodeProfiles.slice(-24)) {
-      expect(profile.reusedCompactPayload).toBe(false);
-      expect(profile.reusedRows).toBe(4_096);
-      expect(profile.allocatedCells).toBe(0);
-      expect(profile.canonicalUtf8Allocations).toBeLessThan(64);
-      expect(profile.expandedCells).toBeGreaterThan(0);
-      expect(profile.canonicalUtf8Allocations).toBe(0);
-      expect(profile.canonicalUtf8Bytes).toBe(0);
-      expect(profile.validatedCellAllocations).toBeLessThan(64);
-    }
-  }, 95_000);
+  it.each(["responsiveness", "retained-memory"] as const)(
+    "reuses authenticated history rows across 24 compact endpoint workload cycles (%s)",
+    (lane) => {
+      const fixture = fileURLToPath(
+        new URL("../../../test-support/open-tui-compact-sub64-process.ts", import.meta.url),
+      );
+      const tsx = fileURLToPath(new URL("../../../../../node_modules/.bin/tsx", import.meta.url));
+      const retainedMemory = lane === "retained-memory";
+      const result = spawnSync(
+        tsx,
+        [
+          ...(retainedMemory ? ["--expose-gc"] : []),
+          fixture,
+          retainedMemory ? "workload-memory" : "workload",
+        ],
+        {
+          encoding: "utf8",
+          timeout: 90_000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const measurement = JSON.parse(result.stdout.trim()) as {
+        workloadMinBytes: number;
+        workloadMaxBytes: number;
+        workloadCycles: number;
+        explicitGcAvailable: boolean;
+        maxHeartbeatDelayMs: number;
+        peakRssBytes: number;
+        peakHeapBytes: number;
+        rssSlopeBytesPerSample: number;
+        heapSlopeBytesPerSample: number;
+        rssGrowthBytes: number;
+        heapGrowthBytes: number;
+        measuredExternalBytes: readonly number[];
+        measuredArrayBufferBytes: readonly number[];
+        deliveryCount: number;
+        ackCount: number;
+        finalHashExact: boolean;
+        applyProfiles: readonly {
+          readonly trustedCompactAdoption: boolean;
+          readonly phaseMicros: Readonly<Record<string, number>>;
+          readonly counts: Readonly<Record<string, number>>;
+        }[];
+        decodeProfiles: readonly {
+          readonly reusedCompactPayload: boolean;
+          readonly expandedRuns: number;
+          readonly expandedCells: number;
+          readonly reusedRows: number;
+          readonly allocatedCells: number;
+          readonly canonicalUtf8Allocations: number;
+          readonly canonicalUtf8Bytes: number;
+          readonly validatedCellAllocations: number;
+        }[];
+      };
+      expect(measurement.workloadCycles).toBe(24);
+      expect(measurement.explicitGcAvailable).toBe(retainedMemory);
+      expect(measurement.workloadMinBytes).toBeGreaterThan(512 * 1_024);
+      expect(measurement.workloadMaxBytes).toBeLessThan(1_024 * 1_024);
+      // Keep the same narrow host-scheduling allowance as the compact delivery
+      // case above. The zero-work adoption profiles below remain deterministic.
+      if (!retainedMemory) expect(measurement.maxHeartbeatDelayMs).toBeLessThanOrEqual(60);
+      expect(measurement.peakRssBytes).toBeLessThan(1_073_741_824);
+      expect(measurement.peakHeapBytes).toBeLessThan(536_870_912);
+      // Natural-GC heapUsed includes dead nursery allocations, so its short
+      // slope measures collection timing rather than retained objects. Keep the
+      // original slope budgets in an identical isolated post-GC workload; the
+      // natural-GC lane still proves latency, peak memory and bounded growth.
+      if (retainedMemory) {
+        expect(measurement.rssSlopeBytesPerSample).toBeLessThanOrEqual(262_144);
+        expect(measurement.heapSlopeBytesPerSample).toBeLessThanOrEqual(131_072);
+      }
+      expect(measurement.rssGrowthBytes).toBeLessThanOrEqual(67_108_864);
+      expect(measurement.heapGrowthBytes).toBeLessThanOrEqual(33_554_432);
+      expect(
+        Math.max(...measurement.measuredExternalBytes) -
+          Math.min(...measurement.measuredExternalBytes),
+      ).toBeLessThanOrEqual(262_144);
+      expect(
+        Math.max(...measurement.measuredArrayBufferBytes) -
+          Math.min(...measurement.measuredArrayBufferBytes),
+      ).toBeLessThanOrEqual(262_144);
+      expect(measurement.deliveryCount).toBe(28);
+      expect(measurement.ackCount).toBe(28);
+      expect(measurement.finalHashExact).toBe(true);
+      expect(measurement.applyProfiles).toHaveLength(28);
+      expect(measurement.decodeProfiles).toHaveLength(28);
+      for (const profile of measurement.applyProfiles) {
+        expect(profile.trustedCompactAdoption).toBe(true);
+        expect(Object.values(profile.phaseMicros).every((value) => value === 0)).toBe(true);
+        expect(Object.values(profile.counts).every((value) => value === 0)).toBe(true);
+      }
+      for (const profile of measurement.decodeProfiles.slice(-24)) {
+        expect(profile.reusedCompactPayload).toBe(false);
+        expect(profile.reusedRows).toBe(4_096);
+        expect(profile.allocatedCells).toBe(0);
+        expect(profile.canonicalUtf8Allocations).toBeLessThan(64);
+        expect(profile.expandedCells).toBeGreaterThan(0);
+        expect(profile.canonicalUtf8Allocations).toBe(0);
+        expect(profile.canonicalUtf8Bytes).toBe(0);
+        expect(profile.validatedCellAllocations).toBeLessThan(64);
+      }
+    },
+    95_000,
+  );
 
   it("retires a cooperative hash mismatch without publication or ACK", async () => {
     const test = rig(true, false, "semantic-compact-v1");

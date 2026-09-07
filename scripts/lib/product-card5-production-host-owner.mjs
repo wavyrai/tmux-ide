@@ -1,6 +1,9 @@
+import { PaneStreamRedeemFrameSchemaZ } from "../../packages/contracts/src/pane-stream.ts";
 import { isAbsolute, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
+
+import { prepareNativePaste } from "./product-native-paste.mjs";
 
 import { card5ProductionHostTopology } from "./product-card5-host-topology.mjs";
 
@@ -41,6 +44,13 @@ export function boundedCard5InputGuardAxes(
   const mutationCount = boundedInputGuardCount(outcome?.mutationCount, 64);
   const exactBoolean = (value) => (typeof value === "boolean" ? value : null);
   return Object.freeze({
+    ...(outcome?.inputMethod === "paste"
+      ? {
+          inputMethod: "paste",
+          pasteCount: boundedInputGuardCount(outcome.pasteCount, 8),
+          mutationTail: Array.isArray(outcome.mutationTail) ? outcome.mutationTail.slice(-4) : [],
+        }
+      : {}),
     beforeInputCount,
     beforeInputCountOverflow:
       Number.isSafeInteger(outcome?.beforeInputCount) && outcome.beforeInputCount > 8,
@@ -67,9 +77,15 @@ export function boundedCard5InputGuardAxes(
 }
 
 export function card5InputGuardFailureReason(axes) {
-  if (axes?.inputCount !== 1) return "input-count-invalid";
-  if (axes.beforeInputCount !== 1) return "beforeinput-count-invalid";
-  if (axes.eventCount !== axes.inputCount + axes.beforeInputCount) return "event-count-invalid";
+  if (axes?.inputMethod === "paste") {
+    if (axes.pasteCount !== 1) return "paste-count-invalid";
+    if (axes.inputCount !== 1 || axes.beforeInputCount !== 1) return "paste-input-count-invalid";
+    if (axes.eventCount !== 3) return "event-count-invalid";
+  } else {
+    if (axes?.inputCount !== 1) return "input-count-invalid";
+    if (axes.beforeInputCount !== 1) return "beforeinput-count-invalid";
+    if (axes.eventCount !== axes.inputCount + axes.beforeInputCount) return "event-count-invalid";
+  }
   if (axes.eventOverflow !== false) return "event-overflow";
   if (axes.mutationCount !== 0) return "mutation-count-invalid";
   if (axes.mutationOverflow !== false) return "mutation-overflow";
@@ -117,6 +133,72 @@ export function boundedCard5PointerDispatchAxes(outcome) {
                 typeof entry?.attribute === "string" && entry.attribute.length <= 32
                   ? entry.attribute
                   : null,
+              targetRole: [
+                ".terminal-surface__viewer-status",
+                ".terminal-surface__state",
+                ".pane-tile__header",
+                ".xterm-rows",
+                ".xterm-accessibility-tree",
+                ".xterm-accessibility > .live-region",
+                ".xterm-screen",
+                ".xterm-helpers",
+                ".terminal-surface__viewport",
+                ".terminal-surface",
+                ".pane-tile__body",
+                ".pane-tile",
+                ".tiled-pane-area",
+                "other",
+              ].includes(entry?.targetRole)
+                ? entry.targetRole
+                : null,
+              ...(entry?.targetTag !== undefined
+                ? {
+                    targetTag: ["style", "span", "div", "textarea", "canvas"].includes(
+                      entry.targetTag,
+                    )
+                      ? entry.targetTag
+                      : "other",
+                  }
+                : {}),
+              ...(Array.isArray(entry?.addedRoles) && Array.isArray(entry?.removedRoles)
+                ? {
+                    addedRoles: entry.addedRoles
+                      .slice(0, 4)
+                      .map((role) =>
+                        [
+                          "xterm-root",
+                          "canvas",
+                          "empty-text",
+                          "whitespace-text",
+                          "text",
+                          "comment",
+                          "terminal-surface",
+                          "other",
+                        ].includes(role)
+                          ? role
+                          : "other",
+                      ),
+                    removedRoles: entry.removedRoles
+                      .slice(0, 4)
+                      .map((role) =>
+                        [
+                          "xterm-root",
+                          "canvas",
+                          "empty-text",
+                          "whitespace-text",
+                          "text",
+                          "comment",
+                          "terminal-surface",
+                          "other",
+                        ].includes(role)
+                          ? role
+                          : "other",
+                      ),
+                    targetPane: ["selected", "sibling", "outside"].includes(entry.targetPane)
+                      ? entry.targetPane
+                      : "outside",
+                  }
+                : {}),
               relevanceHmac: HASH.test(entry?.relevanceHmac ?? "") ? entry.relevanceHmac : null,
             }),
           )
@@ -196,6 +278,7 @@ export function boundedCard5InputReceiptAxes(outcome, keyHex = null) {
     epochExact: exactBoolean(outcome?.epochExact),
     clientGenerationExact: exactBoolean(outcome?.clientGenerationExact),
     targetExact: exactBoolean(outcome?.targetExact),
+    ...(outcome?.mutationTail?.length ? { mutationTail: outcome.mutationTail.slice(-4) } : {}),
     mutationCount: boundedCount(outcome?.mutationCount, 32),
     mutationOverflow: exactBoolean(outcome?.mutationOverflow),
     authorityState: ["null", "expected", "foreign", "invalid"].includes(outcome?.authorityState)
@@ -506,14 +589,18 @@ async function qualifiedTerminalIdentity(page, evidenceKey) {
     await surfaceHandle.dispose();
     throw new Error("Card5 qualified terminal identity was unavailable");
   }
-  const prior = qualifiedTerminalIdentities.get(page);
-  await prior?.surfaceHandle.dispose();
   const authority = Object.freeze({ ...identity, surfaceHandle });
+  return retainQualifiedTerminalIdentity(page, authority);
+}
+
+async function retainQualifiedTerminalIdentity(page, authority) {
+  const prior = qualifiedTerminalIdentities.get(page);
+  await prior?.surfaceHandle.dispose().catch(() => undefined);
   qualifiedTerminalIdentities.set(page, authority);
   const retire = () => {
     if (qualifiedTerminalIdentities.get(page) !== authority) return;
     qualifiedTerminalIdentities.delete(page);
-    void surfaceHandle.dispose().catch(() => undefined);
+    void authority.surfaceHandle.dispose().catch(() => undefined);
   };
   page.on?.("close", retire);
   page.on?.("crash", retire);
@@ -521,6 +608,81 @@ async function qualifiedTerminalIdentity(page, evidenceKey) {
     if (typeof page.mainFrame !== "function" || frame === page.mainFrame()) retire();
   });
   return authority;
+}
+
+/** Only the explicit daemon-replacement boundary may qualify a new DOM surface. */
+export async function requalifyCard5ReplacementSurface(page, keyHex, expected) {
+  if (
+    !HASH.test(keyHex ?? "") ||
+    !exactDaemonInstanceId(expected?.previousGeneration) ||
+    !exactDaemonInstanceId(expected?.generation) ||
+    expected.previousGeneration === expected.generation ||
+    typeof expected.workspaceName !== "string" ||
+    expected.workspaceName.length < 1 ||
+    expected.workspaceName.length > 512 ||
+    typeof expected.semanticPaneId !== "string" ||
+    expected.semanticPaneId.length < 1 ||
+    expected.semanticPaneId.length > 128
+  )
+    throw new TypeError("Card5 replacement surface contract is malformed");
+  const hash = (domain, value) =>
+    createHmac("sha256", Buffer.from(keyHex, "hex")).update(`${domain}\0${value}`).digest("hex");
+  const identity = {
+    workspaceHmac: hash("workspace", expected.workspaceName),
+    paneHmac: hash("pane", expected.semanticPaneId),
+  };
+  const prior = qualifiedTerminalIdentities.get(page);
+  if (
+    prior &&
+    (prior.workspaceHmac !== identity.workspaceHmac || prior.paneHmac !== identity.paneHmac)
+  ) {
+    throw new Error("Card5 replacement must retain the qualified workspace and native pane");
+  }
+  const surfaceHandle = await page.evaluateHandle(
+    () => globalThis.__TMUX_IDE_CARD5_QUALIFIED_TERMINAL__?.("observation") ?? null,
+  );
+  let retained = false;
+  try {
+    const valid = await page.evaluate(
+      ({ exactSurface, expected }) => {
+        const surface = globalThis.__TMUX_IDE_CARD5_QUALIFIED_TERMINAL__?.("observation") ?? null;
+        const snapshot = globalThis.__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__?.()?.snapshot;
+        const binding = globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__?.()?.currentPhysicalBinding;
+        return Boolean(
+          surface &&
+          surface === exactSurface &&
+          surface.isConnected &&
+          surface.ownerDocument === globalThis.document &&
+          globalThis.document.defaultView === globalThis &&
+          surface.getAttribute("data-phase") === "connected" &&
+          surface.getAttribute("data-preserves-frame") === "true" &&
+          surface.getAttribute("data-workspace-name") === expected.workspaceName &&
+          surface.getAttribute("data-semantic-pane-id") === expected.semanticPaneId &&
+          snapshot?.phase === "live" &&
+          snapshot.target?.daemon.instanceId === expected.generation &&
+          snapshot.target?.workspaceName === expected.workspaceName &&
+          snapshot.authority?.generation === expected.generation &&
+          binding?.generation === expected.generation &&
+          binding.workspaceName === expected.workspaceName &&
+          binding.runtimeSession === snapshot.authority.session &&
+          binding.stage === "first-seed" &&
+          Array.isArray(binding.semanticPaneIds) &&
+          binding.semanticPaneIds.includes(expected.semanticPaneId) &&
+          Array.isArray(snapshot.authority.clients) &&
+          snapshot.authority.clients.filter(
+            (client) => client.clientId === binding.clientId && client.surface === "web",
+          ).length === 1,
+        );
+      },
+      { exactSurface: surfaceHandle, expected },
+    );
+    if (!valid) return false;
+    await retainQualifiedTerminalIdentity(page, Object.freeze({ ...identity, surfaceHandle }));
+    retained = true;
+    return true;
+  } finally {
+    if (!retained) await surfaceHandle.dispose().catch(() => undefined);
+  }
 }
 
 async function waitForElectronReadyTerminal(page, signal, evidenceKey) {
@@ -1395,16 +1557,47 @@ export function createCard5ProductionWebHostLease(input) {
             .context()
             .newCDPSession(resources.electronPage);
           await session.send("Emulation.setCPUThrottlingRate", { rate });
+          // Playwright enables focus emulation at page admission. Turn it off
+          // for this native hidden-window challenge so visibility is genuine.
+          await session.send("Emulation.setFocusEmulationEnabled", { enabled: false });
           await resources.electronApp.evaluate(({ BrowserWindow }) => {
             const windows = BrowserWindow.getAllWindows();
             if (windows.length !== 1) throw new Error("Card5 expected one Electron BrowserWindow");
             windows[0].hide();
           });
-          await resources.electronPage.waitForFunction(
-            () => globalThis.document.visibilityState === "hidden",
-          );
+          const deadline = performance.now() + 3_000;
+          let stable = 0;
+          let native = null;
+          while (performance.now() < deadline) {
+            native = await resources.electronApp.evaluate(({ BrowserWindow }) =>
+              BrowserWindow.getAllWindows().map((window) => ({
+                visible: window.isVisible(),
+                focused: window.isFocused(),
+              })),
+            );
+            stable =
+              native?.length === 1 && native[0].visible === false && native[0].focused === false
+                ? stable + 1
+                : 0;
+            if (stable >= 2) break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          if (stable < 2) {
+            const error = new Error("Card5 native hidden-window visibility did not settle");
+            error.observation = {
+              operation: "card5-hidden-window",
+              reason: "visibility-unsettled",
+              native,
+            };
+            throw error;
+          }
           return Object.freeze({ hidden: true, throttled: rate > 1, session });
         },
+        observeElectronHidden: async () =>
+          resources.electronApp.evaluate(({ BrowserWindow }) => {
+            const windows = BrowserWindow.getAllWindows();
+            return windows.length === 1 && !windows[0].isVisible() && !windows[0].isFocused();
+          }),
         setElectronSinkBlocked: async (blocked) =>
           resources.electronPage.evaluate((next) => {
             const control = globalThis.__TMUX_IDE_CARD5_SINK_CONTROL__;
@@ -1423,6 +1616,7 @@ export function createCard5ProductionWebHostLease(input) {
             globalThis.__TMUX_IDE_CARD5_SINK_CONTROL__?.setBlocked(false),
           );
           await slow.session.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+          await slow.session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
           await resources.electronApp.evaluate(({ BrowserWindow }) => {
             const windows = BrowserWindow.getAllWindows();
             if (windows.length !== 1) throw new Error("Card5 expected one Electron BrowserWindow");
@@ -1508,6 +1702,33 @@ export async function observeCard5WebCanonical(page, keyHex, processIdentity) {
       const surfaceProbeFailure = (axes) => ({
         card5ObservationFailure: "surface-probe-identity-invalid",
         surfaceProbeIdentity: Object.freeze({
+          transportTail: (
+            globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__?.()?.lifecycleEvents ?? []
+          )
+            .slice(-4)
+            .map((entry) => ({ stage: entry.stage, code: entry.code })),
+          retainedFailureCode: expectedSurface?.getAttribute?.("data-attach-failure-code") ?? null,
+          retainedResizeOutcome: expectedSurface?.getAttribute?.("data-resize-outcome") ?? null,
+          retainedSurfaceConnected: expectedSurface?.isConnected === true,
+          retainedPhase: ["connecting", "connected", "disconnected", "error"].includes(
+            expectedSurface?.getAttribute?.("data-phase"),
+          )
+            ? expectedSurface.getAttribute("data-phase")
+            : "other",
+          retainedFramePreserved:
+            expectedSurface?.getAttribute?.("data-preserves-frame") === "true",
+          retainedRectNonempty:
+            (expectedSurface?.getBoundingClientRect?.().width ?? 0) > 0 &&
+            (expectedSurface?.getBoundingClientRect?.().height ?? 0) > 0,
+          surfaceCount: Math.min(
+            64,
+            globalThis.document.querySelectorAll?.(".terminal-surface").length ?? 0,
+          ),
+          connectedSurfaceCount: Math.min(
+            64,
+            globalThis.document.querySelectorAll?.(".terminal-surface[data-phase='connected']")
+              .length ?? 0,
+          ),
           qualifiedSurfaceExact: axes.qualifiedSurfaceExact === true,
           probeSurfaceExact: axes.probeSurfaceExact === true,
           connected: axes.connected === true,
@@ -1996,6 +2217,8 @@ export async function observeCard5WebCanonical(page, keyHex, processIdentity) {
           envelopes: evidence?.events ?? [],
           runtimeReplacement: evidence
             ? {
+                documentEpoch: globalThis.performance.timeOrigin,
+                acceptedCount: evidence.acceptedCount,
                 replacementCount: evidence.replacementCount,
                 replacementBoundary: evidence.replacementBoundary,
                 predecessorAcceptedAfterReplacement: evidence.predecessorAcceptedAfterReplacement,
@@ -2304,6 +2527,8 @@ export async function observeCard5WebAuthorityReceipt(page, keyHex, processIdent
         processIdentity: exactProcessIdentity,
         generation: daemonGeneration,
         runtimeReplacement: {
+          documentEpoch: globalThis.performance.timeOrigin,
+          acceptedCount: envelope.acceptedCount,
           inputReceipts: envelope.inputReceipts,
           inputReceiptCount: envelope.inputReceiptCount,
           currentLifecycleRequest: {
@@ -2397,6 +2622,7 @@ export async function activateCard5ExactTerminalSurface({
   inputSha256,
   inputHostRole,
   inputOrdinal,
+  inputMethod = "insertText",
   deadline = performance.now() + 3_000,
   observeAuthorityReceipt = observeCard5WebAuthorityReceipt,
 }) {
@@ -2404,6 +2630,7 @@ export async function activateCard5ExactTerminalSurface({
   let activationPhase = "contract";
   let activationTargetKind = null;
   let activationTargetAxes = null;
+  let activationTargetChange = null;
   let activationLifecycleAxes = null;
   let activationInputGuardAxes = null;
   let activationInputGuardReason = null;
@@ -2435,6 +2662,7 @@ export async function activateCard5ExactTerminalSurface({
           : null,
       targetKind: activationTargetKind,
       targetAxes: activationTargetAxes,
+      targetChange: activationTargetChange,
       lifecycleAxes: activationLifecycleAxes,
       inputGuardAxes: activationInputGuardAxes,
       inputGuardReason: activationInputGuardReason,
@@ -2454,6 +2682,7 @@ export async function activateCard5ExactTerminalSurface({
   const insertsInput = mode === "input";
   if (
     !["focus", "input"].includes(mode) ||
+    !["insertText", "paste"].includes(inputMethod) ||
     (insertsInput &&
       (typeof inputText !== "string" ||
         inputText.length === 0 ||
@@ -2734,6 +2963,7 @@ export async function activateCard5ExactTerminalSurface({
     sameBinding(observed) && observed?.runtimeReplacement?.inputReceiptCount === receiptBoundary;
   const surfaces = page.locator(".terminal-surface[data-phase='connected']");
   const retainedHandles = new Set();
+  let nativePaste = null;
   let deferRetainedHandleDisposal = false;
   let deferredRetainedHandleTrigger = null;
   const disposeHandles = (handles) =>
@@ -2908,10 +3138,14 @@ export async function activateCard5ExactTerminalSurface({
                 hitTarget:
                   hit === target || (hit instanceof globalThis.Node && target.contains(hit)),
               });
+              const scrollChain = [];
+              for (let node = target; node && scrollChain.length < 16; node = node.parentElement)
+                scrollChain.push([node.scrollLeft, node.scrollTop]);
               return {
                 kind,
                 paneCount,
                 axes,
+                scrollChain,
                 rect: [rect.left, rect.top, rect.width, rect.height].map((value) =>
                   Math.round(value * 1000),
                 ),
@@ -2989,6 +3223,48 @@ export async function activateCard5ExactTerminalSurface({
                   relevantCategory = "identityNode";
                   return true;
                 }
+                // xterm's off-screen ARIA announcer appends text independently
+                // of the visible grid. Text-only announcements cannot replace
+                // the pointer target; element and identity changes stay fenced.
+                if (
+                  record.type === "childList" &&
+                  node instanceof globalThis.HTMLElement &&
+                  node.matches(".xterm > .xterm-accessibility > .live-region") &&
+                  node.getAttribute("aria-live") === "assertive" &&
+                  (node.closest(".terminal-surface") === surface ||
+                    node.closest(".pane-tile__body")?.closest(".tiled-pane-area") === area) &&
+                  record.addedNodes.length + record.removedNodes.length <= 64 &&
+                  [...record.addedNodes, ...record.removedNodes].every(
+                    (entry) => entry.nodeType === 3,
+                  )
+                )
+                  return false;
+                // xterm's DOM renderer replaces row text during ordinary
+                // output. The retained pane body is the pointer target, not
+                // these glyph nodes. Keep identity/layout mutations guarded.
+                if (
+                  record.type === "childList" &&
+                  node instanceof globalThis.HTMLElement &&
+                  (node
+                    .closest?.(".xterm-rows,.xterm-accessibility-tree")
+                    ?.closest?.(".terminal-surface") === surface ||
+                    node
+                      .closest?.(".xterm-rows,.xterm-accessibility-tree")
+                      ?.closest?.(".pane-tile__body")
+                      ?.closest?.(".tiled-pane-area") === area) &&
+                  ![...record.addedNodes, ...record.removedNodes].some(
+                    (entry) =>
+                      entry === area ||
+                      entry === surface ||
+                      entry === target ||
+                      entry.contains?.(area) ||
+                      entry.contains?.(surface) ||
+                      entry.contains?.(target) ||
+                      entry.matches?.(".terminal-surface,.pane-tile,[data-pane-compositor]") ||
+                      entry.querySelector?.(".terminal-surface,.pane-tile,[data-pane-compositor]"),
+                  )
+                )
+                  return false;
                 if (node instanceof globalThis.Node && area.contains(node)) {
                   relevantCategory = "areaDescendant";
                   return true;
@@ -3074,7 +3350,52 @@ export async function activateCard5ExactTerminalSurface({
                       64,
                       outcome.mutationCategories[category] + 1,
                     );
+                    const nodeRole = (node) => {
+                      if (node.nodeType === 3)
+                        return node.textContent === ""
+                          ? "empty-text"
+                          : node.textContent?.trim() === ""
+                            ? "whitespace-text"
+                            : "text";
+                      if (node.nodeType === 8) return "comment";
+                      if (node.matches?.(".xterm")) return "xterm-root";
+                      if (node.matches?.("canvas")) return "canvas";
+                      if (node.matches?.(".terminal-surface")) return "terminal-surface";
+                      return "other";
+                    };
+                    const changedSurface = record.target.closest?.(".terminal-surface");
                     outcome.mutationTail.push({
+                      targetTag: ["style", "span", "div", "textarea", "canvas"].includes(
+                        record.target.localName,
+                      )
+                        ? record.target.localName
+                        : "other",
+                      addedRoles: Array.from(record.addedNodes).slice(0, 4).map(nodeRole),
+                      removedRoles: Array.from(record.removedNodes).slice(0, 4).map(nodeRole),
+                      targetPane:
+                        changedSurface === surface ||
+                        record.target === target ||
+                        target.contains(record.target)
+                          ? "selected"
+                          : area.contains(record.target)
+                            ? "sibling"
+                            : "outside",
+                      targetRole:
+                        [
+                          ".terminal-surface__viewer-status",
+                          ".terminal-surface__state",
+                          ".pane-tile__header",
+                          ".xterm-rows",
+                          ".xterm-accessibility-tree",
+                          ".xterm-accessibility > .live-region",
+                          ".xterm-screen",
+                          ".xterm-helpers",
+                          ".terminal-surface__viewport",
+                          ".terminal-surface",
+                          ".pane-tile__body",
+                          ".pane-tile",
+                          ".tiled-pane-area",
+                        ].find((selector) => record.target.closest?.(selector)) ?? "other",
                       type: record.type,
                       attribute: record.type === "attributes" ? record.attributeName : null,
                       relevance: `${category}\0${record.type}\0${record.attributeName ?? ""}`,
@@ -3211,21 +3532,37 @@ export async function activateCard5ExactTerminalSurface({
                     ["sign"],
                   );
                   const mutationTail = await Promise.all(
-                    outcome.mutationTail.map(async ({ type, attribute, relevance }) => ({
-                      type,
-                      attribute,
-                      relevanceHmac: [
-                        ...new Uint8Array(
-                          await globalThis.crypto.subtle.sign(
-                            "HMAC",
-                            key,
-                            new TextEncoder().encode(`card5-pointer-mutation\0${relevance}`),
+                    outcome.mutationTail.map(
+                      async ({
+                        type,
+                        attribute,
+                        relevance,
+                        targetRole,
+                        targetTag,
+                        addedRoles,
+                        removedRoles,
+                        targetPane,
+                      }) => ({
+                        targetTag,
+                        addedRoles,
+                        removedRoles,
+                        targetPane,
+                        targetRole,
+                        type,
+                        attribute,
+                        relevanceHmac: [
+                          ...new Uint8Array(
+                            await globalThis.crypto.subtle.sign(
+                              "HMAC",
+                              key,
+                              new TextEncoder().encode(`card5-pointer-mutation\0${relevance}`),
+                            ),
                           ),
-                        ),
-                      ]
-                        .map((byte) => byte.toString(16).padStart(2, "0"))
-                        .join(""),
-                    })),
+                        ]
+                          .map((byte) => byte.toString(16).padStart(2, "0"))
+                          .join(""),
+                      }),
+                    ),
                   );
                   return Object.freeze({ ...outcome, mutationTail });
                 },
@@ -3312,7 +3649,25 @@ export async function activateCard5ExactTerminalSurface({
     if (!focused) throw fail("xterm-focus-invalid");
     const pointerTargetUnchanged = async () => {
       const observed = await observePointerTarget();
-      return JSON.stringify(observed) === JSON.stringify(selectedTarget);
+      const exact = JSON.stringify(observed) === JSON.stringify(selectedTarget);
+      if (!exact)
+        activationTargetChange = Object.freeze({
+          observed: observed !== null,
+          kindExact: observed?.kind === selectedTarget.kind,
+          paneCountExact: observed?.paneCount === selectedTarget.paneCount,
+          axesExact: JSON.stringify(observed?.axes) === JSON.stringify(selectedTarget.axes),
+          scrollDelta: (selectedTarget.scrollChain ?? []).map((value, index) =>
+            value.map(
+              (offset, axis) => (observed?.scrollChain?.[index]?.[axis] ?? offset) - offset,
+            ),
+          ),
+          rectDelta: selectedTarget.rect.map((value, index) =>
+            Number.isFinite(observed?.rect?.[index])
+              ? Math.max(-10000000, Math.min(10000000, observed.rect[index] - value))
+              : null,
+          ),
+        });
+      return exact;
     };
     if (!(await pointerTargetUnchanged())) throw fail("pointer-target-changed");
     const afterClick = await observe();
@@ -3558,6 +3913,7 @@ export async function activateCard5ExactTerminalSurface({
               clientGenerationExact: initialExact,
               targetExact: initialExact,
               mutationCount: 0,
+              mutationTail: [],
               mutationOverflow: false,
               authorityState: "null",
               timerCleared: false,
@@ -3575,6 +3931,25 @@ export async function activateCard5ExactTerminalSurface({
             let timer = null;
             const recordMutations = (records) => {
               for (const record of records) {
+                // xterm positions its retained input textarea at the cursor.
+                // Styling does not change the input target or stream identity.
+                if (
+                  record.type === "attributes" &&
+                  record.target === textarea &&
+                  record.attributeName === "style"
+                )
+                  continue;
+                // Authority status is independently checked against daemon
+                // snapshots; changing its display does not replace this input target.
+                if (
+                  record.type === "attributes" &&
+                  record.target === surface &&
+                  ((record.attributeName === "data-size-passive" &&
+                    ["true", "false"].includes(surface.getAttribute(record.attributeName))) ||
+                    (record.attributeName === "data-geometry-ownership" &&
+                      ["owner", "passive"].includes(surface.getAttribute(record.attributeName))))
+                )
+                  continue;
                 const changed = [...(record.addedNodes ?? []), ...(record.removedNodes ?? [])];
                 const relevant =
                   record.target === surface ||
@@ -3587,6 +3962,17 @@ export async function activateCard5ExactTerminalSurface({
                         (node.contains?.(surface) || node.contains?.(textarea))),
                   );
                 if (!relevant) continue;
+                state.mutationTail.push({
+                  type: record.type,
+                  target:
+                    record.target === textarea
+                      ? "textarea"
+                      : record.target === surface
+                        ? "surface"
+                        : "ancestor",
+                  attribute: record.attributeName ?? null,
+                });
+                if (state.mutationTail.length > 4) state.mutationTail.shift();
                 if (state.mutationCount < 32) state.mutationCount += 1;
                 else state.mutationOverflow = true;
               }
@@ -4064,16 +4450,25 @@ export async function activateCard5ExactTerminalSurface({
       "input-receipt-waiter-arm",
       disposeHandle,
     );
+    if (inputMethod === "paste") {
+      nativePaste = await withinDeadline(
+        () => prepareNativePaste(page, inputText),
+        "input-clipboard-unavailable",
+        "input-clipboard-prepare",
+        (late) => late.dispose(),
+      );
+    }
     const inputGuardHandle = await withinDeadline(
       () =>
         inputTextareaHandle.evaluateHandle(
-          (textarea, { surface, exactPane, exactInput }) => {
+          (textarea, { surface, exactPane, exactInput, inputMethod }) => {
             if (
               !(textarea instanceof globalThis.HTMLTextAreaElement) ||
               !(surface instanceof globalThis.HTMLElement)
             )
               return null;
             const outcome = {
+              ...(inputMethod === "paste" ? { inputMethod, pasteCount: 0, mutationTail: [] } : {}),
               beforeInputCount: 0,
               inputCount: 0,
               eventCount: 0,
@@ -4164,6 +4559,35 @@ export async function activateCard5ExactTerminalSurface({
             const recordMutations = (records) => {
               for (const record of records) {
                 if (outcome.mutationOverflow) break;
+                if (
+                  record.type === "attributes" &&
+                  record.target === textarea &&
+                  record.attributeName === "style"
+                )
+                  continue;
+                // Authority status is independently checked against daemon
+                // snapshots; changing its display does not replace this input target.
+                if (
+                  record.type === "attributes" &&
+                  record.target === surface &&
+                  ((record.attributeName === "data-size-passive" &&
+                    ["true", "false"].includes(surface.getAttribute(record.attributeName))) ||
+                    (record.attributeName === "data-geometry-ownership" &&
+                      ["owner", "passive"].includes(surface.getAttribute(record.attributeName))))
+                )
+                  continue;
+                // xterm reasserts its focus class on native key events. A
+                // setter that leaves the exact class unchanged is not a
+                // binding mutation; actual blur/focus changes still count.
+                if (
+                  record.type === "attributes" &&
+                  record.attributeName === "class" &&
+                  record.target?.classList?.contains("xterm") &&
+                  surface.contains(record.target) &&
+                  record.target.contains(textarea) &&
+                  record.oldValue === record.target.getAttribute("class")
+                )
+                  continue;
                 const changed = [
                   record.target,
                   ...(record.addedNodes ?? []),
@@ -4174,6 +4598,22 @@ export async function activateCard5ExactTerminalSurface({
                   (record.type === "childList" && changed.some(relevantNode))
                 ) {
                   outcome.mutationCount += 1;
+                  if (outcome.mutationTail) {
+                    outcome.mutationTail.push({
+                      type: record.type,
+                      tag: record.target?.tagName ?? null,
+                      attribute: record.attributeName ?? null,
+                      previousClass:
+                        record.attributeName === "class"
+                          ? String(record.oldValue).slice(0, 240)
+                          : null,
+                      currentClass:
+                        record.attributeName === "class"
+                          ? String(record.target?.className).slice(0, 240)
+                          : null,
+                    });
+                    if (outcome.mutationTail.length > 4) outcome.mutationTail.shift();
+                  }
                   if (outcome.mutationCount > 32) outcome.mutationOverflow = true;
                 }
               }
@@ -4215,8 +4655,14 @@ export async function activateCard5ExactTerminalSurface({
               if (outcome.eventCount > 4) outcome.eventOverflow = true;
               const trusted = event.isTrusted === true;
               const exactTarget = event.composedPath()[0] === textarea && event.target === textarea;
-              const exactData = event.data === exactInput;
-              const exactInputType = event.inputType === "insertText";
+              const exactData =
+                (kind === "paste" ? event.clipboardData?.getData("text/plain") : event.data) ===
+                exactInput;
+              const exactInputType =
+                inputMethod === "paste"
+                  ? kind === "paste" ||
+                    (outcome.pasteCount === 1 && event.inputType === "insertFromPaste")
+                  : event.inputType === "insertText";
               const cancelableBeforeInput = kind !== "beforeinput" || event.cancelable === true;
               const withinDispatchDeadline =
                 Number.isFinite(dispatchDeadline) &&
@@ -4239,15 +4685,18 @@ export async function activateCard5ExactTerminalSurface({
                 !cancelableBeforeInput ||
                 !withinDispatchDeadline ||
                 !currentExact() ||
+                (kind === "paste" && outcome.pasteCount !== 0) ||
                 (kind === "beforeinput" && outcome.beforeInputCount !== 0) ||
                 (kind === "input" && (outcome.beforeInputCount !== 1 || outcome.inputCount !== 0))
               ) {
                 block(event);
                 return;
               }
-              if (kind === "beforeinput") outcome.beforeInputCount += 1;
+              if (kind === "paste") outcome.pasteCount += 1;
+              else if (kind === "beforeinput") outcome.beforeInputCount += 1;
               else outcome.inputCount += 1;
             };
+            const onPaste = (event) => inspect(event, "paste");
             const onBeforeInput = (event) => inspect(event, "beforeinput");
             const onInput = (event) => inspect(event, "input");
             const onFocusChurn = (event) => {
@@ -4256,6 +4705,8 @@ export async function activateCard5ExactTerminalSurface({
                   retainValue(event.composedPath()[0], true) && outcome.restorationExact;
               outcome.rejected = true;
             };
+            if (inputMethod === "paste")
+              globalThis.document.addEventListener("paste", onPaste, true);
             globalThis.document.addEventListener("beforeinput", onBeforeInput, true);
             globalThis.document.addEventListener("input", onInput, true);
             globalThis.document.addEventListener("focusin", onFocusChurn, true);
@@ -4264,6 +4715,8 @@ export async function activateCard5ExactTerminalSurface({
               if (!active) return;
               active = false;
               observer.disconnect();
+              if (inputMethod === "paste")
+                globalThis.document.removeEventListener("paste", onPaste, true);
               globalThis.document.removeEventListener("beforeinput", onBeforeInput, true);
               globalThis.document.removeEventListener("input", onInput, true);
               globalThis.document.removeEventListener("focusin", onFocusChurn, true);
@@ -4290,7 +4743,12 @@ export async function activateCard5ExactTerminalSurface({
               finish() {
                 recordMutations(observer.takeRecords());
                 const exact = currentExact();
-                if (outcome.beforeInputCount !== 1 || outcome.inputCount !== 1 || outcome.rejected)
+                if (
+                  (inputMethod === "paste"
+                    ? outcome.pasteCount !== 1
+                    : outcome.beforeInputCount !== 1 || outcome.inputCount !== 1) ||
+                  outcome.rejected
+                )
                   for (const target of [textarea, globalThis.document.activeElement])
                     outcome.restorationExact = restoreValue(target) && outcome.restorationExact;
                 stop();
@@ -4302,6 +4760,7 @@ export async function activateCard5ExactTerminalSurface({
             surface: exactSurfaceHandle,
             exactPane: expectedPane,
             exactInput: inputText,
+            inputMethod,
           },
         ),
       "input-guard-unavailable",
@@ -4455,7 +4914,7 @@ export async function activateCard5ExactTerminalSurface({
         throw fail("input-insertion-timeout");
       let insertionSettled = false;
       const insertionPending = Promise.resolve()
-        .then(() => page.keyboard.insertText(inputText))
+        .then(() => (nativePaste ? nativePaste.dispatch() : page.keyboard.insertText(inputText)))
         .finally(() => {
           insertionSettled = true;
         });
@@ -4535,24 +4994,7 @@ export async function activateCard5ExactTerminalSurface({
         settled: insertionSettled,
       });
       activationInputGuardReason = card5InputGuardFailureReason(activationInputGuardAxes);
-      if (
-        inputGuardOutcome?.inputCount !== 1 ||
-        inputGuardOutcome?.beforeInputCount !== 1 ||
-        inputGuardOutcome.eventCount !==
-          inputGuardOutcome.inputCount + inputGuardOutcome.beforeInputCount ||
-        inputGuardOutcome.eventOverflow !== false ||
-        inputGuardOutcome.mutationCount !== 0 ||
-        inputGuardOutcome.mutationOverflow !== false ||
-        inputGuardOutcome.trusted !== true ||
-        inputGuardOutcome.exactTarget !== true ||
-        inputGuardOutcome.exactData !== true ||
-        inputGuardOutcome.exactInputType !== true ||
-        inputGuardOutcome.cancelableBeforeInput !== true ||
-        inputGuardOutcome.restorationExact !== true ||
-        inputGuardOutcome.rejected !== false ||
-        inputGuardOutcome.exact !== true
-      )
-        throw fail("input-dispatch-rejected");
+      if (activationInputGuardReason !== null) throw fail("input-dispatch-rejected");
       let inputReceiptOutcome;
       try {
         inputReceiptOutcome = await withinDeadline(
@@ -4627,6 +5069,7 @@ export async function activateCard5ExactTerminalSurface({
       }
     }
   } finally {
+    if (nativePaste) await nativePaste.dispose();
     if (!deferRetainedHandleDisposal) {
       await Promise.allSettled(
         [...retainedHandles].map((handle) => Promise.resolve().then(() => handle.dispose())),
@@ -4798,67 +5241,107 @@ export async function issueCard5PredecessorDescriptor(page, expected) {
   }, expected);
 }
 
-export async function rejectCard5PredecessorDescriptor(page, descriptor) {
+export async function rejectCard5PredecessorDescriptor(page, descriptor, replacementGeneration) {
   if (!descriptor) return Object.freeze({ rejected: false, reason: "descriptor-missing" });
-  return page.evaluate(async (stale) => {
-    const { browserWebSocketHandshakeUrl } =
-      await import("/src/runtime/browser-websocket-session.ts");
-    return new Promise((resolve) => {
-      const socket = new globalThis.WebSocket(
-        browserWebSocketHandshakeUrl(stale.webSocketUrl),
-        stale.subprotocol,
-      );
-      let settled = false;
-      const finish = (value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        try {
-          socket.close();
-        } catch {
-          // Already terminal.
-        }
-        resolve(value);
-      };
-      const timer = setTimeout(() => finish({ rejected: false, reason: "timeout" }), 2_000);
-      socket.addEventListener("open", () => {
-        socket.send(
-          JSON.stringify({
-            type: "redeem",
-            protocolVersion: 1,
-            ticket: stale.redemptionTicket,
-            requestId: stale.requestId,
-            daemonInstanceId: stale.daemonInstanceId,
-            panes: stale.panes,
-            effectiveViewerMode: stale.effectiveViewerMode,
-          }),
+  const redemptionFrame = PaneStreamRedeemFrameSchemaZ.parse({
+    type: "redeem",
+    protocolVersion: descriptor.protocolVersion,
+    ticket: descriptor.redemptionTicket,
+    requestId: descriptor.requestId,
+    daemonInstanceId: descriptor.daemonInstanceId,
+  });
+  return page.evaluate(
+    async ({ stale, replacementGeneration, redemptionFrame }) => {
+      // Challenge the live replacement endpoint with the unchanged predecessor
+      // redemption. A dead predecessor port cannot return a typed rejection.
+      const evidence = globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__?.();
+      const binding = evidence?.currentPhysicalBinding;
+      const snapshot = globalThis.__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__?.()?.snapshot;
+      const descriptors =
+        evidence?.descriptorEvents?.filter(
+          (entry) =>
+            entry.generation === replacementGeneration &&
+            entry.requestId === binding?.requestId &&
+            entry.physicalEpoch === binding?.physicalEpoch,
+        ) ?? [];
+      if (
+        replacementGeneration === stale.daemonInstanceId ||
+        snapshot?.phase !== "live" ||
+        snapshot.target?.daemon.instanceId !== replacementGeneration ||
+        snapshot.authority?.generation !== replacementGeneration ||
+        binding?.generation !== replacementGeneration ||
+        descriptors.length !== 1
+      ) {
+        return { rejected: false, typed: false, reason: "replacement-endpoint-unqualified" };
+      }
+      const endpoint = descriptors[0];
+      // Upgrade admission requires an outstanding broker-issued attachment for
+      // this host origin. Reserve one but never redeem its fresh authority.
+      // The bounded pending ticket is retired by normal expiry/rig teardown.
+      const admission = await globalThis.tmuxIdeHost.daemon.issuePaneStream({
+        protocolVersion: 1,
+        workspaceName: snapshot.target.workspaceName,
+        panes: binding.semanticPaneIds,
+        viewerMode: "read-only",
+      });
+      if (
+        admission.status !== "issued" ||
+        admission.descriptor.daemonInstanceId !== replacementGeneration ||
+        admission.descriptor.webSocketUrl !== endpoint.socketUrl ||
+        admission.descriptor.subprotocol !== endpoint.subprotocol
+      ) {
+        return { rejected: false, typed: false, reason: "replacement-admission-unqualified" };
+      }
+      const { browserWebSocketHandshakeUrl } =
+        await import("/src/runtime/browser-websocket-session.ts");
+      return new Promise((resolve) => {
+        const socket = new globalThis.WebSocket(
+          browserWebSocketHandshakeUrl(endpoint.socketUrl),
+          endpoint.subprotocol,
+        );
+        let settled = false;
+        const finish = (value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          try {
+            socket.close();
+          } catch {
+            // Already terminal.
+          }
+          resolve(value);
+        };
+        const timer = setTimeout(() => finish({ rejected: false, reason: "timeout" }), 2_000);
+        socket.addEventListener("open", () => {
+          socket.send(JSON.stringify(redemptionFrame));
+        });
+        socket.addEventListener("message", (event) => {
+          let frame;
+          try {
+            frame = JSON.parse(String(event.data));
+          } catch {
+            finish({ rejected: true, reason: "malformed" });
+            return;
+          }
+          if (
+            frame?.type === "error" &&
+            ["redemption-rejected", "ticket-expired"].includes(frame.code)
+          ) {
+            finish({ rejected: true, typed: true, reason: frame.code });
+          } else if (frame?.type === "error") {
+            finish({ rejected: false, typed: false, reason: "unexpected-error-code" });
+          } else if (frame?.type === "redeemed" || frame?.type === "seed-batch") {
+            finish({ rejected: false, reason: "stale-authority-accepted" });
+          }
+        });
+        socket.addEventListener("close", () =>
+          finish({ rejected: false, typed: false, reason: "closed-without-error-frame" }),
+        );
+        socket.addEventListener("error", () =>
+          finish({ rejected: false, typed: false, reason: "socket-error" }),
         );
       });
-      socket.addEventListener("message", (event) => {
-        let frame;
-        try {
-          frame = JSON.parse(String(event.data));
-        } catch {
-          finish({ rejected: true, reason: "malformed" });
-          return;
-        }
-        if (
-          frame?.type === "error" &&
-          ["redemption-rejected", "ticket-expired"].includes(frame.code)
-        ) {
-          finish({ rejected: true, typed: true, reason: frame.code });
-        } else if (frame?.type === "error") {
-          finish({ rejected: false, typed: false, reason: "unexpected-error-code" });
-        } else if (frame?.type === "redeemed" || frame?.type === "seed-batch") {
-          finish({ rejected: false, reason: "stale-authority-accepted" });
-        }
-      });
-      socket.addEventListener("close", () =>
-        finish({ rejected: false, typed: false, reason: "closed-without-error-frame" }),
-      );
-      socket.addEventListener("error", () =>
-        finish({ rejected: false, typed: false, reason: "socket-error" }),
-      );
-    });
-  }, descriptor);
+    },
+    { stale: descriptor, replacementGeneration, redemptionFrame },
+  );
 }

@@ -132,9 +132,22 @@ export const SessionRuntimeTerminalKeyInputSchemaZ = z
   })
   .strict();
 
+/** Exact bounded bytes, encoded as hex for JSON transports (for example legacy mouse reports). */
+export const SessionRuntimeTerminalBytesInputSchemaZ = z
+  .object({
+    kind: z.literal("bytes"),
+    data: z
+      .string()
+      .min(2)
+      .max(2048)
+      .regex(/^(?:[0-9a-fA-F]{2})+$/u),
+  })
+  .strict();
+
 export const SessionRuntimeTerminalInputSchemaZ = z.discriminatedUnion("kind", [
   SessionRuntimeTerminalTextInputSchemaZ,
   SessionRuntimeTerminalKeyInputSchemaZ,
+  SessionRuntimeTerminalBytesInputSchemaZ,
 ]);
 export type SessionRuntimeTerminalInput = z.infer<typeof SessionRuntimeTerminalInputSchemaZ>;
 export type SessionRuntimeTerminalInputResult = "ok" | "authority-lost";

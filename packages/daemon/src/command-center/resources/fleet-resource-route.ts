@@ -22,9 +22,9 @@ export interface FleetResourceRouteOptions {
  *
  * `GET /api/resources/fleet-catalog` enumerates every ADOPTED tmux session
  * (registry-backed OR adopted-only) and the coding agents inside it, projected
- * through the pure {@link projectFleetCatalog}. It degrades honestly: a tmux
- * failure returns a valid empty catalog rather than a 500 that could leak
- * internals, and fleet-scale caps trim an oversized fleet to the contract
+ * through the pure {@link projectFleetCatalog}. Failed reads return a sanitized
+ * unavailable response; only successful reads may report an empty catalog.
+ * Fleet-scale caps trim an oversized fleet to the contract
  * ceiling. The resource is path-free by construction — no pane id, session name
  * or absolute path ever crosses the wire.
  */
@@ -40,22 +40,30 @@ export function mountFleetResourceRoute(app: Hono, options: FleetResourceRouteOp
     const gate = authorize(c);
     if (gate) return gate;
 
-    // A tmux failure (null read) or any projection error degrades to a valid,
-    // empty, still-stamped resource — never a 500 exposing daemon internals.
+    c.header("Cache-Control", "no-store");
+    // An unavailable authority must not erase the client's last known fleet
+    // with a successful empty snapshot. Never expose raw socket/process errors.
     let sessions: ReturnType<typeof readAdoptedFleet>;
     try {
       sessions = options.readFleet ? options.readFleet() : readAdoptedFleet(options.registry);
     } catch {
       sessions = null;
     }
+    if (sessions === null)
+      return c.json(
+        { error: "Tmux fleet discovery is unavailable", code: "tmux-unavailable" },
+        503,
+      );
     const nowSec = Math.floor(Date.now() / 1000);
     let resource;
     try {
-      resource = projectFleetCatalog(sessions ?? [], options.daemon, nowSec);
+      resource = projectFleetCatalog(sessions, options.daemon, nowSec);
     } catch {
-      resource = projectFleetCatalog([], options.daemon, nowSec);
+      return c.json(
+        { error: "Fleet catalog projection is unavailable", code: "catalog-unavailable" },
+        503,
+      );
     }
-    c.header("Cache-Control", "no-store");
     return c.json(resource);
   });
 }

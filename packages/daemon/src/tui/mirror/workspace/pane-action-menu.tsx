@@ -1,27 +1,8 @@
 /* @jsxImportSource @opentui/solid */
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { Menu, type MenuItem } from "../ui/index.ts";
-
-export type PaneMenuActionId =
-  | "select-text"
-  | "rename-pane"
-  | "split-right"
-  | "split-down"
-  | "close-pane";
-
-export interface PaneActionMenuItem {
-  readonly id: PaneMenuActionId;
-  readonly label: string;
-  readonly shortcut: string;
-}
-
-export const PANE_ACTION_MENU_ITEMS: readonly PaneActionMenuItem[] = Object.freeze([
-  Object.freeze({ id: "select-text", label: "Select text…", shortcut: "Enter" }),
-  Object.freeze({ id: "rename-pane", label: "Rename pane…", shortcut: "R" }),
-  Object.freeze({ id: "split-right", label: "Split pane right", shortcut: "→" }),
-  Object.freeze({ id: "split-down", label: "Split pane down", shortcut: "D" }),
-  Object.freeze({ id: "close-pane", label: "Close pane…", shortcut: "X" }),
-]);
+export { PANE_ACTION_MENU_ITEMS, type PaneMenuActionId } from "./pane-action-menu-model.ts";
+import { PANE_ACTION_MENU_ITEMS, type PaneMenuActionId } from "./pane-action-menu-model.ts";
 
 export interface PaneActionMenuProps {
   readonly theme: SemanticThemeSnapshot;
@@ -35,6 +16,7 @@ export interface PaneActionMenuProps {
   readonly selectedId: PaneMenuActionId;
   readonly closeArmed: boolean;
   readonly onDismiss?: () => void;
+  readonly onHighlight?: (id: PaneMenuActionId) => void;
   readonly onActionIntent: (id: PaneMenuActionId) => void;
 }
 
@@ -59,9 +41,13 @@ export function PaneActionMenu(props: PaneActionMenuProps) {
       viewportHeight={props.viewportHeight}
       active={props.active}
       title={props.paneTitle}
+      footer={
+        props.closeArmed ? "X / Enter confirm · Esc cancel" : "↑↓ choose · Enter run · Esc back"
+      }
       selectedId={props.selectedId}
       items={presentation(props.closeArmed)}
       onDismiss={props.onDismiss}
+      onHighlight={(id) => props.onHighlight?.(id as PaneMenuActionId)}
       onSelect={(id) => props.onActionIntent(id as PaneMenuActionId)}
     />
   );

@@ -121,6 +121,170 @@ function createHarness(
 }
 
 describe("runHeadlessDaemon", () => {
+  it("cancels replacement recovery when shutdown is requested during retirement", async () => {
+    const harness = createHarness();
+    const start = harness.deps.startEmbeddedDaemon;
+    const retired = deferred();
+    let stopping = false;
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...harness.deps,
+        startEmbeddedDaemon: async (options) => ({
+          ...(await start(options)),
+          tmuxAuthorityReplaced: async () => true,
+          stop: async () => {
+            stopping = true;
+            await retired.promise;
+          },
+        }),
+      },
+    );
+    await vi.waitFor(() => expect(stopping).toBe(true), { timeout: 2_000 });
+    harness.signals.get("SIGTERM")?.();
+    retired.resolve();
+    await expect(running).resolves.toBe("stopped");
+    expect(harness.startOptions).toHaveLength(1);
+    expect(harness.signals.size).toBe(0);
+  });
+
+  it("retires the complete old generation before restarting for a replaced tmux authority", async () => {
+    const harness = createHarness();
+    const start = harness.deps.startEmbeddedDaemon;
+    const events: string[] = [];
+    let starts = 0;
+    const retired = deferred();
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...harness.deps,
+        startEmbeddedDaemon: async (options) => {
+          const generation = ++starts;
+          events.push(`start-${generation}`);
+          const handle = await start(options);
+          return {
+            ...handle,
+            tmuxAuthorityReplaced: async () => generation === 1,
+            stop: async () => {
+              events.push(`stop-${generation}`);
+              if (generation === 1) await retired.promise;
+            },
+          };
+        },
+      },
+    );
+    await vi.waitFor(() => expect(events).toContain("stop-1"), { timeout: 2_000 });
+    expect(starts).toBe(1);
+    retired.resolve();
+    await vi.waitFor(() => expect(starts).toBe(2));
+    expect(events.slice(0, 3)).toEqual(["start-1", "stop-1", "start-2"]);
+    expect(harness.startOptions[0]?.restoreTmuxWorkspaces).toBeUndefined();
+    expect(harness.startOptions[1]?.restoreTmuxWorkspaces).toBe(true);
+    harness.signals.get("SIGTERM")?.();
+    await expect(running).resolves.toBe("stopped");
+    expect(events.at(-1)).toBe("stop-2");
+    expect(harness.signals.size).toBe(0);
+  });
+
+  it("keeps settings restarts and later tmux recovery under the same lifecycle owner", async () => {
+    const harness = createHarness();
+    const start = harness.deps.startEmbeddedDaemon;
+    const retired = deferred();
+    const events: string[] = [];
+    let starts = 0;
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...harness.deps,
+        startEmbeddedDaemon: async (options) => {
+          const generation = ++starts;
+          events.push(`start-${generation}`);
+          const handle = await start(options);
+          return {
+            ...handle,
+            tmuxAuthorityReplaced: async () => generation === 2,
+            stop: async () => {
+              events.push(`stop-${generation}`);
+              if (generation === 1) await retired.promise;
+            },
+          };
+        },
+      },
+    );
+    try {
+      await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
+      expect(harness.startOptions[0]?.requestRestart).toBeTypeOf("function");
+      const restarting = harness.startOptions[0]!.requestRestart!({
+        enabled: true,
+        bindHostname: "0.0.0.0",
+        token: "test-remote-token",
+        port: 4321,
+      });
+      await vi.waitFor(() => expect(events).toContain("stop-1"));
+      expect(starts).toBe(1);
+      retired.resolve();
+      await restarting;
+      await vi.waitFor(() => expect(starts).toBe(3), { timeout: 2500 });
+      expect(events.slice(0, 5)).toEqual(["start-1", "stop-1", "start-2", "stop-2", "start-3"]);
+      for (const options of harness.startOptions.slice(1)) {
+        expect(options).toMatchObject({
+          port: 4321,
+          bindHostname: "0.0.0.0",
+          authToken: "test-remote-token",
+          restoreTmuxWorkspaces: true,
+        });
+      }
+    } finally {
+      retired.resolve();
+      harness.signals.get("SIGTERM")?.();
+      await running;
+    }
+    expect(events.at(-1)).toBe("stop-3");
+    expect(harness.signals.size).toBe(0);
+  });
+
+  it.each(["signal", "failure"] as const)(
+    "does not restart after settings retirement ends in %s",
+    async (outcome) => {
+      const harness = createHarness();
+      const start = harness.deps.startEmbeddedDaemon;
+      const retired = deferred();
+      let stops = 0;
+      const running = runHeadlessDaemon(
+        {},
+        {
+          ...harness.deps,
+          startEmbeddedDaemon: async (options) => ({
+            ...(await start(options)),
+            stop: async () => {
+              stops++;
+              await retired.promise;
+              if (outcome === "failure") throw new Error("retirement failed");
+            },
+          }),
+        },
+      );
+      const settled = running.then(
+        (result) => result,
+        (error: Error) => error.message,
+      );
+      await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
+      const request = { enabled: false, bindHostname: "127.0.0.1" as const, token: null };
+      const retiring = harness.startOptions[0]!.requestRestart!(request).catch(
+        (error: Error) => error.message,
+      );
+      await vi.waitFor(() => expect(stops).toBe(1));
+      await harness.startOptions[0]!.requestRestart!(request);
+      expect(stops).toBe(1);
+      if (outcome === "signal") harness.signals.get("SIGTERM")?.();
+      retired.resolve();
+      await retiring;
+      expect(await settled).toBe(outcome === "signal" ? "stopped" : "retirement failed");
+      expect(harness.startOptions).toHaveLength(1);
+      expect(harness.signals.size).toBe(0);
+    },
+  );
+
   it("uses a safe product-version fallback when bundled package metadata is unavailable", () => {
     expect(
       resolveDaemonProductVersion(undefined, () => {
@@ -212,6 +376,7 @@ describe("runHeadlessDaemon", () => {
         bindHostname: "127.0.0.1",
         authToken: null,
         localBypassToken: expect.any(String),
+        requestRestart: expect.any(Function),
         silent: true,
       },
     ]);

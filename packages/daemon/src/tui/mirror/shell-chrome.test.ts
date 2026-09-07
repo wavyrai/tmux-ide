@@ -95,6 +95,18 @@ describe("shell chrome responsive projection", () => {
     expect(layout.dialogWidth).toBe(shellOverlayWidth(width, variant, "dialog"));
   });
 
+  it.each([0, 1, 12, 20, 32, 48])("keeps chrome inside a %s-column viewport", (width) => {
+    const layout = shellChromeLayout(width, 24, 28);
+    for (const rect of [layout.tabbar, layout.sidebar, layout.main, layout.status]) {
+      expect(rect.x).toBeGreaterThanOrEqual(0);
+      expect(rect.width).toBeGreaterThanOrEqual(0);
+      expect(rect.x + rect.width).toBeLessThanOrEqual(width);
+    }
+    expect(layout.main.width).toBeGreaterThanOrEqual(Math.ceil((width * 2) / 3));
+    expect(layout.paletteWidth).toBeLessThanOrEqual(width);
+    expect(layout.dialogWidth).toBeLessThanOrEqual(width);
+  });
+
   it("keeps surface tab labels and spans deterministic by variant", () => {
     const compact = shellSurfaceTabs(views, "files", "compact", 1);
     expect(compact.map((tab) => tab.label)).toEqual(["  ⌂ ", "  ❯ ", " ●▤ ", "  ± ", "  ◆ "]);

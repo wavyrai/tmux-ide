@@ -55,6 +55,8 @@ export interface RunningDaemon {
   /** SETUP ONLY. Registers a session as a workspace without using the UI. */
   readonly promote: (label: string) => Promise<string>;
   readonly fleetLabels: () => Promise<readonly string[]>;
+  /** Observe a new generation published by the same owned process; never spawn it. */
+  readonly refreshGeneration: () => Promise<void>;
   readonly output: () => string;
   readonly stop: () => Promise<void>;
 }
@@ -102,7 +104,7 @@ export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
     env: environment,
   });
 
-  const record = await pollUntil<CanonicalDaemonRecord>({
+  let record = await pollUntil<CanonicalDaemonRecord>({
     probe: async () => {
       if (harness.child.exitCode !== null) {
         throw new Error(`daemon exited (${harness.child.exitCode})\n${harness.output()}`);
@@ -125,8 +127,8 @@ export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
     timeoutMs: DAEMON_READY_TIMEOUT_MS,
   });
 
-  const baseUrl = `http://127.0.0.1:${record.port}`;
-  const owner = { Authorization: `Bearer ${record.authToken}` };
+  let baseUrl = `http://127.0.0.1:${record.port}`;
+  let owner = { Authorization: `Bearer ${record.authToken}` };
 
   const readiness = async (): Promise<StartupReadinessLadder> => {
     const response = await fetch(`${baseUrl}/api/resources/startup-readiness`, { headers: owner });
@@ -179,8 +181,32 @@ export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
   };
 
   return {
-    record,
-    baseUrl,
+    get record() {
+      return record;
+    },
+    get baseUrl() {
+      return baseUrl;
+    },
+    refreshGeneration: async () => {
+      const previous = record.instanceId;
+      record = await pollUntil<CanonicalDaemonRecord>({
+        probe: async () => {
+          const parsed = CanonicalDaemonInfoSchema.safeParse(
+            JSON.parse(await readFile(join(fleet.daemonInfoDir, "daemon.json"), "utf8")),
+          );
+          return parsed.success &&
+            parsed.data.authToken !== null &&
+            parsed.data.pid === harness.child.pid &&
+            parsed.data.instanceId !== previous
+            ? (parsed.data as CanonicalDaemonRecord)
+            : null;
+        },
+        detail: "the owned daemon process to publish a replacement generation",
+        timeoutMs: 30_000,
+      });
+      baseUrl = `http://127.0.0.1:${record.port}`;
+      owner = { Authorization: `Bearer ${record.authToken}` };
+    },
     readiness,
     promote,
     fleetLabels,

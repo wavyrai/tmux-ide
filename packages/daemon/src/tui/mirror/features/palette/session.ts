@@ -1,14 +1,15 @@
-import { createMemo, createRoot, createSignal } from "solid-js";
+import {
+  bufferPickerGeometry,
+  bufferPickerContains,
+  bufferPickerRowAt,
+} from "./buffer-geometry.ts";
+import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
 
 import {
   clampPaletteTop,
-  paletteContains,
-  palettePos,
-  paletteRowAt,
   paletteRows,
   paletteActionKey,
   type PaletteAction,
-  type PaletteGeom,
   type TmuxBuffer,
 } from "../../palette.ts";
 import {
@@ -35,7 +36,6 @@ import { paletteWorkspaceIdentityScope } from "./contract.ts";
 
 const EMPTY_REPO: readonly string[] = Object.freeze([]);
 const EMPTY_BUFFERS: readonly TmuxBuffer[] = Object.freeze([]);
-const BUFFER_PAGE_ROWS = 10;
 
 const messageOf = (error: unknown) =>
   error instanceof Error && error.message.trim()
@@ -207,15 +207,30 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
       setScrollTop(restore.scrollTop);
       if (repo().phase !== "ready") loadRepo();
     };
-    const bufferGeom = (): PaletteGeom => {
-      const width = Math.min(64, Math.max(12, host.width() - 4));
-      const position = palettePos(host.width(), host.height(), width);
-      return {
-        ...position,
-        width,
-        visibleRows: Math.min(BUFFER_PAGE_ROWS, Math.max(0, buffers().value.length - scrollTop())),
-      };
-    };
+    const bufferGeom = () =>
+      bufferPickerGeometry(
+        host.width(),
+        host.height(),
+        buffers().phase === "ready" ? buffers().value.length : 0,
+        scrollTop(),
+      );
+    createEffect(
+      on(
+        () => [host.width(), host.height(), level()],
+        () => {
+          if (level() !== "buffers") return;
+          const g = bufferGeom();
+          const selected = selectedBufferIndex();
+          setScrollTop(
+            clampPaletteTop(
+              Math.min(selected, Math.max(g.scrollTop, selected - g.capacity + 1)),
+              buffers().value.length,
+              g.capacity,
+            ),
+          );
+        },
+      ),
+    );
     const close = (reason: "escape" | "outside" | "action" = "escape") => {
       if (!isOpen()) return;
       abortAsync();
@@ -247,6 +262,7 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
         loadBufferList();
         return true;
       }
+      if (state.phase !== "ready") return true;
       if (name === "up" || name === "down") {
         const delta = name === "up" ? -1 : 1;
         const nextIndex = Math.max(
@@ -258,10 +274,10 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
           const visibleTop =
             nextIndex < top
               ? nextIndex
-              : nextIndex >= top + BUFFER_PAGE_ROWS
-                ? nextIndex - BUFFER_PAGE_ROWS + 1
+              : nextIndex >= top + bufferGeom().capacity
+                ? nextIndex - bufferGeom().capacity + 1
                 : top;
-          return clampPaletteTop(visibleTop, state.value.length, BUFFER_PAGE_ROWS);
+          return clampPaletteTop(visibleTop, state.value.length, bufferGeom().capacity);
         });
         return true;
       }
@@ -312,7 +328,7 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
         query: query(),
         selectedCommandId: selectedCommandId(),
         selectedBufferIndex: selectedBufferIndex(),
-        scrollTop: scrollTop(),
+        scrollTop: level() === "buffers" ? bufferGeom().scrollTop : scrollTop(),
         entries: entries(),
         projection: projection(),
         repo: repo(),
@@ -383,25 +399,25 @@ export function createPaletteFeatureSession(host: PaletteHostPort): PaletteFeatu
         if (level() === "buffers") {
           const geometry = bufferGeom();
           if (event.kind === "scroll") {
-            if (!paletteContains(geometry, event.x, event.y)) return true;
+            if (!bufferPickerContains(geometry, event.x, event.y)) return true;
             const step = event.scrollDirection === "up" ? -3 : 3;
             setScrollTop((top) =>
-              clampPaletteTop(top + step, buffers().value.length, BUFFER_PAGE_ROWS),
+              clampPaletteTop(top + step, buffers().value.length, bufferGeom().capacity),
             );
             return true;
           }
-          const row = paletteRowAt(geometry, event.x, event.y);
+          const row = bufferPickerRowAt(geometry, event.x, event.y);
           if (event.kind === "move" && row >= 0) {
-            setSelectedBufferIndex(scrollTop() + row);
+            setSelectedBufferIndex(geometry.scrollTop + row);
             return true;
           }
           if (event.kind === "down" && event.button !== 2) {
-            if (!paletteContains(geometry, event.x, event.y)) {
+            if (!bufferPickerContains(geometry, event.x, event.y)) {
               close("outside");
               return true;
             }
             if (row >= 0) {
-              const index = scrollTop() + row;
+              const index = geometry.scrollTop + row;
               const buffer = buffers().value[index];
               if (buffer) {
                 setSelectedBufferIndex(index);

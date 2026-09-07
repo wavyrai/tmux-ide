@@ -1884,10 +1884,23 @@ async function main() {
       if (args.length === 0) fail("key needs at least one tmux key name");
       tmux(["send-keys", "-t", `=${hostSession}:0.0`, ...args]);
       break;
-    case "text":
+    case "text": {
       if (args.length === 0) fail("text needs literal text to send");
-      tmux(["send-keys", "-t", `=${hostSession}:0.0`, "-l", args.join(" ")]);
+      // tmux's argv parser consumes trailing semicolons even with -l. Hex
+      // keys preserve exact UTF-8 bytes; bound argv size for longer text.
+      const bytes = Buffer.from(args.join(" "), "utf8");
+      for (let offset = 0; offset < bytes.length; offset += 1024)
+        tmux([
+          "send-keys",
+          "-t",
+          `=${hostSession}:0.0`,
+          "-H",
+          ...Array.from(bytes.subarray(offset, offset + 1024), (byte) =>
+            byte.toString(16).padStart(2, "0"),
+          ),
+        ]);
       break;
+    }
     case "input": {
       if (args.length !== 1) fail("input needs exactly one strict v1 JSON document");
       const evidence = await executeInputDocument(args[0]);

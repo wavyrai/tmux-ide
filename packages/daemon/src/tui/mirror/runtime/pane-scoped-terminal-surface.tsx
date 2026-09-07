@@ -28,6 +28,12 @@ export interface PaneScopedTerminalAdapter {
   ): () => void;
   /** Immutable canonical state used only by explicit selection/copy gestures. */
   paneSelectionSnapshot(paneId: string): TerminalReplicaSnapshot | null;
+  /** Client-local frozen presentation for an explicit selection gesture. */
+  retainPaneView?(paneId: string): (() => void) | null;
+  /** Native layout sizes, before this client's viewport clips or scales panes. */
+  setNativePaneGeometries?(
+    panes: readonly { readonly paneId: string; readonly cols: number; readonly rows: number }[],
+  ): void;
 }
 
 export interface PaneScopedTerminalSurfaceProps {
@@ -41,6 +47,7 @@ export interface PaneScopedTerminalSurfaceProps {
   readonly searchHl: number;
   readonly searchCur: number;
   readonly scrollOffset: number;
+  readonly viewportOrigin?: { readonly x: number; readonly y: number } | null;
   readonly paneFocused: boolean;
   /** Renderer-owned identity for the current native framebuffer presentation. */
   readonly presentationGeneration?: string;
@@ -48,6 +55,7 @@ export interface PaneScopedTerminalSurfaceProps {
   readonly active?: boolean | Accessor<boolean>;
   readonly sourceEpoch: number;
   readonly hostFocusTransitionOwner?: PaneSurfaceHostFocusTransitionOwner;
+  readonly copyCursor?: Cell | null;
   readonly selRange: { readonly start: Cell; readonly end: Cell } | null;
   readonly search: PaneSearchHighlight | null;
 }
@@ -133,6 +141,7 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
       searchHl={props.searchHl}
       searchCur={props.searchCur}
       scrollOffset={props.scrollOffset}
+      viewportOrigin={props.viewportOrigin}
       paneFocused={props.paneFocused}
       contentVersion={props.adapter.paneVersion(props.paneId)}
       presentationVersion={props.adapter.panePresentationVersion?.(props.paneId) ?? 0}
@@ -140,6 +149,7 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
       rendererEpoch={props.sourceEpoch}
       hostFocusTransitionOwner={props.hostFocusTransitionOwner}
       selRange={props.selRange}
+      copyCursor={props.copyCursor}
       search={props.search}
     />
   );

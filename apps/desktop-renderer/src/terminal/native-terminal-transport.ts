@@ -36,6 +36,11 @@ export interface NativeTerminalCanonicalProjection {
 
 export type NativeTerminalEvent =
   | {
+      readonly type: "geometry-authority";
+      /** Available permits an explicit resize request; it is not an owned lease. */
+      readonly ownership: "owner" | "passive" | "available";
+    }
+  | {
       readonly type: "output";
       readonly bytes: Uint8Array;
       readonly canonical?: NativeTerminalCanonicalProjection;

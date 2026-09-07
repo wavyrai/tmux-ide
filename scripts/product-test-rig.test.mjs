@@ -1581,7 +1581,7 @@ test("anchors memorable pane-name chrome to its canonical semantic layout identi
   const frame = [
     " tmux-ide",
     " ordinary",
-    "● amber-forest".padEnd(50) + " " + "○ quiet-river".padEnd(50),
+    "  ● amber-forest".padEnd(50) + " " + "  ○ quiet-river".padEnd(50),
     "left body".padEnd(50) + " " + "__right_memorable_marker__".padEnd(50),
     "left row two".padEnd(50) + " " + "right row two".padEnd(50),
   ].join("\n");
@@ -1617,6 +1617,27 @@ test("anchors memorable pane-name chrome to its canonical semantic layout identi
     valid: false,
     semanticChromeMatches: 2,
   });
+});
+
+test("current pane header gutter preserves both edge columns in captured evidence", () => {
+  const body = "L" + " ".repeat(130) + "R";
+  const frame = [
+    " tmux-ide",
+    " tabs",
+    " ".repeat(28) + "  ● quiet-river".padEnd(132),
+    " ".repeat(28) + body,
+  ].join("\n");
+  assert.equal(
+    paneBodyRegion(frame, {
+      semanticPaneId: "pane.promoted.fixture",
+      displayName: "quiet-river",
+      left: 0,
+      top: 1,
+      width: 132,
+      height: 1,
+    }),
+    body,
+  );
 });
 
 test("pane body evidence fails closed without a canonical semantic identity", () => {

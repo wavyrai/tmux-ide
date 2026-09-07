@@ -1,4 +1,7 @@
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Terminal as ForkTerminal } from "@tmux-ide/xterm-headless";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -103,6 +106,68 @@ function snapshot(terminal: Pick<StockTerminalShape, "buffer" | "cols" | "modes"
 }
 
 describe("pinned xterm headless fork", () => {
+  it("installs the vendored parser version and archive recorded in provenance", () => {
+    const provenance = JSON.parse(
+      readFileSync(new URL("./xterm-headless-provenance.json", import.meta.url), "utf8"),
+    );
+    const archive = readFileSync(new URL(`../../../${provenance.asset}`, import.meta.url));
+    expect(createHash("sha256").update(archive).digest("hex")).toBe(provenance.assetSha256);
+    expect(`sha512-${createHash("sha512").update(archive).digest("base64")}`).toBe(
+      provenance.assetSri,
+    );
+    const installed = JSON.parse(
+      readFileSync(
+        resolve(dirname(require.resolve("@tmux-ide/xterm-headless")), "../package.json"),
+        "utf8",
+      ),
+    );
+    expect(installed.version).toBe(provenance.version);
+    expect(installed.tmuxIdeSource).toEqual(provenance.source);
+  });
+
+  it("preserves one-column ASCII wrapping and pending-wrap cursor state", async () => {
+    const terminal = new ForkTerminal({ cols: 1, rows: 4, allowProposedApi: true });
+    try {
+      expect(terminal.cols).toBe(1);
+      await write(terminal, "AB");
+      expect(terminal.buffer.active.getLine(0)?.translateToString(true)).toBe("A");
+      expect(terminal.buffer.active.getLine(1)?.translateToString(true)).toBe("B");
+      expect(terminal.buffer.active.cursorX).toBe(1);
+      await write(terminal, "C");
+      expect(terminal.buffer.active.getLine(2)?.translateToString(true)).toBe("C");
+    } finally {
+      terminal.dispose();
+    }
+  });
+
+  it("retains an oversized wide glyph together and accepts following ASCII", async () => {
+    const terminal = new ForkTerminal({ cols: 1, rows: 4, allowProposedApi: true });
+    try {
+      await write(terminal, "界");
+      const row = terminal.buffer.active.getLine(0)!;
+      expect(row.getCell(0)?.getChars()).toBe("界");
+      expect(row.getCell(0)?.getWidth()).toBe(2);
+      expect(row.getCell(1)?.getWidth()).toBe(0);
+      await write(terminal, "A");
+      expect(terminal.buffer.active.getLine(1)?.translateToString(true)).toBe("A");
+    } finally {
+      terminal.dispose();
+    }
+  });
+
+  it("leaves one-column resize reflow to the native owner without hanging on wide history", async () => {
+    const terminal = new ForkTerminal({ cols: 8, rows: 3, scrollback: 20, allowProposedApi: true });
+    try {
+      await write(terminal, "界界ABCD\r\n界EFGH\r\nI\r\nJ");
+      for (const cols of [1, 8, 1, 3, 1]) {
+        terminal.resize(cols, 3);
+        expect(terminal.cols).toBe(cols);
+      }
+    } finally {
+      terminal.dispose();
+    }
+  });
+
   it("admits exactly one prioritized idle write and leaves the next write asynchronous", async () => {
     const terminal = new ForkTerminal({ allowProposedApi: true });
     let first = false;

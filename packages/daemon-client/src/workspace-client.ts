@@ -354,6 +354,9 @@ export function createWorkspaceClient<
     TerminalTombstone
   > | null = null;
   let desiredRuntimeKey: string | null = null;
+  let pendingRuntimeInventory: { inventory: WorkspaceClientRuntimeInventory; key: string } | null =
+    null;
+  let runtimeStartQueued = false;
   let runtimeReceiptUnsubscribe: (() => void) | null = null;
   let runtimeAuthorityUnsubscribe: (() => void) | null = null;
   const pendingTerminalCloses = new Set<Promise<void>>();
@@ -457,6 +460,7 @@ export function createWorkspaceClient<
       transport: options.ports.shell,
       clock,
       onInteractionReceipt: (receipt) => {
+        ledger.observeReceipt(receipt, generation);
         ledger.receipt(receipt, generation);
       },
       onOperationAcknowledged: (acknowledgement) => {
@@ -644,6 +648,7 @@ export function createWorkspaceClient<
     activeRuntimeOwner = null;
     candidateRuntimeOwner = null;
     desiredRuntimeKey = null;
+    pendingRuntimeInventory = null;
     const detached = detachRuntimeValue();
     if (active !== null) options.ports.didRetireRuntime?.();
     const stopping = [stopRuntimeOwner(candidate)];
@@ -673,6 +678,7 @@ export function createWorkspaceClient<
         ) {
           return;
         }
+        ledger.observeReceipt(receipt, owner.clientGeneration);
         ledger.receipt(receipt, owner.clientGeneration);
       });
       runtimeAuthorityUnsubscribe =
@@ -957,6 +963,7 @@ export function createWorkspaceClient<
     const key = runtimeInventoryKey(inventory);
     desiredRuntimeKey = key;
     if (activeRuntimeOwner?.key === key) {
+      pendingRuntimeInventory = null;
       const retiredCandidate = candidateRuntimeOwner;
       candidateRuntimeOwner = null;
       stopRuntimeOwner(retiredCandidate);
@@ -964,11 +971,24 @@ export function createWorkspaceClient<
     }
     if (candidateRuntimeOwner?.key === key) return;
 
+    // Fence obsolete candidates immediately, but coalesce a synchronous burst
+    // before opening another physical socket. Keep the last coherent active
+    // runtime until the usual atomic adoption; no timer or retry delay is added.
     const retiredCandidate = candidateRuntimeOwner;
-    const candidate = createRuntimeOwner(inventory, key);
-    candidateRuntimeOwner = candidate;
+    candidateRuntimeOwner = null;
     stopRuntimeOwner(retiredCandidate);
-    candidate.supervisor.start();
+    pendingRuntimeInventory = { inventory, key };
+    if (runtimeStartQueued) return;
+    runtimeStartQueued = true;
+    queueMicrotask(() => {
+      runtimeStartQueued = false;
+      const pending = pendingRuntimeInventory;
+      pendingRuntimeInventory = null;
+      if (disposed || !pending || desiredRuntimeKey !== pending.key) return;
+      const candidate = createRuntimeOwner(pending.inventory, pending.key);
+      candidateRuntimeOwner = candidate;
+      candidate.supervisor.start();
+    });
   };
 
   const retireCatalog = (): void => {

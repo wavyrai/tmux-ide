@@ -425,6 +425,33 @@ test("application mouse is a distinct exact SGR click with modifiers", () => {
   );
 });
 
+test("wheel events retain SGR direction, modifiers and live boundary checks", () => {
+  for (const [action, code] of [
+    ["wheel-up", 64],
+    ["wheel-down", 65],
+  ]) {
+    const document = { version: 1, kind: "application-mouse", action, x: 4, y: 2 };
+    const parse = (value) => parseTestdriveInputDocument(JSON.stringify(value));
+    for (const [modifiers, offset] of [
+      [[], 0],
+      [["shift", "ctrl"], 20],
+    ]) {
+      assert.deepEqual(translateTestdriveInput(parse({ ...document, modifiers }), context).phases, [
+        { bytes: `\x1b[<${code + offset};5;3M`, delayMs: 0 },
+      ]);
+    }
+    assert.throws(() => parse({ ...document, button: "left" }), /must not specify a button/);
+    assert.throws(
+      () => translateTestdriveInput(parse({ ...document, x: 80 }), context),
+      /outside host geometry/,
+    );
+    assert.throws(
+      () => translateTestdriveInput(parse(document), { ...context, capabilities: {} }),
+      /SGR application mouse/,
+    );
+  }
+});
+
 test("selection drag includes press, bounded interpolation, and exact release geometry", () => {
   const command = parseTestdriveInputDocument(
     JSON.stringify({
@@ -451,6 +478,29 @@ test("copy capture translates to Ctrl-C and requires real clipboard evidence", (
     captureClipboard: true,
   });
   assert.equal(command.timeoutMs, 400);
+});
+
+test("copy capture observes emacs and vi copy keys without changing the clipboard protocol", () => {
+  for (const [copyKey, bytes] of [
+    ["ctrl-c", "\x03"],
+    ["ctrl-w", "\x17"],
+    ["enter", "\r"],
+  ]) {
+    const command = parseTestdriveInputDocument(
+      JSON.stringify({ version: 1, kind: "copy-capture", copyKey }),
+    );
+    assert.deepEqual(translateTestdriveInput(command, context), {
+      phases: [{ bytes, delayMs: 0 }],
+      captureClipboard: true,
+    });
+  }
+  assert.throws(
+    () =>
+      parseTestdriveInputDocument(
+        JSON.stringify({ version: 1, kind: "copy-capture", copyKey: "q" }),
+      ),
+    /copyKey must/,
+  );
 });
 
 test("strict parsing rejects unknown fields, bad timeouts, and oversized paste", () => {

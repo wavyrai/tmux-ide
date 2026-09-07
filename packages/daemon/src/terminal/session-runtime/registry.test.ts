@@ -156,6 +156,34 @@ function finishSeed(sim: SimulatedChannel): void {
 }
 
 describe("SessionRuntimeRegistry", () => {
+  it("publishes a passive client connection to existing consumers without stealing authority", async () => {
+    const { registry } = rig();
+    try {
+      const tui = registry.connect("alpha-session", "opentui", "opentui:1");
+      tui.updatePresence("foreground");
+      for (const authority of ["input", "focus", "geometry"] as const)
+        tui.acquireAuthority(authority);
+      const before = tui.authoritySnapshot();
+      const observed = vi.fn();
+      const stop = tui.onAuthoritySnapshot(observed);
+      observed.mockClear();
+      registry.connect("other-session", "web", "web:other");
+      expect(observed).not.toHaveBeenCalled();
+      registry.connect("alpha-session", "web", "web:2");
+      expect(observed).toHaveBeenCalledTimes(1);
+      const connected = observed.mock.calls[0]![0];
+      expect(connected.revision).toBeGreaterThan(before.revision);
+      expect(connected.owners).toEqual(before.owners);
+      expect(
+        connected.clients.map(({ clientId }: { clientId: string }) => clientId).sort(),
+      ).toEqual(["opentui:1", "web:2"]);
+      expect(tui.authoritySnapshot()).toEqual(connected);
+      stop();
+    } finally {
+      await registry.dispose();
+    }
+  });
+
   it("exposes exact retained session and full-layout authority to PaneStream", async () => {
     const state = fixtureState();
     state.descriptorRows[2] = state.descriptorRows[2]!.replace(

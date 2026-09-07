@@ -277,6 +277,29 @@ function adoptedAgentSession(
 }
 
 describe("WorkspacePromotionAuthority", () => {
+  it.each(["off", "bottom"])(
+    "preserves an adopted window's %s borders when another client opens it",
+    async (border) => {
+      const mock = new MockTmux();
+      const { name } = adoptedAgentSession(mock);
+      const registry = new FakeRegistry();
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock),
+      });
+      await authority.promote(request(fleetSessionIdForName(name)));
+      const window = mock.windowOf("@1")!.window;
+      window.options.set("pane-border-status", border);
+      window.options.set("pane-border-format", "custom native title");
+      mock.pane(window, "%2");
+      const result = await authority.promote(request(fleetSessionIdForName(name)));
+      expect(result.outcome).toBe("replayed");
+      expect(window.options.get("pane-border-status")).toBe(border);
+      expect(window.options.get("pane-border-format")).toBe("custom native title");
+      expect(mock.paneOption("%2")!.options.get("@tmux_ide_pane_id")).toMatch(/^pane\.promoted\./u);
+    },
+  );
   it("promotes an adopted session: stamps panes, classifies the agent, admits to the registry", async () => {
     const mock = new MockTmux();
     const { name } = adoptedAgentSession(mock);

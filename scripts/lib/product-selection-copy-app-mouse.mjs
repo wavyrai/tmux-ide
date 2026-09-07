@@ -891,8 +891,12 @@ function exactCopyFence(value, expected, canonical = null) {
       (value.canonicalIdentity.incarnation === canonical?.incarnation &&
         value.canonicalIdentity.revision === canonical?.revision &&
         value.canonicalIdentity.stateHash === canonical?.stateHash)) &&
-    value.canonicalIdentity.cols === 132 &&
-    value.canonicalIdentity.rows === 41
+    Number.isSafeInteger(expected?.canonicalCols) &&
+    expected.canonicalCols > 0 &&
+    Number.isSafeInteger(expected?.canonicalRows) &&
+    expected.canonicalRows > 0 &&
+    value.canonicalIdentity.cols === expected.canonicalCols &&
+    value.canonicalIdentity.rows === expected.canonicalRows
   );
 }
 

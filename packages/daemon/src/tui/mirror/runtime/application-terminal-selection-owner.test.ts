@@ -8,6 +8,72 @@ import {
 } from "./application-terminal-selection-owner.ts";
 
 describe("application terminal selection owner", () => {
+  it("exposes menu input ownership to the root paste gate and clears it on unmount", () => {
+    const owner = createApplicationTerminalSelectionOwner({
+      copyText: () => true,
+      diagnosticsEnabled: false,
+      generation: () => null,
+    });
+    let open = true;
+    const handler = vi.fn(() => open);
+    owner.registerKey(handler, () => open);
+    expect(owner.blocksInput()).toBe(true);
+    owner.handleKey("x", { ctrl: true });
+    expect(handler).toHaveBeenCalledWith("x", { ctrl: true });
+    open = false;
+    expect(owner.blocksInput()).toBe(false);
+    open = true;
+    owner.registerKey(null);
+    expect(owner.blocksInput()).toBe(false);
+    expect(owner.handleKey("x")).toBe(false);
+  });
+  it("keeps copy and navigation separate from preparation for terminal keys and paste", () => {
+    const owner = createApplicationTerminalSelectionOwner({
+      copyText: () => true,
+      diagnosticsEnabled: false,
+      generation: () => null,
+    });
+    const prepare = vi.fn();
+    const copy = vi.fn(() => true);
+    owner.registerKey(
+      (name) => name === "up",
+      () => false,
+      prepare,
+    );
+    owner.registerCopy(copy);
+    expect(owner.handleKey("up")).toBe(true);
+    expect(owner.handleKey("c", { ctrl: true })).toBe(false);
+    expect(owner.copyCurrent()).toBe(true);
+    expect(prepare).not.toHaveBeenCalled();
+    owner.prepareInput();
+    expect(prepare).toHaveBeenCalledOnce();
+    owner.prepareInput();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    owner.registerKey(null);
+    owner.prepareInput();
+    expect(prepare).toHaveBeenCalledTimes(2);
+  });
+  it("routes legacy mouse bytes without UTF-8 expansion", async () => {
+    const sendInputToPane = vi.fn(async () => true);
+    routeApplicationTerminalPointerInput({ sendInputToPane } as never, "pane-a", {
+      kind: "application-mouse",
+      data: "1b5b4d20ff80",
+      dataEncoding: "hex",
+      action: "down",
+      column: 222,
+      row: 95,
+      button: 0,
+      modifiers: { shift: false, alt: false, ctrl: false },
+      ingress: null,
+    });
+    await Promise.resolve();
+    expect(sendInputToPane).toHaveBeenCalledWith(
+      "pane-a",
+      { kind: "bytes", data: "1b5b4d20ff80" },
+      undefined,
+    );
+  });
+
   it("routes one exact typed application-mouse input and preserves its ingress", async () => {
     const sendInputToPane = vi.fn(async () => true);
     routeApplicationTerminalPointerInput({ sendInputToPane } as never, "pane-a", {

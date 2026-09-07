@@ -1,25 +1,51 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "package": "@tmux-ide/xterm-headless",
-  "version": "6.0.0-tmuxide.2",
-  "release": "https://github.com/wavyrai/xterm.js/releases/tag/v6.0.0-tmuxide.2",
-  "asset": "https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz",
-  "assetSha256": "1ccd7ae170f176dab89ec453476170a853d5493fd1192e114186ce5d5f5cc7d3",
-  "assetSri": "sha512-ZL6DLYJtTbAjJg3HKmofbW9yLDnUayHKrp41PrwEOI2rPlEZ1SLUomTKmBLIr9YrvR8vFlRPl7Bbyk3JEtBY4A==",
-  "sbomSha256": "6c7cd8400689f7824e54f296233545ae156e9d314d62d7379f94a8856faf43f3",
-  "workflowRun": "https://github.com/wavyrai/xterm.js/actions/runs/31992660888",
+  "version": "6.0.0-tmuxide.3-local.3",
+  "asset": "native/xterm/tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.3.tgz",
+  "assetSha256": "50f7d270acf58592d919ccf9ad22d76658607cc090901ef35d50e589e212b78b",
+  "assetSri": "sha512-nS6peJ0dNszZYjAdlqPfvXK1eRoXF6WrTn/cIACJp7Jr94oPmbEh3H5GDjIaItqXMDokh0LTdUBRGHcfs+vt+A==",
+  "build": "node scripts/build-xterm-native-parser.mjs --source <pinned-fork-checkout>",
+  "source": {
+    "schemaVersion": 1,
+    "package": "@tmux-ide/xterm-headless",
+    "version": "6.0.0-tmuxide.3-local.3",
+    "repository": "https://github.com/wavyrai/xterm.js.git",
+    "commit": "8f6d707f7c09410ae4f89ace7b6d1bfed5542428",
+    "patch": "one-column.patch",
+    "patchSha256": "23839bf79feac89193b00392e6966361c3bd44c0b23118a7774c5dd4de2a0cfd",
+    "esbuild": "0.28.2"
+  },
   "upstream": {
     "repository": "https://github.com/xtermjs/xterm.js.git",
     "commit": "f447274f430fd22513f6adbf9862d19524471c04",
     "tree": "62330f6674bf1548123f3e1fe3da17363cc96a13",
     "package": "@xterm/headless@6.0.0"
   },
-  "fork": {
-    "repository": "https://github.com/wavyrai/xterm.js.git",
-    "commit": "8f6d707f7c09410ae4f89ace7b6d1bfed5542428",
-    "tagObject": "7a945b7ae7be7e4c24ecf4f5f0e6d4df3dc1f468",
-    "tag": "v6.0.0-tmuxide.2",
-    "api": "prioritize-next-write-v1"
+  "baseRelease": {
+    "schemaVersion": 1,
+    "package": "@tmux-ide/xterm-headless",
+    "version": "6.0.0-tmuxide.2",
+    "release": "https://github.com/wavyrai/xterm.js/releases/tag/v6.0.0-tmuxide.2",
+    "asset": "https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz",
+    "assetSha256": "1ccd7ae170f176dab89ec453476170a853d5493fd1192e114186ce5d5f5cc7d3",
+    "assetSri": "sha512-ZL6DLYJtTbAjJg3HKmofbW9yLDnUayHKrp41PrwEOI2rPlEZ1SLUomTKmBLIr9YrvR8vFlRPl7Bbyk3JEtBY4A==",
+    "sbomSha256": "6c7cd8400689f7824e54f296233545ae156e9d314d62d7379f94a8856faf43f3",
+    "workflowRun": "https://github.com/wavyrai/xterm.js/actions/runs/31992660888",
+    "upstream": {
+      "repository": "https://github.com/xtermjs/xterm.js.git",
+      "commit": "f447274f430fd22513f6adbf9862d19524471c04",
+      "tree": "62330f6674bf1548123f3e1fe3da17363cc96a13",
+      "package": "@xterm/headless@6.0.0"
+    },
+    "fork": {
+      "repository": "https://github.com/wavyrai/xterm.js.git",
+      "commit": "8f6d707f7c09410ae4f89ace7b6d1bfed5542428",
+      "tagObject": "7a945b7ae7be7e4c24ecf4f5f0e6d4df3dc1f468",
+      "tag": "v6.0.0-tmuxide.2",
+      "api": "prioritize-next-write-v1"
+    },
+    "license": "MIT"
   },
   "license": "MIT"
 }

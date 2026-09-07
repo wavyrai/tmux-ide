@@ -3957,3 +3957,50 @@ test("two successful attempts use distinct clean owners and immutable namespaces
     removeTestTree(temporary);
   }
 });
+
+test("cleanup reports a hung step and still attempts later resource retirement", async () => {
+  const retired = [];
+  const failures = await collectProductRigCleanupFailures(
+    [
+      { subsystem: "browser", run: () => new Promise(() => {}) },
+      {
+        subsystem: "daemon",
+        run: async () => {
+          retired.push("daemon");
+        },
+      },
+      {
+        subsystem: "fleet",
+        run: async () => {
+          retired.push("fleet");
+        },
+      },
+    ],
+    { stepTimeoutMs: 5 },
+  );
+  assert.deepEqual(retired, ["daemon", "fleet"]);
+  assert.deepEqual(failures, [
+    { subsystem: "browser", detail: "cleanup step timed out after 5ms" },
+  ]);
+});
+
+test("cleanup consumes a late rejection after its timeout without replacing the failed receipt", async () => {
+  let rejectStep;
+  const failures = await collectProductRigCleanupFailures(
+    [
+      {
+        subsystem: "browser",
+        run: () =>
+          new Promise((_, reject) => {
+            rejectStep = reject;
+          }),
+      },
+    ],
+    { stepTimeoutMs: 5 },
+  );
+  rejectStep(new Error("late close failure"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(failures, [
+    { subsystem: "browser", detail: "cleanup step timed out after 5ms" },
+  ]);
+});

@@ -5,6 +5,7 @@ import { createSignal } from "solid-js";
 import type { PaletteFeatureSession } from "../features/palette/contract.ts";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import {
+  expectFrameBounds,
   destroyTestRenderer,
   renderForTest,
   stableFrame,
@@ -24,6 +25,77 @@ import {
 import { PaletteProductionOverlay } from "./palette-production-overlay.tsx";
 
 describe("production Palette controller OpenTUI assembly", () => {
+  it.each([
+    [6, 1],
+    [12, 2],
+    [32, 6],
+  ])("renders and targets the selected buffer at %sx%s", async (width, height) => {
+    const { createPaletteFeatureSession, PaletteFeatureSurface } =
+      await import("../features/palette/feature.ts");
+    const { bufferPickerGeometry } = await import("../features/palette/buffer-geometry.ts");
+    const intents: unknown[] = [];
+    const session = createPaletteFeatureSession({
+      width: () => width,
+      height: () => height,
+      identity: () => ({
+        workspaceName: "alpha",
+        directory: "/repo",
+        projectRoot: "/repo",
+        daemonIdentity: "test",
+        generation: 1,
+      }),
+      facts: () => ({
+        terminal: true,
+        surface: "terminal",
+        currentSurface: "terminals",
+        currentViewId: "terminals",
+        currentSession: "alpha",
+        sessions: [],
+        agents: [],
+        panes: [],
+        sizeMismatch: false,
+        appMousePane: false,
+        againName: null,
+        usage: {},
+        keycaps: {},
+        views: [],
+        syncOn: false,
+        saveState: { hasBuffer: false, hasPath: false, readOnlyReason: null },
+      }),
+      loadRepoFiles: async () => [],
+      loadBuffers: async () =>
+        Array.from({ length: 15 }, (_, i) => ({ name: `b${i}`, preview: "界é" })),
+      dispatch: (intent) => {
+        intents.push(intent);
+      },
+    });
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const setup = await renderForTest(
+      () => <PaletteFeatureSurface session={session} theme={theme} />,
+      { width, height },
+    );
+    try {
+      session.openPalette();
+      session.openBufferPicker();
+      await Promise.resolve();
+      await Promise.resolve();
+      for (let i = 0; i < 12; i++)
+        session.handleKey({ name: "down", ctrl: false, meta: false, shift: false });
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expectFrameBounds(frame, width, height);
+      expect(frame).toContain("› b12");
+      const g = bufferPickerGeometry(width, height, 15, session.snapshot().scrollTop);
+      const y = g.top + g.headerRows + 12 - g.scrollTop;
+      expect(y).toBeLessThan(height);
+      session.handlePointer({ kind: "down", x: g.left + g.inset, y, button: 0 });
+      expect(intents).toContainEqual({ kind: "paste-buffer", bufferName: "b12" });
+    } finally {
+      session.dispose();
+      await destroyTestRenderer(setup);
+    }
+  });
+
   it("renders deferred load, generic failure, controller retry, ready, and close", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const canvas = projectAgentTerminalCanvas({ width: 60, height: 16, chromeRows: 2 });

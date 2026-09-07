@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   COHESION_FIXTURE_V1,
+  VISUAL_THEME_PRESETS,
   deriveAttentionBlend,
   resolveVisualTheme,
   type RendererNeutralColor,
@@ -603,5 +604,21 @@ describe("semantic theme store", () => {
 
     store.configure({ mode: "dark", projectTheme: projectTheme(20) });
     expect(notifications).toBe(1);
+  });
+});
+
+describe("theme library", () => {
+  it("provides 22 distinct readable presets without remapping truecolor terminal cells", () => {
+    expect(VISUAL_THEME_PRESETS).toHaveLength(22);
+    expect(new Set(VISUAL_THEME_PRESETS.map((p) => p.id)).size).toBe(22);
+    for (const preset of VISUAL_THEME_PRESETS) {
+      const snapshot = createSemanticThemeSnapshot({ preset: preset.id });
+      expect(snapshot.diagnostics, preset.id).toEqual([]);
+      for (const check of semanticThemeContrastChecks(snapshot))
+        expect(check.passes, `${preset.id}: ${check.id} ${check.ratio}`).toBe(true);
+      const projection = createTerminalPaletteProjection(snapshot, DARK_THEME);
+      expect(projection.resolveForeground(0x123456)).toBe(0x123456);
+      expect(projection.resolveBackground(0x654321)).toBe(0x654321);
+    }
   });
 });

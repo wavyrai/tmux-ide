@@ -26,6 +26,9 @@ import {
 import { WorkspaceRegistry } from "../workspace-registry.ts";
 import { memorablePaneName } from "../../terminal/protocol/pane-display-name.ts";
 
+// PATH/override tests must not depend on locally built distribution assets.
+vi.mock("../bundled-tmux.ts", () => ({ resolveBundledTmux: () => null }));
+
 const DAEMON = "20000000-0000-4000-8000-000000000002";
 const OPERATION = "10000000-0000-4000-8000-000000000001";
 const roots: string[] = [];
@@ -739,7 +742,9 @@ describe("WorkspacePaneCreationAuthority", () => {
     const root = mkdtempSync(join(tmpdir(), "tmux-ide-pinned-environment-"));
     roots.push(root);
     const executablePath = join(root, "trusted-tmux");
-    writeFileSync(executablePath, "#!/bin/sh\nexit 0\n");
+    // Discovery sees no real server in this hermetic environment test. The
+    // injected executor below owns command responses, not this shell stub.
+    writeFileSync(executablePath, "#!/bin/sh\nexit 1\n");
     chmodSync(executablePath, 0o755);
     const registry = new WorkspaceRegistry({ dir: join(root, "registry"), listSessions: () => [] });
     registry.add({

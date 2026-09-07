@@ -35,6 +35,52 @@ afterEach(() => {
 });
 
 describe("pane-stream terminal input decoder", () => {
+  it("publishes early and live geometry authority using the connection principal", async () => {
+    let listeners!: PaneStreamSessionListeners;
+    const events: unknown[] = [];
+    const snapshot = (geometry: string | null) => ({
+      generation: "11111111-1111-4111-8111-111111111111",
+      session: "runtime-a",
+      revision: 2,
+      owners: { input: "other", focus: "other", geometry },
+      nativeGeometryYieldUntilMs: 0,
+      clients: [],
+    });
+    const transport = createPaneStreamNativeTerminalTransport(
+      {
+        connect: async (_request, next) => {
+          listeners = next;
+          next.onAuthoritySnapshot?.(snapshot("other"));
+          return {
+            status: "connected",
+            session: { dispose: vi.fn(), connectionClientId: () => "self" },
+          };
+        },
+      },
+      "geometry-test",
+    );
+    const result = await transport.connect(
+      {
+        protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+        target: { workspaceName: "workspace-a", semanticPaneId: "pane.workspace.a" },
+        viewerMode: "interactive",
+        geometryOwnership: "owner",
+        viewport: { cols: 80, rows: 24 },
+      },
+      (event) => {
+        events.push(event);
+      },
+    );
+    listeners.onAuthoritySnapshot?.(snapshot("self"));
+    listeners.onAuthoritySnapshot?.(snapshot(null));
+    expect(events).toEqual([
+      { type: "geometry-authority", ownership: "passive" },
+      { type: "geometry-authority", ownership: "owner" },
+      { type: "geometry-authority", ownership: "available" },
+    ]);
+    if (result.status === "connected") result.attachment.dispose();
+  });
+
   it("publishes the exact acknowledged viewport instead of replaying connect-time geometry", async () => {
     let listeners: PaneStreamSessionListeners | null = null;
     const resize = vi.fn(async (): Promise<PaneStreamResizeResult> => "ok");
@@ -88,6 +134,100 @@ describe("pane-stream terminal input decoder", () => {
     });
     connected.attachment.dispose();
   });
+
+  it.each(["top", "bottom", "off"] as const)(
+    "retains canonical content dimensions across %s layout updates and reseeds",
+    async (paneBorderStatus) => {
+      let listeners!: PaneStreamSessionListeners;
+      const events: Array<{ type: string; sourceGrid?: { cols: number; rows: number } }> = [];
+      const connected = await createPaneStreamNativeTerminalTransport(
+        {
+          connect: async (_request, next) => {
+            listeners = next;
+            return { status: "connected", session: { dispose: vi.fn() } };
+          },
+        },
+        "daemon-a",
+      ).connect(
+        {
+          protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+          target: { workspaceName: "workspace-a", semanticPaneId: "pane.workspace.a" },
+          viewerMode: "interactive",
+          geometryOwnership: "passive",
+          viewport: { cols: 80, rows: 24 },
+        },
+        (event) => {
+          events.push(event);
+        },
+      );
+      if (connected.status !== "connected") throw new Error("terminal did not connect");
+      const layout = {
+        semanticWindowId: "window-a",
+        windowName: "main",
+        currentWindow: true,
+        cols: 132,
+        rows: 41,
+        zoomed: false,
+        paneBorderStatus,
+        panes: [
+          { pane: "pane.workspace.a", left: 0, top: 0, width: 132, height: 41, active: true },
+        ],
+      };
+      const rows = paneBorderStatus === "off" ? 41 : 40;
+      const canonical = {
+        deliveryRequestId: "delivery-a",
+        generation: "generation-a",
+        incarnation: "incarnation-a",
+        revision: 1,
+        stateHash: "0123456789abcdef",
+        cols: 132,
+        rows,
+        sourceEpoch: 1,
+        alternateScreen: false,
+        cursor: { x: 0, y: 0, hidden: false, style: "block" as const, blink: false },
+        gridRowsRead: rows,
+        gridCellsRead: 132 * rows,
+        fullGridWalks: 0,
+      };
+      listeners.onLayout?.(layout);
+      await listeners.onPaneEvent("pane.workspace.a", {
+        type: "seed-batch",
+        batch: { reset: { cols: 132, rows }, seed: new Uint8Array([65]), held: [], cursor: null },
+        canonical,
+      });
+      expect(events.find((event) => event.type === "state")?.sourceGrid).toEqual({
+        cols: 132,
+        rows,
+      });
+      events.length = 0;
+      listeners.onLayout?.(layout);
+      listeners.onLayoutSnapshot?.({ topologyEpoch: 2, layouts: [layout] });
+      expect(events).toEqual([]);
+      // A real content resize still reaches the renderer before its bytes.
+      await listeners.onPaneEvent("pane.workspace.a", {
+        type: "output",
+        bytes: new Uint8Array([66]),
+        canonical: { ...canonical, revision: 2, cols: 100, rows: 30 },
+      });
+      expect(events.map((event) => event.type)).toEqual(["geometry", "output"]);
+      expect(events[0]?.sourceGrid).toEqual({ cols: 100, rows: 30 });
+      events.length = 0;
+      await listeners.onPaneEvent("pane.workspace.a", {
+        type: "seed-batch",
+        batch: {
+          reset: { cols: 90, rows: 21 },
+          seed: new Uint8Array([67]),
+          held: [],
+          cursor: null,
+        },
+        canonical: { ...canonical, revision: 3, sourceEpoch: 2, cols: 90, rows: 20 },
+      });
+      expect(events[0]?.sourceGrid).toEqual({ cols: 90, rows: 20 });
+      listeners.onLayoutSnapshot?.({ topologyEpoch: 3, layouts: [layout] });
+      expect(events.map((event) => event.type)).toEqual(["geometry", "output"]);
+      connected.attachment.dispose();
+    },
+  );
 
   it.each([
     ["ok", { status: "ok" }],
@@ -184,7 +324,7 @@ describe("pane-stream terminal input decoder", () => {
 
   it.each([
     ["ok", 1, "owner", "none"],
-    ["geometry-authority-conflict", 2, "passive", "geometry-authority-conflict"],
+    ["geometry-authority-conflict", 1, "passive", "geometry-authority-conflict"],
   ] as const)(
     "carries production pane-stream resize outcome %s through the bridge into TerminalSurface",
     async (resizeOutcome, expectedConnections, expectedGeometryOwnership, expectedFailureCode) => {
@@ -266,8 +406,10 @@ describe("pane-stream terminal input decoder", () => {
       expect(root.querySelector(".terminal-surface")?.getAttribute("data-viewer-mode")).toBe(
         "interactive",
       );
-      expect(root.querySelector(".terminal-surface")?.getAttribute("data-geometry-ownership")).toBe(
-        expectedGeometryOwnership,
+      await vi.waitFor(() =>
+        expect(
+          root.querySelector(".terminal-surface")?.getAttribute("data-geometry-ownership"),
+        ).toBe(expectedGeometryOwnership),
       );
       expect(root.querySelector(".terminal-surface")?.getAttribute("data-preserves-frame")).toBe(
         "true",
@@ -306,6 +448,78 @@ describe("pane-stream terminal input decoder", () => {
     expect(chunks.length).toBeGreaterThan(1);
     expect(chunks.every((chunk) => chunk.length <= PANE_STREAM_MAX_INPUT_TEXT_CHARS)).toBe(true);
     expect(chunks.join("")).toBe(source);
+  });
+
+  it("claims shared focus once per foreground epoch without claiming input or geometry", async () => {
+    let focused = true;
+    vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
+    const requests: string[] = [];
+    const presence: string[] = [];
+    const listeners: PaneStreamSessionListeners[] = [];
+    const transport = createPaneStreamNativeTerminalTransport(
+      {
+        connect: async (_request, next) => {
+          listeners.push(next);
+          return {
+            status: "connected",
+            session: {
+              dispose: vi.fn(),
+              updatePresence: (state) => {
+                presence.push(state);
+              },
+              requestAuthority: async (authority) => {
+                requests.push(authority);
+                return null;
+              },
+            },
+          };
+        },
+      },
+      "daemon-a",
+    );
+    const connect = (pane: string) =>
+      transport.connect(
+        {
+          protocolVersion: TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+          target: { workspaceName: "workspace-a", semanticPaneId: pane },
+          viewerMode: "interactive",
+          geometryOwnership: "passive",
+          viewport: { cols: 80, rows: 24 },
+        },
+        () => undefined,
+      );
+    const first = await connect("pane.workspace.a");
+    const second = await connect("pane.workspace.b");
+    await Promise.resolve();
+    expect(requests).toEqual(["focus"]);
+    expect(presence).toEqual(["foreground"]);
+    listeners[0]!.onAuthoritySnapshot?.({
+      generation: "11111111-1111-4111-8111-111111111111",
+      session: "runtime-a",
+      revision: 2,
+      owners: { input: "other", focus: "other", geometry: "other" },
+      nativeGeometryYieldUntilMs: 0,
+      clients: [],
+    });
+    for (let index = 0; index < 100; index += 1) globalThis.dispatchEvent(new Event("focus"));
+    expect(requests).toEqual(["focus"]);
+    focused = false;
+    globalThis.dispatchEvent(new Event("blur"));
+    focused = true;
+    globalThis.dispatchEvent(new Event("focus"));
+    expect(requests).toEqual(["focus", "focus"]);
+    expect(presence).toEqual(["foreground", "background", "foreground"]);
+    if (first.status !== "connected" || second.status !== "connected")
+      throw new Error("not connected");
+    first.attachment.dispose();
+    await Promise.resolve();
+    expect(requests).toEqual(["focus", "focus", "focus"]);
+    second.attachment.dispose();
+    focused = false;
+    globalThis.dispatchEvent(new Event("blur"));
+    focused = true;
+    globalThis.dispatchEvent(new Event("focus"));
+    expect(requests).toHaveLength(3);
   });
 
   it("publishes one focus activity per foreground leader epoch and rearms on loss", async () => {

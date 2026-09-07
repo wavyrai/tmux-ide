@@ -11,6 +11,16 @@ const ANSI_ESCAPE =
   // eslint-disable-next-line no-control-regex
   /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\x2f#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/gu;
 
+// tmux renders the plain vertical resize arrow as one text cell. string-width
+// treats its default-text form as emoji; keep an explicit emoji selector wide.
+function captureCellWidth(text) {
+  let width = 0;
+  for (const { segment } of focusGraphemeSegmenter.segment(text)) {
+    width += segment === "↕" || segment === "↕︎" ? 1 : stringWidth(segment);
+  }
+  return width;
+}
+
 export function normalizeFocusAnsiFrame(ansiFrame) {
   if (typeof ansiFrame !== "string" || ansiFrame.length > 4 * 1024 * 1024)
     throw new Error("focus ANSI frame is unavailable");
@@ -43,7 +53,7 @@ export function decodeFocusFramebufferCapture(envelope) {
   )
     throw new Error("focus capture row contained an invalid terminal control");
   const normalizedAnsi = ansiLines.map((line, index) => {
-    const width = stringWidth(plainLines[index]);
+    const width = captureCellWidth(plainLines[index]);
     if (width > envelope.cols) throw new Error("focus capture row overflowed declared columns");
     return `${line}${" ".repeat(envelope.cols - width)}`;
   });
@@ -53,7 +63,7 @@ export function decodeFocusFramebufferCapture(envelope) {
     rows: envelope.rows,
     ansi: normalizedAnsi.join("\n"),
     plain: plainLines
-      .map((line) => `${line}${" ".repeat(envelope.cols - stringWidth(line))}`)
+      .map((line) => `${line}${" ".repeat(envelope.cols - captureCellWidth(line))}`)
       .join("\n"),
   });
 }
@@ -72,7 +82,7 @@ export function sliceFocusTerminalCells(line, left, width) {
   let column = 0;
   let result = "";
   for (const { segment } of focusGraphemeSegmenter.segment(line)) {
-    const segmentWidth = stringWidth(segment);
+    const segmentWidth = captureCellWidth(segment);
     const end = column + segmentWidth;
     if (end > left && column < left + width) {
       if (column < left || end > left + width) return null;
@@ -81,7 +91,7 @@ export function sliceFocusTerminalCells(line, left, width) {
     column = end;
     if (column >= left + width) break;
   }
-  return column >= left + width && stringWidth(result) === width ? result : null;
+  return column >= left + width && captureCellWidth(result) === width ? result : null;
 }
 
 export function inspectFocusFramebufferCapture({
@@ -129,7 +139,7 @@ export function inspectFocusFramebufferCapture({
       positions.push(
         Object.freeze({
           row,
-          left: stringWidth(lines[row].slice(0, markerCodeUnitLeft)),
+          left: captureCellWidth(lines[row].slice(0, markerCodeUnitLeft)),
           marker: marker === "●" ? "active" : marker === "○" ? "inactive" : "other",
         }),
       );
@@ -142,7 +152,7 @@ export function inspectFocusFramebufferCapture({
     positions: boundedPositions,
     positionsTruncated: positions.length > boundedPositions.length,
     frameRows: lines.length,
-    frameMaxWidth: lines.reduce((maximum, line) => Math.max(maximum, stringWidth(line)), 0),
+    frameMaxWidth: lines.reduce((maximum, line) => Math.max(maximum, captureCellWidth(line)), 0),
   });
   let reason = null;
   if (!projectedRect) reason = "projection-unavailable";
@@ -163,7 +173,7 @@ export function inspectFocusFramebufferCapture({
     projectedRect.firstBodyRow + projectedRect.bodyRows > lines.length ||
     lines
       .slice(projectedRect.firstBodyRow, projectedRect.firstBodyRow + projectedRect.bodyRows)
-      .some((line) => stringWidth(line) < projectedRect.left + projectedRect.width)
+      .some((line) => captureCellWidth(line) < projectedRect.left + projectedRect.width)
   )
     reason = "projected-body-clipped";
   return Object.freeze({

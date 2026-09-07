@@ -838,3 +838,69 @@ describe("PaneSurface OpenTUI renderer", () => {
     expectFrameBounds(setup.captureCharFrame(), 30, 8);
   });
 });
+
+it("repaints a smaller client's viewport when a cursor-only update crosses its bottom edge", async () => {
+  registerPaneSurface();
+  let cursor = { x: 18, y: 39, hidden: false, style: "block" as const, blink: false };
+  const origins: Array<{ x: number; y: number } | undefined> = [];
+  const presentations: Array<{ cursorY: number; visible: boolean; gridWalked: boolean }> = [];
+  const uninstall = installTuiPerformanceEventSink({
+    frame: () => undefined,
+    terminalPaint: () => undefined,
+    terminalDelivery: () => undefined,
+    terminalCursorPresentation: (event) => presentations.push(event),
+  });
+  const mirror: TerminalPaneRenderSource = {
+    supportsViewportOrigin: true,
+    scrollbackDepth: () => 0,
+    cursorState: () => cursor,
+    paneCanonicalIdentity: () => ({
+      generation: "g",
+      incarnation: "i",
+      revision: 1,
+      stateHash: "0a63b052b8f1d994",
+      cols: 77,
+      rows: 49,
+      sourceEpoch: 1,
+    }),
+    blitPane: (_pane, _buffers, _width, _height, _scroll, _fg, _bg, options) => {
+      origins.push(options.viewportOrigin);
+      return null;
+    },
+  };
+  let bump!: () => void;
+  const setup = await renderForTest(
+    () => {
+      const [version, setVersion] = createSignal(0);
+      bump = () => setVersion((value) => value + 1);
+      return (
+        <pane_surface
+          width={53}
+          height={40}
+          mirror={mirror}
+          paneId="pane"
+          paneFocused={true}
+          presentationVersion={version()}
+        />
+      );
+    },
+    { width: 53, height: 40 },
+  );
+  try {
+    await setup.renderOnce();
+    expect(origins.at(-1)).toEqual({ x: 0, y: 0 });
+    cursor = { ...cursor, y: 42 };
+    bump();
+    await setup.renderOnce();
+    expect(origins.at(-1)).toEqual({ x: 0, y: 9 });
+    expect(presentations.at(-1)).toMatchObject({ cursorY: 33, visible: true, gridWalked: true });
+    const count = origins.length;
+    cursor = { ...cursor, y: 43 };
+    bump();
+    await setup.renderOnce();
+    expect(origins).toHaveLength(count);
+    expect(presentations.at(-1)).toMatchObject({ cursorY: 34, visible: true, gridWalked: false });
+  } finally {
+    uninstall();
+  }
+});

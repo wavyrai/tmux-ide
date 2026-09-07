@@ -41,7 +41,9 @@ function rig(
     generation,
     mirror: {
       createIo: (_session, handlers) => {
-        const driver = new ScriptedChannelDriver(handlers);
+        const driver = new ScriptedChannelDriver(handlers, {
+          cursorLinesByPane: { "%2": "0 0 99 50" },
+        });
         drivers.push(driver);
         return driver.channel;
       },
@@ -499,7 +501,100 @@ describe("real SessionRuntime qualification", () => {
     await registry.dispose();
   });
 
-  it("preserves raw text then named-key ordering on the single control lane", async () => {
+  it("retires a failed pane for both clients and reopens it without replacing the sibling or control channel", async () => {
+    const { registry, drivers } = rig();
+    const clients = [
+      registry.connect("zz-sim", "opentui", "client:recovery-tui"),
+      registry.connect("zz-sim", "web", "client:recovery-web"),
+    ];
+    const sinks = clients.map(() => [] as TerminalDeliveryServerMessage[]);
+    const siblingSink: TerminalDeliveryServerMessage[] = [];
+    try {
+      const openings = clients.map((client, index) =>
+        client.openTerminalDelivery(
+          `delivery:recovery:${index}`,
+          `request:recovery:${index}`,
+          "pane.alpha",
+          OFFER,
+          (message) => sinks[index]!.push(message),
+        ),
+      );
+      await waitForDriver(drivers);
+      const driver = drivers[0]!;
+      await driver.settleUntil(() => sinks.every((sink) => sink.length > 0), "recovery seeds");
+      const connections = await Promise.all(openings);
+      const siblingOpening = clients[0]!.openTerminalDelivery(
+        "delivery:sibling",
+        "request:sibling",
+        "pane.beta",
+        OFFER,
+        (message) => siblingSink.push(message),
+      );
+      await driver.settleUntil(() => siblingSink.length > 0, "sibling seed");
+      const sibling = await siblingOpening;
+      const before = sinks.map(latest);
+      const siblingBefore = latest(siblingSink);
+      connections.forEach((connection, index) => connection.ack(ack(before[index]!)));
+      sibling.ack(ack(siblingBefore));
+      // Reject one recovery command, exercising the real channel failure,
+      // owner fault, and registry retirement path with healthy sibling output.
+      const send = driver.channel.send.bind(driver.channel);
+      let rejected = false;
+      driver.channel.send = (command, onReply) => {
+        if (!rejected && command === "refresh-client -A '%1:continue'") {
+          rejected = true;
+          onReply?.({ ok: false, lines: ["injected continue failure"] });
+        } else send(command, onReply);
+      };
+      driver.channel.feedLines("%pause %1");
+      await vi.waitFor(
+        () => {
+          driver.pump();
+          expect(sinks.every((sink) => latest(sink).frame === "tombstone")).toBe(true);
+        },
+        { timeout: 6000 },
+      );
+      expect(rejected).toBe(true);
+      expect(latest(siblingSink)).toBe(siblingBefore);
+      await Promise.all(connections.map((connection) => connection.close()));
+      const nextSinks = clients.map(() => [] as TerminalDeliveryServerMessage[]);
+      const reopening = clients.map((client, index) =>
+        client.openTerminalDelivery(
+          `delivery:replacement:${index}`,
+          `request:replacement:${index}`,
+          "pane.alpha",
+          OFFER,
+          (message) => nextSinks[index]!.push(message),
+        ),
+      );
+      await driver.settleUntil(
+        () => nextSinks.every((sink) => sink.length > 0),
+        "replacement seeds",
+      );
+      const replacements = await Promise.all(reopening);
+      const next = nextSinks.map(latest);
+      expect(next[0]!.frame).toBe("seed");
+      expect(next[0]!.incarnation).not.toBe(before[0]!.incarnation);
+      expect(next[0]!.canonicalRevision).toBeGreaterThan(before[0]!.canonicalRevision);
+      expect(next[1]!.incarnation).toBe(next[0]!.incarnation);
+      expect(next[1]!.canonicalStateHash).toBe(next[0]!.canonicalStateHash);
+      replacements.forEach((connection, index) => connection.ack(ack(next[index]!)));
+      driver.output("%2", "SIBLING");
+      await driver.settleUntil(
+        () => latest(siblingSink).canonicalRevision > siblingBefore.canonicalRevision,
+        "uninterrupted sibling output",
+      );
+      expect(latest(siblingSink).incarnation).toBe(siblingBefore.incarnation);
+      expect(drivers).toHaveLength(1);
+      expect(registry.qualificationSnapshot().controlChannels).toBe(1);
+      await Promise.all([...replacements.map((connection) => connection.close()), sibling.close()]);
+    } finally {
+      await Promise.all(clients.map((client) => client.close()));
+      await registry.dispose();
+    }
+  }, 10000);
+
+  it("preserves text, binary mouse bytes, then named-key ordering on the single control lane", async () => {
     const { registry, drivers } = rig();
     const client = registry.connect("zz-sim", "opentui", "client:input");
     const opening = client.subscribe("pane.alpha", () => undefined);
@@ -511,18 +606,25 @@ describe("real SessionRuntime qualification", () => {
     const subscription = await opening;
     const lease = client.acquireController();
     client.sendInput(lease, "pane.alpha", { kind: "text", data: "paste界" });
+    client.sendInput(lease, "pane.alpha", { kind: "bytes", data: "1b5b4d20ff80" });
     client.sendInput(lease, "pane.alpha", { kind: "key", data: "Enter" });
     await drivers[0]!.settleUntil(
       () =>
         drivers[0]!.channel.written.filter((command) => command.startsWith("send-keys")).length >=
-        2,
+        3,
       "ordered input commands",
     );
     const commands = drivers[0]!.channel.written.filter((command) =>
       command.startsWith("send-keys"),
     );
     expect(commands[0]).toContain("-H");
-    expect(commands[1]).toContain("Enter");
+    expect(commands[1]).toContain("-H 1b 5b 4d 20 ff 80");
+    expect(commands[2]).toContain("Enter");
+    client.releaseController(lease);
+    expect(() => client.sendInput(lease, "pane.alpha", { kind: "bytes", data: "ff" })).toThrow();
+    expect(
+      drivers[0]!.channel.written.filter((command) => command.startsWith("send-keys")),
+    ).toHaveLength(3);
     expect(registry.qualificationSnapshot().controlChannels).toBe(1);
     await subscription.close();
     await client.close();

@@ -1,4 +1,10 @@
+import type { PaneInteractionProjection } from "@tmux-ide/core";
 /* @jsxImportSource @opentui/solid */
+import {
+  clampTerminalViewportOrigin,
+  terminalLiveViewportOrigin,
+  reflowTerminalPosition,
+} from "../terminal-viewport.ts";
 import {
   For,
   Show,
@@ -6,6 +12,7 @@ import {
   createRenderEffect,
   createSignal,
   onCleanup,
+  untrack,
   type Accessor,
 } from "solid-js";
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
@@ -13,23 +20,39 @@ import type { SemanticThemeSnapshot, TerminalPaletteProjection } from "../theme.
 import type { PaneSurfaceHostFocusTransitionOwner } from "../pane-surface.tsx";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { PaneScopedTerminalSurface } from "./pane-scoped-terminal-surface.tsx";
-import { projectOpenTuiPaneFrames, type OpenTuiPaneFrame } from "./terminal-layout-projection.ts";
+import {
+  nativePaneGeometries,
+  projectOpenTuiPaneFrames,
+  type OpenTuiPaneFrame,
+} from "./terminal-layout-projection.ts";
 import {
   TerminalWindowStrip,
   type TerminalWindowTab,
 } from "../workspace/terminal-window-strip.tsx";
-import { PaneTitleBar } from "../workspace/terminal-pane-header.tsx";
+import { orderCells } from "../selection.ts";
+import { extractTerminalCopySelection } from "./terminal-copy-selection.ts";
 import {
-  PANE_ACTION_MENU_ITEMS,
-  PaneActionMenu,
-  type PaneMenuActionId,
-} from "../workspace/pane-action-menu.tsx";
+  createTerminalCopyCursor,
+  moveTerminalCopyCursor,
+  pageTerminalCopyCursor,
+  scrollTerminalCopyCursor,
+  type TerminalCopyCursor,
+  type TerminalCopyMotion,
+} from "./terminal-copy-cursor.ts";
+import {
+  createTerminalScrollback,
+  createTerminalWheelGesture,
+} from "../workspace/terminal-scrollback.ts";
+import { PaneTitleBar } from "../workspace/terminal-pane-header.tsx";
+import { PANE_ACTION_MENU_ITEMS, PaneActionMenu } from "../workspace/pane-action-menu.tsx";
+import type { PaneMenuKeyHandler } from "../workspace/pane-action-menu-model.ts";
+import { createApplicationPaneMenuOwner } from "./application-pane-menu-owner.ts";
 import {
   extractTerminalSelection,
   terminalMouseActionSupported,
   terminalGestureLeaseMatches,
   terminalSelectionCell,
-  terminalSgrMouse,
+  terminalMouseInput,
   type TerminalGestureLease,
   type TerminalGestureRuntimeIdentity,
   type TerminalSelectionRange,
@@ -62,7 +85,10 @@ type WorkspaceMouseEvent = {
   readonly x: number;
   readonly y: number;
   readonly modifiers?: { readonly shift: boolean; readonly alt: boolean; readonly ctrl: boolean };
-  readonly scroll?: { readonly direction?: "up" | "down" | "left" | "right" };
+  readonly scroll?: {
+    readonly direction?: "up" | "down" | "left" | "right";
+    readonly delta?: number;
+  };
   stopPropagation?: () => void;
 };
 
@@ -76,19 +102,11 @@ export interface ApplicationResizePointerIngress {
 }
 
 export type ApplicationPaneContextAction =
+  | "zoom-pane"
   | "rename-pane"
   | "split-right"
   | "split-down"
   | "close-pane";
-
-interface ApplicationPaneContextMenuState {
-  readonly paneId: string;
-  readonly displayName: string;
-  readonly left: number;
-  readonly top: number;
-  readonly selected: number;
-  readonly closeArmed: boolean;
-}
 
 export interface ApplicationMousePointerIngress {
   readonly gestureId: string;
@@ -124,6 +142,7 @@ export function beginApplicationMouseIngress(
 }
 
 export interface ApplicationTerminalWorkspaceProps {
+  readonly paneInteractions?: Accessor<ReadonlyMap<string, PaneInteractionProjection>>;
   readonly layout: Accessor<OpenTuiWorkspaceLayoutSnapshot>;
   readonly adapter: PaneScopedTerminalAdapter;
   readonly rendererEpoch: number;
@@ -139,6 +158,8 @@ export interface ApplicationTerminalWorkspaceProps {
   readonly focusedPane: string | null;
   /** Physical host focus is independent from which retained window is current. */
   readonly rendererFocused?: boolean;
+  /** Higher-level palette/rename overlays suspend pane menu ownership. */
+  readonly interactive?: boolean;
   readonly theme: SemanticThemeSnapshot;
   readonly palette: TerminalPaletteProjection;
   /** Daemon-authored semantic agent state, keyed by durable pane identity. */
@@ -165,6 +186,7 @@ export interface ApplicationTerminalWorkspaceProps {
       | Readonly<{
           kind: "application-mouse";
           data: string;
+          dataEncoding?: "hex";
           action: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down";
           column: number;
           row: number;
@@ -188,7 +210,11 @@ export interface ApplicationTerminalWorkspaceProps {
     }>,
   ) => boolean;
   readonly onSelectionCopyOwner?: (copy: (() => boolean) | null) => void;
-  readonly onSelectionKeyOwner?: (handle: ((name: string) => boolean) | null) => void;
+  readonly onSelectionKeyOwner?: (
+    handle: PaneMenuKeyHandler | null,
+    ownsInput?: () => boolean,
+    beforeTerminalInput?: () => void,
+  ) => void;
   readonly onWindowPresented?: (
     semanticWindowId: string,
     paneId: string,
@@ -198,7 +224,7 @@ export interface ApplicationTerminalWorkspaceProps {
 
 const EMPTY_AGENT_INDICATORS: ReadonlyMap<string, ApplicationTerminalAgentIndicator> = new Map();
 
-const PANE_CONTEXT_MENU_WIDTH = 30;
+const PANE_CONTEXT_MENU_WIDTH = 36;
 
 export const ACTIVE_RESIZE_GUIDE_CELL = Object.freeze({ cols: "╎", rows: "╌" });
 
@@ -218,10 +244,14 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   const projectedFrames = createMemo(
     () =>
       layout().windows.flatMap((window) =>
-        projectOpenTuiPaneFrames(window, {
-          width: props.width,
-          height: props.height,
-        }).map((frame) => Object.freeze({ ...frame, visible: window.currentWindow })),
+        projectOpenTuiPaneFrames(
+          window,
+          {
+            width: props.width,
+            height: props.height,
+          },
+          props.focusedPane,
+        ).map((frame) => Object.freeze({ ...frame, visible: window.currentWindow })),
       ),
     undefined,
     {
@@ -236,11 +266,62 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
             frame.width === candidate.width &&
             frame.height === candidate.height &&
             frame.contentHeight === candidate.contentHeight &&
+            frame.nativeHeight === candidate.nativeHeight &&
+            frame.nativeWidth === candidate.nativeWidth &&
+            frame.compactPosition === candidate.compactPosition &&
             frame.active === candidate.active &&
             frame.visible === candidate.visible
           );
         }),
     },
+  );
+  createRenderEffect(() => {
+    const adapter = props.adapter;
+    const geometries = layout().windows.flatMap(nativePaneGeometries);
+    untrack(() => adapter.setNativePaneGeometries?.(geometries));
+  });
+  const liveViewport = (paneId: string) => {
+    const frame = projectedFrames().find((frame) => frame.paneId === paneId);
+    const snapshot = props.adapter.paneSelectionSnapshot(paneId);
+    return frame && snapshot && props.adapter.renderSource.supportsViewportOrigin
+      ? terminalLiveViewportOrigin(snapshot, { cols: frame.width, rows: frame.contentHeight })
+      : { x: 0, y: 0 };
+  };
+  const wheelGesture = createTerminalWheelGesture();
+  const scrollback = createTerminalScrollback(
+    props.adapter,
+    liveViewport,
+    (paneId, origin) => {
+      const frame = projectedFrames().find((frame) => frame.paneId === paneId);
+      const snapshot = props.adapter.paneSelectionSnapshot(paneId);
+      return frame && snapshot
+        ? clampTerminalViewportOrigin(
+            snapshot,
+            { cols: frame.width, rows: frame.contentHeight },
+            origin,
+            snapshot.history.length,
+          )
+        : origin;
+    },
+    (paneId) => props.adapter.retainPaneView?.(paneId) ?? null,
+  );
+  const selectionViewport = (paneId: string, frame: OpenTuiPaneFrame) =>
+    props.adapter.renderSource.supportsViewportOrigin
+      ? {
+          cols: frame.width,
+          rows: frame.contentHeight,
+          origin: scrollback.origin(paneId) ?? liveViewport(paneId),
+        }
+      : undefined;
+  onCleanup(scrollback.dispose);
+  createRenderEffect(() =>
+    scrollback.retain(
+      new Set(
+        layout().windows.flatMap((window) =>
+          window.panes.flatMap((pane) => (pane.pane ? [pane.pane] : [])),
+        ),
+      ),
+    ),
   );
   const visibleFrames = createMemo(() => projectedFrames().filter((frame) => frame.visible));
   const retainedWindowIds = createMemo(
@@ -313,8 +394,77 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     lease: TerminalGestureLease;
   }> | null>(null);
   const [selectModePane, setSelectModePane] = createSignal<string | null>(null);
-  const [paneContextMenu, setPaneContextMenu] =
-    createSignal<ApplicationPaneContextMenuState | null>(null);
+  const [retainedSelectionPane, setRetainedSelectionPane] = createSignal<string | null>(null);
+  const [keyboardCopy, setKeyboardCopy] = createSignal<{
+    paneId: string;
+    cursor: TerminalCopyCursor;
+  } | null>(null);
+  const copyModeFor = (paneId: string) =>
+    layout().windows.find((window) => window.panes.some((pane) => pane.pane === paneId))?.modeKeys;
+  let releaseSelectionView: (() => void) | null = null;
+  let selectionViewLease: TerminalGestureLease | null = null;
+  const endSelectionView = () => {
+    const release = releaseSelectionView;
+    releaseSelectionView = null;
+    selectionViewLease = null;
+    selecting = null;
+    setRetainedSelectionPane(null);
+    setKeyboardCopy(null);
+    setSelection(null);
+    setCommittedSelection(null);
+    setSelectModePane(null);
+    release?.();
+  };
+  const retainSelectionView = (paneId: string) => {
+    if (retainedSelectionPane() === paneId) return;
+    endSelectionView();
+    releaseSelectionView = props.adapter.retainPaneView?.(paneId) ?? null;
+    if (releaseSelectionView) {
+      const frame = projectedFrames().find((frame) => frame.paneId === paneId && frame.visible);
+      selectionViewLease = frame ? captureGestureLease(paneId, frame) : null;
+      if (selectionViewLease) {
+        setRetainedSelectionPane(paneId);
+        scrollback.move(paneId, 0);
+      } else endSelectionView();
+    }
+  };
+  const paneMenu = createApplicationPaneMenuOwner({
+    rendererEpoch: () => props.rendererEpoch,
+    paneVisible: (paneId) =>
+      props.interactive !== false && visibleFrames().some((frame) => frame.paneId === paneId),
+    onAction: (paneId, id, displayName) => {
+      if (id === "select-text") {
+        retainSelectionView(paneId);
+        setSelectModePane(paneId);
+        setSelection(null);
+        setCommittedSelection(null);
+        const mode = copyModeFor(paneId);
+        const snapshot = props.adapter.paneSelectionSnapshot(paneId);
+        const frame = projectedFrames().find((frame) => frame.paneId === paneId);
+        const lease = frame ? captureGestureLease(paneId, frame) : null;
+        if (
+          mode &&
+          snapshot &&
+          lease &&
+          props.adapter.renderSource.paneCanonicalIdentity?.(paneId)?.viewCols !== undefined
+        ) {
+          selectionViewLease = lease;
+          setRetainedSelectionPane(paneId);
+          const origin = scrollback.origin(paneId) ?? liveViewport(paneId);
+          setKeyboardCopy({
+            paneId,
+            cursor: createTerminalCopyCursor(snapshot, mode, {
+              ...origin,
+              cols: frame!.width,
+              rows: frame!.contentHeight,
+            }),
+          });
+          scrollback.move(paneId, 0);
+        }
+      } else props.onPaneContextAction?.(paneId, id, displayName);
+    },
+  });
+  const paneContextMenu = paneMenu.state;
   let selecting: {
     readonly paneId: string;
     readonly anchor: TerminalSelectionRange["start"];
@@ -340,11 +490,10 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     y: event.y - (props.originY ?? 0) - topOffset(),
   });
   const paneContextMenuWidth = () => Math.max(1, Math.min(PANE_CONTEXT_MENU_WIDTH, props.width));
-  const paneContextMenuHeight = () => PANE_ACTION_MENU_ITEMS.length + 3;
+  const paneContextMenuHeight = () => PANE_ACTION_MENU_ITEMS.length + 4;
   const openPaneContextMenu = (
     paneId: string,
     event: Pick<WorkspaceMouseEvent, "x" | "y">,
-    selected = 0,
   ): void => {
     props.onSelectPane(paneId);
     const pane = layout()
@@ -355,31 +504,12 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     const width = paneContextMenuWidth();
     const height = paneContextMenuHeight();
     const bottom = topOffset() + props.height;
-    setPaneContextMenu({
+    paneMenu.open({
       paneId,
       displayName: pane?.displayName?.trim() || paneId,
       left: Math.max(0, Math.min(localX, props.width - width)),
       top: localY + 1 + height <= bottom ? localY + 1 : Math.max(topOffset(), localY - height),
-      selected: Math.max(0, Math.min(PANE_ACTION_MENU_ITEMS.length - 1, selected)),
-      closeArmed: false,
     });
-  };
-  const activatePaneContextItem = (index: number): void => {
-    const menu = paneContextMenu();
-    const item = PANE_ACTION_MENU_ITEMS[index];
-    if (!menu || !item) return;
-    if (item.id === "close-pane" && !menu.closeArmed) {
-      setPaneContextMenu({ ...menu, selected: index, closeArmed: true });
-      return;
-    }
-    setPaneContextMenu(null);
-    if (item.id === "select-text") {
-      setSelectModePane(menu.paneId);
-      setSelection(null);
-      setCommittedSelection(null);
-      return;
-    }
-    props.onPaneContextAction?.(menu.paneId, item.id, menu.displayName);
   };
   const globalPreview = (preview: ApplicationPaneResizePreview): ApplicationPaneResizePreview =>
     Object.freeze({
@@ -447,8 +577,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       !identity ||
       !Number.isSafeInteger(identity.historyTrim) ||
       !snapshot ||
-      identity.cols !== snapshot.cols ||
-      identity.rows !== snapshot.rows
+      (identity.viewCols ?? identity.cols) !== snapshot.cols ||
+      (identity.viewRows ?? identity.rows) !== snapshot.rows
     )
       return null;
     return Object.freeze({
@@ -526,20 +656,32 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     if (!gestureLeaseCurrent(lease)) return false;
     const snapshot = lease.snapshot;
     if (!terminalMouseActionSupported(snapshot, action)) return false;
-    const data = terminalSgrMouse({
-      action,
-      column: cell.col,
-      row: cell.row,
-      ...(button === undefined ? {} : { button }),
-      ...modifiers,
-    });
-    if (!data) return false;
+    const origin = props.adapter.renderSource.supportsViewportOrigin
+      ? terminalLiveViewportOrigin(snapshot, {
+          cols: lease.frame.width,
+          rows: lease.frame.contentHeight,
+        })
+      : { x: 0, y: 0 };
+    const column = cell.col + origin.x;
+    const row = cell.row + origin.y;
+    const encoded = terminalMouseInput(
+      {
+        action,
+        column,
+        row,
+        ...(button === undefined ? {} : { button }),
+        ...modifiers,
+      },
+      snapshot.modes.mouseEncoding,
+    );
+    if (!encoded) return false;
     props.onTerminalInput?.(lease.paneId, {
       kind: "application-mouse",
-      data,
+      data: encoded.data,
+      ...(encoded.kind === "bytes" ? { dataEncoding: "hex" as const } : {}),
       action,
-      column: cell.col,
-      row: cell.row,
+      column,
+      row,
       button: button ?? null,
       modifiers: Object.freeze({
         shift: modifiers?.shift === true,
@@ -551,6 +693,30 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     return true;
   };
   const copySelection = (): boolean => {
+    const keyboard = keyboardCopy();
+    if (keyboard) {
+      if (
+        !selectionViewLease ||
+        !gestureLeaseCurrent(selectionViewLease) ||
+        !keyboard.cursor.anchor
+      )
+        return false;
+      const copied = extractTerminalCopySelection(
+        keyboard.cursor.snapshot,
+        keyboard.cursor.anchor,
+        keyboard.cursor.position,
+        keyboard.cursor.mode,
+      );
+      return (
+        copied !== null &&
+        props.onCopyText?.(copied.text, {
+          semanticPaneId: keyboard.paneId,
+          bytes: copied.bytes,
+          start: keyboard.cursor.anchor,
+          end: keyboard.cursor.position,
+        }) === true
+      );
+    }
     const committed = committedSelection();
     if (!committed || !gestureLeaseCurrent(committed.lease)) return false;
     return (
@@ -565,58 +731,272 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   createRenderEffect(() => {
     props.terminalGestureRuntime?.();
     projectedFrames();
+    const currentCopy = keyboardCopy();
+    const keyMode = currentCopy && copyModeFor(currentCopy.paneId);
+    if (currentCopy && keyMode && keyMode !== currentCopy.cursor.mode)
+      setKeyboardCopy({
+        ...currentCopy,
+        cursor: { ...currentCopy.cursor, mode: keyMode, anchor: null },
+      });
     for (const paneId of retainedPaneIds()) props.adapter.paneVersion(paneId);
-    if (selecting && !gestureLeaseCurrent(selecting.lease)) {
-      selecting = null;
-      setSelection(null);
-      setCommittedSelection(null);
-      setSelectModePane(null);
+    if (selectionViewLease && !gestureLeaseCurrent(selectionViewLease)) {
+      const previous = selectionViewLease;
+      const frame = projectedFrames().find(
+        (frame) => frame.paneId === previous.paneId && frame.visible,
+      );
+      const next = frame ? captureGestureLease(previous.paneId, frame) : null;
+      // A geometry-only change clears native copy-mode selection, but leaves
+      // the frozen backing content and its source identity available to read.
+      if (
+        next &&
+        next.runtime.daemonGeneration === previous.runtime.daemonGeneration &&
+        next.runtime.clientGeneration === previous.runtime.clientGeneration &&
+        next.runtime.connection === previous.runtime.connection &&
+        next.runtime.client === previous.runtime.client &&
+        next.runtime.adapter === previous.runtime.adapter &&
+        next.runtime.rendererEpoch === previous.runtime.rendererEpoch &&
+        next.sourceEpoch === previous.sourceEpoch &&
+        next.canonicalIdentity.generation === previous.canonicalIdentity.generation &&
+        next.canonicalIdentity.incarnation === previous.canonicalIdentity.incarnation &&
+        next.canonicalIdentity.revision === previous.canonicalIdentity.revision &&
+        next.canonicalIdentity.stateHash === previous.canonicalIdentity.stateHash
+      ) {
+        selectionViewLease = next;
+        const keyboard = keyboardCopy();
+        if (keyboard) {
+          const old = keyboard.cursor;
+          const mapped = reflowTerminalPosition(
+            { ...old.snapshot, modes: { ...old.snapshot.modes, alternateScreen: false } },
+            { ...next.snapshot, modes: { ...next.snapshot.modes, alternateScreen: false } },
+            { x: old.position.col, y: old.position.row - old.snapshot.history.length },
+          );
+          const position = mapped
+            ? { col: mapped.x, row: mapped.y + next.snapshot.history.length }
+            : {
+                col: next.snapshot.cursor.x,
+                row: next.snapshot.history.length + next.snapshot.cursor.y,
+              };
+          setKeyboardCopy({
+            ...keyboard,
+            cursor: { ...old, snapshot: next.snapshot, position, anchor: null },
+          });
+        }
+        selecting = null;
+        setSelection(null);
+        setCommittedSelection(null);
+      } else endSelectionView();
     }
+    if (selecting && !gestureLeaseCurrent(selecting.lease)) endSelectionView();
     if (forwardedPointer) {
       const refreshed = refreshApplicationMouseLease(forwardedPointer.lease);
       if (refreshed) forwardedPointer.lease = refreshed;
       else forwardedPointer = null;
     }
     const committed = committedSelection();
-    if (committed && !gestureLeaseCurrent(committed.lease)) {
-      setSelection(null);
-      setCommittedSelection(null);
-    }
+    if (committed && !gestureLeaseCurrent(committed.lease)) endSelectionView();
   });
   props.onSelectionCopyOwner?.(copySelection);
-  const handleSelectionKey = (name: string): boolean => {
-    const menu = paneContextMenu();
-    if (!menu) return false;
-    const activate = (id: PaneMenuActionId) =>
-      activatePaneContextItem(PANE_ACTION_MENU_ITEMS.findIndex((item) => item.id === id));
-    if (name === "escape") setPaneContextMenu(null);
-    else if (name === "up" || name === "k")
-      setPaneContextMenu({
-        ...menu,
-        selected:
-          (menu.selected - 1 + PANE_ACTION_MENU_ITEMS.length) % PANE_ACTION_MENU_ITEMS.length,
-        closeArmed: false,
-      });
-    else if (name === "down" || name === "j")
-      setPaneContextMenu({
-        ...menu,
-        selected: (menu.selected + 1) % PANE_ACTION_MENU_ITEMS.length,
-        closeArmed: false,
-      });
-    else if (name === "r") activate("rename-pane");
-    else if (name === "right") activate("split-right");
-    else if (name === "d") activate("split-down");
-    else if (name === "x") activate("close-pane");
-    else if (name === "return" || name === "enter") activatePaneContextItem(menu.selected);
-    else return false;
+  const handlePaneMenuKey: PaneMenuKeyHandler = (name, event) => {
+    if (props.interactive === false) return false;
+    if (paneMenu.handleKey(name, event)) return true;
+    const focused = props.focusedPane;
+    const keyboard = keyboardCopy();
+    if (keyboard && keyboard.paneId === focused) {
+      if (["f1", "f2", "f5"].includes(name) || (event?.ctrl && name === "q")) return false;
+      if (event?.eventType === "release") return true;
+      const cancel = () => {
+        endSelectionView();
+        wheelGesture.reset();
+        scrollback.live(keyboard.paneId);
+      };
+      const mode = keyboard.cursor.mode;
+      if (
+        (name === "q" && !event?.ctrl && !event?.meta) ||
+        (event?.ctrl && name === "c") ||
+        (mode === "emacs" && name === "escape")
+      ) {
+        cancel();
+        return true;
+      }
+      if (
+        (mode === "vi" && name === "escape") ||
+        (mode === "emacs" && event?.ctrl && name === "g")
+      ) {
+        setKeyboardCopy({ ...keyboard, cursor: { ...keyboard.cursor, anchor: null } });
+        return true;
+      }
+      if (
+        (mode === "vi" && ["enter", "return"].includes(name)) ||
+        (mode === "emacs" && event?.ctrl && name === "w")
+      ) {
+        copySelection();
+        cancel();
+        return true;
+      }
+      if ((name === "space" || name === " ") && (mode === "vi" ? !event?.ctrl : event?.ctrl)) {
+        setKeyboardCopy({
+          ...keyboard,
+          cursor: { ...keyboard.cursor, anchor: { ...keyboard.cursor.position } },
+        });
+        return true;
+      }
+      const pageDirection =
+        name === "pageup" || (mode === "vi" && event?.ctrl && ["b", "u"].includes(name))
+          ? -1
+          : name === "pagedown" ||
+              (mode === "vi" && event?.ctrl && ["f", "d"].includes(name)) ||
+              (mode === "emacs" &&
+                ((event?.ctrl && name === "v") || (!event?.ctrl && name === "space")))
+            ? 1
+            : 0;
+      if (pageDirection) {
+        const frame = visibleFrames().find((frame) => frame.paneId === keyboard.paneId);
+        if (frame) {
+          const origin = scrollback.origin(keyboard.paneId) ?? liveViewport(keyboard.paneId);
+          const half = mode === "vi" && event?.ctrl && ["u", "d"].includes(name);
+          const page = pageTerminalCopyCursor(
+            keyboard.cursor,
+            origin.y,
+            frame.contentHeight,
+            pageDirection,
+            half,
+          );
+          scrollback.seek(keyboard.paneId, { ...origin, y: page.originY });
+          setKeyboardCopy({ ...keyboard, cursor: page.cursor });
+        }
+        return true;
+      }
+      let motion: TerminalCopyMotion | undefined;
+      if (
+        !event?.ctrl &&
+        !event?.meta &&
+        ["left", "right", "up", "down", "home", "end"].includes(name)
+      )
+        motion = name as TerminalCopyMotion;
+      if (!event?.ctrl && !event?.meta && mode === "vi")
+        motion ??= ({ h: "left", j: "down", k: "up", l: "right", "0": "home", $: "end" } as const)[
+          name as "h"
+        ];
+      if (event?.ctrl && mode === "emacs")
+        motion ??= ({ b: "left", f: "right", p: "up", n: "down", a: "home", e: "end" } as const)[
+          name as "b"
+        ];
+      if (motion) {
+        const cursor = moveTerminalCopyCursor(keyboard.cursor, motion);
+        setKeyboardCopy({ ...keyboard, cursor });
+        const frame = visibleFrames().find((frame) => frame.paneId === keyboard.paneId);
+        if (frame) {
+          const origin = scrollback.origin(keyboard.paneId) ?? liveViewport(keyboard.paneId);
+          const x = Math.min(cursor.snapshot.cols - 1, cursor.position.col);
+          const y = cursor.position.row - cursor.snapshot.history.length;
+          scrollback.seek(keyboard.paneId, {
+            x: x < origin.x ? x : x >= origin.x + frame.width ? x - frame.width + 1 : origin.x,
+            y:
+              y < origin.y
+                ? y
+                : y >= origin.y + frame.contentHeight
+                  ? y - frame.contentHeight + 1
+                  : origin.y,
+          });
+        }
+      }
+      return true;
+    }
+    if (focused) {
+      if (name === "escape" && (retainedSelectionPane() || selectModePane())) {
+        const paneId = retainedSelectionPane() ?? selectModePane()!;
+        endSelectionView();
+        wheelGesture.reset();
+        scrollback.live(paneId);
+        return true;
+      }
+      if (
+        (retainedSelectionPane() === focused ||
+          (scrollback.offset(focused) > 0 &&
+            props.adapter.renderSource.paneCanonicalIdentity?.(focused)?.viewCols !== undefined)) &&
+        !event?.ctrl &&
+        !event?.meta
+      ) {
+        const page = Math.max(
+          1,
+          (visibleFrames().find((frame) => frame.paneId === focused)?.contentHeight ?? 10) - 1,
+        );
+        const delta =
+          name === "up"
+            ? 1
+            : name === "down"
+              ? -1
+              : name === "pageup"
+                ? page
+                : name === "pagedown"
+                  ? -page
+                  : name === "home"
+                    ? Infinity
+                    : name === "end"
+                      ? -Infinity
+                      : null;
+        if (delta !== null) {
+          scrollback.move(focused, delta);
+          return true;
+        }
+      }
+      if (event?.shift && (name === "pageup" || name === "pagedown")) {
+        scrollback.move(
+          focused,
+          (name === "pageup" ? 1 : -1) *
+            Math.max(
+              1,
+              (visibleFrames().find((frame) => frame.paneId === focused)?.contentHeight ?? 10) - 1,
+            ),
+        );
+        return true;
+      }
+      if (name === "escape" && scrollback.offset(focused) > 0) {
+        wheelGesture.reset();
+        scrollback.live(focused);
+        return true;
+      }
+    }
+    if (
+      name !== "f10" ||
+      !event?.shift ||
+      event.ctrl ||
+      event.meta ||
+      event.repeated ||
+      (event.eventType && event.eventType !== "press")
+    )
+      return false;
+    const frame = visibleFrames().find((frame) => frame.paneId === props.focusedPane);
+    if (!frame) return false;
+    openPaneContextMenu(frame.paneId, {
+      x: (props.originX ?? 0) + frame.left + Math.max(0, frame.width - 1),
+      y: (props.originY ?? 0) + frame.top + topOffset(),
+    });
     return true;
   };
-  props.onSelectionKeyOwner?.(handleSelectionKey);
+  props.onSelectionKeyOwner?.(
+    handlePaneMenuKey,
+    () => props.interactive !== false && (paneMenu.ownsInput() || keyboardCopy() !== null),
+    () => {
+      // Called only after global shortcuts, copy, and local navigation decline
+      // the event, immediately before terminal key or paste delivery.
+      const paneId = retainedSelectionPane() ?? props.focusedPane;
+      wheelGesture.reset();
+      endSelectionView();
+      if (paneId) scrollback.live(paneId);
+    },
+  );
   onCleanup(() => {
+    endSelectionView();
     props.onSelectionCopyOwner?.(null);
     props.onSelectionKeyOwner?.(null);
   });
   const routePointer = (event: WorkspaceMouseEvent): void => {
+    if (event.type === "down") wheelGesture.reset();
+    if (paneMenu.ownsInput()) {
+      event.stopPropagation?.();
+      return;
+    }
     const applicationAction =
       event.type === "down"
         ? "down"
@@ -708,7 +1088,13 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       }
       const hit = paneContentAt(point);
       const snapshot = hit ? props.adapter.paneSelectionSnapshot(hit.frame.paneId) : null;
-      if (hit && snapshot && selectModePane() !== hit.frame.paneId) {
+      if (
+        hit &&
+        snapshot &&
+        scrollback.offset(hit.frame.paneId) === 0 &&
+        selectModePane() !== hit.frame.paneId &&
+        retainedSelectionPane() !== hit.frame.paneId
+      ) {
         const lease = captureGestureLease(hit.frame.paneId, hit.frame);
         if (
           lease &&
@@ -724,14 +1110,55 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       const snapshot = hit ? props.adapter.paneSelectionSnapshot(hit.frame.paneId) : null;
       const lease = hit ? captureGestureLease(hit.frame.paneId, hit.frame) : null;
       const action = event.scroll?.direction === "up" ? "wheel-up" : "wheel-down";
+      if (!hit || !snapshot) {
+        wheelGesture.reset();
+        return;
+      }
+      const identity = props.adapter.renderSource.paneCanonicalIdentity?.(hit.frame.paneId);
+      const motion = wheelGesture.consume(
+        JSON.stringify([
+          hit.frame.paneId,
+          identity?.generation,
+          identity?.incarnation,
+          identity?.sourceEpoch,
+        ]),
+        action === "wheel-up" ? 1 : -1,
+        event.scroll?.delta,
+      );
       if (
         hit &&
         snapshot &&
         lease &&
+        !motion.local &&
+        scrollback.offset(hit.frame.paneId) === 0 &&
+        !event.modifiers?.shift &&
         selectModePane() !== hit.frame.paneId &&
+        retainedSelectionPane() !== hit.frame.paneId &&
         forwardMouse(lease, action, hit, undefined, event.modifiers, applicationIngress())
       )
         event.stopPropagation?.();
+      else if (hit && snapshot) {
+        wheelGesture.retainLocal();
+        event.stopPropagation?.();
+        if (motion.lines === 0) return;
+        const keyboard = keyboardCopy();
+        if (keyboard?.paneId === hit.frame.paneId) {
+          const origin = scrollback.origin(hit.frame.paneId) ?? liveViewport(hit.frame.paneId);
+          const next = scrollTerminalCopyCursor(
+            keyboard.cursor,
+            origin.y,
+            hit.frame.contentHeight,
+            action === "wheel-up" ? -1 : 1,
+            Math.abs(motion.lines),
+          );
+          scrollback.seek(hit.frame.paneId, { ...origin, y: next.originY });
+          setKeyboardCopy({ ...keyboard, cursor: next.cursor });
+        } else scrollback.move(hit.frame.paneId, motion.lines);
+        selecting = null;
+        setSelection(null);
+        setCommittedSelection(null);
+        event.stopPropagation?.();
+      }
       return;
     }
     if (event.type === "out") {
@@ -775,7 +1202,13 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         const cell = clampedPaneCell(active.frame, snapshot, point);
         const head =
           gestureLeaseCurrent(active.lease) && cell
-            ? terminalSelectionCell(snapshot, cell.col, cell.row)
+            ? terminalSelectionCell(
+                snapshot,
+                cell.col,
+                cell.row,
+                scrollback.offset(active.paneId),
+                selectionViewport(active.paneId, active.frame),
+              )
             : null;
         if (
           !snapshot ||
@@ -783,8 +1216,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           !active.moved ||
           (head.row === active.anchor.row && head.col === active.anchor.col)
         ) {
-          setSelection(null);
-          setCommittedSelection(null);
+          endSelectionView();
           return;
         }
         const completed = Object.freeze({ paneId: active.paneId, start: active.anchor, end: head });
@@ -827,7 +1259,13 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         const cell = clampedPaneCell(active.frame, snapshot, point);
         const head =
           gestureLeaseCurrent(active.lease) && cell
-            ? terminalSelectionCell(snapshot, cell.col, cell.row)
+            ? terminalSelectionCell(
+                snapshot,
+                cell.col,
+                cell.row,
+                scrollback.offset(active.paneId),
+                selectionViewport(active.paneId, active.frame),
+              )
             : null;
         if (head) {
           active.moved ||= head.row !== active.anchor.row || head.col !== active.anchor.col;
@@ -837,6 +1275,12 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       }
       const hit = paneContentAt(point);
       if (!hit) return;
+      if (
+        event.type === "down" &&
+        retainedSelectionPane() &&
+        retainedSelectionPane() !== hit.frame.paneId
+      )
+        endSelectionView();
       const snapshot = props.adapter.paneSelectionSnapshot(hit.frame.paneId);
       if (!snapshot) return;
       const lease = captureGestureLease(hit.frame.paneId, hit.frame);
@@ -848,12 +1292,15 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         return;
       }
       const localSelection =
-        selectModePane() === hit.frame.paneId || event.modifiers?.shift === true;
+        scrollback.offset(hit.frame.paneId) > 0 ||
+        selectModePane() === hit.frame.paneId ||
+        retainedSelectionPane() === hit.frame.paneId ||
+        event.modifiers?.shift === true;
       const forward = appMouse && !localSelection;
       if (event.type === "down") {
         event.stopPropagation?.();
         props.onSelectPane(hit.frame.paneId);
-        setPaneContextMenu(null);
+        paneMenu.dismiss();
         if (forward) {
           setSelection(null);
           setCommittedSelection(null);
@@ -869,8 +1316,16 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           };
           return;
         }
-        const anchor = terminalSelectionCell(snapshot, hit.col, hit.row);
+        const anchor = terminalSelectionCell(
+          snapshot,
+          hit.col,
+          hit.row,
+          scrollback.offset(hit.frame.paneId),
+          selectionViewport(hit.frame.paneId, hit.frame),
+        );
         if (!anchor) return;
+        setKeyboardCopy(null);
+        retainSelectionView(hit.frame.paneId);
         selecting = {
           paneId: hit.frame.paneId,
           anchor,
@@ -884,7 +1339,13 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       }
       if (event.type === "drag" && selecting?.paneId === hit.frame.paneId) {
         event.stopPropagation?.();
-        const head = terminalSelectionCell(snapshot, hit.col, hit.row);
+        const head = terminalSelectionCell(
+          snapshot,
+          hit.col,
+          hit.row,
+          scrollback.offset(hit.frame.paneId),
+          selectionViewport(hit.frame.paneId, hit.frame),
+        );
         if (head) {
           selecting.moved ||=
             head.row !== selecting.anchor.row || head.col !== selecting.anchor.col;
@@ -1018,11 +1479,20 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
               <PaneTitleBar
                 theme={props.theme}
                 paneId={frame().paneId}
-                title={displayTitle()}
+                title={`${frame().compactPosition ? `Compact ${frame().compactPosition} · Ctrl+O: next · ` : ""}${displayTitle()}${scrollback.offset(frame().paneId) > 0 ? ` ↑${scrollback.offset(frame().paneId)} · Esc: live` : ""}`}
+                zoomed={layout().windows.some(
+                  (window) =>
+                    window.zoomed && window.panes.some((pane) => pane.pane === frame().paneId),
+                )}
+                onRestoreIntent={() =>
+                  props.onPaneContextAction?.(frame().paneId, "zoom-pane", displayTitle())
+                }
                 width={frame().width}
                 selected={props.focusedPane === frame().paneId}
                 terminalFocused={terminalSurfaceFocused(frame())}
                 keyboardFocused={props.focusedPane === frame().paneId}
+                menuOpen={paneContextMenu()?.paneId === frame().paneId}
+                interaction={props.paneInteractions?.().get(frame().paneId)}
                 activity={indicator()?.activity}
                 attention={indicator()?.attention}
                 menuAnchor={{
@@ -1049,16 +1519,42 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                   terminalPalette={props.palette}
                   searchHl={props.palette.searchHighlight}
                   searchCur={props.palette.searchCurrent}
-                  scrollOffset={0}
+                  scrollOffset={scrollback.offset(frame().paneId)}
+                  viewportOrigin={scrollback.origin(frame().paneId)}
                   paneFocused={terminalSurfaceFocused(frame())}
                   active={() => frame().visible}
                   presentationGeneration={presentationGeneration()}
                   sourceEpoch={props.rendererEpoch}
                   hostFocusTransitionOwner={props.hostFocusTransitionOwner}
-                  selRange={
-                    selection()?.paneId === frame().paneId
-                      ? { start: selection()!.start, end: selection()!.end }
+                  copyCursor={
+                    keyboardCopy()?.paneId === frame().paneId
+                      ? {
+                          row: keyboardCopy()!.cursor.position.row,
+                          col: Math.min(
+                            keyboardCopy()!.cursor.snapshot.cols - 1,
+                            keyboardCopy()!.cursor.position.col,
+                          ),
+                        }
                       : null
+                  }
+                  selRange={
+                    keyboardCopy()?.paneId === frame().paneId && keyboardCopy()!.cursor.anchor
+                      ? (() => {
+                          const state = keyboardCopy()!.cursor;
+                          const ordered = orderCells(state.anchor!, state.position);
+                          if (state.mode === "vi") return ordered;
+                          const end =
+                            ordered.end.col > 0
+                              ? { ...ordered.end, col: ordered.end.col - 1 }
+                              : { row: ordered.end.row - 1, col: state.snapshot.cols - 1 };
+                          return end.row < ordered.start.row ||
+                            (end.row === ordered.start.row && end.col < ordered.start.col)
+                            ? null
+                            : { start: ordered.start, end };
+                        })()
+                      : selection()?.paneId === frame().paneId
+                        ? { start: selection()!.start, end: selection()!.end }
+                        : null
                   }
                   search={null}
                 />
@@ -1075,46 +1571,69 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
             position="absolute"
             left={separator.axis === "x" ? separator.position : separator.start}
             top={(separator.axis === "x" ? separator.start : separator.position) + topOffset()}
-            width={separator.axis === "x" ? 1 : Math.max(1, separator.end - separator.start)}
+            width={1}
             height={separator.axis === "x" ? Math.max(1, separator.end - separator.start) : 1}
             backgroundColor={props.theme.colors.accentMuted}
             onMouse={routePointer}
             onMouseDown={routePointer}
             onMouseUp={routePointer}
-          />
+          >
+            <Show when={separator.axis === "y"}>
+              <text fg={props.theme.roles.text.primary}>↕</text>
+            </Show>
+          </box>
         )}
       </For>
-      <For each={paneContextMenu() ? [paneContextMenu()!] : []}>
+      <Show when={paneContextMenu()}>
         {(menu) => (
           <PaneActionMenu
             theme={props.theme}
-            left={menu.left}
-            top={menu.top}
+            left={menu().left}
+            top={menu().top}
             width={paneContextMenuWidth()}
             viewportWidth={props.width}
             viewportHeight={props.height + topOffset()}
-            paneTitle={menu.displayName}
+            paneTitle={menu().displayName}
             active
-            onDismiss={() => setPaneContextMenu(null)}
-            selectedId={PANE_ACTION_MENU_ITEMS[menu.selected]?.id ?? "select-text"}
-            closeArmed={menu.closeArmed}
-            onActionIntent={(id) => {
-              const index = PANE_ACTION_MENU_ITEMS.findIndex((item) => item.id === id);
-              if (index >= 0) activatePaneContextItem(index);
-            }}
+            onDismiss={paneMenu.dismiss}
+            selectedId={menu().selectedId}
+            closeArmed={menu().closeArmed}
+            onHighlight={paneMenu.highlight}
+            onActionIntent={paneMenu.activate}
           />
         )}
-      </For>
-      <For each={selectModePane() ? [selectModePane()!] : []}>
+      </Show>
+      <For
+        each={
+          retainedSelectionPane() || selectModePane()
+            ? [retainedSelectionPane() ?? selectModePane()!]
+            : props.focusedPane && scrollback.offset(props.focusedPane) > 0
+              ? [props.focusedPane]
+              : []
+        }
+      >
         {() => (
           <text
             position="absolute"
             right={1}
             top={topOffset()}
+            height={1}
+            maxWidth={Math.max(1, props.width - 2)}
+            wrapMode="none"
+            truncate
             zIndex={20}
             fg={props.theme.roles.text.link}
+            bg={props.theme.roles.surfaces.panel}
           >
-            {" ⧉ select "}
+            {keyboardCopy()
+              ? props.width < 75
+                ? `copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "q live" : "Esc live"}`
+                : ` ⧉ copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "Space select · Enter copy · q live" : "Ctrl+Space select · Ctrl+W copy · Esc live"} `
+              : retainedSelectionPane()
+                ? "select · Esc live"
+                : selectModePane()
+                  ? " ⧉ select "
+                  : "Scrollback · Esc live"}
           </text>
         )}
       </For>

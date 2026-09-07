@@ -197,7 +197,7 @@ function paletteGeometry(width: number, height: number, variant: CommandPaletteV
     width: Math.max(0, overlay.width - inset * 2),
     height: Math.max(0, overlay.height - inset * 2),
   };
-  const headerHeight = inner.height >= 1 ? 1 : 0;
+  const headerHeight = inner.height >= 3 ? 1 : 0;
   const queryHeight = inner.height >= 2 ? 1 : 0;
   const dividerHeight = inner.height >= 5 ? 1 : 0;
   const footerHeight = inner.height >= 4 ? 1 : 0;
@@ -460,7 +460,18 @@ export function projectCommandPalette(input: CommandPaletteInput): CommandPalett
           errorMessage: input.errorMessage?.trim() ?? "",
           retryCommandId,
         });
-  const scrollTop = Math.min(Math.max(0, clampCell(input.scrollTop ?? 0)), candidates.length);
+  let scrollTop = Math.min(Math.max(0, clampCell(input.scrollTop ?? 0)), candidates.length);
+  if (geometry.list.height === 1) {
+    // A category header cannot fit alongside a command; keep the current action visible.
+    const selectedIndex = candidates.findIndex(
+      (candidate) => candidate.kind === "command" && candidate.command.id === selectedCommandId,
+    );
+    const firstCommandIndex = candidates.findIndex(
+      (candidate, index) => index >= scrollTop && candidate.kind === "command",
+    );
+    if (selectedIndex >= 0) scrollTop = selectedIndex;
+    else if (firstCommandIndex >= 0) scrollTop = firstCommandIndex;
+  }
   const visible: CommandPaletteRow[] = [];
   let y = geometry.list.y;
   let end = scrollTop;
@@ -470,9 +481,11 @@ export function projectCommandPalette(input: CommandPaletteInput): CommandPalett
     index++
   ) {
     const candidate = candidates[index]!;
-    const preferredHeight = rowHeight(candidate, variant);
+    const compactState = candidate.kind === "state" && geometry.list.height === 1;
+    const preferredHeight = compactState ? 1 : rowHeight(candidate, variant);
     const heightBudget = geometry.list.y + geometry.list.height - y;
-    if (requiredCandidateHeight(candidates, index, variant) > heightBudget) break;
+    const requiredHeight = compactState ? 1 : requiredCandidateHeight(candidates, index, variant);
+    if (requiredHeight > heightBudget) break;
     const rect: Rect = {
       x: geometry.list.x,
       y,

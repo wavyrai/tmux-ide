@@ -49,6 +49,7 @@ const MAX_INPUT_TRACE_IDS = 256;
 /** One flushed input action, ready to become a control-mode write. */
 export type InputAction =
   | { kind: "literal"; pane: string; text: string; traceIds?: readonly string[] }
+  | { kind: "bytes"; pane: string; data: Uint8Array; traceIds?: readonly string[] }
   | { kind: "key"; pane: string; key: string; traceIds?: readonly string[] };
 
 export class InputCoalescer {
@@ -78,6 +79,20 @@ export class InputCoalescer {
       this.schedule(() => {
         this.scheduled = false;
         this.flush();
+      });
+    }
+  }
+
+  /** Exact binary input shares the same ordering barrier and command byte cap. */
+  bytes(pane: string, data: Uint8Array, traceId?: string): void {
+    if (!pane || data.length === 0) return;
+    this.flush();
+    for (let offset = 0; offset < data.length; offset += this.maxChunkBytes) {
+      this.emit({
+        kind: "bytes",
+        pane,
+        data: data.slice(offset, offset + this.maxChunkBytes),
+        ...(traceId ? { traceIds: [traceId] } : {}),
       });
     }
   }

@@ -1948,6 +1948,41 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(h.deliveryListeners.size).toBe(0);
   });
 
+  it("delivers copy key mode changes without replacing terminal deliveries", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two"] });
+    const layout = { ...authoritativeLayout(["pane.one", "pane.two"]), modeKeys: "vi" as const };
+    h.mirror.initialLayouts = [layout];
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    expect(socket.framesOfType("layout-snapshot")[0]?.layouts[0]?.modeKeys).toBe("vi");
+    h.mirror.layoutHandlers[0]?.({ ...layout, modeKeys: "emacs" });
+    expect(socket.framesOfType("layout-snapshot").at(-1)?.layouts[0]?.modeKeys).toBe("emacs");
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2);
+    expect(h.deliveryListeners.size).toBe(2);
+    expect(socket.closed).toBeNull();
+  });
+
+  it("keeps native zoom on the same stream and seeds hidden panes on zoomed attachment", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two"] });
+    const unzoomed = authoritativeLayout(["pane.one", "pane.two"], { window: "window.one" });
+    const zoomed = { ...authoritativeLayout(["pane.two"], { window: "window.one" }), zoomed: true };
+    h.mirror.initialLayouts = [zoomed];
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    expect(socket.closed).toBeNull();
+    h.mirror.layoutHandlers[0]?.(unzoomed);
+    h.mirror.layoutHandlers[0]?.(zoomed);
+    expect(socket.framesOfType("layout-snapshot")).toHaveLength(3);
+    expect(socket.closed).toBeNull();
+    expect(h.deliveryListeners.size).toBe(2);
+  });
+
   it("opens every delivery only after a refreshed exact detached-window topology", async () => {
     const h = harness({ panes: ["pane.one", "pane.two", "pane.detached"] });
     h.mirror.initialLayouts = [

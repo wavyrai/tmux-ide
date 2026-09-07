@@ -8,6 +8,7 @@ import type {
   TerminalInterpreterBackendFactory,
 } from "./terminal-interpreter-backend.ts";
 import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
+import { createSessionRuntimeObservability } from "./runtime-observability.ts";
 import { createXtermTerminalInterpreterBackend } from "./xterm-terminal-interpreter-backend.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
@@ -25,6 +26,415 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it.each([false, true])(
+    "holds unknown shell output until a native replacement (same-batch reentry: %s)",
+    async (reenter) => {
+      const updates: CanonicalTerminalReplicaUpdate[] = [];
+      const raw: Array<{ contiguous: boolean }> = [];
+      let requests = 0;
+      const interpreter = new TerminalReplicaInterpreter({
+        generation,
+        workspaceName: "workspace",
+        semanticPaneId: "pane-a",
+        incarnation: `${generation}:0`,
+        cols: 8,
+        rows: 3,
+        onUpdate: (update) => updates.push(update),
+        onRawCommit: (record) => raw.push(record),
+        onNativeReseedRequired: () => {
+          requests++;
+        },
+      });
+      const bytes = (value: string) => new TextEncoder().encode(value);
+      try {
+        await interpreter.enqueue({
+          type: "reseed",
+          cols: 8,
+          rows: 3,
+          chunks: [bytes("H0\r\nH1\r\nALT\r\n\r\n")],
+          cursor: { x: 3, y: 0 },
+          observedModes: { alternateScreen: true },
+          bootstrap: "painted-capture",
+        });
+        expect(interpreter.currentSnapshot().modes.alternateScreen).toBe(true);
+        const history = interpreter.currentSnapshot().history;
+        expect(history.map((row) => row.cells.map((cell) => cell.grapheme).join(""))).toEqual([
+          "H0",
+          "H1",
+        ]);
+        await interpreter.enqueue({ type: "write", data: bytes("\x1b[3;1H\r\nP") });
+        expect(interpreter.currentSnapshot().history).toEqual(history);
+        const coherent = interpreter.currentSnapshot();
+        const count = updates.length;
+        const rawCount = raw.length;
+        await interpreter.enqueue({
+          type: "write",
+          data: bytes("\x1b[?1049lBAD" + (reenter ? "\x1b[?1049hNEW" : "")),
+        });
+        await interpreter.enqueue({ type: "write", data: bytes("MORE") });
+        await interpreter.enqueue({ type: "cursor", x: 1, y: 0 });
+        expect(requests).toBe(1);
+        expect(updates).toHaveLength(count);
+        expect(raw).toHaveLength(rawCount);
+        expect(interpreter.currentSnapshot()).toBe(coherent);
+        await interpreter.enqueue({
+          type: "reseed",
+          cols: 8,
+          rows: 3,
+          chunks: [bytes("H0\r\nH1\r\nSHELL\r\n\r\n")],
+          cursor: { x: 5, y: 0 },
+          observedModes: { alternateScreen: false },
+          bootstrap: "painted-capture",
+        });
+        expect(interpreter.currentSnapshot().modes.alternateScreen).toBe(false);
+        expect(raw.at(-1)?.contiguous).toBe(false);
+        await interpreter.enqueue({ type: "write", data: bytes("!") });
+        expect(
+          interpreter
+            .currentSnapshot()
+            .grid[0]!.cells.map((cell) => cell.grapheme)
+            .join(""),
+        ).toBe("SHELL!");
+      } finally {
+        await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+      }
+    },
+  );
+
+  it.each(["cursor", "reseed"] as const)(
+    "restores scrolling margins and origin without moving the cursor through %s",
+    async (type) => {
+      const interpreter = create([], 8, 5);
+      const bytes = new TextEncoder().encode("HEAD\r\nONE\r\nTWO\r\nTHREE\r\nFOOT");
+      const observedModes = { scrolling: { top: 1, bottom: 3, origin: true } };
+      const visible = () =>
+        interpreter
+          .currentSnapshot()
+          .grid.map((row) => row.cells.map((cell) => cell.grapheme).join(""));
+      try {
+        if (type === "cursor") {
+          await interpreter.enqueue({ type: "write", data: bytes });
+          await interpreter.enqueue({ type, x: 0, y: 3, observedModes });
+        } else
+          await interpreter.enqueue({
+            type,
+            cols: 8,
+            rows: 5,
+            chunks: [bytes],
+            cursor: { x: 0, y: 3 },
+            observedModes,
+            bootstrap: "painted-capture",
+          });
+        expect(visible()).toEqual(["HEAD", "ONE", "TWO", "THREE", "FOOT"]);
+        expect(interpreter.currentSnapshot().cursor).toMatchObject({ x: 0, y: 3 });
+        await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("\r\nNEW") });
+        expect(visible()).toEqual(["HEAD", "TWO", "THREE", "NEW", "FOOT"]);
+        await interpreter.enqueue({ type: "cursor", x: 3, y: 3, observedModes: {} });
+        await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("\x1b[1;1HP") });
+        expect(visible()).toEqual(["HEAD", "PWO", "THREE", "NEW", "FOOT"]);
+        await interpreter.enqueue({
+          type: "cursor",
+          x: 1,
+          y: 1,
+          observedModes: { scrolling: { top: 0, bottom: 4, origin: false } },
+        });
+        await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("\x1b[1;1HQ") });
+        expect(visible()[0]).toBe("QEAD");
+      } finally {
+        await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+      }
+    },
+  );
+
+  it("preserves native UTF-8 mouse state beneath SGR and follows later fragmented mode changes", async () => {
+    const interpreter = create([], 8, 3);
+    const write = async (value: string) =>
+      interpreter.enqueue({ type: "write", data: new TextEncoder().encode(value) });
+    try {
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 8,
+        rows: 3,
+        chunks: [new TextEncoder().encode("AB")],
+        cursor: { x: 2, y: 0 },
+        observedModes: {
+          bracketedPaste: true,
+          mouseProtocol: "drag",
+          mouseSgr: true,
+          mouseUtf8: true,
+        },
+        bootstrap: "painted-capture",
+      });
+      expect(interpreter.currentSnapshot().modes).toMatchObject({
+        bracketedPaste: true,
+        mouseTracking: true,
+        mouseProtocol: "drag",
+        mouseEncoding: "sgr",
+      });
+      await write("\x1b[?1006l");
+      expect(interpreter.currentSnapshot().modes.mouseEncoding).toBe("utf8");
+      await write("\x1b[?100");
+      expect(interpreter.currentSnapshot().modes.mouseEncoding).toBe("utf8");
+      await write("5;2004l");
+      expect(interpreter.currentSnapshot().modes).toMatchObject({
+        bracketedPaste: false,
+        mouseEncoding: "default",
+      });
+      await write("\x1b[?1005h");
+      expect(interpreter.currentSnapshot().modes.mouseEncoding).toBe("utf8");
+      await write("\x1bc");
+      expect(interpreter.currentSnapshot().modes).toMatchObject({
+        bracketedPaste: false,
+        mouseTracking: false,
+        mouseEncoding: "default",
+      });
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+  it.each(["cursor", "reseed"] as const)(
+    "restores scalar observations through %s",
+    async (type) => {
+      const interpreter = create([], 8, 3);
+      const bytes = new TextEncoder().encode("AB");
+      const observedModes = {
+        applicationCursor: true,
+        applicationKeypad: true,
+        insert: true,
+        cursorVisible: false,
+      };
+      try {
+        if (type === "cursor") {
+          await interpreter.enqueue({ type: "write", data: bytes });
+          await interpreter.enqueue({ type, x: 1, y: 0, observedModes });
+        } else {
+          await interpreter.enqueue({
+            type,
+            cols: 8,
+            rows: 3,
+            chunks: [bytes],
+            cursor: { x: 1, y: 0 },
+            observedModes,
+            bootstrap: "painted-capture",
+          });
+        }
+        expect(interpreter.currentSnapshot().modes).toMatchObject({
+          applicationCursor: true,
+          applicationKeypad: true,
+          insert: true,
+        });
+        expect(interpreter.currentSnapshot().cursor.hidden).toBe(true);
+        await interpreter.enqueue({ type: "cursor", x: 1, y: 0, observedModes: {} });
+        await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("P") });
+        expect(
+          interpreter
+            .currentSnapshot()
+            .grid[0]!.cells.map((cell) => cell.grapheme)
+            .join(""),
+        ).toBe("APB");
+        await interpreter.enqueue({
+          type: "cursor",
+          x: 1,
+          y: 0,
+          observedModes: { insert: false, cursorVisible: true },
+        });
+        await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("Q") });
+        expect(
+          interpreter
+            .currentSnapshot()
+            .grid[0]!.cells.map((cell) => cell.grapheme)
+            .join(""),
+        ).toBe("AQB");
+        expect(interpreter.currentSnapshot().modes).toMatchObject({
+          applicationCursor: true,
+          applicationKeypad: true,
+          insert: false,
+        });
+        expect(interpreter.currentSnapshot().cursor.hidden).toBe(false);
+      } finally {
+        await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+      }
+    },
+  );
+
+  it("restores observed wrap mode after replaying joined capture rows", async () => {
+    const interpreter = create([], 3, 4);
+    try {
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 3,
+        rows: 4,
+        chunks: [new TextEncoder().encode("\x1b[?1hABCDEFG")],
+        cursor: { x: 1, y: 2 },
+        wraparound: false,
+        bootstrap: "painted-capture",
+      });
+      const snapshot = interpreter.currentSnapshot();
+      expect(
+        snapshot.grid.slice(0, 3).map((row) => row.cells.map((cell) => cell.grapheme).join("")),
+      ).toEqual(["ABC", "DEF", "G"]);
+      expect(snapshot.modes).toMatchObject({ wraparound: false, applicationCursor: true });
+      await interpreter.enqueue({ type: "cursor", x: 1, y: 2 });
+      expect(interpreter.currentSnapshot().modes.wraparound).toBe(false);
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("P") });
+      expect(
+        interpreter
+          .currentSnapshot()
+          .grid[2]!.cells.map((cell) => cell.grapheme)
+          .join(""),
+      ).toBe("GP");
+      await interpreter.enqueue({ type: "cursor", x: 2, y: 2, wraparound: true });
+      expect(interpreter.currentSnapshot().modes).toMatchObject({
+        wraparound: true,
+        applicationCursor: true,
+      });
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
+  it.each(["cursor", "reseed"] as const)(
+    "keeps a combining mark on the final cell after %s synchronization",
+    async (operation) => {
+      const interpreter = create([], 3, 3);
+      const bytes = new TextEncoder().encode("ABC");
+      try {
+        await interpreter.enqueue({ type: "write", data: bytes });
+        if (operation === "cursor") await interpreter.enqueue({ type: "cursor", x: 3, y: 0 });
+        else
+          await interpreter.enqueue({
+            type: "reseed",
+            cols: 3,
+            rows: 3,
+            chunks: [bytes],
+            cursor: { x: 3, y: 0 },
+            bootstrap: "painted-capture",
+          });
+        await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("\u0301D") });
+        expect(interpreter.currentSnapshot().grid[0]!.cells.map((cell) => cell.grapheme)).toEqual([
+          "A",
+          "B",
+          "C\u0301",
+        ]);
+        expect(interpreter.currentSnapshot().grid[1]!.cells[0]!.grapheme).toBe("D");
+      } finally {
+        await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+      }
+    },
+  );
+
+  it.each([
+    ["cursor", 2, "ABD"],
+    ["cursor", 3, "ABC\nD"],
+    ["reseed", 2, "ABD"],
+    ["reseed", 3, "ABC\nD"],
+  ] as const)(
+    "preserves native %s x=%i separately from the displayed cursor",
+    async (operation, x, expected) => {
+      const interpreter = create([], 3, 3);
+      const bytes = new TextEncoder().encode("ABC");
+      try {
+        await interpreter.enqueue({ type: "write", data: bytes });
+        if (operation === "cursor") await interpreter.enqueue({ type: "cursor", x, y: 0 });
+        else
+          await interpreter.enqueue({
+            type: "reseed",
+            cols: 3,
+            rows: 3,
+            chunks: [bytes],
+            cursor: { x, y: 0 },
+            bootstrap: "painted-capture",
+          });
+        expect(interpreter.currentSnapshot().cursor).toMatchObject({ x: 2, y: 0 });
+        await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("D") });
+        expect(
+          interpreter
+            .currentSnapshot()
+            .grid.map((row) =>
+              row.cells
+                .map((cell) => cell.grapheme || " ")
+                .join("")
+                .trimEnd(),
+            )
+            .join("\n")
+            .trimEnd(),
+        ).toBe(expected);
+      } finally {
+        await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+      }
+    },
+  );
+
+  it("preserves unused cells separately from literal spaces for retained-view reflow", async () => {
+    const interpreter = create([], 6, 2);
+    try {
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("a  ") });
+      expect(interpreter.currentSnapshot().grid[0]!.cells.map((cell) => cell.grapheme)).toEqual([
+        "a",
+        " ",
+        " ",
+        "",
+        "",
+        "",
+      ]);
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("\r\x1b[2K") });
+      expect(interpreter.currentSnapshot().grid[0]!.cells.map((cell) => cell.grapheme)).toEqual([
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+      ]);
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
+  it("distinguishes a traced no-op from a published update without borrowing its trace", async () => {
+    const observability = createSessionRuntimeObservability();
+    const updates: (SessionRuntimeTraceContext | null)[] = [];
+    const interpreter = new TerminalReplicaInterpreter({
+      generation,
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: `${generation}:0`,
+      cols: 12,
+      rows: 3,
+      observability,
+      onUpdate: (_update, trace) => updates.push(trace),
+    });
+    await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("A") });
+    const before = updates.length;
+    const trace = observability.beginTrace("terminal-input-to-paint", {
+      generation,
+      incarnation: `${generation}:0`,
+    });
+    // SGR reset changes no canonical cells here; later output is a separate write.
+    await interpreter.enqueue({
+      type: "write",
+      data: new TextEncoder().encode("\u001b[0m"),
+      trace,
+    });
+    expect(updates).toHaveLength(before);
+    expect(
+      observability
+        .snapshot()
+        .spans.filter((span) => span.traceId === trace?.traceId)
+        .map((span) => span.operation),
+    ).toContain("terminal-replica-project-noop");
+    expect(
+      observability
+        .snapshot()
+        .spans.filter((span) => span.traceId === trace?.traceId)
+        .map((span) => span.operation),
+    ).not.toContain("terminal-replica-project-commit");
+    await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("B") });
+    expect(updates).toHaveLength(before + 1);
+    expect(updates.at(-1)).toBeNull();
+    await interpreter.enqueue({ type: "close", reason: "session-restarted" });
+  });
+
   it("keeps the explicit ANSI baseline exact across reset, geometry reseed, and alt restore", async () => {
     const marker = "ANSI_BASELINE_MARKER";
     const baseline = `\u001b[3J\u001b[2J\u001b[H\u001b[2 q\u001b[?25h${marker}\u001b[2;1H`;
@@ -221,6 +631,9 @@ describe("TerminalReplicaInterpreter", () => {
         write: (data) => delegate.write(data),
         resize: (cols, rows) => delegate.resize(cols, rows),
         setAuthoritativeCursor: (x, y) => delegate.setAuthoritativeCursor(x, y),
+        setAuthoritativeWraparound: (enabled) => delegate.setAuthoritativeWraparound(enabled),
+        setAuthoritativeModes: (modes) => delegate.setAuthoritativeModes(modes),
+        requiresNativeReseed: () => delegate.requiresNativeReseed(),
         modes: () => delegate.modes(),
         dirtyRange: () => delegate.dirtyRange(),
         project: (previous, dirty) => delegate.project(previous, dirty),
@@ -288,6 +701,9 @@ describe("TerminalReplicaInterpreter", () => {
         },
         resize: (cols, rows) => delegate.resize(cols, rows),
         setAuthoritativeCursor: (x, y) => delegate.setAuthoritativeCursor(x, y),
+        setAuthoritativeWraparound: (enabled) => delegate.setAuthoritativeWraparound(enabled),
+        setAuthoritativeModes: (modes) => delegate.setAuthoritativeModes(modes),
+        requiresNativeReseed: () => delegate.requiresNativeReseed(),
         modes: () => delegate.modes(),
         dirtyRange: () => delegate.dirtyRange(),
         project: (previous, dirty) => delegate.project(previous, dirty),
@@ -346,6 +762,9 @@ describe("TerminalReplicaInterpreter", () => {
         },
         resize: (cols, rows) => delegate.resize(cols, rows),
         setAuthoritativeCursor: (x, y) => delegate.setAuthoritativeCursor(x, y),
+        setAuthoritativeWraparound: (enabled) => delegate.setAuthoritativeWraparound(enabled),
+        setAuthoritativeModes: (modes) => delegate.setAuthoritativeModes(modes),
+        requiresNativeReseed: () => delegate.requiresNativeReseed(),
         modes: () => delegate.modes(),
         dirtyRange: () => delegate.dirtyRange(),
         project: (previous, dirty) => delegate.project(previous, dirty),

@@ -34,6 +34,28 @@ const referenceHash = (value: unknown): string => {
 };
 
 describe("terminal canonical hash cache", () => {
+  it("preserves exact UTF-8 hashes across ASCII boundaries and malformed surrogates", () => {
+    const values = [
+      "",
+      " ",
+      Array.from({ length: 128 }, (_, index) => String.fromCharCode(index)).join(""),
+      "a".repeat(1024),
+      "\u007f\u0080",
+      "ASCII界",
+      "e\u0301",
+      "😀",
+      "\ud800",
+      "\udc00",
+      "a\ud800z",
+    ];
+    for (const value of values) {
+      expect(hashCanonicalTerminalValue(value)).toBe(referenceHash(value));
+      expect(hashCanonicalTerminalValue({ [value]: [value, "", "tail"] })).toBe(
+        referenceHash({ [value]: [value, "", "tail"] }),
+      );
+    }
+  });
+
   it("matches the prior canonical BigInt hash for nested UTF-8 values", () => {
     const corpus = [
       null,

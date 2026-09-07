@@ -159,6 +159,10 @@ export interface OpenTuiGenerationHostDependencies {
 }
 
 export interface OpenTuiGenerationHostOptions extends Partial<OpenTuiGenerationHostDependencies> {
+  readonly onConnectionProgress?: (
+    phase: string,
+    details: Readonly<Record<string, unknown>>,
+  ) => void;
   /** One-use, generation-fenced connection prepared by the session owner. */
   readonly initialConnection?: OpenTuiApplicationShellConnection | null;
 }
@@ -314,6 +318,7 @@ function buildProductionBundle(
     1,
     causalCellLedger,
     activeFastLane.resourceSampler,
+    connection.routing?.readNativeBacking ?? null,
   );
   let revoked = false;
   let disposed = false;
@@ -660,6 +665,7 @@ export function createOpenTuiGenerationHost(
           if (!active) publish({ ...EMPTY_SNAPSHOT, status: "unavailable" });
           return false;
         }
+        overrides.onConnectionProgress?.("connection-resolved", {});
         diagnose?.("connection-resolved", {
           daemonGeneration: connection.target.daemon.instanceId,
           workspaceName: connection.workspaceName,
@@ -712,6 +718,7 @@ export function createOpenTuiGenerationHost(
               publish({ ...snapshot, status: "rebinding" });
             },
             didFaultRuntime(runtime, error) {
+              overrides.onConnectionProgress?.("runtime-fault", {});
               diagnose?.("runtime-fault", { message: error.message });
               // A retired runtime can close after its replacement has already
               // become authoritative. Only the exact active runtime may
@@ -729,6 +736,11 @@ export function createOpenTuiGenerationHost(
               publish({ ...snapshot, status: "rebinding" });
             },
             didRuntimeDiagnostic(phase, details) {
+              if (phase === "seed" || phase === "coherent")
+                overrides.onConnectionProgress?.("runtime-progress", {
+                  runtimePhase: phase,
+                  ...details,
+                });
               diagnose?.("runtime-progress", {
                 runtimePhase: phase,
                 ...details,
@@ -951,6 +963,7 @@ export function createOpenTuiGenerationHost(
       return () => listeners.delete(listener);
     },
     async start() {
+      overrides.onConnectionProgress?.("connection-start", {});
       if (!active) publish({ ...EMPTY_SNAPSHOT, status: "connecting" });
       await ensureCanonicalObserver();
       return connectFresh();

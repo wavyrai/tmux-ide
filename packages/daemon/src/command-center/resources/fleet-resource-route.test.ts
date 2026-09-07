@@ -160,16 +160,40 @@ describe("GET /api/resources/fleet-catalog", () => {
     expect(res.status).toBe(503);
   });
 
-  it("degrades a tmux failure to a valid empty catalog", async () => {
+  it("reports unavailable instead of an empty catalog when tmux discovery fails", async () => {
     restoreRunner = _setTmuxRunner(() => {
       throw new Error("no server running");
     });
     const app = appWith({ ownerToken: OWNER });
     const res = await app.request("/api/resources/fleet-catalog", bearer());
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(await res.json()).toEqual({
+      error: "Tmux fleet discovery is unavailable",
+      code: "tmux-unavailable",
+    });
+  });
+
+  it("keeps a genuinely empty fleet successful", async () => {
+    const app = appWith({ ownerToken: OWNER, readFleet: () => [] });
+    const res = await app.request("/api/resources/fleet-catalog", bearer());
     expect(res.status).toBe(200);
-    const parsed = FleetCatalogResourceV1SchemaZ.parse(await res.json());
-    expect(parsed.sessions).toEqual([]);
-    expect(parsed.daemon).toEqual(DAEMON);
+    expect(FleetCatalogResourceV1SchemaZ.parse(await res.json()).sessions).toEqual([]);
+  });
+
+  it("does not expose a replaced socket's path or masquerade as empty", async () => {
+    const app = appWith({
+      ownerToken: OWNER,
+      readFleet: () => {
+        throw new Error("Unix socket authority changed before use: /private/secret.sock");
+      },
+    });
+    const res = await app.request("/api/resources/fleet-catalog", bearer());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: "Tmux fleet discovery is unavailable",
+      code: "tmux-unavailable",
+    });
   });
 
   it("reads the daemon-generation-pinned private socket and excludes the ambient server", async (context) => {

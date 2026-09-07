@@ -698,6 +698,11 @@ function exactStableGeometrySamples(samples) {
         nativeRows,
         topologyHmac,
         nativeLayoutHmac,
+        nativeWindowCols,
+        nativeWindowRows,
+        nativePaneLeft,
+        nativePaneTop,
+        nativePaneBorderStatus,
       }) =>
         Array.isArray(clients) &&
         clients.length === 3 &&
@@ -720,6 +725,21 @@ function exactStableGeometrySamples(samples) {
         passiveCount === 2 &&
         geometryFightCount === 0 &&
         clients.every(({ cols, rows }) => cols === nativeCols && rows === nativeRows) &&
+        Number.isSafeInteger(nativeCols) &&
+        nativeCols > 0 &&
+        Number.isSafeInteger(nativeRows) &&
+        nativeRows > 0 &&
+        Number.isSafeInteger(nativeWindowCols) &&
+        nativeWindowCols > 0 &&
+        Number.isSafeInteger(nativeWindowRows) &&
+        nativeWindowRows > 0 &&
+        Number.isSafeInteger(nativePaneLeft) &&
+        nativePaneLeft >= 0 &&
+        Number.isSafeInteger(nativePaneTop) &&
+        nativePaneTop >= 0 &&
+        nativePaneLeft + nativeCols <= nativeWindowCols &&
+        nativePaneTop + nativeRows <= nativeWindowRows &&
+        ["off", "top", "bottom"].includes(nativePaneBorderStatus) &&
         HMAC.test(topologyHmac ?? "") &&
         HMAC.test(nativeLayoutHmac ?? ""),
     ) &&
@@ -739,11 +759,13 @@ function exactGeometryEvidence(geometry) {
     geometry.challenge.seq > 0 &&
     exactStableGeometrySamples(samples) &&
     samples[0].clients.some(
-      ({ clientHmac, geometryOwner, cols, rows }) =>
-        clientHmac === geometry.challenge.authorityClientHmac &&
-        geometryOwner === true &&
-        cols === geometry.challenge.cols &&
-        rows === geometry.challenge.rows,
+      ({ clientHmac, geometryOwner }) =>
+        clientHmac === geometry.challenge.authorityClientHmac && geometryOwner === true,
+    ) &&
+    samples.every(
+      (sample) =>
+        sample.nativeWindowCols === geometry.challenge.cols &&
+        sample.nativeWindowRows === geometry.challenge.rows,
     )
   );
 }
@@ -848,6 +870,7 @@ function exactSlowIsolation(slowWeb, expectedClient) {
         sample.resource?.processHmac === expectedClient?.processHmac &&
         sample.resource?.clockHmac === expectedClient?.clockHmac &&
         Number.isSafeInteger(sample.resource?.atMicros) &&
+        sample.resource?.resourceEpochBound === true &&
         HMAC.test(sample.resource?.resourceEpochIdentityHmac ?? "") &&
         sample.resource?.canonicalIdentityHmac === sample.fenceCanonicalHmac &&
         Number.isSafeInteger(sample.resource?.rssBytes) &&
@@ -876,6 +899,7 @@ function exactSlowIsolation(slowWeb, expectedClient) {
         sample.resource.eventLoopDelayPeakMicros >= sample.resource.eventLoopDelayMicros &&
         sample.resource.eventLoopDelayPeakMicros <= 100_000,
     ) &&
+    new Set(samples.map((sample) => sample.resource?.resourceEpochIdentityHmac)).size === 1 &&
     resourceProcessIds.size === 1 &&
     resourceClockIds.size === 1 &&
     samples.every(

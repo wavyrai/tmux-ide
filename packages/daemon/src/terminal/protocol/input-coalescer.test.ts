@@ -23,6 +23,23 @@ function harness(maxChunkBytes?: number) {
 }
 
 describe("InputCoalescer", () => {
+  it("preserves binary bytes and mixed input order across panes under the command cap", () => {
+    const { c, actions, drain } = harness(2);
+    c.literal("%1", "a");
+    const bytes = new Uint8Array([0, 128, 255]);
+    c.bytes("%2", bytes, "binary-trace");
+    bytes.fill(1);
+    c.literal("%2", "界");
+    c.key("%2", "Enter");
+    drain();
+    expect(actions).toEqual([
+      { kind: "literal", pane: "%1", text: "a" },
+      { kind: "bytes", pane: "%2", data: new Uint8Array([0, 128]), traceIds: ["binary-trace"] },
+      { kind: "bytes", pane: "%2", data: new Uint8Array([255]), traceIds: ["binary-trace"] },
+      { kind: "literal", pane: "%2", text: "界" },
+      { kind: "key", pane: "%2", key: "Enter" },
+    ]);
+  });
   it("coalesces burst literals into one action per flush", () => {
     const { c, actions, drain } = harness();
     for (const ch of "hello") c.literal("%1", ch);

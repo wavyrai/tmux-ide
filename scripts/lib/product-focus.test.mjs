@@ -464,11 +464,11 @@ test("canonical projection is independent of physical tmux border geometry and h
     }),
     {
       left: 28,
-      chromeRow: 22,
-      firstBodyRow: 23,
+      chromeRow: 21,
+      firstBodyRow: 22,
       width: 132,
-      bodyRows: 20,
-      contentHeight: 20,
+      bodyRows: 21,
+      contentHeight: 21,
       sidebarWidth: 28,
     },
   );
@@ -505,6 +505,20 @@ test("canonical projection is independent of physical tmux border geometry and h
       canonicalPaneId: "pane.bad",
     }),
     null,
+  );
+});
+
+test("tmux resize arrow occupies one text cell without weakening wide-cell bounds", () => {
+  const decoded = decodeFocusFramebufferCapture({ version: 1, cols: 3, rows: 1, ansi: "a↕b" });
+  assert.equal(decoded.plain, "a↕b");
+  assert.equal(sliceFocusTerminalCells(decoded.plain, 1, 1), "↕");
+  assert.throws(
+    () => decodeFocusFramebufferCapture({ version: 1, cols: 3, rows: 1, ansi: "a↕️b" }),
+    /overflowed/,
+  );
+  assert.throws(
+    () => decodeFocusFramebufferCapture({ version: 1, cols: 3, rows: 1, ansi: "a界b" }),
+    /overflowed/,
   );
 });
 

@@ -570,6 +570,7 @@ export function createReferencePerformanceTraceSink(options: {
                     droppedRecords: health.droppedRecords,
                     oversizedRecords: health.oversizedRecords,
                     failed: health.failed,
+                    pendingCriticalRecords: health.pendingCriticalRecords,
                   }
                 : null,
             });

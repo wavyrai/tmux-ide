@@ -5,6 +5,7 @@ import type {
 import type { OpenTuiApplicationShellConnection } from "../application-shell-daemon-connection.ts";
 
 export interface OpenTuiSessionOwnerDependencies {
+  readonly openTimeoutMs?: number;
   readonly prepareConnection: (
     sessionName: string,
   ) => Promise<OpenTuiApplicationShellConnection | null>;
@@ -19,6 +20,7 @@ export interface OpenTuiSessionOwner {
   readonly sessionName: () => string | null;
   readonly snapshot: () => OpenTuiGenerationHostSnapshot | null;
   open(sessionName: string, workspacePrepared?: boolean): Promise<boolean>;
+  cancelPending?(): void;
   dispose(): Promise<void>;
 }
 
@@ -54,6 +56,7 @@ export function createOpenTuiSessionOwner(
   let current: OwnedHost | null = null;
   let preparing: OwnedHost | null = null;
   let disposed = false;
+  let openingController: AbortController | null = null;
   let disposePromise: Promise<void> | null = null;
   let queue: Promise<void> = Promise.resolve();
   const disposalController = new AbortController();
@@ -82,7 +85,9 @@ export function createOpenTuiSessionOwner(
       (connection) => ({ status: "prepared", connection }),
       (error: unknown) => ({ status: "rejected", error }),
     );
-    const signal = disposalController.signal;
+    const signal = openingController
+      ? AbortSignal.any([disposalController.signal, openingController.signal])
+      : disposalController.signal;
     if (signal.aborted) {
       void outcome.then((late) => {
         if (late.status === "prepared") late.connection?.dispose();
@@ -117,72 +122,101 @@ export function createOpenTuiSessionOwner(
     open(sessionName, workspacePrepared = false) {
       return serial(async () => {
         if (disposed) return false;
-        if (current?.sessionName === sessionName) {
-          if (isUsableHostSnapshot(current.latest)) return true;
-          // A retained owner can become unavailable after daemon/tmux churn.
-          // Re-opening that exact session must drive its generation host again
-          // instead of reporting success solely because the name matches.
-          const retrying = current;
-          const restarted = await retrying.host.start().catch(() => false);
-          return (
-            !disposed && current === retrying && restarted && isUsableHostSnapshot(retrying.latest)
-          );
-        }
-        const initialConnection = workspacePrepared ? null : await prepareConnection(sessionName);
-        if (initialConnection === PREPARATION_DISPOSED) return false;
-        // A fresh ordinary tmux session is deliberately absent from workspace
-        // routing until the generation host promotes it. A null prewarm is
-        // therefore not a terminal failure: hand it to the host, whose
-        // generation-fenced resolver performs the exact-live-session check and
-        // promotion before publishing anything. Truly missing sessions still
-        // fail closed when host.start() cannot resolve them.
-        if (disposed) {
-          initialConnection?.dispose();
-          return false;
-        }
-
-        const previous = current;
-        let host: OpenTuiGenerationHost;
+        const controller = new AbortController();
+        openingController = controller;
+        const timer = setTimeout(() => controller.abort(), dependencies.openTimeoutMs ?? 15000);
+        const stopped = new Promise<false>((resolve) =>
+          controller.signal.addEventListener("abort", () => resolve(false), { once: true }),
+        );
         try {
-          host = dependencies.createHost(sessionName, initialConnection);
-        } catch (error) {
-          initialConnection?.dispose();
-          throw error;
-        }
-        const candidate: OwnedHost = {
-          sessionName,
-          host,
-          stop: () => undefined,
-          latest: host.getSnapshot(),
-          retirement: null,
-        };
-        preparing = candidate;
-        candidate.stop = host.subscribe((snapshot) => {
-          candidate.latest = snapshot;
-          // On the first open, connecting/unavailable state is useful. During
-          // A→B preparation, retain the active A snapshot until B is usable.
-          if ((!previous && current === null) || current === candidate) {
-            dependencies.onSnapshot(snapshot);
+          if (current?.sessionName === sessionName) {
+            if (isUsableHostSnapshot(current.latest)) return true;
+            // A retained owner can become unavailable after daemon/tmux churn.
+            // Re-opening that exact session must drive its generation host again
+            // instead of reporting success solely because the name matches.
+            const retrying = current;
+            const restarted = await Promise.race([
+              retrying.host.start().catch(() => false),
+              stopped,
+            ]);
+            if (controller.signal.aborted) {
+              if (current === retrying) {
+                current = null;
+                dependencies.onSnapshot(null);
+              }
+              await retire(retrying);
+              return false;
+            }
+            return (
+              !disposed &&
+              current === retrying &&
+              restarted &&
+              isUsableHostSnapshot(retrying.latest)
+            );
           }
-        });
+          const initialConnection = workspacePrepared ? null : await prepareConnection(sessionName);
+          if (initialConnection === PREPARATION_DISPOSED) return false;
+          // A fresh ordinary tmux session is deliberately absent from workspace
+          // routing until the generation host promotes it. A null prewarm is
+          // therefore not a terminal failure: hand it to the host, whose
+          // generation-fenced resolver performs the exact-live-session check and
+          // promotion before publishing anything. Truly missing sessions still
+          // fail closed when host.start() cannot resolve them.
+          if (disposed || controller.signal.aborted) {
+            initialConnection?.dispose();
+            return false;
+          }
 
-        const started = await host.start().catch(() => false);
-        if (preparing === candidate) preparing = null;
-        if (!started || disposed) {
-          await retire(candidate);
-          if (!previous && current === null) dependencies.onSnapshot(null);
-          return false;
+          const previous = current;
+          let host: OpenTuiGenerationHost;
+          try {
+            host = dependencies.createHost(sessionName, initialConnection);
+          } catch (error) {
+            initialConnection?.dispose();
+            throw error;
+          }
+          const candidate: OwnedHost = {
+            sessionName,
+            host,
+            stop: () => undefined,
+            latest: host.getSnapshot(),
+            retirement: null,
+          };
+          preparing = candidate;
+          candidate.stop = host.subscribe((snapshot) => {
+            candidate.latest = snapshot;
+            // On the first open, connecting/unavailable state is useful. During
+            // A→B preparation, retain the active A snapshot until B is usable.
+            if ((!previous && current === null) || current === candidate) {
+              dependencies.onSnapshot(snapshot);
+            }
+          });
+
+          const started = await Promise.race([host.start().catch(() => false), stopped]);
+          if (preparing === candidate) preparing = null;
+          if (!started || disposed) {
+            await retire(candidate);
+            if (!previous && current === null) dependencies.onSnapshot(null);
+            return false;
+          }
+
+          current = candidate;
+          dependencies.onSnapshot(candidate.latest);
+          if (previous) await retire(previous);
+          return true;
+        } finally {
+          clearTimeout(timer);
+          if (openingController === controller) openingController = null;
         }
-
-        current = candidate;
-        dependencies.onSnapshot(candidate.latest);
-        if (previous) await retire(previous);
-        return true;
       });
+    },
+    cancelPending() {
+      openingController?.abort();
     },
     dispose() {
       if (disposePromise) return disposePromise;
       disposed = true;
+      openingController?.abort();
       disposalController.abort();
       const owners = [...new Set([current, preparing].filter((owner) => owner !== null))];
       current = null;

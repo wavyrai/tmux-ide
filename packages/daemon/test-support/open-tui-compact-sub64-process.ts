@@ -24,7 +24,10 @@ const nonce = "00000000-0000-4000-8000-000000000002";
 const workspaceName = "workspace.alpha";
 const semanticPaneId = "pane.a";
 const incarnation = `${generation}:1`;
-const workloadMode = process.argv[2] === "workload";
+const retainedMemoryMode = process.argv[2] === "workload-memory";
+const workloadMode = process.argv[2] === "workload" || retainedMemoryMode;
+if (retainedMemoryMode && typeof globalThis.gc !== "function")
+  throw new Error("Retained memory qualification requires --expose-gc");
 
 function compactSeed(
   snapshot: TerminalReplicaSnapshot,
@@ -540,6 +543,13 @@ if (workloadMode) {
   const measuredExternalBytes: number[] = [];
   const measuredArrayBufferBytes: number[] = [];
   const postFenceLowWater = async (): Promise<NodeJS.MemoryUsage> => {
+    // Latency qualification uses the separate natural-GC workload. Retained
+    // heap qualification must collect unreachable decode temporaries first;
+    // waiting for a short low-water window does not make V8 run a collection.
+    if (retainedMemoryMode) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      globalThis.gc!();
+    }
     let lowWater: NodeJS.MemoryUsage | null = null;
     for (let sampleOrdinal = 1; sampleOrdinal <= 8; sampleOrdinal += 1) {
       const memory = process.memoryUsage();

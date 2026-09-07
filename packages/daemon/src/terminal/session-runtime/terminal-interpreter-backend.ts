@@ -1,3 +1,4 @@
+import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import type {
   TerminalReplicaCursor,
   TerminalReplicaModes,
@@ -24,7 +25,14 @@ export interface TerminalInterpreterBackend {
   registerOscHandler(identifier: number, handler: (data: string) => boolean): () => void;
   write(data: Uint8Array | string): Promise<void>;
   resize(cols: number, rows: number): void;
+  /** x === cols preserves native wrap-pending state; project() returns a cell position. */
   setAuthoritativeCursor(x: number, y: number): void;
+  /** Restore observed DECAWM after capture replay without changing other parser modes. */
+  setAuthoritativeWraparound(enabled: boolean): void;
+  /** Restore only supplied scalar observations after replaying capture bytes. */
+  setAuthoritativeModes(modes: MirrorObservedTerminalModes): void;
+  /** A pre-existing saved buffer became active without authoritative backing. */
+  requiresNativeReseed(): boolean;
   modes(): TerminalReplicaModes;
   dirtyRange(): { readonly start: number; readonly end: number } | undefined;
   project(

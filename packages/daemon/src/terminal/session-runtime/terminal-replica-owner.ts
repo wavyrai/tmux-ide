@@ -6,6 +6,9 @@ import type {
 } from "@tmux-ide/contracts";
 import type { MirrorLayoutEvent, MirrorPaneEvent } from "../mirror/events.ts";
 import type { MirrorService, MirrorSubscription } from "../mirror/mirror-service.ts";
+import { terminalReplicaRowsEqual } from "@tmux-ide/core";
+import type { NativeGridReadResult } from "../mirror/native-grid-reader.ts";
+import { projectNativeGridRow } from "../mirror/native-grid-projection.ts";
 import {
   TerminalReplicaInterpreter,
   type TerminalReplicaInterpreterStats,
@@ -13,6 +16,7 @@ import {
 import {
   SYSTEM_SESSION_RUNTIME_SCHEDULER,
   type SessionRuntimeScheduler,
+  type SessionRuntimeTimer,
 } from "./runtime-scheduler.ts";
 import type {
   SessionRuntimeObservability,
@@ -41,6 +45,21 @@ export interface TerminalReplicaQualificationSnapshot {
   readonly stateHash: string | null;
   readonly stats: TerminalReplicaInterpreterStats;
 }
+
+/** Daemon-private backing admission; this is not a client transport schema. */
+export type TerminalReplicaNativeBackingResult =
+  | Exclude<NativeGridReadResult, { status: "captured" }>
+  | { readonly status: "mismatch" }
+  | (Extract<NativeGridReadResult, { status: "captured" }> & {
+      readonly authority: {
+        readonly generation: SessionRuntimeGeneration;
+        readonly workspaceName: string;
+        readonly semanticPaneId: string;
+        readonly incarnation: string;
+        readonly revision: number;
+        readonly stateHash: string;
+      };
+    });
 
 interface ReseedCandidate {
   readonly nativeCols: number;
@@ -74,6 +93,10 @@ export class SessionRuntimeTerminalReplicaOwner {
   #reseedRetryCount = 0;
   #reseed: ReseedCandidate | null = null;
   #bootstrapped = false;
+  #waitingForGeometryCapture = false;
+  #historyTimer: SessionRuntimeTimer | null = null;
+  #historyChecking = false;
+  #historyDirty = false;
 
   constructor(
     readonly generation: SessionRuntimeGeneration,
@@ -106,6 +129,15 @@ export class SessionRuntimeTerminalReplicaOwner {
       rows: this.#rows,
       scheduler: options.scheduler,
       observability: options.observability,
+      onNativeReseedRequired: () => {
+        if (this.#disposed || this.#reseed || this.#waitingForGeometryCapture) return;
+        this.#waitingForGeometryCapture = true;
+        this.#supervise(
+          this.#start.then(() => {
+            if (!this.#disposed && this.#waitingForGeometryCapture) this.#upstream?.reseed();
+          }),
+        );
+      },
       onUpdate: (update, trace) => {
         if (update.type === "terminal.seed") {
           this.#bootstrapped = true;
@@ -192,6 +224,68 @@ export class SessionRuntimeTerminalReplicaOwner {
     });
   }
 
+  async captureNativeBacking(): Promise<TerminalReplicaNativeBackingResult> {
+    await this.#start;
+    await this.#interpreter.whenIdle();
+    if (this.#disposed) return { status: "retired" };
+    const upstream = this.#upstream;
+    if (!upstream?.captureNativeBacking) return { status: "unsupported" };
+    const initial = this.#interpreter.currentSeed();
+    if (!initial || this.#reseed || this.#waitingForGeometryCapture) return { status: "changed" };
+    const epoch = this.#subscriptionEpoch;
+    const captured = await upstream.captureNativeBacking();
+    if (captured.status !== "captured") return captured;
+    await this.#interpreter.whenIdle();
+    const isCurrent = () => {
+      const current = this.#interpreter.currentSeed();
+      return (
+        !this.#disposed &&
+        this.#upstream === upstream &&
+        this.#subscriptionEpoch === epoch &&
+        !this.#reseed &&
+        !this.#waitingForGeometryCapture &&
+        captured.isCurrent() &&
+        current?.incarnation === initial.incarnation &&
+        current.revision === initial.revision &&
+        current.stateHash === initial.stateHash
+      );
+    };
+    if (!isCurrent()) return { status: "changed" };
+    const native = captured.snapshot;
+    const canonical = initial.snapshot;
+    if (
+      native.cols !== canonical.cols ||
+      native.rows !== canonical.rows ||
+      native.history !== canonical.history.length ||
+      Math.min(native.cursor[0], native.cols - 1) !== canonical.cursor.x ||
+      native.cursor[1] !== canonical.cursor.y
+    )
+      return { status: "mismatch" };
+    const rows = [...canonical.history, ...canonical.grid];
+    for (let index = 0; index < rows.length; index++) {
+      const projected = projectNativeGridRow(
+        native.grid[index],
+        native.cols,
+        0,
+        index > 0 && (native.grid[index - 1]!.flags & 1) !== 0,
+      );
+      if (!projected || !terminalReplicaRowsEqual(rows[index]!, projected))
+        return { status: "mismatch" };
+    }
+    return Object.freeze({
+      ...captured,
+      isCurrent,
+      authority: Object.freeze({
+        generation: this.generation,
+        workspaceName: initial.workspaceName,
+        semanticPaneId: this.semanticPaneId,
+        incarnation: initial.incarnation,
+        revision: initial.revision,
+        stateHash: initial.stateHash,
+      }),
+    });
+  }
+
   async subscribe(
     listener: (
       update: CanonicalTerminalReplicaUpdate,
@@ -252,6 +346,8 @@ export class SessionRuntimeTerminalReplicaOwner {
   ): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#historyTimer?.cancel();
+    this.#historyTimer = null;
     this.#subscriptionEpoch += 1;
     await this.#interpreter.enqueue({ type: "close", reason });
     await this.#start.catch(() => undefined);
@@ -261,7 +357,51 @@ export class SessionRuntimeTerminalReplicaOwner {
     this.#rawListeners.clear();
   }
 
+  #scheduleHistoryCheck(): void {
+    if (this.#disposed || this.#historyTimer || this.#historyChecking) return;
+    this.#historyTimer = this.#scheduler.timer(() => {
+      this.#historyTimer = null;
+      void this.#checkHistory();
+    }, 250);
+  }
+
+  async #checkHistory(): Promise<void> {
+    if (this.#disposed || this.#historyChecking) return;
+    this.#historyChecking = true;
+    this.#historyDirty = false;
+    try {
+      await this.#start;
+      const upstream = this.#upstream;
+      if (this.#disposed || !upstream?.readHistorySize) return;
+      const epoch = this.#subscriptionEpoch;
+      const size = await upstream.readHistorySize();
+      await this.#interpreter.whenIdle();
+      if (
+        this.#disposed ||
+        epoch !== this.#subscriptionEpoch ||
+        // Output received during the probe makes its count incomparable with
+        // the newer parser state. The dirty flag schedules another check.
+        this.#historyDirty ||
+        this.#reseed ||
+        this.#waitingForGeometryCapture ||
+        size === null
+      )
+        return;
+      const seed = this.#interpreter.currentSeed();
+      if (seed && seed.snapshot.history.length !== size) upstream.reseed();
+    } catch {
+      // Unavailable metadata is not evidence that history disappeared.
+    } finally {
+      this.#historyChecking = false;
+      if (this.#historyDirty) this.#scheduleHistoryCheck();
+    }
+  }
+
   #observePane(event: MirrorPaneEvent): void {
+    if (event.type === "delta") {
+      this.#historyDirty = true;
+      this.#scheduleHistoryCheck();
+    }
     if (event.type === "reset") {
       // Deterministic capture point: reset opens the atomic capture. A probe
       // armed after reset belongs to the next post-capture delta, never to this
@@ -275,6 +415,7 @@ export class SessionRuntimeTerminalReplicaOwner {
         trace: this.#consumeOutputTrace(),
       };
     } else if (event.type === "seed" || event.type === "delta") {
+      if (this.#waitingForGeometryCapture && !this.#reseed) return;
       if (this.#reseed) this.#reseed.chunks.push(event.data.slice());
       else
         this.#supervise(
@@ -285,6 +426,7 @@ export class SessionRuntimeTerminalReplicaOwner {
           }),
         );
     } else if (event.type === "cursor") {
+      this.#waitingForGeometryCapture = false;
       const reseed = this.#reseed;
       this.#reseed = null;
       const lease = reseed ? this.#qualifyReseed(reseed, event.x, event.y) : null;
@@ -294,23 +436,40 @@ export class SessionRuntimeTerminalReplicaOwner {
               type: "reseed",
               nativeCols: reseed.nativeCols,
               nativeRows: reseed.nativeRows,
-              cols: lease.pane.width,
-              rows: lease.pane.height,
+              cols: reseed.nativeCols,
+              rows: reseed.nativeRows,
               chunks: reseed.chunks,
+              historyLimit: event.historyLimit,
+              historySize: event.historySize,
               trace: reseed.trace,
-              // tmux can report x === cols while its terminal is in the
-              // right-margin wrap-pending state. The canonical replica stores
-              // a cell position, so project that state onto the final column.
-              cursor: { x: Math.min(event.x, reseed.nativeCols - 1), y: event.y },
+              // tmux can retain an offscreen x after a non-reflow width shrink
+              // (screen_resize_cursor), as well as x === cols for wrap pending.
+              // Preserve wrap pending in the parser. The backend's canonical
+              // projection, not its input cursor, clamps to the final cell.
+              cursor: { x: event.x, y: event.y },
+              wraparound: event.wraparound,
+              observedModes: event.observedModes,
               bootstrap: "painted-capture",
               validateBeforeCommit: () => this.#leaseIsCurrent(lease, reseed.subscriptionEpoch),
               onInvalidated: () => this.#retryReseedOrFault("terminal reseed layout lease crossed"),
             })
           : reseed
-            ? (this.#retryReseedOrFault("terminal reseed geometry is incompatible"),
+            ? (this.#retryReseedOrFault(
+                `terminal reseed geometry is incompatible: capture ${reseed.nativeCols}x${reseed.nativeRows}, layout ${reseed.layoutLease?.pane.width}x${reseed.layoutLease?.pane.height}, border ${reseed.layoutLease?.paneBorderStatus}`,
+              ),
               Promise.resolve())
-            : this.#interpreter.enqueue({ type: "cursor", x: event.x, y: event.y }),
+            : this.#interpreter.enqueue({
+                type: "cursor",
+                x: event.x,
+                y: event.y,
+                wraparound: event.wraparound,
+                observedModes: event.observedModes,
+              }),
       );
+    } else if (event.type === "fault") {
+      const error = new Error("Native terminal recovery failed");
+      this.#interpreter.abort(error);
+      this.#onFault?.(error);
     } else if (event.type === "closed") {
       const closed = this.#interpreter.enqueue({ type: "close", reason: "pane-closed" });
       this.#supervise(closed);
@@ -339,19 +498,19 @@ export class SessionRuntimeTerminalReplicaOwner {
     this.#layoutEpoch += 1;
     this.#layoutLease = { ...lease, epoch: this.#layoutEpoch };
     this.#cols = lease.pane.width;
-    this.#rows = lease.pane.height;
-    if (this.#reseed) return;
-    if (!this.#bootstrapped) {
-      return;
-    }
-    if (priorCols === lease.pane.width && priorRows === lease.pane.height) return;
-    this.#supervise(
-      this.#interpreter.enqueue({
-        type: "resize",
-        cols: lease.pane.width,
-        rows: lease.pane.height,
-      }),
-    );
+    this.#rows = nativeRowsForLease(lease);
+    if (priorCols === this.#cols && priorRows === this.#rows) return;
+    // A painted capture does not carry tmux's reflow/alternate-screen history.
+    // Locally resizing it can turn native clipped rows into wrapped rows. Keep
+    // the last coherent image until a capture at the new native size replaces it.
+    // One outstanding capture also coalesces geometry bursts; crossed leases
+    // request the latest capture through the normal qualification retry path.
+    this.#reseedRetryCount = 0;
+    if (!this.#bootstrapped || this.#reseed || this.#waitingForGeometryCapture) return;
+    this.#waitingForGeometryCapture = true;
+    void this.#start.then(() => {
+      if (!this.#disposed && this.#waitingForGeometryCapture) this.#upstream?.reseed();
+    });
   }
 
   #readLayoutLease(event: MirrorLayoutEvent): LayoutLeaseObservation {
@@ -408,7 +567,6 @@ export class SessionRuntimeTerminalReplicaOwner {
       !Number.isSafeInteger(cursorY) ||
       cursorX < 0 ||
       cursorY < 0 ||
-      cursorX > reseed.nativeCols ||
       cursorY >= reseed.nativeRows
     )
       return null;
@@ -426,7 +584,7 @@ export class SessionRuntimeTerminalReplicaOwner {
   }
 
   #retryReseedOrFault(message: string): void {
-    if (this.#disposed) return;
+    if (this.#disposed || this.#waitingForGeometryCapture) return;
     if (this.#reseedRetryCount >= 1) {
       const error = new Error(message);
       this.#interpreter.abort(error);
@@ -434,6 +592,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       return;
     }
     this.#reseedRetryCount += 1;
+    this.#waitingForGeometryCapture = true;
     void this.#start.then(() => {
       if (!this.#disposed) this.#upstream?.reseed();
     });
@@ -477,7 +636,11 @@ function boundedPositive(value: number): boolean {
 }
 
 function nativeRowsMatchLease(lease: LayoutLease, nativeRows: number): boolean {
-  if (lease.paneBorderStatus === "off") return lease.pane.height === nativeRows;
+  return nativeRowsForLease(lease) === nativeRows;
+}
+
+function nativeRowsForLease(lease: Omit<LayoutLease, "epoch">): number {
+  if (lease.paneBorderStatus === "off") return lease.pane.height;
 
   // pane-border-status consumes a terminal row only on the pane touching the
   // configured outer window edge. Interior separators are drawn inside the
@@ -486,7 +649,7 @@ function nativeRowsMatchLease(lease: LayoutLease, nativeRows: number): boolean {
     lease.paneBorderStatus === "top"
       ? lease.pane.top === 0
       : lease.pane.top + lease.pane.height === lease.windowRows;
-  return lease.pane.height === nativeRows + (touchesStatusEdge ? 1 : 0);
+  return lease.pane.height - (touchesStatusEdge ? 1 : 0);
 }
 
 function layoutLeaseEqual(

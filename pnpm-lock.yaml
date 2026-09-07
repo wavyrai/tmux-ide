@@ -321,8 +321,8 @@ importers:
         specifier: workspace:*
         version: link:../tmux-bridge
       '@tmux-ide/xterm-headless':
-        specifier: https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz
-        version: https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz
+        specifier: file:native/xterm/tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.3.tgz
+        version: file:packages/daemon/native/xterm/tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.3.tgz
       '@xterm/addon-unicode11':
         specifier: 0.9.0
         version: 0.9.0
@@ -2100,9 +2100,9 @@ packages:
       csstype:
         optional: true
 
-  '@tmux-ide/xterm-headless@https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz':
-    resolution: {integrity: sha512-ZL6DLYJtTbAjJg3HKmofbW9yLDnUayHKrp41PrwEOI2rPlEZ1SLUomTKmBLIr9YrvR8vFlRPl7Bbyk3JEtBY4A==, tarball: https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz}
-    version: 6.0.0-tmuxide.2
+  '@tmux-ide/xterm-headless@file:packages/daemon/native/xterm/tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.3.tgz':
+    resolution: {integrity: sha512-nS6peJ0dNszZYjAdlqPfvXK1eRoXF6WrTn/cIACJp7Jr94oPmbEh3H5GDjIaItqXMDokh0LTdUBRGHcfs+vt+A==, tarball: file:packages/daemon/native/xterm/tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.3.tgz}
+    version: 6.0.0-tmuxide.3-local.3
 
   '@tsconfig/bun@1.0.10':
     resolution: {integrity: sha512-5AV5YknQjNyoYzZ/8NG0dawqew/wH+x7ANiCfCIn29qo0cdbd1EryvFD1k5NSZWLBMOI/fGqMIaxi58GPIP9Cg==}
@@ -6059,7 +6059,7 @@ snapshots:
       - react
     optional: true
 
-  '@tmux-ide/xterm-headless@https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz': {}
+  '@tmux-ide/xterm-headless@file:packages/daemon/native/xterm/tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.3.tgz': {}
 
   '@tsconfig/bun@1.0.10': {}
 

@@ -32,6 +32,18 @@ export function clipTerminal(text: string, width: number): string {
   return out + ellipsis;
 }
 
+/** Keep an append-only input's caret visible, without splitting graphemes. */
+export function clipTerminalEnd(text: string, width: number): string {
+  if (width <= 0) return "";
+  if (terminalDisplayWidth(text) <= width) return text;
+  let tail = "";
+  for (const segment of graphemes(text).reverse()) {
+    if (terminalDisplayWidth(segment + tail) > width - 1) break;
+    tail = segment + tail;
+  }
+  return `…${tail}`;
+}
+
 function graphemes(text: string): string[] {
   const Segmenter = Intl.Segmenter;
   if (Segmenter)

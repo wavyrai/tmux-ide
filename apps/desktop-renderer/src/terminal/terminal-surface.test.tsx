@@ -90,7 +90,7 @@ class ResizeObserverHarness {
     ResizeObserverHarness.active.push(this);
   }
 
-  observe(): void {}
+  readonly observe = vi.fn();
   unobserve(): void {}
   trigger(): void {
     this.callback([], this as unknown as ResizeObserver);
@@ -575,6 +575,12 @@ describe("TerminalSurface", () => {
     expect(vi.mocked(renderer.renderer.resizeGrid).mock.invocationCallOrder.at(-1)).toBeLessThan(
       vi.mocked(renderer.renderer.write).mock.invocationCallOrder.at(-1)!,
     );
+    // Browser resizes must retain the latest content grid, including when
+    // canonical output arrived before the attachment promise resolved.
+    for (const observer of ResizeObserverHarness.active) observer.trigger();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(renderer.renderer.resizeGrid).toHaveBeenLastCalledWith({ cols: 162, rows: 51 });
     expect(attachment.resize).not.toHaveBeenCalled();
     dispose();
   });
@@ -641,6 +647,45 @@ describe("TerminalSurface", () => {
     });
     await vi.waitFor(() => expect(attachment.resize).toHaveBeenCalledWith({ cols: 118, rows: 38 }));
     expect(renderer.renderer.resizeGrid).toHaveBeenCalledWith({ cols: 80, rows: 24 });
+    const publish = listener as unknown as (event: NativeTerminalEvent) => void;
+    publish({ type: "geometry-authority", ownership: "passive" });
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-geometry-ownership")).toBe(
+      "passive",
+    );
+    const resizeCount = vi.mocked(attachment.resize).mock.calls.length;
+    renderer.setViewport({ cols: 120, rows: 40 });
+    publish({
+      type: "geometry",
+      sourceGrid: { cols: 90, rows: 30 },
+      clientViewport: { cols: 118, rows: 38 },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(attachment.resize).toHaveBeenCalledTimes(resizeCount);
+    renderer.setViewport({ cols: 120, rows: 40 });
+    const surface = root.querySelector<HTMLElement>(".terminal-surface")!;
+    expect(ResizeObserverHarness.active[0]!.observe).toHaveBeenCalledWith(surface);
+    expect(ResizeObserverHarness.active[0]!.observe).toHaveBeenCalledWith(
+      surface.querySelector(".terminal-surface__viewport"),
+    );
+    const rect = vi.spyOn(surface, "getBoundingClientRect");
+    rect.mockReturnValue({ width: 600, height: 400 } as DOMRect);
+    publish({ type: "geometry-authority", ownership: "available" });
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-geometry-ownership")).toBe(
+      "passive",
+    );
+    expect(attachment.resize).toHaveBeenCalledTimes(resizeCount);
+    for (const observer of ResizeObserverHarness.active) observer.trigger();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(attachment.resize).toHaveBeenCalledTimes(resizeCount);
+    rect.mockReturnValue({ width: 640, height: 420 } as DOMRect);
+    renderer.setViewport({ cols: 120, rows: 40 });
+    for (const observer of ResizeObserverHarness.active) observer.trigger();
+    await vi.waitFor(() => expect(attachment.resize).toHaveBeenCalledWith({ cols: 120, rows: 40 }));
+    expect(surface.querySelector(".terminal-surface__viewport--measure")).toBeNull();
+    publish({ type: "geometry-authority", ownership: "owner" });
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-geometry-ownership")).toBe(
+      "owner",
+    );
     dispose();
   });
 
@@ -1035,14 +1080,13 @@ describe("TerminalSurface", () => {
         },
       })),
     });
-    const passiveAttachment = attachmentHarness();
     const transport = transportHarness(async (request, listener) => {
       requests.push(request);
       await listener(connectedState({ cols: 39, rows: 24 }, { cols: 39, rows: 24 }));
       await listener({ type: "output", bytes: new TextEncoder().encode("authoritative frame") });
       return {
         status: "connected" as const,
-        attachment: request.geometryOwnership === "owner" ? ownerAttachment : passiveAttachment,
+        attachment: ownerAttachment,
       };
     });
     const renderer = rendererHarness({ cols: 140, rows: 46 });
@@ -1060,7 +1104,7 @@ describe("TerminalSurface", () => {
       root,
     );
 
-    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(ownerAttachment.resize).toHaveBeenCalledOnce());
     await vi.waitFor(() =>
       expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected"),
     );
@@ -1070,13 +1114,10 @@ describe("TerminalSurface", () => {
         geometryOwnership: "owner",
         viewport: { cols: 140, rows: 46 },
       }),
-      expect.objectContaining({
-        viewerMode: "interactive",
-        geometryOwnership: "passive",
-      }),
     ]);
     expect(ownerAttachment.resize).toHaveBeenCalledOnce();
-    expect(passiveAttachment.resize).not.toHaveBeenCalled();
+    expect(transport.connect).toHaveBeenCalledOnce();
+    expect(ownerAttachment.dispose).not.toHaveBeenCalled();
     expect(root.querySelector(".terminal-surface")?.getAttribute("data-viewer-mode")).toBe(
       "interactive",
     );
@@ -1091,8 +1132,9 @@ describe("TerminalSurface", () => {
     );
     expect(root.querySelector(".terminal-surface")?.getAttribute("data-resize-ordinal")).toBe("1");
     renderer.emitInput(new TextEncoder().encode("marker"));
-    await vi.waitFor(() => expect(passiveAttachment.write).toHaveBeenCalledOnce());
-    expect(passiveAttachment.resize).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(ownerAttachment.write).toHaveBeenCalledOnce());
+    expect(transport.connect).toHaveBeenCalledOnce();
+    expect(ownerAttachment.dispose).not.toHaveBeenCalled();
     dispose();
   });
 

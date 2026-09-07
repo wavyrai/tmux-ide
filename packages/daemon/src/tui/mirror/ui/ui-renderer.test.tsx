@@ -290,6 +290,72 @@ describe("OpenTUI ui primitives", () => {
     setup.renderer.destroy();
   });
 
+  it.each([
+    [3, 1],
+    [12, 2],
+  ])("keeps overlay content and Escape available at %sx%s", async (width, height) => {
+    let dismissed = 0;
+    let restored = 0;
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    function Harness() {
+      const [open, setOpen] = createSignal(true);
+      return (
+        <KeyboardRouteTestHost>
+          <box width={width} height={height}>
+            <text>P</text>
+            <OverlayHost
+              width={width}
+              height={height}
+              captureFocus={() => "pane"}
+              isFocusMounted={() => true}
+              restoreFocus={() => restored++}
+              onDismiss={() => {
+                dismissed++;
+                setOpen(false);
+              }}
+              layers={
+                open()
+                  ? [
+                      {
+                        id: "tiny",
+                        render: () => (
+                          <OverlayFrame
+                            theme={theme}
+                            viewportWidth={width}
+                            viewportHeight={height}
+                            width={40}
+                            height={12}
+                            title="Title"
+                            footer="Footer"
+                          >
+                            <text>OK</text>
+                          </OverlayFrame>
+                        ),
+                      },
+                    ]
+                  : []
+              }
+            />
+          </box>
+        </KeyboardRouteTestHost>
+      );
+    }
+    const setup = await renderForTest(() => <Harness />, { width, height });
+    try {
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("OK");
+      setup.mockInput.pressEscape();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      await setup.renderOnce();
+      expect(dismissed).toBe(1);
+      expect(restored).toBe(1);
+      expect(setup.captureCharFrame()).not.toContain("OK");
+      expect(setup.captureCharFrame()).toContain("P");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
   it("keeps overlay frames inset and captures outside pointer dismissal", async () => {
     let dismissed = 0;
     let bubbled = 0;

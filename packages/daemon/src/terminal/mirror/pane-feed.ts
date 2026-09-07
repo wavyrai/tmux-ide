@@ -28,7 +28,7 @@
  * control channel's read loop, never from a promise continuation (a microtask
  * hop would let same-chunk deltas overtake the state change and be dropped).
  */
-import type { MirrorPaneEvent } from "./events.ts";
+import type { MirrorObservedTerminalModes, MirrorPaneEvent } from "./events.ts";
 
 export type PaneFeedState = "live" | "quarantined" | "awaiting-capture" | "awaiting-cursor";
 
@@ -154,7 +154,71 @@ export class PaneFeed {
     }
     events.push({ type: "seed", data: seed });
     for (const data of held) events.push({ type: "delta", data });
-    if (probe) events.push({ type: "cursor", x: probe.x, y: probe.y });
+    if (probe) {
+      const fields = line.trim().split(/\s+/);
+      const value = fields[15];
+      const historyLimit = Number(value);
+      const sizeValue = fields[14];
+      const historySize = Number(sizeValue);
+      const wrapValue = fields[13];
+      const observedModes: MirrorObservedTerminalModes = Object.fromEntries(
+        (
+          [
+            ["alternateScreen", 4],
+            ["cursorVisible", 5],
+            ["insert", 6],
+            ["applicationCursor", 7],
+            ["applicationKeypad", 8],
+            ["bracketedPaste", 16],
+            ["mouseSgr", 18],
+            ["mouseUtf8", 19],
+          ] as const
+        ).flatMap(([name, index]) =>
+          fields[index] === "0" || fields[index] === "1" ? [[name, fields[index] === "1"]] : [],
+        ),
+      );
+      // mouse_any_flag is an aggregate, not DECSET 1003. Require a complete,
+      // consistent one-hot observation before identifying a tracking protocol.
+      const mouseFlags = [fields[9], fields[11], fields[10], fields[17]];
+      const protocols = ["none", "vt200", "drag", "any"] as const;
+      const enabled = mouseFlags.slice(1).filter((flag) => flag === "1").length;
+      const mouseProtocol =
+        mouseFlags.every((flag) => flag === "0" || flag === "1") &&
+        ((mouseFlags[0] === "0" && enabled === 0) || (mouseFlags[0] === "1" && enabled === 1))
+          ? protocols[mouseFlags[0] === "0" ? 0 : mouseFlags.lastIndexOf("1")]
+          : undefined;
+      const top = Number(fields[20]);
+      const bottom = Number(fields[21]);
+      const scrolling =
+        (fields[12] === "0" || fields[12] === "1") &&
+        [fields[20], fields[21]].every((value) => value !== undefined && /^[0-9]+$/u.test(value)) &&
+        Number.isSafeInteger(top) &&
+        Number.isSafeInteger(bottom) &&
+        top <= bottom &&
+        bottom < probe.rows
+          ? { top, bottom, origin: fields[12] === "1" }
+          : undefined;
+      const modes = {
+        ...observedModes,
+        ...(mouseProtocol !== undefined ? { mouseProtocol } : {}),
+        ...(scrolling !== undefined ? { scrolling } : {}),
+      };
+      events.push({
+        type: "cursor",
+        ...(Object.keys(modes).length > 0 ? { observedModes: modes } : {}),
+        ...(wrapValue === "0" || wrapValue === "1" ? { wraparound: wrapValue === "1" } : {}),
+        ...(sizeValue !== undefined &&
+        /^[0-9]+$/u.test(sizeValue) &&
+        Number.isSafeInteger(historySize)
+          ? { historySize }
+          : {}),
+        x: probe.x,
+        y: probe.y,
+        ...(value !== undefined && /^[0-9]+$/u.test(value) && Number.isSafeInteger(historyLimit)
+          ? { historyLimit }
+          : {}),
+      });
+    }
     return events;
   }
 

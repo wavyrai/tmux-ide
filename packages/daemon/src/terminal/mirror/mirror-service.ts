@@ -29,6 +29,7 @@ import {
 } from "./session-channel.ts";
 import type { TrustedMirrorSessionInventory } from "./trusted-inventory.ts";
 import type { InputAction } from "../protocol/input-coalescer.ts";
+import type { NativeGridReadResult } from "./native-grid-reader.ts";
 import {
   controlModeAuthorityKey,
   processControlModeOwnershipRegistry,
@@ -36,6 +37,7 @@ import {
 } from "./control-mode-ownership.ts";
 
 export interface MirrorServiceOptions {
+  resolveSocketPath?: () => string;
   /** `tmux -L <name>` for every channel — isolated servers in tests. */
   socketName?: string;
   /** `tmux -S <path>` for every channel — the daemon's socket authority. */
@@ -45,6 +47,7 @@ export interface MirrorServiceOptions {
   /** `tmux -f <file>` — tests pass /dev/null. */
   configFile?: string;
   pauseAfterSeconds?: number;
+  /** Explicit capture tail override. Omitted preserves native retained history. */
   historyLines?: number;
   internalReadHookEmission?: SessionChannelOptions["internalReadHookEmission"];
   /** Test seam: replace the spawned control channel per session. */
@@ -87,6 +90,10 @@ export interface MirrorSubscribeRequest {
 }
 
 export interface MirrorSubscription {
+  /** Optional raw backing on this exact subscription; it carries no canonical revision. */
+  captureNativeBacking?(): Promise<NativeGridReadResult>;
+  /** Native metadata on this exact retained pane; null means unavailable. */
+  readHistorySize?(): Promise<number | null>;
   readonly session: string;
   readonly semanticPaneId: string;
   /** Park delivery for this subscriber (offscreen freeze). Siblings and other
@@ -216,6 +223,8 @@ export class MirrorService {
       freeze: () => handle.freeze(),
       thaw: () => handle.thaw(),
       reseed: () => handle.reseed(),
+      readHistorySize: () => handle.readHistorySize(),
+      captureNativeBacking: () => handle.captureNativeBacking(),
       sendText: (text) => handle.sendText(text),
       sendKey: (key) => handle.sendKey(key),
       close: async () => {
@@ -284,6 +293,17 @@ export class MirrorService {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
     entry.channel.sendText(semanticPaneId, text, performanceTraceId, isolated);
+  }
+
+  sendBytes(
+    session: string,
+    semanticPaneId: string,
+    data: Uint8Array,
+    performanceTraceId?: string,
+  ): void {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    entry.channel.sendBytes(semanticPaneId, data, performanceTraceId);
   }
 
   sendKey(session: string, semanticPaneId: string, key: string, performanceTraceId?: string): void {
@@ -389,6 +409,7 @@ export class MirrorService {
               handlers,
               socketName: this.opts.socketName,
               socketPath: this.opts.socketPath,
+              resolveSocketPath: this.opts.resolveSocketPath,
               executable: this.opts.executable,
               configFile: this.opts.configFile,
               pauseAfterSeconds: this.opts.pauseAfterSeconds,

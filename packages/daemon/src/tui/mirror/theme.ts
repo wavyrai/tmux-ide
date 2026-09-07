@@ -12,6 +12,7 @@
 import { RGBA } from "@opentui/core";
 import {
   BUILTIN_VISUAL_THEMES,
+  findVisualThemePreset,
   contrastRatio,
   deriveAttentionBlend,
   deriveFocusedHeader,
@@ -122,6 +123,7 @@ export interface SemanticThemeSnapshot extends SemanticThemeTokens {
 
 export interface ThemeConfigInput {
   mode?: ThemeModeSetting;
+  preset?: string;
   userTheme?: unknown;
   projectTheme?: unknown;
   accessibility?: Partial<ThemeAccessibilityPreferences>;
@@ -907,7 +909,7 @@ export function createSemanticThemeSnapshot(
   const resolved = resolveVisualTheme({
     appearance: mode,
     hostDefaults: setting === "system" ? (hostDefaults ?? undefined) : undefined,
-    userTheme: config?.userTheme,
+    userTheme: config?.userTheme ?? findVisualThemePreset(config?.preset),
     projectTheme: config?.projectTheme,
     accessibility,
   });

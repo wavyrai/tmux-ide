@@ -33,19 +33,27 @@ let remoteAccessRestartBackend:
     ) => Promise<RemoteAccessRestartResult> | RemoteAccessRestartResult)
   | null = null;
 
+let remoteAccessListenerPort: number | undefined;
+
 export function setRemoteAccessRestartBackend(
   backend:
     | ((
         request: RemoteAccessRestartRequest,
       ) => Promise<RemoteAccessRestartResult> | RemoteAccessRestartResult)
     | null,
+  listenerPort?: number,
 ): void {
   remoteAccessRestartBackend = backend;
+  remoteAccessListenerPort = backend ? listenerPort : undefined;
 }
 
 function currentPort(deps: AppSetRemoteAccessDeps): number {
   const envPort = Number(process.env.TMUX_IDE_DAEMON_PORT);
-  return deps.port ?? (Number.isInteger(envPort) && envPort > 0 ? envPort : 6060);
+  return (
+    deps.port ??
+    remoteAccessListenerPort ??
+    (Number.isInteger(envPort) && envPort > 0 ? envPort : 6060)
+  );
 }
 
 function primaryLanHost(): string {

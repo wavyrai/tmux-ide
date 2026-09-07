@@ -1,3 +1,4 @@
+import { nativeProjectedRowSource } from "../../terminal/mirror/native-grid-projection.ts";
 import type {
   TerminalDeliveryAck,
   TerminalDeliveryEnvelope,
@@ -571,8 +572,17 @@ export function projectTerminalTextRow(row: TerminalReplicaRow | undefined): Ter
   let text = "";
   let previousStart = 0;
   let previousEnd = 0;
+  const native = nativeProjectedRowSource(row);
   for (let column = 0; column < row.cells.length; column += 1) {
     const cell = row.cells[column]!;
+    const nativeCell = native?.source.cells[native.startColumn + column];
+    if (nativeCell && (nativeCell.flags & 4) !== 0) {
+      const owner = native?.source.cells[native.startColumn + column - 1];
+      const continuation = column > 0 && owner?.width === 2 && !(owner.flags & 4);
+      starts[column] = continuation ? previousStart : text.length;
+      ends[column] = continuation ? previousEnd : text.length;
+      continue;
+    }
     if (cell.width === 0) {
       // A continuation cell selects the complete grapheme it visually belongs
       // to; it must not become a zero-width hole in selection coordinates.
@@ -581,7 +591,7 @@ export function projectTerminalTextRow(row: TerminalReplicaRow | undefined): Ter
       continue;
     }
     const start = text.length;
-    text += cell.grapheme || " ";
+    text += cell.grapheme || (nativeCell?.width === 2 ? nativeCell.text : " ");
     const end = text.length;
     starts[column] = start;
     ends[column] = end;
@@ -717,6 +727,7 @@ export function blitSemanticRow(
   defaultBg: number,
   graphemes: GraphemeOverride[] | undefined,
   palette: TerminalPaletteProjection | undefined,
+  sourceColumn = 0,
 ): void {
   const dfR = (defaultFg >> 16) & 0xff;
   const dfG = (defaultFg >> 8) & 0xff;
@@ -724,16 +735,22 @@ export function blitSemanticRow(
   const dbR = (defaultBg >> 16) & 0xff;
   const dbG = (defaultBg >> 8) & 0xff;
   const dbB = defaultBg & 0xff;
-  let sourceIndex = 0;
+  let sourceIndex = sourceColumn;
   for (let x = 0; x < width; x += 1) {
     const idx = y * width + x;
-    const cell: TerminalReplicaCell | undefined = row?.cells[sourceIndex];
+    let cell: TerminalReplicaCell | undefined = row?.cells[sourceIndex];
     if (!cell) {
       writeCell(buffers, idx, SPACE_CODE, null, null, 0, dfR, dfG, dfB, dbR, dbG, dbB);
       continue;
     }
     sourceIndex += 1;
-    if (cell.width === 0) {
+    const clippedLeading = cell.width === 0 && x === 0;
+    const clippedTrailing = cell.width === 2 && x === width - 1;
+    if (clippedLeading && sourceIndex > 1) {
+      const owner = row?.cells[sourceIndex - 2];
+      if (owner?.width === 2) cell = owner;
+    }
+    if (cell.width === 0 && !clippedLeading) {
       writeContinuation(buffers, idx);
       continue;
     }
@@ -744,7 +761,9 @@ export function blitSemanticRow(
       [foreground, background] = [background, foreground];
       attributes &= ~32;
     }
-    const grapheme = cell.grapheme || " ";
+    // Native tmux clears a partial wide glyph, retaining its background.
+    // Never leave an orphan continuation or draw into adjacent pane chrome.
+    const grapheme = clippedLeading || clippedTrailing ? " " : cell.grapheme || " ";
     const codepoint = grapheme.codePointAt(0) ?? SPACE_CODE;
     writeCell(
       buffers,

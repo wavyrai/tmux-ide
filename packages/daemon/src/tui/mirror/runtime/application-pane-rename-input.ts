@@ -1,3 +1,5 @@
+import { stripVTControlCharacters } from "node:util";
+
 export const APPLICATION_PANE_NAME_MAX_LENGTH = 80;
 
 export interface ApplicationPaneRenameDraft {
@@ -12,7 +14,7 @@ export type ApplicationPaneRenameKeyAction =
   | { readonly kind: "block" };
 
 function appendBounded(current: string, input: string): string {
-  const clean = [...input]
+  const clean = [...stripVTControlCharacters(input)]
     .filter((character) => {
       const codePoint = character.codePointAt(0);
       return codePoint !== undefined && codePoint > 0x1f && codePoint !== 0x7f;
@@ -22,16 +24,32 @@ function appendBounded(current: string, input: string): string {
 }
 
 export function applicationPaneRenameKeyAction(
-  event: Readonly<{ name: string; ctrl: boolean; meta: boolean; shift: boolean }>,
+  event: Readonly<{
+    name: string;
+    ctrl: boolean;
+    meta: boolean;
+    shift: boolean;
+    eventType?: string;
+    repeated?: boolean;
+  }>,
   value: string,
 ): ApplicationPaneRenameKeyAction {
   const name = event.name.toLowerCase();
+  if (event.eventType === "release") return { kind: "block" };
   if (name === "escape") return { kind: "cancel" };
   if (name === "return" || name === "enter")
-    return value.trim().length > 0 ? { kind: "submit" } : { kind: "block" };
+    return value.trim().length > 0 &&
+      !event.repeated &&
+      event.eventType !== "repeat" &&
+      !event.ctrl &&
+      !event.meta
+      ? { kind: "submit" }
+      : { kind: "block" };
   if (name === "backspace") return { kind: "update", value: [...value].slice(0, -1).join("") };
   if (event.ctrl && name === "u") return { kind: "update", value: "" };
-  if (event.ctrl || event.meta || event.name.length !== 1) return { kind: "block" };
+  if (!event.ctrl && !event.meta && name === "space")
+    return { kind: "update", value: appendBounded(value, " ") };
+  if (event.ctrl || event.meta || [...event.name].length !== 1) return { kind: "block" };
   return {
     kind: "update",
     value: appendBounded(value, event.shift ? event.name.toUpperCase() : event.name),

@@ -66,6 +66,8 @@ export interface TerminalDeliveryMetrics {
   readonly nacks: number;
   readonly representationCacheBytes: number;
   readonly rawJournalBytes: number;
+  /** Canonical snapshots reachable by current delivery baselines and transactions. */
+  readonly canonicalRevisions: number;
   readonly maxSlowClientMs: number;
   readonly queueDepth: number;
   readonly maxQueueDepth: number;
@@ -388,6 +390,10 @@ export class SessionRuntimeTerminalDeliveryHub {
       coalesced: this.#coalesced,
       reseeds: this.#reseeds,
       nacks: this.#nacks,
+      canonicalRevisions: [...this.#panes.values()].reduce(
+        (sum, pane) => sum + pane.revisions.size,
+        0,
+      ),
       representationCacheBytes: this.#cacheBytes,
       rawJournalBytes: [...this.#panes.values()].reduce((sum, pane) => sum + pane.rawBytes, 0),
       maxSlowClientMs: Math.max(this.#maxSlowClientMs, currentSlow),
@@ -548,8 +554,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     const record = { update, state: result.state, trace: pane.pendingDeliveryTrace };
     pane.latest = record;
     pane.revisions.set(update.revision, record);
-    while (pane.revisions.size > MAX_CANONICAL_REVISIONS)
-      pane.revisions.delete(pane.revisions.keys().next().value!);
+    this.#pruneCanonicalRevisions(semanticPaneId);
     for (const client of this.#clients.values()) {
       if (client.paneId !== semanticPaneId || client.closed) continue;
       if (!client.lifecycleOpenRecorded)
@@ -1149,6 +1154,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     client.lastAck = ack;
     if (client.latestRevision === ack.canonicalRevision) client.latestRevision = null;
     this.#pruneAckSupersededCache(client.paneId);
+    this.#pruneCanonicalRevisions(client.paneId);
     if (this.#observability.enabled)
       try {
         const atMicros = this.#observability.nowMicros();
@@ -1216,6 +1222,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     this.#nacks += 1;
     client.reseedRequired = true;
     client.inFlight = null;
+    this.#pruneCanonicalRevisions(client.paneId);
     this.#schedule(client);
     this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
   }
@@ -1343,6 +1350,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     client.backgroundTimer?.cancel();
     client.outgoing.length = 0;
     this.#clients.delete(client.key);
+    this.#pruneCanonicalRevisions(client.paneId);
     if ([...this.#clients.values()].some((candidate) => candidate.paneId === client.paneId)) return;
     const pane = this.#panes.get(client.paneId);
     this.#panes.delete(client.paneId);
@@ -1475,6 +1483,31 @@ export class SessionRuntimeTerminalDeliveryHub {
   #clearCache(): void {
     this.#cache.clear();
     this.#cacheBytes = 0;
+  }
+
+  #pruneCanonicalRevisions(paneId: string): void {
+    const pane = this.#panes.get(paneId);
+    if (!pane?.latest) return;
+    const latest = pane.latest.update;
+    const reachable = new Set([latest.revision]);
+    for (const client of this.#clients.values()) {
+      if (client.closed || client.paneId !== paneId) continue;
+      const baseline = pane.revisions.get(client.baselineRevision)?.update;
+      if (
+        !client.reseedRequired &&
+        baseline?.incarnation === latest.incarnation &&
+        baseline.stateHash === client.baselineHash
+      )
+        reachable.add(client.baselineRevision);
+      const flight = client.inFlight?.envelope;
+      if (flight?.incarnation === latest.incarnation) reachable.add(flight.canonicalRevision);
+    }
+    // A hidden or slow reader owns at most one baseline and one transaction.
+    // Historical redraws with no reader cannot help a future delivery: new
+    // readers and skipped revisions already receive an atomic current seed.
+    // MAX_CLIENTS bounds this set to 2 * MAX_CLIENTS + 1 per pane.
+    for (const revision of pane.revisions.keys())
+      if (!reachable.has(revision)) pane.revisions.delete(revision);
   }
 
   #pruneAckSupersededCache(paneId: string): void {

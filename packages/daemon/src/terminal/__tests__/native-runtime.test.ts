@@ -360,6 +360,39 @@ describe("workspace-registry semantic pane discovery", () => {
     });
   });
 
+  it("keeps discovery available through foreground command and presentation changes", async () => {
+    const { registry } = createRegistry();
+    const base = inventoryRunner("runtime-session", "");
+    let reads = 0;
+    const runner: TmuxAttachmentCommandRunner = {
+      run(command) {
+        if (command.argv[0] === "list-sessions") return base.runner.run(command);
+        const fields = paneWire("runtime-session").split(INVENTORY_SEPARATOR);
+        if (++reads % 2 === 0) {
+          fields[8] = "Updated title";
+          fields[9] = "grep";
+          fields[10] = "0";
+          fields[16] = "/new/path";
+        } else fields[9] = "zsh";
+        return { status: "ok", stdout: fields.join(INVENTORY_SEPARATOR) + "\n" };
+      },
+    };
+    const inventory = await discoverWorkspaceRegistryTerminalInventory(registry, runner);
+    expect(inventory.panes[0]).toMatchObject({
+      currentCommand: "grep",
+      title: "Updated title",
+      active: false,
+      dir: "/new/path",
+    });
+    const catalog = new SemanticPaneCatalog({
+      discover: () => discoverWorkspaceRegistrySemanticPanes(registry, runner),
+    });
+    const first = await catalog.resolve(request().target);
+    const second = await catalog.resolve(request().target);
+    expect(second.bindingGeneration).toBe(first.bindingGeneration);
+    expect(second.source).toEqual(first.source);
+  });
+
   it("rejects a pane topology race between exact before/after snapshots", async () => {
     const { registry } = createRegistry();
     let paneReads = 0;
@@ -636,6 +669,49 @@ class StartupReconciliationTmuxModel {
 }
 
 describe("async terminal inventory reads", () => {
+  it("uses the shared daemon fence for both command and asynchronous inventory reads", async () => {
+    const { registry, root } = createRegistry();
+    let replaced = false;
+    const resolve = () => {
+      if (replaced) throw new Error("Unix socket authority changed before use");
+      return ["-S", "/owned/socket"];
+    };
+    const resolveAsync = vi.fn(async () => resolve());
+    const execute = vi.fn(() => "");
+    const executeRead = vi.fn(async () => "");
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: {
+        ...authority(root),
+        namedSocketFence: {
+          resolve,
+          resolveAsync,
+          isPinned: () => true,
+          observe: () => undefined,
+        },
+      },
+      commandExecutor: execute,
+      readCommandExecutor: executeRead,
+    });
+    try {
+      await runtime.whenReady();
+      const command: TmuxArgvPlan = { executable: "tmux", argv: ["list-sessions"] };
+      expect(runtime.runner.run(command).status).toBe("ok");
+      expect((await runtime.readRunner.run(command)).status).toBe("ok");
+      expect(resolveAsync).toHaveBeenCalled();
+      expect(executeRead.mock.calls[0]?.[1]).toEqual(["-S", "/owned/socket", "list-sessions"]);
+      execute.mockClear();
+      executeRead.mockClear();
+      replaced = true;
+      expect(runtime.runner.run(command).status).toBe("failed");
+      expect((await runtime.readRunner.run(command)).status).toBe("failed");
+      expect(execute).not.toHaveBeenCalled();
+      expect(executeRead).not.toHaveBeenCalled();
+    } finally {
+      runtime.dispose();
+    }
+  });
+
   const syncStartup = (_executable: string, rawArgv: readonly string[]) => {
     const argv = rawArgv.slice(2);
     return argv[0] === "list-sessions" ? "" : "";
@@ -2029,7 +2105,39 @@ describe("native terminal attachment runtime lifecycle", () => {
     await runtime.dispose();
   });
 
-  it("fails startup closed for an unavailable explicit named socket", async () => {
+  it.each(["unclassified failure", "Permission denied", "Connection refused"])(
+    "fails startup closed for an inaccessible named socket: %s",
+    async (detail) => {
+      const { registry, root } = createEmptyRegistry();
+      const runtime = createNativeTerminalAttachmentRuntime({
+        daemonInstanceId: INSTANCE_ID,
+        webSocketUrl: WS_URL,
+        registry,
+        tmuxAuthority: {
+          ...authority(root),
+          socketSelector: { kind: "name", name: "explicit-runtime" },
+        },
+        commandExecutor: () => {
+          throw new TmuxError("raw inaccessible named socket detail", "TMUX_UNAVAILABLE", {
+            cause: Object.assign(new Error("connect failed"), {
+              stderr: `error connecting to /owned/socket (${detail})`,
+            }),
+          });
+        },
+      });
+
+      await expect(runtime.whenReady()).rejects.toMatchObject({
+        code: "orphan-reconciliation-failed",
+        message: "Daemon-owned terminal view startup reconciliation failed.",
+      });
+      await runtime.dispose();
+    },
+  );
+
+  it.each([
+    "no server running on /owned/socket",
+    "error connecting to /owned/socket (No such file or directory)",
+  ])("allows an absent named server during startup: %s", async (stderr) => {
     const { registry, root } = createEmptyRegistry();
     const runtime = createNativeTerminalAttachmentRuntime({
       daemonInstanceId: INSTANCE_ID,
@@ -2037,18 +2145,19 @@ describe("native terminal attachment runtime lifecycle", () => {
       registry,
       tmuxAuthority: {
         ...authority(root),
-        socketSelector: { kind: "name", name: "explicit-runtime" },
+        socketSelector: { kind: "name", name: "owned-late-server" },
       },
       commandExecutor: () => {
-        throw new TmuxError("raw inaccessible named socket detail", "TMUX_UNAVAILABLE");
+        throw new TmuxError("unavailable", "TMUX_UNAVAILABLE", {
+          cause: Object.assign(new Error("connect failed"), { stderr }),
+        });
       },
     });
-
-    await expect(runtime.whenReady()).rejects.toMatchObject({
-      code: "orphan-reconciliation-failed",
-      message: "Daemon-owned terminal view startup reconciliation failed.",
-    });
-    await runtime.dispose();
+    try {
+      await expect(runtime.whenReady()).resolves.toBeUndefined();
+    } finally {
+      await runtime.dispose();
+    }
   });
 
   it("fails startup closed for an unavailable explicit socket path", async () => {

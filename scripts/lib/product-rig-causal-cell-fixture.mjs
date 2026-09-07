@@ -5,6 +5,7 @@ import { writeSync } from "node:fs";
 import { createCausalFixtureGeometry } from "./product-rig-causal-fixture-geometry.mjs";
 
 const OSC = "tmux-ide-causal-cell-v1";
+const alternateScreen = process.argv.includes("--alternate-screen");
 const paneId = process.env.TMUX_PANE;
 let buffer = "";
 let restored = false;
@@ -33,7 +34,8 @@ const restore = () => {
   try {
     // Restore the DEC mode changed for the fixed-cell fixture before the
     // interactive shell resumes. A tty reset alone does not restore DECAWM.
-    writeSync(1, "\x1b[?7h\x1b[2J\x1b[3J\x1b[H");
+    writeSync(1, "\x1b[?7h");
+    writeSync(1, alternateScreen ? "\x1b[?1049l" : "\x1b[2J\x1b[3J\x1b[H");
   } catch {
     // The ephemeral pane may already be closed.
   }
@@ -53,7 +55,9 @@ process.once("SIGINT", stop);
 process.once("SIGTERM", stop);
 process.once("exit", restore);
 execFileSync("stty", ["raw", "-echo"], { stdio: ["inherit", "ignore", "ignore"] });
+if (alternateScreen) writeSync(1, "\x1b[?1049h");
 geometry = createCausalFixtureGeometry({
+  clearHistory: !alternateScreen,
   readColumns: () => process.stdout.columns,
   write: (value, callback) => process.stdout.write(value, callback),
   markReady,

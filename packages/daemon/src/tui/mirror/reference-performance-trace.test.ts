@@ -8,6 +8,40 @@ import {
 import { emitTuiTerminalFrameFenceFailOpen } from "./performance-events.ts";
 
 describe("reference performance trace", () => {
+  it("input fences retain the actual pending critical count without inventing a drained writer", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    let pendingCriticalRecords = 3;
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      append: (record) => records.push(record),
+      health: () => ({
+        droppedRecords: 0,
+        oversizedRecords: 0,
+        failed: false,
+        pendingCriticalRecords,
+      }),
+    });
+    const fence = {
+      traceId: "trace",
+      processId: "opentui:1",
+      clockId: "opentui-performance-now" as const,
+      clockKind: "performance-now" as const,
+      atMicros: 1,
+      semanticPaneId: "pane-a",
+      generation: "generation",
+      incarnation: "incarnation",
+      revision: 1,
+      stateHash: "hash",
+    };
+    sink.terminalInputFence?.(fence);
+    expect(records.at(-1)).toMatchObject({ writerHealth: { pendingCriticalRecords: 3 } });
+    pendingCriticalRecords = 0;
+    sink.terminalInputFence?.(fence);
+    expect(records.at(-1)).toMatchObject({ writerHealth: { pendingCriticalRecords: 0 } });
+  });
+
   it("persists bounded content-free window presentation evidence only in detailed mode", () => {
     const records: Readonly<Record<string, unknown>>[] = [];
     const sink = createReferencePerformanceTraceSink({

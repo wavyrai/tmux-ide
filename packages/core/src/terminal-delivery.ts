@@ -2808,7 +2808,7 @@ function renderAnsiRow(row: TerminalReplicaRow): string {
   for (const cell of row.cells) {
     if (cell.width === 0) continue;
     output += ansiCellStyle(cell);
-    output += cell.grapheme;
+    output += cell.grapheme || " ";
   }
   return `${output}\u001b[0m`;
 }

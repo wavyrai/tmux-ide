@@ -109,6 +109,7 @@ export interface ApplicationTerminalInteractionController {
   cyclePane(): void;
   cycleWindow(): void;
   newWindow(): Promise<string>;
+  zoomPane(semanticPaneId?: string): Promise<string>;
   splitPane(direction: "right" | "down"): Promise<string>;
   renamePane(semanticPaneId: string, name: string): Promise<string>;
   closePane(): Promise<string>;
@@ -333,7 +334,9 @@ export function createApplicationTerminalInteractionController(
   ): number | null => {
     const window = snapshot.windows.find(({ panes }) => panes.some(({ pane }) => pane === paneId));
     const pane = window?.panes.find(({ pane }) => pane === paneId);
-    return pane && window ? nativePaneResizeCells(pane, axis, window.paneBorderStatus) : null;
+    return pane && window
+      ? nativePaneResizeCells(pane, axis, window.paneBorderStatus, window.rows)
+      : null;
   };
   const resizePresentationDigest = (
     preview: ApplicationPaneResizePreview | null,
@@ -1137,6 +1140,37 @@ export function createApplicationTerminalInteractionController(
       }
       paneInput.selectPane(pane, { presentOptimistically: false });
     },
+    async zoomPane(targetPane) {
+      const active = options.generation();
+      const semanticPaneId = targetPane ?? options.focusedPane?.() ?? null;
+      const workspaceName = active?.connection?.workspaceName ?? null;
+      const window = options
+        .layout()
+        .windows.find((window) => window.panes.some((pane) => pane.pane === semanticPaneId));
+      if (
+        active?.status !== "live" ||
+        !active.client ||
+        !workspaceName ||
+        !semanticPaneId ||
+        !window
+      )
+        return "zoom unavailable: select a live pane first";
+      try {
+        const response = await active.client.dispatch({
+          kind: "owner-action",
+          name: "workspace.pane.zoom.toggle",
+          input: { workspaceName, semanticPaneId, desired: window.zoomed ? "unzoomed" : "zoomed" },
+          operationId: createOperationId(),
+        });
+        if (options.generation() !== active)
+          return "zoom not confirmed: terminal workspace reconnected";
+        if (response.kind !== "owner-action" || response.result === null)
+          return "zoom not confirmed by the daemon";
+        return window.zoomed ? "restored pane layout" : "zoomed pane";
+      } catch (error) {
+        return `zoom unavailable: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
     async splitPane(direction) {
       const active = options.generation();
       const semanticPaneId = options.focusedPane?.() ?? null;
@@ -1508,9 +1542,10 @@ export function createApplicationTerminalInteractionController(
           const active = options.generation();
           const identity = active?.adapter?.paneCanonicalIdentity(settled.preview.semanticPaneId);
           const clientGeneration = active?.client?.getSnapshot().generation;
-          const layoutPane = options
-            .layout()
-            .current?.panes.find(({ pane }) => pane === settled.preview.semanticPaneId);
+          const layoutWindow = options.layout().current;
+          const layoutPane = layoutWindow?.panes.find(
+            ({ pane }) => pane === settled.preview.semanticPaneId,
+          );
           identityExact =
             active?.status === "live" &&
             active.daemonGeneration === settled.daemonGeneration &&
@@ -1525,7 +1560,14 @@ export function createApplicationTerminalInteractionController(
             identity.cols === settled.cols &&
             identity.rows === settled.rows &&
             layoutPane?.width === settled.cols &&
-            layoutPane.height === settled.rows;
+            layoutWindow !== undefined &&
+            layoutWindow !== null &&
+            nativePaneResizeCells(
+              layoutPane,
+              "rows",
+              layoutWindow.paneBorderStatus,
+              layoutWindow.rows,
+            ) === settled.rows;
         } catch {
           identityExact = false;
         }

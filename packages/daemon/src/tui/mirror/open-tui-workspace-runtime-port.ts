@@ -209,10 +209,13 @@ function layoutExactlyCoversPanes(
   const observedPanes = observed as string[];
   return (
     new Set(observedPanes).size === observedPanes.length &&
-    observedPanes.length === expectedPanes.length &&
-    [...observedPanes]
-      .sort((left, right) => left.localeCompare(right))
-      .every((pane, index) => pane === expectedPanes[index])
+    observedPanes.every((pane) => expectedPanes.includes(pane)) &&
+    // Native tmux visible layouts hide siblings while zoomed. The terminal
+    // inventory and canonical seeds still cover every pane, including hidden
+    // ones; visible geometry must not be mistaken for attachment inventory.
+    snapshot.windows.every((window) => !window.zoomed || window.panes.length === 1) &&
+    (observedPanes.length === expectedPanes.length ||
+      snapshot.windows.some((window) => window.zoomed))
   );
 }
 

@@ -1,3 +1,6 @@
+import type { ApplicationConnectionFeedback } from "../workspace/connection-feedback.ts";
+import { appearanceDialogLayer } from "./application-shell-overlays.tsx";
+import type { ApplicationAppearanceOwner } from "./application-appearance-owner.ts";
 /* @jsxImportSource @opentui/solid */
 import type { ApplicationShellProjectionV1 } from "@tmux-ide/contracts";
 import type { Accessor, ComponentProps, JSX } from "solid-js";
@@ -55,6 +58,8 @@ export function applicationShellKeyAction(
 }
 
 export interface ApplicationShellViewProps {
+  readonly paneInteractions?: TerminalWorkspaceProps["paneInteractions"];
+  readonly appearanceOwner?: ApplicationAppearanceOwner;
   readonly homeAgents?: ApplicationHomeAgentPresentation;
   readonly dimensions: Accessor<{ readonly width: number; readonly height: number }>;
   readonly surface: Accessor<RootSurface>;
@@ -63,11 +68,17 @@ export interface ApplicationShellViewProps {
   readonly sessions: readonly string[] | Accessor<readonly string[]>;
   readonly selectedSession: Accessor<number>;
   readonly bootstrapNote: Accessor<string | null>;
+  readonly connectionFeedback?: Accessor<ApplicationConnectionFeedback | null>;
+  readonly onCancelOpen?: () => void;
+  readonly onCopyConnectionDetails?: () => void;
   readonly catalogPhase?: Accessor<"loading" | "live" | "unavailable">;
   readonly catalogNote?: Accessor<string | null>;
   readonly paletteOpen: Accessor<boolean>;
   readonly paneRenameDialog?: Accessor<ApplicationPaneRenameDraft | null>;
   readonly paletteSelection?: Accessor<number>;
+  readonly paletteQuery?: Accessor<string>;
+  readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
+  readonly onPaletteSelect?: (index: number) => void;
   readonly paletteCommands?: Accessor<readonly ApplicationPaletteCommand[]>;
   readonly terminalRendererSource: Accessor<{
     readonly adapter: TerminalWorkspaceProps["adapter"];
@@ -88,11 +99,13 @@ export interface ApplicationShellViewProps {
     source: InputSource,
     confirmed?: boolean,
   ) => void;
+  readonly onZoomPane?: (paneId: string) => void;
   readonly onCreateWindow?: () => void;
   readonly onCreateSession?: () => void;
   readonly onCycleTheme?: () => void;
   readonly onBeginPaneRename?: (paneId: string, currentName: string) => void;
   readonly onCancelPaneRename?: () => void;
+  readonly onSubmitPaneRename?: () => void;
   readonly onDismissNotification?: () => void;
   readonly paletteCloseArmed?: Accessor<boolean>;
   readonly onSelectPane: TerminalWorkspaceProps["onSelectPane"];
@@ -145,26 +158,18 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
       return readable ? Reflect.get(readable, property) : undefined;
     },
   });
-  // OpenTUI retains native renderables aggressively. Key the visual shell by
-  // the immutable appearance snapshot so a live theme switch cannot leave
-  // previously painted box/framebuffer backgrounds behind. The daemon,
-  // terminal parser, and renderer adapter stay resident; only presentation is
-  // rebuilt for this rare user action.
-  const projectionOwner = createMemo(
-    () =>
-      projection()
-        ? { shell: retainedProjection, theme: props.theme, palette: props.palette }
-        : null,
-    undefined,
-    {
-      equals: (previous, next) =>
-        previous === next ||
-        (previous !== null &&
-          next !== null &&
-          previous.theme === next.theme &&
-          previous.palette === next.palette),
+  // Appearance is reactive presentation, not workspace identity. Keeping this
+  // facade resident preserves client-local reading views across theme changes.
+  const appearance = {
+    shell: retainedProjection,
+    get theme() {
+      return props.theme;
     },
-  );
+    get palette() {
+      return props.palette;
+    },
+  };
+  const projectionOwner = createMemo(() => (projection() ? appearance : null));
   const agentIndicators = createMemo<ReadonlyMap<string, ApplicationTerminalAgentIndicator>>(
     () =>
       new Map(
@@ -185,6 +190,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
       ),
   );
   const routeChromePointer = (x: number, y: number): void => {
+    if (props.appearanceOwner?.pickerOpen()) return;
     const shell = projection();
     if (!shell) return;
     const hit = applicationShellHitTest(shell, x, y);
@@ -199,16 +205,23 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
       keyed
       fallback={
         <ApplicationCatalogShell
+          appearanceOwner={props.appearanceOwner}
           homeAgents={props.homeAgents}
           dimensions={props.dimensions}
           surface={props.surface}
           sessions={props.sessions}
           selectedSession={props.selectedSession}
           bootstrapNote={props.bootstrapNote}
+          connectionFeedback={props.connectionFeedback}
+          onCancelOpen={props.onCancelOpen}
+          onCopyConnectionDetails={props.onCopyConnectionDetails}
           catalogPhase={props.catalogPhase}
           catalogNote={props.catalogNote}
           paletteOpen={props.paletteOpen}
           paletteSelection={props.paletteSelection}
+          paletteQuery={props.paletteQuery}
+          paletteDisabledReason={props.paletteDisabledReason}
+          onPaletteSelect={props.onPaletteSelect}
           paletteCommands={props.paletteCommands}
           paletteCloseArmed={props.paletteCloseArmed}
           theme={props.theme}
@@ -251,6 +264,9 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   width={props.dimensions().width}
                   height={props.dimensions().height}
                   selected={props.paletteSelection?.() ?? 0}
+                  query={props.paletteQuery?.() ?? ""}
+                  disabledReason={props.paletteDisabledReason}
+                  onSelect={props.onPaletteSelect}
                   closeArmed={props.paletteCloseArmed?.() ?? false}
                   commands={
                     props.paletteCommands?.() ?? applicationPaletteCommands(props.semantic())
@@ -280,9 +296,17 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   active={active}
                   zIndex={zIndex}
                   onCancel={() => props.onCancelPaneRename?.()}
+                  onSubmit={() => props.onSubmitPaneRename?.()}
                 />
               ),
             });
+          layers.push(
+            ...appearanceDialogLayer(
+              props.appearanceOwner,
+              props.dimensions().width,
+              props.dimensions().height,
+            ),
+          );
           return layers;
         };
         return (
@@ -301,7 +325,12 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
               projection={shell}
               help="F5 commands"
               onHelp={() => props.onSetPaletteOpen(true, "mouse")}
-              note={props.bootstrapNote() ?? props.generationStatus()}
+              note={
+                props.bootstrapNote() ??
+                (props.generationStatus() === "read-only"
+                  ? `Read-only input · select a pane to request control · shared tmux ${props.layout().current?.cols ?? "?"}×${props.layout().current?.rows ?? "?"}`
+                  : props.generationStatus())
+              }
               showToolStatus={false}
               showSidebar={props.surface() === "terminals"}
               sidebar={
@@ -319,90 +348,98 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                 />
               }
             >
-              <Show
-                when={props.surface() === "terminals"}
-                fallback={
-                  <ApplicationHomeSurface
-                    {...props.homeAgents}
-                    project={shell.semantic.project.name}
-                    status={props.generationStatus()}
-                    note={props.bootstrapNote()}
-                    width={shell.layout.width}
-                    height={shell.content.height}
-                    sessionCount={shell.semantic.sidebar.sessions.length}
-                    session={friendlySessionLabel(shell.activeSession)}
-                    agents={[...agentIndicators().values()]}
-                    branded={true}
-                    theme={appearance.theme}
-                    onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
-                    onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
-                    onCycleTheme={props.onCycleTheme}
-                  />
-                }
-              >
-                <box
-                  position="relative"
-                  width={shell.content.width}
+              <Show when={props.surface() !== "terminals"}>
+                <ApplicationHomeSurface
+                  {...props.homeAgents}
+                  project={shell.semantic.project.name}
+                  status={props.generationStatus()}
+                  note={props.bootstrapNote()}
+                  width={shell.layout.width}
                   height={shell.content.height}
-                  overflow="hidden"
-                >
-                  <Show
-                    when={terminalRendererSource()}
-                    keyed
-                    fallback={
-                      <ApplicationHomeSurface
-                        project="Terminal workspace"
-                        status={props.generationStatus()}
-                        note={props.bootstrapNote() ?? "Waiting for a coherent terminal frame."}
-                        width={shell.content.width}
-                        height={shell.content.height}
-                        sessionCount={shell.semantic.sidebar.sessions.length}
-                        session={shell.activeSession}
-                        branded={false}
-                        theme={appearance.theme}
-                        onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
-                        onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
-                      />
-                    }
-                  >
-                    {(source) => (
-                      <ApplicationTerminalWorkspace
-                        layout={props.layout}
-                        adapter={source.adapter}
-                        rendererEpoch={source.rendererEpoch}
-                        width={shell.content.width}
-                        height={Math.max(2, shell.content.height - 1)}
-                        topOffset={1}
-                        originX={shell.content.x}
-                        originY={shell.content.y}
-                        focusedPane={props.focusedPane()}
-                        rendererFocused={props.rendererFocused?.() ?? props.focusedPane() !== null}
-                        hostFocusTransitionOwner={props.hostFocusTransitionOwner}
-                        theme={appearance.theme}
-                        palette={appearance.palette}
-                        agentIndicators={agentIndicators}
-                        onSelectPane={props.onSelectPane}
-                        onCreateWindow={props.onCreateWindow}
-                        onPaneContextAction={(paneId, action, currentName) => {
-                          if (action === "rename-pane")
-                            props.onBeginPaneRename?.(paneId, currentName);
-                          else props.onPaletteActivate?.(action, "mouse", true);
-                        }}
-                        onResizePreview={props.onResizePreview}
-                        onResizePane={props.onResizePane}
-                        onResizePointerIngress={props.onResizePointerIngress}
-                        onTerminalInput={props.onTerminalInput}
-                        terminalGestureRuntime={props.terminalGestureRuntime}
-                        onApplicationMousePointerIngress={props.onApplicationMousePointerIngress}
-                        onCopyText={props.onCopyText}
-                        onSelectionCopyOwner={props.onSelectionCopyOwner}
-                        onSelectionKeyOwner={props.onSelectionKeyOwner}
-                        onWindowPresented={props.onWindowPresented}
-                      />
-                    )}
-                  </Show>
-                </box>
+                  sessionCount={shell.semantic.sidebar.sessions.length}
+                  session={friendlySessionLabel(shell.activeSession)}
+                  agents={[...agentIndicators().values()]}
+                  branded={true}
+                  theme={appearance.theme}
+                  onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
+                  onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
+                  onCycleTheme={props.onCycleTheme}
+                />
               </Show>
+              <box
+                visible={props.surface() === "terminals"}
+                position="relative"
+                width={shell.content.width}
+                height={shell.content.height}
+                overflow="hidden"
+              >
+                <Show
+                  when={terminalRendererSource()}
+                  keyed
+                  fallback={
+                    <ApplicationHomeSurface
+                      project="Terminal workspace"
+                      status={props.generationStatus()}
+                      note={props.bootstrapNote() ?? "Waiting for a coherent terminal frame."}
+                      width={shell.content.width}
+                      height={shell.content.height}
+                      sessionCount={shell.semantic.sidebar.sessions.length}
+                      session={shell.activeSession}
+                      branded={false}
+                      theme={appearance.theme}
+                      onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
+                      onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
+                    />
+                  }
+                >
+                  {(source) => (
+                    <ApplicationTerminalWorkspace
+                      layout={props.layout}
+                      adapter={source.adapter}
+                      rendererEpoch={source.rendererEpoch}
+                      interactive={
+                        props.surface() === "terminals" &&
+                        !props.paletteOpen() &&
+                        !props.paneRenameDialog?.() &&
+                        !props.appearanceOwner?.pickerOpen()
+                      }
+                      width={shell.content.width}
+                      height={Math.max(2, shell.content.height - 1)}
+                      topOffset={1}
+                      originX={shell.content.x}
+                      originY={shell.content.y}
+                      focusedPane={props.focusedPane()}
+                      rendererFocused={
+                        props.surface() === "terminals" &&
+                        (props.rendererFocused?.() ?? props.focusedPane() !== null)
+                      }
+                      hostFocusTransitionOwner={props.hostFocusTransitionOwner}
+                      theme={appearance.theme}
+                      palette={appearance.palette}
+                      agentIndicators={agentIndicators}
+                      paneInteractions={props.paneInteractions}
+                      onSelectPane={props.onSelectPane}
+                      onCreateWindow={props.onCreateWindow}
+                      onPaneContextAction={(paneId, action, currentName) => {
+                        if (action === "rename-pane")
+                          props.onBeginPaneRename?.(paneId, currentName);
+                        else if (action === "zoom-pane") props.onZoomPane?.(paneId);
+                        else props.onPaletteActivate?.(action, "mouse", true);
+                      }}
+                      onResizePreview={props.onResizePreview}
+                      onResizePane={props.onResizePane}
+                      onResizePointerIngress={props.onResizePointerIngress}
+                      onTerminalInput={props.onTerminalInput}
+                      terminalGestureRuntime={props.terminalGestureRuntime}
+                      onApplicationMousePointerIngress={props.onApplicationMousePointerIngress}
+                      onCopyText={props.onCopyText}
+                      onSelectionCopyOwner={props.onSelectionCopyOwner}
+                      onSelectionKeyOwner={props.onSelectionKeyOwner}
+                      onWindowPresented={props.onWindowPresented}
+                    />
+                  )}
+                </Show>
+              </box>
             </ApplicationShell>
             <ApplicationShellOverlayStack
               width={props.dimensions().width}
@@ -413,10 +450,12 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
               }
               isFocusMounted={(id) =>
                 !id.startsWith("pane:") ||
-                props.layout.current?.panes.some(({ pane }) => `pane:${pane}` === id) === true
+                props.layout().current?.panes.some(({ pane }) => `pane:${pane}` === id) === true
               }
               restoreFocus={(id) => {
-                if (id.startsWith("pane:")) props.onSelectPane(id.slice("pane:".length));
+                // An intentional agent/window navigation supersedes the saved return target.
+                if (id === `pane:${props.focusedPane()}`)
+                  props.onSelectPane(id.slice("pane:".length));
               }}
               onIntent={({ id }) => {
                 if (id === "pane-rename") props.onCancelPaneRename?.();

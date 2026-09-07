@@ -48,7 +48,7 @@ const KEYS_BY_KIND = {
   focus: new Set([...DOCUMENT_KEYS, "state"]),
   "application-mouse": new Set([...DOCUMENT_KEYS, "action", "x", "y", "button", "modifiers"]),
   "selection-drag": new Set([...DOCUMENT_KEYS, "from", "to", "contentRect"]),
-  "copy-capture": DOCUMENT_KEYS,
+  "copy-capture": new Set([...DOCUMENT_KEYS, "copyKey"]),
 };
 const POINTER_KEYS = new Set(["x", "y"]);
 const RECT_KEYS = new Set(["x", "y", "width", "height"]);
@@ -488,12 +488,19 @@ export function parseTestdriveInputDocument(source) {
       }
       return { ...common, kind: "focus", state: object.state };
     case "application-mouse": {
-      if (!["move", "down", "drag", "up", "click"].includes(object.action)) {
-        inputError("application-mouse action must be move, down, drag, up, or click");
+      if (
+        !["move", "down", "drag", "up", "click", "wheel-up", "wheel-down"].includes(object.action)
+      ) {
+        inputError(
+          "application-mouse action must be move, down, drag, up, click, wheel-up, or wheel-down",
+        );
       }
       const button = object.button ?? "left";
-      if (object.action === "move" && object.button !== undefined) {
-        inputError("application-mouse move must not specify a button");
+      if (
+        ["move", "wheel-up", "wheel-down"].includes(object.action) &&
+        object.button !== undefined
+      ) {
+        inputError(`application-mouse ${object.action} must not specify a button`);
       }
       if (!["left", "middle", "right"].includes(button)) {
         inputError("application-mouse button must be left, middle, or right");
@@ -536,8 +543,12 @@ export function parseTestdriveInputDocument(source) {
         contentRect: rect,
       };
     }
-    case "copy-capture":
-      return { ...common, kind: "copy-capture" };
+    case "copy-capture": {
+      const copyKey = object.copyKey ?? "ctrl-c";
+      if (!["ctrl-c", "ctrl-w", "enter"].includes(copyKey))
+        inputError("copyKey must be ctrl-c, ctrl-w, or enter");
+      return { ...common, kind: "copy-capture", copyKey };
+    }
     default:
       inputError(`unsupported kind ${JSON.stringify(object.kind)}`);
   }
@@ -575,6 +586,10 @@ function modifierCode(values) {
 }
 
 function mouseSequence(action, x, y, button = "left", values = []) {
+  if (action === "wheel-up" || action === "wheel-down") {
+    const code = (action === "wheel-up" ? 64 : 65) + modifierCode(values);
+    return `${ESC}[<${code};${x + 1};${y + 1}M`;
+  }
   const buttonCode = { left: 0, middle: 1, right: 2 }[button];
   const code =
     action === "move"
@@ -664,7 +679,17 @@ export function translateTestdriveInput(command, { capabilities, geometry } = {}
       return { phases: selectionPhases(command.from, command.to) };
     case "copy-capture":
       requireCapability(capabilities, "clipboardCapture", "clipboard capture");
-      return { phases: [{ bytes: "\u0003", delayMs: 0 }], captureClipboard: true };
+      return {
+        phases: [
+          {
+            bytes: { "ctrl-c": "\u0003", "ctrl-w": "\u0017", enter: "\r" }[
+              command.copyKey ?? "ctrl-c"
+            ],
+            delayMs: 0,
+          },
+        ],
+        captureClipboard: true,
+      };
     default:
       throw new Error(`Unsupported parsed test-drive input kind ${JSON.stringify(command.kind)}`);
   }

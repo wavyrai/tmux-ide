@@ -106,6 +106,7 @@ export interface WebWorkspaceRuntimeOptions {
   ) => Promise<WorkspaceMultiplexerMutationResult | null>;
   readonly onPaneEvent?: (pane: string, event: PaneMirrorEvent) => void;
   readonly onLayout?: (layout: PaneStreamLayoutEvent) => void;
+  readonly onAuthoritySnapshot?: (snapshot: SessionRuntimeAuthoritySnapshot) => void;
   readonly onLayoutSnapshot?: (snapshot: PaneStreamLayoutSnapshotEvent) => void;
   readonly onSession?: (session: PaneStreamSessionHandle | null) => void;
   readonly onEnd?: (error: unknown) => void;
@@ -344,6 +345,7 @@ export async function connectWebWorkspaceRuntime(
       },
       onAuthoritySnapshot(snapshot) {
         authority = snapshot;
+        options.onAuthoritySnapshot?.(snapshot);
         publishPhysicalBinding();
         for (const listener of authorityListeners) listener(snapshot);
       },

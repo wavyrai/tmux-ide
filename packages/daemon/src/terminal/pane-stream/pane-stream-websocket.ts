@@ -1856,6 +1856,7 @@ export class PaneStreamLiveConnection {
       rows: event.rows,
       zoomed: event.zoomed,
       paneBorderStatus: event.paneBorderStatus,
+      modeKeys: event.modeKeys,
       panes: event.panes.map((pane) => ({
         pane: pane.semanticPaneId,
         displayName: pane.displayName,
@@ -1903,8 +1904,9 @@ export class PaneStreamLiveConnection {
     if (
       currentWindows !== 1 ||
       new Set(panes).size !== panes.length ||
-      panes.length !== expectedPaneIds.length ||
-      panes.some((pane, index) => pane !== expectedPaneIds[index])
+      events.some((event) => event.zoomed && event.panes.length !== 1) ||
+      (panes.length !== expectedPaneIds.length && !events.some((event) => event.zoomed)) ||
+      panes.some((pane) => !expectedPaneIds.includes(pane))
     )
       return null;
     return frames;

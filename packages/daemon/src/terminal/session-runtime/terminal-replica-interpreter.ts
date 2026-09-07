@@ -1,3 +1,4 @@
+import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import {
   detectWidgetMarkerFromReplicaRows,
   type CanonicalTerminalReplicaPatch,
@@ -47,10 +48,20 @@ export type TerminalReplicaInterpreterOperation =
       readonly data: Uint8Array;
       readonly trace?: SessionRuntimeTraceContext | null;
     }
-  | { readonly type: "cursor"; readonly x: number; readonly y: number }
+  | {
+      readonly type: "cursor";
+      readonly x: number;
+      readonly y: number;
+      readonly wraparound?: boolean;
+      readonly observedModes?: MirrorObservedTerminalModes;
+    }
   | { readonly type: "resize"; readonly cols: number; readonly rows: number }
   | {
       readonly type: "reseed";
+      /** Retention configured on the native pane, carried by its capture probe. */
+      readonly historyLimit?: number;
+      /** Actual captured retention can exceed the native limit after reflow. */
+      readonly historySize?: number;
       /** Raw tmux pane dimensions at which capture bytes were painted. */
       readonly nativeCols?: number;
       readonly nativeRows?: number;
@@ -59,6 +70,8 @@ export type TerminalReplicaInterpreterOperation =
       readonly rows: number;
       readonly chunks: readonly Uint8Array[];
       readonly cursor: { readonly x: number; readonly y: number };
+      readonly wraparound?: boolean;
+      readonly observedModes?: MirrorObservedTerminalModes;
       readonly trace?: SessionRuntimeTraceContext | null;
       /** capture-pane is painted truth, not proof of hidden pre-existing VT modes. */
       readonly bootstrap: "painted-capture" | "authoritative-stream";
@@ -87,6 +100,8 @@ export interface TerminalReplicaInterpreterOptions {
     readonly chunks: readonly Uint8Array[];
     readonly contiguous: boolean;
   }) => void;
+  /** Request native truth without publishing an unknown saved-buffer projection. */
+  readonly onNativeReseedRequired?: () => void;
   readonly scheduler?: SessionRuntimeScheduler;
   readonly observability?: SessionRuntimeObservability;
   /** Parser implementation only; SessionRuntime remains the sole state authority. */
@@ -109,7 +124,7 @@ export class TerminalReplicaInterpreter {
   readonly #workspaceName: string;
   readonly #semanticPaneId: string;
   readonly #incarnation: string;
-  readonly #scrollback: number;
+  #scrollback: number;
   readonly #listeners = new Set<
     (update: CanonicalTerminalReplicaUpdate, trace: SessionRuntimeTraceContext | null) => void
   >();
@@ -119,6 +134,8 @@ export class TerminalReplicaInterpreter {
   readonly #backendFactory: TerminalInterpreterBackendFactory;
   #backend: TerminalInterpreterBackend;
   #prioritizeNextWrite = false;
+  #nativeReseedRequested = false;
+  readonly #onNativeReseedRequired: (() => void) | undefined;
   #causalCell: CausalCellLedger | null = null;
   #releaseCausalOsc: (() => void) | null = null;
   #tail: Promise<void> = Promise.resolve();
@@ -167,6 +184,7 @@ export class TerminalReplicaInterpreter {
     this.#revision = options.initialRevision ?? 0;
     this.#scrollback = options.scrollback ?? 5000;
     this.#onRawCommit = options.onRawCommit;
+    this.#onNativeReseedRequired = options.onNativeReseedRequired;
     this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#backendFactory = options.backendFactory ?? createXtermTerminalInterpreterBackend;
@@ -315,15 +333,22 @@ export class TerminalReplicaInterpreter {
       this.#causalCell?.fail("reseeded");
       const nativeCols = operation.nativeCols ?? operation.cols;
       const nativeRows = operation.nativeRows ?? operation.rows;
+      const scrollback = Math.max(
+        operation.historyLimit ?? this.#scrollback,
+        operation.historySize ?? 0,
+      );
       const replacement = this.#backendFactory({
         cols: nativeCols,
         rows: nativeRows,
-        scrollback: this.#scrollback,
+        scrollback,
       });
       try {
         for (const chunk of operation.chunks) {
           await this.#writeToBackend(replacement, chunk);
         }
+        if (operation.wraparound !== undefined)
+          replacement.setAuthoritativeWraparound(operation.wraparound);
+        if (operation.observedModes) replacement.setAuthoritativeModes(operation.observedModes);
         replacement.setAuthoritativeCursor(operation.cursor.x, operation.cursor.y);
         if (nativeCols !== operation.cols || nativeRows !== operation.rows)
           replacement.resize(operation.cols, operation.rows);
@@ -342,6 +367,8 @@ export class TerminalReplicaInterpreter {
       }
       const previous = this.#backend;
       this.#backend = replacement;
+      this.#nativeReseedRequested = false;
+      this.#scrollback = scrollback;
       this.#bootstrap = {
         kind: operation.bootstrap,
         hiddenState:
@@ -354,6 +381,9 @@ export class TerminalReplicaInterpreter {
     if (operation.type === "cursor") {
       // Cursor truth is an overlay. Never inject CUP: DECOM/margins would make
       // it relative and mutate the parser's saved/wrap state.
+      if (operation.wraparound !== undefined)
+        this.#backend.setAuthoritativeWraparound(operation.wraparound);
+      if (operation.observedModes) this.#backend.setAuthoritativeModes(operation.observedModes);
       this.#backend.setAuthoritativeCursor(operation.x, operation.y);
       this.#commit(false, { start: 1, end: 0 });
       return;
@@ -396,7 +426,7 @@ export class TerminalReplicaInterpreter {
   }
 
   async #write(data: Uint8Array, continuedTrace: SessionRuntimeTraceContext | null): Promise<void> {
-    if (this.#closed) return;
+    if (this.#closed || this.#nativeReseedRequested) return;
     // This optional id is only a controlled next-output probe. It is not a
     // causal assertion: unrelated external tmux output arriving first may
     // consume the armed probe and become the measured output.
@@ -415,6 +445,10 @@ export class TerminalReplicaInterpreter {
         trace,
       );
     // DEC synchronized-output is atomic: no intermediate frame leaks.
+    if (this.#backend.requiresNativeReseed()) {
+      this.#commit(false);
+      return;
+    }
     if (this.#backend.modes().synchronizedOutput) {
       this.#scheduleSyncRecovery();
       return;
@@ -465,6 +499,17 @@ export class TerminalReplicaInterpreter {
     dirty?: { start: number; end: number },
     trace: SessionRuntimeTraceContext | null = null,
   ): void {
+    if (this.#backend.requiresNativeReseed()) {
+      if (!this.#nativeReseedRequested) {
+        this.#nativeReseedRequested = true;
+        this.#pendingRaw = [];
+        this.#pendingRawBytes = 0;
+        this.#rawContinuityLost = true;
+        this.#causalCell?.fail("reseeded");
+        this.#onNativeReseedRequired?.();
+      }
+      return;
+    }
     const reduceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
     const projected = this.#project(forceSeed ? undefined : dirty);
     const previous = this.#snapshot;
@@ -490,7 +535,7 @@ export class TerminalReplicaInterpreter {
     const priorHash = hashTerminalReplicaSnapshot(previous);
     if (!forceSeed && nextHash === priorHash) {
       this.#causalCell?.observeCommit(next, this.#revision, nextHash);
-      this.#recordReduceSpan(reduceStarted, trace);
+      this.#recordReduceSpan(reduceStarted, trace, "terminal-replica-project-noop");
       return;
     }
     if (forceSeed || this.#needsSeed) {
@@ -545,11 +590,12 @@ export class TerminalReplicaInterpreter {
   #recordReduceSpan(
     startedAtMicros: number,
     trace: SessionRuntimeTraceContext | null = null,
+    operation = "terminal-replica-project-commit",
   ): void {
     if (!this.#observability.enabled) return;
     this.#observability.recordSpan(
       "reduce",
-      "terminal-replica-project-commit",
+      operation,
       startedAtMicros,
       this.#observability.nowMicros(),
       trace,

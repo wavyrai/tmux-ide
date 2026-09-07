@@ -3,6 +3,8 @@
  * ControlChannelCore fed raw protocol lines — see __tests__/simulated-channel).
  */
 import { describe, expect, it, vi } from "vitest";
+import { hostname } from "node:os";
+import { memorablePaneName } from "../protocol/pane-display-name.ts";
 import {
   SimulatedChannel,
   fixtureAutoReply,
@@ -50,6 +52,7 @@ async function startedRig(
     ) => void;
     onFlowRecoveryObserved?: (observation: MirrorFlowRecoveryObservation) => void;
     continueReply?: "auto-success" | "manual";
+    borderReply?: "manual";
     historyLines?: number;
     atomicHook?: boolean;
     replaceAtomicHookBeforeInvoke?: boolean;
@@ -68,6 +71,8 @@ async function startedRig(
     createIo: (handlers) => {
       const autoReply = fixtureAutoReply(state);
       sim = new SimulatedChannel(handlers, (command) => {
+        if (options.borderReply === "manual" && command.endsWith('"#{pane-border-status}"'))
+          return null;
         if (options.atomicHook && command.startsWith("set-option -po -t %1 @tmux_ide_atomic_")) {
           const created = /^set-option -po -t %1 (@[^ ]+) (.+)$/u.exec(command);
           if (created) {
@@ -91,7 +96,7 @@ async function startedRig(
           atomicInvocationAuthorizations.push(authorized);
           return authorized ? [] : [`tmux-ide-atomic-invoke-rejected-v1:${nonce ?? "invalid"}`];
         }
-        return options.continueReply === "manual" && command.startsWith("refresh-client")
+        return options.continueReply === "manual" && command.startsWith("refresh-client -A")
           ? null
           : autoReply(command);
       });
@@ -333,6 +338,46 @@ function continueNotificationQueueSize(channel: SessionChannel): number {
 }
 
 describe("identity join", () => {
+  it("publishes stable generated shell names when tmux titles equal the server short hostname", async () => {
+    const state = fixtureState();
+    state.descriptorRows = state.descriptorRows.map((row, index) => {
+      const fields = row.split("\t");
+      fields[4] = "bash";
+      fields[9] = hostname().split(".")[0]!;
+      if (index === 0) fields[12] = memorablePaneName("pane.alpha");
+      return fields.join("\t");
+    });
+    const channel = new SessionChannel({
+      session: FIXTURE.session,
+      createIo: (handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+      generatePaneId: () => "pane.mirror.gen1",
+    });
+    const layouts: MirrorLayoutEvent[] = [];
+    channel.subscribeLayout((event) => layouts.push(event));
+    try {
+      await channel.start();
+      expect(
+        layouts
+          .flatMap((event) => event.panes)
+          .find((pane) => pane.semanticPaneId === "pane.alpha"),
+      ).toMatchObject({
+        displayName: memorablePaneName("pane.alpha"),
+        displayNameSource: "generated",
+      });
+      expect(
+        channel.describe().panes.find((pane) => pane.semanticPaneId === "pane.alpha"),
+      ).toMatchObject({
+        displayName: memorablePaneName("pane.alpha"),
+        displayNameSource: "generated",
+      });
+      expect(
+        channel.describe().panes.find((pane) => pane.semanticPaneId === "pane.beta"),
+      ).toMatchObject({ displayName: "Beta IDE", displayNameSource: "manual" });
+    } finally {
+      await channel.dispose();
+    }
+  });
+
   it("strictly recovers the retained control client's Unicode session identity", async () => {
     const session = "zz-café-😀";
     const state = fixtureState();
@@ -376,6 +421,37 @@ describe("identity join", () => {
     expect(gamma.semanticWindowId).toBe("window.test.two");
     // Runtime addresses stay inside the boundary.
     expect(JSON.stringify(description)).not.toMatch(/%[0-9]/);
+    await channel.dispose();
+  });
+
+  it("keeps full membership and hidden pane geometry through native zoom without a truth rebind", async () => {
+    const { channel, sim, state, pendingSyncs } = await startedRig();
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.mirror.gen1\t",
+    ).replace("\t\tzz-sim", "\twindow.test.two\tzz-sim");
+    const visible = "aaaa,200x50,0,0,1";
+    state.windowRows = FIXTURE.windowRows(visible, FIXTURE.layoutW2);
+    state.windowRows[0] = state.windowRows[0]!.replace("\t0\toff", `\t1\toff\t${FIXTURE.layoutW1}`);
+    const trusted = await channel.describeTrustedInventory("$1");
+    expect(trusted.panes).toHaveLength(3);
+    const global: MirrorLayoutEvent[] = [];
+    const sub = await channel.subscribeAuthoritativeLayout(
+      (e) => global.push(e),
+      ["pane.alpha", "pane.beta", "pane.mirror.gen1"],
+    );
+    expect(global.find((e) => e.zoomed)?.panes).toHaveLength(1);
+    const hidden: MirrorLayoutEvent[] = [];
+    channel.subscribePane(
+      "pane.beta",
+      () => {},
+      (e) => hidden.push(e),
+    );
+    expect(hidden.at(-1)?.panes.find((p) => p.semanticPaneId === "pane.beta")?.width).toBe(99);
+    const queued = pendingSyncs.length;
+    sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${visible} *Z`);
+    expect(pendingSyncs.length).toBe(queued);
+    await sub.close();
     await channel.dispose();
   });
 
@@ -589,6 +665,213 @@ describe("seed recipe (the FIFO seam)", () => {
 });
 
 describe("flow control", () => {
+  it("reports exhausted recovery to active subscribers without faulting frozen or sibling panes", async () => {
+    const rig = await startedRig({
+      continueReply: "manual",
+      onFlowRecoveryObserved: (observation) => {
+        if (observation.phase === "nonconverged") throw new Error("diagnostic sink failed");
+      },
+    });
+    const alpha = collect(),
+      frozen = collect(),
+      beta = collect();
+    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+    rig.sim.reply(["alpha"]);
+    rig.sim.reply(["0 0 100 50"]);
+    const parked = rig.channel.subscribePane("pane.alpha", frozen.onEvent);
+    rig.sim.reply(["frozen"]);
+    rig.sim.reply(["0 0 100 50"]);
+    parked.freeze();
+    rig.channel.subscribePane("pane.beta", beta.onEvent);
+    rig.sim.reply(["beta"]);
+    rig.sim.reply(["0 0 100 50"]);
+    alpha.events.length = frozen.events.length = beta.events.length = 0;
+    rig.sim.feedLines("%pause %1");
+    advanceRecoveryClock(rig, 500);
+    expect(alpha.events.filter((event) => event.type === "fault")).toEqual([
+      { type: "fault", reason: "native-recovery-failed" },
+    ]);
+    expect(frozen.events).toEqual([]);
+    expect(beta.events).toEqual([]);
+    rig.sim.output("%2", "LIVE");
+    expect(bytesOf(beta.events)).toEqual(["LIVE"]);
+    advanceRecoveryClock(rig, 10000);
+    expect(alpha.events.filter((event) => event.type === "fault")).toHaveLength(1);
+    await rig.channel.dispose();
+  });
+
+  it("gives each queued pane a fresh active capture budget without publishing pre-capture output", async () => {
+    const rig = await startedRig();
+    const alpha = collect();
+    const beta = collect();
+    const secondAlpha = collect();
+    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+    const betaHandle = rig.channel.subscribePane("pane.beta", beta.onEvent);
+    // Repeated queued requests coalesce instead of allocating more recipes.
+    betaHandle.reseed();
+    betaHandle.reseed();
+    rig.channel.subscribePane("pane.alpha", secondAlpha.onEvent);
+    const captures = () => rig.sim.written.filter((command) => command.includes("capture-pane"));
+    expect(captures()).toHaveLength(1);
+    rig.sim.output("%2", "included in future capture");
+    expect(beta.events).toEqual([]);
+    for (const [index, text] of ["alpha", "beta", "second alpha"].entries()) {
+      advanceRecoveryClock(rig, 4000);
+      rig.sim.reply([text]);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(captures()).toHaveLength(Math.min(index + 2, 3));
+    }
+    expect(rig.recoveryClock.nowMs).toBe(12000);
+    expect(bytesOf(alpha.events)).toEqual(["alpha"]);
+    expect(bytesOf(beta.events)).toEqual(["beta"]);
+    expect(bytesOf(secondAlpha.events)).toEqual(["second alpha"]);
+    expect(
+      [...alpha.events, ...beta.events, ...secondAlpha.events].some(
+        (event) => event.type === "fault",
+      ),
+    ).toBe(false);
+    await rig.channel.dispose();
+  });
+
+  it.each(["freeze", "close"] as const)(
+    "cancels a queued recipe on %s without disturbing its active sibling",
+    async (operation) => {
+      const rig = await startedRig({ continueReply: "manual" });
+      const alpha = collect();
+      const beta = collect();
+      rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+      const queued = rig.channel.subscribePane("pane.beta", beta.onEvent);
+      queued[operation]();
+      beta.events.length = 0;
+      rig.sim.reply(["alpha"]);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(bytesOf(alpha.events)).toEqual(["alpha"]);
+      expect(beta.events).toEqual([]);
+      expect(
+        (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue
+          .size,
+      ).toBe(0);
+      expect(rig.sim.written.filter((command) => command.includes("capture-pane"))).toHaveLength(1);
+      await rig.channel.dispose();
+    },
+  );
+
+  it("does not expire a third pane while two earlier captures use their own budgets", async () => {
+    const rig = await startedRig();
+    // Model the real FIFO: each command-list acknowledgement arrives in wire
+    // order, not immediately when a later pane queues its command list.
+    rig.sim.commandListInline = (command, count, resultIndex, onReply) => {
+      rig.sim.core.pushCommandList(count, resultIndex, onReply);
+      rig.sim.written.push(command);
+    };
+    const panes = [collect(), collect(), collect()];
+    rig.channel.subscribePane("pane.alpha", panes[0]!.onEvent);
+    rig.channel.subscribePane("pane.beta", panes[1]!.onEvent);
+    rig.channel.subscribePane("pane.alpha", panes[2]!.onEvent);
+    for (let index = 0; index < panes.length; index += 1) {
+      advanceRecoveryClock(rig, 4000);
+      rig.sim.reply([]);
+      rig.sim.reply([`pane-${index}`]);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(bytesOf(panes[index]!.events)).toEqual([`pane-${index}`]);
+    }
+    expect(rig.recoveryClock.nowMs).toBe(12000);
+    expect(panes.flatMap((pane) => pane.events).some((event) => event.type === "fault")).toBe(
+      false,
+    );
+    await rig.channel.dispose();
+  });
+
+  it("retires queued recipes together when the active capture stalls", async () => {
+    const rig = await startedRig();
+    const alpha = collect();
+    const beta = collect();
+    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+    rig.channel.subscribePane("pane.beta", beta.onEvent);
+    advanceRecoveryClock(rig, 10000);
+    for (const events of [alpha.events, beta.events])
+      expect(events.filter((event) => event.type === "fault")).toEqual([
+        { type: "fault", reason: "native-recovery-failed" },
+      ]);
+    expect(
+      (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue.size,
+    ).toBe(0);
+    rig.sim.reply(["late alpha"]);
+    rig.sim.reply(["0 0 100 50"]);
+    expect(bytesOf(alpha.events)).toEqual([]);
+    expect(bytesOf(beta.events)).toEqual([]);
+    await rig.channel.dispose();
+  });
+
+  it("bounds queued subscribers and cancels all retained recipes on disposal", async () => {
+    const rig = await startedRig();
+    rig.channel.subscribePane("pane.alpha", () => {});
+    for (let index = 0; index < 65; index += 1) {
+      rig.channel.subscribePane("pane.beta", () => {});
+      expect(
+        (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue
+          .size,
+      ).toBeLessThanOrEqual(64);
+    }
+    await rig.channel.dispose();
+    expect(
+      (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue.size,
+    ).toBe(0);
+    expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+  });
+
+  it("bounds a silent initial capture and ignores its late replies after failure", async () => {
+    const rig = await startedRig();
+    const alpha = collect();
+    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+    advanceRecoveryClock(rig, 10000);
+    expect(alpha.events).toEqual([
+      { type: "flow", state: "paused", reason: "backpressure" },
+      { type: "fault", reason: "native-recovery-failed" },
+    ]);
+    rig.sim.reply(["late capture"]);
+    rig.sim.reply(["0 0 100 50"]);
+    expect(bytesOf(alpha.events)).toEqual([]);
+    expect(alpha.events.filter((event) => event.type === "fault")).toHaveLength(1);
+    await rig.channel.dispose();
+  });
+
+  it.each(["freeze", "close", "dispose"] as const)(
+    "cancels silent capture work on %s",
+    async (operation) => {
+      const observations: MirrorFlowRecoveryObservation[] = [];
+      const rig = await startedRig({
+        onFlowRecoveryObserved: (observation) => observations.push(observation),
+      });
+      const alpha = collect();
+      const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+      if (operation === "dispose") await rig.channel.dispose();
+      else handle[operation]();
+      alpha.events.length = 0;
+      advanceRecoveryClock(rig, 20000);
+      expect(observations).toEqual([]);
+      expect(alpha.events).toEqual([]);
+      expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+      await rig.channel.dispose();
+    },
+  );
+
+  it("ignores a superseded capture without consuming its replacement's FIFO replies", async () => {
+    const rig = await startedRig();
+    const alpha = collect();
+    const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+    handle.reseed();
+    rig.sim.reply(["old"]);
+    rig.sim.reply(["0 0 100 50"]);
+    expect(alpha.events).toEqual([]);
+    rig.sim.reply(["new"]);
+    rig.sim.reply(["0 0 100 50"]);
+    expect(bytesOf(alpha.events)).toEqual(["new"]);
+    advanceRecoveryClock(rig, 20000);
+    expect(alpha.events.filter((event) => event.type === "fault")).toEqual([]);
+    await rig.channel.dispose();
+  });
+
   async function seededPair(rig: Rig): Promise<{
     alpha: ReturnType<typeof collect>;
     beta: ReturnType<typeof collect>;
@@ -853,7 +1136,7 @@ describe("flow control", () => {
     for (const command of hookBodies) {
       expect(command).toContain("capture-pane -p -e -J");
       expect(command).toContain("display-message -p -t %1");
-      expect(command).toContain("refresh-client -A %1:continue");
+      expect(command).toContain("refresh-client -A " + "'\\''" + "%1:continue" + "'\\''");
       expect(command).toContain("set-buffer -a -b owned-buffer");
       expect(command).toContain("wait-for -S owned-ready");
       expect(command).not.toContain("run-shell");
@@ -2106,6 +2389,166 @@ describe("flow control", () => {
 });
 
 describe("layout push", () => {
+  it("retains every coherent window while another window is awaiting border metadata", async () => {
+    const rig = await startedRig({ borderReply: "manual" });
+    rig.state.descriptorRows[2] = rig.state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.mirror.gen1\t",
+    ).replace("\t\tzz-sim", "\twindow.test.two\tzz-sim");
+    const memberships: number[] = [];
+    await rig.channel.subscribeAuthoritativeLayout(
+      () => {},
+      undefined,
+      (snapshot) => memberships.push(snapshot.layouts.length),
+    );
+    expect(memberships.at(-1)).toBe(2);
+    rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
+    rig.sim.feedLines(`%layout-change @2 ${FIXTURE.layoutW2} ${FIXTURE.layoutW2} 0`);
+    rig.sim.reply(["off"]);
+    expect(memberships.at(-1)).toBe(2);
+    rig.sim.reply(["off"]);
+    expect(memberships.every((count) => count === 2)).toBe(true);
+    await rig.channel.dispose();
+  });
+
+  it("holds output until fresh border metadata and ignores superseded replies", async () => {
+    const rig = await startedRig({ borderReply: "manual" });
+    const events: string[] = [];
+    const layouts: MirrorLayoutEvent[] = [];
+    rig.channel.subscribePane(
+      "pane.alpha",
+      (event) => events.push(event.type),
+      (layout) => {
+        layouts.push(layout);
+        events.push("layout");
+      },
+    );
+    rig.sim.reply(["seed"]);
+    rig.sim.reply(["0 0 100 50"]);
+    events.length = 0;
+    rig.sim.feedLines(
+      `%layout-change @1 ${FIXTURE.layoutW1} aaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2} 0`,
+      "%output %1 a",
+    );
+    expect(events).toEqual([]);
+    rig.sim.feedLines(
+      `%layout-change @1 ${FIXTURE.layoutW1} aaaa,200x50,0,0{140x50,0,0,1,59x50,141,0,2} 0`,
+      "%output %1 b",
+    );
+    rig.sim.reply(["off"]);
+    expect(events).toEqual([]);
+    rig.sim.reply(["top"]);
+    expect(events).toEqual(["layout", "delta", "delta"]);
+    expect(layouts.at(-1)?.paneBorderStatus).toBe("top");
+    expect(layouts.at(-1)?.panes[0]?.width).toBe(140);
+    expect(rig.sim.written.filter((cmd) => cmd.includes("tmux-ide-pane-borders:@*")).length).toBe(
+      2,
+    );
+    await rig.channel.dispose();
+  });
+
+  it("bounds output held for metadata and recovers instead of replaying a partial stream", async () => {
+    const rig = await startedRig({ borderReply: "manual" });
+    const collected = collect();
+    rig.channel.subscribePane("pane.alpha", collected.onEvent);
+    rig.sim.reply(["seed"]);
+    rig.sim.reply(["0 0 100 50"]);
+    collected.events.length = 0;
+    rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
+    for (let index = 0; index < 1025; index++) rig.sim.output("%1", "x");
+    expect(collected.events).toEqual([]);
+    rig.sim.reply(["off"]);
+    expect(collected.events).toContainEqual({
+      type: "flow",
+      state: "paused",
+      reason: "backpressure",
+    });
+    expect(bytesOf(collected.events)).toEqual([]);
+    await rig.channel.dispose();
+  });
+
+  it("releases held output after an authoritative refresh when the option reply is invalid", async () => {
+    const rig = await startedRig({ borderReply: "manual" });
+    const collected = collect();
+    rig.channel.subscribePane("pane.alpha", collected.onEvent);
+    rig.sim.reply(["seed"]);
+    rig.sim.reply(["0 0 100 50"]);
+    collected.events.length = 0;
+    rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
+    rig.sim.output("%1", "held");
+    rig.sim.reply(["invalid"]);
+    expect(bytesOf(collected.events)).toEqual([]);
+    expect(rig.pendingSyncs).toHaveLength(1);
+    rig.pendingSyncs.shift()!();
+    await vi.waitFor(() => expect(bytesOf(collected.events)).toEqual(["held"]));
+    await rig.channel.dispose();
+  });
+
+  it("reseeds a watched pane once for a quiet native history clear", async () => {
+    const rig = await startedRig();
+    const collected = collect();
+    rig.channel.subscribePane("pane.alpha", collected.onEvent);
+    rig.sim.reply(["old history"]);
+    rig.sim.reply(["0 0 100 50 0 1 0 0 0 0 0 0 0 1 12"]);
+    collected.events.length = 0;
+    const captures = () =>
+      rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+    const before = captures();
+    rig.sim.feedLines("%subscription-changed tmux-ide-pane-history $1 @1 0 %1 : 0");
+    expect(captures()).toBe(before + 1);
+    rig.sim.feedLines("%subscription-changed tmux-ide-pane-history $1 @1 0 %1 : 0");
+    rig.sim.feedLines("%subscription-changed tmux-ide-pane-history $1 @1 0 %999 : 0");
+    expect(captures()).toBe(before + 1);
+    rig.sim.reply(["live grid"]);
+    rig.sim.reply(["0 0 100 50 0 1 0 0 0 0 0 0 0 1 0"]);
+    expect(bytesOf(collected.events)).toContain("live grid");
+    rig.sim.feedLines("%subscription-changed tmux-ide-pane-history $1 @1 0 %1 : 5");
+    expect(captures()).toBe(before + 1);
+    await rig.channel.dispose();
+  });
+
+  it("publishes native copy key modes and refreshes option-only changes without trusting hints", async () => {
+    const rig = await startedRig();
+    const layouts: MirrorLayoutEvent[] = [];
+    rig.channel.subscribeLayout((event) => layouts.push(event));
+    const rows = rig.state.windowRows.map(
+      (row, index) =>
+        `${row}\t${index === 0 ? FIXTURE.layoutW1 : FIXTURE.layoutW2}\t${index === 0 ? "vi" : "emacs"}`,
+    );
+    rig.state.windowRows = rows;
+    rig.sim.feedLines("%subscription-changed tmux-ide-copy-keys $1 @1 0 - : emacs");
+    expect(rig.pendingSyncs).toHaveLength(1);
+    rig.pendingSyncs.shift()!();
+    await vi.waitFor(() => expect(layouts.at(-2)?.modeKeys).toBe("vi"));
+    expect(layouts.at(-1)?.modeKeys).toBe("emacs");
+    expect(rig.sim.written).toContain("refresh-client -B 'tmux-ide-copy-keys:@*:#{mode-keys}'");
+    const previous = layouts.length;
+    rig.state.windowRows = rows.map((row, index) =>
+      index === 0 ? row.replace(/vi$/, "emacs") : row,
+    );
+    rig.sim.feedLines("%subscription-changed tmux-ide-copy-keys $1 @1 0 - : vi");
+    rig.sim.feedLines("%subscription-changed tmux-ide-copy-keys $1 @1 0 - : vi");
+    expect(rig.pendingSyncs).toHaveLength(1);
+    rig.pendingSyncs.shift()!();
+    await vi.waitFor(() => expect(layouts.length).toBeGreaterThan(previous));
+    expect(
+      layouts.findLast((event) => event.semanticWindowId === "window.test.one")?.modeKeys,
+    ).toBe("emacs");
+    await rig.channel.dispose();
+  });
+
+  it("uses the border subscription as a refresh hint even when geometry is unchanged", async () => {
+    const rig = await startedRig();
+    expect(rig.sim.written).toContain(
+      "refresh-client -B 'tmux-ide-pane-borders:@*:#{pane-border-status}'",
+    );
+    rig.sim.feedLines("%subscription-changed tmux-ide-pane-borders $1 @1 0 - : bottom");
+    expect(rig.pendingSyncs).toHaveLength(1);
+    rig.sim.feedLines("%subscription-changed tmux-ide-pane-borders $1 @1 0 - : off");
+    expect(rig.pendingSyncs).toHaveLength(1);
+    await rig.channel.dispose();
+  });
+
   it("emits joined layout events ahead of subsequent output, in channel order", async () => {
     const rig = await startedRig();
     const order: string[] = [];
@@ -2411,5 +2854,145 @@ describe("age telemetry", () => {
     });
     expect(onOutputObserved).toHaveBeenCalledWith("pane.alpha", 750, undefined);
     await rig.channel.dispose();
+  });
+});
+
+describe("native capture semantic ownership", () => {
+  const raw = () => [
+    JSON.stringify({
+      version: 1,
+      cols: 100,
+      rows: 50,
+      history: 0,
+      hscrolled: 0,
+      limit: 2000,
+      cursor: [0, 0],
+    }),
+    ...Array.from({ length: 50 }, (_, row) =>
+      JSON.stringify({ row, flags: 0, used: 0, cells: [] }),
+    ),
+  ];
+  it("rejects raw backing crossed by pane output but permits sibling output and retry", async () => {
+    const rig = await startedRig();
+    try {
+      const stale = rig.channel.captureNativeBacking("pane.alpha");
+      rig.sim.output("%1", "changed");
+      rig.sim.reply(raw());
+      expect(await stale).toEqual({ status: "changed" });
+      const fresh = rig.channel.captureNativeBacking("pane.alpha");
+      rig.sim.output("%2", "sibling");
+      rig.sim.reply(raw());
+      const captured = await fresh;
+      expect(captured.status).toBe("captured");
+      if (captured.status !== "captured") throw new Error("Missing native backing");
+      expect(captured.isCurrent()).toBe(true);
+      rig.sim.output("%2", "more sibling output");
+      expect(captured.isCurrent()).toBe(true);
+      rig.sim.output("%1", "later pane output");
+      expect(captured.isCurrent()).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("rejects raw backing when layout changes and returns to its original geometry", async () => {
+    const rig = await startedRig();
+    const send = rig.sim.commandListBoundedInline.bind(rig.sim);
+    let deliver: (() => void) | undefined;
+    const hold = vi
+      .spyOn(rig.sim, "commandListBoundedInline")
+      .mockImplementation((command, count, index, limits, callback) => {
+        send(command, count, index, limits, (reply) => {
+          deliver = () => callback(reply);
+        });
+      });
+    try {
+      const stale = rig.channel.captureNativeBacking("pane.alpha");
+      rig.sim.reply(raw());
+      expect(deliver).toBeTypeOf("function");
+      rig.sim.feedLines(
+        `%layout-change @1 ${FIXTURE.layoutW1} aaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2} 0`,
+        `%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`,
+      );
+      deliver!();
+      expect(await stale).toEqual({ status: "changed" });
+    } finally {
+      hold.mockRestore();
+      await rig.channel.dispose();
+    }
+  });
+
+  it("rejects capture after its subscription closes while a peer remains live", async () => {
+    const rig = await startedRig();
+    const first = rig.channel.subscribePane("pane.alpha", () => {});
+    rig.sim.reply(["seed"]);
+    rig.sim.reply(["0 0 100 50"]);
+    const peerEvents = collect();
+    const peer = rig.channel.subscribePane("pane.alpha", peerEvents.onEvent);
+    rig.sim.reply(["seed"]);
+    rig.sim.reply(["0 0 100 50"]);
+    try {
+      const pending = first.captureNativeBacking();
+      first.close();
+      rig.sim.reply(raw());
+      expect(await pending).toEqual({ status: "retired" });
+      const written = rig.sim.written.length;
+      expect(await first.captureNativeBacking()).toEqual({ status: "retired" });
+      expect(rig.sim.written.length).toBe(written);
+      rig.sim.feedLines("%output %1 peer-still-live");
+      expect(bytesOf(peerEvents.events)).toContain("peer-still-live");
+      const active = peer.captureNativeBacking();
+      rig.sim.reply(raw());
+      expect((await active).status).toBe("captured");
+    } finally {
+      peer.close();
+      await rig.channel.dispose();
+    }
+  });
+  it("rejects a delayed completion after the same runtime receives a new semantic binding", async () => {
+    const rig = await startedRig();
+    const send = rig.sim.commandListBoundedInline.bind(rig.sim);
+    let deliver: (() => void) | undefined;
+    const hold = vi
+      .spyOn(rig.sim, "commandListBoundedInline")
+      .mockImplementation((command, count, index, limits, callback) => {
+        send(command, count, index, limits, (reply) => {
+          deliver = () => callback(reply);
+        });
+      });
+    try {
+      const old = rig.channel.captureNativeBacking("pane.alpha");
+      rig.sim.reply(raw());
+      expect(deliver).toBeTypeOf("function");
+      rig.state.descriptorRows[0] = rig.state.descriptorRows[0]!.replace(
+        "%1\tpane.alpha\t",
+        "%1\tpane.replacement\t",
+      );
+      rig.sim.feedLines("%layout-change @1 aaaa,200x50,0,0,2 aaaa,200x50,0,0,2 0");
+      rig.pendingSyncs.shift()!();
+      await vi.waitFor(() =>
+        expect(
+          rig.channel.describe().panes.some((p) => p.semanticPaneId === "pane.replacement"),
+        ).toBe(true),
+      );
+      deliver!();
+      expect(await old).toEqual({ status: "retired" });
+      expect(await rig.channel.captureNativeBacking("pane.alpha")).toEqual({ status: "retired" });
+      hold.mockRestore();
+      const replacement = rig.channel.captureNativeBacking("pane.replacement");
+      rig.sim.reply(raw());
+      expect((await replacement).status).toBe("captured");
+    } finally {
+      hold.mockRestore();
+      await rig.channel.dispose();
+    }
+  });
+  it("settles an in-flight capture on disposal and ignores its later wire reply", async () => {
+    const rig = await startedRig();
+    const pending = rig.channel.captureNativeBacking("pane.alpha");
+    await rig.channel.dispose();
+    expect(await pending).toEqual({ status: "retired" });
+    rig.sim.reply(raw());
+    expect(await rig.channel.captureNativeBacking("pane.alpha")).toEqual({ status: "retired" });
   });
 });

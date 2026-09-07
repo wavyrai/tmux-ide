@@ -22,6 +22,7 @@ import {
 } from "./daemon-embed.ts";
 import { DaemonStartupError, IdeError } from "./errors.ts";
 import { generateAuthToken } from "./auth-token.ts";
+import type { RemoteAccessRestartRequest } from "../command-center/actions/handlers/app-set-remote-access.ts";
 
 export interface HeadlessDaemonOptions {
   readonly port?: string | number;
@@ -259,7 +260,29 @@ export async function runHeadlessDaemon(
   options: HeadlessDaemonOptions = {},
   deps: HeadlessDaemonDependencies = defaultDependencies,
 ): Promise<"stopped" | "already-running"> {
-  const port = parsePort(options.port);
+  let restoreTmuxWorkspaces = false;
+  const lifecycle: { remoteAccess?: RemoteAccessRestartRequest } = {};
+  while (true) {
+    const result = await runHeadlessDaemonGeneration(
+      options,
+      deps,
+      restoreTmuxWorkspaces,
+      lifecycle,
+    );
+    if (result !== "restart") return result;
+    restoreTmuxWorkspaces = true;
+  }
+}
+
+async function runHeadlessDaemonGeneration(
+  options: HeadlessDaemonOptions,
+  deps: HeadlessDaemonDependencies,
+  restoreTmuxWorkspaces: boolean,
+  lifecycle: { remoteAccess?: RemoteAccessRestartRequest },
+): Promise<"stopped" | "already-running" | "restart"> {
+  const port = parsePort(lifecycle.remoteAccess?.port ?? options.port);
+  let restartRequested = false;
+  let stopStarted = false;
   let handle: EmbeddedDaemonHandle | null = null;
   let signalRequested = false;
   const requestStop = (): void => {
@@ -296,11 +319,18 @@ export async function runHeadlessDaemon(
     for (let startAttempt = 0; startAttempt < 2 && !handle; startAttempt += 1) {
       try {
         handle = await deps.startEmbeddedDaemon({
+          ...(restoreTmuxWorkspaces ? { restoreTmuxWorkspaces: true } : {}),
           port,
-          bindHostname: "127.0.0.1",
+          bindHostname: lifecycle.remoteAccess?.bindHostname ?? "127.0.0.1",
           // Persisted only in the owner-only daemon record. This capability is
           // independent from the remotely shared access token.
-          authToken: null,
+          authToken: lifecycle.remoteAccess?.token ?? null,
+          requestRestart: async (request) => {
+            if (!handle || stopStarted || signalRequested) return;
+            lifecycle.remoteAccess = request;
+            restartRequested = true;
+            await handle.stop();
+          },
           localBypassToken: generateAuthToken(),
           silent: true,
           ...(options.sessionName ? { sessionName: options.sessionName } : {}),
@@ -339,6 +369,7 @@ export async function runHeadlessDaemon(
     const originalStop = handle.stop.bind(handle);
     const mutableHandle = handle as { stop: EmbeddedDaemonHandle["stop"] };
     mutableHandle.stop = async (stopOptions) => {
+      stopStarted = true;
       try {
         await originalStop(stopOptions);
       } catch (error) {
@@ -396,9 +427,31 @@ export async function runHeadlessDaemon(
     }
 
     emitStatus(deps, options.json === true, "ready", info);
-    await stopped;
+    let probing = false;
+    const timer = handle.tmuxAuthorityReplaced
+      ? setInterval(() => {
+          if (probing || stopStarted) return;
+          probing = true;
+          void handle!.tmuxAuthorityReplaced!()
+            .then((replaced) => {
+              if (!replaced || stopStarted || signalRequested) return;
+              restartRequested = true;
+              return handle!.stop();
+            })
+            .catch(() => undefined)
+            .finally(() => {
+              probing = false;
+            });
+        }, 1_000)
+      : null;
+    timer?.unref();
+    try {
+      await stopped;
+    } finally {
+      if (timer) clearInterval(timer);
+    }
     if (stopFailure) throw stopFailure;
-    return "stopped";
+    return restartRequested && !signalRequested ? "restart" : "stopped";
   } finally {
     deps.offSignal("SIGINT", requestStop);
     deps.offSignal("SIGTERM", requestStop);

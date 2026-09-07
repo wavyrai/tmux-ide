@@ -226,6 +226,23 @@ describe("HostCapabilities-backed daemon transport", () => {
     });
     expect(handlers.onInteractionReceipt).toHaveBeenCalledWith(interaction);
     expect(handlers.onPeerMismatch).toHaveBeenCalledTimes(2);
+    // A new target can subscribe before the host announces its verified
+    // replacement hello. That announcement must not retire the new target.
+    publish?.({
+      type: "daemon-generation.changed",
+      previousIdentity: { ...DAEMON, instanceId: "11111111-1111-4111-8111-111111111111" },
+      daemon: { status: "connected", identity: { ...DAEMON } },
+    });
+    expect(handlers.onPeerMismatch).toHaveBeenCalledTimes(2);
+    publish?.({
+      type: "daemon-generation.changed",
+      previousIdentity: DAEMON,
+      daemon: {
+        status: "connected",
+        identity: { ...DAEMON, startedAt: "2026-07-22T00:00:00.000Z" },
+      },
+    });
+    expect(handlers.onPeerMismatch).toHaveBeenCalledTimes(3);
 
     publish?.({
       type: "connection.changed",

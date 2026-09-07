@@ -291,6 +291,8 @@ export function createWebWorkspaceRuntimeBridgePorts(input: {
       let stagedLayoutSnapshot:
         | Parameters<WebWorkspacePaneStreamBridge["publishLayoutSnapshot"]>[0]
         | null = null;
+      let stagedAuthority: Parameters<WebWorkspacePaneStreamBridge["publishAuthority"]>[0] | null =
+        null;
       let stagedSession: Parameters<WebWorkspacePaneStreamBridge["bindSession"]>[0] = null;
       let candidateMutationEpoch = 0;
       let activated = false;
@@ -412,6 +414,11 @@ export function createWebWorkspaceRuntimeBridgePorts(input: {
             attemptActivation();
           }
         },
+        onAuthoritySnapshot: (snapshot) => {
+          if (activated && activationCommitted) {
+            if (activeRuntime === runtime) bridge.publishAuthority(snapshot);
+          } else stagedAuthority = snapshot;
+        },
         onLayoutSnapshot: (snapshot) => {
           if (activated && activationCommitted) {
             if (activeRuntime === runtime) bridge.publishLayoutSnapshot(snapshot);
@@ -531,6 +538,7 @@ export function createWebWorkspaceRuntimeBridgePorts(input: {
               if (activeRuntime === runtime) closeCandidate();
               return;
             }
+            if (stagedAuthority) bridge.publishAuthority(stagedAuthority);
             if (stagedLayoutSnapshot) bridge.publishLayoutSnapshot(stagedLayoutSnapshot);
             else if (stagedLayout) bridge.publishLayout(stagedLayout);
             for (const [pane, event] of stagedPanes) bridge.publishPane(pane, event);

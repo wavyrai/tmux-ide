@@ -143,6 +143,37 @@ describe("createDesktopFleetCatalogStore", () => {
     store.dispose();
   });
 
+  it("retains the known fleet on discovery failure and recovers on a successful refresh", async () => {
+    const fake = fakeDaemonHost(async () => ({ status: "ok", envelope: mixedFleetCatalog() }));
+    const store = createDesktopFleetCatalogStore({
+      host: fake.host,
+      daemon: CONNECTED,
+      retry: { maximumAttempts: 0 },
+    });
+    try {
+      await publishLive(fake);
+      await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+      fake.fetchFleetCatalog.mockResolvedValue({
+        status: "error",
+        error: { code: "request-failed", reason: "Tmux fleet discovery is unavailable" },
+      });
+      store.refresh();
+      await vi.waitFor(() =>
+        expect(store.getState()).toMatchObject({
+          status: "stale",
+          reason: "Tmux fleet discovery is unavailable",
+        }),
+      );
+      expect(store.getState().snapshot?.catalog.sessions).toHaveLength(3);
+      fake.fetchFleetCatalog.mockResolvedValue({ status: "ok", envelope: emptyFleetCatalog() });
+      store.refresh();
+      await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+      expect(store.getState().snapshot?.catalog.sessions).toHaveLength(0);
+    } finally {
+      store.dispose();
+    }
+  });
+
   it("drops a response stamped by a superseded daemon generation", async () => {
     const fake = fakeDaemonHost(async () => ({
       // Envelope carries the OTHER daemon; the store is pinned to DAEMON.

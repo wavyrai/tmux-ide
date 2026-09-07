@@ -1,11 +1,45 @@
 import { describe, expect, it } from "bun:test";
 import {
   appSetRemoteAccessHandler,
+  setRemoteAccessRestartBackend,
   type RemoteAccessRestartRequest,
 } from "./app-set-remote-access.ts";
 import type { AppSettings } from "../../../lib/app-settings.ts";
 
 describe("appSetRemoteAccessHandler", () => {
+  it("uses the registered listener port for restart requests and advertised URLs", async () => {
+    const previous = process.env.TMUX_IDE_DAEMON_PORT;
+    process.env.TMUX_IDE_DAEMON_PORT = "6061";
+    const requests: RemoteAccessRestartRequest[] = [];
+    const deps = {
+      readSettings: () => ({ remoteAccess: { enabled: false, token: null } }),
+      writeSettings: () => {},
+      generateToken: () => "test-token",
+      deferRestart: (restart: () => void) => restart(),
+      host: "host.local",
+    };
+    try {
+      for (const port of [48291, 48292]) {
+        setRemoteAccessRestartBackend((request) => {
+          requests.push(request);
+          return {};
+        }, port);
+        const result = await appSetRemoteAccessHandler({ enabled: true }, deps);
+        expect(result.url).toBe(`http://host.local:${port}`);
+        expect(result.qrPayload).toBe(`http://host.local:${port}?token=test-token`);
+        expect(requests.at(-1)?.port).toBe(port);
+      }
+      setRemoteAccessRestartBackend(null);
+      const result = await appSetRemoteAccessHandler({ enabled: true }, deps);
+      expect(result.url).toBe("http://host.local:6061");
+      expect(requests).toHaveLength(2);
+    } finally {
+      setRemoteAccessRestartBackend(null);
+      if (previous === undefined) delete process.env.TMUX_IDE_DAEMON_PORT;
+      else process.env.TMUX_IDE_DAEMON_PORT = previous;
+    }
+  });
+
   it("enables remote access, persists a token, and requests a 0.0.0.0 restart", async () => {
     let settings: AppSettings = { remoteAccess: { enabled: false, token: null } };
     const restarts: RemoteAccessRestartRequest[] = [];

@@ -10,6 +10,7 @@ import type {
 } from "../terminal/native-terminal-transport.ts";
 import type {
   PaneStreamResizeResult,
+  PaneStreamSessionHandle,
   PaneStreamTransport,
 } from "../terminal/pane-stream-transport.ts";
 import {
@@ -19,6 +20,8 @@ import {
 import { createHostPaneStreamTransport } from "./host-pane-stream-transport.ts";
 
 interface PresenceSession {
+  connectionClientId?: PaneStreamSessionHandle["connectionClientId"];
+  requestAuthority?: PaneStreamSessionHandle["requestAuthority"];
   updatePresence?(state: "foreground" | "background"): void;
   noteActivity?(activity: "focus"): void;
 }
@@ -118,7 +121,13 @@ function publishDocumentPresence(): void {
     }
     if (foreground && leader && !group.focusPublished) {
       group.focusPublished = true;
-      if (leader.noteActivity) {
+      if (leader.requestAuthority) {
+        // Activity only elects an existing claimant. A new or explicitly
+        // released binding must claim focus on this actual foreground epoch.
+        // Do not reclaim in response to another client's authority snapshot.
+        void leader.requestAuthority("focus").catch(() => undefined);
+        recordCard5AuthorityActivity("focus");
+      } else if (leader.noteActivity) {
         leader.noteActivity("focus");
         recordCard5AuthorityActivity("focus");
       }
@@ -239,8 +248,28 @@ export function createPaneStreamNativeTerminalTransport(
       let sourceGrid = request.viewport;
       let clientViewport = request.viewport;
       let coherent = false;
+      let canonicalGeometry = false;
+      const acceptCanonicalGrid = async (grid: { cols: number; rows: number }): Promise<void> => {
+        canonicalGeometry = true;
+        const changed = sourceGrid.cols !== grid.cols || sourceGrid.rows !== grid.rows;
+        sourceGrid = { cols: grid.cols, rows: grid.rows };
+        if (coherent && changed) {
+          await listener({ type: "geometry", sourceGrid, clientViewport });
+        }
+      };
       const presenceGroupKey = `${presenceKey}\0${request.target.workspaceName}`;
       let presenceSession: PresenceSession | null = null;
+      let geometryOwner: string | null | undefined;
+      let publishedGeometryOwnership: "owner" | "available" | "passive" | undefined;
+      const publishGeometryAuthority = () => {
+        const clientId = presenceSession?.connectionClientId?.();
+        if (geometryOwner === undefined || !clientId) return;
+        const ownership =
+          geometryOwner === clientId ? "owner" : geometryOwner === null ? "available" : "passive";
+        if (publishedGeometryOwnership === ownership) return;
+        publishedGeometryOwnership = ownership;
+        void listener({ type: "geometry-authority", ownership });
+      };
       const result = await transport.connect(
         {
           workspaceName: request.target.workspaceName,
@@ -250,7 +279,8 @@ export function createPaneStreamNativeTerminalTransport(
         {
           onPaneEvent: async (_pane, event) => {
             if (event.type === "seed-batch") {
-              if (event.batch.reset) sourceGrid = event.batch.reset;
+              if (event.canonical) await acceptCanonicalGrid(event.canonical);
+              else if (event.batch.reset) sourceGrid = event.batch.reset;
               if (!coherent) {
                 coherent = true;
                 await listener({
@@ -268,6 +298,7 @@ export function createPaneStreamNativeTerminalTransport(
               });
               for (const held of event.batch.held) await listener({ type: "output", bytes: held });
             } else if (event.type === "output") {
+              if (event.canonical) await acceptCanonicalGrid(event.canonical);
               await listener({
                 type: "output",
                 bytes: event.bytes,
@@ -278,12 +309,16 @@ export function createPaneStreamNativeTerminalTransport(
             }
           },
           onLayout: (layout) => {
+            // Layout leaves include tmux pane-border status cells. Once a
+            // replica is available, only its content grid may size the renderer.
+            if (canonicalGeometry) return;
             const pane = layout.panes.find(({ pane }) => pane === request.target.semanticPaneId);
             if (!pane) return;
             sourceGrid = { cols: pane.width, rows: pane.height };
             void listener({ type: "geometry", sourceGrid, clientViewport });
           },
           onLayoutSnapshot: (snapshot) => {
+            if (canonicalGeometry) return;
             const pane = snapshot.layouts
               .flatMap((layout) => layout.panes)
               .find(({ pane }) => pane === request.target.semanticPaneId);
@@ -299,6 +334,8 @@ export function createPaneStreamNativeTerminalTransport(
             });
           },
           onAuthoritySnapshot: (snapshot) => {
+            geometryOwner = snapshot.owners.geometry;
+            publishGeometryAuthority();
             if (presenceSession) {
               observePresenceAuthority(presenceGroupKey, presenceSession, snapshot.owners.focus);
             }
@@ -309,6 +346,7 @@ export function createPaneStreamNativeTerminalTransport(
         return { status: "error", error: unavailable(result.error.reason) };
       const session = result.session;
       presenceSession = session;
+      publishGeometryAuthority();
       const inputDecoder = createPaneStreamInputDecoder();
       const unregisterPresence = registerPresenceSession(presenceGroupKey, session);
       let disposed = false;

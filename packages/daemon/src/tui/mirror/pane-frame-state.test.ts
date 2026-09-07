@@ -172,11 +172,21 @@ describe("pane frame state", () => {
       kind: "read",
       endpoint: "source",
       treatment: "observation",
-      badge: "READING",
+      badge: "READ",
       tone: "info",
       label: "Editor reads Tests",
     });
     expect(read.sending).toBeNull();
+    const admittedRead = projectPaneChromeState({
+      keyboardFocused: false,
+      inputOwned: false,
+      interaction: interaction({
+        direction: "outgoing",
+        operationKind: "workspace.pane.read",
+        phase: "accepted",
+      }),
+    });
+    expect(admittedRead.reading?.badge).toBe("READING");
     expect(resolvePaneChromeVisualState(read)).toMatchObject({
       primaryMarker: "idle",
       communication: { role: "read-source" },
