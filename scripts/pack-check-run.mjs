@@ -1216,6 +1216,44 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
 
   send(one, "F5", "Down", "Down", "Enter");
   await observe("split pane right", 10_000, () => paneCount("journey-beta") === 2, one.diagnostics);
+  // Adoption above deliberately exercises unnamed ordinary tmux panes. For
+  // this split-publication proof, assign distinct manual fixture labels: the
+  // optional @ide_name can otherwise remain generic "Terminal" while the
+  // production terminal layout correctly projects a memorable fallback.
+  const splitPanes = tmuxResult(["list-panes", "-t", "=journey-beta", "-F", "#{pane_id}"])
+    .stdout.trim()
+    .split("\n");
+  if (splitPanes.length !== 2 || new Set(splitPanes).size !== 2)
+    throw new Error(`Expected two distinct native split panes: ${JSON.stringify(splitPanes)}`);
+  for (const [index, paneId] of splitPanes.entries()) {
+    const named = tmuxResult([
+      "set-option",
+      "-p",
+      "-t",
+      paneId,
+      "@ide_name",
+      `Pack pane ${index + 1}`,
+      ";",
+      "set-option",
+      "-p",
+      "-t",
+      paneId,
+      "@tmux_ide_name_source",
+      "manual",
+    ]);
+    if (named.status !== 0)
+      throw new Error(`Could not name fixture pane ${paneId}: ${named.stderr}`);
+  }
+  const splitDiagnostics = () =>
+    `${one.diagnostics()}\nsplit pane identities/names:\n${
+      tmuxResult([
+        "list-panes",
+        "-t",
+        "=journey-beta",
+        "-F",
+        "#{pane_id} | #{@tmux_ide_pane_id} | #{@ide_name} | #{@tmux_ide_name_source} | #{pane_title}",
+      ]).stdout
+    }`;
   let stableSplitFrames = 0;
   await observe(
     "split pane UI publication settles",
@@ -1239,7 +1277,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       stableSplitFrames += 1;
       return stableSplitFrames >= 3;
     },
-    one.diagnostics,
+    splitDiagnostics,
   );
 
   const beforeFocus = activePane("journey-beta");
