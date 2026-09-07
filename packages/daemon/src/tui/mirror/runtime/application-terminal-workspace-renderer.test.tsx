@@ -1525,7 +1525,7 @@ it("shows the final row under stacked headers and scrolls locally without repain
   paints.length = 0;
   await setup.mockMouse.scroll(5, 3, "up");
   await setup.renderOnce();
-  expect(setup.captureCharFrame()).toContain("history-19");
+  expect(setup.captureCharFrame()).toContain("history-15");
   expect(setup.captureCharFrame()).toContain("Scrollback");
   expect(paints).not.toContain("b");
   expect(key!("escape")).toBe(true);

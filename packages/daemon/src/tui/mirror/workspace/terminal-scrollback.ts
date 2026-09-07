@@ -1,8 +1,9 @@
-import { createSignal } from "solid-js";
+import { batch, createSignal } from "solid-js";
 import type { TerminalViewportOrigin } from "../terminal-viewport.ts";
 
 /** Terminal mouse reports contain ticks, not macOS pixel offsets or phases.
- * Preserve their cadence without adding a second acceleration/momentum curve.
+ * Match tmux copy-mode's five rows per tick without adding another
+ * acceleration/momentum curve. Fractional input still accumulates by row.
  * A short idle gap is the only available approximation of a gesture boundary.
  */
 export function createTerminalWheelGesture() {
@@ -30,7 +31,7 @@ export function createTerminalWheelGesture() {
       direction = sign;
       lastAt = at;
       const amount = Number.isFinite(delta) ? Math.abs(delta) : 0;
-      remainder += Math.min(amount, 1024);
+      remainder += Math.min(amount, 1024) * 5;
       const lines = Math.floor(remainder);
       remainder -= lines;
       return { lines: lines === 0 ? 0 : sign * lines, local };
@@ -197,9 +198,9 @@ export function createTerminalScrollback(
   return {
     offset: (id: string) => pane(id).offset(),
     origin: (id: string) => pane(id).origin(),
-    move: (id: string, delta: number) => pane(id).move(delta),
-    seek: (id: string, origin: TerminalViewportOrigin) => pane(id).seek(origin),
-    live: (id: string) => pane(id).move(-Infinity, true),
+    move: (id: string, delta: number) => batch(() => pane(id).move(delta)),
+    seek: (id: string, origin: TerminalViewportOrigin) => batch(() => pane(id).seek(origin)),
+    live: (id: string) => batch(() => pane(id).move(-Infinity, true)),
     retain: (ids: ReadonlySet<string>) => {
       for (const [id, item] of panes)
         if (!ids.has(id)) {
