@@ -71,13 +71,13 @@ import { createAppearanceOwner } from "./application-appearance-owner.ts";
 import { createApplicationTerminalPaletteOwner } from "./application-terminal-palette-owner.ts";
 import {
   createApplicationRootReadiness,
-  createApplicationRootRenderer,
+  createApplicationRootRenderer as createRootRenderer,
 } from "./application-root-renderer.ts";
 import { createKeyboardRouteOwner, KeyboardRouteProvider } from "../ui/keyboard-router.tsx";
 export type { StartApplicationRootOptions } from "./application-root-configuration.ts";
 export async function startApplicationRoot(options: StartApplicationRootOptions = {}) {
   options.initialPreparation?.diagnosticHandoff?.attach(tuiPerfMark);
-  let renderer!: Awaited<ReturnType<typeof createApplicationRootRenderer>>;
+  let renderer!: Awaited<ReturnType<typeof createRootRenderer>>;
   let lifecycle!: TuiApplicationLifecycle;
   const { ready, resolveReady, rejectReady } = createApplicationRootReadiness();
   await startTuiApplication({
@@ -85,7 +85,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
     parseArgs: parseApplicationArgs,
     loadConfig: loadApplicationConfig,
     async createRenderer({ config }) {
-      renderer = await createApplicationRootRenderer(config.app.app.kittyKeys);
+      renderer = await createRootRenderer(config.app.app.kittyKeys, () => lifecycle?.shutdown());
       return renderer;
     },
     createLifecycle() {

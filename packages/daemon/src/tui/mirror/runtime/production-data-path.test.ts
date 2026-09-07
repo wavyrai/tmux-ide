@@ -244,6 +244,15 @@ describe("production OpenTUI v2 data path", () => {
     // Keep these explicit and retain a fixed bound on the complete runtime graph;
     // the singular replica/transport ownership checks above remain unchanged.
     for (const path of nativeIntegration) expect(authorityDataPathFiles).toContain(path);
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(119);
+    // Two local renderer-output helpers own ANSI compaction and stdout delivery.
+    // They must not acquire daemon, replica or tmux authority of their own.
+    for (const name of ["renderer-frame-optimizer", "renderer-output-transport"]) {
+      const path = `packages/daemon/src/tui/mirror/runtime/${name}.ts`;
+      expect(authorityDataPathFiles).toContain(path);
+      expect(productionGraph.sourceByFile.get(path)).not.toMatch(
+        /(?:from\s+|import\s*\()["'][^"']*(?:daemon-client|canonical-daemon|daemon-transport|tmux-bridge|replica)/u,
+      );
+    }
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(121);
   });
 });
