@@ -38144,7 +38144,7 @@ function defaultMirrorPaneId() {
 function defaultMirrorWindowId() {
   return `window.mirror.${randomBytes4(8).toString("hex")}`;
 }
-var TMUX_SERVER_HOSTNAME, STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, SYNC_DEBOUNCE_MS, DISPLAY_NAME_SYNC_INTERVAL_MS, RECOVERY_QUIET_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, MAX_CONTINUE_NOTIFICATION_QUEUE, MAX_CONTINUE_NOTIFICATION_DEBT, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
+var TMUX_SERVER_HOSTNAME, STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, SYNC_DEBOUNCE_MS, DISPLAY_NAME_SYNC_INTERVAL_MS, RECOVERY_QUIET_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, MAX_QUEUED_PLAIN_RESEEDS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, MAX_CONTINUE_NOTIFICATION_QUEUE, MAX_CONTINUE_NOTIFICATION_DEBT, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
 var init_session_channel = __esm({
   "packages/daemon/src/terminal/mirror/session-channel.ts"() {
     "use strict";
@@ -38181,6 +38181,7 @@ var init_session_channel = __esm({
     RECOVERY_NO_PROGRESS_DEADLINE_MS = 3e3;
     RECOVERY_ABSOLUTE_DEADLINE_MS = 5e3;
     RECOVERY_MAX_ATTEMPTS = 4;
+    MAX_QUEUED_PLAIN_RESEEDS = 64;
     RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
     RECOVERY_CAPTURE_MAX_LINES = RECOVERY_CAPTURE_MAX_BYTES / 64;
     RECOVERY_CURSOR_MAX_BYTES = 1024;
@@ -38246,6 +38247,8 @@ var init_session_channel = __esm({
       windowAuthorityOrdinal = 0;
       paneIncarnation = 0;
       recoveryOrdinal = 0;
+      plainReseedActive = null;
+      plainReseedQueue = /* @__PURE__ */ new Map();
       outputOrdinals = /* @__PURE__ */ new Map();
       pendingLayoutOutput = /* @__PURE__ */ new Map();
       recoveries = /* @__PURE__ */ new Map();
@@ -38792,16 +38795,68 @@ var init_session_channel = __esm({
         );
       }
       reseedPlain(sub, resumeReason = null) {
-        this.reseed(sub, ({ ok: ok2 }) => {
-          if (ok2) {
+        if (sub.closed || sub.frozen || this.disposed) return;
+        if (this.plainReseedActive === sub) sub.cancelCapture?.();
+        if (!this.plainReseedQueue.has(sub) && this.plainReseedQueue.size >= MAX_QUEUED_PLAIN_RESEEDS) {
+          this.failPlainReseed(sub);
+          return;
+        }
+        this.plainReseedQueue.set(sub, resumeReason);
+        if (this.plainReseedActive !== sub) {
+          sub.feed.beginReseed();
+          sub.cancelCapture = () => {
+            this.plainReseedQueue.delete(sub);
+            sub.cancelCapture = null;
+            sub.feed.abortCurrent();
+          };
+        }
+        this.drainPlainReseeds();
+      }
+      failPlainReseed(sub) {
+        if (sub.closed || sub.frozen || this.disposed || this.recoveries.has(sub.pane.runtimeId) || this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane)
+          return;
+        this.beginLocalOverflowRecovery(sub.pane);
+      }
+      drainPlainReseeds() {
+        if (this.plainReseedActive || this.disposed) return;
+        const next = this.plainReseedQueue.entries().next().value;
+        if (!next) return;
+        const [sub, resumeReason] = next;
+        this.plainReseedQueue.delete(sub);
+        if (sub.closed || sub.frozen) {
+          this.drainPlainReseeds();
+          return;
+        }
+        this.plainReseedActive = sub;
+        this.reseed(
+          sub,
+          (result) => {
+            if (this.plainReseedActive !== sub) return;
+            this.plainReseedActive = null;
+            if (!result.ok) {
+              const waiting = [...this.plainReseedQueue.keys()];
+              this.plainReseedQueue.clear();
+              for (const queued of waiting) queued.cancelCapture?.();
+              this.failPlainReseed(sub);
+              for (const queued of waiting) this.failPlainReseed(queued);
+              return;
+            }
+            this.drainPlainReseeds();
+            result.publish();
             if (resumeReason && !sub.closed && !sub.frozen)
               sub.onEvent({ type: "flow", state: "resumed", reason: resumeReason });
-            return;
-          }
-          if (sub.closed || sub.frozen || this.disposed || this.recoveries.has(sub.pane.runtimeId) || this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane)
-            return;
-          this.beginLocalOverflowRecovery(sub.pane);
-        });
+          },
+          true
+        );
+        if (this.plainReseedActive === sub) {
+          const cancel = sub.cancelCapture;
+          sub.cancelCapture = () => {
+            cancel?.();
+            this.plainReseedQueue.delete(sub);
+            if (this.plainReseedActive === sub) this.plainReseedActive = null;
+            this.drainPlainReseeds();
+          };
+        }
       }
       retireInternalReadMarker(runtime, marker) {
         if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtime))
