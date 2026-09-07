@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 import { applyTerminalReplicaPatch } from "@tmux-ide/core";
 import { MirrorControlChannel } from "../mirror/control-channel.ts";
+import type { MirrorFlowRecoveryObservation } from "../mirror/session-channel.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
 
 const available = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
@@ -77,9 +78,14 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
       );
       let channels = 0;
       let captures = 0;
+      const recoveries: MirrorFlowRecoveryObservation[] = [];
       const registry = new SessionRuntimeRegistry({
         generation: randomUUID(),
         mirror: {
+          onFlowRecoveryObserved: (_session, observation) => {
+            recoveries.push(observation);
+            if (recoveries.length > 64) recoveries.shift();
+          },
           createIo: (target, handlers) => {
             channels++;
             const io = new MirrorControlChannel({
@@ -141,6 +147,9 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
         );
         let stage = "opening";
         const verifyNative = () => {
+          // Check every pane's cheap convergence signals before walking any
+          // full history. Repeatedly comparing already-ready 20k-line siblings
+          // would block the control reader that the remaining pane needs.
           for (const [index, pane] of panes.entries()) {
             const [cols, rows] = tmux(
               "display-message",
@@ -155,13 +164,18 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
               tmux("display-message", "-p", "-t", pane, "#{history_size}"),
             );
             if (historyLines > 0) expect(historySize).toBeGreaterThan(historyLines - 100);
-            const nativeHistory = tmux("capture-pane", "-p", "-S", "-", "-t", pane);
             for (const snapshot of snapshots) {
               expect(snapshot.get(index)!.history, `${stage}: ${pane} history`).toHaveLength(
                 historySize,
               );
               expect(snapshot.get(index)).toMatchObject({ cols, rows });
-              expect(text(snapshot.get(index)!)).toBe(tmux("capture-pane", "-p", "-t", pane));
+            }
+          }
+          for (const [index, pane] of panes.entries()) {
+            const nativeHistory = tmux("capture-pane", "-p", "-S", "-", "-t", pane);
+            const nativeVisible = tmux("capture-pane", "-p", "-t", pane);
+            for (const snapshot of snapshots) {
+              expect(text(snapshot.get(index)!)).toBe(nativeVisible);
               expect(text(snapshot.get(index)!, true)).toBe(nativeHistory);
             }
             expect(incarnations[0]!.get(index)).toBe(incarnations[1]!.get(index));
@@ -218,6 +232,9 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
         await Promise.all(
           [...subscriptions, ...reconnected].map((subscription) => subscription.close()),
         );
+      } catch (error) {
+        console.error(JSON.stringify({ border, historyLines, captures, recoveries }));
+        throw error;
       } finally {
         await Promise.all(clients.map((client) => client.close()));
         await registry.dispose();

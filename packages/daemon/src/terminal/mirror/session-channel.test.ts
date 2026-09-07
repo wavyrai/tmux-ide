@@ -700,6 +700,126 @@ describe("flow control", () => {
     await rig.channel.dispose();
   });
 
+  it("gives each queued pane a fresh active capture budget without publishing pre-capture output", async () => {
+    const rig = await startedRig();
+    const alpha = collect();
+    const beta = collect();
+    const secondAlpha = collect();
+    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+    const betaHandle = rig.channel.subscribePane("pane.beta", beta.onEvent);
+    // Repeated queued requests coalesce instead of allocating more recipes.
+    betaHandle.reseed();
+    betaHandle.reseed();
+    rig.channel.subscribePane("pane.alpha", secondAlpha.onEvent);
+    const captures = () => rig.sim.written.filter((command) => command.includes("capture-pane"));
+    expect(captures()).toHaveLength(1);
+    rig.sim.output("%2", "included in future capture");
+    expect(beta.events).toEqual([]);
+    for (const [index, text] of ["alpha", "beta", "second alpha"].entries()) {
+      advanceRecoveryClock(rig, 4000);
+      rig.sim.reply([text]);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(captures()).toHaveLength(Math.min(index + 2, 3));
+    }
+    expect(rig.recoveryClock.nowMs).toBe(12000);
+    expect(bytesOf(alpha.events)).toEqual(["alpha"]);
+    expect(bytesOf(beta.events)).toEqual(["beta"]);
+    expect(bytesOf(secondAlpha.events)).toEqual(["second alpha"]);
+    expect(
+      [...alpha.events, ...beta.events, ...secondAlpha.events].some(
+        (event) => event.type === "fault",
+      ),
+    ).toBe(false);
+    await rig.channel.dispose();
+  });
+
+  it.each(["freeze", "close"] as const)(
+    "cancels a queued recipe on %s without disturbing its active sibling",
+    async (operation) => {
+      const rig = await startedRig({ continueReply: "manual" });
+      const alpha = collect();
+      const beta = collect();
+      rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+      const queued = rig.channel.subscribePane("pane.beta", beta.onEvent);
+      queued[operation]();
+      beta.events.length = 0;
+      rig.sim.reply(["alpha"]);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(bytesOf(alpha.events)).toEqual(["alpha"]);
+      expect(beta.events).toEqual([]);
+      expect(
+        (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue
+          .size,
+      ).toBe(0);
+      expect(rig.sim.written.filter((command) => command.includes("capture-pane"))).toHaveLength(1);
+      await rig.channel.dispose();
+    },
+  );
+
+  it("does not expire a third pane while two earlier captures use their own budgets", async () => {
+    const rig = await startedRig();
+    // Model the real FIFO: each command-list acknowledgement arrives in wire
+    // order, not immediately when a later pane queues its command list.
+    rig.sim.commandListInline = (command, count, resultIndex, onReply) => {
+      rig.sim.core.pushCommandList(count, resultIndex, onReply);
+      rig.sim.written.push(command);
+    };
+    const panes = [collect(), collect(), collect()];
+    rig.channel.subscribePane("pane.alpha", panes[0]!.onEvent);
+    rig.channel.subscribePane("pane.beta", panes[1]!.onEvent);
+    rig.channel.subscribePane("pane.alpha", panes[2]!.onEvent);
+    for (let index = 0; index < panes.length; index += 1) {
+      advanceRecoveryClock(rig, 4000);
+      rig.sim.reply([]);
+      rig.sim.reply([`pane-${index}`]);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(bytesOf(panes[index]!.events)).toEqual([`pane-${index}`]);
+    }
+    expect(rig.recoveryClock.nowMs).toBe(12000);
+    expect(panes.flatMap((pane) => pane.events).some((event) => event.type === "fault")).toBe(
+      false,
+    );
+    await rig.channel.dispose();
+  });
+
+  it("retires queued recipes together when the active capture stalls", async () => {
+    const rig = await startedRig();
+    const alpha = collect();
+    const beta = collect();
+    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+    rig.channel.subscribePane("pane.beta", beta.onEvent);
+    advanceRecoveryClock(rig, 10000);
+    for (const events of [alpha.events, beta.events])
+      expect(events.filter((event) => event.type === "fault")).toEqual([
+        { type: "fault", reason: "native-recovery-failed" },
+      ]);
+    expect(
+      (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue.size,
+    ).toBe(0);
+    rig.sim.reply(["late alpha"]);
+    rig.sim.reply(["0 0 100 50"]);
+    expect(bytesOf(alpha.events)).toEqual([]);
+    expect(bytesOf(beta.events)).toEqual([]);
+    await rig.channel.dispose();
+  });
+
+  it("bounds queued subscribers and cancels all retained recipes on disposal", async () => {
+    const rig = await startedRig();
+    rig.channel.subscribePane("pane.alpha", () => {});
+    for (let index = 0; index < 65; index += 1) {
+      rig.channel.subscribePane("pane.beta", () => {});
+      expect(
+        (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue
+          .size,
+      ).toBeLessThanOrEqual(64);
+    }
+    await rig.channel.dispose();
+    expect(
+      (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue.size,
+    ).toBe(0);
+    expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+  });
+
   it("bounds a silent initial capture and ignores its late replies after failure", async () => {
     const rig = await startedRig();
     const alpha = collect();

@@ -114,6 +114,7 @@ const RECOVERY_COMMAND_DEADLINE_MS = 500;
 const RECOVERY_NO_PROGRESS_DEADLINE_MS = 3_000;
 const RECOVERY_ABSOLUTE_DEADLINE_MS = 5_000;
 const RECOVERY_MAX_ATTEMPTS = 4;
+const MAX_QUEUED_PLAIN_RESEEDS = 64;
 const RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
 // Budget row bookkeeping separately from wire bytes (64 bytes per retained
 // line). A fixed 8192-row ceiling rejected small captures of ordinary history.
@@ -411,6 +412,8 @@ export class SessionChannel {
   private windowAuthorityOrdinal = 0;
   private paneIncarnation = 0;
   private recoveryOrdinal = 0;
+  private plainReseedActive: SubRecord | null = null;
+  private readonly plainReseedQueue = new Map<SubRecord, "requested" | null>();
   private readonly outputOrdinals = new Map<string, number>();
   private readonly pendingLayoutOutput = new Map<
     string,
@@ -1090,22 +1093,84 @@ export class SessionChannel {
   }
 
   private reseedPlain(sub: SubRecord, resumeReason: "requested" | null = null): void {
-    this.reseed(sub, ({ ok }) => {
-      if (ok) {
+    if (sub.closed || sub.frozen || this.disposed) return;
+    if (this.plainReseedActive === sub) sub.cancelCapture?.();
+    if (!this.plainReseedQueue.has(sub) && this.plainReseedQueue.size >= MAX_QUEUED_PLAIN_RESEEDS) {
+      this.failPlainReseed(sub);
+      return;
+    }
+    this.plainReseedQueue.set(sub, resumeReason);
+    if (this.plainReseedActive !== sub) {
+      // Output before this queued recipe starts is already in its future
+      // capture. Do not publish it using the prior geometry in the meantime.
+      sub.feed.beginReseed();
+      sub.cancelCapture = () => {
+        this.plainReseedQueue.delete(sub);
+        sub.cancelCapture = null;
+        sub.feed.abortCurrent();
+      };
+    }
+    this.drainPlainReseeds();
+  }
+
+  private failPlainReseed(sub: SubRecord): void {
+    if (
+      sub.closed ||
+      sub.frozen ||
+      this.disposed ||
+      this.recoveries.has(sub.pane.runtimeId) ||
+      this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane
+    )
+      return;
+    this.beginLocalOverflowRecovery(sub.pane);
+  }
+
+  private drainPlainReseeds(): void {
+    if (this.plainReseedActive || this.disposed) return;
+    const next = this.plainReseedQueue.entries().next().value;
+    if (!next) return;
+    const [sub, resumeReason] = next;
+    this.plainReseedQueue.delete(sub);
+    if (sub.closed || sub.frozen) {
+      this.drainPlainReseeds();
+      return;
+    }
+    this.plainReseedActive = sub;
+    // Only the recipe actually submitted to the control FIFO owns a five
+    // second deadline. A large sibling projection cannot consume the waiting
+    // panes' entire capture budgets before their commands have been written.
+    this.reseed(
+      sub,
+      (result) => {
+        if (this.plainReseedActive !== sub) return;
+        this.plainReseedActive = null;
+        if (!result.ok) {
+          // A stalled FIFO cannot make progress for queued recipes either. Retire
+          // them together instead of granting each another wait behind that slot.
+          const waiting = [...this.plainReseedQueue.keys()];
+          this.plainReseedQueue.clear();
+          for (const queued of waiting) queued.cancelCapture?.();
+          this.failPlainReseed(sub);
+          for (const queued of waiting) this.failPlainReseed(queued);
+          return;
+        }
+        // Admit the next recipe before publishing this potentially large seed.
+        this.drainPlainReseeds();
+        result.publish();
         if (resumeReason && !sub.closed && !sub.frozen)
           sub.onEvent({ type: "flow", state: "resumed", reason: resumeReason });
-        return;
-      }
-      if (
-        sub.closed ||
-        sub.frozen ||
-        this.disposed ||
-        this.recoveries.has(sub.pane.runtimeId) ||
-        this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane
-      )
-        return;
-      this.beginLocalOverflowRecovery(sub.pane);
-    });
+      },
+      true,
+    );
+    if (this.plainReseedActive === sub) {
+      const cancel = sub.cancelCapture;
+      sub.cancelCapture = () => {
+        cancel?.();
+        this.plainReseedQueue.delete(sub);
+        if (this.plainReseedActive === sub) this.plainReseedActive = null;
+        this.drainPlainReseeds();
+      };
+    }
   }
 
   private retireInternalReadMarker(runtime: string, marker: string): void {
