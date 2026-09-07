@@ -50,6 +50,46 @@ afterAll(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+// Probe only a disposable server. Stock tmux versions differ in capture-mode
+// metadata and frozen-copy capture support; ordinary compatibility tests below
+// still run when those newer native contracts are unavailable.
+const nativeCapabilities = (() => {
+  if (!available) return { captureModes: false, frozenCopy: false, physicalGrid: false };
+  const probeSocket = `${socket}-capabilities`;
+  const command = (...args: string[]) =>
+    spawnSync("tmux", ["-L", probeSocket, "-f", "/dev/null", ...args], {
+      encoding: "utf8",
+      env: { ...process.env, TMUX: "" },
+    });
+  try {
+    const started = command("new-session", "-d", "-s", "probe", "-x", "40", "-y", "8", "sleep 60");
+    if (started.status !== 0)
+      throw new Error(`Capability probe could not start: ${started.stderr}`);
+    const modes = command(
+      "display-message",
+      "-p",
+      "-t",
+      "probe",
+      "#{bracket_paste_flag}|#{mouse_all_flag}|#{origin_flag}|#{scroll_region_upper}|#{scroll_region_lower}",
+    );
+    command("copy-mode", "-t", "probe");
+    return {
+      captureModes: modes.status === 0 && /^\d+\|\d+\|\d+\|\d+\|\d+$/u.test(modes.stdout.trim()),
+      frozenCopy: command("capture-pane", "-p", "-M", "-L", "-S", "-", "-t", "probe").status === 0,
+      physicalGrid: command("capture-pane", "-p", "-R", "-S", "-", "-t", "probe").status === 0,
+    };
+  } finally {
+    command("kill-server");
+  }
+})();
+if (
+  process.env.TMUX_IDE_REQUIRE_NATIVE_CAPABILITIES === "1" &&
+  (!available || !Object.values(nativeCapabilities).every(Boolean))
+)
+  throw new Error(
+    `Required bundled tmux capabilities missing: ${JSON.stringify(nativeCapabilities)}`,
+  );
+
 describe.skipIf(!available)("native one-column live geometry", () => {
   it.each(["attach", "resize", "output"])(
     "preserves native dimensions and ASCII rows after %s",
@@ -366,132 +406,135 @@ process.stdin.on('data', data => process.stdout.write(data)); process.stdout.wri
   );
 });
 
-describe.skipIf(!available)("native scrolling region recovery", () => {
-  it.each(
-    [false, true].flatMap((origin) => [
-      { top: 1, bottom: 5, origin },
-      { top: 3, bottom: 8, origin },
-    ]),
-  )(
-    "retains fixed rows from $top through $bottom with origin $origin",
-    async ({ top, bottom, origin }) => {
-      const session = `region-${top}-${bottom}-${origin}`;
-      const script = join(directory, `${session}.mjs`);
-      writeFileSync(
-        script,
-        `process.stdin.setRawMode(true); process.stdin.resume();
+describe.skipIf(!available || !nativeCapabilities.captureModes)(
+  "native scrolling region recovery",
+  () => {
+    it.each(
+      [false, true].flatMap((origin) => [
+        { top: 1, bottom: 5, origin },
+        { top: 3, bottom: 8, origin },
+      ]),
+    )(
+      "retains fixed rows from $top through $bottom with origin $origin",
+      async ({ top, bottom, origin }) => {
+        const session = `region-${top}-${bottom}-${origin}`;
+        const script = join(directory, `${session}.mjs`);
+        writeFileSync(
+          script,
+          `process.stdin.setRawMode(true); process.stdin.resume();
 process.stdin.on('data', data => process.stdout.write(data)); process.stdout.write('READY');`,
-      );
-      tmux(
-        "new-session",
-        "-d",
-        "-s",
-        session,
-        "-x",
-        "40",
-        "-y",
-        "12",
-        `${process.execPath} ${script}`,
-      );
-      tmux("set-option", "-t", session, "status", "off");
-      await vi.waitFor(() => expect(tmux("capture-pane", "-p", "-t", session)).toBe("READY"));
-      const rows = Array.from({ length: 12 }, (_, row) => `ROW${String(row).padStart(2, "0")}`);
-      const paint =
-        "\x1b[2J" +
-        rows.map((text, row) => `\x1b[${row + 1};1H${text}`).join("") +
-        `\x1b[${top + 1};${bottom + 1}r\x1b[?6${origin ? "h" : "l"}\x1b[${origin ? bottom - top + 1 : bottom + 1};1H`;
-      tmux("send-keys", "-t", session, "-l", paint);
-      await vi.waitFor(() =>
-        expect(tmux("capture-pane", "-p", "-t", session)).toBe(rows.join("\n")),
-      );
-      expect(
-        tmux(
-          "display-message",
-          "-p",
-          "-t",
-          session,
-          "#{scroll_region_upper} #{scroll_region_lower} #{origin_flag} #{cursor_y}",
-        ),
-      ).toBe(`${top} ${bottom} ${origin ? 1 : 0} ${bottom}`);
-      const mirror = new MirrorService({
-        createIo: (target, handlers) =>
-          new MirrorControlChannel({
-            session: target,
-            handlers,
-            socketName: socket,
-            configFile: "/dev/null",
-          }),
-      });
-      let owner: SessionRuntimeTerminalReplicaOwner | undefined;
-      let snapshot: TerminalReplicaSnapshot | null = null;
-      const publications: string[][] = [];
-      const visible = () =>
-        snapshot?.grid
-          .map((row) =>
-            row.cells
-              .map((cell) => cell.grapheme || " ")
-              .join("")
-              .trimEnd(),
-          )
-          .join("\n")
-          .trimEnd();
-      try {
-        const described = await mirror.describeSession(session);
-        owner = new SessionRuntimeTerminalReplicaOwner(
-          "00000000-0000-4000-8000-000000000001",
-          session,
-          described.panes[0]!.semanticPaneId,
-          mirror,
-          { incarnation: "region:0", initialRevision: 0 },
         );
-        await owner.subscribe((update) => {
-          if (update.type === "terminal.seed") snapshot = update.snapshot;
-          else if (update.type === "terminal.patch" && snapshot)
-            snapshot = applyTerminalReplicaPatch(snapshot, update.patch);
-          if (snapshot)
-            publications.push(
-              snapshot.grid.map((row) =>
-                row.cells
-                  .map((cell) => cell.grapheme || " ")
-                  .join("")
-                  .trimEnd(),
-              ),
-            );
+        tmux(
+          "new-session",
+          "-d",
+          "-s",
+          session,
+          "-x",
+          "40",
+          "-y",
+          "12",
+          `${process.execPath} ${script}`,
+        );
+        tmux("set-option", "-t", session, "status", "off");
+        await vi.waitFor(() => expect(tmux("capture-pane", "-p", "-t", session)).toBe("READY"));
+        const rows = Array.from({ length: 12 }, (_, row) => `ROW${String(row).padStart(2, "0")}`);
+        const paint =
+          "\x1b[2J" +
+          rows.map((text, row) => `\x1b[${row + 1};1H${text}`).join("") +
+          `\x1b[${top + 1};${bottom + 1}r\x1b[?6${origin ? "h" : "l"}\x1b[${origin ? bottom - top + 1 : bottom + 1};1H`;
+        tmux("send-keys", "-t", session, "-l", paint);
+        await vi.waitFor(() =>
+          expect(tmux("capture-pane", "-p", "-t", session)).toBe(rows.join("\n")),
+        );
+        expect(
+          tmux(
+            "display-message",
+            "-p",
+            "-t",
+            session,
+            "#{scroll_region_upper} #{scroll_region_lower} #{origin_flag} #{cursor_y}",
+          ),
+        ).toBe(`${top} ${bottom} ${origin ? 1 : 0} ${bottom}`);
+        const mirror = new MirrorService({
+          createIo: (target, handlers) =>
+            new MirrorControlChannel({
+              session: target,
+              handlers,
+              socketName: socket,
+              configFile: "/dev/null",
+            }),
         });
-        expect(visible()).toBe(rows.join("\n"));
-        expect(snapshot?.modes.origin).toBe(origin);
-        publications.length = 0;
-        tmux("send-keys", "-t", session, "-l", "\r\nNEW");
-        rows.splice(top, 1);
-        rows.splice(bottom, 0, "NEW");
-        await vi.waitFor(
-          () => {
+        let owner: SessionRuntimeTerminalReplicaOwner | undefined;
+        let snapshot: TerminalReplicaSnapshot | null = null;
+        const publications: string[][] = [];
+        const visible = () =>
+          snapshot?.grid
+            .map((row) =>
+              row.cells
+                .map((cell) => cell.grapheme || " ")
+                .join("")
+                .trimEnd(),
+            )
+            .join("\n")
+            .trimEnd();
+        try {
+          const described = await mirror.describeSession(session);
+          owner = new SessionRuntimeTerminalReplicaOwner(
+            "00000000-0000-4000-8000-000000000001",
+            session,
+            described.panes[0]!.semanticPaneId,
+            mirror,
+            { incarnation: "region:0", initialRevision: 0 },
+          );
+          await owner.subscribe((update) => {
+            if (update.type === "terminal.seed") snapshot = update.snapshot;
+            else if (update.type === "terminal.patch" && snapshot)
+              snapshot = applyTerminalReplicaPatch(snapshot, update.patch);
+            if (snapshot)
+              publications.push(
+                snapshot.grid.map((row) =>
+                  row.cells
+                    .map((cell) => cell.grapheme || " ")
+                    .join("")
+                    .trimEnd(),
+                ),
+              );
+          });
+          expect(visible()).toBe(rows.join("\n"));
+          expect(snapshot?.modes.origin).toBe(origin);
+          publications.length = 0;
+          tmux("send-keys", "-t", session, "-l", "\r\nNEW");
+          rows.splice(top, 1);
+          rows.splice(bottom, 0, "NEW");
+          await vi.waitFor(
+            () => {
+              expect(tmux("capture-pane", "-p", "-t", session)).toBe(rows.join("\n"));
+              expect(visible()).toBe(rows.join("\n"));
+              expect(snapshot?.cursor).toMatchObject({ x: 3, y: bottom });
+            },
+            { timeout: 1000 },
+          );
+          expect(publications.length).toBeGreaterThan(0);
+          for (const frame of publications) {
+            expect(frame.slice(0, top)).toEqual(rows.slice(0, top));
+            expect(frame.slice(bottom + 1)).toEqual(rows.slice(bottom + 1));
+          }
+          tmux("send-keys", "-t", session, "-l", "\x1b[1;1HP");
+          rows[origin ? top : 0] = "P" + rows[origin ? top : 0]!.slice(1);
+          await vi.waitFor(() => {
             expect(tmux("capture-pane", "-p", "-t", session)).toBe(rows.join("\n"));
             expect(visible()).toBe(rows.join("\n"));
-            expect(snapshot?.cursor).toMatchObject({ x: 3, y: bottom });
-          },
-          { timeout: 1000 },
-        );
-        expect(publications.length).toBeGreaterThan(0);
-        for (const frame of publications) {
-          expect(frame.slice(0, top)).toEqual(rows.slice(0, top));
-          expect(frame.slice(bottom + 1)).toEqual(rows.slice(bottom + 1));
+            expect(snapshot?.cursor).toMatchObject({ x: 1, y: origin ? top : 0 });
+          });
+        } finally {
+          await owner?.dispose();
+          await mirror.dispose();
         }
-        tmux("send-keys", "-t", session, "-l", "\x1b[1;1HP");
-        rows[origin ? top : 0] = "P" + rows[origin ? top : 0]!.slice(1);
-        await vi.waitFor(() => {
-          expect(tmux("capture-pane", "-p", "-t", session)).toBe(rows.join("\n"));
-          expect(visible()).toBe(rows.join("\n"));
-          expect(snapshot?.cursor).toMatchObject({ x: 1, y: origin ? top : 0 });
-        });
-      } finally {
-        await owner?.dispose();
-        await mirror.dispose();
-      }
-    },
-    10000,
-  );
-});
+      },
+      10000,
+    );
+  },
+);
 
 describe.skipIf(!available)("native binary mouse input", () => {
   it.each(["default", "utf8", "sgr"] as const)(
@@ -569,114 +612,117 @@ process.stdin.on('data', data => appendFileSync(${JSON.stringify(received)}, dat
   );
 });
 
-describe.skipIf(!available)("native mouse and paste capture", () => {
-  it.each(
-    ["none", "vt200", "drag", "any"].flatMap((protocol) =>
-      ["default", "utf8", "sgr", "both"].map((encoding) => ({ protocol, encoding })),
-    ),
-  )(
-    "restores $protocol tracking with $encoding encoding and follows live changes",
-    async ({ protocol, encoding }) => {
-      const session = `mouse-${protocol}-${encoding}`;
-      const script = join(directory, `${session}.mjs`);
-      const mode = { none: 0, vt200: 1000, drag: 1002, any: 1003 }[protocol]!;
-      const utf8 = encoding === "utf8" || encoding === "both";
-      const sgr = encoding === "sgr" || encoding === "both";
-      const initial =
-        "\x1b[?2004h" +
-        (mode ? `\x1b[?${mode}h` : "") +
-        (utf8 ? "\x1b[?1005h" : "") +
-        (sgr ? "\x1b[?1006h" : "") +
-        "READY";
-      writeFileSync(
-        script,
-        `process.stdin.setRawMode(true); process.stdin.resume();
+describe.skipIf(!available || !nativeCapabilities.captureModes)(
+  "native mouse and paste capture",
+  () => {
+    it.each(
+      ["none", "vt200", "drag", "any"].flatMap((protocol) =>
+        ["default", "utf8", "sgr", "both"].map((encoding) => ({ protocol, encoding })),
+      ),
+    )(
+      "restores $protocol tracking with $encoding encoding and follows live changes",
+      async ({ protocol, encoding }) => {
+        const session = `mouse-${protocol}-${encoding}`;
+        const script = join(directory, `${session}.mjs`);
+        const mode = { none: 0, vt200: 1000, drag: 1002, any: 1003 }[protocol]!;
+        const utf8 = encoding === "utf8" || encoding === "both";
+        const sgr = encoding === "sgr" || encoding === "both";
+        const initial =
+          "\x1b[?2004h" +
+          (mode ? `\x1b[?${mode}h` : "") +
+          (utf8 ? "\x1b[?1005h" : "") +
+          (sgr ? "\x1b[?1006h" : "") +
+          "READY";
+        writeFileSync(
+          script,
+          `process.stdin.setRawMode(true); process.stdin.resume();
 process.stdin.on('data', data => process.stdout.write(data)); process.stdout.write(${JSON.stringify(initial)});`,
-      );
-      tmux(
-        "new-session",
-        "-d",
-        "-s",
-        session,
-        "-x",
-        "40",
-        "-y",
-        "12",
-        `${process.execPath} ${script}`,
-      );
-      tmux("set-option", "-t", session, "status", "off");
-      await vi.waitFor(() => expect(tmux("capture-pane", "-p", "-t", session)).toBe("READY"));
-      const mirror = new MirrorService({
-        createIo: (target, handlers) =>
-          new MirrorControlChannel({
-            session: target,
-            handlers,
-            socketName: socket,
-            configFile: "/dev/null",
-          }),
-      });
-      let owner: SessionRuntimeTerminalReplicaOwner | undefined;
-      let snapshot: TerminalReplicaSnapshot | null = null;
-      try {
-        const described = await mirror.describeSession(session);
-        owner = new SessionRuntimeTerminalReplicaOwner(
-          "00000000-0000-4000-8000-000000000001",
-          session,
-          described.panes[0]!.semanticPaneId,
-          mirror,
-          { incarnation: "mouse:0", initialRevision: 0 },
         );
-        await owner.subscribe((update) => {
-          if (update.type === "terminal.seed") snapshot = update.snapshot;
-          else if (update.type === "terminal.patch" && snapshot)
-            snapshot = applyTerminalReplicaPatch(snapshot, update.patch);
+        tmux(
+          "new-session",
+          "-d",
+          "-s",
+          session,
+          "-x",
+          "40",
+          "-y",
+          "12",
+          `${process.execPath} ${script}`,
+        );
+        tmux("set-option", "-t", session, "status", "off");
+        await vi.waitFor(() => expect(tmux("capture-pane", "-p", "-t", session)).toBe("READY"));
+        const mirror = new MirrorService({
+          createIo: (target, handlers) =>
+            new MirrorControlChannel({
+              session: target,
+              handlers,
+              socketName: socket,
+              configFile: "/dev/null",
+            }),
         });
-        expect(
-          tmux(
-            "display-message",
-            "-p",
-            "-t",
+        let owner: SessionRuntimeTerminalReplicaOwner | undefined;
+        let snapshot: TerminalReplicaSnapshot | null = null;
+        try {
+          const described = await mirror.describeSession(session);
+          owner = new SessionRuntimeTerminalReplicaOwner(
+            "00000000-0000-4000-8000-000000000001",
             session,
-            "#{bracket_paste_flag} #{mouse_sgr_flag} #{mouse_utf8_flag}",
-          ),
-        ).toBe(`1 ${sgr ? 1 : 0} ${utf8 ? 1 : 0}`);
-        expect(snapshot?.modes).toMatchObject({
-          bracketedPaste: true,
-          mouseTracking: protocol !== "none",
-          mouseProtocol: protocol,
-          mouseEncoding: sgr ? "sgr" : utf8 ? "utf8" : "default",
-        });
-        tmux("send-keys", "-t", session, "-l", "\x1b[?1006l");
-        await vi.waitFor(() => {
-          expect(tmux("display-message", "-p", "-t", session, "#{mouse_sgr_flag}")).toBe("0");
-          expect(snapshot?.modes.mouseEncoding).toBe(utf8 ? "utf8" : "default");
-        });
-        tmux("send-keys", "-t", session, "-l", "\x1b[?1005;1000;2004l");
-        await vi.waitFor(() => {
+            described.panes[0]!.semanticPaneId,
+            mirror,
+            { incarnation: "mouse:0", initialRevision: 0 },
+          );
+          await owner.subscribe((update) => {
+            if (update.type === "terminal.seed") snapshot = update.snapshot;
+            else if (update.type === "terminal.patch" && snapshot)
+              snapshot = applyTerminalReplicaPatch(snapshot, update.patch);
+          });
           expect(
             tmux(
               "display-message",
               "-p",
               "-t",
               session,
-              "#{bracket_paste_flag} #{mouse_any_flag} #{mouse_utf8_flag}",
+              "#{bracket_paste_flag} #{mouse_sgr_flag} #{mouse_utf8_flag}",
             ),
-          ).toBe("0 0 0");
+          ).toBe(`1 ${sgr ? 1 : 0} ${utf8 ? 1 : 0}`);
           expect(snapshot?.modes).toMatchObject({
-            bracketedPaste: false,
-            mouseTracking: false,
-            mouseProtocol: "none",
-            mouseEncoding: "default",
+            bracketedPaste: true,
+            mouseTracking: protocol !== "none",
+            mouseProtocol: protocol,
+            mouseEncoding: sgr ? "sgr" : utf8 ? "utf8" : "default",
           });
-        });
-      } finally {
-        await owner?.dispose();
-        await mirror.dispose();
-      }
-    },
-    10000,
-  );
-});
+          tmux("send-keys", "-t", session, "-l", "\x1b[?1006l");
+          await vi.waitFor(() => {
+            expect(tmux("display-message", "-p", "-t", session, "#{mouse_sgr_flag}")).toBe("0");
+            expect(snapshot?.modes.mouseEncoding).toBe(utf8 ? "utf8" : "default");
+          });
+          tmux("send-keys", "-t", session, "-l", "\x1b[?1005;1000;2004l");
+          await vi.waitFor(() => {
+            expect(
+              tmux(
+                "display-message",
+                "-p",
+                "-t",
+                session,
+                "#{bracket_paste_flag} #{mouse_any_flag} #{mouse_utf8_flag}",
+              ),
+            ).toBe("0 0 0");
+            expect(snapshot?.modes).toMatchObject({
+              bracketedPaste: false,
+              mouseTracking: false,
+              mouseProtocol: "none",
+              mouseEncoding: "default",
+            });
+          });
+        } finally {
+          await owner?.dispose();
+          await mirror.dispose();
+        }
+      },
+      10000,
+    );
+  },
+);
 
 describe.skipIf(!available)("native pending-wrap cursor", () => {
   it.each([
@@ -1662,120 +1708,126 @@ describe.skipIf(!available)("native wrapped selection", () => {
   }, 10000);
 });
 
-describe.skipIf(!available)("native physical padding reflow", () => {
-  it.each([false, true])(
-    "preserves physical rows with preexisting extended padding %s",
-    async (extendedPadding) => {
-      const session = `physical-padding-reflow-${extendedPadding}`;
-      const script = join(directory, `${session}.mjs`);
-      writeFileSync(
-        script,
-        `process.stdout.write(${JSON.stringify((extendedPadding ? "\x1b[1;10Hé\x1b[H" : "") + "COPY-0  界é\r\nREADY")});setInterval(()=>{},10000);`,
-      );
-      tmux(
-        "new-session",
-        "-d",
-        "-s",
-        session,
-        "-x",
-        "40",
-        "-y",
-        "8",
-        `${process.execPath} ${script}`,
-      );
-      tmux("set-option", "-t", session, "status", "off");
-      await vi.waitFor(() => expect(tmux("capture-pane", "-p", "-t", session)).toContain("READY"));
-      // Both seeds expose identical painted capture and cursor/history metadata.
-      // Their first narrow reflow differs because compact/extended padding is hidden.
-      expect(tmux("capture-pane", "-p", "-e", "-J", "-S", "-", "-t", session)).toBe(
-        "COPY-0  界é\nREADY",
-      );
-      expect(
-        tmux("display-message", "-p", "-t", session, "#{cursor_x}:#{cursor_y}:#{history_size}"),
-      ).toBe("5:1:0");
-      tmux("copy-mode", "-t", session);
-      const ascii = (text: string) => [...text].map((text) => ({ text, width: 1, padding: false }));
-      let backing: readonly NativeReflowRow[] = [
-        {
-          cells: [
-            ...ascii("COPY-0  "),
-            { text: "界", width: 2, padding: false },
-            { text: "!", width: extendedPadding ? 0 : 1, padding: true },
-            { text: "é", width: 1, padding: false },
-          ],
-          extended: true,
-          continues: false,
-        },
-        { cells: ascii("READY"), extended: false, continues: false },
-        ...Array.from({ length: 6 }, () => ({ cells: [], extended: false, continues: false })),
-      ];
-      try {
-        for (const cols of [3, 8, 3, 2, 5, 40, 1, 40]) {
-          tmux("resize-window", "-t", session, "-x", String(cols), "-y", "8");
-          backing = reflowNativeRows(backing, cols);
-          while (backing.length < 8)
-            backing = [...backing, { cells: [], extended: false, continues: false }];
-          const captured = backing
-            .map((row, index) => {
-              const text = row.cells
-                .filter((cell) => !cell.padding)
-                .map((cell) => cell.text)
-                .join("")
-                .trimEnd();
-              return `${index - (backing.length - 8)} ${text}`;
-            })
-            .join("\n")
-            .trimEnd();
-          expect(captured, `physical rows at ${cols} columns`).toBe(
-            tmux("capture-pane", "-p", "-M", "-L", "-S", "-", "-t", session),
-          );
-          if (cols === 2) {
-            const wide = backing.find((row) => row.cells.some((cell) => cell.text === "界"))!;
-            const accent = backing.find((row) => row.cells.some((cell) => cell.text === "é"))!;
-            expect(wide.cells).toHaveLength(1);
-            expect(accent.cells[0]?.padding).toBe(true);
-            expect(accent.cells[1]?.text).toBe("é");
-          }
-          tmux("send-keys", "-t", session, "-X", "history-top");
-          tmux("send-keys", "-t", session, "-X", "start-of-line");
-          let row = 0;
-          let column = 0;
-          for (let step = 0; step < 22; step++) {
-            const [x, y, scroll] = tmux(
-              "display-message",
-              "-p",
-              "-t",
-              session,
-              "#{copy_cursor_x}:#{copy_cursor_y}:#{scroll_position}",
-            )
-              .split(":")
-              .map(Number);
-            expect({ column, row }, `native cursor at ${cols} columns, step ${step}`).toEqual({
-              column: x,
-              row: backing.length - 8 - scroll! + y!,
-            });
-            const cells = backing[row]!.cells;
-            let end = cells.length;
-            while (end > 0 && cells[end - 1]!.text === " " && !cells[end - 1]!.padding) end--;
-            if (column >= end && row < backing.length - 1) {
-              row++;
-              column = 0;
-            } else if (column < end) {
-              column++;
-              while (column < end && cells[column]?.padding) column++;
+describe.skipIf(!available || !nativeCapabilities.frozenCopy)(
+  "native physical padding reflow",
+  () => {
+    it.each([false, true])(
+      "preserves physical rows with preexisting extended padding %s",
+      async (extendedPadding) => {
+        const session = `physical-padding-reflow-${extendedPadding}`;
+        const script = join(directory, `${session}.mjs`);
+        writeFileSync(
+          script,
+          `process.stdout.write(${JSON.stringify((extendedPadding ? "\x1b[1;10Hé\x1b[H" : "") + "COPY-0  界é\r\nREADY")});setInterval(()=>{},10000);`,
+        );
+        tmux(
+          "new-session",
+          "-d",
+          "-s",
+          session,
+          "-x",
+          "40",
+          "-y",
+          "8",
+          `${process.execPath} ${script}`,
+        );
+        tmux("set-option", "-t", session, "status", "off");
+        await vi.waitFor(() =>
+          expect(tmux("capture-pane", "-p", "-t", session)).toContain("READY"),
+        );
+        // Both seeds expose identical painted capture and cursor/history metadata.
+        // Their first narrow reflow differs because compact/extended padding is hidden.
+        expect(tmux("capture-pane", "-p", "-e", "-J", "-S", "-", "-t", session)).toBe(
+          "COPY-0  界é\nREADY",
+        );
+        expect(
+          tmux("display-message", "-p", "-t", session, "#{cursor_x}:#{cursor_y}:#{history_size}"),
+        ).toBe("5:1:0");
+        tmux("copy-mode", "-t", session);
+        const ascii = (text: string) =>
+          [...text].map((text) => ({ text, width: 1, padding: false }));
+        let backing: readonly NativeReflowRow[] = [
+          {
+            cells: [
+              ...ascii("COPY-0  "),
+              { text: "界", width: 2, padding: false },
+              { text: "!", width: extendedPadding ? 0 : 1, padding: true },
+              { text: "é", width: 1, padding: false },
+            ],
+            extended: true,
+            continues: false,
+          },
+          { cells: ascii("READY"), extended: false, continues: false },
+          ...Array.from({ length: 6 }, () => ({ cells: [], extended: false, continues: false })),
+        ];
+        try {
+          for (const cols of [3, 8, 3, 2, 5, 40, 1, 40]) {
+            tmux("resize-window", "-t", session, "-x", String(cols), "-y", "8");
+            backing = reflowNativeRows(backing, cols);
+            while (backing.length < 8)
+              backing = [...backing, { cells: [], extended: false, continues: false }];
+            const captured = backing
+              .map((row, index) => {
+                const text = row.cells
+                  .filter((cell) => !cell.padding)
+                  .map((cell) => cell.text)
+                  .join("")
+                  .trimEnd();
+                return `${index - (backing.length - 8)} ${text}`;
+              })
+              .join("\n")
+              .trimEnd();
+            expect(captured, `physical rows at ${cols} columns`).toBe(
+              tmux("capture-pane", "-p", "-M", "-L", "-S", "-", "-t", session),
+            );
+            if (cols === 2) {
+              const wide = backing.find((row) => row.cells.some((cell) => cell.text === "界"))!;
+              const accent = backing.find((row) => row.cells.some((cell) => cell.text === "é"))!;
+              expect(wide.cells).toHaveLength(1);
+              expect(accent.cells[0]?.padding).toBe(true);
+              expect(accent.cells[1]?.text).toBe("é");
             }
-            tmux("send-keys", "-t", session, "-X", "cursor-right");
+            tmux("send-keys", "-t", session, "-X", "history-top");
+            tmux("send-keys", "-t", session, "-X", "start-of-line");
+            let row = 0;
+            let column = 0;
+            for (let step = 0; step < 22; step++) {
+              const [x, y, scroll] = tmux(
+                "display-message",
+                "-p",
+                "-t",
+                session,
+                "#{copy_cursor_x}:#{copy_cursor_y}:#{scroll_position}",
+              )
+                .split(":")
+                .map(Number);
+              expect({ column, row }, `native cursor at ${cols} columns, step ${step}`).toEqual({
+                column: x,
+                row: backing.length - 8 - scroll! + y!,
+              });
+              const cells = backing[row]!.cells;
+              let end = cells.length;
+              while (end > 0 && cells[end - 1]!.text === " " && !cells[end - 1]!.padding) end--;
+              if (column >= end && row < backing.length - 1) {
+                row++;
+                column = 0;
+              } else if (column < end) {
+                column++;
+                while (column < end && cells[column]?.padding) column++;
+              }
+              tmux("send-keys", "-t", session, "-X", "cursor-right");
+            }
           }
+        } finally {
+          tmux("kill-session", "-t", session);
         }
-      } finally {
-        tmux("kill-session", "-t", session);
-      }
-    },
-  );
-});
+      },
+    );
+  },
+);
 
 describe.skipIf(!available)("native frozen copy-view resize", () => {
-  it.each([3, 30])(
+  it.skipIf(!nativeCapabilities.frozenCopy).each([3, 30])(
     "shares rows through native height changes with %s initial lines",
     async (lineCount) => {
       const session = `frozen-height-sharing-${lineCount}`;
@@ -1946,6 +1998,7 @@ describe.skipIf(!available)("native frozen copy-view resize", () => {
         });
         const backing = await owner.captureNativeBacking();
         if (backing.status === "unsupported") {
+          expect(process.env.TMUX_IDE_REQUIRE_NATIVE_CAPABILITIES).not.toBe("1");
           // Existing stock tmux retains compatibility mode; exact hidden-cell
           // qualification is exercised with the bundled tmux on PATH.
           const release = adapter.retainPaneView(paneId)!;

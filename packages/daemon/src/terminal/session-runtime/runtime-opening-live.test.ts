@@ -139,6 +139,7 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
             channels,
           }),
         );
+        let stage = "opening";
         const verifyNative = () => {
           for (const [index, pane] of panes.entries()) {
             const [cols, rows] = tmux(
@@ -156,7 +157,9 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
             if (historyLines > 0) expect(historySize).toBeGreaterThan(historyLines - 100);
             const nativeHistory = tmux("capture-pane", "-p", "-S", "-", "-t", pane);
             for (const snapshot of snapshots) {
-              expect(snapshot.get(index)!.history).toHaveLength(historySize);
+              expect(snapshot.get(index)!.history, `${stage}: ${pane} history`).toHaveLength(
+                historySize,
+              );
               expect(snapshot.get(index)).toMatchObject({ cols, rows });
               expect(text(snapshot.get(index)!)).toBe(tmux("capture-pane", "-p", "-t", pane));
               expect(text(snapshot.get(index)!, true)).toBe(nativeHistory);
@@ -194,8 +197,21 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
         );
         expect(incarnations[1]).toEqual(priorIncarnations);
         expect(captures).toBe(panes.length);
+        stage = "resize";
+        const resizeStarted = performance.now();
         tmux("resize-window", "-t", session, "-x", "93", "-y", "31");
-        await vi.waitFor(verifyNative, { timeout: 3000 });
+        // This is a functional convergence test, not a reference-host latency
+        // budget. Shared Linux runners need about seven seconds even for the
+        // initial 20k-line capture above; allow the full reseed to finish while
+        // preserving exact native history, geometry and both-client assertions.
+        await vi.waitFor(verifyNative, { timeout: 10000 });
+        console.info(
+          JSON.stringify({
+            border,
+            historyLines,
+            resizeMs: Math.round(performance.now() - resizeStarted),
+          }),
+        );
         expect(channels).toBe(1);
         expect(registry.qualificationSnapshot().controlChannels).toBe(1);
         expect(Object.keys(registry.qualificationSnapshot().sessions[0]!.replicas)).toHaveLength(3);
@@ -207,7 +223,7 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
         await registry.dispose();
       }
     },
-    15000,
+    30000,
   );
 });
 

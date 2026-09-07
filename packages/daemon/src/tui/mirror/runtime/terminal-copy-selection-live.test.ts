@@ -13,7 +13,41 @@ import {
   scrollTerminalCopyCursor,
   type TerminalCopyMotion,
 } from "./terminal-copy-cursor.ts";
-import { extractTerminalCopySelection } from "./terminal-copy-selection.ts";
+import {
+  extractTerminalCopySelection,
+  terminalCopyLineLength,
+  terminalCopyRow,
+} from "./terminal-copy-selection.ts";
+
+/** tmux 3.4 keeps vi's cursor one cell past EOL; 3.7 clamps to the last cell.
+ * Our local copy mode deliberately follows the pinned 3.7 contract regardless
+ * of the backing server. Probe the native behavior, then explicitly move the
+ * older reference cursor to that same endpoint before comparing copied bytes.
+ */
+function nativeViHasExtraEndColumn(
+  tmux: (...args: string[]) => string,
+  state: TerminalReplicaSnapshot,
+): boolean {
+  tmux("set-option", "-w", "-t", "reference", "mode-keys", "vi");
+  tmux("copy-mode", "-t", "reference");
+  tmux("send-keys", "-t", "reference", "-X", "history-top");
+  tmux("send-keys", "-t", "reference", "-X", "end-of-line");
+  const column = Number(tmux("display-message", "-p", "-t", "reference", "#{copy_cursor_x}"));
+  const length = terminalCopyLineLength(terminalCopyRow(state, 0)!);
+  expect(length).toBeGreaterThan(0);
+  expect([length - 1, length]).toContain(column);
+  tmux("send-keys", "-t", "reference", "-X", "cancel");
+  return column === length;
+}
+
+function clampLegacyNativeViEnd(
+  tmux: (...args: string[]) => string,
+  state: TerminalReplicaSnapshot,
+  point: { row: number; col: number },
+): void {
+  const length = terminalCopyLineLength(terminalCopyRow(state, point.row)!);
+  if (length > 0 && point.col === length) tmux("send-keys", "-t", "reference", "-X", "cursor-left");
+}
 
 it.skipIf(spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0)(
   "matches fresh native copy buffers for emacs/vi wide and combining endpoints",
@@ -67,6 +101,7 @@ it.skipIf(spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0)(
       });
       await vi.waitFor(() => expect(snapshot?.grid[0]?.cells[1]?.grapheme).toBe("界"));
       const state = snapshot!;
+      const legacyViEnd = nativeViHasExtraEndColumn(tmux, state);
       const point = () => {
         const [col, row] = tmux(
           "display-message",
@@ -91,6 +126,7 @@ it.skipIf(spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0)(
                 localCursor,
                 key.toLowerCase() as TerminalCopyMotion,
               );
+              if (mode === "vi" && legacyViEnd) clampLegacyNativeViEnd(tmux, state, point());
               expect(localCursor.position, `${mode}/${direction}/${key}`).toEqual(point());
             }
           };
@@ -185,6 +221,7 @@ it.skipIf(spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0)(
       });
       await vi.waitFor(() => expect(snapshot?.history.length).toBeGreaterThan(10));
       const state = snapshot!;
+      const legacyViEnd = nativeViHasExtraEndColumn(tmux, state);
       for (const mode of ["emacs", "vi"] as const) {
         tmux("set-option", "-w", "-t", "reference", "mode-keys", mode);
         for (const half of [false, true, "scroll"] as const) {
@@ -219,6 +256,21 @@ it.skipIf(spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0)(
                 : pageTerminalCopyCursor(cursor, originY, state.rows, direction, half);
             cursor = next.cursor;
             originY = next.originY;
+            if (mode === "vi" && legacyViEnd) {
+              const [offset, col, row] = tmux(
+                "display-message",
+                "-p",
+                "-t",
+                "reference",
+                "#{scroll_position}:#{copy_cursor_x}:#{copy_cursor_y}",
+              )
+                .split(":")
+                .map(Number);
+              clampLegacyNativeViEnd(tmux, state, {
+                col: col!,
+                row: state.history.length - offset! + row!,
+              });
+            }
             const [offset, col, row] = tmux(
               "display-message",
               "-p",

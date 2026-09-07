@@ -104,7 +104,7 @@ jobs:
       - name: Qualify native grid and daemon client transport
         run: |
           bundle="$PWD/packages/daemon/dist/native/tmux/$(node -p 'process.platform + "-" + process.arch')"
-          PATH="$bundle:$PATH" pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts src/tui/mirror/runtime/terminal-native-content-live.test.ts
+          TMUX_IDE_REQUIRE_NATIVE_CAPABILITIES=1 PATH="$bundle:$PATH" pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts src/tui/mirror/runtime/terminal-native-content-live.test.ts
           TMUX_IDE_NATIVE_GRID_TMUX="$bundle/tmux" pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts src/terminal/session-runtime/native-backing-owner-live.test.ts
       - uses: actions/upload-artifact@v4
         with:
