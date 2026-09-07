@@ -3,6 +3,8 @@
  * ControlChannelCore fed raw protocol lines — see __tests__/simulated-channel).
  */
 import { describe, expect, it, vi } from "vitest";
+import { hostname } from "node:os";
+import { memorablePaneName } from "../protocol/pane-display-name.ts";
 import {
   SimulatedChannel,
   fixtureAutoReply,
@@ -336,6 +338,46 @@ function continueNotificationQueueSize(channel: SessionChannel): number {
 }
 
 describe("identity join", () => {
+  it("publishes stable generated shell names when tmux titles equal the server short hostname", async () => {
+    const state = fixtureState();
+    state.descriptorRows = state.descriptorRows.map((row, index) => {
+      const fields = row.split("\t");
+      fields[4] = "bash";
+      fields[9] = hostname().split(".")[0]!;
+      if (index === 0) fields[12] = memorablePaneName("pane.alpha");
+      return fields.join("\t");
+    });
+    const channel = new SessionChannel({
+      session: FIXTURE.session,
+      createIo: (handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+      generatePaneId: () => "pane.mirror.gen1",
+    });
+    const layouts: MirrorLayoutEvent[] = [];
+    channel.subscribeLayout((event) => layouts.push(event));
+    try {
+      await channel.start();
+      expect(
+        layouts
+          .flatMap((event) => event.panes)
+          .find((pane) => pane.semanticPaneId === "pane.alpha"),
+      ).toMatchObject({
+        displayName: memorablePaneName("pane.alpha"),
+        displayNameSource: "generated",
+      });
+      expect(
+        channel.describe().panes.find((pane) => pane.semanticPaneId === "pane.alpha"),
+      ).toMatchObject({
+        displayName: memorablePaneName("pane.alpha"),
+        displayNameSource: "generated",
+      });
+      expect(
+        channel.describe().panes.find((pane) => pane.semanticPaneId === "pane.beta"),
+      ).toMatchObject({ displayName: "Beta IDE", displayNameSource: "manual" });
+    } finally {
+      await channel.dispose();
+    }
+  });
+
   it("strictly recovers the retained control client's Unicode session identity", async () => {
     const session = "zz-café-😀";
     const state = fixtureState();

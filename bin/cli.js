@@ -14629,9 +14629,9 @@ function connectHostname(bindHostname) {
   return bindHostname;
 }
 function urlHostname(bindHostname) {
-  const hostname3 = connectHostname(bindHostname).replace(/^\[|\]$/gu, "");
-  if (/[/?#@]/u.test(hostname3)) throw new TypeError("Invalid daemon bind hostname");
-  const escaped = hostname3.replace(/%/gu, "%25");
+  const hostname4 = connectHostname(bindHostname).replace(/^\[|\]$/gu, "");
+  if (/[/?#@]/u.test(hostname4)) throw new TypeError("Invalid daemon bind hostname");
+  const escaped = hostname4.replace(/%/gu, "%25");
   return escaped.includes(":") ? `[${escaped}]` : escaped;
 }
 function canonicalDaemonUrl(protocol, bindHostname, port, path2 = "") {
@@ -26932,11 +26932,13 @@ function memorablePaneName(seed) {
   const second = stableHash(`${seed}:noun`);
   return `${ADJECTIVES[first % ADJECTIVES.length]}-${NOUNS[second % NOUNS.length]}`;
 }
-function meaningfulTitle(value, currentCommand) {
+function meaningfulTitle(value, currentCommand, hostName) {
   const title = boundedName(value);
   if (!title || GENERIC_TITLES.has(title.toLowerCase())) return null;
   if (title.startsWith("/") || title.startsWith("~") || title.includes("@")) return null;
-  if (currentCommand && GENERIC_SHELLS.has(currentCommand.toLowerCase()) && /^[a-z0-9][a-z0-9.-]*\.[a-z0-9-]{2,}$/iu.test(title))
+  if (currentCommand && GENERIC_SHELLS.has(currentCommand.toLowerCase()) && (/^[a-z0-9][a-z0-9.-]*\.[a-z0-9-]{2,}$/iu.test(title) || hostName && [hostName, hostName.split(".")[0]].some(
+    (host) => host?.toLowerCase() === title.toLowerCase()
+  )))
     return null;
   return title;
 }
@@ -26954,7 +26956,7 @@ function resolvePaneDisplayName(input) {
   const command2 = commandBasename(input.currentCommand);
   if (command2 && !GENERIC_SHELLS.has(command2.toLowerCase()))
     return { name: command2, source: "process" };
-  const title = meaningfulTitle(input.title, command2);
+  const title = meaningfulTitle(input.title, command2, input.hostName);
   if (title) return { name: title, source: "title" };
   return {
     name: configuredName && configuredSource === "generated" ? configuredName : generatedName,
@@ -38110,6 +38112,7 @@ var init_pane_feed = __esm({
 
 // packages/daemon/src/terminal/mirror/session-channel.ts
 import { createHash as createHash14, randomBytes as randomBytes4 } from "node:crypto";
+import { hostname as hostname3 } from "node:os";
 function snapshotFingerprint2(captureLines, cursorLine, fallbackSize) {
   const hash = createHash14("sha256");
   const append = (bytes) => {
@@ -38141,7 +38144,7 @@ function defaultMirrorPaneId() {
 function defaultMirrorWindowId() {
   return `window.mirror.${randomBytes4(8).toString("hex")}`;
 }
-var STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, SYNC_DEBOUNCE_MS, DISPLAY_NAME_SYNC_INTERVAL_MS, RECOVERY_QUIET_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, MAX_CONTINUE_NOTIFICATION_QUEUE, MAX_CONTINUE_NOTIFICATION_DEBT, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
+var TMUX_SERVER_HOSTNAME, STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, SYNC_DEBOUNCE_MS, DISPLAY_NAME_SYNC_INTERVAL_MS, RECOVERY_QUIET_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, MAX_CONTINUE_NOTIFICATION_QUEUE, MAX_CONTINUE_NOTIFICATION_DEBT, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
 var init_session_channel = __esm({
   "packages/daemon/src/terminal/mirror/session-channel.ts"() {
     "use strict";
@@ -38156,6 +38159,7 @@ var init_session_channel = __esm({
     init_flow_ledger();
     init_pane_feed();
     init_tmux_interaction_options();
+    TMUX_SERVER_HOSTNAME = hostname3();
     STRUCTURAL_NOTIFICATIONS = /* @__PURE__ */ new Set([
       "window-add",
       "window-close",
@@ -38346,6 +38350,7 @@ var init_session_channel = __esm({
       describe() {
         const panes = [...this.panesBySemantic.values()].map((pane) => {
           const display = resolvePaneDisplayName({
+            hostName: TMUX_SERVER_HOSTNAME,
             semanticPaneId: pane.semanticId,
             configuredName: pane.descriptor?.name,
             configuredNameSource: pane.descriptor?.nameSource,
@@ -39834,6 +39839,7 @@ var init_session_channel = __esm({
           panes: layout.leaves.map((leaf) => {
             const pane = this.panesByRuntime.get(leaf.id) ?? null;
             const display = pane ? resolvePaneDisplayName({
+              hostName: TMUX_SERVER_HOSTNAME,
               semanticPaneId: pane.semanticId,
               configuredName: pane.descriptor?.name,
               configuredNameSource: pane.descriptor?.nameSource,
@@ -71641,7 +71647,7 @@ import { createServer as createServer3 } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 async function startCommandCenter(options = {}) {
   const port = options.port ?? 6060;
-  const hostname3 = options.hostname ?? "0.0.0.0";
+  const hostname4 = options.hostname ?? "0.0.0.0";
   const appOpts = {};
   if (options.authService) appOpts.authService = options.authService;
   if (options.authConfig) appOpts.authConfig = options.authConfig;
@@ -71649,8 +71655,8 @@ async function startCommandCenter(options = {}) {
   const listener = getRequestListener(app.fetch);
   const server = createServer3(listener);
   return new Promise((resolve38) => {
-    server.listen(port, hostname3, () => {
-      console.log(`Command Center API on http://${hostname3}:${port}`);
+    server.listen(port, hostname4, () => {
+      console.log(`Command Center API on http://${hostname4}:${port}`);
       resolve38(server);
     });
   });
@@ -77494,11 +77500,11 @@ async function retireTerminalAttachmentTransport(runtime, boundary) {
   const results = await Promise.allSettled([runtimeDisposal, boundaryClose]);
   return results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
 }
-async function pickFreePort(hostname3) {
+async function pickFreePort(hostname4) {
   const probe = createServer();
   return await new Promise((resolve38, reject) => {
     probe.once("error", reject);
-    probe.listen(0, hostname3, () => {
+    probe.listen(0, hostname4, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {

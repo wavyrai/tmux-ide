@@ -128,6 +128,7 @@ export function memorablePaneName(seed: string): string {
 function meaningfulTitle(
   value: string | null | undefined,
   currentCommand: string | null,
+  hostName?: string | null,
 ): string | null {
   const title = boundedName(value);
   if (!title || GENERIC_TITLES.has(title.toLowerCase())) return null;
@@ -138,7 +139,11 @@ function meaningfulTitle(
   if (
     currentCommand &&
     GENERIC_SHELLS.has(currentCommand.toLowerCase()) &&
-    /^[a-z0-9][a-z0-9.-]*\.[a-z0-9-]{2,}$/iu.test(title)
+    (/^[a-z0-9][a-z0-9.-]*\.[a-z0-9-]{2,}$/iu.test(title) ||
+      (hostName &&
+        [hostName, hostName.split(".")[0]].some(
+          (host) => host?.toLowerCase() === title.toLowerCase(),
+        )))
   )
     return null;
   return title;
@@ -152,6 +157,8 @@ export function resolvePaneDisplayName(
     currentCommand?: string | null;
     title?: string | null;
     paneType?: string | null;
+    /** Host running the daemon and its local tmux server, not the renderer host. */
+    hostName?: string | null;
   }>,
 ): PaneDisplayName {
   const configuredName = boundedName(input.configuredName);
@@ -175,7 +182,7 @@ export function resolvePaneDisplayName(
   if (command && !GENERIC_SHELLS.has(command.toLowerCase()))
     return { name: command, source: "process" };
 
-  const title = meaningfulTitle(input.title, command);
+  const title = meaningfulTitle(input.title, command, input.hostName);
   if (title) return { name: title, source: "title" };
 
   return {

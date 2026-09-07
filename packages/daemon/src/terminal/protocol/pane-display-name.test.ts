@@ -28,6 +28,41 @@ describe("pane display names", () => {
     ).toEqual({ name: memorablePaneName("pane.alpha"), source: "generated" });
   });
 
+  it("keeps generated shell pane identities when Linux or short hostnames become OSC titles", () => {
+    for (const [hostName, title] of [
+      ["runnervmejwal", "runnervmejwal"],
+      ["builder.example.test", "builder"],
+      ["Builder", "builder"],
+    ]) {
+      const input = {
+        semanticPaneId: "pane.alpha",
+        configuredName: memorablePaneName("pane.alpha"),
+        currentCommand: "bash",
+        hostName,
+        title,
+      };
+      expect(resolvePaneDisplayName(input)).toEqual({
+        name: memorablePaneName("pane.alpha"),
+        source: "generated",
+      });
+      expect(
+        resolvePaneDisplayName({
+          ...input,
+          configuredName: "My shell",
+          configuredNameSource: "manual",
+        }),
+      ).toEqual({ name: "My shell", source: "manual" });
+      expect(resolvePaneDisplayName({ ...input, title: "Deploy logs" })).toEqual({
+        name: "Deploy logs",
+        source: "title",
+      });
+      expect(resolvePaneDisplayName({ ...input, currentCommand: "btop" })).toEqual({
+        name: "btop",
+        source: "process",
+      });
+    }
+  });
+
   it("recognizes a persisted deterministic fallback without source metadata", () => {
     expect(
       resolvePaneDisplayName({

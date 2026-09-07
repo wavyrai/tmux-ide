@@ -27,6 +27,7 @@
  *    discipline — leaving fire-and-forget via the channel.
  */
 import { createHash, randomBytes } from "node:crypto";
+import { hostname } from "node:os";
 import {
   WORKSPACE_SEMANTIC_PANE_OPTION,
   WORKSPACE_SEMANTIC_WINDOW_OPTION,
@@ -85,6 +86,8 @@ import {
   registerInternalReadOperation,
   retireInternalReadOperation,
 } from "../../lib/tmux-interaction-options.ts";
+
+const TMUX_SERVER_HOSTNAME = hostname();
 
 /** Notifications whose payload cannot be applied directly — fall back to the
  *  debounced truth sync (shared by all semantic terminal clients). */
@@ -542,6 +545,7 @@ export class SessionChannel {
   describe(): MirrorSessionDescription {
     const panes = [...this.panesBySemantic.values()].map((pane) => {
       const display = resolvePaneDisplayName({
+        hostName: TMUX_SERVER_HOSTNAME,
         semanticPaneId: pane.semanticId,
         configuredName: pane.descriptor?.name,
         configuredNameSource: pane.descriptor?.nameSource,
@@ -2359,6 +2363,7 @@ export class SessionChannel {
         const pane = this.panesByRuntime.get(leaf.id) ?? null;
         const display = pane
           ? resolvePaneDisplayName({
+              hostName: TMUX_SERVER_HOSTNAME,
               semanticPaneId: pane.semanticId,
               configuredName: pane.descriptor?.name,
               configuredNameSource: pane.descriptor?.nameSource,
