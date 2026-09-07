@@ -1,9 +1,9 @@
 ---
-title: OpenTUI 2.9 beta.3
-description: The current 2.9.0-beta.7 visual tmux release with agent-aware chrome
+title: OpenTUI 2.9 beta.8
+description: The current 2.9.0-beta.8 visual tmux release with agent-aware chrome
 ---
 
-The current package is `2.9.0-beta.7`. It ships a polished OpenTUI client around ordinary tmux
+The current package is `2.9.0-beta.8`. It ships an OpenTUI client around ordinary tmux
 sessions. tmux owns PTYs, processes, topology, persistence, and SSH; the daemon
 publishes semantic workspace state and pane streams; OpenTUI owns presentation
 and input.
@@ -20,6 +20,19 @@ Pass a session name to bypass Home:
 ```bash
 tmux-ide app work
 ```
+
+## New in beta.8
+
+- Pane headers show recent input and pane reads, with external tmux activity
+  distinguished from attributed agent activity. Failed and disconnected states
+  have explicit labels.
+- Appearance offers 22 Gloomberb themes alongside System, Dark, and Light.
+  Open Appearance, type to filter, and use the arrow keys to preview. Enter
+  saves the selection; Escape restores the previous theme. Theme changes leave
+  terminal truecolor output intact.
+- Resize, zoom, and retained scrollback fixes include corrected pane geometry
+  and finer mouse scrolling. The TUI keeps wheel momentum in scrollback when
+  returning to live output.
 
 ## Included
 
@@ -44,6 +57,13 @@ tmux-ide app work
 web client. The native desktop client is still under development. Mission
 profiles and the Missions panel exist, but public CLI mission dispatch from
 workspace defaults is not wired in this beta.
+
+The npm package includes a patched tmux server for compatible Apple Silicon
+macOS hosts. Its native grid extension preserves hidden terminal backing during
+frozen scrollback reflow. Existing system-tmux servers remain in compatibility
+mode; installing the package does not restart them or migrate running sessions.
+Other hosts use system tmux. Terminal mouse events are row based, so this TUI
+does not provide pixel-level macOS scrolling.
 
 ## Reporting issues
 

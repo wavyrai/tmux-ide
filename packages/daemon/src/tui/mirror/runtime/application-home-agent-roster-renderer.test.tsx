@@ -58,7 +58,7 @@ describe("flat Home agent roster", () => {
       const data = snapshot([
         row("quiet-otter", { activity: "waiting", attention: true }),
         row("分析 Café 👨‍💻", { sessionName: "other-project" }),
-        row("unknown-agent", { activity: "disconnected" }),
+        row("disconnected-agent", { activity: "disconnected" }),
       ]);
       const setup = await renderForTest(
         () => (
@@ -86,7 +86,7 @@ describe("flat Home agent roster", () => {
         expect(frame).toContain("Scope: 3 of 3 sessions observed");
         expect(frame).toContain("SESSION");
         expect(frame).toContain("! BLOCKED");
-        expect(frame).toContain("UNKNOWN");
+        expect(frame).toContain("DISCONNECTED");
         expect(frame).toContain("分析 Café 👨‍💻");
       }
       if (width === 32) {
