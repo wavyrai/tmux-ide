@@ -756,62 +756,71 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     },
   );
 
-  it("lets fast clients advance while a stalled sink retains only one flight and latest pointer", async () => {
-    const owner = new FakeOwner();
-    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
-    const slowMessages: TerminalDeliveryServerMessage[] = [];
-    const fastMessages: TerminalDeliveryServerMessage[] = [];
-    let releaseSlow!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      releaseSlow = resolve;
-    });
-    const slow = await hub.open(
-      "slow",
-      "pane-a",
-      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
-      (message) => {
-        slowMessages.push(message);
-        return blocked;
-      },
-    );
-    const fast = await hub.open(
-      "fast",
-      "pane-a",
-      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
-      (message) => fastMessages.push(message),
-    );
-    owner.emit(seed());
-    await settle();
-    fast.ack(ack(fastMessages[0] as TerminalDeliveryEnvelope));
-    for (let revision = 1; revision <= 20; revision += 1) owner.emit(patch(revision, revision % 2));
-    await settle();
-    const latest = fastMessages.findLast(
-      (message) => message.type === "terminal.delivery",
-    ) as TerminalDeliveryEnvelope;
-    expect(latest.canonicalRevision).toBe(20);
-    fast.ack(ack(latest));
-    expect(hub.metrics()).toMatchObject({ clients: 2, inFlight: 1, latestPointers: 1 });
-    expect(hub.metrics().maxQueueDepth).toBeLessThanOrEqual(2);
-    expect(hub.convergenceSnapshot().clients).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ clientId: "slow", inFlightRevision: 0, latestRevision: 20 }),
-        expect.objectContaining({ clientId: "fast", baselineRevision: 20 }),
-      ]),
-    );
-    expect(slowMessages.filter((message) => message.type === "terminal.delivery")).toHaveLength(1);
-    releaseSlow();
-    await settle();
-    slow.ack(ack(slowMessages[0] as TerminalDeliveryEnvelope));
-    await settle();
-    const resumed = slowMessages.findLast(
-      (message) => message.type === "terminal.delivery",
-    ) as TerminalDeliveryEnvelope;
-    expect(resumed.canonicalRevision).toBe(20);
-    expect(resumed.frame).toBe("seed");
-    slow.ack(ack(resumed));
-    await Promise.all([slow.close(), fast.close()]);
-    await hub.close();
-  });
+  it.each(["semantic-v1", "semantic-compact-v1"] as const)(
+    "lets %s fast clients advance while a stalled sink retains only one flight and latest pointer",
+    async (encoding) => {
+      const owner = new FakeOwner();
+      const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+      const slowMessages: TerminalDeliveryServerMessage[] = [];
+      const fastMessages: TerminalDeliveryServerMessage[] = [];
+      let releaseSlow!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        releaseSlow = resolve;
+      });
+      const slow = await hub.open(
+        "slow",
+        "pane-a",
+        { protocolVersions: [1], encodings: [encoding], richPlacements: false },
+        (message) => {
+          slowMessages.push(message);
+          return blocked;
+        },
+      );
+      const fast = await hub.open(
+        "fast",
+        "pane-a",
+        { protocolVersions: [1], encodings: [encoding], richPlacements: false },
+        (message) => fastMessages.push(message),
+      );
+      owner.emit(seed());
+      await settle();
+      fast.ack(ack(fastMessages[0] as TerminalDeliveryEnvelope));
+      for (let revision = 1; revision <= 20; revision += 1)
+        owner.emit(patch(revision, revision % 2));
+      await settle();
+      const latest = fastMessages.findLast(
+        (message) => message.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      expect(latest.canonicalRevision).toBe(20);
+      expect(latest.encoding).toBe(encoding);
+      fast.ack(ack(latest));
+      expect(hub.metrics()).toMatchObject({ clients: 2, inFlight: 1, latestPointers: 1 });
+      expect(hub.metrics().maxQueueDepth).toBeLessThanOrEqual(2);
+      expect(hub.convergenceSnapshot().clients).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ clientId: "slow", inFlightRevision: 0, latestRevision: 20 }),
+          expect.objectContaining({ clientId: "fast", baselineRevision: 20 }),
+        ]),
+      );
+      expect(slowMessages.filter((message) => message.type === "terminal.delivery")).toHaveLength(
+        1,
+      );
+      releaseSlow();
+      await settle();
+      slow.ack(ack(slowMessages[0] as TerminalDeliveryEnvelope));
+      await settle();
+      const resumed = slowMessages.findLast(
+        (message) => message.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      expect(resumed.canonicalRevision).toBe(20);
+      expect(resumed.frame).toBe("seed");
+      expect(resumed.encoding).toBe(encoding);
+      expect(resumed.canonicalStateHash).toBe(latest.canonicalStateHash);
+      slow.ack(ack(resumed));
+      await Promise.all([slow.close(), fast.close()]);
+      await hub.close();
+    },
+  );
 
   it("reports a stalled sink retirement while a healthy sibling keeps advancing", async () => {
     const owner = new FakeOwner();
