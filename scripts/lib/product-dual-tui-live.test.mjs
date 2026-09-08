@@ -1,4 +1,6 @@
 import test from "node:test";
+import { createHash } from "node:crypto";
+import stringWidth from "string-width";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -432,6 +434,58 @@ const timer=setInterval(()=>{
       tui("second", "resize", "90", "24");
       await verifyUnicodePeer("unicode-reading-client-wide");
       assert.equal(geometry(), dimensions, "Unicode zoom restore changed native geometry");
+      const selectionFrame = await frame("unicode-selection-ready", "second", anchored);
+      const selectionRow = selectionFrame.findIndex(
+        (line, row) => row >= 3 && /(?:WRAP|LIVE)_\d{5} 界e\u0301/u.test(line),
+      );
+      assert.ok(selectionRow >= 3, "visible complete Unicode selection token");
+      const selected = /(?:WRAP|LIVE)_\d{5} 界e\u0301/u.exec(selectionFrame[selectionRow]);
+      const selectionX = stringWidth(selectionFrame[selectionRow].slice(0, selected.index));
+      const selectionWidth = stringWidth(selected[0]);
+      const selectionLeft = stringWidth(selectionFrame[3].match(/^ */)[0]);
+      const siblingHeader = selectionFrame[2].indexOf("○ node");
+      assert.ok(siblingHeader > selectionLeft, "observed sibling pane header boundary");
+      const selectionRight = stringWidth(selectionFrame[2].slice(0, siblingHeader)) - 1;
+      let copy;
+      try {
+        copy = JSON.parse(
+          tui(
+            "second",
+            "input",
+            JSON.stringify({
+              version: 1,
+              kind: "selection-drag",
+              timeoutMs: 5000,
+              from: { x: selectionX, y: selectionRow },
+              to: { x: selectionX + selectionWidth - 1, y: selectionRow },
+              contentRect: {
+                x: selectionLeft,
+                y: 3,
+                width: selectionRight - selectionLeft,
+                height: selectionFrame.length - 4,
+              },
+            }),
+          ),
+        );
+      } catch (error) {
+        writeFileSync(join(artifacts, "unicode-selection-failure.txt"), tui("second", "capture"));
+        throw error;
+      }
+      assert.deepEqual(
+        copy.clipboard,
+        {
+          bytes: Buffer.byteLength(selected[0]),
+          sha256: createHash("sha256").update(selected[0]).digest("hex"),
+        },
+        "Unicode selection must preserve exact UTF-8 bytes",
+      );
+      assert.equal(geometry(), dimensions, "copying Unicode must not mutate native layout");
+      report.unicodeSelection = {
+        expected: selected[0],
+        clipboard: copy.clipboard,
+        observation: copy.clipboardObservation,
+        style: copy.selectionStyle,
+      };
       writeFileSync(unicodeStop, "stop", { mode: 0o600 });
       const unicodeFinal = (rows) =>
         rows.join("\n").includes("UNICODE_DONE") && unicodeChrome(rows);

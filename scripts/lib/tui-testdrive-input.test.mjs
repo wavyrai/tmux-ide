@@ -463,9 +463,9 @@ test("selection drag includes press, bounded interpolation, and exact release ge
     }),
   );
   const phases = translateTestdriveInput(command, context).phases;
-  assert.equal(phases[0].bytes, "\x1b[<0;3;4M");
-  assert.equal(phases.at(-1).bytes, "\x1b[<0;8;6m");
-  assert.ok(phases.slice(1, -1).every((phase) => phase.bytes.startsWith("\x1b[<32;")));
+  assert.equal(phases[0].bytes, "\x1b[<4;3;4M");
+  assert.equal(phases.at(-1).bytes, "\x1b[<4;8;6m");
+  assert.ok(phases.slice(1, -1).every((phase) => phase.bytes.startsWith("\x1b[<36;")));
   assert.ok(phases.length <= 26);
 });
 
@@ -1220,7 +1220,7 @@ test("selection and copy preserve exact arm rollback with zero release effect", 
         assert.equal(error.observation.finalHookAbsent, true);
         assert.equal(error.observation.clipboardReleaseTransportAttempted, false);
         assert.equal(error.observation.clipboardReleaseEffectOccurred, false);
-        assert.equal(error.observation.completedTransportCalls, kind === "selection-drag" ? 4 : 0);
+        assert.equal(error.observation.completedTransportCalls, kind === "selection-drag" ? 1 : 0);
         return true;
       },
     );
@@ -1517,7 +1517,7 @@ test("selection exhausts its proof slice before release and copy", async () => {
   const harness = orchestrationPort({
     verifyIdentity: async () => {
       verifies += 1;
-      if (verifies === 8) harness.advance(1_751);
+      if (verifies === 5) harness.advance(1_775);
     },
     captureAnsi: async () =>
       captures++ === 0
@@ -1544,12 +1544,12 @@ test("selection exhausts its proof slice before release and copy", async () => {
     ),
     (error) => {
       assert.equal(error.observation.substage, "pre-release-budget");
-      assert.equal(error.observation.completedTransportCalls, 4);
+      assert.equal(error.observation.completedTransportCalls, 1);
       return true;
     },
   );
   assert.equal(armed, false);
-  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 4);
+  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 1);
 });
 
 test("live-shaped selection allocates its available arm and retains the exact release slice", async () => {
@@ -1564,7 +1564,7 @@ test("live-shaped selection allocates its available arm and retains the exact re
         : `${prefix}\x1b[38;5;0;48;5;1mABCD\x1b[0m`;
     },
     armClipboard: async (_identity, _nonce, timeout, cleanupTimeout) => {
-      assert.equal(timeout, 671);
+      assert.equal(timeout, 695);
       assert.equal(cleanupTimeout, 650);
       harness.advance(600);
       return {
@@ -1575,7 +1575,7 @@ test("live-shaped selection allocates its available arm and retains the exact re
     inject: async (identity, bytes, timeout) => {
       harness.calls.push(["inject", identity.paneId, bytes, timeout]);
       injections += 1;
-      if (injections === 5) harness.advance(100);
+      if (injections === 2) harness.advance(100);
       return {
         physicalCalls: 1,
         transportAttempted: true,
@@ -1598,16 +1598,16 @@ test("live-shaped selection allocates its available arm and retains the exact re
     ),
     harness.port,
   );
-  assert.equal(result.clipboardObservation.clipboardArmStartedElapsedMs, 1_079);
-  assert.equal(result.clipboardObservation.clipboardArmElapsedMs, 1_679);
-  assert.equal(result.clipboardObservation.clipboardArmBudgetAtStartMs, 671);
-  assert.equal(result.clipboardObservation.clipboardArmRawRemainingAtStartMs, 1_921);
+  assert.equal(result.clipboardObservation.clipboardArmStartedElapsedMs, 1_055);
+  assert.equal(result.clipboardObservation.clipboardArmElapsedMs, 1_655);
+  assert.equal(result.clipboardObservation.clipboardArmBudgetAtStartMs, 695);
+  assert.equal(result.clipboardObservation.clipboardArmRawRemainingAtStartMs, 1_945);
   assert.equal(result.clipboardObservation.clipboardReleaseBudgetAtStartMs, 200);
   assert.equal(result.clipboardObservation.clipboardReleaseTransportAttempted, true);
   assert.equal(result.clipboardObservation.clipboardReleaseEffectOccurred, true);
   assert.equal(result.clipboardObservation.clipboardReleaseLoadMarkerAcquired, true);
   assert.equal(result.clipboardObservation.clipboardReleaseCleanupAttempted, false);
-  assert.equal(result.transportCalls, 5);
+  assert.equal(result.transportCalls, 2);
 });
 
 test("an arm over its exact cap retires without releasing", async () => {
@@ -1646,7 +1646,7 @@ test("an arm over its exact cap retires without releasing", async () => {
     },
   );
   assert.equal(disposed, 1);
-  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 4);
+  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 1);
 });
 
 test("release timeout seals marker acquisition and one cleanup attempt", async () => {
@@ -1661,7 +1661,7 @@ test("release timeout seals marker acquisition and one cleanup attempt", async (
     inject: async (identity, bytes, timeout) => {
       harness.calls.push(["inject", identity.paneId, bytes, timeout]);
       injections += 1;
-      if (injections === 5) {
+      if (injections === 2) {
         const error = new Error("tmux delivery timed out");
         error.code = "ETIMEDOUT";
         error.deliveryEvidence = {
@@ -1714,7 +1714,7 @@ test("fulfilled selection and copy effects over 200ms remain uncredited", async 
           : `${prefix}\x1b[38;5;0;48;5;1mABCD\x1b[0m`,
       inject: async () => {
         injections += 1;
-        if ((kind === "copy-capture" && injections === 1) || injections === 5) {
+        if ((kind === "copy-capture" && injections === 1) || injections === 2) {
           harness.advance(201);
         }
         return {
@@ -1749,10 +1749,10 @@ test("fulfilled selection and copy effects over 200ms remain uncredited", async 
       (error) => {
         assert.equal(error.observation.clipboardReleaseTransportAttempted, true);
         assert.equal(error.observation.clipboardReleaseEffectOccurred, true);
-        assert.equal(error.observation.completedTransportCalls, kind === "selection-drag" ? 4 : 0);
+        assert.equal(error.observation.completedTransportCalls, kind === "selection-drag" ? 1 : 0);
         assert.equal(
           error.observation.completedPhysicalTransportCalls,
-          kind === "selection-drag" ? 4 : 0,
+          kind === "selection-drag" ? 1 : 0,
         );
         return true;
       },
@@ -1814,7 +1814,7 @@ test("selection and copy preserve proven unmarked pre-load failure as no effect"
           : `${prefix}\x1b[38;5;0;48;5;1mABCD\x1b[0m`,
       inject: async () => {
         injections += 1;
-        if ((kind === "copy-capture" && injections === 1) || injections === 5) {
+        if ((kind === "copy-capture" && injections === 1) || injections === 2) {
           const error = new Error("load failed before paste");
           error.deliveryEvidence = {
             transportAttempted: true,
@@ -1899,9 +1899,11 @@ test("selection uses renderer-true tmux cell color swaps before copy release", a
     contentRect: { x: 2, y: 3, width: 4, height: 1 },
   });
   const injected = harness.calls.filter(([kind]) => kind === "inject").map((call) => call[2]);
-  assert.deepEqual(injected.slice(0, 3), ["\x1b[<2;3;4M", "\x1b[<2;3;4m", "\r"]);
+  assert.equal(injected.length, 2);
+  assert.ok(injected[0].startsWith("\x1b[<4;"));
+  assert.ok(injected.every((bytes) => !bytes.includes("\r") && !bytes.includes("\x1b[<2;")));
   assert.ok(harness.calls.findIndex(([kind]) => kind === "arm") < harness.calls.length - 2);
-  assert.equal(injected.at(-1), "\x1b[<0;6;4m");
+  assert.equal(injected.at(-1), "\x1b[<4;6;4m");
 });
 
 test("long selection keeps exact logical input but uses constant bounded host transport", async () => {
@@ -1942,18 +1944,17 @@ test("long selection keeps exact logical input but uses constant bounded host tr
   const logical = translateTestdriveInput(command, context).phases;
   const result = await executeTestdriveInputOperation(command, harness.port);
   const injected = harness.calls.filter(([kind]) => kind === "inject").map((call) => call[2]);
-  assert.equal(injected.length, 5);
-  assert.deepEqual(injected.slice(0, 3), ["\x1b[<2;29;4M", "\x1b[<2;29;4m", "\r"]);
+  assert.equal(injected.length, 2);
   assert.equal(
-    injected[3],
+    injected[0],
     logical
       .slice(0, -1)
       .map(({ bytes }) => bytes)
       .join(""),
   );
-  assert.equal(injected[4], logical.at(-1).bytes);
-  assert.equal(result.phases, logical.length + 3);
-  assert.equal(result.transportCalls, 5);
+  assert.equal(injected[1], logical.at(-1).bytes);
+  assert.equal(result.phases, logical.length);
+  assert.equal(result.transportCalls, 2);
   assert.equal(
     result.bytesInjected,
     injected.reduce((total, bytes) => total + Buffer.byteLength(bytes), 0),
@@ -1974,7 +1975,7 @@ test("selection failure reports bounded logical and transport progress", async (
   const harness = orchestrationPort({
     inject: async (_identity, _bytes, _timeout) => {
       injections += 1;
-      if (injections === 4) throw new Error("pre-release transport failed");
+      if (injections === 1) throw new Error("pre-release transport failed");
     },
   });
   const command = parseTestdriveInputDocument(
@@ -1991,12 +1992,12 @@ test("selection failure reports bounded logical and transport progress", async (
     assert.equal(error.observation.operation, "tui-testdrive-input");
     assert.equal(error.observation.kind, "selection-drag");
     assert.equal(error.observation.substage, "drag-pre-release");
-    assert.equal(error.observation.completedPhases, 3);
-    assert.equal(error.observation.totalPhases, 29);
-    assert.equal(error.observation.completedTransportCalls, 3);
-    assert.equal(error.observation.totalTransportCalls, 5);
-    assert.equal(error.observation.completedPhysicalTransportCalls, 3);
-    assert.equal(error.observation.totalPhysicalTransportCalls, 5);
+    assert.equal(error.observation.completedPhases, 0);
+    assert.equal(error.observation.totalPhases, 26);
+    assert.equal(error.observation.completedTransportCalls, 0);
+    assert.equal(error.observation.totalTransportCalls, 2);
+    assert.equal(error.observation.completedPhysicalTransportCalls, 0);
+    assert.equal(error.observation.totalPhysicalTransportCalls, 2);
     assert.equal(error.observation.clipboardReleaseTransportAttempted, false);
     assert.equal(error.observation.clipboardReleaseLoadMarkerAcquired, false);
     assert.equal(error.observation.clipboardReleaseCleanupAttempted, false);
@@ -2173,7 +2174,7 @@ test("selection replacement before release fails closed and disposes without mou
     assert.equal(error.observation.substage, "release-identity");
     return true;
   });
-  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 4);
+  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 1);
   assert.equal(
     harness.calls.some(([kind]) => kind === "arm"),
     true,
@@ -2187,7 +2188,7 @@ test("selection deadline after the fixed drag batch fails before capture, arm, o
     inject: async (identity, bytes, timeout) => {
       harness.calls.push(["inject", identity.paneId, bytes, timeout]);
       injections += 1;
-      harness.advance(injections === 4 ? 700 : 5);
+      harness.advance(injections === 1 ? 700 : 5);
     },
     captureAnsi: async () => {
       harness.calls.push(["capture"]);
@@ -2211,8 +2212,8 @@ test("selection deadline after the fixed drag batch fails before capture, arm, o
   await assert.rejects(executeTestdriveInputOperation(command, harness.port), (error) => {
     assert.match(error.message, /absolute deadline/u);
     assert.equal(error.observation.substage, "selection-style-wait");
-    assert.equal(error.observation.completedPhases, 28);
-    assert.equal(error.observation.completedTransportCalls, 4);
+    assert.equal(error.observation.completedPhases, 25);
+    assert.equal(error.observation.completedTransportCalls, 1);
     return true;
   });
   assert.equal(harness.calls.filter(([kind]) => kind === "capture").length, 1);
@@ -2220,7 +2221,7 @@ test("selection deadline after the fixed drag batch fails before capture, arm, o
     harness.calls.some(([kind]) => kind === "arm"),
     false,
   );
-  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 4);
+  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 1);
 });
 
 test("selection waits for the exact delayed style frame before arming one release", async () => {
@@ -2254,14 +2255,14 @@ test("selection waits for the exact delayed style frame before arming one releas
   );
   const result = await executeTestdriveInputOperation(command, harness.port);
   assert.equal(captures, 3);
-  assert.equal(result.transportCalls, 5);
+  assert.equal(result.transportCalls, 2);
   const armIndex = harness.calls.findIndex(([kind]) => kind === "arm");
   const releaseIndex = harness.calls.findLastIndex(([kind]) => kind === "inject");
   assert.ok(harness.calls.findLastIndex(([kind]) => kind === "capture") < armIndex);
   assert.ok(armIndex < releaseIndex);
 });
 
-test("selection replacement after the badge capture prevents the pre-release batch", async () => {
+test("selection replacement after the initial capture prevents the pre-release batch", async () => {
   let capturedBefore = false;
   const harness = orchestrationPort({
     captureAnsi: async () => {
@@ -2270,7 +2271,7 @@ test("selection replacement after the badge capture prevents the pre-release bat
       return "";
     },
     verifyIdentity: async () => {
-      if (capturedBefore) throw new Error("host pane identity changed after badge capture");
+      if (capturedBefore) throw new Error("host pane identity changed after initial capture");
     },
   });
   const command = parseTestdriveInputDocument(
@@ -2287,7 +2288,7 @@ test("selection replacement after the badge capture prevents the pre-release bat
     assert.equal(error.observation.substage, "drag-pre-release-identity");
     return true;
   });
-  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 3);
+  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 0);
 });
 
 test("selection replacement during the style wait cancels arm and release", async () => {
@@ -2322,7 +2323,7 @@ test("selection replacement during the style wait cancels arm and release", asyn
     assert.equal(error.observation.substage, "selection-style-wait");
     return true;
   });
-  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 4);
+  assert.equal(harness.calls.filter(([kind]) => kind === "inject").length, 1);
   assert.equal(
     harness.calls.some(([kind]) => kind === "arm"),
     false,
@@ -3062,7 +3063,7 @@ test("tmux 3.7b proves OSC52 rotation and consecutive selection-drag then copy-c
     `const values=${JSON.stringify(contents.map((value) => value.toString("base64")))};`,
     "process.stdin.setRawMode?.(true);",
     "process.stdin.resume();",
-    "process.stdin.on('data',(bytes)=>{const input=bytes.toString('latin1');if(!input.includes('\\x1b[<0;')&&!input.includes('\\x03'))return;const value=values[Math.min(index++,values.length-1)];process.stdout.write('\\x1b]52;c;'+value+'\\x07');});",
+    "process.stdin.on('data',(bytes)=>{const input=bytes.toString('latin1');if(!/\\x1b\\[<(?:0|4);/.test(input)&&!input.includes('\\x03'))return;const value=values[Math.min(index++,values.length-1)];process.stdout.write('\\x1b]52;c;'+value+'\\x07');});",
   ].join("");
   const inventorySource = () => {
     try {
@@ -3481,4 +3482,36 @@ test("tmux 3.7b proves OSC52 rotation and consecutive selection-drag then copy-c
     }
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("Shift selection permits only its own header status color change", () => {
+  const base = "\x1b[31;40m";
+  const inverse = "\x1b[30;41m";
+  const before = base + "ABCDEF\nABCDEF\nABCDEF";
+  const after =
+    base + "A" + inverse + "BCD" + base + "EF\nA" + inverse + "BC" + base + "DEF\nABCDEF";
+  const args = [
+    { x: 1, y: 1 },
+    { x: 2, y: 1 },
+    { cols: 6, rows: 3 },
+    { x: 1, y: 1, width: 3, height: 2 },
+  ];
+  assert.throws(
+    () => proveRendererSelectionStyleDelta(before, after, ...args),
+    /extra changed cells/,
+  );
+  assert.deepEqual(proveRendererSelectionStyleDelta(before, after, ...args, true), {
+    cells: 2,
+    extraChangedCells: 0,
+  });
+  const sibling = after.replace("EF\n", "E" + inverse + "F" + base + "\n");
+  assert.throws(
+    () => proveRendererSelectionStyleDelta(before, sibling, ...args, true),
+    /extra changed cells/,
+  );
+  const content = after.replace("DEF\n", "D" + inverse + "E" + base + "F\n");
+  assert.throws(
+    () => proveRendererSelectionStyleDelta(before, content, ...args, true),
+    /extra changed cells/,
+  );
 });
