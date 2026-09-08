@@ -1,4 +1,5 @@
 import type { TerminalReplicaColor, TerminalReplicaRow } from "@tmux-ide/contracts";
+import { createBufferedFnv64 } from "./terminal-fnv64-wasm.ts";
 
 const ROW_HASH_CACHE = new WeakMap<object, string>();
 const DEEPLY_FROZEN_ROWS = new WeakSet<object>();
@@ -213,6 +214,20 @@ const compactColorKey = (color: TerminalReplicaColor): number =>
 
 /** Package-private per-decode cache for exact canonical cell byte segments. */
 export class TerminalReplicaRunEncodingCache {
+  #canonicalBytes = 0;
+
+  createHash(): CanonicalFnv64 | NonNullable<ReturnType<typeof createBufferedFnv64>> {
+    // Small deliveries benefit more from row reuse than from crossing into
+    // WASM. Count only completed, uncached work in this decode transaction.
+    return (
+      (this.#canonicalBytes >= 64 * 1_024 ? createBufferedFnv64() : null) ?? new CanonicalFnv64()
+    );
+  }
+
+  recordCanonicalBytes(bytes: number): void {
+    this.#canonicalBytes = Math.min(64 * 1_024, this.#canonicalBytes + bytes);
+  }
+
   readonly #entries = new Map<
     string,
     Map<number, Map<number, Map<number, Map<number, PreparedCanonicalCell>>>>
@@ -332,7 +347,8 @@ export async function hashTerminalReplicaRowRunsCooperatively(
   onEncodedRun?: (bytes: number) => void,
   encodingCache = new TerminalReplicaRunEncodingCache(),
 ): Promise<string> {
-  const hash = new CanonicalFnv64();
+  const hash = encodingCache.createHash();
+  let canonicalBytes = 10 + String(cellCount).length;
   hash.ascii("a2:");
   hash.boolean(wrapped);
   hash.ascii(`a${cellCount}:`);
@@ -340,6 +356,8 @@ export async function hashTerminalReplicaRowRunsCooperatively(
   for (const [count, cell] of runs) {
     const { prepared, allocatedBytes, cacheMiss } = encodingCache.prepare(cell);
     if (cacheMiss) onEncodedRun?.(allocatedBytes);
+    canonicalBytes +=
+      (prepared.prefix.length + prepared.graphemeBytes.length + prepared.suffix.length) * count;
     for (let index = 0; index < count; index += 1) {
       hash.ascii(prepared.prefix);
       hash.bytes(prepared.graphemeBytes);
@@ -352,7 +370,9 @@ export async function hashTerminalReplicaRowRunsCooperatively(
     }
   }
   hash.ascii(";;");
-  return hash.digest();
+  const digest = hash.digest();
+  encodingCache.recordCanonicalBytes(canonicalBytes);
+  return digest;
 }
 
 /** Package-private verified-decoder seam; this module is not a package export. */

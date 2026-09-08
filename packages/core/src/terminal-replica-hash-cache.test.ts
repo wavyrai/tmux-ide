@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as bufferedHash from "./terminal-fnv64-wasm.ts";
 import type { TerminalReplicaRow, TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 import { blankTerminalReplicaSnapshot, hashTerminalReplicaSnapshot } from "./terminal-replica.ts";
 import {
   hashCanonicalTerminalValue,
   hashTerminalReplicaRowCached,
   hashTerminalReplicaRowRunsCooperatively,
+  TerminalReplicaRunEncodingCache,
 } from "./terminal-replica-hash-cache.ts";
 
 const canonicalEncode = (value: unknown): string => {
@@ -34,6 +36,48 @@ const referenceHash = (value: unknown): string => {
 };
 
 describe("terminal canonical hash cache", () => {
+  it("accelerates substantial transactions without changing hashes or cooperative checkpoints", async () => {
+    const cache = new TerminalReplicaRunEncodingCache();
+    const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
+    const cell = {
+      ...blankTerminalReplicaSnapshot(1, 1).grid[0]!.cells[0]!,
+      grapheme: "界e\u0301\ud800",
+    };
+    const row = { wrapped: true, cells: Array.from({ length: 1_024 }, () => cell) };
+    const expected = hashTerminalReplicaRowCached(row);
+    const decode = async (encodingCache: TerminalReplicaRunEncodingCache) => {
+      let checkpoints = 0;
+      const digest = await hashTerminalReplicaRowRunsCooperatively(
+        true,
+        row.cells.length,
+        [[row.cells.length, cell]],
+        async () => {
+          checkpoints += 1;
+        },
+        64,
+        undefined,
+        encodingCache,
+      );
+      expect(digest).toBe(expected);
+      expect(checkpoints).toBe(16);
+    };
+    try {
+      await decode(cache);
+      expect(factory).not.toHaveBeenCalled();
+      await Promise.all([decode(cache), decode(cache)]);
+      expect(factory).toHaveBeenCalledTimes(2);
+      expect(factory.mock.results.every((result) => result.value !== null)).toBe(true);
+      // A separate client/delivery does not inherit another transaction's work.
+      await decode(new TerminalReplicaRunEncodingCache());
+      expect(factory).toHaveBeenCalledTimes(2);
+      factory.mockReturnValue(null);
+      await decode(cache);
+      expect(factory).toHaveBeenCalledTimes(3);
+    } finally {
+      factory.mockRestore();
+    }
+  });
+
   it("preserves carries and wraparound over every indexed color and RGB byte extreme", () => {
     const colors = [
       { kind: "default" },
