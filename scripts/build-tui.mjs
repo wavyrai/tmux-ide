@@ -136,7 +136,8 @@ const workerAssetPlugin = {
 const result = await Bun.build({
   entrypoints: [entry],
   target: "bun",
-  compile: { outfile, target },
+  // Standalone startup must not execute project-local development preloads.
+  compile: { outfile, target, autoloadBunfig: false },
   // This executable is the production runtime; source-mode development keeps
   // readable symbols. Minifying the embedded JS cuts cold-start IO and module
   // evaluation (the dominant first-frame cost) without changing OpenTUI's
