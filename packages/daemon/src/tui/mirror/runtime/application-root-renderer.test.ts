@@ -1,4 +1,5 @@
 import { Writable } from "node:stream";
+import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const createRenderer = vi.hoisted(() =>
@@ -8,10 +9,21 @@ const outputTransport = vi.hoisted(() => vi.fn());
 vi.mock("./renderer-output-transport.ts", () => ({
   createRendererOutputTransport: outputTransport,
 }));
-vi.mock("@opentui/core", () => ({ createCliRenderer: createRenderer }));
+const perf = vi.hoisted(() => ({ enabled: false, mark: vi.fn() }));
+vi.mock("./application-performance-log.ts", () => ({
+  tuiPerfMark: perf.mark,
+  get tuiPerfStream() {
+    return perf.enabled ? { enabled: true } : null;
+  },
+}));
+vi.mock("@opentui/core", () => ({
+  createCliRenderer: createRenderer,
+  CliRenderEvents: { CAPABILITIES: "capabilities" },
+}));
 import { createApplicationRootRenderer } from "./application-root-renderer.ts";
 
 beforeEach(() => {
+  perf.enabled = false;
   vi.stubEnv("TMUX_IDE_FRAME_OUTPUT", undefined);
   vi.stubEnv("OTUI_DUMP_CAPTURES", undefined);
 });
@@ -47,6 +59,118 @@ describe("root renderer host capabilities", () => {
     vi.stubEnv("OPENTUI_FORCE_EXPLICIT_WIDTH", value);
     await createApplicationRootRenderer(false);
     expect(process.env.OPENTUI_FORCE_EXPLICIT_WIDTH).toBe(value);
+  });
+});
+
+describe("root renderer capability evidence", () => {
+  it("does not inspect capabilities or install a listener when performance logging is disabled", async () => {
+    const on = vi.fn();
+    createRenderer.mockResolvedValueOnce({
+      on,
+      get capabilities() {
+        throw new Error("disabled diagnostics read capabilities");
+      },
+    });
+    await createApplicationRootRenderer(false);
+    expect(on).not.toHaveBeenCalled();
+    expect(perf.mark.mock.calls.some(([phase]) => phase === "renderer-host-capabilities")).toBe(
+      false,
+    );
+  });
+
+  it("records actual detected capabilities, deduplicates changes, and removes only its listener", async () => {
+    perf.enabled = true;
+    const renderer = Object.assign(new EventEmitter(), {
+      capabilities: null as Record<string, unknown> | null,
+      width: 120,
+      height: 40,
+      targetFps: 60,
+      maxFps: 120,
+    });
+    const otherListener = vi.fn();
+    renderer.on("capabilities", otherListener);
+    createRenderer.mockResolvedValueOnce(renderer as unknown as Record<string, unknown>);
+    await createApplicationRootRenderer(false);
+    const observations = () =>
+      perf.mark.mock.calls
+        .filter(([phase]) => phase === "renderer-host-capabilities")
+        .map(([, details]) => details);
+    expect(observations()).toEqual([
+      {
+        capabilitiesAvailable: false,
+        sync: null,
+        explicit_width: null,
+        sgr_pixels: null,
+        multiplexer: null,
+        terminalName: null,
+        terminalVersion: null,
+        cols: 120,
+        rows: 40,
+        targetFps: 60,
+        maxFps: 120,
+      },
+    ]);
+    renderer.capabilities = {
+      sync: true,
+      explicit_width: false,
+      sgr_pixels: true,
+      multiplexer: "tmux",
+      terminal: { name: "Test host", version: "3.7" },
+    };
+    renderer.emit("capabilities");
+    renderer.emit("capabilities");
+    expect(observations()).toHaveLength(2);
+    expect(observations()[1]).toMatchObject({
+      capabilitiesAvailable: true,
+      sync: true,
+      explicit_width: false,
+      sgr_pixels: true,
+      multiplexer: "tmux",
+      terminalName: "Test host",
+      terminalVersion: "3.7",
+    });
+    renderer.width = 90;
+    renderer.targetFps = 30;
+    renderer.emit("capabilities");
+    expect(observations().at(-1)).toMatchObject({ cols: 90, targetFps: 30 });
+    expect(renderer.listenerCount("capabilities")).toBe(2);
+    (createRenderer.mock.calls.at(-1)![0].onDestroy as () => void)();
+    expect(renderer.listenerCount("capabilities")).toBe(1);
+    renderer.emit("capabilities");
+    expect(observations()).toHaveLength(3);
+    expect(otherListener).toHaveBeenCalledTimes(4);
+  });
+
+  it("bounds untrusted host labels and keeps diagnostic failures out of the renderer", async () => {
+    perf.enabled = true;
+    const renderer = Object.assign(new EventEmitter(), {
+      capabilities: {
+        sync: false,
+        explicit_width: false,
+        sgr_pixels: false,
+        multiplexer: "none",
+        terminal: { name: "x".repeat(1_000), version: "v\n\u001b[31m" },
+      },
+      width: 80,
+      height: 24,
+      targetFps: 60,
+      maxFps: 120,
+    });
+    createRenderer.mockResolvedValueOnce(renderer as unknown as Record<string, unknown>);
+    await createApplicationRootRenderer(false);
+    expect(perf.mark).toHaveBeenCalledWith(
+      "renderer-host-capabilities",
+      expect.objectContaining({
+        terminalName: "x".repeat(128),
+        terminalVersion: "v[31m",
+      }),
+    );
+    perf.mark.mockImplementationOnce(() => {
+      throw new Error("diagnostic writer failure");
+    });
+    renderer.width = 81;
+    expect(() => renderer.emit("capabilities")).not.toThrow();
+    (createRenderer.mock.calls.at(-1)![0].onDestroy as () => void)();
   });
 });
 

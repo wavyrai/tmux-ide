@@ -1,6 +1,6 @@
-import { createCliRenderer } from "@opentui/core";
+import { CliRenderEvents, createCliRenderer } from "@opentui/core";
 
-import { tuiPerfMark } from "./application-performance-log.ts";
+import { tuiPerfMark, tuiPerfStream } from "./application-performance-log.ts";
 import { createRendererOutputTransport } from "./renderer-output-transport.ts";
 import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 
@@ -31,10 +31,13 @@ export async function createApplicationRootRenderer(
   transport?.stdout.on("error", failOutput);
   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
   let resize = () => {};
+  let removeCapabilityObserver: (() => void) | undefined;
   const preserveCaptureDump = ["true", "1", "on", "yes"].includes(
     (process.env.OTUI_DUMP_CAPTURES ?? "").toLowerCase(),
   );
   const disposeOutput = () => {
+    removeCapabilityObserver?.();
+    removeCapabilityObserver = undefined;
     clearTimeout(resizeTimer);
     transport?.stdout.off("resize", resize);
     transport?.stdout.off("error", failOutput);
@@ -75,6 +78,41 @@ export async function createApplicationRootRenderer(
     throw error;
   }
   const activeRenderer = renderer;
+  if (tuiPerfStream) {
+    let previous: string | undefined;
+    const boundedLabel = (value: string | undefined) =>
+      value === undefined ? null : value.slice(0, 128).replace(/[^\x20-\x7e]/gu, "");
+    const observeCapabilities = () => {
+      // Detected protocol support is host evidence, not proof of presentation.
+      // This opt-in observer never reads terminal contents or environment labels.
+      try {
+        const capabilities = activeRenderer.capabilities;
+        const details = {
+          capabilitiesAvailable: capabilities !== null,
+          sync: capabilities?.sync ?? null,
+          explicit_width: capabilities?.explicit_width ?? null,
+          sgr_pixels: capabilities?.sgr_pixels ?? null,
+          multiplexer: boundedLabel(capabilities?.multiplexer),
+          terminalName: boundedLabel(capabilities?.terminal?.name),
+          terminalVersion: boundedLabel(capabilities?.terminal?.version),
+          cols: activeRenderer.width,
+          rows: activeRenderer.height,
+          targetFps: activeRenderer.targetFps,
+          maxFps: activeRenderer.maxFps,
+        };
+        const key = JSON.stringify(details);
+        if (key === previous) return;
+        previous = key;
+        tuiPerfMark("renderer-host-capabilities", details);
+      } catch {
+        // Diagnostics cannot interrupt renderer startup or capability detection.
+      }
+    };
+    activeRenderer.on(CliRenderEvents.CAPABILITIES, observeCapabilities);
+    removeCapabilityObserver = () =>
+      activeRenderer.off(CliRenderEvents.CAPABILITIES, observeCapabilities);
+    observeCapabilities();
+  }
   if (transport) {
     resize = () => {
       clearTimeout(resizeTimer);

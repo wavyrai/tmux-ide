@@ -231,6 +231,19 @@ export function reflowTerminalPosition(
   origin: TerminalViewportOrigin,
   frozen = false,
 ): TerminalViewportOrigin | null {
+  // Native backing can arrive without replacing the immutable retained view.
+  // Its coordinates are already exact; avoid walking the entire history just
+  // to rediscover the same row (including the native cell-identity search).
+  if (
+    previous === next &&
+    Number.isInteger(origin.x) &&
+    origin.x >= 0 &&
+    origin.x < previous.cols &&
+    Number.isInteger(origin.y) &&
+    origin.y >= -previous.history.length &&
+    origin.y < previous.grid.length
+  )
+    return { ...origin };
   const beforeBacking = nativeBacking.get(previous);
   const afterBacking = nativeBacking.get(next);
   if (beforeBacking && afterBacking) {

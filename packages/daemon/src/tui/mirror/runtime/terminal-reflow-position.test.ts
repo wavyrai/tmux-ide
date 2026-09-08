@@ -219,6 +219,28 @@ describe("retained terminal cell reflow", () => {
     expect(original).toEqual(before);
   });
 
+  it("does not scan retained history when mapping within the identical snapshot", () => {
+    const original = snapshot(4, 0, [["ABCD", false]]);
+    let rowReads = 0;
+    const history = new Proxy(
+      Array.from({ length: 9000 }, () => original.grid[0]!),
+      {
+        get(target, property, receiver) {
+          if (typeof property === "string" && /^\d+$/.test(property)) rowReads++;
+          return Reflect.get(target, property, receiver);
+        },
+      },
+    );
+    const retained = { ...original, history };
+    // Late native backing admission can revise the view's backing identity
+    // without replacing this immutable snapshot or moving its reading anchor.
+    expect(reflowTerminalPosition(retained, retained, { x: 2, y: -5 }, true)).toEqual({
+      x: 2,
+      y: -5,
+    });
+    expect(rowReads).toBe(0);
+  });
+
   it("does not read history cell arrays when only height changes", () => {
     const original = snapshot(4, 0, [["ABCD", false]]);
     const historyRow = Object.freeze({
