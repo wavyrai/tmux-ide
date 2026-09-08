@@ -179,6 +179,8 @@ export interface ApplicationTerminalWorkspaceProps {
     readonly y: number;
     readonly gestureId: string | null;
   }) => ApplicationResizePointerIngress | null;
+  /** Optional bounded host diagnostics; contains no terminal content. */
+  readonly onWheelObservation?: (observation: Readonly<Record<string, unknown>>) => void;
   readonly onTerminalInput?: (
     paneId: string,
     input:
@@ -1105,13 +1107,31 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       return;
     }
     if (event.type === "scroll") {
-      if (event.scroll?.direction !== "up" && event.scroll?.direction !== "down") return;
       const hit = paneContentAt(point);
+      const before = props.onWheelObservation && hit ? scrollback.offset(hit.frame.paneId) : null;
+      const observe = (route: string): void => {
+        props.onWheelObservation?.({
+          paneId: hit?.frame.paneId ?? null,
+          direction: event.scroll?.direction ?? null,
+          delta: event.scroll?.delta ?? null,
+          shift: event.modifiers?.shift === true,
+          alt: event.modifiers?.alt === true,
+          ctrl: event.modifiers?.ctrl === true,
+          route,
+          offsetBefore: before,
+          offsetAfter: hit ? scrollback.offset(hit.frame.paneId) : null,
+        });
+      };
+      if (event.scroll?.direction !== "up" && event.scroll?.direction !== "down") {
+        observe("unsupported-direction");
+        return;
+      }
       const snapshot = hit ? props.adapter.paneSelectionSnapshot(hit.frame.paneId) : null;
       const lease = hit ? captureGestureLease(hit.frame.paneId, hit.frame) : null;
       const action = event.scroll?.direction === "up" ? "wheel-up" : "wheel-down";
       if (!hit || !snapshot) {
         wheelGesture.reset();
+        observe("missing-pane-or-snapshot");
         return;
       }
       const identity = props.adapter.renderSource.paneCanonicalIdentity?.(hit.frame.paneId);
@@ -1135,12 +1155,16 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         selectModePane() !== hit.frame.paneId &&
         retainedSelectionPane() !== hit.frame.paneId &&
         forwardMouse(lease, action, hit, undefined, event.modifiers, applicationIngress())
-      )
+      ) {
         event.stopPropagation?.();
-      else if (hit && snapshot) {
+        observe("application");
+      } else if (hit && snapshot) {
         wheelGesture.retainLocal();
         event.stopPropagation?.();
-        if (motion.lines === 0) return;
+        if (motion.lines === 0) {
+          observe("local-accumulating");
+          return;
+        }
         const keyboard = keyboardCopy();
         if (keyboard?.paneId === hit.frame.paneId) {
           const origin = scrollback.origin(hit.frame.paneId) ?? liveViewport(hit.frame.paneId);
@@ -1154,6 +1178,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           scrollback.seek(hit.frame.paneId, { ...origin, y: next.originY });
           setKeyboardCopy({ ...keyboard, cursor: next.cursor });
         } else scrollback.move(hit.frame.paneId, motion.lines);
+        observe("local-history");
         selecting = null;
         setSelection(null);
         setCommittedSelection(null);

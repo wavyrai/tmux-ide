@@ -471,6 +471,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onResizePreview={recoverHostFocus(interaction.previewPaneResize)}
               onResizePane={recoverHostFocus(interaction.resizePane)}
               onResizePointerIngress={recoverHostFocus.optional(resizeIngress)}
+              onWheelObservation={
+                tuiPerfStream
+                  ? (observation) => tuiPerfMark("terminal-wheel-route", observation)
+                  : undefined
+              }
               onTerminalInput={recoverHostFocus((paneId, input) =>
                 routeApplicationTerminalPointerInput(interaction, paneId, input),
               )}

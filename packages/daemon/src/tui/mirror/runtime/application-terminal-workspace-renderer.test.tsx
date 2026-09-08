@@ -1463,6 +1463,7 @@ it("shows the final row under stacked headers and scrolls locally without repain
       },
     ]),
   );
+  const observations: Readonly<Record<string, unknown>>[] = [];
   const paints: string[] = [];
   const source: PaneScopedTerminalAdapter = {
     ...adapter({}, []),
@@ -1511,6 +1512,7 @@ it("shows the final row under stacked headers and scrolls locally without repain
         focusedPane="a"
         theme={theme}
         palette={createTerminalPaletteProjection(theme)}
+        onWheelObservation={(event) => observations.push(event)}
         onSelectPane={() => {}}
         onSelectionKeyOwner={(handler) => {
           key = handler;
@@ -1523,8 +1525,23 @@ it("shows the final row under stacked headers and scrolls locally without repain
   expect(setup.captureCharFrame()).toContain("a-row-2");
   expect(setup.captureCharFrame()).toContain("b-row-2");
   paints.length = 0;
-  await setup.mockMouse.scroll(5, 3, "up");
+  await setup.mockMouse.scroll(5, 3, "up", { modifiers: { shift: true } });
   await setup.renderOnce();
+  expect(observations.at(-1)).toMatchObject({
+    direction: "up",
+    shift: true,
+    route: "local-history",
+    offsetBefore: 0,
+    offsetAfter: 5,
+  });
+  await setup.mockMouse.scroll(5, 3, "right", { modifiers: { shift: true } });
+  expect(observations.at(-1)).toMatchObject({
+    direction: "right",
+    shift: true,
+    route: "unsupported-direction",
+    offsetBefore: 5,
+    offsetAfter: 5,
+  });
   expect(setup.captureCharFrame()).toContain("history-15");
   expect(setup.captureCharFrame()).toContain("Scrollback");
   expect(paints).not.toContain("b");
