@@ -123,6 +123,71 @@ describe("terminal replica reducer", () => {
     ).toBe("conflict");
   });
 
+  it("reuses internally validated row identities without weakening replay or geometry checks", () => {
+    const initial = blankTerminalReplicaSnapshot(2, 2);
+    const row = {
+      wrapped: false,
+      cells: initial.grid[0]!.cells.map((cell) => ({ ...cell, grapheme: "x" })),
+    };
+    const next = applyTerminalReplicaPatch(initial, { rows: [{ index: 0, row }] });
+    const update = patch(initial, { rows: [{ index: 0, row: next.grid[0]! }] });
+    const boot = applyTerminalReplicaUpdate(null, seed(initial));
+    let profile: unknown;
+    const applied = applyTerminalReplicaUpdate(boot.state, update, {
+      instrumentation: {
+        nowMicros: () => 0,
+        onComplete: (value) => {
+          profile = value;
+        },
+      },
+    });
+    expect(applied.status).toBe("applied");
+    expect(applied.state?.snapshot?.grid[0]).toBe(next.grid[0]);
+    expect(applied.state?.hash).toBe(hashTerminalReplicaSnapshot(next));
+    expect(profile).toMatchObject({
+      counts: { patchedRows: 1, validatedCells: 0, frozenCells: 0, rowHashMisses: 0 },
+    });
+    expect(applyTerminalReplicaUpdate(applied.state, update).status).toBe("idempotent");
+    expect(() =>
+      applyTerminalReplicaPatch(initial, {
+        dimensions: { cols: 1, rows: 2 },
+        rows: [{ index: 0, row: next.grid[0]! }],
+      }),
+    ).toThrow();
+    expect(() =>
+      applyTerminalReplicaPatch(initial, { rows: [{ index: 2, row: next.grid[0]! }] }),
+    ).toThrow();
+    expect(() =>
+      applyTerminalReplicaPatch(initial, {
+        rows: [
+          { index: 0, row: next.grid[0]! },
+          { index: 0, row: next.grid[0]! },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it("does not trust external frozen rows, including malformed wide cells", () => {
+    const initial = blankTerminalReplicaSnapshot(2, 2);
+    const external = {
+      wrapped: false,
+      cells: initial.grid[0]!.cells.map((cell) => Object.freeze({ ...cell, grapheme: "z" })),
+    };
+    Object.freeze(external.cells);
+    Object.freeze(external);
+    const next = applyTerminalReplicaPatch(initial, { rows: [{ index: 0, row: external }] });
+    expect(next.grid[0]).not.toBe(external);
+    const malformed = {
+      wrapped: false,
+      cells: external.cells.map((cell) => Object.freeze({ ...cell, width: 0 as const })),
+    };
+    Object.freeze(malformed.cells);
+    Object.freeze(malformed);
+    expect(() =>
+      applyTerminalReplicaPatch(initial, { rows: [{ index: 0, row: malformed }] }),
+    ).toThrow("Malformed terminal replica row");
+  });
+
   it("keeps reducer semantics independent from absent or throwing profiling", () => {
     const initial = blankTerminalReplicaSnapshot(2, 2);
     const boot = applyTerminalReplicaUpdate(null, seed(initial));

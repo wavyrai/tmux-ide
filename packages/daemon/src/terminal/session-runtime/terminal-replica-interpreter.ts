@@ -565,7 +565,8 @@ export class TerminalReplicaInterpreter {
         ...(next.cols !== previous.cols || next.rows !== previous.rows
           ? { dimensions: { cols: next.cols, rows: next.rows } }
           : {}),
-        rows: dirtyRows,
+        // Publish the validated row identities whose hashes were just computed.
+        rows: dirtyRows.map(({ index }) => ({ index, row: next.grid[index]! })),
         ...(historyChanged ? (historyDelta ? { historyDelta } : { history: next.history }) : {}),
         cursor: next.cursor,
         modes: next.modes,

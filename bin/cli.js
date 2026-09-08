@@ -32748,6 +32748,7 @@ function freezeRow(row) {
   });
 }
 function validateAndFreezeRow(row, profile) {
+  if (VALIDATED_PATCH_ROWS.has(row)) return row;
   const cells = new Array(row.cells.length);
   for (let index = 0; index < row.cells.length; index += 1) {
     const cell = row.cells[index];
@@ -32763,10 +32764,12 @@ function validateAndFreezeRow(row, profile) {
     });
     if (profile) profile.counts.frozenCells += 1;
   }
-  return Object.freeze({
+  const frozen = Object.freeze({
     wrapped: row.wrapped,
     cells: Object.freeze(cells)
   });
+  VALIDATED_PATCH_ROWS.add(frozen);
+  return frozen;
 }
 function freezeTerminalReplicaRow(row) {
   if (!terminalReplicaRowIsValid(row)) throw new TypeError("Malformed terminal replica row");
@@ -32945,12 +32948,13 @@ function terminalReplicaRowIsValid(row) {
   }
   return true;
 }
-var DEFAULT_COLOR, ROW_ARRAY_HASH_CACHE, ROW_SEQUENCE_BASE;
+var VALIDATED_PATCH_ROWS, DEFAULT_COLOR, ROW_ARRAY_HASH_CACHE, ROW_SEQUENCE_BASE;
 var init_terminal_replica2 = __esm({
   "packages/core/src/terminal-replica.ts"() {
     "use strict";
     init_terminal_compact_capability();
     init_terminal_replica_hash_cache();
+    VALIDATED_PATCH_ROWS = /* @__PURE__ */ new WeakSet();
     DEFAULT_COLOR = Object.freeze({ kind: "default" });
     ROW_ARRAY_HASH_CACHE = /* @__PURE__ */ new WeakMap();
     ROW_SEQUENCE_BASE = 0x100000001b3n;
@@ -55449,7 +55453,8 @@ var init_terminal_replica_interpreter = __esm({
           hashAlgorithm: "fnv1a64-v1",
           patch: {
             ...next.cols !== previous.cols || next.rows !== previous.rows ? { dimensions: { cols: next.cols, rows: next.rows } } : {},
-            rows: dirtyRows,
+            // Publish the validated row identities whose hashes were just computed.
+            rows: dirtyRows.map(({ index }) => ({ index, row: next.grid[index] })),
             ...historyChanged ? historyDelta ? { historyDelta } : { history: next.history } : {},
             cursor: next.cursor,
             modes: next.modes,

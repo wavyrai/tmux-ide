@@ -16,6 +16,10 @@ import {
   isTerminalReplicaRowDeeplyFrozen,
 } from "./terminal-replica-hash-cache.ts";
 
+// Only rows validated and copied by this module can bypass a repeated copy.
+// External Object.freeze calls do not establish this provenance.
+const VALIDATED_PATCH_ROWS = new WeakSet<TerminalReplicaRow>();
+
 const DEFAULT_COLOR = Object.freeze({ kind: "default" } as const);
 const ROW_ARRAY_HASH_CACHE = new WeakMap<
   object,
@@ -652,6 +656,7 @@ function validateAndFreezeRow(
   row: TerminalReplicaRow,
   profile?: MutableTerminalReplicaApplyProfile,
 ): TerminalReplicaRow {
+  if (VALIDATED_PATCH_ROWS.has(row)) return row;
   const cells = new Array(row.cells.length);
   for (let index = 0; index < row.cells.length; index += 1) {
     const cell = row.cells[index]!;
@@ -667,10 +672,12 @@ function validateAndFreezeRow(
     });
     if (profile) profile.counts.frozenCells += 1;
   }
-  return Object.freeze({
+  const frozen = Object.freeze({
     wrapped: row.wrapped,
     cells: Object.freeze(cells),
   }) as unknown as TerminalReplicaRow;
+  VALIDATED_PATCH_ROWS.add(frozen);
+  return frozen;
 }
 
 export function freezeTerminalReplicaRow(row: TerminalReplicaRow): TerminalReplicaRow {

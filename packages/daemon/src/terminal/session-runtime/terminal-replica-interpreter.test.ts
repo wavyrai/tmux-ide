@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { widgetMarkerAnnouncement, type CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
 import type { CausalCellProbeV1 } from "@tmux-ide/contracts";
-import { hashTerminalReplicaSnapshot, TERMINAL_CONFORMANCE_FIXTURES } from "@tmux-ide/core";
+import {
+  applyTerminalReplicaUpdate,
+  hashTerminalReplicaSnapshot,
+  TERMINAL_CONFORMANCE_FIXTURES,
+} from "@tmux-ide/core";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
 import type {
   TerminalInterpreterBackend,
@@ -26,6 +30,39 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it("publishes the validated snapshot rows for downstream reducer reuse", async () => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const interpreter = create(updates);
+    try {
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("A") });
+      let state = applyTerminalReplicaUpdate(null, updates.at(-1)!).state;
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("B") });
+      const update = updates.at(-1)!;
+      expect(update.type).toBe("terminal.patch");
+      if (update.type !== "terminal.patch") throw new Error("expected patch");
+      for (const change of update.patch.rows)
+        expect(change.row).toBe(interpreter.currentSnapshot().grid[change.index]);
+      let profile: unknown;
+      const applied = applyTerminalReplicaUpdate(state, update, {
+        instrumentation: {
+          nowMicros: () => 0,
+          onComplete: (value) => {
+            profile = value;
+          },
+        },
+      });
+      state = applied.state;
+      expect(applied.status).toBe("applied");
+      expect(state?.hash).toBe(hashTerminalReplicaSnapshot(interpreter.currentSnapshot()));
+      expect(profile).toMatchObject({
+        counts: { validatedCells: 0, frozenCells: 0, rowHashMisses: 0 },
+      });
+      expect(applyTerminalReplicaUpdate(state, update).status).toBe("idempotent");
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
   it.each([false, true])(
     "holds unknown shell output until a native replacement (same-batch reentry: %s)",
     async (reenter) => {
