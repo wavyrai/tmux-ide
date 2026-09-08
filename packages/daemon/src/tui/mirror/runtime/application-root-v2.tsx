@@ -35,12 +35,14 @@ import {
 import { resolveApplicationHostFocusControlCapability } from "./application-host-focus-control-capability.ts";
 import { createApplicationHostFocusControlBindingObserver } from "./application-host-focus-control-binding.ts";
 import {
+  markGenerationStatus,
   markTerminalHostFocusBinding,
   markTerminalHostFocusControlGate,
   tuiPerfCriticalMark,
   tuiPerfDiagnostics,
   tuiPerfMark,
   tuiPerfStream,
+  tuiPerfWheelObservation,
 } from "./application-performance-log.ts";
 import { installApplicationPostRenderRuntime } from "./application-post-render-runtime.ts";
 import { createOpenTuiHostLocalTmuxAdapter } from "./host-local-tmux-adapter.ts";
@@ -194,11 +196,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               snapshot?.status === "live" ? snapshot.authorityClient : null;
             terminalHostFocus.adopt(nextAuthorityClient);
             hostFocusBindingObserver.adopt(snapshot);
-            if (snapshot)
-              tuiPerfMark("generation-status", {
-                status: snapshot.status,
-                daemonGeneration: snapshot.daemonGeneration,
-              });
+            markGenerationStatus(snapshot);
             inputReadiness.adopt(snapshot);
           },
         });
@@ -471,11 +469,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onResizePreview={recoverHostFocus(interaction.previewPaneResize)}
               onResizePane={recoverHostFocus(interaction.resizePane)}
               onResizePointerIngress={recoverHostFocus.optional(resizeIngress)}
-              onWheelObservation={
-                tuiPerfStream
-                  ? (observation) => tuiPerfMark("terminal-wheel-route", observation)
-                  : undefined
-              }
+              onWheelObservation={tuiPerfWheelObservation}
               onTerminalInput={recoverHostFocus((paneId, input) =>
                 routeApplicationTerminalPointerInput(interaction, paneId, input),
               )}

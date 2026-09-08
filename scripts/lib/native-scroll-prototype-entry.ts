@@ -5,7 +5,6 @@ import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import library from "tmux-ide:experimental-scroll-library" with { type: "file" };
-import { registerNativeScrollHint } from "../../packages/daemon/src/tui/mirror/runtime/native-scroll-hints.ts";
 
 // Both FFI bindings must share one native handle registry. Bun can materialize
 // an embedded library separately for each dlopen; use one real path instead.
@@ -22,6 +21,8 @@ const native = dlopen(nativePath, {
     returns: "bool",
   },
 });
+const { registerNativeScrollHint } =
+  await import("../../packages/daemon/src/tui/mirror/pane-surface.tsx");
 const observedSupport = new WeakMap<object, boolean>();
 registerNativeScrollHint((ctx, x, y, width, height) => {
   if (typeof ctx.rendererPtr !== "number" || typeof ctx.frameId !== "number") return;

@@ -1,5 +1,5 @@
 /* @jsxImportSource @opentui/solid */
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { useTerminalDimensions } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ } from "@tmux-ide/contracts";
@@ -13,13 +13,14 @@ import {
 } from "@tmux-ide/core";
 import type { BlitOptions } from "./pane-mirror.ts";
 import { installTuiPerformanceEventSink } from "./performance-events.ts";
-import { registerNativeScrollHint } from "./runtime/native-scroll-hints.ts";
 import {
   PaneSurfaceRenderable,
   createPaneSurfaceHostFocusTransitionOwner,
   projectPaneFramebufferCells,
   qualifiesPaneSurfaceHostFocusFrame,
   registerPaneSurface,
+  queueNativeScrollHint,
+  registerNativeScrollHint,
   type PaneSurfaceOptions,
   type TerminalPaneRenderSource,
 } from "./pane-surface.tsx";
@@ -954,4 +955,37 @@ it("repaints a smaller client's viewport when a cursor-only update crosses its b
   } finally {
     uninstall();
   }
+});
+
+describe("native scroll hints", () => {
+  it("is optional and forwards the renderer context and content bounds unchanged", () => {
+    const context = { rendererPtr: 12, frameId: 42 };
+    expect(() => queueNativeScrollHint(context, 4, 2, 80, 24)).not.toThrow();
+    const handler = mock();
+    const dispose = registerNativeScrollHint(handler);
+    try {
+      queueNativeScrollHint(context, 4, 2, 80, 24);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith(context, 4, 2, 80, 24);
+      expect(handler.mock.calls[0][0]).toBe(context);
+      dispose();
+      queueNativeScrollHint(context, 4, 2, 80, 24);
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not let stale disposal remove a newer registration of the same handler", () => {
+    const handler = mock();
+    const oldDispose = registerNativeScrollHint(handler);
+    const dispose = registerNativeScrollHint(handler);
+    try {
+      oldDispose();
+      queueNativeScrollHint({}, 0, 0, 1, 1);
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
 });

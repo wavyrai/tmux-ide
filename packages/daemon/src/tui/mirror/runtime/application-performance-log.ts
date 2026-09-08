@@ -50,6 +50,22 @@ export function tuiPerfMark(phase: string, details?: Readonly<Record<string, unk
   if (record) writer?.write(record);
 }
 
+/** Optional stable callback keeps wheel diagnostics absent from the disabled path. */
+export const tuiPerfWheelObservation = stream
+  ? (observation: Readonly<Record<string, unknown>>): void =>
+      tuiPerfMark("terminal-wheel-route", observation)
+  : undefined;
+
+export function markGenerationStatus(
+  snapshot: { readonly status: string; readonly daemonGeneration: string | null } | null,
+): void {
+  if (snapshot)
+    tuiPerfMark("generation-status", {
+      status: snapshot.status,
+      daemonGeneration: snapshot.daemonGeneration,
+    });
+}
+
 export function tuiPerfCriticalMark(
   key: string,
   phase: string,
