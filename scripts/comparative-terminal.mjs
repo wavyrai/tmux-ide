@@ -213,8 +213,10 @@ export async function runTarget(target, options, directory) {
             return false;
           }
         }, "exact owned daemon readiness");
-        binary = process.execPath;
-        args = [options.binaries.cli, "app", session];
+        // Own the actual renderer PID. The CLI can spawn a compiled TUI child;
+        // observing launcher exit alone does not prove that client was retired.
+        binary = options.binaries.tui;
+        args = ["app", `--target=${session}`];
       }
     }
     report.provisionedMs = nowMs() - start;
