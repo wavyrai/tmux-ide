@@ -2,7 +2,7 @@
 import { paneInteractionPresence, type PaneInteractionProjection } from "@tmux-ide/core";
 import { Badge } from "../ui/badge.tsx";
 import type { AgentActivity } from "@tmux-ide/contracts";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
@@ -103,6 +103,13 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
       safeWidth() - markerGutterWidth() - markerWidth() - actionWidth() - zoomWidth() - 4;
     if (!presence() || available < presence()!.badge.length + 2) return 0;
     return Math.min(available, terminalDisplayWidth(activityLabel()) + 2);
+  };
+  // Capture one non-null presence for each badge lifetime. A retiring child's
+  // queued style effect must not dereference the parent's now-expired receipt.
+  const activityBadge = () => {
+    const current = presence();
+    const width = activityWidth();
+    return current && width > 0 ? { presence: current, width, label: activityLabel() } : null;
   };
   // Keep the state glyph out of the first two inline cells. OpenTUI can repaint
   // those cells from the clipped parent during nested workspace composition.
@@ -247,22 +254,24 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
           {clipTerminal(zoomLabel(), zoomWidth())}
         </text>
       ) : null}
-      {activityWidth() > 0 ? (
-        <Badge
-          theme={props.theme}
-          label={activityLabel()}
-          width={activityWidth()}
-          tone={
-            presence()!.tone === "danger"
-              ? "destructive"
-              : presence()!.tone === "info"
-                ? "accent"
-                : "done"
-          }
-          selected={props.selected}
-          focused={props.keyboardFocused || props.terminalFocused}
-        />
-      ) : null}
+      <Show when={activityBadge()} keyed>
+        {(activity) => (
+          <Badge
+            theme={props.theme}
+            label={activity.label}
+            width={activity.width}
+            tone={
+              activity.presence.tone === "danger"
+                ? "destructive"
+                : activity.presence.tone === "info"
+                  ? "accent"
+                  : "done"
+            }
+            selected={props.selected}
+            focused={props.keyboardFocused || props.terminalFocused}
+          />
+        )}
+      </Show>
       {showBadge() ? (
         <AgentBadge
           theme={props.theme}

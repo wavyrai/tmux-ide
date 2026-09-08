@@ -31,6 +31,9 @@ export async function createApplicationRootRenderer(
   transport?.stdout.on("error", failOutput);
   let resizeTimer: ReturnType<typeof setTimeout> | undefined;
   let resize = () => {};
+  const preserveCaptureDump = ["true", "1", "on", "yes"].includes(
+    (process.env.OTUI_DUMP_CAPTURES ?? "").toLowerCase(),
+  );
   const disposeOutput = () => {
     clearTimeout(resizeTimer);
     transport?.stdout.off("resize", resize);
@@ -39,7 +42,13 @@ export async function createApplicationRootRenderer(
   };
   try {
     renderer = await createCliRenderer({
-      ...(transport ? { stdout: transport.stdout, remote: false, onDestroy: disposeOutput } : {}),
+      ...(transport ? { stdout: transport.stdout, remote: false } : {}),
+      onDestroy: () => {
+        disposeOutput();
+        // Release captured Error arguments after the UI closes, unless the
+        // user explicitly requested OpenTUI's post-exit diagnostic dump.
+        if (!preserveCaptureDump) renderer?.console?.clear();
+      },
       exitOnCtrlC: false,
       autoFocus: false,
       // Explicitly forward the JS-side default (and user overrides) to the
@@ -47,8 +56,15 @@ export async function createApplicationRootRenderer(
       forwardEnvKeys: ["OPENTUI_FORCE_EXPLICIT_WIDTH"],
       ...TUI_RENDERER_CADENCE,
       useKittyKeyboard: kittyKeys ? {} : null,
-      consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
-      openConsoleOnError: Boolean(process.env.TMUX_IDE_MIRROR_DEBUG),
+      // Uncaught/render errors must go through OpenTUI's framed overlay.
+      // Disabling capture lets Bun print source excerpts over the live TUI.
+      consoleMode: "console-overlay",
+      openConsoleOnError: true,
+      consoleOptions: {
+        title: "tmux-ide diagnostics",
+        maxStoredLogs: 100,
+        maxDisplayLines: 500,
+      },
     });
     if (outputError) {
       renderer.destroy();

@@ -13,6 +13,7 @@ import { createApplicationRootRenderer } from "./application-root-renderer.ts";
 
 beforeEach(() => {
   vi.stubEnv("TMUX_IDE_FRAME_OUTPUT", undefined);
+  vi.stubEnv("OTUI_DUMP_CAPTURES", undefined);
 });
 
 afterEach(() => {
@@ -47,6 +48,45 @@ describe("root renderer host capabilities", () => {
     await createApplicationRootRenderer(false);
     expect(process.env.OPENTUI_FORCE_EXPLICIT_WIDTH).toBe(value);
   });
+});
+
+describe("root renderer diagnostic containment", () => {
+  it.each([undefined, "1"])("contains errors in a bounded overlay with debug=%s", async (debug) => {
+    vi.stubEnv("TMUX_IDE_MIRROR_DEBUG", debug);
+    await createApplicationRootRenderer(false);
+    expect(createRenderer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        consoleMode: "console-overlay",
+        openConsoleOnError: true,
+        consoleOptions: {
+          title: "tmux-ide diagnostics",
+          maxStoredLogs: 100,
+          maxDisplayLines: 500,
+        },
+      }),
+    );
+  });
+
+  it("releases captured Error references when the renderer is destroyed", async () => {
+    const clear = vi.fn();
+    createRenderer.mockResolvedValueOnce({ console: { clear } });
+    await createApplicationRootRenderer(false);
+    expect(clear).not.toHaveBeenCalled();
+    (createRenderer.mock.calls.at(-1)![0].onDestroy as () => void)();
+    expect(clear).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it.each(["1", "TRUE", "on", "yes"])(
+    "preserves the explicit post-exit capture dump (%s)",
+    async (value) => {
+      vi.stubEnv("OTUI_DUMP_CAPTURES", value);
+      const clear = vi.fn();
+      createRenderer.mockResolvedValueOnce({ console: { clear } });
+      await createApplicationRootRenderer(false);
+      (createRenderer.mock.calls.at(-1)![0].onDestroy as () => void)();
+      expect(clear).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("root renderer frame-output experiment", () => {
