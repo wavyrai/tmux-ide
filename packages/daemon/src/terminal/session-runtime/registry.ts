@@ -2036,6 +2036,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     let closed = false;
     const connection: TerminalDeliveryConnection = {
       negotiation: upstream.negotiation,
+      closed: upstream.closed,
       ack: (ack: TerminalDeliveryAck) => upstream.ack(ack),
       nack: (nack: TerminalDeliveryNack) => upstream.nack(nack),
       setVisibility: (visibility: TerminalDeliveryVisibility) => upstream.setVisibility(visibility),

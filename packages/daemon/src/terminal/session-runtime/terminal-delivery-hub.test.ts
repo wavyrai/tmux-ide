@@ -813,6 +813,78 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     await hub.close();
   });
 
+  it("reports a stalled sink retirement while a healthy sibling keeps advancing", async () => {
+    const owner = new FakeOwner();
+    const timers = new Set<() => void>();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
+      scheduler: {
+        nowMs: () => 0,
+        createId: () => crypto.randomUUID(),
+        microtask: queueMicrotask,
+        timer: (callback) => {
+          timers.add(callback);
+          return {
+            cancel: () => {
+              timers.delete(callback);
+            },
+          };
+        },
+      },
+    });
+    const slowMessages: TerminalDeliveryServerMessage[] = [];
+    const fastMessages: TerminalDeliveryServerMessage[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const offer = {
+      protocolVersions: [1] as const,
+      encodings: ["semantic-v1"] as const,
+      richPlacements: false,
+    };
+    const slow = await hub.open("slow-timeout", "pane-a", offer, (message) => {
+      slowMessages.push(message);
+      return blocked;
+    });
+    const fast = await hub.open("fast", "pane-a", offer, (message) => {
+      fastMessages.push(message);
+    });
+    let retirement: string | undefined;
+    void slow.closed?.then((reason) => {
+      retirement = reason;
+    });
+    owner.emit(seed());
+    await settle();
+    fast.ack(ack(fastMessages[0] as TerminalDeliveryEnvelope));
+    await settle();
+    expect(timers.size).toBe(1);
+    for (const callback of [...timers]) callback();
+    await settle();
+    expect(retirement).toBe("sink-failed");
+    expect(hub.metrics().clients).toBe(1);
+    expect(owner.closes).toBe(0);
+    release();
+    slow.ack(ack(slowMessages[0] as TerminalDeliveryEnvelope));
+    owner.emit(patch(1, 1));
+    await settle();
+    expect(slowMessages).toHaveLength(1);
+    const advanced = fastMessages.findLast(
+      (message) => message.type === "terminal.delivery",
+    ) as TerminalDeliveryEnvelope;
+    expect(advanced.canonicalRevision).toBe(1);
+    fast.ack(ack(advanced));
+    const reconnectMessages: TerminalDeliveryServerMessage[] = [];
+    const reconnect = await hub.open("slow-timeout", "pane-a", offer, (message) => {
+      reconnectMessages.push(message);
+    });
+    await settle();
+    expect(owner.subscriptions).toBe(1);
+    expect(reconnectMessages[0]).toMatchObject({ frame: "seed", canonicalRevision: 1 });
+    await reconnect.close();
+    await fast.close();
+    await hub.close();
+  });
+
   it("preempts a blocked representation with source close and tolerates its racing ACK", async () => {
     const owner = new FakeOwner();
     const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);

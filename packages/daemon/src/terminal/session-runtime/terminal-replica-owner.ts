@@ -189,6 +189,10 @@ export class SessionRuntimeTerminalReplicaOwner {
         if (this.#disposed) return subscription.close();
         this.#upstream = subscription;
       });
+    // Semantic delivery subscribes directly to this cached owner. A failed
+    // bootstrap must retire its rejected start promise through the same
+    // registry fault barrier as a parser failure, so the next open can retry.
+    this.#supervise(this.#start);
   }
 
   installOutputTraceReader(reader: () => SessionRuntimeTraceContext | null): void {

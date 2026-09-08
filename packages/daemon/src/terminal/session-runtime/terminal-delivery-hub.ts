@@ -94,6 +94,8 @@ export interface TerminalDeliveryConvergenceSnapshot {
 }
 
 export interface TerminalDeliveryConnection {
+  /** Local lifecycle notification; sink failure requires transport reconnection. */
+  readonly closed: Promise<"closed" | "sink-failed">;
   readonly negotiation: TerminalDeliveryNegotiationResult;
   ack(ack: TerminalDeliveryAck): void;
   nack(nack: TerminalDeliveryNack): void;
@@ -163,6 +165,7 @@ interface ClientState {
   scheduled: boolean;
   closed: boolean;
   lifecycleOpenRecorded: boolean;
+  readonly resolveClosed: (reason: "closed" | "sink-failed") => void;
   readonly outgoing: Array<() => TerminalDeliveryServerMessage>;
   sending: boolean;
   retireAfterDrain: boolean;
@@ -327,6 +330,10 @@ export class SessionRuntimeTerminalDeliveryHub {
     try {
       const pane = await this.#ensurePane(semanticPaneId);
       if (this.#closed) throw new Error("Terminal delivery hub is closed");
+      let resolveClosed!: (reason: "closed" | "sink-failed") => void;
+      const closed = new Promise<"closed" | "sink-failed">((resolve) => {
+        resolveClosed = resolve;
+      });
       const client: ClientState = {
         key,
         clientId,
@@ -346,6 +353,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         scheduled: false,
         closed: false,
         lifecycleOpenRecorded: false,
+        resolveClosed,
         outgoing: [],
         sending: false,
         retireAfterDrain: false,
@@ -359,6 +367,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       this.#recordDeliveryStatus(client, pane);
       return {
         negotiation,
+        closed,
         ack: (ack) => this.#ack(client, ack),
         nack: (nack) => this.#nack(client, nack),
         setVisibility: (visibilityInput) => {
@@ -1331,7 +1340,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         client.outgoing.length = 0;
         try {
           client.outgoing.length = 0;
-          await this.#closeClient(client);
+          await this.#closeClient(client, "sink-failed");
         } catch {
           // Closing a failed source is best effort and cannot escape this task.
         }
@@ -1342,9 +1351,13 @@ export class SessionRuntimeTerminalDeliveryHub {
     });
   }
 
-  async #closeClient(client: ClientState): Promise<void> {
+  async #closeClient(
+    client: ClientState,
+    reason: "closed" | "sink-failed" = "closed",
+  ): Promise<void> {
     if (client.closed) return;
     client.closed = true;
+    client.resolveClosed(reason);
     if (client.lifecycleOpenRecorded)
       this.#recordDeliveryLifecycle(client, this.#panes.get(client.paneId), "close");
     client.backgroundTimer?.cancel();
@@ -1820,6 +1833,7 @@ function rejectedConnection(
 ): TerminalDeliveryConnection {
   return {
     negotiation,
+    closed: Promise.resolve("closed"),
     ack: () => undefined,
     nack: () => undefined,
     setVisibility: () => undefined,
