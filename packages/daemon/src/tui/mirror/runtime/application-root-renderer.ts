@@ -8,6 +8,7 @@ import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 export async function createApplicationRootRenderer(
   kittyKeys: boolean,
   onOutputError?: (error: Error) => Promise<unknown> | undefined,
+  onDestroyed?: () => Promise<unknown> | undefined,
 ) {
   // tmux consumes OSC 66 instead of displaying its payload. Early echoed input
   // can make OpenTUI's cursor-position probe falsely detect explicit-width
@@ -19,6 +20,7 @@ export async function createApplicationRootRenderer(
   const transport =
     process.env.TMUX_IDE_FRAME_OUTPUT === "1" ? createRendererOutputTransport() : null;
   let renderer: Awaited<ReturnType<typeof createCliRenderer>> | undefined;
+  let destroyed = false;
   let outputError: Error | undefined;
   const failOutput = (error: Error) => {
     if (outputError) return;
@@ -47,10 +49,14 @@ export async function createApplicationRootRenderer(
     renderer = await createCliRenderer({
       ...(transport ? { stdout: transport.stdout, remote: false } : {}),
       onDestroy: () => {
+        destroyed = true;
         disposeOutput();
         // Release captured Error arguments after the UI closes, unless the
         // user explicitly requested OpenTUI's post-exit diagnostic dump.
         if (!preserveCaptureDump) renderer?.console?.clear();
+        // OpenTUI can destroy itself after a process signal. The application
+        // still owns sockets and pending work after terminal output is gone.
+        void onDestroyed?.()?.catch(() => undefined);
       },
       exitOnCtrlC: false,
       autoFocus: false,
@@ -73,6 +79,7 @@ export async function createApplicationRootRenderer(
       renderer.destroy();
       throw outputError;
     }
+    if (destroyed) throw new Error("tmux-ide: terminal renderer closed during startup");
   } catch (error) {
     disposeOutput();
     throw error;

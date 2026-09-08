@@ -88,7 +88,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
     parseArgs: parseApplicationArgs,
     loadConfig: loadApplicationConfig,
     async createRenderer({ config }) {
-      renderer = await createRootRenderer(config.app.app.kittyKeys, () => lifecycle?.shutdown());
+      renderer = await createRootRenderer(
+        config.app.app.kittyKeys,
+        () => lifecycle?.shutdown(),
+        () => lifecycle?.shutdown("host"),
+      );
       return renderer;
     },
     createLifecycle() {

@@ -21,6 +21,7 @@ vi.mock("@opentui/core", () => ({
   CliRenderEvents: { CAPABILITIES: "capabilities", FRAME: "frame" },
 }));
 import { createApplicationRootRenderer } from "./application-root-renderer.ts";
+import { TuiApplicationLifecycle } from "./application-lifecycle.ts";
 
 beforeEach(() => {
   perf.enabled = false;
@@ -417,5 +418,40 @@ describe("root renderer frame-output experiment", () => {
     expect(destroy).not.toHaveBeenCalled();
     onDestroy()();
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes application resources when OpenTUI destroys the renderer directly", async () => {
+    const { dispose } = setupTransport();
+    const closeSocket = vi.fn(async () => {});
+    const abortPending = vi.fn();
+    const destroy = vi.fn();
+    const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: destroy });
+    lifecycle.registerCloser("socket", closeSocket);
+    lifecycle.registerCleanup("pending-input", abortPending);
+    createRenderer.mockResolvedValueOnce({ destroy });
+    await createApplicationRootRenderer(false, undefined, () => lifecycle.shutdown("host"));
+
+    // This is OpenTUI's signal-driven callback, without a keyboard quit.
+    onDestroy()();
+    const report = await lifecycle.shutdown("keyboard");
+    expect(report.reason).toBe("host");
+    expect(lifecycle.signal.aborted).toBe(true);
+    expect(closeSocket).toHaveBeenCalledOnce();
+    expect(abortPending).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a renderer destroyed before the application lifecycle is installed", async () => {
+    const { stdout, dispose } = setupTransport();
+    createRenderer.mockImplementationOnce(async () => {
+      onDestroy()();
+      return { destroy: vi.fn() };
+    });
+    await expect(createApplicationRootRenderer(false, undefined, () => undefined)).rejects.toThrow(
+      "terminal renderer closed during startup",
+    );
+    expect(dispose).toHaveBeenCalled();
+    expect(stdout.listenerCount("resize")).toBe(0);
+    expect(stdout.listenerCount("error")).toBe(0);
   });
 });
