@@ -46,10 +46,10 @@ index f98069c..32060ce 100644
      const object_ptr = acquireRenderer(renderer_handle) orelse return @intFromEnum(renderer.RenderStatus.failed);
      return @intFromEnum(object_ptr.render(force));
 diff --git a/packages/core/src/zig/renderer.zig b/packages/core/src/zig/renderer.zig
-index d3fa5b4..5cfe029 100644
+index d3fa5b4..152c65a 100644
 --- a/packages/core/src/zig/renderer.zig
 +++ b/packages/core/src/zig/renderer.zig
-@@ -183,7 +183,16 @@ const SIXEL_CACHE_MAX_ENTRIES = 256;
+@@ -183,7 +183,17 @@ const SIXEL_CACHE_MAX_ENTRIES = 256;
  // cell backgrounds, so those payloads carry a background fingerprint. Byte and entry limits bound
  // payload and metadata retention. An empty payload is cached for fully transparent placements.
  
@@ -58,6 +58,7 @@ index d3fa5b4..5cfe029 100644
  pub const CliRenderer = struct {
 +    // Isolated prototype: full-width candidate, recomputed by caller each frame.
 +    scrollPrototypeAuto: bool = false,
++    asciiCursorContract: bool = false,
 +    scrollPrototype: ?struct { left: u32 = 0, right: ?u32 = null, top: u32, bottom: u32, delta: i32 } = null,
 +    scrollRects: [16]ScrollRect = undefined,
 +    scrollRectCount: usize = 0,
@@ -66,7 +67,7 @@ index d3fa5b4..5cfe029 100644
      width: u32,
      height: u32,
      currentRenderBuffer: *OptimizedBuffer,
-@@ -379,7 +388,13 @@ pub const CliRenderer = struct {
+@@ -379,7 +389,13 @@ pub const CliRenderer = struct {
          errdefer backend.deinit();
  
          const image_id_salt = 1 + @as(u32, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp())) ^ @as(u128, @intFromPtr(self)))) % (std.math.maxInt(u32) - gp.IMAGE_ID_MASK - 1);
@@ -80,7 +81,31 @@ index d3fa5b4..5cfe029 100644
              .width = width,
              .height = height,
              .currentRenderBuffer = currentBuffer,
-@@ -676,6 +691,9 @@ pub const CliRenderer = struct {
+@@ -501,8 +517,15 @@ pub const CliRenderer = struct {
+ 
+         writer.writeAll(ansi.ANSI.saveCursorState) catch {};
+ 
++        self.asciiCursorContract = false;
+         if (useAlternateScreen) {
+             self.terminal.enterAltScreen(writer) catch {};
++            if (self.scrollPrototypeAuto and self.renderOffset == 0) {
++                // The prototype owns a full-screen surface, including on resume.
++                // Reset inherited origin and horizontal/vertical scroll margins.
++                writer.writeAll("\x1b[?6l\x1b[?69l\x1b[r") catch {};
++                self.asciiCursorContract = true;
++            }
+         } else if (reserve_non_alt_surface) {
+             ansi.ANSI.makeRoomForRendererOutput(writer, @max(self.height, 1)) catch {};
+         }
+@@ -516,6 +539,7 @@ pub const CliRenderer = struct {
+ 
+     pub fn suspendRenderer(self: *CliRenderer) void {
+         if (!self.terminalSetup) return;
++        self.asciiCursorContract = false;
+         self.performShutdownSequence();
+     }
+ 
+@@ -676,6 +700,9 @@ pub const CliRenderer = struct {
      }
  
      pub fn resize(self: *CliRenderer, width: u32, height: u32) !void {
@@ -90,7 +115,7 @@ index d3fa5b4..5cfe029 100644
          if (self.width == width and self.height == height) return;
  
          self.width = width;
-@@ -842,6 +860,9 @@ pub const CliRenderer = struct {
+@@ -842,6 +869,9 @@ pub const CliRenderer = struct {
      }
  
      fn clearSkippedFrameState(self: *CliRenderer) void {
@@ -100,7 +125,7 @@ index d3fa5b4..5cfe029 100644
          self.nextRenderBuffer.clear(self.backgroundColor, null);
          @memset(self.nextHitGrid, 0);
      }
-@@ -853,6 +874,8 @@ pub const CliRenderer = struct {
+@@ -853,6 +883,8 @@ pub const CliRenderer = struct {
      }
  
      fn finishFailedFrame(self: *CliRenderer) RenderStatus {
@@ -109,7 +134,7 @@ index d3fa5b4..5cfe029 100644
          self.pendingImages.clearRetainingCapacity();
          @memset(self.nextHitGrid, 0);
          self.force_full_repaint = true;
-@@ -2281,6 +2304,164 @@ pub const CliRenderer = struct {
+@@ -2281,6 +2313,164 @@ pub const CliRenderer = struct {
          }
      }
  
@@ -274,7 +299,7 @@ index d3fa5b4..5cfe029 100644
      /// Generic over the writer type so each backend can provide its own writer
      /// (buffered frame append or feed streaming) without dispatch in the render path.
      /// `sync_started` is true only when the caller already opened the
-@@ -2330,6 +2511,28 @@ pub const CliRenderer = struct {
+@@ -2330,6 +2520,28 @@ pub const CliRenderer = struct {
              };
          }
  
@@ -303,7 +328,7 @@ index d3fa5b4..5cfe029 100644
          var currentFg: ?RGBA = null;
          var currentBg: ?RGBA = null;
          var currentAttributes: ?u32 = null;
-@@ -2354,7 +2557,11 @@ pub const CliRenderer = struct {
+@@ -2354,7 +2566,11 @@ pub const CliRenderer = struct {
          for (0..self.height) |uy| {
              const y = @as(u32, @intCast(uy));
  
@@ -316,7 +341,15 @@ index d3fa5b4..5cfe029 100644
                  const row_start = @as(usize, y) * self.width;
                  const row_end = row_start + self.width;
                  if (std.mem.eql(u32, self.currentRenderBuffer.buffer.char[row_start..row_end], self.nextRenderBuffer.buffer.char[row_start..row_end]) and
-@@ -2369,6 +2576,10 @@ pub const CliRenderer = struct {
+@@ -2363,12 +2579,18 @@ pub const CliRenderer = struct {
+                     std.mem.eql(u32, self.currentRenderBuffer.buffer.attributes[row_start..row_end], self.nextRenderBuffer.buffer.attributes[row_start..row_end])) continue;
+             }
+ 
++            const ascii_cursor_enabled = self.scrollPrototypeAuto and self.asciiCursorContract and self.useAlternateScreen and self.renderOffset == 0 and !has_image_state;
++            var known_output_x: ?u32 = null;
+             var runStart: i64 = -1;
+             var runLength: u32 = 0;
+             const cells_updated_before_row = cellsUpdated;
  
              for (0..self.width) |ux| {
                  const x = @as(u32, @intCast(ux));
@@ -327,15 +360,80 @@ index d3fa5b4..5cfe029 100644
                  const currentCell = self.currentRenderBuffer.get(x, y);
                  const nextCell = self.nextRenderBuffer.get(x, y);
  
-@@ -2382,7 +2593,7 @@ pub const CliRenderer = struct {
+@@ -2382,7 +2604,8 @@ pub const CliRenderer = struct {
                          buf.rgbaEqual(currentCell.?.fg, cell.fg) and buf.rgbaEqual(currentCell.?.bg, cell.bg);
                      // Identical reserved cells still repaint when their
                      // placement's pixels are dirty (e.g. Sixel content change).
 -                    if (cellsEqual and !(clears_pending and cell_type == gp.CHAR_FLAG_IMAGE and dirtyImageChar(image_dirty_items, cell.char))) {
 +                    if (!cell_force and cellsEqual and !(clears_pending and cell_type == gp.CHAR_FLAG_IMAGE and dirtyImageChar(image_dirty_items, cell.char))) {
++                        known_output_x = null;
                          if (runLength > 0) {
                              writer.writeAll(ansi.ANSI.reset) catch {};
                              runStart = -1;
+@@ -2398,11 +2621,13 @@ pub const CliRenderer = struct {
+                 // Fallback placements materialize as ordinary cells and fall
+                 // through to normal diffing.
+                 if (cell_type == gp.CHAR_FLAG_IMAGE) blk: {
++                    known_output_x = null;
+                     const id = gp.imageIdFromChar(cell.char);
+                     if (id == 0 or id > image_dirty_items.len) break :blk;
+                     const state = &image_dirty_items[id - 1];
+                     if (state.protocol == .fallback) break :blk;
+                     if (!should_force and !state.clear and gp.isImageChar(currentCell.?.char)) {
++                        known_output_x = null;
+                         if (runLength > 0) {
+                             writer.writeAll(ansi.ANSI.reset) catch {};
+                             runStart = -1;
+@@ -2444,6 +2669,7 @@ pub const CliRenderer = struct {
+                 const linkId = if (hyperlinksEnabled) ansi.TextAttributes.getLinkId(cell.attributes) else 0;
+ 
+                 if (hyperlinksEnabled and linkId != currentLinkId) {
++                    known_output_x = null;
+                     if (currentLinkId != 0) {
+                         writer.writeAll("\x1b]8;;\x1b\\") catch {};
+                     }
+@@ -2459,8 +2685,15 @@ pub const CliRenderer = struct {
+                     }
+                 }
+ 
+-                if (!sameAttributes or runStart == -1) {
+-                    if (runLength > 0) {
++                const color_only_change = ascii_cursor_enabled and known_output_x != null and known_output_x.? == x and runStart != -1 and runLength > 0 and currentAttributes != null and currentAttributes.? == cell.attributes and (!fgMatch or !bgMatch);
++                if (color_only_change) {
++                    if (!fgMatch) self.emitColor(writer, cell.fg, false);
++                    if (!bgMatch) self.emitColor(writer, cell.bg, true);
++                    currentFg = cell.fg;
++                    currentBg = cell.bg;
++                } else if (!sameAttributes or runStart == -1) {
++                    // Row boundaries reset run bookkeeping, not terminal attributes.
++                    if (runLength > 0 or (currentAttributes != null and currentAttributes.? != cell.attributes)) {
+                         writer.writeAll(ansi.ANSI.reset) catch {};
+                     }
+ 
+@@ -2471,7 +2704,10 @@ pub const CliRenderer = struct {
+                     currentBg = cell.bg;
+                     currentAttributes = cell.attributes;
+ 
+-                    ansi.ANSI.moveToOutput(writer, x + 1, y + 1 + self.renderOffset) catch {};
++                    if (!ascii_cursor_enabled or known_output_x == null or known_output_x.? != x) {
++                        ansi.ANSI.moveToOutput(writer, x + 1, y + 1 + self.renderOffset) catch {};
++                        known_output_x = if (ascii_cursor_enabled) x else null;
++                    }
+ 
+                     self.emitColor(writer, cell.fg, false);
+                     self.emitColor(writer, cell.bg, true);
+@@ -2518,6 +2754,11 @@ pub const CliRenderer = struct {
+                         }
+                     },
+                 }
++                // Only an actual CUP followed by contiguous ASCII establishes position.
++                // Wide/grapheme/NUL/continuation cells and the right edge stay conservative.
++                if (ascii_cursor_enabled and known_output_x != null and known_output_x.? == x and cell.char >= 32 and cell.char <= 126 and x + 1 < self.width) {
++                    known_output_x = x + 1;
++                } else known_output_x = null;
+                 runLength += 1;
+ 
+                 // Sync this cell to the current buffer so the next frame's diff
 diff --git a/packages/core/src/zig/terminal.zig b/packages/core/src/zig/terminal.zig
 index 92dce32..11bf858 100644
 --- a/packages/core/src/zig/terminal.zig
@@ -383,10 +481,10 @@ index 92dce32..11bf858 100644
      if (std.mem.indexOf(u8, response, "1016;2$y")) |_| {
          self.caps.sgr_pixels = true;
 diff --git a/packages/core/src/zig/tests/renderer_test.zig b/packages/core/src/zig/tests/renderer_test.zig
-index 33e2159..780d626 100644
+index 33e2159..81b13b2 100644
 --- a/packages/core/src/zig/tests/renderer_test.zig
 +++ b/packages/core/src/zig/tests/renderer_test.zig
-@@ -4430,3 +4430,532 @@ test "renderer clears an upper sixel hole when its lower image moves away" {
+@@ -4430,3 +4430,730 @@ test "renderer clears an upper sixel hole when its lower image moves away" {
      try std.testing.expectEqual(renderer.RenderStatus.rendered, test_renderer.renderer.render(false));
      try std.testing.expect(std.mem.indexOf(u8, test_renderer.memory.lastWrite(), "\x1b[1;1H") != null);
  }
@@ -918,6 +1016,204 @@ index 33e2159..780d626 100644
 +    r.beginScrollPrototypeFrame(3);
 +    try std.testing.expect(!r.scrollRectsInvalid);
 +    try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++}
++
++fn paintAsciiCupFixture(r: *CliRenderer, special: ?u32) void {
++    for (0..2) |y| for (0..8) |x| {
++        r.getNextBuffer().setRaw(@intCast(x), @intCast(y), .{
++            .char = if (y == 0 and x == 2 and special != null) special.? else @as(u32, @intCast('a' + x)),
++            .fg = ansi.rgbColor(@intCast(100 + x), 120, 130, 255),
++            .bg = ansi.rgbColor(0, 0, 0, 255),
++            .attributes = 0,
++        });
++    };
++}
++
++test "ASCII CUP prototype requires setup contract and suppresses contiguous style positions" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    for ([_]bool{ false, true }) |setup| {
++        var fixture = try TestRenderer.create(std.testing.allocator, 8, 2, pool);
++        defer fixture.deinit();
++        const r = fixture.renderer;
++        r.scrollPrototypeAuto = true;
++        if (setup) {
++            r.setupTerminal(true);
++            try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[?1049h") != null);
++            try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[?6l\x1b[?69l\x1b[r") != null);
++        }
++        paintAsciiCupFixture(r, null);
++        _ = r.render(true);
++        const bytes = fixture.memory.lastWrite();
++        try std.testing.expect(std.mem.indexOf(u8, bytes, "\x1b[1;1H") != null);
++        try std.testing.expectEqual(!setup, std.mem.indexOf(u8, bytes, "\x1b[1;2H") != null);
++        // A new row always reanchors, including after the preceding right edge.
++        try std.testing.expect(std.mem.indexOf(u8, bytes, "\x1b[2;1H") != null);
++        if (setup) {
++            r.suspendRenderer();
++            try std.testing.expect(!r.asciiCursorContract);
++            r.resumeRenderer();
++            try std.testing.expect(r.asciiCursorContract);
++            try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[?6l\x1b[?69l\x1b[r") != null);
++        }
++    }
++}
++
++test "ASCII CUP prototype reanchors after wide scalar NUL and unchanged gaps" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    for ([_]u32{ 0, 0x754c, 0x1f600, gp.packContinuation(1, 0, 0) }) |special| {
++        var fixture = try TestRenderer.create(std.testing.allocator, 8, 2, pool);
++        defer fixture.deinit();
++        const r = fixture.renderer;
++        r.scrollPrototypeAuto = true;
++        r.setupTerminal(true);
++        paintAsciiCupFixture(r, special);
++        _ = r.render(true);
++        try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[1;4H") != null);
++        paintAsciiCupFixture(r, special);
++        for ([_]u32{ 0, 2 }) |x| {
++            var cell = r.getNextBuffer().get(x, 0).?;
++            cell.char = 'z';
++            r.getNextBuffer().setRaw(x, 0, cell);
++        }
++        _ = r.render(false);
++        try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[1;3H") != null);
++    }
++}
++
++test "ASCII CUP prototype cannot regain cursor from ASCII after unknown Unicode without CUP" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 8, 2, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    r.scrollPrototypeAuto = true;
++    r.setupTerminal(true);
++    paintAsciiCupFixture(r, 0x754c);
++    // x=2 emits Unicode, x=3 emits ASCII with identical attributes (no CUP),
++    // x=4 changes style and must explicitly reanchor despite the preceding ASCII.
++    var ascii = r.getNextBuffer().get(3, 0).?;
++    ascii.fg = r.getNextBuffer().get(2, 0).?.fg;
++    r.getNextBuffer().setRaw(3, 0, ascii);
++    _ = r.render(true);
++    const bytes = fixture.memory.lastWrite();
++    try std.testing.expect(std.mem.indexOf(u8, bytes, "\x1b[1;4H") == null);
++    try std.testing.expect(std.mem.indexOf(u8, bytes, "\x1b[1;5H") != null);
++}
++
++fn paintColorPair(r: *CliRenderer, fg_change: bool, bg_change: bool, attribute_change: bool, link_change: bool) void {
++    const attributes = ansi.TextAttributes.BOLD | ansi.TextAttributes.INVERSE;
++    for (0..2) |x| r.getNextBuffer().setRaw(@intCast(x), 0, .{
++        .char = if (x == 0) 'a' else 'b',
++        .fg = ansi.rgbColor(if (x == 1 and fg_change) 201 else 101, 102, 103, 255),
++        .bg = ansi.rgbColor(if (x == 1 and bg_change) 204 else 104, 105, 106, 255),
++        .attributes = if (x == 1 and attribute_change) 0 else if (x == 1 and link_change) ansi.TextAttributes.setLinkId(attributes, 1) else attributes,
++    });
++}
++
++test "ASCII color-only prototype emits only changed channels with unchanged full attributes" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    for ([_][2]bool{ .{ true, false }, .{ false, true }, .{ true, true } }) |changes| {
++        var fixture = try TestRenderer.create(std.testing.allocator, 2, 1, pool);
++        defer fixture.deinit();
++        const r = fixture.renderer;
++        r.scrollPrototypeAuto = true;
++        r.terminal.caps.rgb = true;
++        r.setupTerminal(true);
++        paintColorPair(r, changes[0], changes[1], false, false);
++        _ = r.render(true);
++        const bytes = fixture.memory.lastWrite();
++        const begin = std.mem.indexOfScalar(u8, bytes, 'a').? + 1;
++        const end = std.mem.indexOfScalarPos(u8, bytes, begin, 'b').?;
++        var expected: [100]u8 = undefined;
++        var stream = std.io.fixedBufferStream(&expected);
++        if (changes[0]) try ansi.ANSI.fgColorOutput(stream.writer(), 201, 102, 103);
++        if (changes[1]) try ansi.ANSI.bgColorOutput(stream.writer(), 204, 105, 106);
++        try std.testing.expectEqualStrings(stream.getWritten(), bytes[begin..end]);
++    }
++}
++
++test "ASCII color-only prototype falls back for attributes and full link ID changes" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    for ([_]bool{ false, true }) |link_change| {
++        var fixture = try TestRenderer.create(std.testing.allocator, 2, 1, pool);
++        defer fixture.deinit();
++        const r = fixture.renderer;
++        r.scrollPrototypeAuto = true;
++        r.terminal.caps.rgb = true;
++        r.setupTerminal(true);
++        paintColorPair(r, true, true, !link_change, link_change);
++        _ = r.render(true);
++        const bytes = fixture.memory.lastWrite();
++        const begin = std.mem.indexOfScalar(u8, bytes, 'a').? + 1;
++        const end = std.mem.indexOfScalarPos(u8, bytes, begin, 'b').?;
++        try std.testing.expect(std.mem.indexOf(u8, bytes[begin..end], "\x1b[0m") != null);
++        try std.testing.expect(std.mem.indexOf(u8, bytes[begin..end], "\x1b[38;2;201;102;103m") != null);
++        try std.testing.expect(std.mem.indexOf(u8, bytes[begin..end], "\x1b[48;2;204;105;106m") != null);
++    }
++}
++
++test "cross-row attribute reset wire capture" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 1, 2, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    r.scrollPrototypeAuto = false;
++    r.setupTerminal(true);
++    for (0..2) |y| r.getNextBuffer().setRaw(0, @intCast(y), .{
++        .char = if (y == 0) 'a' else 'b',
++        .fg = ansi.rgbColor(101, 102, 103, 255),
++        .bg = ansi.rgbColor(104, 105, 106, 255),
++        .attributes = if (y == 0) ansi.TextAttributes.BOLD else 0,
++    });
++    _ = r.render(true);
++    const bytes = fixture.memory.lastWrite();
++    const begin = std.mem.indexOfScalar(u8, bytes, 'a').? + 1;
++    const end = std.mem.indexOfScalarPos(u8, bytes, begin, 'b').?;
++    // Terminal attributes must be reset despite new-row runLength being zero.
++    try std.testing.expect(std.mem.indexOf(u8, bytes[begin..end], "\x1b[0m") != null);
++}
++
++test "cross-row attribute changes reset previous flags before enabling the next row" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    const attrs = [_]u32{ ansi.TextAttributes.BOLD, ansi.TextAttributes.DIM, ansi.TextAttributes.ITALIC, ansi.TextAttributes.UNDERLINE, ansi.TextAttributes.INVERSE, ansi.TextAttributes.HIDDEN, ansi.TextAttributes.STRIKETHROUGH, 0 };
++    for ([_]bool{ false, true }) |prototype| {
++        var fixture = try TestRenderer.create(std.testing.allocator, 1, attrs.len, pool);
++        defer fixture.deinit();
++        const r = fixture.renderer;
++        r.scrollPrototypeAuto = prototype;
++        r.setupTerminal(true);
++        for (attrs, 0..) |attributes, y| r.getNextBuffer().setRaw(0, @intCast(y), .{
++            .char = @intCast('a' + y),
++            .fg = ansi.rgbColor(101, 102, 103, 255),
++            .bg = ansi.rgbColor(104, 105, 106, 255),
++            .attributes = attributes,
++        });
++        _ = r.render(true);
++        const bytes = fixture.memory.lastWrite();
++        for (1..attrs.len) |y| {
++            const begin = std.mem.indexOfScalar(u8, bytes, @intCast('a' + y - 1)).? + 1;
++            const end = std.mem.indexOfScalarPos(u8, bytes, begin, @intCast('a' + y)).?;
++            const transition = bytes[begin..end];
++            try std.testing.expect(std.mem.startsWith(u8, transition, "\x1b[0m"));
++            var attribute_bytes: [100]u8 = undefined;
++            var stream = std.io.fixedBufferStream(&attribute_bytes);
++            try ansi.TextAttributes.applyAttributesOutputWriter(stream.writer(), attrs[y]);
++            try std.testing.expect(std.mem.endsWith(u8, transition, stream.getWritten()));
++        }
++    }
 +}
 diff --git a/packages/core/src/zig/tests/terminal_test.zig b/packages/core/src/zig/tests/terminal_test.zig
 index 36a9aca..df8b22b 100644
