@@ -2236,6 +2236,23 @@ describe("semantic pane-stream runtime client", () => {
       snapshot: { ...initial, owners: { ...initial.owners, focus: "tui:one" } },
     });
     expect(conflicting.socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+
+    const staleDeadline = await open();
+    staleDeadline.socket.message({
+      type: "authority-snapshot",
+      snapshot: { ...initial, nativeGeometryYieldUntilMs: 180 },
+    });
+    expect(staleDeadline.socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+
+    const advancingDeadline = await open();
+    for (const revision of [4, 5]) {
+      advancingDeadline.socket.message({
+        type: "authority-snapshot",
+        snapshot: { ...initial, revision, nativeGeometryYieldUntilMs: 180 + revision },
+      });
+      expect(advancingDeadline.socket.closed).toBeNull();
+    }
+    advancingDeadline.client.close();
   });
 
   it.each([

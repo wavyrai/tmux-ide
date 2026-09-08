@@ -698,13 +698,35 @@ describe("PaneStreamAdmissionCoordinator", () => {
     if (!decision.accepted) throw new Error(`upgrade rejected: ${decision.code}`);
     const socket = new FakeSocket();
     decision.admission.bind(socket);
-    socket.message({
-      type: "redeem",
-      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
-      ticket: descriptor.redemptionTicket,
-      requestId,
-      daemonInstanceId: INSTANCE,
-    });
+    const clientSocket = new LoopbackClientSocket(socket, () => undefined);
+    socket.onTransmit = (text) => queueMicrotask(() => clientSocket.message(text));
+    const onFault = vi.fn();
+    const client = await connectIssuedPaneStreamRuntimeClient(
+      {
+        createSocket: () => {
+          queueMicrotask(() => clientSocket.open());
+          return clientSocket;
+        },
+        origin: ORIGIN,
+        hostClientId: `test-host:${requestId}`,
+        stream: {
+          protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+          workspaceName: "workspace.alpha",
+          panes,
+          viewerMode: "read-only",
+          terminalDelivery: {
+            protocolVersions: [1],
+            encodings: ["semantic-v1"],
+            richPlacements: false,
+          },
+        },
+        requestInitialInputAuthority: false,
+        onNegotiated: () => undefined,
+        onTerminalDelivery: () => undefined,
+        onFault,
+      },
+      descriptor,
+    );
     await vi.waitFor(() =>
       expect(socket.framesOfType("terminal-delivery-ready").length).toBe(panes.length),
     );
@@ -724,7 +746,23 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(operations.indexOf("pane-stream-layout-validated")).toBeLessThan(
       operations.indexOf("pane-stream-delivery-open"),
     );
-    socket.close();
+    // Repeated native events while geometry is ownerless must remain valid
+    // through the real registry, stream publication and client replay guard.
+    let previousAuthority = registry.authoritySnapshot(FIXTURE.session);
+    for (let index = 0; index < 2; index++) {
+      await settled();
+      registry.noteNativeGeometryActivity(FIXTURE.session);
+      await settled();
+      const next = registry.authoritySnapshot(FIXTURE.session);
+      expect(next.nativeGeometryYieldUntilMs).toBeGreaterThan(
+        previousAuthority.nativeGeometryYieldUntilMs,
+      );
+      expect(next.revision).toBeGreaterThan(previousAuthority.revision);
+      expect(clientSocket.readyState).toBe(1);
+      expect(onFault).not.toHaveBeenCalled();
+      previousAuthority = next;
+    }
+    client.close();
     await runtime.dispose();
     await registry.dispose();
   });
