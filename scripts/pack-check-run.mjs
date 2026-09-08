@@ -699,6 +699,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       launcherPath,
       [
         "#!/bin/sh",
+        "export TMUX_IDE_CLIPBOARD_BACKEND=osc52",
         `export TMUX_IDE_TUI_READY_FILE=${shQuote(readyPath)}`,
         `export TMUX_IDE_TUI_PERF_LOG=${shQuote(performancePath)}`,
         ...(hosted ? ["export TMUX_IDE_HOSTED=1"] : []),

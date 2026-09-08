@@ -1549,6 +1549,8 @@ async function start(args) {
   const launchEpochMs = Date.now();
   const launchId = randomUUID();
   const environment = [
+    // Clipboard fixtures observe their private tmux buffer, never the user's pasteboard.
+    "TMUX_IDE_CLIPBOARD_BACKEND=osc52",
     `TMUX_IDE_CWD=${shQuote(launch.cwd)}`,
     ...(publicEnvironment
       ? Object.entries(publicEnvironment).map(([key, value]) => `${key}=${shQuote(value)}`)
@@ -1584,6 +1586,7 @@ async function start(args) {
   const publicExecEnvironment = publicEnvironment
     ? {
         ...publicEnvironment,
+        TMUX_IDE_CLIPBOARD_BACKEND: "osc52",
         TMUX_IDE_CWD: launch.cwd,
         TMUX_IDE_CLI: join(repoRoot, "bin", "cli.js"),
         TMUX_IDE_TUI_PERF_LOG: perfLogPath,

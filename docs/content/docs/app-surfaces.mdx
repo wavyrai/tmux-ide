@@ -51,6 +51,12 @@ scrolling, or hold the pointer above or below the pane to extend into history.
 Escape clears selection and returns to live output. In a mouse-enabled
 application, hold Shift to select locally, or use the pane's Select text action.
 
+Local macOS copying uses the system clipboard and shows confirmation when the
+write finishes. Over SSH and on other platforms, copying uses the host terminal's
+OSC 52 support. To explicitly use that terminal route on macOS, launch with
+`TMUX_IDE_CLIPBOARD_BACKEND=osc52 tmux-ide`. Terminal-routed confirmation indicates
+that the request was sent; the terminal controls whether it is accepted.
+
 Ctrl+click a visible HTTP or HTTPS URL to open it in your browser. Ordinary
 clicks retain their existing terminal behavior. Links split across soft-wrapped
 rows are recognized; this does not open links merely because a program prints them.
