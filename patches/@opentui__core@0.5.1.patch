@@ -1,0 +1,36 @@
+diff --git a/chunk-bun-8fkgaxc6.js b/chunk-bun-8fkgaxc6.js
+index 3977ea9f1a24cf7e00cadc7c6b0f419c3405c37e..59161dcf0f3345842882d1bfbb7971ae70badd90 100644
+--- a/chunk-bun-8fkgaxc6.js
++++ b/chunk-bun-8fkgaxc6.js
+@@ -9690,6 +9690,13 @@ Captured external output:
+       this.clock.clearTimeout(this.renderTimeout);
+       this.renderTimeout = null;
+     }
++    // Keep a committed frame owned until the destination write completes.
++    // Coalesce dirty views before composition and native baseline advancement.
++    // Split-footer capture retains its separate ordered commit contract.
++    if (this._feed?.isBackpressured() && !(this._splitHeight > 0 && this._externalOutputMode === "capture-stdout")) {
++      this.handleNativeRenderRejection(NATIVE_RENDER_STATUS_SKIPPED);
++      return;
++    }
+     this.rendering = true;
+     let renderFailed = false;
+     try {
+diff --git a/chunk-node-0yw3x5m7.js b/chunk-node-0yw3x5m7.js
+index 84a2d22b6e36c1dab68641684f66b048069634ee..1de2409bedfb6e2d3fff8c21c8315d471621254e 100644
+--- a/chunk-node-0yw3x5m7.js
++++ b/chunk-node-0yw3x5m7.js
+@@ -9689,6 +9689,13 @@ Captured external output:
+       this.clock.clearTimeout(this.renderTimeout);
+       this.renderTimeout = null;
+     }
++    // Keep a committed frame owned until the destination write completes.
++    // Coalesce dirty views before composition and native baseline advancement.
++    // Split-footer capture retains its separate ordered commit contract.
++    if (this._feed?.isBackpressured() && !(this._splitHeight > 0 && this._externalOutputMode === "capture-stdout")) {
++      this.handleNativeRenderRejection(NATIVE_RENDER_STATUS_SKIPPED);
++      return;
++    }
+     this.rendering = true;
+     let renderFailed = false;
+     try {
