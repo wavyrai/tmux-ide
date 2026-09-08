@@ -131,8 +131,9 @@ describe("root renderer capability evidence", () => {
     });
     renderer.width = 90;
     renderer.targetFps = 30;
+    renderer.maxFps = Number.POSITIVE_INFINITY;
     renderer.emit("capabilities");
-    expect(observations().at(-1)).toMatchObject({ cols: 90, targetFps: 30 });
+    expect(observations().at(-1)).toMatchObject({ cols: 90, targetFps: 30, maxFps: "unlimited" });
     expect(renderer.listenerCount("capabilities")).toBe(2);
     (createRenderer.mock.calls.at(-1)![0].onDestroy as () => void)();
     expect(renderer.listenerCount("capabilities")).toBe(1);

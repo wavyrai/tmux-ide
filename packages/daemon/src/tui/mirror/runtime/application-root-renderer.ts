@@ -98,7 +98,10 @@ export async function createApplicationRootRenderer(
           cols: activeRenderer.width,
           rows: activeRenderer.height,
           targetFps: activeRenderer.targetFps,
-          maxFps: activeRenderer.maxFps,
+          maxFps:
+            activeRenderer.maxFps === Number.POSITIVE_INFINITY
+              ? "unlimited"
+              : activeRenderer.maxFps,
         };
         const key = JSON.stringify(details);
         if (key === previous) return;
