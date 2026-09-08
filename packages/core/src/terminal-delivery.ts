@@ -1995,6 +1995,12 @@ async function expandParsedRowSlice(
   )
     return value;
   const slice = value as CompactParsedRowSlice;
+  // Ordinary terminal rows are small. Parsing their individual JSON tokens
+  // through async methods adds thousands of microtasks to a full redraw.
+  // Bound native parsing by encoded bytes; all row/run/cell validation and
+  // expansion budgets still run below, and larger rows remain cooperative.
+  if (slice.end - slice.start <= 8 * 1_024)
+    return JSON.parse(slice.source.slice(slice.start, slice.end));
   const rowSource = new CooperativeJsonSource(slice.source.bytes(slice.start, slice.end));
   return new CooperativeJsonParser(rowSource, control.yieldControl).parse();
 }

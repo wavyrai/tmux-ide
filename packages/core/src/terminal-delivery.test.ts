@@ -935,6 +935,66 @@ describe("terminal delivery client", () => {
     ).toMatchObject({ exact: true, bytes: expect.any(Number) });
   });
 
+  it("preserves verified rows below and above the bounded native JSON row size", async () => {
+    for (const length of [1, 3_000]) {
+      const blank = blankTerminalReplicaSnapshot(4, 1);
+      const snapshot = {
+        ...blank,
+        grid: [
+          {
+            wrapped: false,
+            cells: blank.grid[0]!.cells.map((cell, index) => ({
+              ...cell,
+              grapheme: "x".repeat(length) + index,
+            })),
+          },
+        ],
+      };
+      const bytes = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+      const wire = JSON.parse(new TextDecoder().decode(bytes)) as { s: unknown[] };
+      const rowBytes = new TextEncoder().encode(JSON.stringify((wire.s[2] as unknown[])[0])).length;
+      expect(rowBytes > 8 * 1_024).toBe(length === 3_000);
+      const verified = await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        null,
+        hashTerminalReplicaSnapshot(snapshot),
+        { yieldControl: async () => {} },
+      );
+      expect(verified.payload).toEqual(decodeCompactSemanticTerminalUpdate(bytes));
+      expect(verified.canonicalSnapshot).toEqual(snapshot);
+    }
+  });
+
+  it("rejects invalid bounded JSON rows before verified adoption", async () => {
+    const snapshot = blankTerminalReplicaSnapshot(1, 1);
+    const seed = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+    let deep: unknown = "x";
+    for (let index = 0; index < 70; index++) deep = [deep];
+    const invalidRows = [
+      [0, [[1, deep, 1, 0, 0, 0]]],
+      [0, [[1, "x".repeat(4_097), 1, 0, 0, 0]]],
+      [0, [[1, "x", 2, 0, 0, 0]]],
+      [0, [[1, "x", 1, 0, 0, 256]]],
+      [0, [[2, "x", 1, 0, 0, 0]]],
+      [0, [[0, "x", 1, 0, 0, 0]]],
+    ];
+    for (const row of invalidRows) {
+      const wire = JSON.parse(new TextDecoder().decode(seed)) as { s: unknown[] };
+      (wire.s[2] as unknown[])[0] = row;
+      expect(new TextEncoder().encode(JSON.stringify(row)).length).toBeLessThan(8 * 1_024);
+      const bytes = new TextEncoder().encode(JSON.stringify(wire));
+      expect(() => decodeCompactSemanticTerminalUpdate(bytes)).toThrow();
+      await expect(
+        decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+          bytes,
+          null,
+          hashTerminalReplicaSnapshot(snapshot),
+          { yieldControl: async () => {} },
+        ),
+      ).rejects.toThrow();
+    }
+  });
+
   it("keeps cooperative compact JSON syntax exact with the synchronous decoder", async () => {
     const snapshot = blankTerminalReplicaSnapshot(2, 1);
     const bytes = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
