@@ -13,6 +13,7 @@ import {
   scrollTerminalCopyCursor,
   type TerminalCopyMotion,
 } from "./terminal-copy-cursor.ts";
+import { extractTerminalSelection } from "./terminal-selection.ts";
 import {
   extractTerminalCopySelection,
   terminalCopyLineLength,
@@ -49,9 +50,26 @@ function clampLegacyNativeViEnd(
   if (length > 0 && point.col === length) tmux("send-keys", "-t", "reference", "-X", "cursor-left");
 }
 
-it.skipIf(spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0)(
-  "matches fresh native copy buffers for emacs/vi wide and combining endpoints",
-  async () => {
+it.skipIf(spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0).each([
+  {
+    label: "ASCII wrap",
+    wrapped: "abcdefghijklmnopqrstuvwxy",
+    expected: "abcdefghijklmnopqrstuvwxy",
+  },
+  {
+    label: "wide glyph fits",
+    wrapped: "abcdefghijklmnopqr界étuvwxy",
+    expected: "abcdefghijklmnopqr界étuvwxy",
+  },
+  // tmux retains the unused final cell before a wide glyph moves to the next row.
+  {
+    label: "wide glyph wraps",
+    wrapped: "abcdefghijklmnopqrs界étuvwxy",
+    expected: "abcdefghijklmnopqrs 界étuvwxy",
+  },
+])(
+  "matches native keyboard and pointer copy bytes: $label",
+  async ({ wrapped, expected }) => {
     const root = mkdtempSync("/tmp/tmi-copy-selection-");
     const socketPath = join(root, "tmux.sock");
     const raw = (...args: string[]) =>
@@ -78,7 +96,7 @@ it.skipIf(spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0)(
         "20",
         "-y",
         "8",
-        "printf 'A界é B\\r\\nalpha beta gamma\\r\\nabcdefghijklmnopqrstuvwxy\\r\\n\\033[1;1H'; sleep 600",
+        `printf 'A界é B\\r\\nalpha beta gamma\\r\\n${wrapped}\\r\\n\\033[1;1H'; sleep 600`,
       );
       tmux("set-option", "-g", "set-clipboard", "off");
       await vi.waitFor(() =>
@@ -151,11 +169,17 @@ it.skipIf(spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0)(
           tmux("send-keys", "-t", "reference", "-X", "copy-selection");
           const names = tmux("list-buffers", "-F", "#{buffer_name}");
           const native = names ? raw("save-buffer", "-") : null;
-          if (direction === "wrapped-line")
-            expect(native?.toString()).toBe("abcdefghijklmnopqrstuvwxy");
+          if (direction === "wrapped-line") expect(native?.toString()).toBe(expected);
           const local = extractTerminalCopySelection(state, anchor, cursor, mode);
           expect(local ? Buffer.from(local.text) : null, `${mode}/${direction}`).toEqual(native);
           expect(local?.bytes ?? 0).toBe(native?.length ?? 0);
+          if (mode === "vi" && direction === "wrapped-line") {
+            const pointer = extractTerminalSelection(state, anchor, cursor);
+            expect(pointer ? Buffer.from(pointer.text) : null, "pointer wrapped selection").toEqual(
+              native,
+            );
+            expect(pointer?.bytes ?? 0).toBe(native?.length ?? 0);
+          }
           tmux("send-keys", "-t", "reference", "-X", "cancel");
         }
       }
