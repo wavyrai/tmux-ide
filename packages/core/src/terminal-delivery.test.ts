@@ -935,6 +935,105 @@ describe("terminal delivery client", () => {
     ).toMatchObject({ exact: true, bytes: expect.any(Number) });
   });
 
+  it("reuses identical current-message rows without skipping aggregate validation", async () => {
+    const snapshot = blankTerminalReplicaSnapshot(66, 41);
+    const bytes = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+    let profile: unknown;
+    const verified = await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+      bytes,
+      null,
+      hashTerminalReplicaSnapshot(snapshot),
+      {
+        yieldControl: async () => {},
+        onComplete: (value) => {
+          profile = value;
+        },
+      },
+    );
+    expect(verified.canonicalSnapshot).toEqual(snapshot);
+    expect(profile).toMatchObject({
+      expandedRows: 41,
+      reusedRows: 40,
+      allocatedCells: 66,
+      expandedCells: 2706,
+    });
+    expect(verified.canonicalSnapshot!.grid[0]).toBe(verified.canonicalSnapshot!.grid[40]);
+    const wire = JSON.parse(new TextDecoder().decode(bytes));
+    wire.s[0] = 4096;
+    wire.s[1] = 245;
+    wire.s[2] = Array.from({ length: 245 }, () => [0, [[4096, " ", 1, 0, 0, 0]]]);
+    await expect(
+      decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        new TextEncoder().encode(JSON.stringify(wire)),
+        null,
+        "unused",
+        { yieldControl: async () => {} },
+      ),
+    ).rejects.toThrow("expanded cell budget exceeded");
+    wire.s[0] = 66;
+    wire.s[1] = 41;
+    wire.s[2] = Array.from({ length: 41 }, (_, index) => [
+      0,
+      [[index === 40 ? 65 : 66, " ", 1, 0, 0, 0]],
+    ]);
+    await expect(
+      decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        new TextEncoder().encode(JSON.stringify(wire)),
+        null,
+        "unused",
+        { yieldControl: async () => {} },
+      ),
+    ).rejects.toThrow("width mismatch");
+  });
+
+  it("checks exact bytes within raw-row hash collisions and stops caching at its entry limit", async () => {
+    for (const labels of [
+      ["dkzbb9", "1mu5745", "dkzbb9", "1mu5745"],
+      [...Array.from({ length: 1025 }, (_, index) => String(index)), "0", "1024"],
+    ]) {
+      const blank = blankTerminalReplicaSnapshot(1, labels.length);
+      const snapshot = {
+        ...blank,
+        grid: labels.map((grapheme) => ({
+          wrapped: false,
+          cells: [{ ...blank.grid[0]!.cells[0]!, grapheme }],
+        })),
+      };
+      const bytes = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+      let profile: unknown;
+      const verified = await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        null,
+        hashTerminalReplicaSnapshot(snapshot),
+        {
+          yieldControl: async () => {},
+          onComplete: (value) => {
+            profile = value;
+          },
+        },
+      );
+      expect(verified.canonicalSnapshot).toEqual(snapshot);
+      expect(profile).toMatchObject({ reusedRows: labels.length === 4 ? 2 : 1 });
+    }
+  });
+
+  it("keeps cancellation checkpoints while expanding cached rows", async () => {
+    const snapshot = blankTerminalReplicaSnapshot(1, 128);
+    const bytes = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+    await expect(
+      decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        null,
+        hashTerminalReplicaSnapshot(snapshot),
+        {
+          yieldControl: async () => {
+            throw new Error("retired");
+          },
+        },
+      ),
+    ).rejects.toThrow("retired");
+  });
+
   it("preserves verified rows below and above the bounded native JSON row size", async () => {
     for (const length of [1, 3_000]) {
       const blank = blankTerminalReplicaSnapshot(4, 1);

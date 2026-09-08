@@ -577,6 +577,9 @@ interface CompactDecodeBudget {
   rowCache?: Map<string, Readonly<{ row: TerminalReplicaRow; runs: number; cells: number }>>;
   rowReuseIndex?: ReadonlyMap<string, TerminalReplicaRow | readonly TerminalReplicaRow[]>;
   rawRowReuseIndex?: ValidatedCompactRawRowIndex;
+  transactionRows?: Map<number, ValidatedCompactRawRowCandidate>;
+  transactionRowBytes?: number;
+  transactionRowCount?: number;
   reusedRows: number;
   allocatedCells: number;
   canonicalUtf8Allocations: number;
@@ -1108,6 +1111,9 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
   // Cooperative validation never serializes a whole row to form an interning
   // key; that would recreate an unbounded synchronous phase.
   budget.rowCache = undefined;
+  budget.transactionRows = new Map();
+  budget.transactionRowBytes = 0;
+  budget.transactionRowCount = 0;
   budget.runEncodingCache = new TerminalReplicaRunEncodingCache();
   budget.decodedCellCache = new Map();
   const control = {
@@ -1213,6 +1219,9 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
   // or publication, so release it before the longest cooperative phase.
   budget.rowReuseIndex = undefined;
   budget.rawRowReuseIndex = undefined;
+  budget.transactionRows = undefined;
+  budget.transactionRowBytes = undefined;
+  budget.transactionRowCount = undefined;
   budget.runEncodingCache = undefined;
   budget.decodedCellCache = undefined;
   const hash = snapshot
@@ -1807,6 +1816,11 @@ async function expandRowsSliceCooperatively(
     rowSlice.start = start;
     rowSlice.end = index;
     rows.push(await expandRowCooperatively(rowSlice, budget, cols, control));
+    control.rowsSinceYield += 1;
+    if (control.rowsSinceYield >= control.rowsPerSlice) {
+      control.rowsSinceYield = 0;
+      await control.yieldControl();
+    }
     const separator = slice.source.byteAt(index++);
     if (separator === 0x5d) break;
     if (separator !== 0x2c) throw new SyntaxError("Invalid compact JSON rows");
@@ -1831,13 +1845,23 @@ async function expandRowCooperatively(
       : null;
   const rawHash = parsedSlice ? parsedSlice.source.hash(parsedSlice.start, parsedSlice.end) : null;
   const rawIndexed = rawHash === null ? undefined : budget.rawRowReuseIndex?.get(rawHash);
-  const rawReuse = !rawIndexed
+  const transactionIndexed = rawHash === null ? undefined : budget.transactionRows?.get(rawHash);
+  const transactionReuse = !transactionIndexed
     ? undefined
-    : parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, rawIndexed.raw)
-      ? rawIndexed
-      : rawIndexed.collisions?.find((candidate) =>
+    : parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, transactionIndexed.raw)
+      ? transactionIndexed
+      : transactionIndexed.collisions?.find((candidate) =>
           parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, candidate.raw),
         );
+  const rawReuse =
+    transactionReuse ??
+    (!rawIndexed
+      ? undefined
+      : parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, rawIndexed.raw)
+        ? rawIndexed
+        : rawIndexed.collisions?.find((candidate) =>
+            parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, candidate.raw),
+          ));
   if (rawReuse) {
     if (cols !== null && rawReuse.cells !== cols) throw new TypeError("Compact row width mismatch");
     budget.runs += rawReuse.runs;
@@ -1931,6 +1955,7 @@ async function expandRowCooperatively(
           cells: cellCount,
         }),
       );
+    rememberTransactionRow(budget, indexed);
     return indexed;
   }
   if (indexed && compactRowReuseCollision(indexed)) {
@@ -1949,6 +1974,7 @@ async function expandRowCooperatively(
             cells: cellCount,
           }),
         );
+      rememberTransactionRow(budget, candidate);
       return candidate;
     }
   }
@@ -1981,7 +2007,31 @@ async function expandRowCooperatively(
         cells: cellCount,
       }),
     );
+  rememberTransactionRow(budget, row);
   return row;
+}
+
+// Keep current-message reuse separate from the immutable baseline index. Cache
+// saturation only forfeits an optimization; it never changes validation.
+function rememberTransactionRow(budget: CompactDecodeBudget, row: TerminalReplicaRow): void {
+  const cache = budget.transactionRows;
+  const entry = VALIDATED_COMPACT_RAW_ROW.get(row);
+  if (!cache || !entry) return;
+  const bucket = cache.get(entry.rawHash);
+  if (
+    (bucket ? 1 + (bucket.collisions?.length ?? 0) : 0) >= 4 ||
+    (budget.transactionRowCount ?? 0) >= 1024 ||
+    (budget.transactionRowBytes ?? 0) + entry.raw.byteLength > 256 * 1024
+  )
+    return;
+  if (bucket)
+    cache.set(entry.rawHash, {
+      ...bucket,
+      collisions: [...(bucket.collisions ?? []), entry],
+    });
+  else cache.set(entry.rawHash, entry);
+  budget.transactionRowBytes = (budget.transactionRowBytes ?? 0) + entry.raw.byteLength;
+  budget.transactionRowCount = (budget.transactionRowCount ?? 0) + 1;
 }
 
 async function expandParsedRowSlice(
