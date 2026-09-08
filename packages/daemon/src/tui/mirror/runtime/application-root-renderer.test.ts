@@ -18,7 +18,7 @@ vi.mock("./application-performance-log.ts", () => ({
 }));
 vi.mock("@opentui/core", () => ({
   createCliRenderer: createRenderer,
-  CliRenderEvents: { CAPABILITIES: "capabilities" },
+  CliRenderEvents: { CAPABILITIES: "capabilities", FRAME: "frame" },
 }));
 import { createApplicationRootRenderer } from "./application-root-renderer.ts";
 
@@ -63,6 +63,37 @@ describe("root renderer host capabilities", () => {
 });
 
 describe("root renderer capability evidence", () => {
+  it("records live scheduler state only for opt-in frames and removes its observer", async () => {
+    perf.enabled = true;
+    const renderer = Object.assign(new EventEmitter(), {
+      getSchedulerState: () => ({
+        isRunning: true,
+        isRendering: true,
+        hasScheduledRender: false,
+      }),
+      liveRequestCount: 1,
+    });
+    const other = vi.fn();
+    renderer.on("frame", other);
+    createRenderer.mockResolvedValueOnce(renderer as unknown as Record<string, unknown>);
+    await createApplicationRootRenderer(false);
+    renderer.emit("frame", { frameId: 12 });
+    expect(perf.mark).toHaveBeenCalledWith("renderer-frame-scheduler", {
+      frameId: 12,
+      isRunning: true,
+      isRendering: true,
+      hasScheduledRender: false,
+      liveRequestCount: 1,
+    });
+    perf.mark.mockImplementationOnce(() => {
+      throw new Error("writer failure");
+    });
+    expect(() => renderer.emit("frame", { frameId: 13 })).not.toThrow();
+    (createRenderer.mock.calls.at(-1)![0].onDestroy as () => void)();
+    expect(renderer.listenerCount("frame")).toBe(1);
+    expect(other).toHaveBeenCalledTimes(2);
+  });
+
   it("does not inspect capabilities or install a listener when performance logging is disabled", async () => {
     const on = vi.fn();
     createRenderer.mockResolvedValueOnce({

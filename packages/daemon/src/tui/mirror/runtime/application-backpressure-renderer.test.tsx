@@ -4,9 +4,11 @@ import { Terminal } from "@tmux-ide/xterm-headless";
 
 /** Exercise the shipped dependency, including its actual native output feed. */
 describe("renderer presentation backpressure", () => {
-  it("holds one committed frame and paints the latest state when output resumes", async () => {
-    const entry = import.meta.resolve("@opentui/core");
-    const source = `
+  it.each([false, true])(
+    "holds one committed frame and paints the latest state when output resumes (live=%s)",
+    async (live) => {
+      const entry = import.meta.resolve("@opentui/core");
+      const source = `
       import { Writable, PassThrough } from 'node:stream';
       const { CliRenderer, TextRenderable, CliRenderEvents } = await import(${JSON.stringify(entry)});
       const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -28,6 +30,7 @@ describe("renderer presentation backpressure", () => {
       renderer.on(CliRenderEvents.FRAME, () => frames++);
       hold = true;
       text.content = 'FRAME_0001';
+      if (${live}) renderer.requestLive();
       await delay(20);
       const firstBytes = stdout.writableLength;
       for (let i = 2; i <= 10; i++) {
@@ -35,6 +38,7 @@ describe("renderer presentation backpressure", () => {
         await delay(5);
       }
       const blocked = {firstBytes, queuedBytes: stdout.writableLength, frames};
+      if (${live}) renderer.dropLive();
       hold = false;
       release?.();
       await renderer.idle();
@@ -46,31 +50,32 @@ describe("renderer presentation backpressure", () => {
       await delay(20);
       process.stdout.write(JSON.stringify({blocked, resumed, idleFrames}));
     `;
-    const child = spawnSync(process.execPath, ["--eval", source], {
-      encoding: "utf8",
-      timeout: 5_000,
-      maxBuffer: 1024 * 1024,
-      env: { ...process.env, OTUI_DUMP_CAPTURES: "0", SHOW_CONSOLE: "0" },
-    });
-    expect(child.error).toBeUndefined();
-    expect(child.status).toBe(0);
-    expect(child.stderr).toBe("");
-    const receipt = JSON.parse(child.stdout);
-    expect(receipt.blocked.firstBytes).toBeGreaterThan(0);
-    expect(receipt.blocked.queuedBytes).toBe(receipt.blocked.firstBytes);
-    expect(receipt.blocked.frames).toBe(1);
-    expect(receipt.resumed.frames).toBe(2);
-    expect(receipt.idleFrames).toBe(2);
-    const terminal = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
-    try {
-      await new Promise<void>((resolve) =>
-        terminal.write(Buffer.from(receipt.resumed.bytes, "base64"), resolve),
-      );
-      expect(terminal.buffer.active.getLine(0)?.translateToString(true).trimEnd()).toBe(
-        "FRAME_0010",
-      );
-    } finally {
-      terminal.dispose();
-    }
-  });
+      const child = spawnSync(process.execPath, ["--eval", source], {
+        encoding: "utf8",
+        timeout: 5_000,
+        maxBuffer: 1024 * 1024,
+        env: { ...process.env, OTUI_DUMP_CAPTURES: "0", SHOW_CONSOLE: "0" },
+      });
+      expect(child.error).toBeUndefined();
+      expect(child.status).toBe(0);
+      expect(child.stderr).toBe("");
+      const receipt = JSON.parse(child.stdout);
+      expect(receipt.blocked.firstBytes).toBeGreaterThan(0);
+      expect(receipt.blocked.queuedBytes).toBe(receipt.blocked.firstBytes);
+      expect(receipt.blocked.frames).toBe(1);
+      expect(receipt.resumed.frames).toBe(2);
+      expect(receipt.idleFrames).toBe(2);
+      const terminal = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
+      try {
+        await new Promise<void>((resolve) =>
+          terminal.write(Buffer.from(receipt.resumed.bytes, "base64"), resolve),
+        );
+        expect(terminal.buffer.active.getLine(0)?.translateToString(true).trimEnd()).toBe(
+          "FRAME_0010",
+        );
+      } finally {
+        terminal.dispose();
+      }
+    },
+  );
 });

@@ -111,9 +111,23 @@ export async function createApplicationRootRenderer(
         // Diagnostics cannot interrupt renderer startup or capability detection.
       }
     };
+    const observeFrame = ({ frameId }: { frameId: number }) => {
+      try {
+        tuiPerfMark("renderer-frame-scheduler", {
+          frameId,
+          ...activeRenderer.getSchedulerState(),
+          liveRequestCount: activeRenderer.liveRequestCount,
+        });
+      } catch {
+        // Opt-in scheduling evidence must never interrupt presentation.
+      }
+    };
     activeRenderer.on(CliRenderEvents.CAPABILITIES, observeCapabilities);
-    removeCapabilityObserver = () =>
+    activeRenderer.on(CliRenderEvents.FRAME, observeFrame);
+    removeCapabilityObserver = () => {
       activeRenderer.off(CliRenderEvents.CAPABILITIES, observeCapabilities);
+      activeRenderer.off(CliRenderEvents.FRAME, observeFrame);
+    };
     observeCapabilities();
   }
   if (transport) {
