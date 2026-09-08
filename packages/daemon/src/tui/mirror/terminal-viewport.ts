@@ -137,10 +137,21 @@ function* logicalRanges(
   if (count > 0) yield { start, end: count };
 }
 
+function unusedTerminalCell(cell: TerminalReplicaCell): boolean {
+  return (
+    cell.width === 1 &&
+    cell.grapheme === "" &&
+    cell.attributes === 0 &&
+    cell.foreground.kind === "default" &&
+    cell.background.kind === "default"
+  );
+}
+
 /** Walk logical text without copying history or allocating a token array. */
 function* logicalTokens(
   snapshot: TerminalReplicaSnapshot,
   range?: LogicalRange,
+  retained = false,
 ): Generator<PositionToken, undefined, void> {
   const count = snapshot.history.length + snapshot.grid.length;
   const rowAt = (index: number) =>
@@ -153,7 +164,13 @@ function* logicalTokens(
     const continues = next?.wrapped === true;
     let used = current.cells.length;
     if (!continues) {
-      while (used > 0 && (retainedTerminalCell(current, used - 1)!.grapheme || " ") === " ") used--;
+      // Match the retained reflow's tail policy: written/styled blanks can
+      // wrap into continuation rows and remain part of the logical line.
+      while (used > 0) {
+        const cell = retainedTerminalCell(current, used - 1)!;
+        if (retained ? !unusedTerminalCell(cell) : (cell.grapheme || " ") !== " ") break;
+        used--;
+      }
     }
     for (let column = 0; column < used; column++) {
       const cell = retainedTerminalCell(current, column)!;
@@ -183,11 +200,12 @@ function matchLogicalPosition(
   origin: TerminalViewportOrigin,
   beforeRange?: LogicalRange,
   afterRange?: LogicalRange,
+  retained = false,
 ): TerminalViewportOrigin | null {
   if (previous.modes.alternateScreen || next.modes.alternateScreen) return null;
   const oldRow = previous.history.length + origin.y;
-  const before = logicalTokens(previous, beforeRange);
-  const after = logicalTokens(next, afterRange);
+  const before = logicalTokens(previous, beforeRange, retained);
+  const after = logicalTokens(next, afterRange, retained);
   let a = before.next().value;
   let b = after.next().value;
   let mapped: { row: number; column: number } | null = null;
@@ -290,7 +308,7 @@ export function reflowTerminalPosition(
     }
     if (sharedPrefix) return { x: origin.x, y: oldRow - next.history.length };
   }
-  const prefix = matchLogicalPosition(previous, next, origin);
+  const prefix = matchLogicalPosition(previous, next, origin, undefined, undefined, frozen);
   if (prefix || previous.modes.alternateScreen || next.modes.alternateScreen) return prefix;
   let anchored: LogicalRange | undefined;
   let oldLines = 0;
@@ -303,7 +321,7 @@ export function reflowTerminalPosition(
   let newLines = 0;
   for (const range of logicalRanges(next)) {
     newLines++;
-    const match = matchLogicalPosition(previous, next, origin, anchored, range);
+    const match = matchLogicalPosition(previous, next, origin, anchored, range, frozen);
     if (match) {
       // A repeated paragraph has no unique correspondence. Never pick its
       // first occurrence merely because its text looks plausible.
@@ -442,14 +460,7 @@ export function reflowRetainedTerminalSnapshot(
     // Preserve written spaces and styled blanks; discard only unused tail cells.
     while (used > 0) {
       const cell = retainedTerminalCell(row, used - 1)!;
-      if (
-        cell.width !== 1 ||
-        cell.grapheme !== "" ||
-        cell.attributes !== 0 ||
-        cell.foreground.kind !== "default" ||
-        cell.background.kind !== "default"
-      )
-        break;
+      if (!unusedTerminalCell(cell)) break;
       used--;
     }
     for (let column = 0; column < used; column++) {

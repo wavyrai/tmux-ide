@@ -31,6 +31,21 @@ function snapshot(
 }
 
 describe("logical terminal reflow position", () => {
+  it("preserves a reader after preceding styled blank tails wrap during retained resize", () => {
+    const before = snapshot(8, 2, [
+      ["OLD", false],
+      ["READ", false],
+      ["LIVE", false],
+    ]);
+    for (const row of [...before.history, ...before.grid]) {
+      for (const cell of row.cells) cell.background = { kind: "indexed", index: 17 };
+    }
+    const after = reflowRetainedTerminalSnapshot(before, 4, 3)!;
+    expect(after.history.length).toBe(3);
+    expect(reflowTerminalPosition(before, after, { x: 0, y: -1 }, true)).toEqual({ x: 0, y: -1 });
+    expect(reflowTerminalPosition(after, before, { x: 0, y: -1 }, true)).toEqual({ x: 0, y: -1 });
+  });
+
   it("matches displayed gaps and unused tails across capture representations", () => {
     const wide = snapshot(4, 0, [
       ["a B", false],
