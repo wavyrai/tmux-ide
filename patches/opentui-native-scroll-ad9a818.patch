@@ -1,0 +1,949 @@
+diff --git a/packages/core/src/zig/build.zig b/packages/core/src/zig/build.zig
+index 6c94af7..598f972 100644
+--- a/packages/core/src/zig/build.zig
++++ b/packages/core/src/zig/build.zig
+@@ -465,12 +465,13 @@ pub fn build(b: *std.Build) void {
+     // Test step (native only)
+     const test_step = b.step("test", "Run unit tests");
+     const native_target = nativeExecutableTarget(b);
++    const test_optimize: std.builtin.OptimizeMode = if (b.option(bool, "scroll-prototype-benchmark", "Build isolated scrolling microbenchmark with ReleaseFast") orelse false) .ReleaseFast else .Debug;
+     const test_mod = b.createModule(.{
+         .root_source_file = b.path("test.zig"),
+         .target = native_target,
+-        .optimize = .Debug,
++        .optimize = test_optimize,
+     });
+-    applyDependencies(b, test_mod, .Debug, native_target, build_options);
++    applyDependencies(b, test_mod, test_optimize, native_target, build_options);
+     const test_artifact = b.addTest(.{
+         .root_module = test_mod,
+         .filters = if (b.option([]const u8, "test-filter", "Skip tests that do not match filter")) |f| &.{f} else &.{},
+diff --git a/packages/core/src/zig/lib.zig b/packages/core/src/zig/lib.zig
+index f98069c..32060ce 100644
+--- a/packages/core/src/zig/lib.zig
++++ b/packages/core/src/zig/lib.zig
+@@ -834,6 +834,22 @@ fn packFailedRenderResult() u64 {
+     return packRenderResult(.{ .renderOffset = 0, .status = .failed });
+ }
+ 
++export fn rendererBeginScrollPrototypeFrame(renderer_handle: NativeHandle, frame_id: u32) void {
++    const object_ptr = acquireRenderer(renderer_handle) orelse return;
++    object_ptr.beginScrollPrototypeFrame(frame_id);
++}
++
++export fn rendererScrollPrototypeMarginsSupported(renderer_handle: NativeHandle) bool {
++    const object_ptr = acquireRenderer(renderer_handle) orelse return false;
++    return object_ptr.terminal.caps.declrmm and object_ptr.terminal.multiplexer == .none;
++}
++
++// Private prototype geometry hint. Existing FFI structures and exports unchanged.
++export fn rendererQueueScrollPrototypeRect(renderer_handle: NativeHandle, x: u32, y: u32, width: u32, height: u32) bool {
++    const object_ptr = acquireRenderer(renderer_handle) orelse return false;
++    return object_ptr.queueScrollPrototypeRect(x, y, width, height);
++}
++
+ export fn render(renderer_handle: NativeHandle, force: bool) u8 {
+     const object_ptr = acquireRenderer(renderer_handle) orelse return @intFromEnum(renderer.RenderStatus.failed);
+     return @intFromEnum(object_ptr.render(force));
+diff --git a/packages/core/src/zig/renderer.zig b/packages/core/src/zig/renderer.zig
+index d3fa5b4..5cfe029 100644
+--- a/packages/core/src/zig/renderer.zig
++++ b/packages/core/src/zig/renderer.zig
+@@ -183,7 +183,16 @@ const SIXEL_CACHE_MAX_ENTRIES = 256;
+ // cell backgrounds, so those payloads carry a background fingerprint. Byte and entry limits bound
+ // payload and metadata retention. An empty payload is cached for fully transparent placements.
+ 
++pub const ScrollRect = struct { left: u32, top: u32, right: u32, bottom: u32 };
++
+ pub const CliRenderer = struct {
++    // Isolated prototype: full-width candidate, recomputed by caller each frame.
++    scrollPrototypeAuto: bool = false,
++    scrollPrototype: ?struct { left: u32 = 0, right: ?u32 = null, top: u32, bottom: u32, delta: i32 } = null,
++    scrollRects: [16]ScrollRect = undefined,
++    scrollRectCount: usize = 0,
++    scrollHintFrameId: ?u32 = null,
++    scrollRectsInvalid: bool = false,
+     width: u32,
+     height: u32,
+     currentRenderBuffer: *OptimizedBuffer,
+@@ -379,7 +388,13 @@ pub const CliRenderer = struct {
+         errdefer backend.deinit();
+ 
+         const image_id_salt = 1 + @as(u32, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp())) ^ @as(u128, @intFromPtr(self)))) % (std.math.maxInt(u32) - gp.IMAGE_ID_MASK - 1);
++        const scroll_auto_env = std.process.getEnvVarOwned(allocator, "TMUX_IDE_NATIVE_SCROLL_PROTOTYPE") catch |err| switch (err) {
++            error.EnvironmentVariableNotFound => null,
++            else => return err,
++        };
++        defer if (scroll_auto_env) |value| allocator.free(value);
+         self.* = .{
++            .scrollPrototypeAuto = if (scroll_auto_env) |value| std.mem.eql(u8, value, "1") else false,
+             .width = width,
+             .height = height,
+             .currentRenderBuffer = currentBuffer,
+@@ -676,6 +691,9 @@ pub const CliRenderer = struct {
+     }
+ 
+     pub fn resize(self: *CliRenderer, width: u32, height: u32) !void {
++        self.scrollRectCount = 0;
++        self.scrollRectsInvalid = false;
++        self.scrollPrototype = null;
+         if (self.width == width and self.height == height) return;
+ 
+         self.width = width;
+@@ -842,6 +860,9 @@ pub const CliRenderer = struct {
+     }
+ 
+     fn clearSkippedFrameState(self: *CliRenderer) void {
++        self.scrollPrototype = null;
++        self.scrollRectCount = 0;
++        self.scrollRectsInvalid = false;
+         self.nextRenderBuffer.clear(self.backgroundColor, null);
+         @memset(self.nextHitGrid, 0);
+     }
+@@ -853,6 +874,8 @@ pub const CliRenderer = struct {
+     }
+ 
+     fn finishFailedFrame(self: *CliRenderer) RenderStatus {
++        self.scrollRectCount = 0;
++        self.scrollRectsInvalid = false;
+         self.pendingImages.clearRetainingCapacity();
+         @memset(self.nextHitGrid, 0);
+         self.force_full_repaint = true;
+@@ -2281,6 +2304,164 @@ pub const CliRenderer = struct {
+         }
+     }
+ 
++    pub fn beginScrollPrototypeFrame(self: *CliRenderer, frame_id: u32) void {
++        if (self.scrollHintFrameId != null and self.scrollHintFrameId.? == frame_id) return;
++        self.scrollHintFrameId = frame_id;
++        self.scrollRectCount = 0;
++        self.scrollRectsInvalid = false;
++        self.scrollPrototype = null;
++    }
++
++    pub fn queueScrollPrototypeRect(self: *CliRenderer, x: u32, y: u32, width: u32, height: u32) bool {
++        if (self.scrollRectsInvalid or width < 2 or height < 3 or x >= self.width or y >= self.height or width > self.width - x or height > self.height - y) return false;
++        const rect = ScrollRect{ .left = x, .top = y, .right = x + width - 1, .bottom = y + height - 1 };
++        for (self.scrollRects[0..self.scrollRectCount]) |prior| {
++            if (rect.left <= prior.right and rect.right >= prior.left and rect.top <= prior.bottom and rect.bottom >= prior.top) {
++                self.scrollRectsInvalid = true;
++                self.scrollRectCount = 0;
++                return false;
++            }
++        }
++        if (self.scrollRectCount == self.scrollRects.len) {
++            self.scrollRectsInvalid = true;
++            self.scrollRectCount = 0;
++            return false;
++        }
++        self.scrollRects[self.scrollRectCount] = rect;
++        self.scrollRectCount += 1;
++        return true;
++    }
++
++    fn scrollRowHash(target: *OptimizedBuffer, y: u32, left: u32, width: u32) u64 {
++        const start: usize = @as(usize, y) * target.width + left;
++        const end = start + width;
++        var hash = std.hash.Wyhash.init(0x726f777363726f6c);
++        hash.update(std.mem.sliceAsBytes(target.buffer.char[start..end]));
++        hash.update(std.mem.sliceAsBytes(target.buffer.fg[start..end]));
++        hash.update(std.mem.sliceAsBytes(target.buffer.bg[start..end]));
++        hash.update(std.mem.sliceAsBytes(target.buffer.attributes[start..end]));
++        return hash.final();
++    }
++
++    fn detectScrollPrototype(self: *CliRenderer, rect: ScrollRect) void {
++        // Bounded, allocation-free prototype. Hashes nominate only; full cell
++        // equality remains mandatory immediately before emitting any motion.
++        if (!self.scrollPrototypeAuto or self.height < 3 or self.height > 512 or !self.useAlternateScreen) return;
++        const width = rect.right - rect.left + 1;
++        const height = rect.bottom - rect.top + 1;
++        if (height < 3) return;
++        var before: [512]u64 = undefined;
++        var after: [512]u64 = undefined;
++        var changed_cells: [512]u32 = undefined;
++        var unchanged_prefix: [513]u32 = undefined;
++        unchanged_prefix[0] = 0;
++        var total_changed: u32 = 0;
++        for (0..height) |uy| {
++            const y: u32 = @intCast(uy);
++            before[y] = scrollRowHash(self.currentRenderBuffer, y + rect.top, rect.left, width);
++            after[y] = scrollRowHash(self.nextRenderBuffer, y + rect.top, rect.left, width);
++            changed_cells[y] = 0;
++            if (before[y] == after[y]) {
++                unchanged_prefix[y + 1] = unchanged_prefix[y] + width;
++                continue;
++            }
++            for (0..width) |ux| {
++                const x: u32 = @intCast(ux);
++                const a = self.currentRenderBuffer.get(x + rect.left, y + rect.top).?;
++                const b = self.nextRenderBuffer.get(x + rect.left, y + rect.top).?;
++                if (a.char != b.char or a.attributes != b.attributes or !buf.rgbaEqual(a.fg, b.fg) or !buf.rgbaEqual(a.bg, b.bg)) changed_cells[y] += 1;
++            }
++            unchanged_prefix[y + 1] = unchanged_prefix[y] + width - changed_cells[y];
++            total_changed += changed_cells[y];
++        }
++        if (total_changed <= 64) return;
++        var best_savings: u32 = 64;
++        const max_distance = @min(@as(u32, 64), height - 2);
++        for (1..max_distance + 1) |udistance| {
++            const distance: u32 = @intCast(udistance);
++            for ([_]i32{ 1, -1 }) |sign| {
++                const delta: i32 = @as(i32, @intCast(distance)) * sign;
++                const start: u32 = if (delta < 0) distance else 0;
++                const end = height - (if (delta > 0) distance else 0);
++                var run_start = start;
++                var reused_changed: u32 = 0;
++                for (start..end) |uy| {
++                    const y: u32 = @intCast(uy);
++                    const source: u32 = @intCast(@as(i64, y) + delta);
++                    if (before[source] != after[y]) {
++                        run_start = y + 1;
++                        reused_changed = 0;
++                        continue;
++                    }
++                    reused_changed += changed_cells[y];
++                    const count = y - run_start + 1;
++                    // Baseline already paints changed exposed cells. Only
++                    // unchanged exposed cells are extra work induced by scrolling.
++                    const exposed_cost = if (delta > 0) unchanged_prefix[y + distance + 1] - unchanged_prefix[y + 1] else unchanged_prefix[run_start] - unchanged_prefix[run_start - distance];
++                    if (count >= 2 and reused_changed > exposed_cost and reused_changed - exposed_cost > best_savings) {
++                        best_savings = reused_changed - exposed_cost;
++                        self.scrollPrototype = .{ .left = rect.left, .right = rect.right, .top = rect.top + run_start - (if (delta < 0) distance else 0), .bottom = rect.top + y + (if (delta > 0) distance else 0), .delta = delta };
++                    }
++                }
++            }
++        }
++    }
++
++    fn applyScrollPrototype(self: *CliRenderer, writer: anytype, frame_started: *bool, force: bool, images: bool) ?ScrollRect {
++        const hint = self.scrollPrototype orelse return null;
++        self.scrollPrototype = null;
++        if (force or images or self.renderOffset != 0 or self.width < 2 or hint.top >= hint.bottom or hint.bottom >= self.height or hint.delta == 0 or hint.delta == std.math.minInt(i32)) return null;
++        const left = hint.left;
++        const right = hint.right orelse (self.width - 1);
++        if (left >= right or right >= self.width) return null;
++        const partial = left != 0 or right != self.width - 1;
++        if (partial and (!self.terminal.caps.declrmm or self.terminal.multiplexer != .none)) return null;
++        for (hint.top..hint.bottom + 1) |uy| {
++            const y: u32 = @intCast(uy);
++            for ([_]*OptimizedBuffer{ self.currentRenderBuffer, self.nextRenderBuffer }) |target| {
++                const a = target.get(left, y).?.char;
++                const b = target.get(right, y).?.char;
++                if ((gp.isContinuationChar(a) and gp.charLeftExtent(a) > 0) or ((gp.isContinuationChar(b) or gp.isGraphemeChar(b)) and gp.charRightExtent(b) > 0)) return null;
++            }
++        }
++        const count: u32 = @intCast(@abs(hint.delta));
++        const height = hint.bottom - hint.top + 1;
++        if (count >= height) return null;
++        const target_top = hint.top + (if (hint.delta < 0) count else @as(u32, 0));
++        const target_bottom = hint.bottom - (if (hint.delta > 0) count else @as(u32, 0));
++        // Validate final composed rows, including every sidebar/overlay cell.
++        for (target_top..target_bottom + 1) |uy| {
++            const y: u32 = @intCast(uy);
++            const source: u32 = @intCast(@as(i64, y) + hint.delta);
++            for (left..right + 1) |ux| {
++                const x: u32 = @intCast(ux);
++                const old = self.currentRenderBuffer.get(x, source).?;
++                const next = self.nextRenderBuffer.get(x, y).?;
++                // Complete physical rows preserve wide-cell spans; image cells remain excluded.
++                if (gp.isImageChar(old.char) or gp.isImageChar(next.char) or old.char != next.char or old.attributes != next.attributes or !buf.rgbaEqual(old.fg, next.fg) or !buf.rgbaEqual(old.bg, next.bg)) return null;
++            }
++        }
++        if (!frame_started.*) {
++            beginRenderFrame(writer);
++            frame_started.* = true;
++        }
++        if (partial) {
++            writer.print("\x1b[0m\x1b[?69h\x1b[{d};{d}r\x1b[{d};{d}s\x1b[{d};{d}H\x1b[{d}{s}\x1b[?69l\x1b[r", .{ hint.top + 1, hint.bottom + 1, left + 1, right + 1, hint.top + 1, left + 1, count, if (hint.delta > 0) "S" else "T" }) catch {};
++        } else {
++            writer.print("\x1b[0m\x1b[{d};{d}r\x1b[{d};1H\x1b[{d}{s}\x1b[r", .{ hint.top + 1, hint.bottom + 1, hint.top + 1, count, if (hint.delta > 0) "S" else "T" }) catch {};
++        }
++        // Copy through ownership-aware cell synchronization in overlap-safe order.
++        for (0..height - count) |i| {
++            const y: u32 = if (hint.delta > 0) target_top + @as(u32, @intCast(i)) else target_bottom - @as(u32, @intCast(i));
++            const source: u32 = @intCast(@as(i64, y) + hint.delta);
++            for (left..right + 1) |ux| {
++                const x: u32 = @intCast(ux);
++                self.currentRenderBuffer.syncCell(x, y, self.currentRenderBuffer.get(x, source).?);
++            }
++        }
++        return if (hint.delta > 0) .{ .left = left, .right = right, .top = target_bottom + 1, .bottom = hint.bottom } else .{ .left = left, .right = right, .top = hint.top, .bottom = target_top - 1 };
++    }
++
+     /// Generic over the writer type so each backend can provide its own writer
+     /// (buffered frame append or feed streaming) without dispatch in the render path.
+     /// `sync_started` is true only when the caller already opened the
+@@ -2330,6 +2511,28 @@ pub const CliRenderer = struct {
+             };
+         }
+ 
++        var exposed: [16]ScrollRect = undefined;
++        var exposed_count: usize = 0;
++        if (!self.scrollRectsInvalid and self.scrollRectCount > 0) {
++            for (self.scrollRects[0..self.scrollRectCount]) |rect| {
++                if (rect.right >= self.width or rect.bottom >= self.height) continue;
++                self.scrollPrototype = null;
++                if (!should_force and !has_image_state and self.renderOffset == 0) self.detectScrollPrototype(rect);
++                if (self.applyScrollPrototype(writer, &frame_started, should_force, has_image_state)) |region| {
++                    exposed[exposed_count] = region;
++                    exposed_count += 1;
++                }
++            }
++        } else if (!self.scrollRectsInvalid) {
++            if (!should_force and !has_image_state and self.renderOffset == 0 and self.scrollPrototype == null) self.detectScrollPrototype(.{ .left = 0, .right = self.width - 1, .top = 0, .bottom = self.height - 1 });
++            if (self.applyScrollPrototype(writer, &frame_started, should_force, has_image_state)) |region| {
++                exposed[0] = region;
++                exposed_count = 1;
++            }
++        }
++        self.scrollRectCount = 0;
++        self.scrollRectsInvalid = false;
++
+         var currentFg: ?RGBA = null;
+         var currentBg: ?RGBA = null;
+         var currentAttributes: ?u32 = null;
+@@ -2354,7 +2557,11 @@ pub const CliRenderer = struct {
+         for (0..self.height) |uy| {
+             const y = @as(u32, @intCast(uy));
+ 
+-            if (use_row_equality) {
++            var row_force = false;
++            for (exposed[0..exposed_count]) |region| {
++                row_force = row_force or (y >= region.top and y <= region.bottom);
++            }
++            if (use_row_equality and !row_force) {
+                 const row_start = @as(usize, y) * self.width;
+                 const row_end = row_start + self.width;
+                 if (std.mem.eql(u32, self.currentRenderBuffer.buffer.char[row_start..row_end], self.nextRenderBuffer.buffer.char[row_start..row_end]) and
+@@ -2369,6 +2576,10 @@ pub const CliRenderer = struct {
+ 
+             for (0..self.width) |ux| {
+                 const x = @as(u32, @intCast(ux));
++                var cell_force = false;
++                for (exposed[0..exposed_count]) |region| {
++                    cell_force = cell_force or (y >= region.top and y <= region.bottom and x >= region.left and x <= region.right);
++                }
+                 const currentCell = self.currentRenderBuffer.get(x, y);
+                 const nextCell = self.nextRenderBuffer.get(x, y);
+ 
+@@ -2382,7 +2593,7 @@ pub const CliRenderer = struct {
+                         buf.rgbaEqual(currentCell.?.fg, cell.fg) and buf.rgbaEqual(currentCell.?.bg, cell.bg);
+                     // Identical reserved cells still repaint when their
+                     // placement's pixels are dirty (e.g. Sixel content change).
+-                    if (cellsEqual and !(clears_pending and cell_type == gp.CHAR_FLAG_IMAGE and dirtyImageChar(image_dirty_items, cell.char))) {
++                    if (!cell_force and cellsEqual and !(clears_pending and cell_type == gp.CHAR_FLAG_IMAGE and dirtyImageChar(image_dirty_items, cell.char))) {
+                         if (runLength > 0) {
+                             writer.writeAll(ansi.ANSI.reset) catch {};
+                             runStart = -1;
+diff --git a/packages/core/src/zig/terminal.zig b/packages/core/src/zig/terminal.zig
+index 92dce32..11bf858 100644
+--- a/packages/core/src/zig/terminal.zig
++++ b/packages/core/src/zig/terminal.zig
+@@ -24,6 +24,7 @@ pub const Capabilities = struct {
+     sixel: bool = false,
+     focus_tracking: bool = false,
+     sync: bool = false,
++    declrmm: bool = false,
+     bracketed_paste: bool = false,
+     hyperlinks: bool = false,
+     osc52: bool = false,
+@@ -149,6 +150,7 @@ pub const TerminalInfo = struct {
+ };
+ 
+ caps: Capabilities = .{},
++declrmm_query_sent: bool = false,
+ opts: Options = .{},
+ host_env_map: ?std.process.EnvMap = null,
+ remote: bool = false,
+@@ -314,6 +316,13 @@ pub fn queryTerminalSend(self: *Terminal, tty: anytype) !void {
+         ansi.ANSI.hideCursor ++
+         ansi.ANSI.saveCursorState);
+ 
++    // Query the immediate endpoint only: never infer inner tmux support from
++    // a passthrough reply sent by its outer terminal.
++    if (self.multiplexer == .none) {
++        try tty.writeAll("\x1b[?69$p");
++        self.declrmm_query_sent = true;
++    }
++
+     // Capture the current cursor position before temporary home-position queries.
+     try tty.writeAll(ansi.ANSI.cursorPositionRequest);
+ 
+@@ -1221,6 +1230,11 @@ pub fn processCapabilityResponse(self: *Terminal, response: []const u8) void {
+     self.parseKittyGraphicsResponse(response);
+     self.parseSixelDeviceAttributes(response);
+ 
++    if (self.declrmm_query_sent and self.multiplexer == .none) {
++        if (std.mem.indexOf(u8, response, "\x1b[?69;1$y") != null or std.mem.indexOf(u8, response, "\x1b[?69;2$y") != null) self.caps.declrmm = true;
++        if (std.mem.indexOf(u8, response, "\x1b[?69;0$y") != null or std.mem.indexOf(u8, response, "\x1b[?69;3$y") != null or std.mem.indexOf(u8, response, "\x1b[?69;4$y") != null) self.caps.declrmm = false;
++    }
++
+     // DECRPM responses
+     if (std.mem.indexOf(u8, response, "1016;2$y")) |_| {
+         self.caps.sgr_pixels = true;
+diff --git a/packages/core/src/zig/tests/renderer_test.zig b/packages/core/src/zig/tests/renderer_test.zig
+index 33e2159..780d626 100644
+--- a/packages/core/src/zig/tests/renderer_test.zig
++++ b/packages/core/src/zig/tests/renderer_test.zig
+@@ -4430,3 +4430,532 @@ test "renderer clears an upper sixel hole when its lower image moves away" {
+     try std.testing.expectEqual(renderer.RenderStatus.rendered, test_renderer.renderer.render(false));
+     try std.testing.expect(std.mem.indexOf(u8, test_renderer.memory.lastWrite(), "\x1b[1;1H") != null);
+ }
++
++fn paintScrollRows(target: *OptimizedBuffer, rows: []const u8) void {
++    for (rows, 0..) |c, y| {
++        for (0..target.width) |x| target.setRaw(@intCast(x), @intCast(y), .{ .char = c, .fg = ansi.rgbColor(255, 255, 255, 255), .bg = ansi.rgbColor(0, 0, 0, 255), .attributes = 0 });
++    }
++}
++
++test "renderer-owned scroll reuses bounded rows and resets margins before painting" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 8, 6, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    paintScrollRows(r.getNextBuffer(), "HABCDE");
++    _ = r.render(true);
++    paintScrollRows(r.getNextBuffer(), "HBCDAE");
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = 1 };
++    try std.testing.expectEqual(renderer.RenderStatus.rendered, r.render(false));
++    try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[2;5r\x1b[2;1H\x1b[1S\x1b[r") != null);
++    for ("HBCDAE", 0..) |c, y| try std.testing.expectEqual(@as(u32, c), r.getCurrentBuffer().get(0, @intCast(y)).?.char);
++    // Reverse uses last accepted state, not an accumulated input offset.
++    paintScrollRows(r.getNextBuffer(), "HABCDE");
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = -1 };
++    _ = r.render(false);
++    try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[1T\x1b[r") != null);
++    for ("HABCDE", 0..) |c, y| try std.testing.expectEqual(@as(u32, c), r.getCurrentBuffer().get(0, @intCast(y)).?.char);
++    // One mismatching composed cell prohibits moving neighbors or overlays.
++    paintScrollRows(r.getNextBuffer(), "HBCXAE");
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = 1 };
++    _ = r.render(false);
++    try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[1S") == null);
++}
++
++test "renderer-owned scroll discards skipped candidate and reverses from accepted frame" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    _ = link.initGlobalLinkPool(std.testing.allocator);
++    defer link.deinitGlobalLinkPool();
++    var opts = native_span_feed.defaultOptions();
++    opts.span_queue_capacity = 2;
++    const feed = try native_span_feed.Stream.create(std.testing.allocator, opts);
++    const r = try CliRenderer.createWithOptions(std.testing.allocator, 8, 6, pool, .{ .remote_mode = .remote, .output = .{ .feed = feed } });
++    defer feed.destroy();
++    defer r.destroy();
++    paintScrollRows(r.getNextBuffer(), "HABCDE");
++    _ = r.render(true);
++    paintScrollRows(r.getNextBuffer(), "HBCDAE");
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = 1 };
++    _ = r.render(false);
++    try std.testing.expect(r.backend.shouldSkipFrame());
++    paintScrollRows(r.getNextBuffer(), "HCDAFE");
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = 1 };
++    try std.testing.expectEqual(renderer.RenderStatus.skipped, r.render(false));
++    try std.testing.expect(r.scrollPrototype == null);
++    try std.testing.expectEqual(@as(u32, 'B'), r.getCurrentBuffer().get(0, 1).?.char);
++    var spans: [32]native_span_feed.SpanInfo = undefined;
++    _ = feed.drainSpans(&spans);
++    paintScrollRows(r.getNextBuffer(), "HABCDE");
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = -1 };
++    try std.testing.expectEqual(renderer.RenderStatus.rendered, r.render(false));
++    for ("HABCDE", 0..) |c, y| try std.testing.expectEqual(@as(u32, c), r.getCurrentBuffer().get(0, @intCast(y)).?.char);
++}
++
++test "renderer-owned scroll auto detects bounded composed rows" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 16, 18, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    r.scrollPrototypeAuto = true;
++    paintScrollRows(r.getNextBuffer(), "HABCDEFGHIJKLMNOPZ");
++    _ = r.render(true);
++    paintScrollRows(r.getNextBuffer(), "HFGHIJKLMNOPQRSTUZ");
++    _ = r.render(false);
++    try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[2;17r\x1b[2;1H\x1b[5S\x1b[r") != null);
++    for ("HFGHIJKLMNOPQRSTUZ", 0..) |c, y| try std.testing.expectEqual(@as(u32, c), r.getCurrentBuffer().get(0, @intCast(y)).?.char);
++}
++
++test "renderer-owned scroll failed publication emits no partial move and forces recovery" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    _ = link.initGlobalLinkPool(std.testing.allocator);
++    defer link.deinitGlobalLinkPool();
++    var opts = native_span_feed.defaultOptions();
++    opts.chunk_size = 128;
++    opts.initial_chunks = 16;
++    opts.max_bytes = 2048;
++    opts.growth_policy = @intFromEnum(native_span_feed.GrowthPolicy.block);
++    opts.auto_commit_on_full = 0;
++    const feed = try native_span_feed.Stream.create(std.testing.allocator, opts);
++    const r = try CliRenderer.createWithOptions(std.testing.allocator, 8, 6, pool, .{ .remote_mode = .remote, .output = .{ .feed = feed }, .clearOnShutdown = false });
++    defer feed.destroy();
++    defer r.destroy();
++    var spans: [32]native_span_feed.SpanInfo = undefined;
++    paintScrollRows(r.getNextBuffer(), "HABCDE");
++    try std.testing.expectEqual(renderer.RenderStatus.rendered, r.render(true));
++    var count = feed.drainSpans(&spans);
++    for (spans[0..count]) |span| feed.markSpanConsumed(span);
++    const blocker = [_]u8{'x'} ** 1984;
++    try feed.writeAtomic(&blocker);
++    paintScrollRows(r.getNextBuffer(), "HBCDAE");
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = 1 };
++    try std.testing.expectEqual(renderer.RenderStatus.failed, r.render(false));
++    try std.testing.expect(r.force_full_repaint);
++    try std.testing.expect(r.scrollPrototype == null);
++    count = feed.drainSpans(&spans);
++    for (spans[0..count]) |span| {
++        try std.testing.expect(std.mem.indexOf(u8, span.slice(), "\x1b[") == null);
++        feed.markSpanConsumed(span);
++    }
++    // Next frame reverses user intent; forced repaint must not scroll the
++    // unpublished optimistic current buffer a second time.
++    paintScrollRows(r.getNextBuffer(), "HABCDE");
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = -1 };
++    try std.testing.expectEqual(renderer.RenderStatus.rendered, r.render(false));
++    count = feed.drainSpans(&spans);
++    for (spans[0..count]) |span| {
++        try std.testing.expect(std.mem.indexOf(u8, span.slice(), "\x1b[1T") == null);
++        feed.markSpanConsumed(span);
++    }
++    for ("HABCDE", 0..) |c, y| for (0..8) |x| try std.testing.expectEqual(@as(u32, c), r.getCurrentBuffer().get(@intCast(x), @intCast(y)).?.char);
++}
++
++fn paintStyledScrollRows(target: *OptimizedBuffer, rows: []const u8) void {
++    paintScrollRows(target, rows);
++    for (rows, 0..) |_, y| for (0..target.width) |x| {
++        var cell = target.get(@intCast(x), @intCast(y)).?;
++        cell.bg = ansi.rgbColor(31, 47, 63, 255);
++        cell.fg = ansi.rgbColor(101, 151, 201, 255);
++        cell.attributes = ansi.TextAttributes.BOLD;
++        target.setRaw(@intCast(x), @intCast(y), cell);
++    };
++}
++
++test "renderer-owned scroll restores styled exposed blanks after margin reset" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 8, 6, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    r.terminal.caps.rgb = true;
++    paintStyledScrollRows(r.getNextBuffer(), "HABC E");
++    _ = r.render(true);
++    // Exposed row is already blank in the remembered screen. Nevertheless
++    // scrolling erases with default rendition, so it must be explicitly painted.
++    paintStyledScrollRows(r.getNextBuffer(), "HBC  E");
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = 1 };
++    _ = r.render(false);
++    const bytes = fixture.memory.lastWrite();
++    const reset = std.mem.indexOf(u8, bytes, "\x1b[1S\x1b[r").?;
++    const tail_bytes = bytes[reset..];
++    try std.testing.expect(std.mem.indexOf(u8, tail_bytes, "48;2;31;47;63") != null);
++    try std.testing.expect(std.mem.indexOf(u8, tail_bytes, "        ") != null);
++    for ("HBC  E", 0..) |c, y| for (0..8) |x| {
++        const cell = r.getCurrentBuffer().get(@intCast(x), @intCast(y)).?;
++        try std.testing.expectEqual(@as(u32, c), cell.char);
++        try std.testing.expectEqual(ansi.rgbColor(31, 47, 63, 255), cell.bg);
++        try std.testing.expectEqual(@as(u32, ansi.TextAttributes.BOLD), cell.attributes);
++    };
++}
++
++test "renderer-owned scroll rejects stationary sidebar but preserves full wide rows" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 8, 6, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    paintScrollRows(r.getNextBuffer(), "HABCDE");
++    try r.getNextBuffer().drawText("!", 0, 2, ansi.rgbColor(255, 255, 255, 255), ansi.rgbColor(0, 0, 0, 255), 0);
++    _ = r.render(true);
++    paintScrollRows(r.getNextBuffer(), "HBCDAE");
++    try r.getNextBuffer().drawText("!", 0, 2, ansi.rgbColor(255, 255, 255, 255), ansi.rgbColor(0, 0, 0, 255), 0);
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = 1 };
++    _ = r.render(false);
++    try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[1S") == null);
++    try std.testing.expectEqual(@as(u32, '!'), r.getCurrentBuffer().get(0, 2).?.char);
++    paintScrollRows(r.getNextBuffer(), "HABCDE");
++    try r.getNextBuffer().drawText("界", 2, 2, ansi.rgbColor(255, 255, 255, 255), ansi.rgbColor(0, 0, 0, 255), 0);
++    _ = r.render(true);
++    paintScrollRows(r.getNextBuffer(), "HBCDAE");
++    try r.getNextBuffer().drawText("界", 2, 1, ansi.rgbColor(255, 255, 255, 255), ansi.rgbColor(0, 0, 0, 255), 0);
++    r.scrollPrototype = .{ .top = 1, .bottom = 4, .delta = 1 };
++    _ = r.render(false);
++    try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[1S") != null);
++}
++
++fn paintUnicodeScrollRows(target: *OptimizedBuffer, rows: []const u8, attributes: u32) !void {
++    paintStyledScrollRows(target, rows);
++    for (rows, 0..) |_, y| {
++        try target.drawText("界e\u{301}🌊", 1, @intCast(y), ansi.rgbColor(101, 151, 201, 255), ansi.rgbColor(31, 47, 63, 255), attributes);
++        // Exercise a complete wide character ending at the physical right edge.
++        try target.drawText("界", @intCast(target.width - 2), @intCast(y), ansi.rgbColor(101, 151, 201, 255), ansi.rgbColor(31, 47, 63, 255), attributes);
++    }
++}
++
++test "renderer-owned scroll repeated Unicode combining and linked rows retain ownership" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    const links = link.initGlobalLinkPool(std.testing.allocator);
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 32, 18, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    r.terminal.caps.hyperlinks = true;
++    r.scrollPrototypeAuto = true;
++    const link_id = try links.alloc("https://example.com/scroll-prototype");
++    const attributes = ansi.TextAttributes.setLinkId(ansi.TextAttributes.BOLD, link_id);
++    try paintUnicodeScrollRows(r.getNextBuffer(), "HABCDEFGHIJKLMNOPZ", attributes);
++    _ = r.render(true);
++    const glyph_id = gp.graphemeIdFromChar(r.getCurrentBuffer().get(1, 1).?.char);
++    const initial_refs = try pool.getRefcount(glyph_id);
++    for (0..20) |iteration| {
++        const rows = if (iteration % 2 == 0) "HFGHIJKLMNOPQRSTUZ" else "HABCDEFGHIJKLMNOPZ";
++        try paintUnicodeScrollRows(r.getNextBuffer(), rows, attributes);
++        var expected: [32 * 18]buffer.Cell = undefined;
++        for (0..18) |y| for (0..32) |x| {
++            expected[y * 32 + x] = r.getNextBuffer().get(@intCast(x), @intCast(y)).?;
++        };
++        try std.testing.expectEqual(renderer.RenderStatus.rendered, r.render(false));
++        const direction = if (iteration % 2 == 0) "\x1b[5S\x1b[r" else "\x1b[5T\x1b[r";
++        try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), direction) != null);
++        for (0..18) |y| for (0..32) |x| {
++            try std.testing.expectEqualDeep(expected[y * 32 + x], r.getCurrentBuffer().get(@intCast(x), @intCast(y)).?);
++        };
++        try std.testing.expectEqual(initial_refs, try pool.getRefcount(glyph_id));
++    }
++}
++
++fn paintCoalescedRows(target: *OptimizedBuffer, offset: u8) void {
++    var rows: [64]u8 = undefined;
++    for (0..target.height) |y| rows[y] = if (y == 0) '#' else if (y == target.height - 1) '$' else @intCast(33 + y + offset);
++    paintScrollRows(target, rows[0..target.height]);
++}
++
++test "renderer-owned scroll bounded hashes handle coalesced and fractional reversal" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 32, 50, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    r.scrollPrototypeAuto = true;
++    for ([_]u8{ 1, 4, 10, 15, 30, 40 }) |distance| {
++        paintCoalescedRows(r.getNextBuffer(), 0);
++        _ = r.render(true);
++        paintCoalescedRows(r.getNextBuffer(), distance);
++        _ = r.render(false);
++        var expected_escape: [32]u8 = undefined;
++        const up = try std.fmt.bufPrint(&expected_escape, "\x1b[{d}S\x1b[r", .{distance});
++        try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), up) != null);
++        for (1..49) |y| try std.testing.expectEqual(@as(u32, @intCast(33 + y + distance)), r.getCurrentBuffer().get(0, @intCast(y)).?.char);
++        paintCoalescedRows(r.getNextBuffer(), 0);
++        _ = r.render(false);
++        const down = try std.fmt.bufPrint(&expected_escape, "\x1b[{d}T\x1b[r", .{distance});
++        try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), down) != null);
++        for (1..49) |y| try std.testing.expectEqual(@as(u32, @intCast(33 + y)), r.getCurrentBuffer().get(0, @intCast(y)).?.char);
++        const bytes_before = fixture.memory.bytes.items.len;
++        paintCoalescedRows(r.getNextBuffer(), 0);
++        _ = r.render(false);
++        try std.testing.expectEqual(bytes_before, fixture.memory.bytes.items.len);
++    }
++}
++
++test "renderer-owned scroll coalesces across rejected feed frame" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    _ = link.initGlobalLinkPool(std.testing.allocator);
++    defer link.deinitGlobalLinkPool();
++    var opts = native_span_feed.defaultOptions();
++    opts.span_queue_capacity = 2;
++    const feed = try native_span_feed.Stream.create(std.testing.allocator, opts);
++    const r = try CliRenderer.createWithOptions(std.testing.allocator, 32, 50, pool, .{ .remote_mode = .remote, .output = .{ .feed = feed }, .clearOnShutdown = false });
++    defer feed.destroy();
++    defer r.destroy();
++    r.scrollPrototypeAuto = true;
++    paintCoalescedRows(r.getNextBuffer(), 0);
++    _ = r.render(true);
++    paintCoalescedRows(r.getNextBuffer(), 5);
++    _ = r.render(false);
++    paintCoalescedRows(r.getNextBuffer(), 10);
++    try std.testing.expectEqual(renderer.RenderStatus.skipped, r.render(false));
++    var spans: [32]native_span_feed.SpanInfo = undefined;
++    var count = feed.drainSpans(&spans);
++    for (spans[0..count]) |span| feed.markSpanConsumed(span);
++    paintCoalescedRows(r.getNextBuffer(), 15);
++    try std.testing.expectEqual(renderer.RenderStatus.rendered, r.render(false));
++    count = feed.drainSpans(&spans);
++    var moved_ten = false;
++    for (spans[0..count]) |span| {
++        moved_ten = moved_ten or std.mem.indexOf(u8, span.slice(), "\x1b[10S\x1b[r") != null;
++        feed.markSpanConsumed(span);
++    }
++    try std.testing.expect(moved_ten);
++    for (1..49) |y| try std.testing.expectEqual(@as(u32, @intCast(33 + y + 15)), r.getCurrentBuffer().get(0, @intCast(y)).?.char);
++}
++
++test "renderer-owned scroll benchmark bounded detector native cost" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    for ([_]bool{ false, true }) |enabled| {
++        for ([_]bool{ false, true }) |moving| {
++            var fixture = try TestRenderer.create(std.testing.allocator, 160, 50, pool);
++            defer fixture.deinit();
++            const r = fixture.renderer;
++            r.scrollPrototypeAuto = enabled;
++            paintCoalescedRows(r.getNextBuffer(), 0);
++            _ = r.render(true);
++            var elapsed: i128 = 0;
++            var bytes: usize = 0;
++            for (0..500) |iteration| {
++                paintCoalescedRows(r.getNextBuffer(), if (moving and iteration % 2 == 0) 10 else 0);
++                fixture.memory.bytes.clearRetainingCapacity();
++                const started = std.time.nanoTimestamp();
++                _ = r.render(false);
++                elapsed += std.time.nanoTimestamp() - started;
++                bytes += fixture.memory.bytes.items.len;
++            }
++            std.debug.print("SCROLL_BENCH enabled={any} moving={any} frames=500 native_ns={d} bytes={d}\n", .{ enabled, moving, elapsed, bytes });
++        }
++    }
++}
++
++fn paintRectFixture(target: *OptimizedBuffer, offset: u8) void {
++    paintCoalescedRows(target, 0);
++    for (1..target.height - 1) |y| for (3..19) |x| {
++        target.setRaw(@intCast(x), @intCast(y), .{ .char = @intCast(33 + y + offset), .fg = ansi.rgbColor(100, 150, 200, 255), .bg = ansi.rgbColor(30, 40, 50, 255), .attributes = ansi.TextAttributes.BOLD });
++    };
++}
++
++test "renderer-owned scroll rectangle capability exact supported late and absent" {
++    const Terminal = @import("../terminal.zig");
++    var term = Terminal.init(.{});
++    term.multiplexer = .none;
++    term.processCapabilityResponse("\x1b[?69;2$y");
++    try std.testing.expect(!term.caps.declrmm); // unsolicited reply
++    term.declrmm_query_sent = true;
++    for ([_][]const u8{ "\x1b[?169;2$y", "69;2$y", "\x1b[?69;22$y", "\x1b[?69;0$y", "\x1b[?69;3$y", "\x1b[?69;4$y" }) |reply| {
++        term.processCapabilityResponse(reply);
++        try std.testing.expect(!term.caps.declrmm);
++    }
++    term.processCapabilityResponse("\x1b[?69;2$y");
++    try std.testing.expect(term.caps.declrmm);
++    term.processCapabilityResponse("\x1b[?69;0$y");
++    try std.testing.expect(!term.caps.declrmm);
++    term.processCapabilityResponse("\x1b[?69;1$y");
++    try std.testing.expect(term.caps.declrmm);
++    term.caps.declrmm = false;
++    term.multiplexer = .tmux;
++    term.processCapabilityResponse("\x1b[?69;2$y");
++    try std.testing.expect(!term.caps.declrmm);
++}
++
++test "renderer-owned scroll rectangle preserves siblings headers and reset margins" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 40, 20, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    r.scrollPrototypeAuto = true;
++    paintRectFixture(r.getNextBuffer(), 0);
++    _ = r.render(true);
++    paintRectFixture(r.getNextBuffer(), 5);
++    try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++    _ = r.render(false);
++    try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[?69h") == null);
++    r.terminal.caps.declrmm = true;
++    paintRectFixture(r.getNextBuffer(), 0);
++    try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++    _ = r.render(false);
++    const bytes = fixture.memory.lastWrite();
++    try std.testing.expect(std.mem.indexOf(u8, bytes, "\x1b[?69h\x1b[2;19r\x1b[4;19s\x1b[2;4H\x1b[5T\x1b[?69l\x1b[r") != null);
++    try std.testing.expectEqual(@as(usize, 0), r.scrollRectCount);
++    for (0..20) |y| for (0..40) |x| {
++        const expected: u32 = if (y == 0) '#' else if (y == 19) '$' else @intCast(33 + y);
++        const cell = r.getCurrentBuffer().get(@intCast(x), @intCast(y)).?;
++        try std.testing.expectEqual(expected, cell.char);
++        if (y > 0 and y < 19 and x >= 3 and x < 19) try std.testing.expectEqual(ansi.rgbColor(30, 40, 50, 255), cell.bg);
++    };
++    // Queue overlap invalidates the frame's proposal list.
++    try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++    try std.testing.expect(!r.queueScrollPrototypeRect(4, 1, 16, 18));
++    paintRectFixture(r.getNextBuffer(), 5);
++    _ = r.render(false);
++    try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[?69h") == null);
++    try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++    try r.resize(20, 10);
++    try std.testing.expectEqual(@as(usize, 0), r.scrollRectCount);
++}
++
++test "renderer-owned scroll rectangle rejects crossing wide cells and overlay" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 40, 20, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    r.scrollPrototypeAuto = true;
++    r.terminal.caps.declrmm = true;
++    for ([_]u32{ 2, 18 }) |wide_x| {
++        paintRectFixture(r.getNextBuffer(), 0);
++        for (1..19) |y| try r.getNextBuffer().drawText("界", @intCast(wide_x), @intCast(y), ansi.rgbColor(100, 150, 200, 255), ansi.rgbColor(30, 40, 50, 255), 0);
++        _ = r.render(true);
++        paintRectFixture(r.getNextBuffer(), 5);
++        for (1..19) |y| try r.getNextBuffer().drawText("界", @intCast(wide_x), @intCast(y), ansi.rgbColor(100, 150, 200, 255), ansi.rgbColor(30, 40, 50, 255), 0);
++        try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++        _ = r.render(false);
++        try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[?69h") == null);
++    }
++    paintRectFixture(r.getNextBuffer(), 0);
++    _ = r.render(true);
++    paintRectFixture(r.getNextBuffer(), 5);
++    // An overlay covering the content invalidates all retained row matches.
++    for (1..19) |y| try r.getNextBuffer().drawText("!", 3, @intCast(y), ansi.rgbColor(255, 0, 0, 255), ansi.rgbColor(0, 0, 0, 255), 0);
++    try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++    _ = r.render(false);
++    try std.testing.expect(std.mem.indexOf(u8, fixture.memory.lastWrite(), "\x1b[?69h") == null);
++}
++
++test "renderer-owned scroll rectangle rejected publication and skipped queue recover" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    _ = link.initGlobalLinkPool(std.testing.allocator);
++    defer link.deinitGlobalLinkPool();
++    for ([_]bool{ false, true }) |fail_publication| {
++        var opts = native_span_feed.defaultOptions();
++        opts.span_queue_capacity = if (fail_publication) 64 else 2;
++        opts.chunk_size = 32768;
++        opts.initial_chunks = if (fail_publication) 1 else 2;
++        opts.max_bytes = if (fail_publication) 32768 else 65536;
++        opts.growth_policy = @intFromEnum(native_span_feed.GrowthPolicy.block);
++        opts.auto_commit_on_full = 0;
++        const feed = try native_span_feed.Stream.create(std.testing.allocator, opts);
++        const r = try CliRenderer.createWithOptions(std.testing.allocator, 40, 20, pool, .{ .remote_mode = .remote, .output = .{ .feed = feed }, .clearOnShutdown = false });
++        defer feed.destroy();
++        defer r.destroy();
++        r.scrollPrototypeAuto = true;
++        r.terminal.caps.declrmm = true;
++        paintRectFixture(r.getNextBuffer(), 0);
++        try std.testing.expectEqual(renderer.RenderStatus.rendered, r.render(true));
++        var spans: [128]native_span_feed.SpanInfo = undefined;
++        if (fail_publication) {
++            const count = feed.drainSpans(&spans);
++            for (spans[0..count]) |span| feed.markSpanConsumed(span);
++            const blocker = [_]u8{'x'} ** 32704;
++            try feed.writeAtomic(&blocker);
++        } else {
++            paintRectFixture(r.getNextBuffer(), 5);
++            try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++            try std.testing.expectEqual(renderer.RenderStatus.rendered, r.render(false));
++        }
++        paintRectFixture(r.getNextBuffer(), 10);
++        try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++        try std.testing.expectEqual(if (fail_publication) renderer.RenderStatus.failed else renderer.RenderStatus.skipped, r.render(false));
++        try std.testing.expectEqual(@as(usize, 0), r.scrollRectCount);
++        var count = feed.drainSpans(&spans);
++        for (spans[0..count]) |span| {
++            if (fail_publication) try std.testing.expect(std.mem.indexOf(u8, span.slice(), "\x1b[") == null);
++            feed.markSpanConsumed(span);
++        }
++        paintRectFixture(r.getNextBuffer(), 0);
++        try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++        try std.testing.expectEqual(renderer.RenderStatus.rendered, r.render(false));
++        count = feed.drainSpans(&spans);
++        for (spans[0..count]) |span| {
++            if (fail_publication) try std.testing.expect(std.mem.indexOf(u8, span.slice(), "\x1b[?69h") == null);
++            feed.markSpanConsumed(span);
++        }
++        for (1..19) |y| for (3..19) |x| try std.testing.expectEqual(@as(u32, @intCast(33 + y)), r.getCurrentBuffer().get(@intCast(x), @intCast(y)).?.char);
++    }
++}
++
++test "renderer-owned scroll moves two disjoint pane rectangles independently" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 40, 20, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    r.scrollPrototypeAuto = true;
++    r.terminal.caps.declrmm = true;
++    for (0..2) |frame| {
++        paintRectFixture(r.getNextBuffer(), if (frame == 0) 0 else 5);
++        for (1..19) |y| for (22..38) |x| r.getNextBuffer().setRaw(@intCast(x), @intCast(y), .{ .char = @intCast(65 + y + (if (frame == 0) @as(u32, 0) else 3)), .fg = ansi.rgbColor(200, 120, 100, 255), .bg = ansi.rgbColor(60, 50, 40, 255), .attributes = 0 });
++        var expected: [800]buffer.Cell = undefined;
++        for (0..20) |y| for (0..40) |x| {
++            expected[y * 40 + x] = r.getNextBuffer().get(@intCast(x), @intCast(y)).?;
++        };
++        if (frame != 0) {
++            try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++            try std.testing.expect(r.queueScrollPrototypeRect(22, 1, 16, 18));
++        }
++        _ = r.render(frame == 0);
++        if (frame != 0) {
++            const bytes = fixture.memory.lastWrite();
++            try std.testing.expect(std.mem.indexOf(u8, bytes, "\x1b[5S\x1b[?69l\x1b[r") != null);
++            try std.testing.expect(std.mem.indexOf(u8, bytes, "\x1b[3S\x1b[?69l\x1b[r") != null);
++        }
++        for (0..20) |y| for (0..40) |x| {
++            try std.testing.expectEqualDeep(expected[y * 40 + x], r.getCurrentBuffer().get(@intCast(x), @intCast(y)).?);
++        };
++    }
++}
++
++test "renderer-owned scroll queue drops hints when host skipped native frame" {
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    var fixture = try TestRenderer.create(std.testing.allocator, 40, 20, pool);
++    defer fixture.deinit();
++    const r = fixture.renderer;
++    r.beginScrollPrototypeFrame(1);
++    try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++    r.beginScrollPrototypeFrame(1);
++    try std.testing.expectEqual(@as(usize, 1), r.scrollRectCount);
++    // No native render occurred: next JS frame must discard previous hints.
++    r.beginScrollPrototypeFrame(2);
++    try std.testing.expectEqual(@as(usize, 0), r.scrollRectCount);
++    try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++    try std.testing.expect(!r.queueScrollPrototypeRect(3, 1, 16, 18));
++    r.beginScrollPrototypeFrame(3);
++    try std.testing.expect(!r.scrollRectsInvalid);
++    try std.testing.expect(r.queueScrollPrototypeRect(3, 1, 16, 18));
++}
+diff --git a/packages/core/src/zig/tests/terminal_test.zig b/packages/core/src/zig/tests/terminal_test.zig
+index 36a9aca..df8b22b 100644
+--- a/packages/core/src/zig/tests/terminal_test.zig
++++ b/packages/core/src/zig/tests/terminal_test.zig
+@@ -1732,3 +1732,23 @@ test "resetState - skips mouse disable when mouse was never enabled" {
+     try testing.expect(std.mem.indexOf(u8, output, ansi.ANSI.disableMouseTracking) == null);
+     try testing.expect(std.mem.indexOf(u8, output, ansi.ANSI.disableSGRMouseMode) == null);
+ }
++
++test "renderer-owned scroll margin query targets immediate endpoint only" {
++    var env = std.process.EnvMap.init(testing.allocator);
++    defer env.deinit();
++    var term = Terminal.init(.{ .env_map = &env });
++    defer term.deinit();
++    var writer = TestWriter.init(testing.allocator);
++    defer writer.deinit();
++    try term.queryTerminalSend(&writer);
++    try testing.expect(std.mem.indexOf(u8, writer.getWritten(), "\x1b[?69$p") != null);
++    try testing.expect(term.declrmm_query_sent);
++    try env.put("TMUX", "/tmp/example,1,0");
++    var nested = Terminal.init(.{ .env_map = &env });
++    defer nested.deinit();
++    var nested_writer = TestWriter.init(testing.allocator);
++    defer nested_writer.deinit();
++    try nested.queryTerminalSend(&nested_writer);
++    try testing.expect(std.mem.indexOf(u8, nested_writer.getWritten(), "?69$p") == null);
++    try testing.expect(!nested.declrmm_query_sent);
++}
