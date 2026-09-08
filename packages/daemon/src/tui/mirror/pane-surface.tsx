@@ -27,6 +27,7 @@ import {
   type RenderableOptions,
 } from "@opentui/core";
 import { extend } from "@opentui/solid";
+import { queueNativeScrollHint } from "./runtime/native-scroll-hints.ts";
 import {
   clampTerminalViewportOrigin,
   terminalLiveViewportOrigin,
@@ -664,6 +665,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
 
   protected override renderSelf(buffer: OptimizedBuffer): void {
     if (!this.visible || this.isDestroyed) return;
+    queueNativeScrollHint(this._ctx, this.x, this.y, this.width, this.height);
     const origin = this.resolvedViewportOrigin();
     if (origin.x !== this._lastViewportOrigin.x || origin.y !== this._lastViewportOrigin.y) {
       this._forceFull = true;

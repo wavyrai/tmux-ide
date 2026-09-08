@@ -13,6 +13,7 @@ import {
 } from "@tmux-ide/core";
 import type { BlitOptions } from "./pane-mirror.ts";
 import { installTuiPerformanceEventSink } from "./performance-events.ts";
+import { registerNativeScrollHint } from "./runtime/native-scroll-hints.ts";
 import {
   PaneSurfaceRenderable,
   createPaneSurfaceHostFocusTransitionOwner,
@@ -137,6 +138,56 @@ function semanticLane(
 }
 
 describe("PaneSurface OpenTUI renderer", () => {
+  it("offers only pane content bounds to the optional native scroll extension", async () => {
+    registerPaneSurface();
+    const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
+    const lane = semanticLane("A", 1);
+    const rectangles: number[][] = [];
+    const dispose = registerNativeScrollHint((context, x, y, width, height) => {
+      expect(typeof context.frameId).toBe("number");
+      rectangles.push([x, y, width, height]);
+    });
+    try {
+      const setup = await renderForTest(
+        () => (
+          <box width={20} height={8}>
+            <box position="absolute" left={0} top={0} width={6} height={8}>
+              <text>side</text>
+            </box>
+            <box position="absolute" left={6} top={1} width={10} height={5} flexDirection="column">
+              <text height={1}>header</text>
+              <pane_surface
+                width={10}
+                height={4}
+                mirror={lane.source}
+                paneId="pane.editor"
+                defaultFg={palette.foreground}
+                defaultBg={palette.background}
+                terminalPalette={palette}
+                searchHl={palette.searchHighlight}
+                searchCur={palette.searchCurrent}
+                contentVersion={1}
+              />
+            </box>
+          </box>
+        ),
+        { width: 20, height: 8 },
+      );
+      await setup.renderOnce();
+      expect(rectangles.length).toBeGreaterThan(0);
+      expect(rectangles.every((rect) => rect.join(",") === "6,2,10,4")).toBe(true);
+      const withExtension = setup.captureCharFrame();
+      expect(withExtension).toContain("header");
+      rectangles.length = 0;
+      dispose();
+      await setup.renderOnce();
+      expect(rectangles).toEqual([]);
+      expect(setup.captureCharFrame()).toBe(withExtension);
+    } finally {
+      dispose();
+    }
+  });
+
   it("consumes one exact root-owned focus transition and fences stale replacements", () => {
     let followupRenders = 0;
     const owner = createPaneSurfaceHostFocusTransitionOwner(() => {
