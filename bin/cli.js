@@ -28213,7 +28213,9 @@ function createPinnedWorkspaceTmuxRunner(authority, options = {}) {
   return (args) => {
     const selector = socketIdentity ? ["-S", revalidateUnixSocketIdentity(socketIdentity)] : namedFence?.resolve() ?? socketArgv;
     const output = String(
-      runTmuxBinary(executablePath, [...selector, ...args], {
+      // Machine-readable formats contain tabs and Unicode even under LC_ALL=C.
+      // -u controls this client's output encoding without changing pane locale.
+      runTmuxBinary(executablePath, [...selector, "-u", ...args], {
         encoding: "utf8",
         env: environment,
         maxBuffer: TMUX_OUTPUT_BYTES,
@@ -28242,7 +28244,7 @@ function createPinnedWorkspaceTmuxAsyncRunner(authority) {
     const execute = (selector2) => new Promise((resolve38, reject) => {
       execFile8(
         executablePath,
-        [...selector2, ...args],
+        [...selector2, "-u", ...args],
         {
           encoding: "utf8",
           env: environment,

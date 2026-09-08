@@ -6,7 +6,11 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { WorkspacePaneCreationAuthority } from "../workspace-pane-creation.ts";
+import {
+  createPinnedWorkspaceTmuxRunner,
+  createPinnedWorkspaceTmuxAsyncRunner,
+  WorkspacePaneCreationAuthority,
+} from "../workspace-pane-creation.ts";
 import { WorkspaceRegistry } from "../workspace-registry.ts";
 
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
@@ -46,6 +50,37 @@ describe.skipIf(!hasTmux)("workspace pane creation live tmux boundary", () => {
   afterAll(() => {
     spawnSync("tmux", ["-L", socketName, "kill-server"], { stdio: "ignore" });
     rmSync(root, { recursive: true, force: true });
+  });
+
+  it("preserves machine-readable tabs and Unicode for sync and async clients under C locale", async () => {
+    const executablePath = realpathSync(
+      execFileSync("which", ["tmux"], { encoding: "utf8" }).trim(),
+    );
+    const socketPath = runOnSocket(["display-message", "-p", "#{socket_path}"]);
+    const paneLocaleBefore = runOnSocket(["show-environment", "-g"]);
+    const previousLocale = process.env.LC_ALL;
+    process.env.LC_ALL = "C";
+    try {
+      const authority = {
+        executablePath,
+        socketSelector: { kind: "path" as const, path: socketPath },
+      };
+      const sync = createPinnedWorkspaceTmuxRunner(authority);
+      const asyncRunner = createPinnedWorkspaceTmuxAsyncRunner(authority);
+      const format = "#{pane_id}\t#{pane_width}\t界";
+      const args = ["list-panes", "-t", sessionName, "-F", format];
+      const expected = execFileSync(executablePath, ["-S", socketPath, "-u", ...args], {
+        env: { TERM: "xterm-256color", LC_ALL: "C" },
+        encoding: "utf8",
+      }).trimEnd();
+      expect(expected).toMatch(/^%[0-9]+\t[0-9]+\t界$/u);
+      expect(sync(args)).toBe(expected);
+      await expect(asyncRunner(args)).resolves.toBe(expected);
+      expect(runOnSocket(["show-environment", "-g"])).toBe(paneLocaleBefore);
+    } finally {
+      if (previousLocale === undefined) delete process.env.LC_ALL;
+      else process.env.LC_ALL = previousLocale;
+    }
   });
 
   it("preserves hostile argv boundaries and uses raw exact runtime ids internally", async () => {
