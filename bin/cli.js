@@ -55348,6 +55348,7 @@ var init_terminal_replica_owner = __esm({
           if (this.#disposed) return subscription.close();
           this.#upstream = subscription;
         });
+        this.#supervise(this.#start);
       }
       generation;
       session;
@@ -55941,6 +55942,7 @@ function cacheKey(parts) {
 function rejectedConnection(negotiation) {
   return {
     negotiation,
+    closed: Promise.resolve("closed"),
     ack: () => void 0,
     nack: () => void 0,
     setVisibility: () => void 0,
@@ -56058,6 +56060,10 @@ var init_terminal_delivery_hub = __esm({
         try {
           const pane = await this.#ensurePane(semanticPaneId3);
           if (this.#closed) throw new Error("Terminal delivery hub is closed");
+          let resolveClosed;
+          const closed = new Promise((resolve38) => {
+            resolveClosed = resolve38;
+          });
           const client = {
             key,
             clientId,
@@ -56077,6 +56083,7 @@ var init_terminal_delivery_hub = __esm({
             scheduled: false,
             closed: false,
             lifecycleOpenRecorded: false,
+            resolveClosed,
             outgoing: [],
             sending: false,
             retireAfterDrain: false,
@@ -56090,6 +56097,7 @@ var init_terminal_delivery_hub = __esm({
           this.#recordDeliveryStatus(client, pane);
           return {
             negotiation,
+            closed,
             ack: (ack) => this.#ack(client, ack),
             nack: (nack) => this.#nack(client, nack),
             setVisibility: (visibilityInput) => {
@@ -56901,7 +56909,7 @@ var init_terminal_delivery_hub = __esm({
             client.outgoing.length = 0;
             try {
               client.outgoing.length = 0;
-              await this.#closeClient(client);
+              await this.#closeClient(client, "sink-failed");
             } catch {
             }
           } finally {
@@ -56910,9 +56918,10 @@ var init_terminal_delivery_hub = __esm({
           }
         });
       }
-      async #closeClient(client) {
+      async #closeClient(client, reason = "closed") {
         if (client.closed) return;
         client.closed = true;
+        client.resolveClosed(reason);
         if (client.lifecycleOpenRecorded)
           this.#recordDeliveryLifecycle(client, this.#panes.get(client.paneId), "close");
         client.backgroundTimer?.cancel();
@@ -58796,6 +58805,7 @@ var init_registry2 = __esm({
         let closed = false;
         const connection = {
           negotiation: upstream.negotiation,
+          closed: upstream.closed,
           ack: (ack) => upstream.ack(ack),
           nack: (nack) => upstream.nack(nack),
           setVisibility: (visibility) => upstream.setVisibility(visibility),
@@ -62185,6 +62195,10 @@ var init_pane_stream_websocket = __esm({
           }
           if (!delivery.negotiation.accepted) continue;
           channel.delivery = delivery;
+          void delivery.closed?.then((reason) => {
+            if (reason === "sink-failed" && !this.#closed && !channel.closed && channel.delivery === delivery)
+              this.close(1013, "output-backpressure");
+          });
           channel.deliveryAddress = {
             workspaceName: this.#descriptor.workspaceName,
             generation: delivery.negotiation.negotiated.generation,
