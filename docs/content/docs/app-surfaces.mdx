@@ -12,6 +12,13 @@ Terminals. It intentionally has no persistent workspace sidebar.
 When no tmux server exists, Home stays useful and offers a new-session action.
 The session list updates as ordinary tmux sessions appear or disappear.
 
+Recent pane activity shows the latest reported reads and input actions, with
+brief matching indicators in pane headers. This includes tmux-ide actions and
+`send-keys`/`capture-pane` commands observed by the daemon's hooks on tracked
+panes. Other tmux servers, untracked panes, and commands that bypass those hooks
+are outside this view. External commands are not automatically attributed to an
+agent, and the feed does not show the contents of input or captured text.
+
 ## Terminals
 
 Terminals is a visual client for the selected tmux session:
@@ -35,6 +42,18 @@ requests mouse input. Shift+wheel uses the same path. Press Escape to return to
 live output. To send wheel input to the application itself, return to live output
 and hold Alt/Option while scrolling. Shift takes precedence over Alt/Option.
 Clicks and drags continue to follow the application's mouse mode.
+
+### Selection and links
+
+Drag to select and copy terminal text. Double-click selects a word; triple-click
+selects a logical line, including its wrapped rows. Continue dragging while
+scrolling, or hold the pointer above or below the pane to extend into history.
+Escape clears selection and returns to live output. In a mouse-enabled
+application, hold Shift to select locally, or use the pane's Select text action.
+
+Ctrl+click a visible HTTP or HTTPS URL to open it in your browser. Ordinary
+clicks retain their existing terminal behavior. Links split across soft-wrapped
+rows are recognized; this does not open links merely because a program prints them.
 
 ## Commands and notifications
 

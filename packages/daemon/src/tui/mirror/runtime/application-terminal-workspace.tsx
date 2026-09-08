@@ -30,6 +30,8 @@ import {
   type TerminalWindowTab,
 } from "../workspace/terminal-window-strip.tsx";
 import { orderCells } from "../selection.ts";
+import { terminalSelectionUnit, extendTerminalSelectionUnit } from "./terminal-selection-units.ts";
+import { terminalLinkAt, isTerminalLinkClick } from "./terminal-links.ts";
 import { extractTerminalCopySelection } from "./terminal-copy-selection.ts";
 import {
   createTerminalCopyCursor,
@@ -202,6 +204,7 @@ export interface ApplicationTerminalWorkspaceProps {
   ) => ApplicationMousePointerIngress | null;
   /** Exact live generation owner used to fence multi-event pointer/copy gestures. */
   readonly terminalGestureRuntime?: Accessor<TerminalGestureRuntimeIdentity | null>;
+  readonly onOpenLink?: (url: string) => void;
   readonly onCopyText?: (
     text: string,
     evidence: Readonly<{
@@ -388,6 +391,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     null,
   );
   const [resizePreview, setResizePreview] = createSignal<ApplicationPaneResizePreview | null>(null);
+  const [pointerSelecting, setPointerSelecting] = createSignal(false);
   const [selection, setSelection] = createSignal<TerminalSelectionRange | null>(null);
   const [committedSelection, setCommittedSelection] = createSignal<Readonly<{
     range: TerminalSelectionRange;
@@ -410,6 +414,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     releaseSelectionView = null;
     selectionViewLease = null;
     selecting = null;
+    setPointerSelecting(false);
+    stopSelectionScroll();
     setRetainedSelectionPane(null);
     setKeyboardCopy(null);
     setSelection(null);
@@ -472,8 +478,28 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     readonly anchor: TerminalSelectionRange["start"];
     readonly frame: OpenTuiPaneFrame;
     readonly lease: TerminalGestureLease;
+    readonly unit: "cell" | "word" | "line";
+    readonly anchorRange: Readonly<{
+      start: TerminalSelectionRange["start"];
+      end: TerminalSelectionRange["end"];
+    }>;
+    pointer: Readonly<{ x: number; y: number }>;
     moved: boolean;
   } | null = null;
+  let linkPointer = false;
+  let lastSelectionClick: {
+    paneId: string;
+    row: number;
+    col: number;
+    at: number;
+    count: number;
+    lease: TerminalGestureLease;
+  } | null = null;
+  let selectionScrollTimer: ReturnType<typeof setInterval> | null = null;
+  const stopSelectionScroll = () => {
+    if (selectionScrollTimer) clearInterval(selectionScrollTimer);
+    selectionScrollTimer = null;
+  };
   let forwardedPointer: {
     readonly paneId: string;
     readonly button: number;
@@ -564,6 +590,53 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       col: Math.max(0, Math.min(cols - 1, point.x - frame.left)),
       row: Math.max(0, Math.min(rows - 1, point.y - frame.top - 1)),
     });
+  };
+  const updatePointerSelection = (point: Readonly<{ x: number; y: number }>) => {
+    const active = selecting;
+    if (!active || !gestureLeaseCurrent(active.lease)) return;
+    active.pointer = point;
+    const cell = clampedPaneCell(active.frame, active.lease.snapshot, point);
+    const head =
+      cell &&
+      terminalSelectionCell(
+        active.lease.snapshot,
+        cell.col,
+        cell.row,
+        scrollback.offset(active.paneId),
+        selectionViewport(active.paneId, active.frame),
+      );
+    if (!head) return;
+    active.moved ||= head.row !== active.anchor.row || head.col !== active.anchor.col;
+    if (active.moved) lastSelectionClick = null;
+    const range = extendTerminalSelectionUnit(
+      active.lease.snapshot,
+      active.anchorRange,
+      head,
+      active.unit,
+    );
+    if (range) setSelection({ paneId: active.paneId, ...range });
+  };
+  const scheduleSelectionScroll = () => {
+    const active = selecting;
+    if (
+      !active ||
+      (active.pointer.y > active.frame.top &&
+        active.pointer.y < active.frame.top + active.frame.contentHeight + 1)
+    ) {
+      stopSelectionScroll();
+      return;
+    }
+    if (selectionScrollTimer) return;
+    selectionScrollTimer = setInterval(() => {
+      const current = selecting;
+      if (!current || !gestureLeaseCurrent(current.lease)) {
+        stopSelectionScroll();
+        return;
+      }
+      const direction = current.pointer.y <= current.frame.top ? 1 : -1;
+      scrollback.move(current.paneId, direction * 2);
+      updatePointerSelection(current.pointer);
+    }, 40);
   };
   const captureGestureLease = (
     paneId: string,
@@ -784,6 +857,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           });
         }
         selecting = null;
+        setPointerSelecting(false);
+        stopSelectionScroll();
         setSelection(null);
         setCommittedSelection(null);
       } else endSelectionView();
@@ -1043,6 +1118,12 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         : null;
     const point = terminalPoint(event);
     const isRelease = event.type === "up" || event.type === "drag-end" || event.type === "drop";
+    if (linkPointer && (isRelease || event.type === "drag")) {
+      event.stopPropagation?.();
+      if (isRelease) linkPointer = false;
+      return;
+    }
+    if (event.type === "down") linkPointer = false;
     if (drag) {
       event.stopPropagation?.();
       const ingress = resizeIngress();
@@ -1107,7 +1188,15 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       return;
     }
     if (event.type === "scroll") {
-      const hit = paneContentAt(point);
+      // A held selection owns the gesture even when the pointer crosses a sibling.
+      const activeSelection = selecting;
+      const selectionCell =
+        activeSelection &&
+        clampedPaneCell(activeSelection.frame, activeSelection.lease.snapshot, point);
+      const hit =
+        activeSelection && selectionCell
+          ? { frame: activeSelection.frame, ...selectionCell }
+          : paneContentAt(point);
       const before = props.onWheelObservation && hit ? scrollback.offset(hit.frame.paneId) : null;
       const observe = (route: string): void => {
         props.onWheelObservation?.({
@@ -1188,9 +1277,11 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           setKeyboardCopy({ ...keyboard, cursor: next.cursor });
         } else scrollback.move(hit.frame.paneId, motion.lines);
         observe("local-history");
-        selecting = null;
-        setSelection(null);
-        setCommittedSelection(null);
+        if (selecting?.paneId === hit.frame.paneId) updatePointerSelection(selecting.pointer);
+        else {
+          setSelection(null);
+          setCommittedSelection(null);
+        }
         event.stopPropagation?.();
       }
       return;
@@ -1232,6 +1323,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         event.stopPropagation?.();
         const active = selecting;
         selecting = null;
+        setPointerSelecting(false);
+        stopSelectionScroll();
         const snapshot = active.lease.snapshot;
         const cell = clampedPaneCell(active.frame, snapshot, point);
         const head =
@@ -1247,13 +1340,18 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         if (
           !snapshot ||
           !head ||
-          !active.moved ||
-          (head.row === active.anchor.row && head.col === active.anchor.col)
+          (active.unit === "cell" &&
+            (!active.moved || (head.row === active.anchor.row && head.col === active.anchor.col)))
         ) {
           endSelectionView();
           return;
         }
-        const completed = Object.freeze({ paneId: active.paneId, start: active.anchor, end: head });
+        const range = extendTerminalSelectionUnit(snapshot, active.anchorRange, head, active.unit);
+        if (!range) {
+          endSelectionView();
+          return;
+        }
+        const completed = Object.freeze({ paneId: active.paneId, ...range });
         const copied = extractTerminalSelection(snapshot, completed.start, completed.end);
         setSelection(completed);
         setCommittedSelection(
@@ -1288,23 +1386,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       }
       if (event.type === "drag" && selecting) {
         event.stopPropagation?.();
-        const active = selecting;
-        const snapshot = active.lease.snapshot;
-        const cell = clampedPaneCell(active.frame, snapshot, point);
-        const head =
-          gestureLeaseCurrent(active.lease) && cell
-            ? terminalSelectionCell(
-                snapshot,
-                cell.col,
-                cell.row,
-                scrollback.offset(active.paneId),
-                selectionViewport(active.paneId, active.frame),
-              )
-            : null;
-        if (head) {
-          active.moved ||= head.row !== active.anchor.row || head.col !== active.anchor.col;
-          setSelection({ paneId: active.paneId, start: active.anchor, end: head });
-        }
+        updatePointerSelection(point);
+        scheduleSelectionScroll();
         return;
       }
       const hit = paneContentAt(point);
@@ -1319,6 +1402,23 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       if (!snapshot) return;
       const lease = captureGestureLease(hit.frame.paneId, hit.frame);
       if (!lease) return;
+      if (props.onOpenLink && isTerminalLinkClick(event)) {
+        const cell = terminalSelectionCell(
+          snapshot,
+          hit.col,
+          hit.row,
+          scrollback.offset(hit.frame.paneId),
+          selectionViewport(hit.frame.paneId, hit.frame),
+        );
+        const url = cell && terminalLinkAt(snapshot, cell);
+        if (url) {
+          event.stopPropagation?.();
+          linkPointer = true;
+          lastSelectionClick = null;
+          props.onOpenLink(url);
+          return;
+        }
+      }
       const appMouse = terminalMouseActionSupported(snapshot, "down");
       if (event.button === 2 && event.type === "down") {
         event.stopPropagation?.();
@@ -1358,45 +1458,44 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           selectionViewport(hit.frame.paneId, hit.frame),
         );
         if (!anchor) return;
+        const now = performance.now();
+        const previous = lastSelectionClick;
+        const count =
+          previous &&
+          previous.paneId === hit.frame.paneId &&
+          previous.row === anchor.row &&
+          previous.col === anchor.col &&
+          now - previous.at <= 400 &&
+          gestureLeaseCurrent(previous.lease)
+            ? (previous.count % 3) + 1
+            : 1;
+        lastSelectionClick = {
+          paneId: hit.frame.paneId,
+          row: anchor.row,
+          col: anchor.col,
+          at: now,
+          count,
+          lease,
+        };
+        const unit = count === 3 ? "line" : count === 2 ? "word" : "cell";
+        const anchorRange = terminalSelectionUnit(snapshot, anchor, unit);
+        if (!anchorRange) return;
         setKeyboardCopy(null);
         retainSelectionView(hit.frame.paneId);
         selecting = {
           paneId: hit.frame.paneId,
           anchor,
+          anchorRange,
+          unit,
+          pointer: point,
           frame: hit.frame,
           lease,
           moved: false,
         };
+        setPointerSelecting(true);
         setCommittedSelection(null);
-        setSelection({ paneId: hit.frame.paneId, start: anchor, end: anchor });
+        setSelection({ paneId: hit.frame.paneId, ...anchorRange });
         return;
-      }
-      if (event.type === "drag" && selecting?.paneId === hit.frame.paneId) {
-        event.stopPropagation?.();
-        const head = terminalSelectionCell(
-          snapshot,
-          hit.col,
-          hit.row,
-          scrollback.offset(hit.frame.paneId),
-          selectionViewport(hit.frame.paneId, hit.frame),
-        );
-        if (head) {
-          selecting.moved ||=
-            head.row !== selecting.anchor.row || head.col !== selecting.anchor.col;
-          setSelection({ paneId: hit.frame.paneId, start: selecting.anchor, end: head });
-        }
-        return;
-      }
-      if (event.type === "drag" && forwardedPointer?.paneId === hit.frame.paneId) {
-        event.stopPropagation?.();
-        forwardMouse(
-          forwardedPointer.lease,
-          "drag",
-          hit,
-          forwardedPointer.button,
-          event.modifiers,
-          applicationIngress(),
-        );
       }
       return;
     }
@@ -1718,6 +1817,17 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           />
         )}
       </For>
+      <Show when={pointerSelecting()}>
+        <box
+          position="absolute"
+          left={0}
+          top={0}
+          width={props.width}
+          height={props.height + topOffset()}
+          zIndex={40}
+          onMouse={routePointer}
+        />
+      </Show>
     </>
   );
 }

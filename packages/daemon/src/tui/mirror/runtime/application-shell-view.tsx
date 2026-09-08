@@ -1,3 +1,4 @@
+import type { InteractionReceipt } from "@tmux-ide/contracts";
 import type { ApplicationConnectionFeedback } from "../workspace/connection-feedback.ts";
 import { appearanceDialogLayer } from "./application-shell-overlays.tsx";
 import type { ApplicationAppearanceOwner } from "./application-appearance-owner.ts";
@@ -59,6 +60,7 @@ export function applicationShellKeyAction(
 
 export interface ApplicationShellViewProps {
   readonly paneInteractions?: TerminalWorkspaceProps["paneInteractions"];
+  readonly recentPaneActivity?: () => readonly InteractionReceipt[];
   readonly appearanceOwner?: ApplicationAppearanceOwner;
   readonly homeAgents?: ApplicationHomeAgentPresentation;
   readonly dimensions: Accessor<{ readonly width: number; readonly height: number }>;
@@ -116,6 +118,7 @@ export interface ApplicationShellViewProps {
   readonly onTerminalInput?: TerminalWorkspaceProps["onTerminalInput"];
   readonly terminalGestureRuntime?: TerminalWorkspaceProps["terminalGestureRuntime"];
   readonly onApplicationMousePointerIngress?: TerminalWorkspaceProps["onApplicationMousePointerIngress"];
+  readonly onOpenLink?: TerminalWorkspaceProps["onOpenLink"];
   readonly onCopyText?: TerminalWorkspaceProps["onCopyText"];
   readonly onSelectionCopyOwner?: TerminalWorkspaceProps["onSelectionCopyOwner"];
   readonly onSelectionKeyOwner?: TerminalWorkspaceProps["onSelectionKeyOwner"];
@@ -352,6 +355,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
               <Show when={props.surface() !== "terminals"}>
                 <ApplicationHomeSurface
                   {...props.homeAgents}
+                  recentPaneActivity={props.recentPaneActivity?.()}
                   project={shell.semantic.project.name}
                   status={props.generationStatus()}
                   note={props.bootstrapNote()}
@@ -434,6 +438,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       onTerminalInput={props.onTerminalInput}
                       terminalGestureRuntime={props.terminalGestureRuntime}
                       onApplicationMousePointerIngress={props.onApplicationMousePointerIngress}
+                      onOpenLink={props.onOpenLink}
                       onCopyText={props.onCopyText}
                       onSelectionCopyOwner={props.onSelectionCopyOwner}
                       onSelectionKeyOwner={props.onSelectionKeyOwner}

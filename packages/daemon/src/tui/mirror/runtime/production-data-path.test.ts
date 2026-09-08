@@ -87,7 +87,9 @@ describe("production OpenTUI v2 data path", () => {
         false,
       );
     }
-    expect(source).not.toMatch(/\b(?:Missions|Activity|Files|Changes)\b/u);
+    // Home may label observed pane activity; the retired ActivitySurface and its
+    // feature module remain forbidden by the constructor/import checks above.
+    expect(source).not.toMatch(/\b(?:Missions|Files|Changes)\b/u);
   });
 
   it("keeps raw colors out of every production app-owned surface", () => {
@@ -205,6 +207,8 @@ describe("production OpenTUI v2 data path", () => {
     for (const path of [
       "packages/daemon/src/tui/mirror/runtime/terminal-copy-cursor.ts",
       "packages/daemon/src/tui/mirror/runtime/terminal-copy-selection.ts",
+      "packages/daemon/src/tui/mirror/runtime/terminal-links.ts",
+      "packages/daemon/src/tui/mirror/runtime/terminal-selection-units.ts",
       "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
       "packages/daemon/src/tui/mirror/runtime/application-terminal-workspace.tsx",
       "packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface.tsx",
@@ -222,8 +226,9 @@ describe("production OpenTUI v2 data path", () => {
 
   it("keeps the production root reviewable as a small renderer client", () => {
     // Includes the one root-owned keyboard/paste ingress and the three-line
-    // composition seam for shared receipt presence (no new transport owner).
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(513);
+    // composition seam for shared receipt presence plus link/activity callbacks
+    // (no new transport owner).
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(515);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.
@@ -253,6 +258,8 @@ describe("production OpenTUI v2 data path", () => {
         /(?:from\s+|import\s*\()["'][^"']*(?:daemon-client|canonical-daemon|daemon-transport|tmux-bridge|replica)/u,
       );
     }
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(121);
+    // Two pure pointer helpers and one explicit host URL opener add no stream,
+    // replica, polling or daemon owner. Keep their cost visible in this bound.
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(124);
   });
 });

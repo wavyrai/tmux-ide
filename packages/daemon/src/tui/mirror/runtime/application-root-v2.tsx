@@ -1,3 +1,4 @@
+import { createTerminalLinkOpener } from "./terminal-link-opener.ts";
 import { createApplicationPaneActivityOwner } from "./application-pane-activity-owner.ts";
 import { createApplicationConnectionFeedback } from "../workspace/connection-feedback.ts";
 /* @jsxImportSource @opentui/solid */
@@ -430,6 +431,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               paletteCloseArmed={paletteCommands.closeArmed}
               paletteCommands={paletteCommandList}
               paneInteractions={paneInteractions}
+              recentPaneActivity={paneInteractions.activity}
               terminalRendererSource={terminalRendererSource}
               terminalGestureRuntime={terminalGestureRuntime}
               onApplicationMousePointerIngress={focusedApplicationMouseIngress}
@@ -473,6 +475,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onTerminalInput={recoverHostFocus((paneId, input) =>
                 routeApplicationTerminalPointerInput(interaction, paneId, input),
               )}
+              onOpenLink={recoverHostFocus(createTerminalLinkOpener(setTransientNote))}
               onCopyText={selectionOwner.copy}
               onSelectionCopyOwner={selectionOwner.registerCopy}
               onSelectionKeyOwner={selectionOwner.registerKey}

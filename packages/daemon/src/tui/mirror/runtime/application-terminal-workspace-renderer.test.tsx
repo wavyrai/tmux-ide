@@ -1586,3 +1586,118 @@ it.each([false, true])(
     setup.renderer.destroy();
   },
 );
+
+it("routes raw mouse multi-click, wheel-drag, edge scrolling and Ctrl-link activation", async () => {
+  registerPaneSurface();
+  const theme = createSemanticThemeSnapshot({ mode: "dark" });
+  const { blankTerminalReplicaSnapshot } = await import("@tmux-ide/core");
+  const blank = blankTerminalReplicaSnapshot(30, 9);
+  const makeRow = (text: string) => ({
+    wrapped: false,
+    cells: [...text.padEnd(30)]
+      .slice(0, 30)
+      .map((grapheme) => ({ ...blank.grid[0]!.cells[0]!, grapheme })),
+  });
+  const replica = {
+    ...blank,
+    history: Array.from({ length: 20 }, (_, i) => makeRow(`history-${i}`)),
+    grid: Array.from({ length: 9 }, () => makeRow("hello world https://a.test")),
+  };
+  const live = adapter({ "pane.a": "A", "pane.b": "B" }, []);
+  const scrollOffsets = new Map<string, number>();
+  const blit = live.renderSource.blitPane;
+  live.renderSource.blitPane = (...args) => {
+    scrollOffsets.set(args[0], args[4]);
+    return blit(...args);
+  };
+  live.paneSelectionSnapshot = () => replica;
+  live.renderSource.scrollbackDepth = () => replica.history.length;
+  live.renderSource.paneCanonicalIdentity = () => ({
+    generation: "gen",
+    incarnation: "gen:0",
+    revision: 1,
+    stateHash: "hash",
+    cols: 30,
+    rows: 9,
+    sourceEpoch: 1,
+    historyTrim: 0,
+  });
+  const connection = {},
+    client = {};
+  const current = {
+    ...layout().current!,
+    cols: 60,
+    panes: [
+      { pane: "pane.a", left: 0, top: 0, width: 30, height: 9, active: true },
+      { pane: "pane.b", left: 30, top: 0, width: 30, height: 9, active: false },
+    ],
+  };
+  let copy: (() => boolean) | null = null;
+  const copied: string[] = [],
+    opened: string[] = [];
+  const setup = await renderForTest(
+    () => (
+      <ApplicationTerminalWorkspace
+        layout={() => ({ current, windows: [current] })}
+        adapter={live}
+        rendererEpoch={1}
+        terminalGestureRuntime={() => ({
+          daemonGeneration: "daemon",
+          clientGeneration: 1,
+          connection,
+          client,
+          adapter: live,
+          rendererEpoch: 1,
+        })}
+        width={60}
+        height={10}
+        focusedPane="pane.a"
+        theme={theme}
+        palette={createTerminalPaletteProjection(theme)}
+        onSelectPane={() => {}}
+        onCopyText={(text) => {
+          copied.push(text);
+          return true;
+        }}
+        onSelectionCopyOwner={(value) => {
+          copy = value;
+        }}
+        onOpenLink={(url) => opened.push(url)}
+      />
+    ),
+    { width: 60, height: 11 },
+  );
+  try {
+    await setup.renderOnce();
+    await setup.mockMouse.doubleClick(1, 3);
+    await setup.renderOnce();
+    expect(copy?.()).toBe(true);
+    expect(copied.at(-1)).toBe("hello");
+    await setup.mockMouse.click(1, 3);
+    await setup.renderOnce();
+    expect(copy?.()).toBe(true);
+    expect(copied.at(-1)).toBe("hello world https://a.test");
+    await setup.mockMouse.click(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toEqual(["https://a.test/"]);
+    await setup.mockMouse.pressDown(2, 5);
+    await setup.mockMouse.scroll(40, 5, "up");
+    await setup.mockMouse.moveTo(2, 3);
+    await setup.mockMouse.release(2, 3);
+    await setup.renderOnce();
+    expect(copy?.()).toBe(true);
+    expect(copied.at(-1)).toContain("history-");
+    expect(copied.at(-1)).toContain("hello world");
+    expect(scrollOffsets.get("pane.a")).toBe(5);
+    expect(scrollOffsets.get("pane.b")).toBe(0);
+    await setup.mockMouse.pressDown(2, 4);
+    await setup.renderOnce();
+    await setup.mockMouse.moveTo(2, 0);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await setup.mockMouse.release(2, 0);
+    expect(copy?.()).toBe(true);
+    expect(copied.at(-1)).toContain("history-");
+    expect(copied.at(-1)).toContain("history-14");
+  } finally {
+    setup.renderer.destroy();
+  }
+});
