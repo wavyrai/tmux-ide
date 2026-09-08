@@ -11,11 +11,14 @@ Choose **light**, **dark**, or **system** from the command palette's Settings
 group. A switch publishes one new appearance generation and repaints every
 app-owned surface atomically.
 
-Terminal content is different: applications inside tmux own their ANSI colors.
-tmux-ide preserves those indexed and truecolor cells rather than recoloring
-them to match the application chrome. That means a dark-only program can remain
-dark while the surrounding tmux-ide chrome is light; it is the program's chosen
-palette, not mixed application theming.
+Terminal panes follow the selected appearance too: default foreground/background
+and standard ANSI colors (slots 0–15) use the theme palette. System appearance
+uses detected host ANSI colors where available. Named themes derive basic colors
+from their semantic palette, including status and accent colors.
+
+Explicit truecolor and the extended 256-color cube/grayscale (slots 16–255) stay
+unchanged. Applications that paint their own RGB backgrounds can therefore keep
+those backgrounds when you switch themes.
 
 Fresh sessions advertise:
 

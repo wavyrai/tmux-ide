@@ -10478,6 +10478,7 @@ var init_visual_theme_presets = __esm({
           overrides: {
             surfaces: {
               canvas: background,
+              terminal: background,
               panel: color4(p.panel),
               panelRaised: color4(p.header),
               header: color4(p.header),

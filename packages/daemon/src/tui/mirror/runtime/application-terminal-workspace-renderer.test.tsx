@@ -1332,6 +1332,18 @@ describe("ApplicationTerminalWorkspace", () => {
       expect(paneActions.at(-1)).toEqual({ paneId: "pane.a", action: "close-pane" });
       await setup.renderOnce();
 
+      // Ordinary wheel stays local even when the application requests mouse input.
+      await setup.mockMouse.scroll(2, 3, "up");
+      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { shift: true } });
+      expect(forwarded).toEqual([]);
+      // Alt is a routing modifier, not part of the application's wheel event.
+      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { alt: true } });
+      expect(forwarded).toEqual(encoding === "sgr" ? ["\u001b[<64;3;1M"] : ["1b5b4d602321"]);
+      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { alt: true, shift: true } });
+      expect(forwarded).toHaveLength(1);
+      forwarded.length = 0;
+      wireEncodings.length = 0;
+
       await setup.mockMouse.click(2, 3, MouseButtons.LEFT);
       expect(forwarded).toEqual(
         encoding === "sgr"
@@ -1535,11 +1547,11 @@ it.each([false, true])(
     expect(setup.captureCharFrame()).toContain("b-row-2");
     const beforeScroll = setup.captureCharFrame();
     paints.length = 0;
-    await setup.mockMouse.scroll(5, 3, "up", { modifiers: { shift: true } });
+    await setup.mockMouse.scroll(5, 3, "up");
     await setup.renderOnce();
     expect(observations.at(-1)).toMatchObject({
       direction: "up",
-      shift: true,
+      shift: false,
       route: "local-history",
       offsetBefore: 0,
       offsetAfter: 5,
@@ -1563,10 +1575,14 @@ it.each([false, true])(
           .map((row) => row.slice(25, 49));
       expect(sibling(setup.captureCharFrame())).toEqual(sibling(beforeScroll));
     }
+    const regularScrollFrame = setup.captureCharFrame();
     expect(key!("escape")).toBe(true);
     await setup.renderOnce();
     expect(setup.captureCharFrame()).toContain("a-row-2");
     expect(setup.captureCharFrame()).not.toContain("Scrollback");
+    await setup.mockMouse.scroll(5, 3, "up", { modifiers: { shift: true } });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toBe(regularScrollFrame);
     setup.renderer.destroy();
   },
 );

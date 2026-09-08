@@ -1135,9 +1135,11 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         return;
       }
       const identity = props.adapter.renderSource.paneCanonicalIdentity?.(hit.frame.paneId);
+      const applicationWheel = event.modifiers?.alt === true && !event.modifiers?.shift;
       const motion = wheelGesture.consume(
         JSON.stringify([
           hit.frame.paneId,
+          applicationWheel ? "application" : "history",
           identity?.generation,
           identity?.incarnation,
           identity?.sourceEpoch,
@@ -1151,10 +1153,17 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         lease &&
         !motion.local &&
         scrollback.offset(hit.frame.paneId) === 0 &&
-        !event.modifiers?.shift &&
+        applicationWheel &&
         selectModePane() !== hit.frame.paneId &&
         retainedSelectionPane() !== hit.frame.paneId &&
-        forwardMouse(lease, action, hit, undefined, event.modifiers, applicationIngress())
+        forwardMouse(
+          lease,
+          action,
+          hit,
+          undefined,
+          { ...event.modifiers, alt: false },
+          applicationIngress(),
+        )
       ) {
         event.stopPropagation?.();
         observe("application");
