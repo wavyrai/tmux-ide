@@ -70602,7 +70602,7 @@ var require_package = __commonJS({
         "test:tui-testdrive": "node --test scripts/lib/tui-testdrive-clipboard-hook.test.mjs scripts/lib/tui-testdrive-input.test.mjs",
         "test:performance-qualification": "node scripts/performance-qualification.mjs",
         "benchmark:comparative": "node scripts/comparative-terminal.mjs",
-        "test:benchmark-comparative": "node --test scripts/comparative-terminal-support.test.mjs",
+        "test:benchmark-comparative": "node --test scripts/comparative-terminal-support.test.mjs scripts/lib/terminal-scroll-observations.test.mjs",
         "measure:performance-portable": "node scripts/performance-portable-evidence.mjs",
         "test:portable-release-contract": "pnpm exec vitest run scripts/lib/portable-performance-evidence.test.mjs",
         "measure:performance-reference": "node scripts/performance-reference.mjs",
