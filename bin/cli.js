@@ -38430,7 +38430,8 @@ var init_pane_feed = __esm({
               ["applicationKeypad", 8],
               ["bracketedPaste", 16],
               ["mouseSgr", 18],
-              ["mouseUtf8", 19]
+              ["mouseUtf8", 19],
+              ["scrollOnClear", 22]
             ].flatMap(
               ([name, index]) => fields[index] === "0" || fields[index] === "1" ? [[name, fields[index] === "1"]] : []
             )
@@ -38591,7 +38592,8 @@ var init_session_channel = __esm({
       "#{mouse_sgr_flag}",
       "#{mouse_utf8_flag}",
       "#{scroll_region_upper}",
-      "#{scroll_region_lower}"
+      "#{scroll_region_lower}",
+      "#{scroll-on-clear}"
     ].join(" ");
     FAILED_RESEED_RESULT = Object.freeze({
       ok: false,
@@ -38725,6 +38727,7 @@ var init_session_channel = __esm({
         this.io.send("refresh-client -B 'tmux-ide-pane-borders:@*:#{pane-border-status}'");
         this.io.send("refresh-client -B 'tmux-ide-copy-keys:@*:#{mode-keys}'");
         this.io.send("refresh-client -B 'tmux-ide-pane-history:%*:#{history_size}'");
+        this.io.send("refresh-client -B 'tmux-ide-scroll-on-clear:%*:#{scroll-on-clear}'");
         if (this.opts.onNativeClientActivity) {
           this.io.send(`refresh-client -B '${NATIVE_CLIENT_SUBSCRIPTION}::#{session_attached}'`);
         }
@@ -39155,6 +39158,7 @@ var init_session_channel = __esm({
             if (Number.isSafeInteger(historySize) && historySize >= 0)
               sub.pane.historySize = historySize;
             const fallbackSize = this.layoutSizeFor(runtime);
+            this.observeScrollOnClear(sub.pane, cursorLine);
             const events = sub.feed.cursorReply(epoch, cursorLine, fallbackSize);
             let published = false;
             const publish = () => {
@@ -39557,6 +39561,7 @@ var init_session_channel = __esm({
             }
             const cursorLine = reply.lines[0] ?? "";
             const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+            this.observeScrollOnClear(pane, cursorLine);
             const deliveries = participants.map(({ sub, epoch }) => ({
               sub,
               epoch,
@@ -39734,6 +39739,7 @@ var init_session_channel = __esm({
                 const captureLines = Object.freeze([...result.captureLines]);
                 for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
                 const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+                this.observeScrollOnClear(pane, result.cursorLine);
                 const deliveries = participants.map(({ sub, epoch }) => ({
                   sub,
                   epoch,
@@ -40035,8 +40041,26 @@ var init_session_channel = __esm({
         }
       }
       // ── Notifications (channel order is the invariant) ──────────────────────
+      observeScrollOnClear(pane, cursorLine) {
+        const value = cursorLine.trim().split(/\s+/)[22];
+        pane.scrollOnClear = value === "0" || value === "1" ? value === "1" : void 0;
+      }
       onNotify(name, rest) {
         if (name === "subscription-changed") {
+          const policy = /^tmux-ide-scroll-on-clear\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([01])\s*$/u.exec(
+            rest
+          );
+          if (policy) {
+            const pane = this.panesByRuntime.get(policy[1]);
+            const enabled = policy[2] === "1";
+            if (pane && pane.scrollOnClear !== enabled) {
+              pane.scrollOnClear = enabled;
+              if (!this.recoveries.has(pane.runtimeId)) {
+                for (const sub of pane.subs) if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
+              }
+            }
+            return;
+          }
           const history = /^tmux-ide-pane-history\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([0-9]+)\s*$/u.exec(
             rest
           );
@@ -41883,7 +41907,7 @@ var init_native_grid_projection = __esm({
   }
 });
 
-// node_modules/.pnpm/@tmux-ide+xterm-headless@file+packages+daemon+native+xterm+tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.3.tgz/node_modules/@tmux-ide/xterm-headless/lib-headless/xterm-headless.mjs
+// node_modules/.pnpm/@tmux-ide+xterm-headless@file+packages+daemon+native+xterm+tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.5.tgz/node_modules/@tmux-ide/xterm-headless/lib-headless/xterm-headless.mjs
 function stringFromCodePoint(codePoint) {
   if (codePoint > 65535) {
     codePoint -= 65536;
@@ -42328,7 +42352,7 @@ function isValidColorIndex(value) {
 }
 var __defProp2, __getOwnPropDesc2, __decorateClass, __decorateParam, StringToUtf32, Utf8ToUtf32, DEFAULT_COLOR2, DEFAULT_ATTR, CHAR_DATA_ATTR_INDEX, CHAR_DATA_CHAR_INDEX, CHAR_DATA_WIDTH_INDEX, CHAR_DATA_CODE_INDEX, NULL_CELL_CHAR, NULL_CELL_WIDTH, NULL_CELL_CODE, WHITESPACE_CELL_CHAR, WHITESPACE_CELL_WIDTH, WHITESPACE_CELL_CODE, AttributeData, ExtendedAttrs, CellData, BufferLineApiView, BufferApiView, ErrorHandler, errorHandler, canceledName, CancellationError, ErrorNoTelemetry, _MonotonousArray, CompareResult, numberComparator, _CallbackIterable, _a, _b, SetWithKey, SetMap, Iterable, TRACK_DISPOSABLES, disposableTracker, _DisposableTracker, _DisposableStore, DisposableStore, Disposable, MutableDisposable, _Node, hasPerformanceNow, StopWatch, _enableListenerGCedWarning, _enableDisposeWithListenerWarning, _enableSnapshotPotentialLeakWarning, Event, _EventProfiling, EventProfiling, _globalLeakWarningThreshold, _LeakageMonitor, LeakageMonitor, Stacktrace, ListenerLeakError, ListenerRefusalError, id, UniqueContainer, compactionThreshold, forEachListener, _listenerFinalizers, Emitter, EventDeliveryQueuePrivate, BufferNamespaceApi, ParserApi, UnicodeApi, CELL_SIZE, DEFAULT_ATTR_DATA, $startIndex, CLEANUP_THRESHOLD, BufferLine, DI_TARGET, DI_DEPENDENCIES, serviceRegistry, IBufferService, ICoreMouseService, ICoreService, ICharsetService, IInstantiationService, ILogService, IOptionsService, IOscLinkService, IUnicodeService, IDecorationService, ServiceCollection, InstantiationService, optionsKeyToLogLevel, LOG_PREFIX, LogService, traceLogger, CircularList, isNode, userAgent, platform, isFirefox, isLegacyEdge, isSafari, isMac, isWindows, isLinux, isChromeOS, TaskQueue, PriorityTaskQueue, IdleTaskQueueInternal, IdleTaskQueue, _Marker, Marker, CHARSETS, DEFAULT_CHARSET, MAX_BUFFER_SIZE, Buffer2, BufferSet, MINIMUM_COLS, MINIMUM_ROWS, BufferService, DEFAULT_OPTIONS, FONT_WEIGHT_OPTIONS, OptionsService, DEFAULT_MODES, DEFAULT_DEC_PRIVATE_MODES, CoreService, DEFAULT_PROTOCOLS, S, DEFAULT_ENCODINGS, CoreMouseService, BMP_COMBINING, HIGH_COMBINING, table, UnicodeV6, UnicodeService, CharsetService, C0, C1, C1_ESCAPED, PAYLOAD_LIMIT, MAX_VALUE, MAX_SUBPARAMS, Params, EMPTY_HANDLERS, OscParser, OscHandler, EMPTY_HANDLERS2, DcsParser, EMPTY_PARAMS, DcsHandler, TransitionTable, NON_ASCII_PRINTABLE, VT500_TRANSITION_TABLE, EscapeSequenceParser, RGB_REX, HASH_REX, GLEVEL, MAX_PARSEBUFFER_LENGTH, STACK_LIMIT, SLOW_ASYNC_LIMIT, $temp, InputHandler, DirtyRowTracker, DISCARD_WATERMARK, WRITE_TIMEOUT_MS, WRITE_BUFFER_LENGTH_THRESHOLD, WriteBuffer, OscLinkService, hasWriteSyncWarnHappened, CoreTerminal, Terminal, AddonManager, CONSTRUCTOR_ONLY_OPTIONS, Terminal2;
 var init_xterm_headless = __esm({
-  "node_modules/.pnpm/@tmux-ide+xterm-headless@file+packages+daemon+native+xterm+tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.3.tgz/node_modules/@tmux-ide/xterm-headless/lib-headless/xterm-headless.mjs"() {
+  "node_modules/.pnpm/@tmux-ide+xterm-headless@file+packages+daemon+native+xterm+tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.5.tgz/node_modules/@tmux-ide/xterm-headless/lib-headless/xterm-headless.mjs"() {
     __defProp2 = Object.defineProperty;
     __getOwnPropDesc2 = Object.getOwnPropertyDescriptor;
     __decorateClass = (decorators, target, key, kind) => {
@@ -44509,6 +44533,7 @@ ${stackTraceFormattedLines.join("\n")}
         this.isWrapped = isWrapped;
         this._combined = {};
         this._extendedAttrs = {};
+        this.tmuxCellUsed = 0;
         this._data = new Uint32Array(cols * CELL_SIZE);
         const cell = fillCellData || CellData.fromCharData([0, NULL_CELL_CHAR, NULL_CELL_WIDTH, NULL_CELL_CODE]);
         for (let i = 0; i < cols; ++i) {
@@ -44541,6 +44566,7 @@ ${stackTraceFormattedLines.join("\n")}
        * @deprecated
        */
       set(index, value) {
+        if (value[CHAR_DATA_CHAR_INDEX]) this.tmuxCellUsed = Math.max(this.tmuxCellUsed, index + Math.max(1, value[CHAR_DATA_WIDTH_INDEX]));
         this._data[
           index * CELL_SIZE + 1
           /* FG */
@@ -44676,6 +44702,11 @@ ${stackTraceFormattedLines.join("\n")}
        * Set data at `index` to `cell`.
        */
       setCell(index, cell) {
+        if (cell.content & 4194303) this.tmuxCellUsed = Math.max(this.tmuxCellUsed, index + Math.max(
+          1,
+          cell.content >> 22
+          /* WIDTH_SHIFT */
+        ));
         if (cell.content & 2097152) {
           this._combined[index] = cell.combinedData;
         }
@@ -44701,6 +44732,7 @@ ${stackTraceFormattedLines.join("\n")}
        * it gets an optimized access method.
        */
       setCellFromCodepoint(index, codePoint, width, attrs) {
+        if (codePoint) this.tmuxCellUsed = Math.max(this.tmuxCellUsed, index + Math.max(1, width));
         if (attrs.bg & 268435456) {
           this._extendedAttrs[index] = attrs.extended;
         }
@@ -44753,6 +44785,7 @@ ${stackTraceFormattedLines.join("\n")}
       }
       insertCells(pos, n, fillCellData) {
         pos %= this.length;
+        if (n > 0 && n < this.length - pos) this.tmuxCellUsed = Math.max(this.tmuxCellUsed, this.length);
         if (pos && this.getWidth(pos - 1) === 2) {
           this.setCellFromCodepoint(pos - 1, 0, 1, fillCellData);
         }
@@ -44775,6 +44808,8 @@ ${stackTraceFormattedLines.join("\n")}
       }
       deleteCells(pos, n, fillCellData) {
         pos %= this.length;
+        if (n > 0 && n < this.length - pos) this.tmuxCellUsed = Math.max(this.tmuxCellUsed, this.length - n);
+        else if (pos === 0 && n >= this.length) this.tmuxCellUsed = 0;
         if (n < this.length - pos) {
           const cell = new CellData();
           for (let i = 0; i < this.length - pos - n; ++i) {
@@ -44889,6 +44924,7 @@ ${stackTraceFormattedLines.join("\n")}
           }
           return;
         }
+        this.tmuxCellUsed = 0;
         this._combined = {};
         this._extendedAttrs = {};
         for (let i = 0; i < this.length; ++i) {
@@ -44912,6 +44948,7 @@ ${stackTraceFormattedLines.join("\n")}
           this._extendedAttrs[el] = line._extendedAttrs[el];
         }
         this.isWrapped = line.isWrapped;
+        this.tmuxCellUsed = line.tmuxCellUsed;
       }
       /** create a new clone */
       clone() {
@@ -44925,6 +44962,7 @@ ${stackTraceFormattedLines.join("\n")}
           newLine._extendedAttrs[el] = this._extendedAttrs[el];
         }
         newLine.isWrapped = this.isWrapped;
+        newLine.tmuxCellUsed = this.tmuxCellUsed;
         return newLine;
       }
       getTrimmedLength() {
@@ -44959,6 +44997,8 @@ ${stackTraceFormattedLines.join("\n")}
         return 0;
       }
       copyCellsFrom(src, srcCol, destCol, length, applyInReverse) {
+        const copiedUsed = Math.max(0, Math.min(length, src.tmuxCellUsed - srcCol));
+        if (copiedUsed > 0) this.tmuxCellUsed = Math.max(this.tmuxCellUsed, destCol + copiedUsed);
         const srcData = src._data;
         if (applyInReverse) {
           for (let cell = length - 1; cell >= 0; cell--) {
@@ -46394,6 +46434,8 @@ ${stackTraceFormattedLines.join("\n")}
       logger: null,
       scrollback: 1e3,
       scrollOnEraseInDisplay: false,
+      tmuxScrollOnClear: false,
+      tmuxHistoryLimit: -1,
       scrollOnUserInput: true,
       scrollSensitivity: 1,
       screenReaderMode: false,
@@ -49748,6 +49790,7 @@ ${stackTraceFormattedLines.join("\n")}
           this._activeBuffer.getNullCell(this._eraseAttrData()),
           respectProtect
         );
+        if (!respectProtect && start2 === 0 && end >= this._bufferService.cols) line.tmuxCellUsed = 0;
         if (clearWrap) {
           line.isWrapped = false;
         }
@@ -49815,7 +49858,40 @@ ${stackTraceFormattedLines.join("\n")}
             this._dirtyRowTracker.markDirty(0);
             break;
           case 2:
-            if (this._optionsService.rawOptions.scrollOnEraseInDisplay) {
+            if (this._optionsService.rawOptions.tmuxScrollOnClear && !respectProtect) {
+              const buffer = this._activeBuffer;
+              let usedRows = 0;
+              const configuredLimit = this._optionsService.rawOptions.tmuxHistoryLimit;
+              const limit = configuredLimit >= 0 ? configuredLimit : this._optionsService.rawOptions.scrollback;
+              if (limit > 0 && buffer === this._bufferService.buffers.normal && buffer.hasScrollback) {
+                for (let row = this._bufferService.rows - 1; row >= 0; row--) {
+                  if (buffer.lines.get(buffer.ybase + row).tmuxCellUsed !== 0) {
+                    usedRows = row + 1;
+                    break;
+                  }
+                }
+              }
+              const top = buffer.scrollTop;
+              const bottom = buffer.scrollBottom;
+              buffer.scrollTop = 0;
+              buffer.scrollBottom = this._bufferService.rows - 1;
+              try {
+                for (let row = 0; row < usedRows; row++) {
+                  if (buffer.ybase > 0 && buffer.ybase >= limit) {
+                    const trim = Math.min(buffer.ybase, Math.max(1, Math.floor(limit / 10)));
+                    buffer.lines.trimStart(trim);
+                    buffer.ybase -= trim;
+                    buffer.ydisp = Math.max(0, buffer.ydisp - trim);
+                  }
+                  this._bufferService.scroll(this._eraseAttrData());
+                }
+              } finally {
+                buffer.scrollTop = top;
+                buffer.scrollBottom = bottom;
+              }
+              for (let row = 0; row < this._bufferService.rows; row++) this._resetBufferLine(row);
+              this._dirtyRowTracker.markRangeDirty(0, this._bufferService.rows - 1);
+            } else if (this._optionsService.rawOptions.scrollOnEraseInDisplay) {
               j = this._bufferService.rows;
               this._dirtyRowTracker.markRangeDirty(0, j - 1);
               while (j--) {
@@ -54614,19 +54690,24 @@ var init_xterm_terminal_interpreter_backend = __esm({
       #lastViewportY = 0;
       #lastBufferType = "normal";
       #hasProjected = false;
+      #bufferChangedSinceProjection = false;
       #mouseUtf8 = false;
       #capturedAlternate = false;
       #nativeReseedRequired = false;
+      #nativeModesObserved = false;
+      #scrollOnClear;
       constructor(options) {
         this.#terminal = new Terminal2({
           cols: options.cols,
           rows: options.rows,
           scrollback: options.scrollback,
+          tmuxHistoryLimit: options.historyLimit ?? options.scrollback,
           allowProposedApi: true
         });
         this.#terminal.loadAddon(new import_addon_unicode11.Unicode11Addon());
         this.#terminal.unicode.activeVersion = "11";
         this.#terminal.buffer.onBufferChange((buffer) => {
+          this.#bufferChangedSinceProjection = true;
           if (this.#capturedAlternate && buffer.type === "normal") this.#nativeReseedRequired = true;
         });
         for (const [final, enabled] of [
@@ -54642,9 +54723,13 @@ var init_xterm_terminal_interpreter_backend = __esm({
           this.#mouseUtf8 = false;
           return false;
         });
+        this.#terminal.parser.registerCsiHandler({ final: "J" }, (params) => {
+          if (params[0] === 2 && this.#nativeModesObserved && this.#scrollOnClear === void 0 && this.#terminal.buffer.active.type === "normal")
+            this.#nativeReseedRequired = true;
+          return false;
+        });
         this.#terminal.onScroll(() => {
-          if (!this.#capturedAlternate || this.#terminal.buffer.active.type === "normal")
-            this.#scrollEpoch += 1;
+          if (this.#terminal.buffer.active.type === "normal") this.#scrollEpoch += 1;
         });
         const core = this.#terminal._core;
         if (!core?.coreService) {
@@ -54703,6 +54788,11 @@ var init_xterm_terminal_interpreter_backend = __esm({
         this.#capturedAlternate = true;
       }
       setAuthoritativeModes(modes) {
+        this.#nativeModesObserved = true;
+        if (modes.scrollOnClear !== void 0) {
+          this.#scrollOnClear = modes.scrollOnClear;
+          this.#terminal.options.tmuxScrollOnClear = modes.scrollOnClear;
+        }
         if (modes.alternateScreen === true) this.#restoreCapturedAlternate();
         const core = this.#terminal._core;
         const service = core.coreService;
@@ -54759,9 +54849,9 @@ var init_xterm_terminal_interpreter_backend = __esm({
       }
       project(previous, dirty) {
         const buffer = this.#terminal.buffer.active;
-        const historyBuffer = this.#capturedAlternate ? this.#terminal.buffer.normal : buffer;
+        const historyBuffer = this.#terminal.buffer.normal;
         const ownsPrevious = this.#hasProjected || isCanonicalBlankSnapshot(previous);
-        const geometryStable = ownsPrevious && historyBuffer.viewportY === this.#lastViewportY && buffer.type === this.#lastBufferType && previous.cols === this.#terminal.cols;
+        const geometryStable = ownsPrevious && !this.#bufferChangedSinceProjection && historyBuffer.viewportY === this.#lastViewportY && buffer.type === this.#lastBufferType && previous.cols === this.#terminal.cols;
         const canReuseHistory = geometryStable && this.#scrollEpoch === this.#lastScrollEpoch;
         const stats = { fullWalks: dirty ? 0 : 1, gridRowsRead: 0, historyRowsRead: 0, cellsRead: 0 };
         let history = canReuseHistory ? previous.history : [];
@@ -54769,7 +54859,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         const scrolls = this.#scrollEpoch - this.#lastScrollEpoch;
         const previousLength = previous.history.length;
         const nextLength = historyBuffer.viewportY;
-        const incrementalHistory = !canReuseHistory && this.#lastBufferType === buffer.type && previous.cols === this.#terminal.cols && nextLength >= previousLength && scrolls > 0;
+        const incrementalHistory = !canReuseHistory && !this.#bufferChangedSinceProjection && this.#lastBufferType === buffer.type && previous.cols === this.#terminal.cols && nextLength >= previousLength && scrolls > 0;
         if (incrementalHistory) {
           const appended = nextLength - previousLength;
           const trim = Math.min(previousLength, Math.max(0, scrolls - appended));
@@ -54803,6 +54893,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         this.#lastBufferType = buffer.type;
         this.#lastScrollEpoch = this.#scrollEpoch;
         this.#hasProjected = true;
+        this.#bufferChangedSinceProjection = false;
         return {
           cols: this.#terminal.cols,
           rows: this.#terminal.rows,
@@ -55304,7 +55395,8 @@ var init_terminal_replica_interpreter = __esm({
           const replacement = this.#backendFactory({
             cols: nativeCols,
             rows: nativeRows,
-            scrollback
+            scrollback,
+            historyLimit: operation.historyLimit ?? scrollback
           });
           try {
             for (const chunk of operation.chunks) {

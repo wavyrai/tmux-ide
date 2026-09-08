@@ -220,6 +220,24 @@ describe("PaneFeed", () => {
     },
   );
 
+  it.each(["0", "1", "", "unknown", "2"])(
+    "carries only observed scroll-on-clear policy: %s",
+    (value) => {
+      const feed = new PaneFeed();
+      const epoch = feed.beginReseed();
+      feed.captureReply(epoch, ["screen"]);
+      const cursor = feed
+        .cursorReply(epoch, `0 0 80 24 0 1 0 0 0 0 0 0 0 1 12 2000 0 0 0 0 0 23 ${value}`)
+        .at(-1);
+      expect(cursor?.type).toBe("cursor");
+      if (cursor?.type === "cursor") {
+        if (value === "0" || value === "1")
+          expect(cursor.observedModes?.scrollOnClear).toBe(value === "1");
+        else expect(cursor.observedModes).not.toHaveProperty("scrollOnClear");
+      }
+    },
+  );
+
   it("passes deltas through while live", () => {
     const feed = new PaneFeed();
     const events = delta(feed, "hello");

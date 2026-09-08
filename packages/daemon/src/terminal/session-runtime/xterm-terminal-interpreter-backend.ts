@@ -25,20 +25,27 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   #lastViewportY = 0;
   #lastBufferType = "normal";
   #hasProjected = false;
+  #bufferChangedSinceProjection = false;
   #mouseUtf8 = false;
   #capturedAlternate = false;
   #nativeReseedRequired = false;
+  #nativeModesObserved = false;
+  #scrollOnClear: boolean | undefined;
 
   constructor(options: TerminalInterpreterBackendFactoryOptions) {
     this.#terminal = new Terminal({
       cols: options.cols,
       rows: options.rows,
       scrollback: options.scrollback,
+      tmuxHistoryLimit: options.historyLimit ?? options.scrollback,
       allowProposedApi: true,
     });
     this.#terminal.loadAddon(new Unicode11Addon());
     this.#terminal.unicode.activeVersion = "11";
     this.#terminal.buffer.onBufferChange((buffer) => {
+      // A normal→alternate→normal round trip can occur within one write.
+      // Its scroll notifications are not normal-history append operations.
+      this.#bufferChangedSinceProjection = true;
       if (this.#capturedAlternate && buffer.type === "normal") this.#nativeReseedRequired = true;
     });
     // Stock tmux retains DECSET 1005 independently of SGR. xterm no longer
@@ -56,11 +63,20 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
       this.#mouseUtf8 = false;
       return false;
     });
+    this.#terminal.parser.registerCsiHandler({ final: "J" }, (params) => {
+      if (
+        params[0] === 2 &&
+        this.#nativeModesObserved &&
+        this.#scrollOnClear === undefined &&
+        this.#terminal.buffer.active.type === "normal"
+      )
+        this.#nativeReseedRequired = true;
+      return false;
+    });
     this.#terminal.onScroll(() => {
-      // Captured native history stays in normal while alternate rows scroll
-      // without adding history. Do not turn those scrolls into history trims.
-      if (!this.#capturedAlternate || this.#terminal.buffer.active.type === "normal")
-        this.#scrollEpoch += 1;
+      // tmux retains normal history while alternate rows scroll independently.
+      // Neither captured nor live alternate scrolling may trim that history.
+      if (this.#terminal.buffer.active.type === "normal") this.#scrollEpoch += 1;
     });
     const core = (
       this.#terminal as unknown as {
@@ -163,6 +179,11 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   }
 
   setAuthoritativeModes(modes: MirrorObservedTerminalModes): void {
+    this.#nativeModesObserved = true;
+    if (modes.scrollOnClear !== undefined) {
+      this.#scrollOnClear = modes.scrollOnClear;
+      this.#terminal.options.tmuxScrollOnClear = modes.scrollOnClear;
+    }
     if (modes.alternateScreen === true) this.#restoreCapturedAlternate();
     const core = (
       this.#terminal as unknown as {
@@ -289,13 +310,14 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     dirty?: { start: number; end: number },
   ): TerminalInterpreterBackendProjection {
     const buffer = this.#terminal.buffer.active;
-    const historyBuffer = this.#capturedAlternate ? this.#terminal.buffer.normal : buffer;
+    const historyBuffer = this.#terminal.buffer.normal;
     // A newly constructed xterm and the interpreter's blank snapshot already
     // describe the same zero-history geometry. Requiring a prior projection
     // turns the first dirty write into an unnecessary full-grid walk.
     const ownsPrevious = this.#hasProjected || isCanonicalBlankSnapshot(previous);
     const geometryStable =
       ownsPrevious &&
+      !this.#bufferChangedSinceProjection &&
       historyBuffer.viewportY === this.#lastViewportY &&
       buffer.type === this.#lastBufferType &&
       previous.cols === this.#terminal.cols;
@@ -308,6 +330,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     const nextLength = historyBuffer.viewportY;
     const incrementalHistory =
       !canReuseHistory &&
+      !this.#bufferChangedSinceProjection &&
       this.#lastBufferType === buffer.type &&
       previous.cols === this.#terminal.cols &&
       nextLength >= previousLength &&
@@ -346,6 +369,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     this.#lastBufferType = buffer.type;
     this.#lastScrollEpoch = this.#scrollEpoch;
     this.#hasProjected = true;
+    this.#bufferChangedSinceProjection = false;
     return {
       cols: this.#terminal.cols,
       rows: this.#terminal.rows,

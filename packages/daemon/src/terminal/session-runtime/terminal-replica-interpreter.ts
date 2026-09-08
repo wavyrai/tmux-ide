@@ -341,6 +341,7 @@ export class TerminalReplicaInterpreter {
         cols: nativeCols,
         rows: nativeRows,
         scrollback,
+        historyLimit: operation.historyLimit ?? scrollback,
       });
       try {
         for (const chunk of operation.chunks) {

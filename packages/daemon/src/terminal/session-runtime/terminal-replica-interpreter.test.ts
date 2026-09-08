@@ -30,6 +30,88 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it("holds a native main-screen clear until its unknown history policy is recaptured", async () => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    let reseeds = 0;
+    const interpreter = new TerminalReplicaInterpreter({
+      generation,
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: `${generation}:0`,
+      cols: 8,
+      rows: 3,
+      onUpdate: (update) => updates.push(update),
+      onNativeReseedRequired: () => {
+        reseeds++;
+      },
+    });
+    try {
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 8,
+        rows: 3,
+        chunks: [new TextEncoder().encode("BEFORE")],
+        cursor: { x: 6, y: 0 },
+        observedModes: { alternateScreen: false },
+        bootstrap: "painted-capture",
+      });
+      const before = interpreter.currentSnapshot();
+      await interpreter.enqueue({
+        type: "write",
+        data: new TextEncoder().encode("\x1b[2J\x1b[HAFTER"),
+      });
+      expect(reseeds).toBe(1);
+      expect(interpreter.currentSnapshot()).toBe(before);
+      expect(updates).toHaveLength(1);
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
+  it("retains captured overflow history while applying the actual tmux clear-history limit", async () => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const interpreter = create(updates, 8, 3);
+    const rowText = (row: { cells: readonly { grapheme: string }[] }) =>
+      row.cells
+        .map((cell) => cell.grapheme)
+        .join("")
+        .trimEnd();
+    try {
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 8,
+        rows: 3,
+        historyLimit: 20,
+        historySize: 25,
+        chunks: [
+          new TextEncoder().encode(
+            [
+              ...Array.from({ length: 25 }, (_, index) => `row${index}`),
+              "FIRST",
+              "SECOND",
+              "",
+            ].join("\r\n"),
+          ),
+        ],
+        cursor: { x: 6, y: 1 },
+        observedModes: { alternateScreen: false, scrollOnClear: true },
+        bootstrap: "painted-capture",
+      });
+      expect(interpreter.currentSnapshot().history).toHaveLength(25);
+      expect(rowText(interpreter.currentSnapshot().history[0]!)).toBe("row0");
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("\x1b[2J") });
+      const snapshot = interpreter.currentSnapshot();
+      expect(snapshot.history.map(rowText)).toEqual([
+        ...Array.from({ length: 21 }, (_, index) => `row${index + 4}`),
+        "FIRST",
+        "SECOND",
+      ]);
+      expect(snapshot.grid.map(rowText)).toEqual(["", "", ""]);
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
   it("publishes the validated snapshot rows for downstream reducer reuse", async () => {
     const updates: CanonicalTerminalReplicaUpdate[] = [];
     const interpreter = create(updates);

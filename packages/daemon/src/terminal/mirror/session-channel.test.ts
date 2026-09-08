@@ -2484,6 +2484,36 @@ describe("layout push", () => {
     await rig.channel.dispose();
   });
 
+  it("reseeds on observed scroll-on-clear changes without guessing unknown policy", async () => {
+    const rig = await startedRig();
+    const collected = collect();
+    rig.channel.subscribePane("pane.alpha", collected.onEvent);
+    rig.sim.reply(["old history"]);
+    const probe = (policy: string) =>
+      `0 0 100 50 0 1 0 0 0 0 0 0 0 1 12 2000 0 0 0 0 0 49 ${policy}`;
+    rig.sim.reply([probe("1")]);
+    const captures = () =>
+      rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+    const before = captures();
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 1");
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : unknown");
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %999 : 0");
+    expect(captures()).toBe(before);
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 0");
+    expect(captures()).toBe(before + 1);
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 0");
+    expect(captures()).toBe(before + 1);
+    rig.sim.reply(["updated history"]);
+    rig.sim.reply([probe("0")]);
+    const cursor = collected.events.at(-1);
+    expect(cursor?.type === "cursor" && cursor.observedModes?.scrollOnClear).toBe(false);
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 1");
+    expect(captures()).toBe(before + 2);
+    rig.sim.reply(["restored history"]);
+    rig.sim.reply([probe("1")]);
+    await rig.channel.dispose();
+  });
+
   it("reseeds a watched pane once for a quiet native history clear", async () => {
     const rig = await startedRig();
     const collected = collect();

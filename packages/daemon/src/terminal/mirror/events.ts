@@ -18,6 +18,8 @@
 
 /** Modes observed at the native capture seam; omitted fields stay unknown. */
 export interface MirrorObservedTerminalModes {
+  /** Authoritative tmux pane option; absent when the capture cannot resolve it. */
+  readonly scrollOnClear?: boolean;
   readonly alternateScreen?: boolean;
   readonly applicationCursor?: boolean;
   readonly applicationKeypad?: boolean;

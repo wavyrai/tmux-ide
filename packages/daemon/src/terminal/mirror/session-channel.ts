@@ -146,6 +146,7 @@ const RECOVERY_CURSOR_PROBE_FORMAT = [
   "#{mouse_utf8_flag}",
   "#{scroll_region_upper}",
   "#{scroll_region_lower}",
+  "#{scroll-on-clear}",
 ].join(" ");
 
 export type MirrorFlowRecoveryPhase =
@@ -255,6 +256,7 @@ interface SubRecord {
 
 interface PaneRecord {
   historySize?: number;
+  scrollOnClear?: boolean;
   runtimeId: string;
   semanticId: string;
   descriptor: SessionPaneDescriptor | null;
@@ -532,6 +534,7 @@ export class SessionChannel {
     this.io.send("refresh-client -B 'tmux-ide-pane-borders:@*:#{pane-border-status}'");
     this.io.send("refresh-client -B 'tmux-ide-copy-keys:@*:#{mode-keys}'");
     this.io.send("refresh-client -B 'tmux-ide-pane-history:%*:#{history_size}'");
+    this.io.send("refresh-client -B 'tmux-ide-scroll-on-clear:%*:#{scroll-on-clear}'");
     if (this.opts.onNativeClientActivity) {
       // tmux does not guarantee `%client-attached` is broadcast to an
       // existing control client. A format subscription is the documented,
@@ -1070,6 +1073,7 @@ export class SessionChannel {
         if (Number.isSafeInteger(historySize) && historySize >= 0)
           sub.pane.historySize = historySize;
         const fallbackSize = this.layoutSizeFor(runtime);
+        this.observeScrollOnClear(sub.pane, cursorLine);
         const events = sub.feed.cursorReply(epoch, cursorLine, fallbackSize);
         let published = false;
         const publish = (): boolean => {
@@ -1545,6 +1549,7 @@ export class SessionChannel {
         }
         const cursorLine = reply.lines[0] ?? "";
         const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+        this.observeScrollOnClear(pane, cursorLine);
         const deliveries = participants.map(({ sub, epoch }) => ({
           sub,
           epoch,
@@ -1763,6 +1768,7 @@ export class SessionChannel {
             const captureLines = Object.freeze([...result.captureLines]);
             for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
             const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+            this.observeScrollOnClear(pane, result.cursorLine!);
             const deliveries = participants.map(({ sub, epoch }) => ({
               sub,
               epoch,
@@ -2105,8 +2111,29 @@ export class SessionChannel {
 
   // ── Notifications (channel order is the invariant) ──────────────────────
 
+  private observeScrollOnClear(pane: PaneRecord, cursorLine: string): void {
+    const value = cursorLine.trim().split(/\s+/)[22];
+    pane.scrollOnClear = value === "0" || value === "1" ? value === "1" : undefined;
+  }
+
   private onNotify(name: string, rest: string): void {
     if (name === "subscription-changed") {
+      const policy =
+        /^tmux-ide-scroll-on-clear\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([01])\s*$/u.exec(
+          rest,
+        );
+      if (policy) {
+        const pane = this.panesByRuntime.get(policy[1]!);
+        const enabled = policy[2] === "1";
+        if (pane && pane.scrollOnClear !== enabled) {
+          pane.scrollOnClear = enabled;
+          // Option notifications are sampled by tmux. On observation, replace
+          // content and policy together; existing history checks cover the gap.
+          if (!this.recoveries.has(pane.runtimeId))
+            for (const sub of pane.subs) if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
+        }
+        return;
+      }
       const history =
         /^tmux-ide-pane-history\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([0-9]+)\s*$/u.exec(
           rest,

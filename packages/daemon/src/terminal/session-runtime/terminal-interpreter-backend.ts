@@ -65,6 +65,8 @@ export interface TerminalInterpreterBackendFactoryOptions {
   readonly cols: number;
   readonly rows: number;
   readonly scrollback: number;
+  /** Native collection policy; retained capacity can be larger after tmux reflow. */
+  readonly historyLimit?: number;
 }
 
 export type TerminalInterpreterBackendFactory = (

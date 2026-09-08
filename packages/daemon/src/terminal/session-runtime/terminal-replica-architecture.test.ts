@@ -37,11 +37,11 @@ describe("terminal replica architecture", () => {
     expect(packageJson.devDependencies["@xterm/headless-stock"]).toBe("npm:@xterm/headless@6.0.0");
     expect(provenance).toMatchObject({
       schemaVersion: 2,
-      version: "6.0.0-tmuxide.3-local.3",
-      assetSha256: "50f7d270acf58592d919ccf9ad22d76658607cc090901ef35d50e589e212b78b",
+      version: "6.0.0-tmuxide.3-local.5",
+      assetSha256: "3bb07dbf466cc6d6750038dbff535fb02dffd9c23ddeac0eb2c4a5af8d8e08ea",
       source: {
         commit: "8f6d707f7c09410ae4f89ace7b6d1bfed5542428",
-        patchSha256: "23839bf79feac89193b00392e6966361c3bd44c0b23118a7774c5dd4de2a0cfd",
+        patchSha256: "816f7c6f7c7a7cbd57c2d5fc29087e23ba4e31757b9a73574cdde20bf7f8e4d6",
       },
     });
     expect(provenance.baseRelease).toMatchObject({

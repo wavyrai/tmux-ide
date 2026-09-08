@@ -172,6 +172,7 @@ export class PaneFeed {
             ["bracketedPaste", 16],
             ["mouseSgr", 18],
             ["mouseUtf8", 19],
+            ["scrollOnClear", 22],
           ] as const
         ).flatMap(([name, index]) =>
           fields[index] === "0" || fields[index] === "1" ? [[name, fields[index] === "1"]] : [],
