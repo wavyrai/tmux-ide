@@ -34,6 +34,22 @@ const referenceHash = (value: unknown): string => {
 };
 
 describe("terminal canonical hash cache", () => {
+  it("preserves carries and wraparound over every indexed color and RGB byte extreme", () => {
+    const colors = [
+      { kind: "default" },
+      ...Array.from({ length: 256 }, (_, index) => ({ kind: "indexed", index })),
+      ...[0, 0xff, 0xff00, 0xff0000, 0xffffff].map((value) => ({ kind: "rgb", value })),
+    ];
+    const values = colors.map((foreground, index) => [
+      String.fromCharCode(index % 128),
+      index % 3,
+      foreground,
+      colors[colors.length - index - 1],
+      index * 257,
+    ]);
+    expect(hashCanonicalTerminalValue([true, values])).toBe(referenceHash([true, values]));
+  });
+
   it("preserves exact UTF-8 hashes across ASCII boundaries and malformed surrogates", () => {
     const values = [
       "",

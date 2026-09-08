@@ -23,7 +23,18 @@ class CanonicalFnv64 {
   }
 
   ascii(value: string): number {
-    for (let index = 0; index < value.length; index += 1) this.#byte(value.charCodeAt(index));
+    // Canonical color/field tags dominate full-row hashing. Keep the limbs
+    // local through each fragment instead of reading/writing fields per byte.
+    let high = this.#high;
+    let low = this.#low;
+    for (let index = 0; index < value.length; index += 1) {
+      low = (low ^ value.charCodeAt(index)) >>> 0;
+      const product = low * 0x1b3;
+      high = (high * 0x1b3 + Math.floor(product / 0x1_0000_0000) + low * 0x100) >>> 0;
+      low = product >>> 0;
+    }
+    this.#high = high;
+    this.#low = low;
     return value.length;
   }
 
