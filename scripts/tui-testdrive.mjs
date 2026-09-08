@@ -82,7 +82,11 @@ const cleanupToken = `testdrive:cleanup:${process.getuid?.() ?? process.pid}`;
 const targetSocketName = process.env.TMUX_IDE_TESTDRIVE_TARGET_SOCKET_NAME?.trim() || null;
 const targetSocketPath = process.env.TMUX_IDE_TMUX_SOCKET_PATH?.trim() || null;
 const hostSocketPath = process.env.TMUX_IDE_TESTDRIVE_HOST_SOCKET_PATH?.trim() || null;
-const compiledTui = join(repoRoot, "packages", "daemon", "dist", "tui", "tmux-ide-tui");
+// Qualify an experimental compiled renderer without replacing the local preview.
+const compiledTui = resolve(
+  process.env.TMUX_IDE_TESTDRIVE_TUI_BIN?.trim() ||
+    join(repoRoot, "packages", "daemon", "dist", "tui", "tmux-ide-tui"),
+);
 const sourceTui = join(repoRoot, "packages", "daemon", "src", "tui", "mirror", "app.tsx");
 const execFileAsync = promisify(execFile);
 
