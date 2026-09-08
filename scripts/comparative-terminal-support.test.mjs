@@ -153,3 +153,23 @@ test("private tmux cleanup recovers launch identity only behind the exact sessio
     /missing private session/,
   );
 });
+
+test("input mode validation rejects ambiguous scenarios before artifact access", () => {
+  assert.throws(() => validateOptions({ inputMode: "paste" }), /inputMode/);
+});
+
+test("key decoder increments once per literal x and line decoder retains split-frame order", async () => {
+  const { createProducerInputDecoder } = await import("./comparative-terminal-producer.mjs");
+  const keys = [];
+  const key = createProducerInputDecoder("key", (value) => keys.push(value));
+  key(Buffer.from("xx\r"));
+  key(Buffer.from("x"));
+  assert.deepEqual(keys, [1, 2, 3]);
+  const lines = [];
+  const line = createProducerInputDecoder("line", (value) => lines.push(value));
+  line(Buffer.from("CBINPUT:000"));
+  assert.deepEqual(lines, []);
+  line(Buffer.from("001\rCBINPUT:000002\r"));
+  assert.deepEqual(lines, [1, 2]);
+  assert.throws(() => createProducerInputDecoder("paste", () => {}), /inputMode/);
+});

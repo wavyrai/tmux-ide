@@ -75,6 +75,8 @@ export function createScreen(cols, rows, reply, observe) {
   };
 }
 export function validateOptions(options) {
+  if (options.inputMode !== undefined && !["key", "line"].includes(options.inputMode))
+    throw new Error("Invalid inputMode: expected key or line");
   if (
     !Array.isArray(options.targets) ||
     !options.targets.length ||

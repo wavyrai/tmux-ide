@@ -55,6 +55,7 @@ export async function runTarget(target, options, directory) {
     mkdirSync(path, { recursive: true, mode: 0o700 });
   const report = {
     target,
+    inputMode: options.inputMode ?? "line",
     root,
     session,
     status: "failed",
@@ -142,7 +143,9 @@ export async function runTarget(target, options, directory) {
   process.on("SIGINT", signal);
   process.on("SIGTERM", signal);
   try {
-    const producerCommand = [process.execPath, producer, receipt].map(shellQuote).join(" ");
+    const producerCommand = [process.execPath, producer, receipt, options.inputMode ?? "line"]
+      .map(shellQuote)
+      .join(" ");
     let binary, args;
     if (target === "herdr") {
       env.HERDR_SESSION = session;
@@ -293,7 +296,9 @@ export async function runTarget(target, options, directory) {
     for (let sequence = 1; sequence <= options.samples + 2; sequence++) {
       healthy();
       const atMs = nowMs();
-      client.write(`CBINPUT:${String(sequence).padStart(6, "0")}\r`);
+      client.write(
+        options.inputMode === "key" ? "x" : `CBINPUT:${String(sequence).padStart(6, "0")}\r`,
+      );
       await until(
         () => {
           healthy();
@@ -342,6 +347,7 @@ export async function runTarget(target, options, directory) {
 }
 
 export async function main(options, output) {
+  options = { ...options, inputMode: options.inputMode === undefined ? "line" : options.inputMode };
   const artifacts = validateOptions(options);
   for (const [name, entry] of Object.entries(artifacts)) {
     entry.sourceProvenance =
@@ -366,7 +372,7 @@ export async function main(options, output) {
   mkdirSync(output, { recursive: true });
   const report = {
     schemaVersion: REPORT_VERSION,
-    scenario: "startup-and-echo",
+    scenario: options.inputMode === "key" ? "startup-and-key-echo" : "startup-and-line-echo",
     artifacts,
     nodeArtifact: artifact(process.execPath),
     producerArtifact: artifact(producer),

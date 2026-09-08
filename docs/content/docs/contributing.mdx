@@ -85,6 +85,12 @@ pnpm benchmark:comparative /absolute/options.json /absolute/results-directory
 pnpm test:benchmark-comparative
 ```
 
+Set `"inputMode": "key"` to measure one literal `x` key per sample. The default
+`"inputMode": "line"` sends `CBINPUT:000001` plus carriage return (15 bytes total);
+its latency includes delivery of the entire burst and is not single-key latency.
+Both modes use the same producer redraw and marker oracle, and reports record
+the selected mode.
+
 Use a fresh results directory for each run. The runner creates private tmux
 sockets and configuration directories, matches content dimensions, checks ordered
 input echoes, and cleans up the processes it starts. Reports preserve artifact
