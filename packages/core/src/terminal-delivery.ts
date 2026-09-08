@@ -213,33 +213,36 @@ export function encodeCompactSemanticTerminalUpdate(
   input: TerminalSemanticDeliveryPayload,
 ): Uint8Array {
   const update = TerminalSemanticDeliveryPayloadSchemaZ.parse(input);
+  // Compact payloads contain only arrays and primitives below this object.
+  // Insert root keys in canonical order so the native serializer emits exactly
+  // the same representation without recursively allocating JSON fragments.
   const wire =
     update.frame === "seed"
       ? {
-          v: 1,
-          k: COMPACT_SEMANTIC_KIND,
           f: "s",
+          k: COMPACT_SEMANTIC_KIND,
           r: update.revision,
           s: compactSnapshot(update.snapshot),
+          v: 1,
         }
       : update.frame === "patch"
         ? {
-            v: 1,
-            k: COMPACT_SEMANTIC_KIND,
-            f: "p",
             b: update.baseRevision,
-            r: update.revision,
+            f: "p",
+            k: COMPACT_SEMANTIC_KIND,
             p: compactPatch(update.patch),
+            r: update.revision,
+            v: 1,
           }
         : {
-            v: 1,
-            k: COMPACT_SEMANTIC_KIND,
-            f: "t",
             b: update.baseRevision,
+            f: "t",
+            k: COMPACT_SEMANTIC_KIND,
             r: update.revision,
             t: update.tombstone.reason,
+            v: 1,
           };
-  const bytes = UTF8_ENCODER.encode(canonicalJson(wire));
+  const bytes = UTF8_ENCODER.encode(JSON.stringify(wire));
   assertRepresentationSize(bytes);
   return bytes;
 }

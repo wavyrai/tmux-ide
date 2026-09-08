@@ -33064,27 +33064,27 @@ function preaccountSemanticTerminalUpdateBytes(input, maximum = TERMINAL_DELIVER
 function encodeCompactSemanticTerminalUpdate(input) {
   const update = TerminalSemanticDeliveryPayloadSchemaZ.parse(input);
   const wire = update.frame === "seed" ? {
-    v: 1,
-    k: COMPACT_SEMANTIC_KIND,
     f: "s",
+    k: COMPACT_SEMANTIC_KIND,
     r: update.revision,
-    s: compactSnapshot(update.snapshot)
+    s: compactSnapshot(update.snapshot),
+    v: 1
   } : update.frame === "patch" ? {
-    v: 1,
-    k: COMPACT_SEMANTIC_KIND,
+    b: update.baseRevision,
     f: "p",
-    b: update.baseRevision,
-    r: update.revision,
-    p: compactPatch(update.patch)
-  } : {
-    v: 1,
     k: COMPACT_SEMANTIC_KIND,
-    f: "t",
-    b: update.baseRevision,
+    p: compactPatch(update.patch),
     r: update.revision,
-    t: update.tombstone.reason
+    v: 1
+  } : {
+    b: update.baseRevision,
+    f: "t",
+    k: COMPACT_SEMANTIC_KIND,
+    r: update.revision,
+    t: update.tombstone.reason,
+    v: 1
   };
-  const bytes = UTF8_ENCODER2.encode(canonicalJson(wire));
+  const bytes = UTF8_ENCODER2.encode(JSON.stringify(wire));
   assertRepresentationSize(bytes);
   return bytes;
 }

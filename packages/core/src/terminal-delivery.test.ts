@@ -575,6 +575,29 @@ describe("terminal delivery client", () => {
     expect(decodeCompactSemanticTerminalUpdate(encodeCompactSemanticTerminalUpdate(patch))).toEqual(
       patch,
     );
+    const canonicalJsonReference = (value: unknown): string => {
+      if (value === null || typeof value !== "object") return JSON.stringify(value);
+      if (Array.isArray(value)) return `[${value.map(canonicalJsonReference).join(",")}]`;
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonicalJsonReference(record[key])}`)
+        .join(",")}}`;
+    };
+    for (const payload of [
+      seed,
+      patch,
+      {
+        frame: "tombstone" as const,
+        baseRevision: 8,
+        revision: 9,
+        tombstone: { reason: "pane-closed" as const },
+      },
+    ]) {
+      const text = new TextDecoder().decode(encodeCompactSemanticTerminalUpdate(payload));
+      expect(text).toBe(canonicalJsonReference(JSON.parse(text)));
+      expect(decodeCompactSemanticTerminalUpdate(new TextEncoder().encode(text))).toEqual(payload);
+    }
   });
 
   it("deep-freezes compact decodes and adopts only the decoder-owned verified snapshot", () => {
