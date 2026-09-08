@@ -7,7 +7,24 @@ import {
   isolatedEnv,
   shellQuote,
   validateOptions,
+  tuiRendererConfiguration,
 } from "./comparative-terminal-support.mjs";
+
+test("renderer comparison modes explicitly control both output and scrolling", () => {
+  assert.deepEqual(tuiRendererConfiguration(), {
+    mode: "standard",
+    environment: { TMUX_IDE_FRAME_OUTPUT: "0", TMUX_IDE_NATIVE_SCROLL_PROTOTYPE: "0" },
+  });
+  assert.deepEqual(tuiRendererConfiguration("framed").environment, {
+    TMUX_IDE_FRAME_OUTPUT: "1",
+    TMUX_IDE_NATIVE_SCROLL_PROTOTYPE: "0",
+  });
+  assert.deepEqual(tuiRendererConfiguration("scroll-preview").environment, {
+    TMUX_IDE_FRAME_OUTPUT: "1",
+    TMUX_IDE_NATIVE_SCROLL_PROTOTYPE: "1",
+  });
+  assert.throws(() => tuiRendererConfiguration("unknown"), /Invalid tuiRenderer/);
+});
 
 test("requires explicit artifacts, bounded options and records exact bytes", () => {
   const binaries = { tmux: process.execPath };

@@ -75,6 +75,7 @@ export function createScreen(cols, rows, reply, observe) {
   };
 }
 export function validateOptions(options) {
+  tuiRendererConfiguration(options.tuiRenderer);
   if (options.inputMode !== undefined && !["key", "line"].includes(options.inputMode))
     throw new Error("Invalid inputMode: expected key or line");
   if (
@@ -100,6 +101,19 @@ export function validateOptions(options) {
   return Object.fromEntries(
     [...needed].map((key) => [key, artifact(options.binaries?.[key] ?? "")]),
   );
+}
+
+/** Requested mode is separate from artifact provenance and detected host capabilities. */
+export function tuiRendererConfiguration(mode = "standard") {
+  if (!["standard", "framed", "scroll-preview"].includes(mode))
+    throw new Error("Invalid tuiRenderer: expected standard, framed, or scroll-preview");
+  return {
+    mode,
+    environment: {
+      TMUX_IDE_FRAME_OUTPUT: mode === "standard" ? "0" : "1",
+      TMUX_IDE_NATIVE_SCROLL_PROTOTYPE: mode === "scroll-preview" ? "1" : "0",
+    },
+  };
 }
 
 /** Uses the owning child/PTY handle, never a PID discovered from unrelated processes. */

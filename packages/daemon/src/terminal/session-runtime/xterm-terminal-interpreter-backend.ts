@@ -30,6 +30,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   #capturedAlternate = false;
   #nativeReseedRequired = false;
   #nativeModesObserved = false;
+  #historyProjectionInvalidated = false;
   #scrollOnClear: boolean | undefined;
 
   constructor(options: TerminalInterpreterBackendFactoryOptions) {
@@ -61,9 +62,11 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     }
     this.#terminal.parser.registerEscHandler({ final: "c" }, () => {
       this.#mouseUtf8 = false;
+      this.#historyProjectionInvalidated = true;
       return false;
     });
     this.#terminal.parser.registerCsiHandler({ final: "J" }, (params) => {
+      if (params[0] === 3) this.#historyProjectionInvalidated = true;
       if (
         params[0] === 2 &&
         this.#nativeModesObserved &&
@@ -114,6 +117,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     // Native tmux is authoritative for transitions through one column. The
     // parser deliberately skips its incompatible wide-cell reflow in this case.
     if (cols !== this.cols && (cols === 1 || this.cols === 1)) this.#nativeReseedRequired = true;
+    if (cols !== this.cols || rows !== this.rows) this.#historyProjectionInvalidated = true;
     this.#terminal.resize(cols, rows);
   }
 
@@ -317,6 +321,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     const ownsPrevious = this.#hasProjected || isCanonicalBlankSnapshot(previous);
     const geometryStable =
       ownsPrevious &&
+      !this.#historyProjectionInvalidated &&
       !this.#bufferChangedSinceProjection &&
       historyBuffer.viewportY === this.#lastViewportY &&
       buffer.type === this.#lastBufferType &&
@@ -330,12 +335,15 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     const nextLength = historyBuffer.viewportY;
     const incrementalHistory =
       !canReuseHistory &&
+      !this.#historyProjectionInvalidated &&
       !this.#bufferChangedSinceProjection &&
       this.#lastBufferType === buffer.type &&
       previous.cols === this.#terminal.cols &&
-      nextLength >= previousLength &&
       scrolls > 0;
     if (incrementalHistory) {
+      // ED2 may collect ten percent of native history before appending.
+      // A negative length delta is still an incremental trim/append when
+      // no reset, resize, or buffer transition invalidated scroll accounting.
       const appended = nextLength - previousLength;
       const trim = Math.min(previousLength, Math.max(0, scrolls - appended));
       const retained = previousLength - trim;
@@ -370,6 +378,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     this.#lastScrollEpoch = this.#scrollEpoch;
     this.#hasProjected = true;
     this.#bufferChangedSinceProjection = false;
+    this.#historyProjectionInvalidated = false;
     return {
       cols: this.#terminal.cols,
       rows: this.#terminal.rows,

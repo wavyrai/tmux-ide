@@ -23,6 +23,7 @@ import {
   isolatedEnv,
   createScreen,
   validateOptions,
+  tuiRendererConfiguration,
   artifact,
   retireOwnedProcess,
   retirePrivateTmux,
@@ -56,6 +57,8 @@ export async function runTarget(target, options, directory) {
   const report = {
     target,
     inputMode: options.inputMode ?? "line",
+    requestedTuiRenderer:
+      target === "tmux-ide" ? tuiRendererConfiguration(options.tuiRenderer) : null,
     root,
     session,
     status: "failed",
@@ -195,7 +198,7 @@ export async function runTarget(target, options, directory) {
         env.TMUX_IDE_HOME = root;
         env.TMUX_IDE_DAEMON_INFO_DIR = root;
         env.TMUX_IDE_TUI_BIN = options.binaries.tui;
-        env.TMUX_IDE_NATIVE_SCROLL_PROTOTYPE = "0";
+        Object.assign(env, tuiRendererConfiguration(options.tuiRenderer).environment);
         const daemon = own(process.execPath, [options.binaries.cli, "--headless", "--json"]);
         await until(async () => {
           healthy();

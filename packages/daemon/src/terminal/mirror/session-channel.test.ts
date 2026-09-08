@@ -2484,6 +2484,38 @@ describe("layout push", () => {
     await rig.channel.dispose();
   });
 
+  it.each(["awaiting-capture", "awaiting-cursor"] as const)(
+    "keeps the opening capture alive when policy is observed while %s",
+    async (phase) => {
+      const rig = await startedRig();
+      const collected = collect();
+      try {
+        rig.channel.subscribePane("pane.alpha", collected.onEvent);
+        const captures = () =>
+          rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+        const before = captures();
+        if (phase === "awaiting-cursor") rig.sim.reply(["opening history"]);
+        rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 1");
+        // Even a policy change during the capture must be read by its pending
+        // authoritative cursor probe, not cancel the ordered capture recipe.
+        rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 0");
+        expect(captures()).toBe(before);
+        if (phase === "awaiting-capture") rig.sim.reply(["opening history"]);
+        rig.sim.output("%1", "held-output");
+        rig.sim.reply(["0 0 100 50 0 1 0 0 0 0 0 0 0 1 12 2000 0 0 0 0 0 49 0"]);
+        expect(collected.events.filter((event) => event.type === "seed")).toHaveLength(1);
+        expect(bytesOf(collected.events)).toContain("held-output");
+        const cursor = collected.events.at(-1);
+        expect(cursor?.type === "cursor" && cursor.observedModes?.scrollOnClear).toBe(false);
+        rig.sim.output("%1", "live-output");
+        expect(bytesOf(collected.events)).toContain("live-output");
+        expect(captures()).toBe(before);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
   it("reseeds on observed scroll-on-clear changes without guessing unknown policy", async () => {
     const rig = await startedRig();
     const collected = collect();

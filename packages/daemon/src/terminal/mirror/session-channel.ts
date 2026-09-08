@@ -2127,10 +2127,14 @@ export class SessionChannel {
         const enabled = policy[2] === "1";
         if (pane && pane.scrollOnClear !== enabled) {
           pane.scrollOnClear = enabled;
-          // Option notifications are sampled by tmux. On observation, replace
-          // content and policy together; existing history checks cover the gap.
+          // A pending capture already reads policy in its ordered cursor
+          // probe. Cancelling it here can repeatedly retire opening recipes
+          // while tmux delivers the initial sampled option notification.
+          // Live feeds instead replace content and policy together.
           if (!this.recoveries.has(pane.runtimeId))
-            for (const sub of pane.subs) if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
+            for (const sub of pane.subs)
+              if (!sub.closed && !sub.frozen && sub.feed.currentState() === "live")
+                this.reseedPlain(sub);
         }
         return;
       }

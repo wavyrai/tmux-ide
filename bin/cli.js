@@ -40056,7 +40056,9 @@ var init_session_channel = __esm({
             if (pane && pane.scrollOnClear !== enabled) {
               pane.scrollOnClear = enabled;
               if (!this.recoveries.has(pane.runtimeId)) {
-                for (const sub of pane.subs) if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
+                for (const sub of pane.subs)
+                  if (!sub.closed && !sub.frozen && sub.feed.currentState() === "live")
+                    this.reseedPlain(sub);
               }
             }
             return;
@@ -54695,6 +54697,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
       #capturedAlternate = false;
       #nativeReseedRequired = false;
       #nativeModesObserved = false;
+      #historyProjectionInvalidated = false;
       #scrollOnClear;
       constructor(options) {
         this.#terminal = new Terminal2({
@@ -54721,9 +54724,11 @@ var init_xterm_terminal_interpreter_backend = __esm({
         }
         this.#terminal.parser.registerEscHandler({ final: "c" }, () => {
           this.#mouseUtf8 = false;
+          this.#historyProjectionInvalidated = true;
           return false;
         });
         this.#terminal.parser.registerCsiHandler({ final: "J" }, (params) => {
+          if (params[0] === 3) this.#historyProjectionInvalidated = true;
           if (params[0] === 2 && this.#nativeModesObserved && this.#scrollOnClear === void 0 && this.#terminal.buffer.active.type === "normal")
             this.#nativeReseedRequired = true;
           return false;
@@ -54755,6 +54760,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
       }
       resize(cols, rows) {
         if (cols !== this.cols && (cols === 1 || this.cols === 1)) this.#nativeReseedRequired = true;
+        if (cols !== this.cols || rows !== this.rows) this.#historyProjectionInvalidated = true;
         this.#terminal.resize(cols, rows);
       }
       setAuthoritativeCursor(x, y) {
@@ -54851,7 +54857,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         const buffer = this.#terminal.buffer.active;
         const historyBuffer = this.#terminal.buffer.normal;
         const ownsPrevious = this.#hasProjected || isCanonicalBlankSnapshot(previous);
-        const geometryStable = ownsPrevious && !this.#bufferChangedSinceProjection && historyBuffer.viewportY === this.#lastViewportY && buffer.type === this.#lastBufferType && previous.cols === this.#terminal.cols;
+        const geometryStable = ownsPrevious && !this.#historyProjectionInvalidated && !this.#bufferChangedSinceProjection && historyBuffer.viewportY === this.#lastViewportY && buffer.type === this.#lastBufferType && previous.cols === this.#terminal.cols;
         const canReuseHistory = geometryStable && this.#scrollEpoch === this.#lastScrollEpoch;
         const stats = { fullWalks: dirty ? 0 : 1, gridRowsRead: 0, historyRowsRead: 0, cellsRead: 0 };
         let history = canReuseHistory ? previous.history : [];
@@ -54859,7 +54865,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         const scrolls = this.#scrollEpoch - this.#lastScrollEpoch;
         const previousLength = previous.history.length;
         const nextLength = historyBuffer.viewportY;
-        const incrementalHistory = !canReuseHistory && !this.#bufferChangedSinceProjection && this.#lastBufferType === buffer.type && previous.cols === this.#terminal.cols && nextLength >= previousLength && scrolls > 0;
+        const incrementalHistory = !canReuseHistory && !this.#historyProjectionInvalidated && !this.#bufferChangedSinceProjection && this.#lastBufferType === buffer.type && previous.cols === this.#terminal.cols && scrolls > 0;
         if (incrementalHistory) {
           const appended = nextLength - previousLength;
           const trim = Math.min(previousLength, Math.max(0, scrolls - appended));
@@ -54894,6 +54900,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         this.#lastScrollEpoch = this.#scrollEpoch;
         this.#hasProjected = true;
         this.#bufferChangedSinceProjection = false;
+        this.#historyProjectionInvalidated = false;
         return {
           cols: this.#terminal.cols,
           rows: this.#terminal.rows,
