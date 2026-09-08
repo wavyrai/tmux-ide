@@ -1637,30 +1637,50 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
               : []
         }
       >
-        {() => (
-          <text
-            position="absolute"
-            right={1}
-            top={topOffset()}
-            height={1}
-            maxWidth={Math.max(1, props.width - 2)}
-            wrapMode="none"
-            truncate
-            zIndex={20}
-            fg={props.theme.roles.text.link}
-            bg={props.theme.roles.surfaces.panel}
-          >
-            {keyboardCopy()
-              ? props.width < 75
-                ? `copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "q live" : "Esc live"}`
-                : ` ⧉ copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "Space select · Enter copy · q live" : "Ctrl+Space select · Ctrl+W copy · Esc live"} `
-              : retainedSelectionPane()
-                ? "select · Esc live"
-                : selectModePane()
-                  ? " ⧉ select "
-                  : "Scrollback · Esc live"}
-          </text>
-        )}
+        {(paneId) => {
+          const ownerFrame = createMemo(() =>
+            projectedFrames().find((frame) => frame.paneId === paneId),
+          );
+          return (
+            <text
+              position="absolute"
+              right={
+                Math.max(
+                  0,
+                  props.width - ((ownerFrame()?.left ?? 0) + (ownerFrame()?.width ?? 0)),
+                ) + ((ownerFrame()?.width ?? 0) < 12 ? 0 : 1)
+              }
+              top={(ownerFrame()?.top ?? 0) + topOffset()}
+              height={1}
+              maxWidth={Math.max(
+                1,
+                (ownerFrame()?.width ?? 1) - ((ownerFrame()?.width ?? 0) < 12 ? 0 : 2),
+              )}
+              visible={ownerFrame()?.visible ?? false}
+              wrapMode="none"
+              truncate
+              zIndex={20}
+              fg={props.theme.roles.text.link}
+              bg={props.theme.roles.surfaces.panel}
+            >
+              {(ownerFrame()?.width ?? 0) < 22
+                ? keyboardCopy()
+                  ? `copy ${keyboardCopy()!.cursor.mode}`
+                  : retainedSelectionPane() || selectModePane()
+                    ? "select"
+                    : "Scrollback"
+                : keyboardCopy()
+                  ? (ownerFrame()?.width ?? 0) < 75
+                    ? `copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "q live" : "Esc live"}`
+                    : ` ⧉ copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "Space select · Enter copy · q live" : "Ctrl+Space select · Ctrl+W copy · Esc live"} `
+                  : retainedSelectionPane()
+                    ? "select · Esc live"
+                    : selectModePane()
+                      ? " ⧉ select "
+                      : "Scrollback · Esc live"}
+            </text>
+          );
+        }}
       </For>
       <box
         position="absolute"
