@@ -265,9 +265,9 @@ test(
         "wheel-up",
         "second",
         (rows) =>
-          rows[2].includes("↑1") &&
-          rows[3].includes("HISTORY_092") &&
-          rows.at(-2).includes("HISTORY_119"),
+          rows[2].includes("↑5") &&
+          rows[3].includes("HISTORY_088") &&
+          rows.at(-2).includes("HISTORY_115"),
       );
       await frame("wheel-up", "first", baseline(44, "HISTORY_081"));
       assert.equal(geometry(), dimensions, "wheel scrolling mutated native geometry");
@@ -376,7 +376,7 @@ process.stdout.write('\\x1b[?1000h\\x1b[?1006h'+Array.from({length:120},(_,i)=>'
       await frame(
         "shift-wheel-local",
         "second",
-        (rows) => rows[2].includes("↑1") && rows[3].includes("HISTORY_100"),
+        (rows) => rows[2].includes("↑5") && rows[3].includes("HISTORY_096"),
       );
       await frame(
         "shift-wheel-local",
