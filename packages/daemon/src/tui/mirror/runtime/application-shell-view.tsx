@@ -119,6 +119,7 @@ export interface ApplicationShellViewProps {
   readonly terminalGestureRuntime?: TerminalWorkspaceProps["terminalGestureRuntime"];
   readonly onApplicationMousePointerIngress?: TerminalWorkspaceProps["onApplicationMousePointerIngress"];
   readonly onOpenLink?: TerminalWorkspaceProps["onOpenLink"];
+  readonly copyFeedback?: TerminalWorkspaceProps["copyFeedback"];
   readonly onCopyText?: TerminalWorkspaceProps["onCopyText"];
   readonly onSelectionCopyOwner?: TerminalWorkspaceProps["onSelectionCopyOwner"];
   readonly onSelectionKeyOwner?: TerminalWorkspaceProps["onSelectionKeyOwner"];
@@ -439,6 +440,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       terminalGestureRuntime={props.terminalGestureRuntime}
                       onApplicationMousePointerIngress={props.onApplicationMousePointerIngress}
                       onOpenLink={props.onOpenLink}
+                      copyFeedback={props.copyFeedback}
                       onCopyText={props.onCopyText}
                       onSelectionCopyOwner={props.onSelectionCopyOwner}
                       onSelectionKeyOwner={props.onSelectionKeyOwner}

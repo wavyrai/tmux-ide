@@ -84,3 +84,5 @@ export * from "./causal-cell.ts";
 export * from "./shared-monotonic-clock.ts";
 
 export * from "./visual-theme-presets.ts";
+
+export * from "./saved-machines.ts";

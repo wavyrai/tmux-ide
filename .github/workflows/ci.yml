@@ -64,6 +64,10 @@ jobs:
         if: matrix.node >= 22
         run: pnpm test:unit
 
+      - name: Run comparative benchmark contract tests
+        if: matrix.node >= 22
+        run: pnpm test:benchmark-comparative
+
       - name: Run canonical daemon and authentication suites
         if: matrix.node >= 22
         run: pnpm test:daemon-bun

@@ -226,9 +226,9 @@ describe("production OpenTUI v2 data path", () => {
 
   it("keeps the production root reviewable as a small renderer client", () => {
     // Includes the one root-owned keyboard/paste ingress and the three-line
-    // composition seam for shared receipt presence plus link/activity callbacks
+    // composition seam for shared receipt presence, copy feedback, and link/activity callbacks
     // (no new transport owner).
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(515);
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(516);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.

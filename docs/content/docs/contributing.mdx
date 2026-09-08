@@ -58,6 +58,45 @@ node bin/cli.js status --json
 node bin/cli.js stop --json
 ```
 
+## Comparative Terminal Smoke Benchmark
+
+The isolated comparison runner exercises native tmux, tmux-ide, and Herdr with
+the same producer and terminal parser. Build the tmux-ide CLI and TUI first, then
+save an options file outside the checkout with absolute paths to the artifacts:
+
+```json
+{
+  "targets": ["tmux", "tmux-ide", "herdr"],
+  "cols": 66,
+  "rows": 41,
+  "samples": 2,
+  "rounds": 1,
+  "binaries": {
+    "tmux": "/absolute/path/to/tmux",
+    "cli": "/absolute/path/to/tmux-ide/bin/cli.js",
+    "tui": "/absolute/path/to/tmux-ide-tui",
+    "herdr": "/absolute/path/to/herdr"
+  }
+}
+```
+
+```bash
+pnpm benchmark:comparative /absolute/options.json /absolute/results-directory
+pnpm test:benchmark-comparative
+```
+
+Use a fresh results directory for each run. The runner creates private tmux
+sockets and configuration directories, matches content dimensions, checks ordered
+input echoes, and cleans up the processes it starts. Reports preserve artifact
+hashes, raw terminal output, geometry, samples, and cleanup outcomes. Temporary
+configuration directories remain available for diagnosis.
+
+This small configuration checks harness correctness. Startup includes provisioning;
+latency ends when the shared terminal parser observes an echo. It does not measure
+physical display refresh, whole-frame coherence, scrolling smoothness, throughput,
+resource usage, or remote behavior. Run comparisons without concurrent builds or
+tests, and do not interpret a small smoke run as a performance ranking.
+
 ## CI
 
 GitHub Actions validates:

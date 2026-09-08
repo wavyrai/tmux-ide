@@ -204,6 +204,7 @@ export interface ApplicationTerminalWorkspaceProps {
   ) => ApplicationMousePointerIngress | null;
   /** Exact live generation owner used to fence multi-event pointer/copy gestures. */
   readonly terminalGestureRuntime?: Accessor<TerminalGestureRuntimeIdentity | null>;
+  readonly copyFeedback?: Readonly<{ paneId: string; copied: boolean }> | null;
   readonly onOpenLink?: (url: string) => void;
   readonly onCopyText?: (
     text: string,
@@ -487,6 +488,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     moved: boolean;
   } | null = null;
   let linkPointer = false;
+  let liveReturnPointer = false;
   let lastSelectionClick: {
     paneId: string;
     row: number;
@@ -1118,12 +1120,18 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         : null;
     const point = terminalPoint(event);
     const isRelease = event.type === "up" || event.type === "drag-end" || event.type === "drop";
-    if (linkPointer && (isRelease || event.type === "drag")) {
+    if ((linkPointer || liveReturnPointer) && (isRelease || event.type === "drag")) {
       event.stopPropagation?.();
-      if (isRelease) linkPointer = false;
+      if (isRelease) {
+        linkPointer = false;
+        liveReturnPointer = false;
+      }
       return;
     }
-    if (event.type === "down") linkPointer = false;
+    if (event.type === "down") {
+      linkPointer = false;
+      liveReturnPointer = false;
+    }
     if (drag) {
       event.stopPropagation?.();
       const ingress = resizeIngress();
@@ -1737,20 +1745,52 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         )}
       </Show>
       <For
-        each={
-          retainedSelectionPane() || selectModePane()
-            ? [retainedSelectionPane() ?? selectModePane()!]
-            : props.focusedPane && scrollback.offset(props.focusedPane) > 0
-              ? [props.focusedPane]
-              : []
-        }
+        each={[
+          ...new Set([
+            ...(retainedSelectionPane() || selectModePane()
+              ? [retainedSelectionPane() ?? selectModePane()!]
+              : []),
+            ...visibleFrames()
+              .filter((frame) => scrollback.offset(frame.paneId) > 0)
+              .map((frame) => frame.paneId),
+            ...(props.copyFeedback ? [props.copyFeedback.paneId] : []),
+          ]),
+        ]}
       >
         {(paneId) => {
           const ownerFrame = createMemo(() =>
             projectedFrames().find((frame) => frame.paneId === paneId),
           );
+          const canReturnLive = () =>
+            scrollback.offset(paneId) > 0 ||
+            retainedSelectionPane() === paneId ||
+            selectModePane() === paneId;
+          const returnLive = () => {
+            if (selecting || !canReturnLive()) return;
+            if (
+              retainedSelectionPane() === paneId ||
+              selectModePane() === paneId ||
+              keyboardCopy()?.paneId === paneId
+            )
+              endSelectionView();
+            wheelGesture.reset();
+            scrollback.live(paneId);
+          };
           return (
             <text
+              onMouse={(event) => {
+                if (liveReturnPointer && event.type === "up") {
+                  liveReturnPointer = false;
+                  event.stopPropagation();
+                  return;
+                }
+                if (selecting || !canReturnLive()) return;
+                event.stopPropagation();
+                if (event.type === "down" && event.button === 0) {
+                  liveReturnPointer = true;
+                  returnLive();
+                }
+              }}
               position="absolute"
               right={
                 Math.max(
@@ -1768,24 +1808,34 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
               wrapMode="none"
               truncate
               zIndex={20}
-              fg={props.theme.roles.text.link}
+              fg={
+                props.copyFeedback?.paneId === paneId
+                  ? props.copyFeedback.copied
+                    ? props.theme.roles.statusTone.success
+                    : props.theme.roles.statusTone.danger
+                  : props.theme.roles.text.link
+              }
               bg={props.theme.roles.surfaces.panel}
             >
-              {(ownerFrame()?.width ?? 0) < 22
-                ? keyboardCopy()
-                  ? `copy ${keyboardCopy()!.cursor.mode}`
-                  : retainedSelectionPane() || selectModePane()
-                    ? "select"
-                    : "Scrollback"
-                : keyboardCopy()
-                  ? (ownerFrame()?.width ?? 0) < 75
-                    ? `copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "q live" : "Esc live"}`
-                    : ` ⧉ copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "Space select · Enter copy · q live" : "Ctrl+Space select · Ctrl+W copy · Esc live"} `
-                  : retainedSelectionPane()
-                    ? "select · Esc live"
-                    : selectModePane()
-                      ? " ⧉ select "
-                      : "Scrollback · Esc live"}
+              {props.copyFeedback?.paneId === paneId
+                ? canReturnLive() && (ownerFrame()?.width ?? 0) < 22
+                  ? `${props.copyFeedback.copied ? "✓" : "!"} · Live`
+                  : `${props.copyFeedback.copied ? "Copied" : "Copy unavailable"}${canReturnLive() ? ((ownerFrame()?.width ?? 0) < 36 ? " · Live" : " · Back to live") : ""}`
+                : keyboardCopy()?.paneId === paneId
+                  ? (ownerFrame()?.width ?? 0) >= 75
+                    ? ` ⧉ copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "Space select · Enter copy · q live" : "Ctrl+Space select · Ctrl+W copy · Esc live"} · Back to live `
+                    : (ownerFrame()?.width ?? 0) < 14
+                      ? `copy ${keyboardCopy()!.cursor.mode}`
+                      : `copy ${keyboardCopy()!.cursor.mode} · ${(ownerFrame()?.width ?? 0) < 30 ? "Live" : "Back to live"}`
+                  : (ownerFrame()?.width ?? 0) < 14
+                    ? retainedSelectionPane() === paneId || selectModePane() === paneId
+                      ? "select"
+                      : "Live"
+                    : retainedSelectionPane() === paneId || selectModePane() === paneId
+                      ? "select · Back to live"
+                      : (ownerFrame()?.width ?? 0) < 30
+                        ? "Scrollback · Live"
+                        : "Scrollback · Back to live"}
             </text>
           );
         }}

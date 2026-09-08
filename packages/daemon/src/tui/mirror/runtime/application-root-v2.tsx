@@ -476,6 +476,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
                 routeApplicationTerminalPointerInput(interaction, paneId, input),
               )}
               onOpenLink={recoverHostFocus(createTerminalLinkOpener(setTransientNote))}
+              copyFeedback={selectionOwner.feedback()}
               onCopyText={selectionOwner.copy}
               onSelectionCopyOwner={selectionOwner.registerCopy}
               onSelectionKeyOwner={selectionOwner.registerKey}

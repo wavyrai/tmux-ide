@@ -1,3 +1,4 @@
+import { createEffect, createSignal, getOwner, onCleanup } from "solid-js";
 import type { OpenTuiGenerationHostSnapshot } from "./open-tui-generation-host.ts";
 import type { TerminalGestureRuntimeIdentity } from "./terminal-selection.ts";
 import type { ApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
@@ -153,6 +154,23 @@ export function createApplicationTerminalSelectionOwner(options: {
   readonly diagnosticsEnabled: boolean;
   readonly generation: () => OpenTuiGenerationHostSnapshot | null;
 }) {
+  const [feedback, setFeedback] = createSignal<Readonly<{
+    paneId: string;
+    copied: boolean;
+  }> | null>(null);
+  let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearFeedback = () => {
+    if (feedbackTimer !== null) clearTimeout(feedbackTimer);
+    feedbackTimer = null;
+    setFeedback(null);
+  };
+  if (getOwner()) {
+    createEffect(() => {
+      options.generation();
+      clearFeedback();
+    });
+    onCleanup(clearFeedback);
+  }
   let copySelection: (() => boolean) | null = null;
   let handleKey: PaneMenuKeyHandler | null = null;
   let ownsInput: (() => boolean) | undefined;
@@ -160,6 +178,8 @@ export function createApplicationTerminalSelectionOwner(options: {
   let copyOrdinal = 0;
   let pointerGestureId: string | null = null;
   return Object.freeze({
+    feedback,
+    clearFeedback,
     beginPointerIngress(input: {
       readonly action: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down";
       readonly x: number;
@@ -185,7 +205,16 @@ export function createApplicationTerminalSelectionOwner(options: {
       }
     },
     copy(text: string, evidence: TerminalSelectionCopyEvidence): boolean {
-      const copied = options.copyText(text);
+      let copied = false;
+      try {
+        copied = options.copyText(text);
+      } catch {
+        /* Clipboard failures must not break pane rendering. */
+      }
+      clearFeedback();
+      setFeedback(Object.freeze({ paneId: evidence.semanticPaneId, copied }));
+      feedbackTimer = setTimeout(clearFeedback, 1_800);
+      feedbackTimer.unref?.();
       if (!options.diagnosticsEnabled) return copied;
       try {
         const ordinal = copyOrdinal++;
