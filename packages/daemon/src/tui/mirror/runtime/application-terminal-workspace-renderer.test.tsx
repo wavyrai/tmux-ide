@@ -1702,132 +1702,172 @@ it("routes raw mouse multi-click, wheel-drag, edge scrolling and Ctrl-link activ
   }
 });
 
-it("focuses the inactive pane for Shift-drag and contains selection while its app updates", async () => {
-  registerPaneSurface();
-  const theme = createSemanticThemeSnapshot({ mode: "dark" });
-  const { blankTerminalReplicaSnapshot } = await import("@tmux-ide/core");
-  const blank = blankTerminalReplicaSnapshot(30, 9);
-  const makeSnapshot = (label: string) => ({
-    ...blank,
-    modes: {
-      ...blank.modes,
-      mouseProtocol: "drag" as const,
-      mouseEncoding: "sgr" as const,
-      mouseTracking: true,
-    },
-    grid: blank.grid.map((row) => ({
-      ...row,
-      cells: row.cells.map((cell, i) => ({ ...cell, grapheme: label.padEnd(30)[i]! })),
-    })),
-  });
-  const replicas = new Map([
-    ["pane.a", makeSnapshot("first pane")],
-    ["pane.b", makeSnapshot("working pane")],
-  ]);
-  let revision = 1;
-  const held = new Map<string, ReturnType<typeof makeSnapshot>>();
-  const live = adapter({ "pane.a": "A", "pane.b": "B" }, []);
-  live.paneSelectionSnapshot = (pane) => held.get(pane) ?? replicas.get(pane) ?? null;
-  live.retainPaneView = (pane) => {
-    held.set(pane, replicas.get(pane)!);
-    return () => {
-      held.delete(pane);
+it.each([false, true])(
+  "focuses the inactive pane for Shift-drag while output updates (retention reflow: %s)",
+  async (reflowOnRetain) => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const { blankTerminalReplicaSnapshot } = await import("@tmux-ide/core");
+    const blank = blankTerminalReplicaSnapshot(30, 9);
+    const makeSnapshot = (label: string) => ({
+      ...blank,
+      modes: {
+        ...blank.modes,
+        mouseProtocol: "drag" as const,
+        mouseEncoding: "sgr" as const,
+        mouseTracking: true,
+      },
+      grid: blank.grid.map((row) => ({
+        ...row,
+        cells: row.cells.map((cell, i) => ({ ...cell, grapheme: label.padEnd(30)[i]! })),
+      })),
+    });
+    const replicas = new Map([
+      ["pane.a", makeSnapshot("first pane")],
+      ["pane.b", makeSnapshot("working pane")],
+    ]);
+    let revision = 1;
+    const held = new Map<string, ReturnType<typeof makeSnapshot>>();
+    const live = adapter({ "pane.a": "A", "pane.b": "B" }, []);
+    const originalBlit = live.renderSource.blitPane;
+    live.renderSource.blitPane = (...args) => {
+      const result = originalBlit(...args);
+      const buffers = args[1];
+      for (let offset = 0; offset < buffers.fg.length; offset += 4) {
+        buffers.fg.set([210, 220, 230, 255], offset);
+        buffers.bg.set([20, 30, 40, 255], offset);
+      }
+      return result;
     };
-  };
-  live.renderSource.paneCanonicalIdentity = (pane) => ({
-    generation: "gen",
-    incarnation: "gen:0",
-    revision: held.has(pane) ? 1 : revision,
-    stateHash: held.has(pane) || revision === 1 ? "original" : "updated",
-    cols: 30,
-    rows: 9,
-    sourceEpoch: 1,
-    historyTrim: 0,
-  });
-  const current = {
-    ...layout().current!,
-    cols: 60,
-    panes: [
-      { pane: "pane.a", left: 0, top: 0, width: 30, height: 9, active: true },
-      { pane: "pane.b", left: 30, top: 0, width: 30, height: 9, active: false },
-    ],
-  };
-  const connection = {},
-    client = {};
-  const [feedback, setFeedback] = createSignal<{ paneId: string; copied: boolean } | null>(null);
-  const [focus, setFocus] = createSignal("pane.a");
-  let copy: (() => boolean) | null = null;
-  const copied: Array<{ text: string; pane: string }> = [],
-    forwarded: string[] = [];
-  const setup = await renderForTest(
-    () => (
-      <ApplicationTerminalWorkspace
-        layout={() => ({ current, windows: [current] })}
-        adapter={live}
-        rendererEpoch={1}
-        terminalGestureRuntime={() => ({
-          daemonGeneration: "daemon",
-          clientGeneration: 1,
-          connection,
-          client,
-          adapter: live,
-          rendererEpoch: 1,
-        })}
-        width={60}
-        height={10}
-        focusedPane={focus()}
-        theme={theme}
-        palette={createTerminalPaletteProjection(theme)}
-        copyFeedback={feedback()}
-        onSelectPane={setFocus}
-        onTerminalInput={(pane) => forwarded.push(pane)}
-        onCopyText={(text, evidence) => {
-          copied.push({ text, pane: evidence.semanticPaneId });
-          setFeedback({ paneId: evidence.semanticPaneId, copied: true });
-          return true;
-        }}
-        onSelectionCopyOwner={(value) => {
-          copy = value;
-        }}
-      />
-    ),
-    { width: 60, height: 11 },
-  );
-  try {
-    await setup.renderOnce();
-    await setup.mockMouse.pressDown(31, 3, MouseButtons.LEFT, { modifiers: { shift: true } });
-    expect(focus()).toBe("pane.b");
-    revision = 2;
-    replicas.set("pane.b", makeSnapshot("new application output"));
-    await setup.renderOnce();
-    await setup.mockMouse.moveTo(45, 3, { modifiers: { shift: true } });
-    await setup.mockMouse.release(45, 3, MouseButtons.LEFT, { modifiers: { shift: true } });
-    expect(copy?.()).toBe(true);
-    expect(copied.at(-1)).toEqual({ text: "orking pane", pane: "pane.b" });
-    await setup.renderOnce();
-    const feedbackFrame = setup.captureCharFrame();
-    expect(feedbackFrame.split("\n").some((line) => line.slice(30).includes("Copied"))).toBe(true);
-    expect(feedbackFrame.split("\n").some((line) => line.slice(0, 30).includes("Copied"))).toBe(
-      false,
+    live.paneSelectionSnapshot = (pane) => held.get(pane) ?? replicas.get(pane) ?? null;
+    live.retainPaneView = (pane) => {
+      const snapshot = replicas.get(pane)!;
+      held.set(
+        pane,
+        reflowOnRetain
+          ? {
+              ...snapshot,
+              cols: 29,
+              grid: snapshot.grid.map((row) => ({ ...row, cells: row.cells.slice(0, 29) })),
+            }
+          : snapshot,
+      );
+      return () => {
+        held.delete(pane);
+      };
+    };
+    live.renderSource.paneCanonicalIdentity = (pane) => ({
+      generation: "gen",
+      incarnation: "gen:0",
+      revision: held.has(pane) ? 1 : revision,
+      stateHash: held.has(pane) || revision === 1 ? "original" : "updated",
+      cols: 30,
+      rows: 9,
+      ...(held.has(pane) && reflowOnRetain ? { viewCols: 29, viewRows: 9 } : {}),
+      sourceEpoch: 1,
+      historyTrim: 0,
+    });
+    const current = {
+      ...layout().current!,
+      cols: 60,
+      panes: [
+        { pane: "pane.a", left: 0, top: 0, width: 30, height: 9, active: true },
+        { pane: "pane.b", left: 30, top: 0, width: 30, height: 9, active: false },
+      ],
+    };
+    const connection = {},
+      client = {};
+    const [feedback, setFeedback] = createSignal<{ paneId: string; copied: boolean } | null>(null);
+    const [focus, setFocus] = createSignal("pane.a");
+    let copy: (() => boolean) | null = null;
+    const copied: Array<{ text: string; pane: string }> = [],
+      forwarded: string[] = [];
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={() => ({ current, windows: [current] })}
+          adapter={live}
+          rendererEpoch={1}
+          terminalGestureRuntime={() => ({
+            daemonGeneration: "daemon",
+            clientGeneration: 1,
+            connection,
+            client,
+            adapter: live,
+            rendererEpoch: 1,
+          })}
+          width={60}
+          height={10}
+          focusedPane={focus()}
+          theme={theme}
+          palette={createTerminalPaletteProjection(theme)}
+          copyFeedback={feedback()}
+          onSelectPane={setFocus}
+          onTerminalInput={(pane) => forwarded.push(pane)}
+          onCopyText={(text, evidence) => {
+            copied.push({ text, pane: evidence.semanticPaneId });
+            setFeedback({ paneId: evidence.semanticPaneId, copied: true });
+            return true;
+          }}
+          onSelectionCopyOwner={(value) => {
+            copy = value;
+          }}
+        />
+      ),
+      { width: 60, height: 11 },
     );
-    expect(copy?.()).toBe(true);
-    setFeedback({ paneId: "pane.b", copied: false });
-    await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Copy unavailable");
+    try {
+      await setup.renderOnce();
+      await setup.mockMouse.pressDown(31, 3, MouseButtons.LEFT, { modifiers: { shift: true } });
+      expect(focus()).toBe("pane.b");
+      revision = 2;
+      replicas.set("pane.b", makeSnapshot("new application output"));
+      await setup.renderOnce();
+      await setup.mockMouse.moveTo(45, 3, { modifiers: { shift: true } });
+      await setup.mockMouse.release(45, 3, MouseButtons.LEFT, { modifiers: { shift: true } });
+      expect(copy?.()).toBe(true);
+      expect(copied.at(-1)).toEqual({ text: "orking pane", pane: "pane.b" });
+      await setup.renderOnce();
+      const expectRetainedHighlight = () => {
+        let x = 0;
+        const selected = setup.captureSpans().lines[3]!.spans.find((span) => {
+          const contains = x <= 32 && x + span.text.length > 32;
+          x += span.text.length;
+          return contains;
+        });
+        expect(selected).toBeDefined();
+        expect(colorToThemeBytes(selected!.fg)).toEqual([20, 30, 40, 255]);
+        expect(colorToThemeBytes(selected!.bg)).toEqual([210, 220, 230, 255]);
+      };
+      expectRetainedHighlight();
+      await setup.renderOnce();
+      expectRetainedHighlight();
+      const feedbackFrame = setup.captureCharFrame();
+      expect(feedbackFrame.split("\n").some((line) => line.slice(30).includes("Copied"))).toBe(
+        true,
+      );
+      expect(feedbackFrame.split("\n").some((line) => line.slice(0, 30).includes("Copied"))).toBe(
+        false,
+      );
+      expect(copy?.()).toBe(true);
+      setFeedback({ paneId: "pane.b", copied: false });
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("Copy unavailable");
 
-    await setup.renderOnce();
-    await setup.mockMouse.pressDown(31, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
-    await setup.renderOnce();
-    await setup.mockMouse.moveTo(1, 4, { modifiers: { shift: true } });
-    await setup.mockMouse.release(1, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
-    expect(copy?.()).toBe(true);
-    expect(copied.at(-1)).toEqual({ text: "wo", pane: "pane.b" });
-    expect(focus()).toBe("pane.b");
-    expect(forwarded).toEqual([]);
-  } finally {
-    setup.renderer.destroy();
-  }
-});
+      await setup.renderOnce();
+      await setup.mockMouse.pressDown(31, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
+      await setup.renderOnce();
+      await setup.mockMouse.moveTo(1, 4, { modifiers: { shift: true } });
+      await setup.mockMouse.release(1, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
+      expect(copy?.()).toBe(true);
+      expect(copied.at(-1)).toEqual({ text: "wo", pane: "pane.b" });
+      expect(focus()).toBe("pane.b");
+      expect(forwarded).toEqual([]);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 
 it.each([12, 30])(
   "returns only the clicked inactive history pane to live at width %s",

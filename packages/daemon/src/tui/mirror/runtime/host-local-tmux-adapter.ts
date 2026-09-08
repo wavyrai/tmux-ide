@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { closeSync, openSync, writeSync } from "node:fs";
 
+import { tuiPerfMark } from "./application-performance-log.ts";
+
 import { osc52Sequence } from "../selection.ts";
 
 export interface OpenTuiHostLocalTmuxAdapter {
@@ -50,24 +52,63 @@ export function writeAllSync(
   }
 }
 
+type ClipboardBackend = "native-macos" | "osc52";
+type ClipboardOutcome =
+  | "submitted"
+  | "copied"
+  | "spawn-failed"
+  | "timeout"
+  | "stdin-failed"
+  | "stdin-unavailable"
+  | "exit-failed"
+  | "policy-failed"
+  | "policy-not-ready"
+  | "invalid-length"
+  | "write-failed"
+  | "transport-written";
+type ClipboardDiagnostic = (backend: ClipboardBackend, outcome: ClipboardOutcome) => void;
+function clipboardDiagnostic(backend: ClipboardBackend, outcome: ClipboardOutcome): void {
+  try {
+    tuiPerfMark("terminal-clipboard", { backend, outcome });
+  } catch {
+    /* Diagnostics never own copying. */
+  }
+}
+
 /** Native clipboard writes resolve only after the helper has exited successfully. */
 export function writeMacClipboard(
   text: string,
   launch: typeof execFile = execFile,
+  diagnose: ClipboardDiagnostic = clipboardDiagnostic,
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let inputFailed = false;
+    let settled = false;
+    const finish = (outcome: ClipboardOutcome): void => {
+      if (settled) return;
+      settled = true;
+      try {
+        diagnose("native-macos", outcome);
+      } catch {
+        /* Best effort only. */
+      }
+      resolve(outcome === "copied");
+    };
     try {
       const child = launch(
         "/usr/bin/pbcopy",
         [],
         { timeout: 1_500, killSignal: "SIGKILL", maxBuffer: 4_096 },
         (error) => {
-          resolve(!error && !inputFailed);
+          if (inputFailed) finish("stdin-failed");
+          else if (!error) finish("copied");
+          else if (error.killed && error.signal === "SIGKILL") finish("timeout");
+          else if (typeof error.code === "string") finish("spawn-failed");
+          else finish("exit-failed");
         },
       );
       if (!child.stdin) {
-        resolve(false);
+        finish("stdin-unavailable");
         child.kill();
         return;
       }
@@ -75,9 +116,14 @@ export function writeMacClipboard(
         inputFailed = true;
         child.kill();
       });
-      child.stdin.end(text, "utf8");
+      try {
+        child.stdin.end(text, "utf8");
+      } catch {
+        finish("stdin-failed");
+        child.kill();
+      }
     } catch {
-      resolve(false);
+      finish("spawn-failed");
     }
   });
 }
@@ -146,13 +192,21 @@ export function createOpenTuiHostLocalTmuxAdapter(
         boundedClipboardPolicyRun(run, ["set-option", "-gq", "allow-passthrough", "on"]),
       ]).then(
         () => (clipboardConfigured = true),
-        () => false,
+        () => {
+          clipboardDiagnostic("osc52", "policy-failed");
+          return false;
+        },
       );
       return clipboardConfiguration;
     },
     copyText(text) {
       const bytes = Buffer.byteLength(text, "utf8");
-      if (bytes < 1 || bytes > 1_000_000) return false;
+      const backend = nativeCopy ? "native-macos" : "osc52";
+      if (bytes < 1 || bytes > 1_000_000) {
+        clipboardDiagnostic(backend, "invalid-length");
+        return false;
+      }
+      clipboardDiagnostic(backend, "submitted");
       if (nativeCopy) {
         // Serialize writes, keeping only the newest pending request (at most 1 MB).
         return new Promise<boolean>((resolve) => {
@@ -162,10 +216,16 @@ export function createOpenTuiHostLocalTmuxAdapter(
           } else submitNativeCopy(text, resolve);
         });
       }
-      if (!clipboardConfigured) return false;
+      if (!clipboardConfigured) {
+        clipboardDiagnostic("osc52", "policy-not-ready");
+        return false;
+      }
       try {
-        return writeClipboard(osc52Sequence(Buffer.from(text, "utf8").toString("base64")));
+        const copied = writeClipboard(osc52Sequence(Buffer.from(text, "utf8").toString("base64")));
+        clipboardDiagnostic("osc52", copied ? "transport-written" : "write-failed");
+        return copied;
       } catch {
+        clipboardDiagnostic("osc52", "write-failed");
         return false;
       }
     },

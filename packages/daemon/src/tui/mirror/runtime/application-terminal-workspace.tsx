@@ -1458,14 +1458,27 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           };
           return;
         }
+        setKeyboardCopy(null);
+        retainSelectionView(hit.frame.paneId);
+        // Retention may synchronously reflow to this client's viewport. Capture
+        // the gesture after that transition so its coordinates match the held view.
+        const selectionLease = captureGestureLease(hit.frame.paneId, hit.frame);
+        if (!selectionLease) {
+          endSelectionView();
+          return;
+        }
+        const selectionSnapshot = selectionLease.snapshot;
         const anchor = terminalSelectionCell(
-          snapshot,
+          selectionSnapshot,
           hit.col,
           hit.row,
           scrollback.offset(hit.frame.paneId),
           selectionViewport(hit.frame.paneId, hit.frame),
         );
-        if (!anchor) return;
+        if (!anchor) {
+          endSelectionView();
+          return;
+        }
         const now = performance.now();
         const previous = lastSelectionClick;
         const count =
@@ -1483,13 +1496,14 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           col: anchor.col,
           at: now,
           count,
-          lease,
+          lease: selectionLease,
         };
         const unit = count === 3 ? "line" : count === 2 ? "word" : "cell";
-        const anchorRange = terminalSelectionUnit(snapshot, anchor, unit);
-        if (!anchorRange) return;
-        setKeyboardCopy(null);
-        retainSelectionView(hit.frame.paneId);
+        const anchorRange = terminalSelectionUnit(selectionSnapshot, anchor, unit);
+        if (!anchorRange) {
+          endSelectionView();
+          return;
+        }
         selecting = {
           paneId: hit.frame.paneId,
           anchor,
@@ -1497,7 +1511,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           unit,
           pointer: point,
           frame: hit.frame,
-          lease,
+          lease: selectionLease,
           moved: false,
         };
         setPointerSelecting(true);

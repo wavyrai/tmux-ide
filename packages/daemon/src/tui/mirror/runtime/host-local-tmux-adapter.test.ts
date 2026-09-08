@@ -1,4 +1,5 @@
 import * as childProcess from "node:child_process";
+import * as performanceLog from "./application-performance-log.ts";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -146,6 +147,27 @@ describe("host-local tmux adapter boundary", () => {
     }
   });
 
+  it("logs terminal transport submission without claiming an OS clipboard acknowledgement", () => {
+    const mark = vi.spyOn(performanceLog, "tuiPerfMark").mockImplementation(() => undefined);
+    try {
+      const adapter = createOpenTuiHostLocalTmuxAdapter(
+        false,
+        async () => undefined,
+        () => true,
+        false,
+        null,
+      );
+      expect(adapter.copyText("PRIVATE_SELECTED_TEXT")).toBe(true);
+      expect(mark.mock.calls).toEqual([
+        ["terminal-clipboard", { backend: "osc52", outcome: "submitted" }],
+        ["terminal-clipboard", { backend: "osc52", outcome: "transport-written" }],
+      ]);
+      expect(JSON.stringify(mark.mock.calls)).not.toContain("PRIVATE");
+    } finally {
+      mark.mockRestore();
+    }
+  });
+
   it("retains the hosted marker without exposing client mutation", () => {
     const adapter = createOpenTuiHostLocalTmuxAdapter(false);
     expect(adapter.hosted).toBe(false);
@@ -234,6 +256,77 @@ describe("native macOS clipboard", () => {
       finish(failure === "exit" ? new Error("timed out or nonzero exit") : null);
       await expect(result).resolves.toBe(failure === "none");
     }
+  });
+
+  it("reports bounded native outcomes without clipboard payload or helper error details", async () => {
+    const cases = [
+      "copied",
+      "spawn-failed",
+      "timeout",
+      "stdin-failed",
+      "stdin-unavailable",
+      "exit-failed",
+    ] as const;
+    for (const outcome of cases) {
+      const diagnostics = vi.fn();
+      let finish!: (error: unknown) => void;
+      let inputError!: () => void;
+      const launch = vi.fn((_path, _args, _options, callback) => {
+        if (outcome === "spawn-failed") throw new Error("PRIVATE_HELPER_DETAIL");
+        finish = callback;
+        return {
+          kill: vi.fn(),
+          stdin:
+            outcome === "stdin-unavailable"
+              ? null
+              : {
+                  on: (_event: string, handler: () => void) => {
+                    inputError = handler;
+                  },
+                  end: vi.fn(),
+                },
+        };
+      });
+      const result = writeMacClipboard(
+        "PRIVATE_SELECTED_TEXT",
+        launch as unknown as typeof childProcess.execFile,
+        diagnostics,
+      );
+      if (outcome === "stdin-failed") inputError();
+      if (outcome !== "spawn-failed" && outcome !== "stdin-unavailable") {
+        finish(
+          outcome === "timeout"
+            ? Object.assign(new Error("PRIVATE_HELPER_DETAIL"), { killed: true, signal: "SIGKILL" })
+            : outcome === "exit-failed"
+              ? Object.assign(new Error("PRIVATE_HELPER_DETAIL"), { code: 1 })
+              : null,
+        );
+      }
+      await expect(result).resolves.toBe(outcome === "copied");
+      expect(diagnostics.mock.calls).toEqual([["native-macos", outcome]]);
+      expect(JSON.stringify(diagnostics.mock.calls)).not.toContain("PRIVATE");
+    }
+  });
+
+  it("contains diagnostic sink exceptions and classifies synchronous stdin errors", async () => {
+    const kill = vi.fn();
+    const launch = vi.fn(() => ({
+      kill,
+      stdin: {
+        on: vi.fn(),
+        end: () => {
+          throw new Error("private");
+        },
+      },
+    }));
+    const diagnostics = vi.fn(() => {
+      throw new Error("diagnostic sink failure");
+    });
+    await expect(
+      writeMacClipboard("private", launch as unknown as typeof childProcess.execFile, diagnostics),
+    ).resolves.toBe(false);
+    expect(diagnostics).toHaveBeenCalledWith("native-macos", "stdin-failed");
+    expect(kill).toHaveBeenCalledOnce();
   });
 
   it("serializes native copies, retains only the latest pending text and recovers after failure", async () => {
