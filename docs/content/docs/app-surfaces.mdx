@@ -66,6 +66,54 @@ Ctrl+click a visible HTTP or HTTPS URL to open it in your browser. Ordinary
 clicks retain their existing terminal behavior. Links split across soft-wrapped
 rows are recognized; this does not open links merely because a program prints them.
 
+## Connect to another machine over SSH
+
+Install the same tmux-ide beta build on both machines. The remote machine needs
+Node.js and tmux, and `tmux-ide` must be available on the PATH used by noninteractive
+SSH commands. Configure an SSH alias, key authentication, and host trust first:
+the app uses `BatchMode=yes`, so it cannot prompt for a password or accept an
+unknown host key.
+
+On the remote machine, start the daemon:
+
+```bash
+tmux-ide --headless
+```
+
+This runs in the foreground; keep that process alive in a separate shell or under
+your process supervisor. If a healthy daemon already exists, the command reports
+it and exits. Create any sessions you want to open using ordinary tmux on that
+machine.
+
+On your local machine, open the remote session browser or a named session:
+
+```bash
+tmux-ide app --ssh my-server
+tmux-ide app --ssh my-server work
+```
+
+`my-server` can be an alias from `~/.ssh/config` or `user@host`. The app opens an
+SSH tunnel to the existing remote daemon; it does not install software or start
+a daemon remotely. Home and Terminals show the selected host label. Each TUI
+connects to one machine; open another TUI for another host.
+
+If the connection drops, the app reconnects to that same host. It never silently
+switches to your local daemon. Remote sessions and their processes remain owned
+by tmux when you close the viewer. Creating a session or provisioning an agent
+from the remote Home screen is not available in this beta; create those remotely
+before opening them in the app.
+
+On Linux, system tmux can serve the connection and normal terminal streaming.
+Without the optional patched tmux build, retained history uses compatible
+semantic reflow rather than native physical-grid backing. Older tmux versions
+also expose fewer terminal-mode details, so this is not a claim of identical
+behavior to the qualified native setup. Installing a different tmux executable
+does not upgrade an already-running tmux server.
+
+The TUI still runs locally with `app --ssh`, so local macOS clipboard copying
+continues to use the system clipboard. Running the TUI itself inside an SSH shell
+uses the terminal clipboard route described above.
+
 ## Commands and notifications
 
 `F5` or `Ctrl+P` opens the command surface. Transient action notes, such as a successful

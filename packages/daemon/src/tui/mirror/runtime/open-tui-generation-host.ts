@@ -1,5 +1,5 @@
-import { basename, dirname } from "node:path";
-import { watch as watchFileSystem } from "node:fs";
+import { observeApplicationDaemonGeneration } from "./application-daemon-authority.ts";
+import { readApplicationDaemonInfo as readCanonicalDaemonInfo } from "./application-daemon-authority.ts";
 import type {
   ActionInput,
   ActionName,
@@ -20,11 +20,7 @@ import type {
   WorkspaceClientRuntimeInventory,
 } from "@tmux-ide/daemon-client/workspace-client-types";
 
-import {
-  canonicalDaemonUrl,
-  getCanonicalDaemonInfoPath,
-  readCanonicalDaemonInfo,
-} from "../../../lib/canonical-daemon.ts";
+import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
 import { ensureOpenTuiSessionWorkspace } from "../configless-session-bootstrap.ts";
 import {
   OPEN_TUI_HOST_CLIENT_ID,
@@ -144,7 +140,7 @@ export interface OpenTuiGenerationHostDependencies {
   ) => OpenTuiGenerationBundle;
   readonly createRebindCoordinator: () => DaemonAuthorityRebindCoordinator;
   readonly observeCanonicalGeneration: (
-    listener: (daemonGeneration: string) => void,
+    listener: (daemonGeneration: string | null) => void,
   ) => Promise<() => void | Promise<void>>;
   readonly onDiagnostic?: (
     phase:
@@ -385,35 +381,7 @@ const DEFAULT_DEPENDENCIES: OpenTuiGenerationHostDependencies = {
   },
   buildBundle: buildProductionBundle,
   createRebindCoordinator: () => new DaemonAuthorityRebindCoordinator(),
-  observeCanonicalGeneration: async (listener) => {
-    const recordPath = getCanonicalDaemonInfoPath();
-    const recordName = basename(recordPath);
-    let stopped = false;
-    let queued = false;
-    const observe = (): void => {
-      if (stopped || queued) return;
-      queued = true;
-      queueMicrotask(() => {
-        queued = false;
-        if (stopped) return;
-        const generation = readCanonicalDaemonInfo()?.instanceId;
-        if (generation) listener(generation);
-      });
-    };
-    const watcher = watchFileSystem(dirname(recordPath), (_event, filename) => {
-      // Some platforms omit the filename for directory watches. Treat that as
-      // an unknown directory mutation and re-read the one validated record.
-      if (filename === null || filename.toString() === recordName) observe();
-    });
-    // A filesystem watcher error must never crash the renderer. The active
-    // generation remains usable; a later app launch installs a fresh watcher.
-    watcher.on("error", () => watcher.close());
-    return () => {
-      if (stopped) return;
-      stopped = true;
-      watcher.close();
-    };
-  },
+  observeCanonicalGeneration: observeApplicationDaemonGeneration,
 };
 
 interface Candidate {
@@ -521,6 +489,7 @@ export function createOpenTuiGenerationHost(
   let canonicalObserverFlight: Promise<void> | null = null;
   let stopCanonicalObserver: (() => void | Promise<void>) | null = null;
   let requestedCanonicalGeneration: string | null = null;
+  let authorityOffline = false;
   const retirementPromises = new Set<Promise<void>>();
 
   const publish = (next: OpenTuiGenerationHostSnapshot): void => {
@@ -628,7 +597,7 @@ export function createOpenTuiGenerationHost(
   };
 
   const connectFresh = (): Promise<boolean> => {
-    if (disposed) return Promise.resolve(false);
+    if (disposed || authorityOffline) return Promise.resolve(false);
     if (connectFlight) return connectFlight;
     const expectedEpoch = ++epoch;
     const preparedConnection = initialConnection;
@@ -911,11 +880,30 @@ export function createOpenTuiGenerationHost(
     return connectFlight;
   };
 
-  const observeCanonicalGeneration = (daemonGeneration: string): void => {
-    if (disposed || requestedCanonicalGeneration === daemonGeneration) return;
+  const observeCanonicalGeneration = (daemonGeneration: string | null): void => {
+    if (disposed) return;
+    if (daemonGeneration === null) {
+      if (authorityOffline) return;
+      authorityOffline = true;
+      requestedCanonicalGeneration = null;
+      initialConnection = null;
+      epoch += 1;
+      if (active) revokeRetainedGeneration(active);
+      if (candidate) {
+        const staleCandidate = candidate;
+        candidate = null;
+        disposeCandidate(staleCandidate);
+      }
+      return;
+    }
+    authorityOffline = false;
+    if (requestedCanonicalGeneration === daemonGeneration) return;
     const currentGeneration = active?.bundle.connection.target.daemon.instanceId ?? null;
     const candidateGeneration = candidate?.bundle.connection.target.daemon.instanceId ?? null;
-    if (currentGeneration === daemonGeneration || candidateGeneration === daemonGeneration) {
+    if (
+      (!active?.revoked && currentGeneration === daemonGeneration) ||
+      candidateGeneration === daemonGeneration
+    ) {
       requestedCanonicalGeneration = daemonGeneration;
       return;
     }

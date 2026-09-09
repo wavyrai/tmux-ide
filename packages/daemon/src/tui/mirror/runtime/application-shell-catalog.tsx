@@ -26,6 +26,7 @@ import { ApplicationShellOverlayStack } from "./application-shell-overlay-stack.
 export type ApplicationCatalogSurface = "home" | "terminals";
 export type ApplicationCatalogInputSource = "keyboard" | "mouse";
 export interface ApplicationCatalogShellProps {
+  readonly machineLabel?: string | null;
   readonly appearanceOwner?: ApplicationAppearanceOwner;
   readonly homeAgents?: ApplicationHomeAgentPresentation;
   readonly dimensions: Accessor<{ readonly width: number; readonly height: number }>;
@@ -74,6 +75,7 @@ const CATALOG_VIEWS: readonly ShellChromeView[] = [
 function CatalogTerminalSurface(props: {
   readonly phase: "loading" | "live" | "unavailable";
   readonly sessionCount: number;
+  readonly machineLabel?: string | null;
   readonly note: string | null;
   readonly connection?: ApplicationConnectionFeedback | null;
   readonly onCancelOpen?: () => void;
@@ -93,7 +95,9 @@ function CatalogTerminalSurface(props: {
   const detail = () => {
     if (props.note && !props.note.startsWith("Discovering live tmux sessions")) return props.note;
     if (props.phase === "live" && props.sessionCount === 0)
-      return "Start a local workspace here, or open tmux in another terminal.";
+      return props.machineLabel
+        ? `Start a tmux session on ${props.machineLabel}, then select it here.`
+        : "Start a local workspace here, or open tmux in another terminal.";
     if (props.sessionCount > 0) return "Choose a session from the sidebar to open it.";
     return null;
   };
@@ -292,6 +296,9 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
         activeViewId={props.surface()}
         hoveredIndex={null}
         rightChips={[
+          ...(props.machineLabel
+            ? [{ id: "machine", label: `SSH ${props.machineLabel}`, context: true }]
+            : []),
           {
             id: "catalog-status",
             label: topStatus(),
@@ -354,6 +361,7 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                 <CatalogTerminalSurface
                   phase={phase()}
                   sessionCount={sessions().length}
+                  machineLabel={props.machineLabel}
                   note={note()}
                   connection={props.connectionFeedback?.()}
                   onCancelOpen={props.onCancelOpen}

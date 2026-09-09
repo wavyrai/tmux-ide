@@ -141,7 +141,7 @@ function paneTreeLimitFailure(value) {
   }
   return null;
 }
-var WORKSPACE_STATE_VERSION, WORKSPACE_SEMANTIC_PANE_OPTION, WORKSPACE_SEMANTIC_WINDOW_OPTION, WORKSPACE_STATE_MAX_LAYOUTS, WORKSPACE_STATE_MAX_CHECKOUTS, WORKSPACE_STATE_MAX_PANES, WORKSPACE_STATE_MAX_TREE_DEPTH, WORKSPACE_STATE_MAX_TREE_NODES, WORKSPACE_STATE_MAX_NAME_LENGTH, SafeStringSchemaZ, WorkspaceIdSchemaZ, NullableTextSchemaZ, AbsolutePathSchemaZ, WorkspaceTimestampSchemaZ, WorkspaceProjectIdentitySchemaZ, WorkspacePaneRectSchemaZ, WorkspacePaneCwdSchemaZ, WorkspacePaneDefinitionSchemaZ, WorkspacePaneTreeNodeRecursiveSchemaZ, WorkspacePaneTreeNodeSchemaZ, WorkspacePaneTopologySchemaZ, WorkspaceDockSnapshotSchemaZ, WorkspaceWorkbenchStateSchemaZ, WorkspaceLayoutSnapshotSchemaZ, WorkspaceNamedLayoutSchemaZ, WorkspacePaneBindingSchemaZ, WorkspaceRecoveryStateSchemaZ, WorkspaceCheckoutStateSchemaZ, WorkspaceStateV1SchemaZ, WorkspaceObservedPaneSchemaZ, WorkspaceObservationSchemaZ, WorkspaceLayoutApplyPlanSchemaZ, WorkspaceStateDiagnosticSchemaZ;
+var WORKSPACE_STATE_VERSION, WORKSPACE_SEMANTIC_PANE_OPTION, WORKSPACE_SEMANTIC_WINDOW_OPTION, WORKSPACE_STATE_MAX_LAYOUTS, WORKSPACE_STATE_MAX_CHECKOUTS, WORKSPACE_STATE_MAX_PANES, WORKSPACE_STATE_MAX_TREE_DEPTH, WORKSPACE_STATE_MAX_TREE_NODES, WORKSPACE_STATE_MAX_ID_LENGTH, WORKSPACE_STATE_MAX_NAME_LENGTH, SafeStringSchemaZ, WorkspaceIdSchemaZ, NullableTextSchemaZ, AbsolutePathSchemaZ, WorkspaceTimestampSchemaZ, WorkspaceProjectIdentitySchemaZ, WorkspacePaneRectSchemaZ, WorkspacePaneCwdSchemaZ, WorkspacePaneDefinitionSchemaZ, WorkspacePaneTreeNodeRecursiveSchemaZ, WorkspacePaneTreeNodeSchemaZ, WorkspacePaneTopologySchemaZ, WorkspaceDockSnapshotSchemaZ, WorkspaceWorkbenchStateSchemaZ, WorkspaceLayoutSnapshotSchemaZ, WorkspaceNamedLayoutSchemaZ, WorkspacePaneBindingSchemaZ, WorkspaceRecoveryStateSchemaZ, WorkspaceCheckoutStateSchemaZ, WorkspaceStateV1SchemaZ, WorkspaceObservedPaneSchemaZ, WorkspaceObservationSchemaZ, WorkspaceLayoutApplyPlanSchemaZ, WorkspaceStateDiagnosticSchemaZ;
 var init_workspace_state = __esm({
   "packages/contracts/src/workspace-state.ts"() {
     "use strict";
@@ -154,6 +154,7 @@ var init_workspace_state = __esm({
     WORKSPACE_STATE_MAX_PANES = 128;
     WORKSPACE_STATE_MAX_TREE_DEPTH = 32;
     WORKSPACE_STATE_MAX_TREE_NODES = 255;
+    WORKSPACE_STATE_MAX_ID_LENGTH = PORTABLE_WORKSPACE_ID_MAX_LENGTH;
     WORKSPACE_STATE_MAX_NAME_LENGTH = 80;
     SafeStringSchemaZ = (max) => z4.string().min(1).max(max).refine((value) => !value.includes("\0"), "text must not contain NUL bytes");
     WorkspaceIdSchemaZ = PortableWorkspaceIdSchemaZ;
@@ -1779,7 +1780,7 @@ var init_app_window_state = __esm({
 
 // packages/contracts/src/commands.ts
 import { z as z11 } from "zod";
-var COMMAND_PROTOCOL_VERSION, CommandIdSchemaZ, CommandOwnerSchemaZ, CommandSourceKindSchemaZ, CommandSourceSchemaZ, CommandSchemaReferencesSchemaZ, CommandConfirmationSchemaZ, CommandDescriptorSchemaZ, CommandArgumentsSchemaZ, CommandInvocationSchemaZ, CommandAvailabilitySchemaZ, CommandResolutionErrorCodeSchemaZ, CommandResolutionErrorSchemaZ, APPLICATION_SHELL_COMMAND_IDS, ApplicationShellCommandIdSchemaZ;
+var COMMAND_PROTOCOL_VERSION, CommandIdSchemaZ, CommandOwnerSchemaZ, CommandSourceKindSchemaZ, CommandSourceSchemaZ, CommandSchemaReferencesSchemaZ, CommandConfirmationSchemaZ, CommandDescriptorSchemaZ, CommandArgumentsSchemaZ, CommandInvocationSchemaZ, CommandAvailabilitySchemaZ, CommandResolutionErrorCodeSchemaZ, CommandResolutionErrorSchemaZ, APPLICATION_SHELL_COMMAND_IDS, ApplicationShellCommandIdSchemaZ, WORKSPACE_WINDOW_MODE_COMMAND_IDS;
 var init_commands = __esm({
   "packages/contracts/src/commands.ts"() {
     "use strict";
@@ -1858,6 +1859,17 @@ var init_commands = __esm({
     ApplicationShellCommandIdSchemaZ = z11.enum(
       Object.values(APPLICATION_SHELL_COMMAND_IDS)
     );
+    WORKSPACE_WINDOW_MODE_COMMAND_IDS = [
+      "workspace.windowMode.enter",
+      "workspace.windowMode.exit",
+      "workspace.windowMode.cancel",
+      "workspace.windowMode.focus",
+      "workspace.windowMode.move",
+      "workspace.windowMode.resize",
+      "workspace.windowMode.float.toggle",
+      "workspace.windowMode.maximize.toggle",
+      "workspace.windowMode.close"
+    ];
   }
 });
 
@@ -1913,6 +1925,105 @@ var init_experience_identifiers = __esm({
 
 // packages/contracts/src/pane-appearance.ts
 import { z as z13 } from "zod";
+function statusToneForDomainStatus(status2) {
+  return DOMAIN_STATUS_TONES[status2];
+}
+function toneForAttention(attention) {
+  switch (attention) {
+    case "none":
+      return null;
+    case "unread":
+    case "requested":
+      return "info";
+    case "warning":
+      return "warning";
+    case "destructive":
+    case "recovery":
+      return "danger";
+  }
+}
+function borderForState(state) {
+  if (state.applicationFocus.pane && state.applicationFocus.windowActive) {
+    return { role: "focused", strength: "decisive", ownsApplicationFocus: true };
+  }
+  const attentionTone = toneForAttention(state.attention);
+  if (attentionTone === "danger") {
+    return { role: "danger", strength: "decisive", ownsApplicationFocus: false };
+  }
+  if (attentionTone === "warning") {
+    return { role: "attention", strength: "decisive", ownsApplicationFocus: false };
+  }
+  return {
+    role: state.structure === "docked" ? "subtle" : "default",
+    strength: state.structure === "docked" ? "quiet" : "default",
+    ownsApplicationFocus: false
+  };
+}
+function actionBackground(state) {
+  if (state.controlInteraction.disabled) return "disabled";
+  if (state.controlInteraction.pressed) return "pressed";
+  if (state.controlInteraction.hover) return "hover";
+  return null;
+}
+function stateDescription(state) {
+  const parts = [
+    `${state.structure} pane`,
+    `${state.domainStatus} status`,
+    `${state.agentActivity} agent`
+  ];
+  if (state.applicationFocus.pane) parts.push("application focus");
+  if (state.applicationFocus.terminalInput) parts.push("terminal input owner");
+  if (state.layoutInteraction.selected) parts.push("selected for layout editing");
+  if (state.attention !== "none") parts.push(`${state.attention} attention`);
+  if (state.controlInteraction.loading) parts.push("loading");
+  if (state.controlInteraction.disabled) parts.push("controls disabled");
+  return parts.join(", ");
+}
+function resolvePaneAppearance(state) {
+  const parsed = PaneVisualStateV1SchemaZ.parse(state);
+  const domainTone = statusToneForDomainStatus(parsed.domainStatus);
+  const attentionTone = toneForAttention(parsed.attention);
+  const selected = parsed.layoutInteraction.selected;
+  return {
+    structure: parsed.structure,
+    header: {
+      surface: parsed.applicationFocus.pane && parsed.applicationFocus.windowActive ? "headerActive" : "header",
+      text: parsed.applicationFocus.windowActive ? "primary" : "muted",
+      focused: parsed.applicationFocus.pane,
+      windowActive: parsed.applicationFocus.windowActive,
+      agentActivity: parsed.agentActivity,
+      attention: parsed.attention
+    },
+    border: borderForState(parsed),
+    outerOutline: {
+      visible: selected,
+      role: selected ? "selected" : null,
+      intent: selected ? "layout-selection" : null
+    },
+    status: {
+      domainStatus: parsed.domainStatus,
+      domainTone,
+      attentionTone,
+      tone: attentionTone ?? domainTone,
+      attention: parsed.attention
+    },
+    action: {
+      background: actionBackground(parsed),
+      focusOutline: parsed.controlInteraction.focusVisible ? "focused" : null,
+      ...parsed.controlInteraction,
+      interactive: !parsed.controlInteraction.disabled && !parsed.controlInteraction.loading
+    },
+    accessibility: {
+      focused: parsed.applicationFocus.pane,
+      terminalInputOwner: parsed.applicationFocus.terminalInput,
+      layoutSelected: selected,
+      hasAttention: parsed.attention !== "none",
+      busy: parsed.controlInteraction.loading,
+      disabled: parsed.controlInteraction.disabled,
+      description: stateDescription(parsed)
+    }
+  };
+}
 var SemanticProductIdSchemaZ, PANE_STRUCTURE_IDS, PaneStructureSchemaZ, AGENT_ACTIVITY_IDS, AgentActivitySchemaZ, CANONICAL_DOMAIN_STATUS_IDS, CanonicalDomainStatusSchemaZ, PANE_ATTENTION_IDS, PaneAttentionSchemaZ, PaneVisualStateV1SchemaZ, DOMAIN_STATUS_TONES;
 var init_pane_appearance = __esm({
   "packages/contracts/src/pane-appearance.ts"() {
@@ -1988,13 +2099,33 @@ function deepFreezeData(value) {
   for (const child of Object.values(value)) deepFreezeData(child);
   return Object.freeze(value);
 }
-var ShellAreaIdSchemaZ, PRIMARY_WORKSPACE_MODE_IDS, PrimaryWorkspaceModeIdSchemaZ, DOCK_TOOL_IDS, DockToolIdSchemaZ, PRODUCT_SURFACE_IDS, ProductSurfaceIdSchemaZ, CANONICAL_SHELL_AREAS, SurfaceKindSchemaZ, ApplicationShellDockModeSchemaZ, SurfaceCommandTemplateSchemaZ, ProductSurfaceDefinitionSchemaZ, modeCommand, dockCommand, CANONICAL_SURFACE_REGISTRY, surfaceById;
+function canonicalSurface(id2) {
+  return surfaceById.get(id2);
+}
+function commandsToOpenSurface(intent) {
+  const surface = canonicalSurface(intent.surface);
+  if (surface.kind === "primary-mode") return deepFreezeData([surface.activation]);
+  const commands = [
+    modeCommand(surface.owningMode),
+    { id: APPLICATION_SHELL_COMMAND_IDS.setDockMode, args: { mode: "open" } },
+    surface.activation
+  ];
+  if (intent.resourceId) {
+    commands.push({
+      id: APPLICATION_SHELL_COMMAND_IDS.selectResource,
+      args: { surface: surface.id, resourceId: intent.resourceId }
+    });
+  }
+  return deepFreezeData(SurfaceCommandTemplateSchemaZ.array().parse(commands));
+}
+var EXPERIENCE_KERNEL_VERSION, ShellAreaIdSchemaZ, PRIMARY_WORKSPACE_MODE_IDS, PrimaryWorkspaceModeIdSchemaZ, DOCK_TOOL_IDS, DockToolIdSchemaZ, PRODUCT_SURFACE_IDS, ProductSurfaceIdSchemaZ, CANONICAL_SHELL_AREAS, SurfaceKindSchemaZ, ApplicationShellDockModeSchemaZ, SurfaceCommandTemplateSchemaZ, ProductSurfaceDefinitionSchemaZ, modeCommand, dockCommand, CANONICAL_SURFACE_REGISTRY, surfaceById;
 var init_experience_shell = __esm({
   "packages/contracts/src/experience-shell.ts"() {
     "use strict";
     init_commands();
     init_experience_identifiers();
     init_pane_appearance();
+    EXPERIENCE_KERNEL_VERSION = 1;
     ShellAreaIdSchemaZ = z14.enum([
       "application-bar",
       "sidebar",
@@ -2167,6 +2298,50 @@ function resolveSemanticInputLayer(state) {
   }
   return { kind: "app", zone: parsed.focusZone };
 }
+function targetExists(target, availability) {
+  if (target.kind === "pane") return availability.paneIds.has(target.paneId);
+  if (target.kind === "control") return availability.controlIds?.has(target.controlId) === true;
+  return true;
+}
+function deterministicFocusFallback(state, availability) {
+  if (state.appFocusedPaneId && availability.paneIds.has(state.appFocusedPaneId)) {
+    return { kind: "pane", paneId: state.appFocusedPaneId, input: "chrome" };
+  }
+  const firstPaneId = [...availability.paneIds].sort()[0];
+  return firstPaneId ? { kind: "pane", paneId: firstPaneId, input: "chrome" } : { kind: "zone", zone: "primary-navigation" };
+}
+function applyTarget(state, target) {
+  if (target.kind === "pane") {
+    return {
+      ...state,
+      focusZone: target.input === "terminal" ? "terminal" : "canvas",
+      appFocusedPaneId: target.paneId,
+      terminalInputPaneId: target.input === "terminal" ? target.paneId : null
+    };
+  }
+  if (target.kind === "dock-tool") {
+    return { ...state, focusZone: "dock-tabs", terminalInputPaneId: null };
+  }
+  if (target.kind === "control") {
+    return { ...state, focusZone: target.zone, terminalInputPaneId: null };
+  }
+  return { ...state, focusZone: target.zone, terminalInputPaneId: null };
+}
+function closeTopOverlay(state, availability) {
+  const parsed = FocusOverlayStateV1SchemaZ.parse(state);
+  const closed = parsed.overlays.at(-1) ?? null;
+  if (!closed) {
+    const restoredTarget2 = deterministicFocusFallback(parsed, availability);
+    return { state: applyTarget(parsed, restoredTarget2), closedOverlayId: null, restoredTarget: restoredTarget2 };
+  }
+  const overlays = parsed.overlays.slice(0, -1);
+  const restoredTarget = targetExists(closed.focusReturnTarget, availability) ? closed.focusReturnTarget : deterministicFocusFallback(parsed, availability);
+  return {
+    state: applyTarget({ ...parsed, overlays }, restoredTarget),
+    closedOverlayId: closed.id,
+    restoredTarget
+  };
+}
 var FocusZoneSchemaZ, SemanticFocusTargetSchemaZ, OverlayKindSchemaZ, SemanticOverlaySchemaZ, FocusOverlayStateV1SchemaZ, overlayPriority;
 var init_focus_overlay = __esm({
   "packages/contracts/src/focus-overlay.ts"() {
@@ -2237,6 +2412,59 @@ var init_focus_overlay = __esm({
 
 // packages/contracts/src/client-view-state.ts
 import { z as z16 } from "zod";
+function stackActiveWindows(node, output) {
+  if (node === null) return;
+  if (node.type === "stack") {
+    output[node.id] = node.activeWindowId;
+    return;
+  }
+  for (const child of node.children) stackActiveWindows(child, output);
+}
+function createClientViewStateV1(input) {
+  const document = input.legacyDocument ? AppWindowDocumentV1SchemaZ.parse(input.legacyDocument) : null;
+  const activeWindowIdsByStack = {};
+  stackActiveWindows(document?.dockRoot ?? null, activeWindowIdsByStack);
+  return ClientViewStateV1SchemaZ.parse({
+    version: CLIENT_VIEW_STATE_VERSION,
+    clientId: input.clientId,
+    viewId: input.viewId,
+    workspaceId: input.workspaceId,
+    focusedWindowId: document?.focusedWindowId ?? null,
+    activeWindowIdsByStack,
+    selectedWindowIds: document?.focusedWindowId ? [document.focusedWindowId] : [],
+    dock: {
+      mode: document?.dockState.mode ?? "collapsed",
+      preferredHeight: document?.dockState.preferredHeight ?? null,
+      focusZone: document?.dockState.focusZone ?? "canvas",
+      activeTabId: null
+    },
+    viewport: { x: 0, y: 0, scale: 1 }
+  });
+}
+function collectStacks(node, output) {
+  if (node === null) return;
+  if (node.type === "stack") {
+    output.set(node.id, new Set(node.windowIds));
+    return;
+  }
+  for (const child of node.children) collectStacks(child, output);
+}
+function reconcileClientViewStateV1(value, nextDocument) {
+  const state = ClientViewStateV1SchemaZ.parse(value);
+  const document = AppWindowDocumentV1SchemaZ.parse(nextDocument);
+  const stacks = /* @__PURE__ */ new Map();
+  collectStacks(document.dockRoot, stacks);
+  const activeWindowIdsByStack = {};
+  for (const [stackId, windowId] of Object.entries(state.activeWindowIdsByStack)) {
+    if (stacks.get(stackId)?.has(windowId)) activeWindowIdsByStack[stackId] = windowId;
+  }
+  return ClientViewStateV1SchemaZ.parse({
+    ...state,
+    focusedWindowId: state.focusedWindowId && Object.hasOwn(document.windows, state.focusedWindowId) ? state.focusedWindowId : null,
+    activeWindowIdsByStack,
+    selectedWindowIds: state.selectedWindowIds.filter((id2) => Object.hasOwn(document.windows, id2))
+  });
+}
 var CLIENT_VIEW_STATE_VERSION, ClientViewIdentitySchemaZ, ClientCanvasViewportSchemaZ, ClientDockPresentationSchemaZ, ClientViewStateV1SchemaZ;
 var init_client_view_state = __esm({
   "packages/contracts/src/client-view-state.ts"() {
@@ -2495,6 +2723,143 @@ var init_desktop_missions = __esm({
 
 // packages/contracts/src/visual-tokens.ts
 import { z as z20 } from "zod";
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function diagnostic(diagnostics, source, code, path2, message) {
+  diagnostics.push({ source, code, path: path2, message });
+}
+function cleanOverrides(value, source, diagnostics) {
+  if (!isRecord(value)) {
+    diagnostic(
+      diagnostics,
+      source,
+      "invalid-document",
+      "overrides",
+      "theme overrides must be an object"
+    );
+    return {};
+  }
+  const cleaned = {};
+  for (const [group, groupValue] of Object.entries(value)) {
+    const roles = groupSchemas[group];
+    if (!roles) {
+      diagnostic(diagnostics, source, "unknown-token", group, `unknown token group: ${group}`);
+      continue;
+    }
+    if (!isRecord(groupValue)) {
+      diagnostic(diagnostics, source, "invalid-token", group, "token group must be an object");
+      continue;
+    }
+    const cleanGroup = {};
+    for (const [role, token] of Object.entries(groupValue)) {
+      const schema = roles[role];
+      if (!schema) {
+        diagnostic(
+          diagnostics,
+          source,
+          "unknown-token",
+          `${group}.${role}`,
+          `unknown token role: ${role}`
+        );
+        continue;
+      }
+      const parsed = schema.safeParse(token);
+      if (!parsed.success) {
+        diagnostic(
+          diagnostics,
+          source,
+          "invalid-token",
+          `${group}.${role}`,
+          parsed.error.issues[0]?.message ?? "invalid token"
+        );
+        continue;
+      }
+      cleanGroup[role] = parsed.data;
+    }
+    if (Object.keys(cleanGroup).length > 0) cleaned[group] = cleanGroup;
+  }
+  return VisualTokenOverridesV1SchemaZ.parse(cleaned);
+}
+function cleanIdentity(value, schema, fallback, source, path2, diagnostics) {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  diagnostic(diagnostics, source, "invalid-document", path2, `invalid ${path2}; using ${fallback}`);
+  return fallback;
+}
+function loadVisualThemeDocument(raw, source) {
+  const diagnostics = [];
+  if (isRecord(raw) && typeof raw.version === "number" && raw.version > VISUAL_THEME_VERSION) {
+    diagnostic(
+      diagnostics,
+      source,
+      "future-version",
+      "version",
+      `theme version ${raw.version} is newer than supported version ${VISUAL_THEME_VERSION}`
+    );
+    return {
+      status: "future-version",
+      sourceVersion: raw.version,
+      migrated: false,
+      writable: false,
+      document: null,
+      diagnostics
+    };
+  }
+  const record = isRecord(raw) ? raw : {};
+  const sourceVersion = record.version === 0 ? 0 : record.version === 1 ? 1 : null;
+  if (sourceVersion === null) {
+    diagnostic(
+      diagnostics,
+      source,
+      "invalid-document",
+      "version",
+      "missing or invalid theme version; using safe defaults"
+    );
+  }
+  const migrated = sourceVersion === 0;
+  if (migrated) {
+    diagnostic(diagnostics, source, "migrated", "version", "migrated theme version 0 to version 1");
+  }
+  const id2 = cleanIdentity(record.id, ThemeIdSchemaZ, `${source}-theme`, source, "id", diagnostics);
+  const name = cleanIdentity(
+    record.name,
+    ThemeNameSchemaZ,
+    `${source} theme`,
+    source,
+    "name",
+    diagnostics
+  );
+  const appearanceResult = ThemeAppearanceSchemaZ.safeParse(record.appearance);
+  if (record.appearance !== void 0 && !appearanceResult.success) {
+    diagnostic(
+      diagnostics,
+      source,
+      "invalid-document",
+      "appearance",
+      "invalid appearance; inheriting lower layer"
+    );
+  }
+  const overrides = cleanOverrides(
+    migrated ? record.tokens : record.overrides,
+    source,
+    diagnostics
+  );
+  return {
+    status: "ready",
+    sourceVersion,
+    migrated,
+    writable: true,
+    document: {
+      version: VISUAL_THEME_VERSION,
+      id: id2,
+      name,
+      ...appearanceResult.success ? { appearance: appearanceResult.data } : {},
+      overrides
+    },
+    diagnostics
+  };
+}
 function color(hex) {
   const normalized = hex.replace(/^#/u, "");
   return {
@@ -2533,6 +2898,9 @@ function readableForeground(background, dark, light) {
 }
 function deriveFocusedHeader(header, focus) {
   return mixSrgbColors(header, focus, 0.16);
+}
+function deriveAttentionBlend(surface, attention) {
+  return mixSrgbColors(surface, attention, 0.2);
 }
 function baseTokens(appearance) {
   const dark = appearance === "dark";
@@ -2656,11 +3024,118 @@ function baseTokens(appearance) {
     }
   });
 }
-var VISUAL_THEME_VERSION, DENSITY_TOKEN_ROLES, SHAPE_TOKEN_ROLES, ELEVATION_TOKEN_ROLES, MOTION_DURATION_ROLES, TYPOGRAPHY_TOKEN_ROLES, WINDOW_ACTIVITY_TOKEN_ROLES, RendererNeutralColorSchemaZ, RhythmValueSchemaZ, RatioValueSchemaZ, DurationValueSchemaZ, ElevationValueSchemaZ, TypographyValueSchemaZ, MotionEasingSchemaZ, WindowActivityValueSchemaZ, SurfacesSchemaZ, TextSchemaZ, BordersSchemaZ, StatusToneSchemaZ, SelectionSchemaZ, DensitySchemaZ, ShapeSchemaZ, ElevationSchemaZ, MotionSchemaZ, TypographySchemaZ, FocusSchemaZ, WindowActivitySchemaZ, VisualTokensV1SchemaZ, VisualTokenOverridesV1SchemaZ, ThemeIdSchemaZ, ThemeNameSchemaZ, ThemeAppearanceSchemaZ, VisualHostDefaultsV1SchemaZ, VisualThemeDocumentV1SchemaZ, VisualThemeDocumentV0SchemaZ, ThemeAccessibilityPreferencesSchemaZ, groupSchemas, rhythm, ratio, duration, BUILTIN_VISUAL_THEMES;
+function applyOverrides(base, overrides) {
+  return VisualTokensV1SchemaZ.parse({
+    surfaces: { ...base.surfaces, ...overrides.surfaces },
+    text: { ...base.text, ...overrides.text },
+    borders: { ...base.borders, ...overrides.borders },
+    statusTone: { ...base.statusTone, ...overrides.statusTone },
+    selection: { ...base.selection, ...overrides.selection },
+    density: { ...base.density, ...overrides.density },
+    shape: { ...base.shape, ...overrides.shape },
+    elevation: { ...base.elevation, ...overrides.elevation },
+    motion: { ...base.motion, ...overrides.motion },
+    typography: { ...base.typography, ...overrides.typography },
+    focus: { ...base.focus, ...overrides.focus },
+    windowActivity: { ...base.windowActivity, ...overrides.windowActivity }
+  });
+}
+function applyAccessibility(tokens, preferences) {
+  let next = tokens;
+  if (preferences.reducedMotion) {
+    next = applyOverrides(next, {
+      motion: {
+        instant: duration(0),
+        fast: duration(0),
+        standard: duration(0),
+        emphasized: duration(0),
+        easing: { standard: "linear", emphasized: "linear" }
+      }
+    });
+  }
+  if (preferences.increasedContrast) {
+    next = applyOverrides(next, {
+      borders: {
+        focused: next.focus.highContrastOutline,
+        selected: next.focus.highContrastOutline,
+        attention: next.statusTone.warning,
+        danger: next.statusTone.danger
+      },
+      focus: { focusContrast: ratio(7) },
+      windowActivity: {
+        active: { opacity: ratio(1), contrast: ratio(1) },
+        inactive: { opacity: ratio(1), contrast: ratio(1) }
+      }
+    });
+  }
+  return next;
+}
+function resolveVisualTheme(input = {}) {
+  const loadedUser = input.userTheme === void 0 ? null : loadVisualThemeDocument(input.userTheme, "user");
+  const loadedProject = input.projectTheme === void 0 ? null : loadVisualThemeDocument(input.projectTheme, "project");
+  const readyUser = loadedUser?.status === "ready" ? loadedUser.document : null;
+  const readyProject = loadedProject?.status === "ready" ? loadedProject.document : null;
+  const appearance = readyProject?.appearance ?? readyUser?.appearance ?? input.appearance ?? input.hostDefaults?.appearance ?? "dark";
+  let tokens = BUILTIN_VISUAL_THEMES[appearance];
+  if (input.hostDefaults?.appearance === appearance)
+    tokens = applyOverrides(tokens, input.hostDefaults.overrides);
+  if (readyUser) tokens = applyOverrides(tokens, readyUser.overrides);
+  if (readyProject) tokens = applyOverrides(tokens, readyProject.overrides);
+  tokens = applyAccessibility(
+    tokens,
+    ThemeAccessibilityPreferencesSchemaZ.parse({
+      reducedMotion: input.accessibility?.reducedMotion ?? false,
+      increasedContrast: input.accessibility?.increasedContrast ?? false
+    })
+  );
+  return {
+    version: VISUAL_THEME_VERSION,
+    appearance,
+    tokens,
+    diagnostics: [...loadedUser?.diagnostics ?? [], ...loadedProject?.diagnostics ?? []],
+    futureSources: [loadedUser, loadedProject].filter(
+      (loaded) => loaded?.status === "future-version"
+    ).map((loaded) => loaded.diagnostics[0].source)
+  };
+}
+var VISUAL_THEME_VERSION, SURFACE_TOKEN_ROLES, TEXT_TOKEN_ROLES, BORDER_TOKEN_ROLES, STATUS_TONE_ROLES, SELECTION_TOKEN_ROLES, DENSITY_TOKEN_ROLES, SHAPE_TOKEN_ROLES, ELEVATION_TOKEN_ROLES, MOTION_DURATION_ROLES, TYPOGRAPHY_TOKEN_ROLES, FOCUS_TOKEN_ROLES, WINDOW_ACTIVITY_TOKEN_ROLES, RendererNeutralColorSchemaZ, RhythmValueSchemaZ, RatioValueSchemaZ, DurationValueSchemaZ, ElevationValueSchemaZ, TypographyValueSchemaZ, MotionEasingSchemaZ, WindowActivityValueSchemaZ, SurfacesSchemaZ, TextSchemaZ, BordersSchemaZ, StatusToneSchemaZ, SelectionSchemaZ, DensitySchemaZ, ShapeSchemaZ, ElevationSchemaZ, MotionSchemaZ, TypographySchemaZ, FocusSchemaZ, WindowActivitySchemaZ, VisualTokensV1SchemaZ, VisualTokenOverridesV1SchemaZ, ThemeIdSchemaZ, ThemeNameSchemaZ, ThemeAppearanceSchemaZ, VisualHostDefaultsV1SchemaZ, VisualThemeDocumentV1SchemaZ, VisualThemeDocumentV0SchemaZ, ThemeAccessibilityPreferencesSchemaZ, groupSchemas, rhythm, ratio, duration, BUILTIN_VISUAL_THEMES;
 var init_visual_tokens = __esm({
   "packages/contracts/src/visual-tokens.ts"() {
     "use strict";
     VISUAL_THEME_VERSION = 1;
+    SURFACE_TOKEN_ROLES = [
+      "canvas",
+      "panel",
+      "panelRaised",
+      "terminal",
+      "header",
+      "headerActive",
+      "command"
+    ];
+    TEXT_TOKEN_ROLES = [
+      "primary",
+      "secondary",
+      "muted",
+      "bright",
+      "inverse",
+      "link"
+    ];
+    BORDER_TOKEN_ROLES = [
+      "subtle",
+      "default",
+      "focused",
+      "selected",
+      "attention",
+      "danger"
+    ];
+    STATUS_TONE_ROLES = ["neutral", "info", "warning", "danger", "success"];
+    SELECTION_TOKEN_ROLES = [
+      "selection",
+      "selectionText",
+      "hover",
+      "pressed",
+      "disabled"
+    ];
     DENSITY_TOKEN_ROLES = [
       "cellHeight",
       "headerHeight",
@@ -2678,6 +3153,12 @@ var init_visual_tokens = __esm({
     ELEVATION_TOKEN_ROLES = ["floating", "palette", "windowMode"];
     MOTION_DURATION_ROLES = ["instant", "fast", "standard", "emphasized"];
     TYPOGRAPHY_TOKEN_ROLES = ["workspace", "label", "title", "metadata", "code"];
+    FOCUS_TOKEN_ROLES = [
+      "outline",
+      "outlineOffset",
+      "focusContrast",
+      "highContrastOutline"
+    ];
     WINDOW_ACTIVITY_TOKEN_ROLES = ["active", "inactive"];
     RendererNeutralColorSchemaZ = z20.object({
       space: z20.literal("srgb"),
@@ -3487,6 +3968,9 @@ function isControlFree(value) {
     return code >= 32 && code !== 127;
   });
 }
+function isInferredEdgeKind(kind) {
+  return kind === "inferred-role" || kind === "inferred-mission";
+}
 function resolveAgentStatusPresentation(input) {
   if (input.stale && (input.status === "working" || input.status === "blocked")) {
     return STALE_STATUS_PRESENTATION;
@@ -3918,6 +4402,33 @@ function projectApplicationShellV1(input) {
     })
   );
 }
+function applicationShellCommandDescriptor(id2) {
+  return descriptorById.get(id2);
+}
+function applicationShellCommandArgumentSchema(id2) {
+  return APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS[id2];
+}
+function validatedInvocation(id2, args, source) {
+  const parsedArgs = applicationShellCommandArgumentSchema(id2).parse(args);
+  return deepFreeze2(
+    ApplicationShellCommandInvocationSchemaZ.parse({
+      version: COMMAND_PROTOCOL_VERSION,
+      id: id2,
+      source,
+      args: parsedArgs
+    })
+  );
+}
+function applicationShellCommandInvocation(id2, args, source) {
+  return validatedInvocation(id2, args, source);
+}
+function invocationFromTemplate(template, source) {
+  return validatedInvocation(
+    ApplicationShellCommandIdSchemaZ.parse(template.id),
+    template.args,
+    source
+  );
+}
 function applyFocusTarget(focus, target) {
   if (target.kind === "pane") {
     return {
@@ -4005,6 +4516,83 @@ function replayInvocations(initialState, invocations) {
   return invocations.reduce(
     (state, invocation) => applyApplicationShellInvocationV1(state, invocation),
     deepFreeze2(ApplicationShellReplayStateV1SchemaZ.parse(initialState))
+  );
+}
+function replayApplicationShellActionTraceV1(trace) {
+  const parsed = ApplicationShellActionTraceV1SchemaZ.parse(trace);
+  return replayInvocations(parsed.initialState, parsed.invocations);
+}
+function applicationShellActionTraceV1(input, source = { kind: "program", surface: "application-shell" }) {
+  const parsedInput = ApplicationShellProjectionInputV1SchemaZ.parse({
+    project: input.project,
+    workspace: input.workspace,
+    dock: input.dock,
+    focus: input.focus,
+    connection: input.connection,
+    terminalInventory: input.terminalInventory
+  });
+  if (parsedInput.focus.overlays.length > 0) {
+    throw new Error("application shell action traces require a closed-overlay initial state");
+  }
+  const initialState = deepFreeze2(
+    ApplicationShellReplayStateV1SchemaZ.parse({
+      activeMode: parsedInput.workspace.activeMode,
+      dockMode: parsedInput.dock.mode,
+      activeDockTool: parsedInput.dock.activeTool,
+      focus: parsedInput.focus,
+      selectedResources: []
+    })
+  );
+  let currentState = initialState;
+  const invocations = [];
+  const append = (invocation) => {
+    currentState = applyApplicationShellInvocationV1(currentState, invocation);
+    invocations.push(invocation);
+  };
+  for (const surface of CANONICAL_SURFACE_REGISTRY) {
+    for (const template of commandsToOpenSurface({ surface: surface.id })) {
+      append(invocationFromTemplate(template, source));
+    }
+  }
+  for (const mode of ApplicationShellDockModeSchemaZ.options) {
+    append(
+      applicationShellCommandInvocation(
+        APPLICATION_SHELL_COMMAND_IDS.setDockMode,
+        { mode },
+        source
+      )
+    );
+  }
+  const focusReturnTarget = { kind: "zone", zone: "dock-tabs" };
+  const overlayId = "overlay.palette.trace";
+  append(
+    applicationShellCommandInvocation(
+      APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+      { target: focusReturnTarget },
+      source
+    )
+  );
+  append(
+    applicationShellCommandInvocation(
+      APPLICATION_SHELL_COMMAND_IDS.openPalette,
+      { overlayId, focusReturnTarget },
+      source
+    )
+  );
+  append(
+    applicationShellCommandInvocation(
+      APPLICATION_SHELL_COMMAND_IDS.closePalette,
+      { overlayId },
+      source
+    )
+  );
+  return deepFreeze2(
+    ApplicationShellActionTraceV1SchemaZ.parse({
+      version: APPLICATION_SHELL_TRACE_VERSION,
+      initialState,
+      invocations,
+      finalState: currentState
+    })
   );
 }
 var APPLICATION_SHELL_PROJECTION_VERSION, APPLICATION_SHELL_TRACE_VERSION, TerminalResourceUnavailableReasonSchemaZ, TerminalWindowResourceIdSchemaZ, TerminalResourceAttachabilitySchemaZ, ApplicationShellTerminalResourceSchemaZ, ApplicationShellTerminalInventorySchemaZ, ApplicationShellProjectionInputV1Fields, ApplicationShellProjectionInputV1WireSchemaZ, ApplicationShellProjectionInputV1SchemaZ, ApplicationShellProjectionInputV2SchemaZ, ApplicationShellProjectionInputV3SchemaZ, WorkspaceFixtureSchemaZ, ApplicationShellSurfaceProjectionSchemaZ, ApplicationShellProjectionV1SchemaZ, ApplicationShellActivateModeArgumentsSchemaZ, ApplicationShellActivateDockToolArgumentsSchemaZ, ApplicationShellSetDockModeArgumentsSchemaZ, ApplicationShellMoveFocusArgumentsSchemaZ, ApplicationShellOpenPaletteArgumentsSchemaZ, ApplicationShellClosePaletteArgumentsSchemaZ, ApplicationShellSelectResourceArgumentsSchemaZ, APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS, ApplicationShellCommandInvocationSchemaZ, descriptor, APPLICATION_SHELL_COMMAND_DESCRIPTORS, descriptorById, APPLICATION_SHELL_COMMAND_DEFINITIONS, ApplicationShellResourceSelectionSchemaZ, ApplicationShellReplayStateV1SchemaZ, ApplicationShellActionTraceV1BaseSchemaZ, ApplicationShellActionTraceV1SchemaZ;
@@ -4507,7 +5095,7 @@ function refuseReadOnlyGeometryOwner(value, ctx) {
     });
   }
 }
-var TERMINAL_ATTACHMENT_PROTOCOL_VERSION, TERMINAL_ATTACHMENT_MIN_COLS, TERMINAL_ATTACHMENT_MAX_COLS, TERMINAL_ATTACHMENT_MIN_ROWS, TERMINAL_ATTACHMENT_MAX_ROWS, TerminalAttachmentSemanticTargetSchemaZ, TerminalAttachmentViewerModeSchemaZ, TerminalAttachmentGeometryOwnershipSchemaZ, TerminalAttachmentViewportSchemaZ, TerminalAttachRequestSchemaZ, TerminalAttachmentDescriptorSchemaZ, TerminalAttachmentPlanHandleSchemaZ, TerminalAttachmentErrorSchemaZ, TerminalAttachmentPlanResponseSchemaZ, TERMINAL_ATTACHMENT_ISSUE_PATH, TERMINAL_ATTACHMENT_REDEEM_PATH, TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL, TerminalAttachmentRequestIdSchemaZ, TerminalAttachmentRedemptionTicketSchemaZ, TerminalAttachmentLoopbackWebSocketUrlSchemaZ, TerminalAttachmentIssueDescriptorSchemaZ, TerminalAttachmentIssueErrorCodeSchemaZ, TerminalAttachmentIssueErrorSchemaZ, TerminalAttachmentIssueResultSchemaZ, TerminalAttachmentIssueMutationRequestSchemaZ;
+var TERMINAL_ATTACHMENT_PROTOCOL_VERSION, TERMINAL_ATTACHMENT_MIN_COLS, TERMINAL_ATTACHMENT_MAX_COLS, TERMINAL_ATTACHMENT_MIN_ROWS, TERMINAL_ATTACHMENT_MAX_ROWS, TERMINAL_ATTACHMENT_RESERVED_PANE_ID_PREFIX, TerminalAttachmentSemanticTargetSchemaZ, TerminalAttachmentViewerModeSchemaZ, TerminalAttachmentGeometryOwnershipSchemaZ, TerminalAttachmentViewportSchemaZ, TerminalAttachRequestSchemaZ, TerminalAttachmentDescriptorSchemaZ, TerminalAttachmentPlanHandleSchemaZ, TerminalAttachmentErrorSchemaZ, TerminalAttachmentPlanResponseSchemaZ, TERMINAL_ATTACHMENT_ISSUE_PATH, TERMINAL_ATTACHMENT_REDEEM_PATH, TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL, TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS, TerminalAttachmentRequestIdSchemaZ, TerminalAttachmentRedemptionTicketSchemaZ, TerminalAttachmentLoopbackWebSocketUrlSchemaZ, TerminalAttachmentIssueDescriptorSchemaZ, TerminalAttachmentIssueErrorCodeSchemaZ, TerminalAttachmentIssueErrorSchemaZ, TerminalAttachmentIssueResultSchemaZ, TerminalAttachmentIssueMutationRequestSchemaZ;
 var init_terminal_attachments = __esm({
   "packages/contracts/src/terminal-attachments.ts"() {
     "use strict";
@@ -4520,6 +5108,7 @@ var init_terminal_attachments = __esm({
     TERMINAL_ATTACHMENT_MAX_COLS = 500;
     TERMINAL_ATTACHMENT_MIN_ROWS = 5;
     TERMINAL_ATTACHMENT_MAX_ROWS = 200;
+    TERMINAL_ATTACHMENT_RESERVED_PANE_ID_PREFIX = RESERVED_DISCOVERED_TERMINAL_ID_PREFIX;
     TerminalAttachmentSemanticTargetSchemaZ = z26.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
@@ -4608,6 +5197,7 @@ var init_terminal_attachments = __esm({
     TERMINAL_ATTACHMENT_ISSUE_PATH = "/api/v1/terminal/attachments/issue";
     TERMINAL_ATTACHMENT_REDEEM_PATH = "/v1/terminal/attachments/redeem";
     TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL = "tmux-ide-terminal.v1";
+    TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS = 6e4;
     TerminalAttachmentRequestIdSchemaZ = z26.uuid();
     TerminalAttachmentRedemptionTicketSchemaZ = z26.string().regex(/^ta1_[A-Za-z0-9_-]{43}$/u);
     TerminalAttachmentLoopbackWebSocketUrlSchemaZ = z26.url().max(2048).refine((value) => {
@@ -4675,6 +5265,37 @@ function buildStartupReadinessLadder(verdicts, observedAt) {
     observedAt,
     rungs,
     blockedAt: firstUnsatisfied >= 0 ? STARTUP_READINESS_RUNG_ORDER[firstUnsatisfied] : null
+  };
+}
+function startupReadinessBlockingRung(ladder) {
+  return ladder.rungs.find((rung) => rung.status !== "satisfied") ?? null;
+}
+function projectDesktopStartupReadiness(input) {
+  if (input.daemon.status !== "connected") {
+    const childOutput = input.daemon.childOutput;
+    const ladder = input.ladder ?? input.daemon.startupReadiness ?? null;
+    if (ladder && ladder.blockedAt !== null) {
+      return { ladder, ...childOutput ? { childOutput } : {} };
+    }
+    return {
+      ladder: buildStartupReadinessLadder(
+        [
+          {
+            status: "stuck",
+            reason: { vocabulary: "desktop-daemon-host-issue", code: input.daemon.code }
+          }
+        ],
+        input.observedAt
+      ),
+      ...childOutput ? { childOutput } : {}
+    };
+  }
+  if (input.ladder) return { ladder: input.ladder };
+  return {
+    ladder: buildStartupReadinessLadder(
+      [{ status: "satisfied" }, { status: "satisfied" }, { status: "satisfied" }],
+      input.observedAt
+    )
   };
 }
 var STARTUP_READINESS_RESOURCE_VERSION, StartupReadinessRungIdSchemaZ, STARTUP_READINESS_RUNG_ORDER, StartupReadinessOwnReasonSchemaZ, StartupReadinessStuckReasonSchemaZ, STARTUP_READINESS_RUNG_VOCABULARIES, StartupReadinessCatalogPopulationSchemaZ, RungBaseFields, StartupReadinessRungSchemaZ, StartupReadinessLadderSchemaZ, StartupReadinessResourceSchemaZ, DesktopStartupReadinessSchemaZ;
@@ -6268,7 +6889,7 @@ var init_daemon_events = __esm({
 
 // packages/contracts/src/desktop-host.ts
 import { z as z38 } from "zod";
-var DESKTOP_HOST_API_VERSION, DESKTOP_PACKAGED_RENDERER_SCHEME, DESKTOP_PACKAGED_RENDERER_HOST, DESKTOP_PACKAGED_RENDERER_ORIGIN, DESKTOP_PACKAGED_RENDERER_ENTRY_URL, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonLoopbackUrlSchemaZ, DesktopDaemonHostDescriptorSchemaZ, DesktopDaemonSupervisorFatalReasonSchemaZ, DesktopDaemonHostIssueSchemaFields, DesktopDaemonCapabilityIssueSchemaFields, DesktopDaemonHostStateSchemaZ, DesktopDaemonCapabilityStateSchemaZ, DesktopDaemonCapabilityErrorCodeSchemaZ, DesktopDaemonCapabilityErrorSchemaZ, DesktopDaemonWorkspaceSummarySchemaZ, DesktopDaemonListWorkspacesResultSchemaZ, DesktopDaemonCapabilitiesResultSchemaZ, DesktopDaemonFetchApplicationShellRequestSchemaZ, DesktopApplicationShellTargetSchemaZ, DesktopDaemonFetchApplicationShellResultSchemaZ, DesktopDaemonFetchWorkspaceFilesRequestSchemaZ, DesktopDaemonFetchWorkspaceFilesResultSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ, DesktopDaemonFetchWorkspaceChangesRequestSchemaZ, DesktopDaemonFetchWorkspaceChangesResultSchemaZ, DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ, DesktopDaemonFetchWorkspaceMissionsResultSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ, DesktopDaemonFetchFleetCatalogResultSchemaZ, DesktopDaemonFetchWorkspaceCatalogResultSchemaZ, DesktopDaemonStartupReadinessResultSchemaZ, DesktopDaemonEventSubscriptionRequestSchemaZ, DesktopDaemonSubscriptionIdSchemaZ, DesktopDaemonSubscriptionRequestIdSchemaZ, DesktopDaemonRequestIdSchemaZ, DesktopWebHostClientIdSchemaZ, DesktopDaemonTransportStateSchemaZ, DesktopDaemonEventSchemaZ, DesktopDaemonDisconnectedCapabilityStateSchemaZ, DesktopDaemonConnectedCapabilityStateSchemaZ, DesktopDaemonRefreshConnectionResultSchemaZ, DesktopDaemonSubscribeWireResultSchemaZ, DesktopDaemonEventWireEnvelopeSchemaZ, DesktopOnboardingStateSchemaZ, DesktopHostBootstrapSchemaZ, DesktopDirectorySelectionSchemaZ;
+var DESKTOP_HOST_API_VERSION, DESKTOP_PACKAGED_RENDERER_SCHEME, DESKTOP_PACKAGED_RENDERER_HOST, DESKTOP_PACKAGED_RENDERER_ORIGIN, DESKTOP_PACKAGED_RENDERER_ENTRY_URL, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonLoopbackUrlSchemaZ, DesktopDaemonHostDescriptorSchemaZ, DesktopDaemonSupervisorFatalReasonSchemaZ, DesktopDaemonHostIssueSchemaFields, DesktopDaemonCapabilityIssueSchemaFields, DesktopDaemonHostStateSchemaZ, DesktopDaemonPreflightSchemaZ, DesktopDaemonCapabilityStateSchemaZ, DesktopDaemonCapabilityErrorCodeSchemaZ, DesktopDaemonCapabilityErrorSchemaZ, DesktopDaemonWorkspaceSummarySchemaZ, DesktopDaemonListWorkspacesResultSchemaZ, DesktopDaemonCapabilitiesResultSchemaZ, DesktopDaemonFetchApplicationShellRequestSchemaZ, DesktopApplicationShellTargetSchemaZ, DesktopDaemonFetchApplicationShellResultSchemaZ, DesktopDaemonFetchWorkspaceFilesRequestSchemaZ, DesktopDaemonFetchWorkspaceFilesResultSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ, DesktopDaemonFetchWorkspaceChangesRequestSchemaZ, DesktopDaemonFetchWorkspaceChangesResultSchemaZ, DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ, DesktopDaemonFetchWorkspaceMissionsResultSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ, DesktopDaemonFetchFleetCatalogResultSchemaZ, DesktopDaemonFetchWorkspaceCatalogResultSchemaZ, DesktopDaemonStartupReadinessResultSchemaZ, DesktopDaemonEventSubscriptionRequestSchemaZ, DesktopDaemonSubscriptionIdSchemaZ, DesktopDaemonSubscriptionRequestIdSchemaZ, DesktopDaemonRequestIdSchemaZ, DesktopWebHostClientIdSchemaZ, DesktopDaemonTransportStateSchemaZ, DesktopDaemonEventSchemaZ, DesktopDaemonDisconnectedCapabilityStateSchemaZ, DesktopDaemonConnectedCapabilityStateSchemaZ, DesktopDaemonRefreshConnectionResultSchemaZ, DesktopDaemonSubscribeWireResultSchemaZ, DesktopDaemonEventWireEnvelopeSchemaZ, DesktopOnboardingStateSchemaZ, DesktopHostBootstrapSchemaZ, DesktopDirectorySelectionSchemaZ;
 var init_desktop_host = __esm({
   "packages/contracts/src/desktop-host.ts"() {
     "use strict";
@@ -6363,6 +6984,7 @@ var init_desktop_host = __esm({
       z38.object({ status: z38.literal("unavailable"), ...DesktopDaemonHostIssueSchemaFields }).strict(),
       z38.object({ status: z38.literal("degraded"), ...DesktopDaemonHostIssueSchemaFields }).strict()
     ]);
+    DesktopDaemonPreflightSchemaZ = DesktopDaemonHostStateSchemaZ;
     DesktopDaemonCapabilityStateSchemaZ = z38.discriminatedUnion("status", [
       z38.object({ status: z38.literal("connected"), identity: DaemonInstanceIdentitySchemaZ }).strict(),
       z38.object({ status: z38.literal("unavailable"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict(),
@@ -6929,6 +7551,17 @@ function deepFreeze3(value) {
     for (const nested of Object.values(value)) deepFreeze3(nested);
   }
   return value;
+}
+function workspacePaneCreateInvocation(args, source, operationId) {
+  return deepFreeze3(
+    WorkspacePaneCreateInvocationSchemaZ.parse({
+      version: COMMAND_PROTOCOL_VERSION,
+      id: WORKSPACE_PANE_CREATE_COMMAND_ID,
+      ...operationId === void 0 ? {} : { operationId },
+      source,
+      args
+    })
+  );
 }
 var WORKSPACE_PANE_CREATE_COMMAND_ID, WorkspacePaneCreationReferenceSchemaZ, WorkspacePaneCreationWorkspaceNameSchemaZ, WorkspacePaneDisplayTitleSchemaZ, WorkspacePaneCreationPlacementSchemaZ, WorkspacePaneCreationBaseArgumentsSchemaZ, WorkspaceTerminalCreateArgumentsSchemaZ, WorkspaceAgentCreateArgumentsSchemaZ, WorkspacePaneCreateArgumentsSchemaZ, WorkspacePaneCreateInvocationSchemaZ, WorkspacePaneCreateMutationRequestSchemaZ, WorkspacePaneCreatedResourceBaseSchemaZ, WorkspacePaneCreatedResourceSchemaZ, WorkspacePaneCreateMutationResultSchemaZ, WorkspacePaneCreateHostResultSchemaZ, WORKSPACE_PANE_CREATE_COMMAND_DESCRIPTOR;
 var init_workspace_pane_creation = __esm({
@@ -7873,7 +8506,7 @@ var init_terminals = __esm({
 
 // packages/contracts/src/terminal-replica.ts
 import { z as z49 } from "zod";
-var TerminalReplicaColorSchemaZ, TerminalReplicaCellAttributesSchemaZ, TerminalReplicaCellSchemaZ, TerminalReplicaRowSchemaZ, TerminalReplicaCursorSchemaZ, TerminalReplicaModesSchemaZ, TerminalReplicaPlacementSchemaZ, TerminalReplicaSnapshotSchemaZ, TerminalReplicaPatchPayloadSchemaZ, TerminalReplicaTombstonePayloadSchemaZ, TERMINAL_REPLICA_ATTRIBUTE;
+var TerminalReplicaColorSchemaZ, TerminalReplicaCellAttributesSchemaZ, TerminalReplicaCellSchemaZ, TerminalReplicaRowSchemaZ, TerminalReplicaCursorSchemaZ, TerminalReplicaModesSchemaZ, TerminalReplicaPlacementSchemaZ, TerminalReplicaSnapshotSchemaZ, TerminalReplicaPatchPayloadSchemaZ, TerminalReplicaTombstonePayloadSchemaZ, TERMINAL_REPLICA_ATTRIBUTE, TERMINAL_REPLICA_HASH_ALGORITHM;
 var init_terminal_replica = __esm({
   "packages/contracts/src/terminal-replica.ts"() {
     "use strict";
@@ -7959,12 +8592,13 @@ var init_terminal_replica = __esm({
       hidden: 64,
       strikethrough: 128
     });
+    TERMINAL_REPLICA_HASH_ALGORITHM = "fnv1a64-v1";
   }
 });
 
 // packages/contracts/src/session-runtime.ts
 import { z as z50 } from "zod";
-var SessionRuntimeGenerationSchemaZ, SessionRuntimeClientIdSchemaZ, SessionRuntimeSessionNameSchemaZ, SessionRuntimeControllerRoleSchemaZ, SessionRuntimeControllerLeaseSchemaZ, SessionRuntimeControllerSnapshotSchemaZ, SessionRuntimeAuthorityKindSchemaZ, SessionRuntimeClientSurfaceSchemaZ, SessionRuntimePresenceStateSchemaZ, SessionRuntimeActivityKindSchemaZ, SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS, SessionRuntimeTerminalKeyNameSchemaZ, SessionRuntimeTerminalTextInputSchemaZ, SessionRuntimeTerminalKeyInputSchemaZ, SessionRuntimeTerminalBytesInputSchemaZ, SessionRuntimeTerminalInputSchemaZ, SessionRuntimeAuthorityLeaseSchemaZ, SessionRuntimeClientPresenceSchemaZ, SessionRuntimeAuthoritySnapshotSchemaZ, TerminalReplicaRevisionSchemaZ, TerminalReplicaFrameMetadataSchemaZ, CanonicalTerminalReplicaSeedSchemaZ, CanonicalTerminalReplicaPatchSchemaZ, CanonicalTerminalReplicaTombstoneSchemaZ, CanonicalTerminalReplicaUpdateSchemaZ, SessionRuntimePaneReadIntentSchemaZ, SessionRuntimeSemanticIntentSchemaZ;
+var SESSION_RUNTIME_CONTRACT_VERSION, SessionRuntimeGenerationSchemaZ, SessionRuntimeClientIdSchemaZ, SessionRuntimeSessionNameSchemaZ, SessionRuntimeControllerRoleSchemaZ, SessionRuntimeControllerLeaseSchemaZ, SessionRuntimeControllerSnapshotSchemaZ, SessionRuntimeAuthorityKindSchemaZ, SessionRuntimeClientSurfaceSchemaZ, SessionRuntimePresenceStateSchemaZ, SessionRuntimeActivityKindSchemaZ, SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS, SessionRuntimeTerminalKeyNameSchemaZ, SessionRuntimeTerminalTextInputSchemaZ, SessionRuntimeTerminalKeyInputSchemaZ, SessionRuntimeTerminalBytesInputSchemaZ, SessionRuntimeTerminalInputSchemaZ, SessionRuntimeAuthorityLeaseSchemaZ, SessionRuntimeClientPresenceSchemaZ, SessionRuntimeAuthoritySnapshotSchemaZ, TerminalReplicaRevisionSchemaZ, TerminalReplicaFrameMetadataSchemaZ, CanonicalTerminalReplicaSeedSchemaZ, CanonicalTerminalReplicaPatchSchemaZ, CanonicalTerminalReplicaTombstoneSchemaZ, CanonicalTerminalReplicaUpdateSchemaZ, SessionRuntimePaneReadIntentSchemaZ, SessionRuntimeSemanticIntentSchemaZ;
 var init_session_runtime = __esm({
   "packages/contracts/src/session-runtime.ts"() {
     "use strict";
@@ -7974,6 +8608,7 @@ var init_session_runtime = __esm({
     init_workspace_multiplexer();
     init_workspace_state();
     init_terminal_replica();
+    SESSION_RUNTIME_CONTRACT_VERSION = 1;
     SessionRuntimeGenerationSchemaZ = DaemonInstanceIdentitySchemaZ.shape.instanceId;
     SessionRuntimeClientIdSchemaZ = z50.string().min(1).max(4096).refine((value) => !/[\0\r\n]/u.test(value));
     SessionRuntimeSessionNameSchemaZ = z50.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
@@ -8410,7 +9045,7 @@ var init_terminal_delivery = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z53 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_CLIENT_FRAME_BYTES, PANE_STREAM_MAX_INPUT_TEXT_CHARS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorCodeSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamKeyNameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -8440,6 +9075,8 @@ var init_pane_stream = __esm({
     PANE_STREAM_MAX_HELD_DELTAS = 256;
     PANE_STREAM_MAX_LAYOUT_PANES = 64;
     PANE_STREAM_MAX_GRID_CELLS = 4096;
+    PANE_STREAM_MAX_CLIENT_FRAME_BYTES = 4096;
+    PANE_STREAM_MAX_INPUT_TEXT_CHARS = SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS;
     PANE_STREAM_MAX_INPUT_SEQUENCE = 4294967295;
     PaneStreamSemanticPaneIdSchemaZ = TerminalAttachmentSemanticPaneIdSchemaZ;
     PaneStreamViewerModeSchemaZ = TerminalAttachmentViewerModeSchemaZ;
@@ -8468,6 +9105,7 @@ var init_pane_stream = __esm({
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ
     }).strict();
+    PaneStreamIssueErrorCodeSchemaZ = TerminalIssueErrorCodeCompatSchemaZ;
     PaneStreamIssueErrorSchemaZ = TerminalIssueErrorCompatSchemaZ;
     PaneStreamIssueResultSchemaZ = z53.discriminatedUnion("status", [
       z53.object({ status: z53.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
@@ -8493,6 +9131,7 @@ var init_pane_stream = __esm({
       deliveryAcks: z53.boolean().optional(),
       diagnosticCapabilities: z53.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
     }).strict();
+    PaneStreamKeyNameSchemaZ = SessionRuntimeTerminalKeyNameSchemaZ;
     PaneStreamInputFrameMetadataShape = {
       type: z53.literal("input"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
@@ -8858,13 +9497,24 @@ var init_pane_stream = __esm({
 
 // packages/contracts/src/control.ts
 import { z as z54 } from "zod";
-var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentStatusEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema, subscribeParamsSchema;
+var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, CONTROL_VERBS, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentStatusEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema, subscribeParamsSchema;
 var init_control = __esm({
   "packages/contracts/src/control.ts"() {
     "use strict";
     CONTROL_PROTOCOL_VERSION = 1;
     controlIdSchema = z54.union([z54.string(), z54.number()]);
     agentStatusSchema = z54.enum(["blocked", "working", "done", "idle", "unknown"]);
+    CONTROL_VERBS = [
+      "fleet",
+      "agents",
+      "send",
+      "wait",
+      "spawn",
+      "restart-agent",
+      "stop-agent",
+      "explain",
+      "subscribe"
+    ];
     controlRequestSchema = z54.object({
       v: z54.literal(CONTROL_PROTOCOL_VERSION),
       id: controlIdSchema,
@@ -8967,6 +9617,46 @@ function deepFreeze4(value) {
     for (const nested of Object.values(value)) deepFreeze4(nested);
   }
   return value;
+}
+function isMultiplexerVerbId(value) {
+  return typeof value === "string" && BY_ID.has(value);
+}
+function multiplexerVerb(id2) {
+  const entry = BY_ID.get(id2);
+  if (!entry) throw new TypeError(`unknown multiplexer verb: ${id2}`);
+  return entry;
+}
+function multiplexerVerbsForScope(scope) {
+  return MULTIPLEXER_VERB_TABLE.filter((entry) => entry.scope === scope);
+}
+function unavailable(reason) {
+  return Object.freeze({ available: false, reason });
+}
+function multiplexerVerbAvailability(verb, facts) {
+  for (const input of verb.availabilityInputs) {
+    if (facts[input] === void 0) return unavailable(`${input} is unknown`);
+  }
+  if (verb.availabilityInputs.includes("workspaceConnected") && !facts.workspaceConnected) {
+    return unavailable("the workspace is not connected");
+  }
+  switch (verb.id) {
+    case "window.kill":
+      return facts.sessionWindowCount > 1 ? AVAILABLE : unavailable("this is the session's last window");
+    case "pane.kill":
+      return facts.windowPaneCount > 1 || facts.sessionWindowCount > 1 ? AVAILABLE : unavailable("this is the session's last pane");
+    case "window.zoom.toggle":
+      return facts.windowZoomed || facts.windowPaneCount > 1 ? AVAILABLE : unavailable("this window has only one pane");
+    case "pane.select":
+      return facts.targetIsActivePane ? unavailable("this pane is already active") : AVAILABLE;
+    case "pane.swap":
+      return facts.windowPaneCount > 1 ? AVAILABLE : unavailable("this window has no other pane to swap with");
+    case "pane.resize":
+      return facts.windowPaneCount > 1 ? AVAILABLE : unavailable("this window has only one pane, so it has no border to move");
+    case "stack.activate":
+      return facts.targetIsDockedStackMember ? AVAILABLE : unavailable("this window is not in a docked stack");
+    default:
+      return AVAILABLE;
+  }
 }
 var MULTIPLEXER_VERB_TABLE_VERSION, MultiplexerVerbIdSchemaZ, MultiplexerVerbScopeSchemaZ, ActionNameSchemaZ, AppWindowCommandTypeSchemaZ, MultiplexerVerbExecutionSchemaZ, MultiplexerVerbAvailabilityInputSchemaZ, MultiplexerVerbEntrySchemaZ, ENTRIES, MULTIPLEXER_VERB_TABLE, BY_ID, MULTIPLEXER_VERB_IDS, AVAILABLE, MultiplexerVerbInvocationSchemaZ;
 var init_multiplexer_verbs = __esm({
@@ -9253,7 +9943,30 @@ var init_widget_asset = __esm({
 
 // packages/contracts/src/daemon-resource-request.ts
 import { z as z57 } from "zod";
-var DaemonResourceRequestSchemaZ, DAEMON_RESOURCE_RESULT_SCHEMAS, DAEMON_RESOURCE_KINDS, DAEMON_RESOURCE_KIND_SET, CANCELLABLE_DAEMON_RESOURCE_KINDS, CANCELLABLE_DAEMON_RESOURCE_KIND_SET;
+function isDaemonResourceKind(value) {
+  return typeof value === "string" && DAEMON_RESOURCE_KIND_SET.has(value);
+}
+function isCancellableDaemonResourceKind(value) {
+  return CANCELLABLE_DAEMON_RESOURCE_KIND_SET.has(value);
+}
+function daemonWorkspaceRouteName(resource3, entry) {
+  return entry[DAEMON_WORKSPACE_ROUTE_KEYS[resource3]];
+}
+function createDaemonResourceMethods(dispatch) {
+  const methods = {};
+  for (const resource3 of DAEMON_RESOURCE_KINDS) {
+    methods[resource3] = (request, signal) => {
+      if (REQUESTLESS_DAEMON_RESOURCES.has(resource3)) {
+        const requestSignal2 = isCancellableDaemonResourceKind(resource3) ? request : void 0;
+        return requestSignal2 === void 0 ? dispatch({ resource: resource3 }) : dispatch({ resource: resource3 }, requestSignal2);
+      }
+      const requestSignal = isCancellableDaemonResourceKind(resource3) ? signal : void 0;
+      return requestSignal === void 0 ? dispatch({ resource: resource3, request }) : dispatch({ resource: resource3, request }, requestSignal);
+    };
+  }
+  return methods;
+}
+var DaemonResourceRequestSchemaZ, DAEMON_RESOURCE_RESULT_SCHEMAS, DAEMON_RESOURCE_KINDS, DAEMON_RESOURCE_KIND_SET, CANCELLABLE_DAEMON_RESOURCE_KINDS, CANCELLABLE_DAEMON_RESOURCE_KIND_SET, DAEMON_WORKSPACE_ROUTE_KEYS, REQUESTLESS_DAEMON_RESOURCES;
 var init_daemon_resource_request = __esm({
   "packages/contracts/src/daemon-resource-request.ts"() {
     "use strict";
@@ -9356,6 +10069,22 @@ var init_daemon_resource_request = __esm({
     CANCELLABLE_DAEMON_RESOURCE_KIND_SET = new Set(
       CANCELLABLE_DAEMON_RESOURCE_KINDS
     );
+    DAEMON_WORKSPACE_ROUTE_KEYS = {
+      fetchApplicationShell: "sessionName",
+      fetchWorkspaceFiles: "workspaceName",
+      fetchWorkspaceFilePreview: "workspaceName",
+      fetchWorkspaceChanges: "workspaceName",
+      fetchWorkspaceMissions: "workspaceName",
+      fetchWorkspaceChangeDiff: "workspaceName"
+    };
+    REQUESTLESS_DAEMON_RESOURCES = /* @__PURE__ */ new Set([
+      "capabilities",
+      "refreshConnection",
+      "listWorkspaces",
+      "fetchFleetCatalog",
+      "fetchWorkspaceCatalog",
+      "startupReadiness"
+    ]);
   }
 });
 
@@ -9391,16 +10120,208 @@ var init_terminal_runtime_inventory = __esm({
 });
 
 // packages/contracts/src/workspace-files-tree.ts
+function compareWorkspaceFileEntries(a, b) {
+  const aDir = a.kind === "directory";
+  const bDir = b.kind === "directory";
+  if (aDir !== bDir) return aDir ? -1 : 1;
+  const aName = a.name.toLowerCase();
+  const bName = b.name.toLowerCase();
+  if (aName < bName) return -1;
+  if (aName > bName) return 1;
+  if (a.name < b.name) return -1;
+  if (a.name > b.name) return 1;
+  if (a.id < b.id) return -1;
+  if (a.id > b.id) return 1;
+  return 0;
+}
+function sortWorkspaceFileEntries(entries) {
+  return [...entries].sort(compareWorkspaceFileEntries);
+}
+function flattenWorkspaceFileTree(input) {
+  const byDirectory = /* @__PURE__ */ new Map();
+  for (const catalog of input.catalogs) byDirectory.set(catalog.directoryId, catalog.entries);
+  const expanded = new Set(input.expandedIds ?? []);
+  const selectedId = input.selectedId ?? null;
+  const rows = [];
+  const onPath = /* @__PURE__ */ new Set();
+  let truncated = false;
+  const walk = (directoryId, depth) => {
+    if (onPath.has(directoryId)) {
+      truncated = true;
+      return;
+    }
+    const entries = byDirectory.get(directoryId);
+    if (entries === void 0) return;
+    onPath.add(directoryId);
+    for (const entry of sortWorkspaceFileEntries(entries)) {
+      if (rows.length >= WORKSPACE_FILE_TREE_MAX_ROWS) {
+        truncated = true;
+        break;
+      }
+      const isDirectory = entry.kind === "directory";
+      const isExpanded = isDirectory && entry.hasChildren && expanded.has(entry.id);
+      rows.push({
+        id: entry.id,
+        parentId: entry.parentId,
+        name: entry.name,
+        relativePath: entry.relativePath,
+        kind: entry.kind,
+        depth,
+        gitStatus: entry.gitStatus,
+        hidden: entry.hidden,
+        ignored: entry.ignored,
+        expandable: isDirectory && entry.hasChildren,
+        expanded: isExpanded,
+        childrenLoaded: byDirectory.has(entry.id),
+        selected: entry.id === selectedId
+      });
+      if (isExpanded) walk(entry.id, depth + 1);
+    }
+    onPath.delete(directoryId);
+  };
+  walk(input.rootId, 0);
+  const selectedIndex = selectedId === null ? -1 : rows.findIndex((row) => row.id === selectedId);
+  return {
+    rows,
+    selectedId: selectedIndex === -1 ? null : selectedId,
+    selectedIndex,
+    truncated
+  };
+}
+function toggleWorkspaceFileExpansion(expandedIds, id2, next) {
+  const set = new Set(expandedIds);
+  const shouldExpand = next ?? !set.has(id2);
+  if (shouldExpand) set.add(id2);
+  else set.delete(id2);
+  return set;
+}
+function moveWorkspaceFileSelection(rows, currentId, direction) {
+  if (rows.length === 0) return null;
+  const step = direction === "down" ? 1 : -1;
+  const currentIndex = currentId === null ? -1 : rows.findIndex((row) => row.id === currentId);
+  if (currentIndex === -1) {
+    return (direction === "down" ? rows[0] : rows[rows.length - 1]).id;
+  }
+  const nextIndex = Math.min(rows.length - 1, Math.max(0, currentIndex + step));
+  return rows[nextIndex].id;
+}
+var WORKSPACE_FILE_TREE_MAX_ROWS;
 var init_workspace_files_tree = __esm({
   "packages/contracts/src/workspace-files-tree.ts"() {
     "use strict";
+    WORKSPACE_FILE_TREE_MAX_ROWS = 2e4;
   }
 });
 
 // packages/contracts/src/workspace-changes-view.ts
+function compareWorkspaceChangeEntries(a, b) {
+  const aPath = a.relativePath.toLowerCase();
+  const bPath = b.relativePath.toLowerCase();
+  if (aPath < bPath) return -1;
+  if (aPath > bPath) return 1;
+  if (a.relativePath < b.relativePath) return -1;
+  if (a.relativePath > b.relativePath) return 1;
+  if (a.id < b.id) return -1;
+  if (a.id > b.id) return 1;
+  return 0;
+}
+function sortWorkspaceChangeEntries(entries) {
+  return [...entries].sort(compareWorkspaceChangeEntries);
+}
+function groupWorkspaceChanges(entries) {
+  const grouping = { staged: [], unstaged: [], untracked: [] };
+  for (const entry of entries) grouping[entry.group].push(entry);
+  grouping.staged.sort(compareWorkspaceChangeEntries);
+  grouping.unstaged.sort(compareWorkspaceChangeEntries);
+  grouping.untracked.sort(compareWorkspaceChangeEntries);
+  return grouping;
+}
+function summarizeWorkspaceChanges(entries) {
+  const summary = {
+    staged: 0,
+    unstaged: 0,
+    untracked: 0,
+    total: 0,
+    additions: 0,
+    deletions: 0,
+    binary: 0
+  };
+  for (const entry of entries) {
+    summary[entry.group] += 1;
+    summary.total += 1;
+    if (entry.binary) summary.binary += 1;
+    summary.additions += entry.additions ?? 0;
+    summary.deletions += entry.deletions ?? 0;
+  }
+  return summary;
+}
+function filterWorkspaceChanges(entries, filter = {}) {
+  const group = filter.group ?? "all";
+  const query = filter.query?.trim().toLowerCase() ?? "";
+  return entries.filter((entry) => {
+    if (group !== "all" && entry.group !== group) return false;
+    if (query.length === 0) return true;
+    if (entry.relativePath.toLowerCase().includes(query)) return true;
+    return entry.originPath?.toLowerCase().includes(query) ?? false;
+  });
+}
+function flattenWorkspaceChangesView(input) {
+  const visible = filterWorkspaceChanges(input.entries, input.filter);
+  const grouping = groupWorkspaceChanges(visible);
+  const selectedId = input.selectedId ?? null;
+  const rows = [];
+  for (const group of WORKSPACE_CHANGE_GROUP_ORDER) {
+    const groupEntries = grouping[group];
+    if (groupEntries.length === 0) continue;
+    rows.push({
+      kind: "group",
+      group,
+      entry: null,
+      count: groupEntries.length,
+      selectable: false,
+      selected: false
+    });
+    for (const entry of groupEntries) {
+      rows.push({
+        kind: "change",
+        group,
+        entry,
+        count: 0,
+        selectable: true,
+        selected: entry.id === selectedId
+      });
+    }
+  }
+  const selectedIndex = rows.findIndex((row) => row.selected);
+  return {
+    rows,
+    selectedId: selectedIndex === -1 ? null : selectedId,
+    selectedIndex,
+    summary: summarizeWorkspaceChanges(visible)
+  };
+}
+function moveWorkspaceChangeSelection(rows, currentId, direction) {
+  const selectable = rows.filter(
+    (row) => row.selectable && row.entry !== null
+  );
+  if (selectable.length === 0) return null;
+  const step = direction === "down" ? 1 : -1;
+  const currentIndex = currentId === null ? -1 : selectable.findIndex((row) => row.entry.id === currentId);
+  if (currentIndex === -1) {
+    return (direction === "down" ? selectable[0] : selectable[selectable.length - 1]).entry.id;
+  }
+  const nextIndex = Math.min(selectable.length - 1, Math.max(0, currentIndex + step));
+  return selectable[nextIndex].entry.id;
+}
+var WORKSPACE_CHANGE_GROUP_ORDER;
 var init_workspace_changes_view = __esm({
   "packages/contracts/src/workspace-changes-view.ts"() {
     "use strict";
+    WORKSPACE_CHANGE_GROUP_ORDER = [
+      "staged",
+      "unstaged",
+      "untracked"
+    ];
   }
 });
 
@@ -9507,6 +10428,64 @@ var init_visual_recipes = __esm({
 });
 
 // packages/contracts/src/fleet-agent-graph.ts
+function fleetActivityToNodeStatus(activity) {
+  return ACTIVITY_TO_NODE_STATUS[activity];
+}
+function fleetDisplayNodeId(agentId) {
+  if (!FleetAgentIdSchemaZ.safeParse(agentId).success) return null;
+  return `${RESERVED_DISCOVERED_TERMINAL_ID_PREFIX}${agentId}`;
+}
+function fleetSessionGroupId(sessionId) {
+  if (!FleetSessionIdSchemaZ.safeParse(sessionId).success) return null;
+  return `group.${sessionId.slice("session.".length)}`;
+}
+function projectFleetAgentGraphOverlay(input) {
+  let truncated = false;
+  const nodes = [];
+  const groups = [];
+  let sessionCount = 0;
+  for (const session of input.sessions) {
+    const groupId2 = fleetSessionGroupId(session.sessionId);
+    if (groupId2 === null) {
+      truncated = true;
+      continue;
+    }
+    if (sessionCount >= FLEET_MAX_SESSIONS) {
+      truncated = true;
+      continue;
+    }
+    sessionCount += 1;
+    const memberWindowIds = [];
+    let agentCount = 0;
+    for (const agent of session.agents) {
+      const windowId = fleetDisplayNodeId(agent.agentId);
+      if (windowId === null) {
+        truncated = true;
+        continue;
+      }
+      if (agentCount >= FLEET_MAX_AGENTS_PER_SESSION) {
+        truncated = true;
+        continue;
+      }
+      if (nodes.length >= FLEET_MAX_TOTAL_AGENTS) {
+        truncated = true;
+        continue;
+      }
+      agentCount += 1;
+      nodes.push({
+        windowId,
+        status: fleetActivityToNodeStatus(agent.activity),
+        statusSource: agent.statusSource,
+        attention: agent.attention,
+        label: agent.name
+      });
+      memberWindowIds.push(windowId);
+    }
+    groups.push({ id: groupId2, label: session.label, memberWindowIds });
+  }
+  const folded = projectAgentGraphOverlay({ nodes, edges: [], groups });
+  return { overlay: folded.overlay, truncated: truncated || folded.truncated };
+}
 var ACTIVITY_TO_NODE_STATUS;
 var init_fleet_agent_graph = __esm({
   "packages/contracts/src/fleet-agent-graph.ts"() {
@@ -9619,8 +10598,31 @@ function decodeWidgetMarkerLine(line) {
     return null;
   }
 }
+function widgetLogicalLines(rows) {
+  const lines = [];
+  for (const row of rows) {
+    let end = row.cells.length;
+    while (end > 0 && isBlankCell(row.cells[end - 1])) end -= 1;
+    let text = "";
+    for (let index = 0; index < end; index += 1) text += row.cells[index] ?? "";
+    if (row.wrapped && lines.length > 0) {
+      lines[lines.length - 1] += text;
+    } else {
+      lines.push(text);
+    }
+  }
+  return lines;
+}
 function isBlankCell(cell) {
   return cell === void 0 || cell === "" || cell === " ";
+}
+function detectWidgetMarker(rows) {
+  const lines = widgetLogicalLines(rows);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const decoded = decodeWidgetMarkerLine(lines[index]);
+    if (decoded) return { id: decoded.id, args: decoded.args, lineIndex: index };
+  }
+  return null;
 }
 function detectWidgetMarkerFromReplicaRows(rows) {
   const lines = [];
@@ -9637,6 +10639,21 @@ function detectWidgetMarkerFromReplicaRows(rows) {
     if (decoded) return { id: decoded.id, args: decoded.args, lineIndex: index };
   }
   return null;
+}
+function createWidgetMarkerByteWatcher() {
+  const token = WIDGET_MARKER_SENTINEL;
+  let carry = "";
+  return {
+    observe(bytes) {
+      const text = carry + bytesToBinaryString(bytes);
+      const found = text.includes(token);
+      carry = text.slice(Math.max(0, text.length - (token.length - 1)));
+      return found;
+    },
+    reset() {
+      carry = "";
+    }
+  };
 }
 var WIDGET_MARKER_SENTINEL, WIDGET_MARKER_CONCEAL_PREFIX, WIDGET_MARKER_CONCEAL_SUFFIX, WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS, WIDGET_ID_PATTERN, BASE64URL_PATTERN, DIGEST_PATTERN, EMPTY_PAYLOAD, WidgetMarkerTooLargeError;
 var init_pane_widget_marker = __esm({
@@ -9665,6 +10682,28 @@ var init_pane_widget_marker = __esm({
 
 // packages/contracts/src/rich-card-widget.ts
 import { z as z60 } from "zod";
+function richCardTextFallback(card) {
+  const lines = [card.title];
+  if (card.subtitle) lines.push(card.subtitle);
+  for (const item of card.items) {
+    switch (item.type) {
+      case "text":
+      case "badge":
+        lines.push(item.text);
+        break;
+      case "progress":
+        lines.push(`${item.label ? `${item.label}: ` : ""}${Math.round(item.value)}%`);
+        break;
+      case "code":
+        lines.push(item.code);
+        break;
+      case "button":
+        lines.push(`[${item.label}]`);
+        break;
+    }
+  }
+  return lines.join("\n");
+}
 var RichCardToneSchemaZ, RichCardItemSchemaZ, RichCardWidgetArgsSchemaZ;
 var init_rich_card_widget = __esm({
   "packages/contracts/src/rich-card-widget.ts"() {
@@ -9759,12 +10798,13 @@ var init_pane_widget_descriptor = __esm({
 
 // packages/contracts/src/performance-qualification.ts
 import { z as z62 } from "zod";
-var PERFORMANCE_QUALIFICATION_CONTRACT_VERSION, PERFORMANCE_QUALIFICATION_MAX_QUEUE_ITEMS, PERFORMANCE_QUALIFICATION_MAX_QUEUE_BYTES, PerformanceStageSchemaZ, PERFORMANCE_STAGE_ORDER, MonotonicClockKindSchemaZ, BoundedIdentitySchemaZ2, MonotonicMicrosSchemaZ, ProcessMonotonicSpanV1SchemaZ, PerformanceStageSpanV1SchemaZ, PerformanceTraceV1SchemaZ, StateConvergenceIdentityV1SchemaZ, QualifiedClientDispositionSchemaZ, ClientConvergenceObservationV1SchemaZ, QualifiedQueueKindSchemaZ, ClientQueueMetricV1SchemaZ, ClientQueueSeriesV1SchemaZ, MutationQualificationAcceptanceV1SchemaZ, MutationTerminalStatusSchemaZ, MutationTerminalOutcomeV1SchemaZ;
+var PERFORMANCE_QUALIFICATION_CONTRACT_VERSION, PERFORMANCE_QUALIFICATION_FRAME_BUDGET_MS, PERFORMANCE_QUALIFICATION_MAX_QUEUE_ITEMS, PERFORMANCE_QUALIFICATION_MAX_QUEUE_BYTES, PerformanceStageSchemaZ, PERFORMANCE_STAGE_ORDER, MonotonicClockKindSchemaZ, BoundedIdentitySchemaZ2, MonotonicMicrosSchemaZ, ProcessMonotonicSpanV1SchemaZ, PerformanceStageSpanV1SchemaZ, PerformanceTraceV1SchemaZ, StateConvergenceIdentityV1SchemaZ, QualifiedClientDispositionSchemaZ, ClientConvergenceObservationV1SchemaZ, QualifiedQueueKindSchemaZ, ClientQueueMetricV1SchemaZ, ClientQueueSeriesV1SchemaZ, MutationQualificationAcceptanceV1SchemaZ, MutationTerminalStatusSchemaZ, MutationTerminalOutcomeV1SchemaZ;
 var init_performance_qualification = __esm({
   "packages/contracts/src/performance-qualification.ts"() {
     "use strict";
     init_session_runtime();
     PERFORMANCE_QUALIFICATION_CONTRACT_VERSION = 1;
+    PERFORMANCE_QUALIFICATION_FRAME_BUDGET_MS = 16.67;
     PERFORMANCE_QUALIFICATION_MAX_QUEUE_ITEMS = 65536;
     PERFORMANCE_QUALIFICATION_MAX_QUEUE_BYTES = 64 * 1024 * 1024;
     PerformanceStageSchemaZ = z62.enum([
@@ -10517,10 +11557,11 @@ var init_visual_theme_presets = __esm({
 
 // packages/contracts/src/saved-machines.ts
 import { z as z64 } from "zod";
-var MAX_SAVED_MACHINES, SavedMachineIdSchema, SshTargetSchema, SavedMachineSchema, SavedMachineRegistrySchema;
+var LOCAL_MACHINE_ID, MAX_SAVED_MACHINES, SavedMachineIdSchema, SshTargetSchema, SavedMachineSchema, SavedMachineRegistrySchema;
 var init_saved_machines = __esm({
   "packages/contracts/src/saved-machines.ts"() {
     "use strict";
+    LOCAL_MACHINE_ID = "local";
     MAX_SAVED_MACHINES = 64;
     SavedMachineIdSchema = z64.uuid().transform((id2) => id2.toLowerCase());
     SshTargetSchema = z64.string().max(255).regex(
@@ -10556,6 +11597,963 @@ var init_saved_machines = __esm({
 });
 
 // packages/contracts/src/index.ts
+var src_exports = {};
+__export(src_exports, {
+  ACTION_NAMES: () => ACTION_NAMES,
+  AGENT_ACTIVITY_IDS: () => AGENT_ACTIVITY_IDS,
+  AGENT_GRAPH_GROUP_TOKEN_MAX: () => AGENT_GRAPH_GROUP_TOKEN_MAX,
+  AGENT_GRAPH_GROUP_TOKEN_MIN: () => AGENT_GRAPH_GROUP_TOKEN_MIN,
+  AGENT_GRAPH_LABEL_MAX_LENGTH: () => AGENT_GRAPH_LABEL_MAX_LENGTH,
+  AGENT_GRAPH_MAX_EDGES: () => AGENT_GRAPH_MAX_EDGES,
+  AGENT_GRAPH_MAX_GROUPS: () => AGENT_GRAPH_MAX_GROUPS,
+  AGENT_GRAPH_MAX_GROUP_MEMBERS: () => AGENT_GRAPH_MAX_GROUP_MEMBERS,
+  AGENT_GRAPH_MAX_NODES: () => AGENT_GRAPH_MAX_NODES,
+  APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS: () => APPLICATION_SHELL_COMMAND_ARGUMENT_SCHEMAS,
+  APPLICATION_SHELL_COMMAND_DEFINITIONS: () => APPLICATION_SHELL_COMMAND_DEFINITIONS,
+  APPLICATION_SHELL_COMMAND_DESCRIPTORS: () => APPLICATION_SHELL_COMMAND_DESCRIPTORS,
+  APPLICATION_SHELL_COMMAND_IDS: () => APPLICATION_SHELL_COMMAND_IDS,
+  APPLICATION_SHELL_PROJECTION_VERSION: () => APPLICATION_SHELL_PROJECTION_VERSION,
+  APPLICATION_SHELL_RESOURCE_V1_VERSION: () => APPLICATION_SHELL_RESOURCE_V1_VERSION,
+  APPLICATION_SHELL_RESOURCE_V2_VERSION: () => APPLICATION_SHELL_RESOURCE_V2_VERSION,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION: () => APPLICATION_SHELL_RESOURCE_V3_VERSION,
+  APPLICATION_SHELL_TRACE_VERSION: () => APPLICATION_SHELL_TRACE_VERSION,
+  APP_WINDOW_DOCUMENT_VERSION: () => APP_WINDOW_DOCUMENT_VERSION,
+  APP_WINDOW_MAX_ID_LENGTH: () => APP_WINDOW_MAX_ID_LENGTH,
+  APP_WINDOW_MAX_LAYOUTS: () => APP_WINDOW_MAX_LAYOUTS,
+  APP_WINDOW_MAX_TITLE_LENGTH: () => APP_WINDOW_MAX_TITLE_LENGTH,
+  APP_WINDOW_MAX_TREE_DEPTH: () => APP_WINDOW_MAX_TREE_DEPTH,
+  APP_WINDOW_MAX_TREE_NODES: () => APP_WINDOW_MAX_TREE_NODES,
+  APP_WINDOW_MAX_WINDOWS: () => APP_WINDOW_MAX_WINDOWS,
+  APP_WINDOW_TIMESTAMP_MAX_LENGTH: () => APP_WINDOW_TIMESTAMP_MAX_LENGTH,
+  ActionContractsZ: () => ActionContractsZ,
+  AddWorkspaceRequestSchemaZ: () => AddWorkspaceRequestSchemaZ,
+  AddWorkspaceResponseSchemaZ: () => AddWorkspaceResponseSchemaZ,
+  AgentActivitySchemaZ: () => AgentActivitySchemaZ,
+  AgentGraphEdgeKindSchemaZ: () => AgentGraphEdgeKindSchemaZ,
+  AgentGraphEdgeSchemaZ: () => AgentGraphEdgeSchemaZ,
+  AgentGraphGroupIdSchemaZ: () => AgentGraphGroupIdSchemaZ,
+  AgentGraphGroupSchemaZ: () => AgentGraphGroupSchemaZ,
+  AgentGraphLabelSchemaZ: () => AgentGraphLabelSchemaZ,
+  AgentGraphNodeSchemaZ: () => AgentGraphNodeSchemaZ,
+  AgentGraphNodeStatusSchemaZ: () => AgentGraphNodeStatusSchemaZ,
+  AgentGraphOverlaySchemaZ: () => AgentGraphOverlaySchemaZ,
+  AgentGraphStatusSourceSchemaZ: () => AgentGraphStatusSourceSchemaZ,
+  AppSetRemoteAccessInputZ: () => AppSetRemoteAccessInputZ,
+  AppSetRemoteAccessResultZ: () => AppSetRemoteAccessResultZ,
+  AppWindowDockMemorySchemaZ: () => AppWindowDockMemorySchemaZ,
+  AppWindowDockNodeSchemaZ: () => AppWindowDockNodeSchemaZ,
+  AppWindowDockStateSchemaZ: () => AppWindowDockStateSchemaZ,
+  AppWindowDocumentV1SchemaZ: () => AppWindowDocumentV1SchemaZ,
+  AppWindowIdSchemaZ: () => AppWindowIdSchemaZ,
+  AppWindowInstanceSchemaZ: () => AppWindowInstanceSchemaZ,
+  AppWindowMutationArgumentsSchemaZ: () => AppWindowMutationArgumentsSchemaZ,
+  AppWindowMutationCommandSchemaZ: () => AppWindowMutationCommandSchemaZ,
+  AppWindowMutationHostResultSchemaZ: () => AppWindowMutationHostResultSchemaZ,
+  AppWindowMutationInputZ: () => AppWindowMutationInputZ,
+  AppWindowMutationInvocationSchemaZ: () => AppWindowMutationInvocationSchemaZ,
+  AppWindowMutationRequestSchemaZ: () => AppWindowMutationRequestSchemaZ,
+  AppWindowMutationResultSchemaZ: () => AppWindowMutationResultSchemaZ,
+  AppWindowMutationResultZ: () => AppWindowMutationResultZ,
+  AppWindowNamedLayoutSchemaZ: () => AppWindowNamedLayoutSchemaZ,
+  AppWindowNativeSurfaceSchemaZ: () => AppWindowNativeSurfaceSchemaZ,
+  AppWindowPlacementSchemaZ: () => AppWindowPlacementSchemaZ,
+  AppWindowRectSchemaZ: () => AppWindowRectSchemaZ,
+  AppWindowSceneSchemaZ: () => AppWindowSceneSchemaZ,
+  AppWindowSourceSchemaZ: () => AppWindowSourceSchemaZ,
+  AppWindowTimestampSchemaZ: () => AppWindowTimestampSchemaZ,
+  ApplicationShellActionTraceV1SchemaZ: () => ApplicationShellActionTraceV1SchemaZ,
+  ApplicationShellActivateDockToolArgumentsSchemaZ: () => ApplicationShellActivateDockToolArgumentsSchemaZ,
+  ApplicationShellActivateModeArgumentsSchemaZ: () => ApplicationShellActivateModeArgumentsSchemaZ,
+  ApplicationShellClosePaletteArgumentsSchemaZ: () => ApplicationShellClosePaletteArgumentsSchemaZ,
+  ApplicationShellCommandIdSchemaZ: () => ApplicationShellCommandIdSchemaZ,
+  ApplicationShellCommandInvocationSchemaZ: () => ApplicationShellCommandInvocationSchemaZ,
+  ApplicationShellDockModeSchemaZ: () => ApplicationShellDockModeSchemaZ,
+  ApplicationShellMoveFocusArgumentsSchemaZ: () => ApplicationShellMoveFocusArgumentsSchemaZ,
+  ApplicationShellOpenPaletteArgumentsSchemaZ: () => ApplicationShellOpenPaletteArgumentsSchemaZ,
+  ApplicationShellProjectionInputV1SchemaZ: () => ApplicationShellProjectionInputV1SchemaZ,
+  ApplicationShellProjectionInputV1WireSchemaZ: () => ApplicationShellProjectionInputV1WireSchemaZ,
+  ApplicationShellProjectionInputV2SchemaZ: () => ApplicationShellProjectionInputV2SchemaZ,
+  ApplicationShellProjectionInputV3SchemaZ: () => ApplicationShellProjectionInputV3SchemaZ,
+  ApplicationShellProjectionV1SchemaZ: () => ApplicationShellProjectionV1SchemaZ,
+  ApplicationShellReplayStateV1SchemaZ: () => ApplicationShellReplayStateV1SchemaZ,
+  ApplicationShellResourceSchemaZ: () => ApplicationShellResourceSchemaZ,
+  ApplicationShellResourceSelectionSchemaZ: () => ApplicationShellResourceSelectionSchemaZ,
+  ApplicationShellResourceV1SchemaZ: () => ApplicationShellResourceV1SchemaZ,
+  ApplicationShellResourceV2SchemaZ: () => ApplicationShellResourceV2SchemaZ,
+  ApplicationShellResourceV3SchemaZ: () => ApplicationShellResourceV3SchemaZ,
+  ApplicationShellSelectResourceArgumentsSchemaZ: () => ApplicationShellSelectResourceArgumentsSchemaZ,
+  ApplicationShellSetDockModeArgumentsSchemaZ: () => ApplicationShellSetDockModeArgumentsSchemaZ,
+  ApplicationShellSurfaceProjectionSchemaZ: () => ApplicationShellSurfaceProjectionSchemaZ,
+  ApplicationShellTerminalInventorySchemaZ: () => ApplicationShellTerminalInventorySchemaZ,
+  ApplicationShellTerminalResourceSchemaZ: () => ApplicationShellTerminalResourceSchemaZ,
+  AssetPaneImageWidgetArgsSchemaZ: () => AssetPaneImageWidgetArgsSchemaZ,
+  AssetPaneMarkdownWidgetArgsSchemaZ: () => AssetPaneMarkdownWidgetArgsSchemaZ,
+  AuthConfigSchema: () => AuthConfigSchema,
+  AuthoredInteractionOriginSchemaZ: () => AuthoredInteractionOriginSchemaZ,
+  BORDER_TOKEN_ROLES: () => BORDER_TOKEN_ROLES,
+  BUILTIN_VISUAL_THEMES: () => BUILTIN_VISUAL_THEMES,
+  CANCELLABLE_DAEMON_RESOURCE_KINDS: () => CANCELLABLE_DAEMON_RESOURCE_KINDS,
+  CANONICAL_DOMAIN_STATUS_IDS: () => CANONICAL_DOMAIN_STATUS_IDS,
+  CANONICAL_SHELL_AREAS: () => CANONICAL_SHELL_AREAS,
+  CANONICAL_SURFACE_REGISTRY: () => CANONICAL_SURFACE_REGISTRY,
+  CAUSAL_CELL_CAPABILITY_V1: () => CAUSAL_CELL_CAPABILITY_V1,
+  CLIENT_VIEW_STATE_VERSION: () => CLIENT_VIEW_STATE_VERSION,
+  COHESION_FIXTURE_V1: () => COHESION_FIXTURE_V1,
+  COHESION_FIXTURE_VERSION: () => COHESION_FIXTURE_VERSION,
+  COMMAND_PROTOCOL_VERSION: () => COMMAND_PROTOCOL_VERSION,
+  CONTROL_PROTOCOL_VERSION: () => CONTROL_PROTOCOL_VERSION,
+  CONTROL_VERBS: () => CONTROL_VERBS,
+  CONTROL_WAIT_MAX_TIMEOUT_MS: () => CONTROL_WAIT_MAX_TIMEOUT_MS,
+  CanonicalDaemonInfoSchema: () => CanonicalDaemonInfoSchema,
+  CanonicalDomainStatusSchemaZ: () => CanonicalDomainStatusSchemaZ,
+  CanonicalTerminalReplicaPatchSchemaZ: () => CanonicalTerminalReplicaPatchSchemaZ,
+  CanonicalTerminalReplicaSeedSchemaZ: () => CanonicalTerminalReplicaSeedSchemaZ,
+  CanonicalTerminalReplicaTombstoneSchemaZ: () => CanonicalTerminalReplicaTombstoneSchemaZ,
+  CanonicalTerminalReplicaUpdateSchemaZ: () => CanonicalTerminalReplicaUpdateSchemaZ,
+  CausalCellCapabilitySchemaZ: () => CausalCellCapabilitySchemaZ,
+  CausalCellFailureReasonV1SchemaZ: () => CausalCellFailureReasonV1SchemaZ,
+  CausalCellFailureV1SchemaZ: () => CausalCellFailureV1SchemaZ,
+  CausalCellGeometryV1SchemaZ: () => CausalCellGeometryV1SchemaZ,
+  CausalCellProbeV1SchemaZ: () => CausalCellProbeV1SchemaZ,
+  CausalCellProofV1SchemaZ: () => CausalCellProofV1SchemaZ,
+  CausalCellStructuralDiffV1SchemaZ: () => CausalCellStructuralDiffV1SchemaZ,
+  ClientCanvasViewportSchemaZ: () => ClientCanvasViewportSchemaZ,
+  ClientConvergenceObservationV1SchemaZ: () => ClientConvergenceObservationV1SchemaZ,
+  ClientDockPresentationSchemaZ: () => ClientDockPresentationSchemaZ,
+  ClientQueueMetricV1SchemaZ: () => ClientQueueMetricV1SchemaZ,
+  ClientQueueSeriesV1SchemaZ: () => ClientQueueSeriesV1SchemaZ,
+  ClientViewIdentitySchemaZ: () => ClientViewIdentitySchemaZ,
+  ClientViewStateV1SchemaZ: () => ClientViewStateV1SchemaZ,
+  CohesionFixtureV1SchemaZ: () => CohesionFixtureV1SchemaZ,
+  CommandArgumentsSchemaZ: () => CommandArgumentsSchemaZ,
+  CommandAvailabilitySchemaZ: () => CommandAvailabilitySchemaZ,
+  CommandCenterConfigSchema: () => CommandCenterConfigSchema,
+  CommandConfirmationSchemaZ: () => CommandConfirmationSchemaZ,
+  CommandDescriptorSchemaZ: () => CommandDescriptorSchemaZ,
+  CommandIdSchemaZ: () => CommandIdSchemaZ,
+  CommandInvocationSchemaZ: () => CommandInvocationSchemaZ,
+  CommandOwnerSchemaZ: () => CommandOwnerSchemaZ,
+  CommandResolutionErrorCodeSchemaZ: () => CommandResolutionErrorCodeSchemaZ,
+  CommandResolutionErrorSchemaZ: () => CommandResolutionErrorSchemaZ,
+  CommandSchemaReferencesSchemaZ: () => CommandSchemaReferencesSchemaZ,
+  CommandSourceKindSchemaZ: () => CommandSourceKindSchemaZ,
+  CommandSourceSchemaZ: () => CommandSourceSchemaZ,
+  ConfigAddPaneInputZ: () => ConfigAddPaneInputZ,
+  ConfigAddPaneResultZ: () => ConfigAddPaneResultZ,
+  ConfigAddRowInputZ: () => ConfigAddRowInputZ,
+  ConfigAddRowResultZ: () => ConfigAddRowResultZ,
+  ConfigDisableTeamInputZ: () => ConfigDisableTeamInputZ,
+  ConfigDisableTeamResultZ: () => ConfigDisableTeamResultZ,
+  ConfigEnableTeamInputZ: () => ConfigEnableTeamInputZ,
+  ConfigEnableTeamResultZ: () => ConfigEnableTeamResultZ,
+  ConfigRemovePaneInputZ: () => ConfigRemovePaneInputZ,
+  ConfigRemovePaneResultZ: () => ConfigRemovePaneResultZ,
+  ConfigResultZ: () => ConfigResultZ,
+  ConfigSetInputZ: () => ConfigSetInputZ,
+  DAEMON_CHILD_OUTPUT_MAX_LINES: () => DAEMON_CHILD_OUTPUT_MAX_LINES,
+  DAEMON_CHILD_OUTPUT_MAX_LINE_LENGTH: () => DAEMON_CHILD_OUTPUT_MAX_LINE_LENGTH,
+  DAEMON_RESOURCE_KINDS: () => DAEMON_RESOURCE_KINDS,
+  DAEMON_RESOURCE_RESULT_SCHEMAS: () => DAEMON_RESOURCE_RESULT_SCHEMAS,
+  DAEMON_WIRE_PROTOCOL_VERSION: () => DAEMON_WIRE_PROTOCOL_VERSION,
+  DAEMON_WORKSPACE_ROUTE_KEYS: () => DAEMON_WORKSPACE_ROUTE_KEYS,
+  DENSITY_TOKEN_ROLES: () => DENSITY_TOKEN_ROLES,
+  DESKTOP_HOST_API_VERSION: () => DESKTOP_HOST_API_VERSION,
+  DESKTOP_MISSION_MAX_ACTIVITY: () => DESKTOP_MISSION_MAX_ACTIVITY,
+  DESKTOP_MISSION_MAX_HISTORY: () => DESKTOP_MISSION_MAX_HISTORY,
+  DESKTOP_MISSION_MAX_VISIBLE: () => DESKTOP_MISSION_MAX_VISIBLE,
+  DESKTOP_PACKAGED_RENDERER_ENTRY_URL: () => DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
+  DESKTOP_PACKAGED_RENDERER_HOST: () => DESKTOP_PACKAGED_RENDERER_HOST,
+  DESKTOP_PACKAGED_RENDERER_ORIGIN: () => DESKTOP_PACKAGED_RENDERER_ORIGIN,
+  DESKTOP_PACKAGED_RENDERER_SCHEME: () => DESKTOP_PACKAGED_RENDERER_SCHEME,
+  DOCK_TOOL_IDS: () => DOCK_TOOL_IDS,
+  DaemonChildOutputTailSchemaZ: () => DaemonChildOutputTailSchemaZ,
+  DaemonEventActionCompleteFrameSchemaZ: () => DaemonEventActionCompleteFrameSchemaZ,
+  DaemonEventAgentStatusChangedFrameSchemaZ: () => DaemonEventAgentStatusChangedFrameSchemaZ,
+  DaemonEventAgentTurnCompletedFrameSchemaZ: () => DaemonEventAgentTurnCompletedFrameSchemaZ,
+  DaemonEventClientFrameSchemaZ: () => DaemonEventClientFrameSchemaZ,
+  DaemonEventConfigChangedFrameSchemaZ: () => DaemonEventConfigChangedFrameSchemaZ,
+  DaemonEventFleetChangedFrameSchemaZ: () => DaemonEventFleetChangedFrameSchemaZ,
+  DaemonEventHelloFrameSchemaZ: () => DaemonEventHelloFrameSchemaZ,
+  DaemonEventInitErrorFrameSchemaZ: () => DaemonEventInitErrorFrameSchemaZ,
+  DaemonEventInitOutputFrameSchemaZ: () => DaemonEventInitOutputFrameSchemaZ,
+  DaemonEventPingFrameSchemaZ: () => DaemonEventPingFrameSchemaZ,
+  DaemonEventPongFrameSchemaZ: () => DaemonEventPongFrameSchemaZ,
+  DaemonEventProjectsChangedFrameSchemaZ: () => DaemonEventProjectsChangedFrameSchemaZ,
+  DaemonEventProtocolErrorCodeSchemaZ: () => DaemonEventProtocolErrorCodeSchemaZ,
+  DaemonEventProtocolErrorFrameSchemaZ: () => DaemonEventProtocolErrorFrameSchemaZ,
+  DaemonEventResourceChangedFrameSchemaZ: () => DaemonEventResourceChangedFrameSchemaZ,
+  DaemonEventResourceInterestSchemaZ: () => DaemonEventResourceInterestSchemaZ,
+  DaemonEventResourceInterestsAckFrameSchemaZ: () => DaemonEventResourceInterestsAckFrameSchemaZ,
+  DaemonEventResourceKindSchemaZ: () => DaemonEventResourceKindSchemaZ,
+  DaemonEventResourceObservedFrameSchemaZ: () => DaemonEventResourceObservedFrameSchemaZ,
+  DaemonEventServerFrameSchemaZ: () => DaemonEventServerFrameSchemaZ,
+  DaemonEventSessionsChangedFrameSchemaZ: () => DaemonEventSessionsChangedFrameSchemaZ,
+  DaemonEventSnapshotFrameSchemaZ: () => DaemonEventSnapshotFrameSchemaZ,
+  DaemonEventSnapshotRequiredFrameSchemaZ: () => DaemonEventSnapshotRequiredFrameSchemaZ,
+  DaemonEventSubscribeFrameSchemaZ: () => DaemonEventSubscribeFrameSchemaZ,
+  DaemonEventTerminalsChangedFrameSchemaZ: () => DaemonEventTerminalsChangedFrameSchemaZ,
+  DaemonEventUnsubscribeFrameSchemaZ: () => DaemonEventUnsubscribeFrameSchemaZ,
+  DaemonEventWorkspaceAddedFrameSchemaZ: () => DaemonEventWorkspaceAddedFrameSchemaZ,
+  DaemonEventWorkspacePromotionCompletedFrameSchemaZ: () => DaemonEventWorkspacePromotionCompletedFrameSchemaZ,
+  DaemonEventWorkspaceRemovedFrameSchemaZ: () => DaemonEventWorkspaceRemovedFrameSchemaZ,
+  DaemonHealthSchema: () => DaemonHealthSchema,
+  DaemonHealthzSchema: () => DaemonHealthzSchema,
+  DaemonIdentitySchema: () => DaemonIdentitySchema,
+  DaemonInstanceIdSchema: () => DaemonInstanceIdSchema,
+  DaemonInstanceIdentitySchemaZ: () => DaemonInstanceIdentitySchemaZ,
+  DaemonPaneInfoSchemaZ: () => DaemonPaneInfoSchemaZ,
+  DaemonPanesResponseSchemaZ: () => DaemonPanesResponseSchemaZ,
+  DaemonProjectResponseSchemaZ: () => DaemonProjectResponseSchemaZ,
+  DaemonProjectTemplateSchemaZ: () => DaemonProjectTemplateSchemaZ,
+  DaemonProjectTemplatesResponseSchemaZ: () => DaemonProjectTemplatesResponseSchemaZ,
+  DaemonProjectsResponseSchemaZ: () => DaemonProjectsResponseSchemaZ,
+  DaemonRegisteredProjectResponseSchemaZ: () => DaemonRegisteredProjectResponseSchemaZ,
+  DaemonRegisteredProjectSchemaZ: () => DaemonRegisteredProjectSchemaZ,
+  DaemonResourceRequestSchemaZ: () => DaemonResourceRequestSchemaZ,
+  DaemonSessionOverviewSchemaZ: () => DaemonSessionOverviewSchemaZ,
+  DaemonSessionSnapshotSchemaZ: () => DaemonSessionSnapshotSchemaZ,
+  DaemonSessionsResponseSchemaZ: () => DaemonSessionsResponseSchemaZ,
+  DaemonShutdownInputZ: () => DaemonShutdownInputZ,
+  DaemonShutdownResultZ: () => DaemonShutdownResultZ,
+  DaemonWireProtocolVersionSchema: () => DaemonWireProtocolVersionSchema,
+  DaemonWorkspaceResponseSchemaZ: () => DaemonWorkspaceResponseSchemaZ,
+  DaemonWorkspaceSchemaZ: () => DaemonWorkspaceSchemaZ,
+  DaemonWorkspacesResponseSchemaZ: () => DaemonWorkspacesResponseSchemaZ,
+  DashboardConfigSchema: () => DashboardConfigSchema,
+  DesktopApplicationShellTargetSchemaZ: () => DesktopApplicationShellTargetSchemaZ,
+  DesktopDaemonCapabilitiesResultSchemaZ: () => DesktopDaemonCapabilitiesResultSchemaZ,
+  DesktopDaemonCapabilityErrorCodeSchemaZ: () => DesktopDaemonCapabilityErrorCodeSchemaZ,
+  DesktopDaemonCapabilityErrorSchemaZ: () => DesktopDaemonCapabilityErrorSchemaZ,
+  DesktopDaemonCapabilityStateSchemaZ: () => DesktopDaemonCapabilityStateSchemaZ,
+  DesktopDaemonEventSchemaZ: () => DesktopDaemonEventSchemaZ,
+  DesktopDaemonEventSubscriptionRequestSchemaZ: () => DesktopDaemonEventSubscriptionRequestSchemaZ,
+  DesktopDaemonEventWireEnvelopeSchemaZ: () => DesktopDaemonEventWireEnvelopeSchemaZ,
+  DesktopDaemonFetchApplicationShellRequestSchemaZ: () => DesktopDaemonFetchApplicationShellRequestSchemaZ,
+  DesktopDaemonFetchApplicationShellResultSchemaZ: () => DesktopDaemonFetchApplicationShellResultSchemaZ,
+  DesktopDaemonFetchFleetCatalogResultSchemaZ: () => DesktopDaemonFetchFleetCatalogResultSchemaZ,
+  DesktopDaemonFetchWorkspaceCatalogResultSchemaZ: () => DesktopDaemonFetchWorkspaceCatalogResultSchemaZ,
+  DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ: () => DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ: () => DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ,
+  DesktopDaemonFetchWorkspaceChangesRequestSchemaZ: () => DesktopDaemonFetchWorkspaceChangesRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceChangesResultSchemaZ: () => DesktopDaemonFetchWorkspaceChangesResultSchemaZ,
+  DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ: () => DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ: () => DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ,
+  DesktopDaemonFetchWorkspaceFilesRequestSchemaZ: () => DesktopDaemonFetchWorkspaceFilesRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceFilesResultSchemaZ: () => DesktopDaemonFetchWorkspaceFilesResultSchemaZ,
+  DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ: () => DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ,
+  DesktopDaemonFetchWorkspaceMissionsResultSchemaZ: () => DesktopDaemonFetchWorkspaceMissionsResultSchemaZ,
+  DesktopDaemonHostDescriptorSchemaZ: () => DesktopDaemonHostDescriptorSchemaZ,
+  DesktopDaemonHostIssueCodeSchemaZ: () => DesktopDaemonHostIssueCodeSchemaZ,
+  DesktopDaemonHostStateSchemaZ: () => DesktopDaemonHostStateSchemaZ,
+  DesktopDaemonListWorkspacesResultSchemaZ: () => DesktopDaemonListWorkspacesResultSchemaZ,
+  DesktopDaemonPreflightSchemaZ: () => DesktopDaemonPreflightSchemaZ,
+  DesktopDaemonRefreshConnectionResultSchemaZ: () => DesktopDaemonRefreshConnectionResultSchemaZ,
+  DesktopDaemonRequestIdSchemaZ: () => DesktopDaemonRequestIdSchemaZ,
+  DesktopDaemonStartupReadinessResultSchemaZ: () => DesktopDaemonStartupReadinessResultSchemaZ,
+  DesktopDaemonSubscribeWireResultSchemaZ: () => DesktopDaemonSubscribeWireResultSchemaZ,
+  DesktopDaemonSubscriptionIdSchemaZ: () => DesktopDaemonSubscriptionIdSchemaZ,
+  DesktopDaemonSubscriptionRequestIdSchemaZ: () => DesktopDaemonSubscriptionRequestIdSchemaZ,
+  DesktopDaemonSupervisorFatalReasonSchemaZ: () => DesktopDaemonSupervisorFatalReasonSchemaZ,
+  DesktopDaemonTransportStateSchemaZ: () => DesktopDaemonTransportStateSchemaZ,
+  DesktopDaemonWorkspaceSummarySchemaZ: () => DesktopDaemonWorkspaceSummarySchemaZ,
+  DesktopDirectorySelectionSchemaZ: () => DesktopDirectorySelectionSchemaZ,
+  DesktopHostBootstrapSchemaZ: () => DesktopHostBootstrapSchemaZ,
+  DesktopMissionActivityEventSchemaZ: () => DesktopMissionActivityEventSchemaZ,
+  DesktopMissionHistorySummarySchemaZ: () => DesktopMissionHistorySummarySchemaZ,
+  DesktopMissionLatestAttemptSchemaZ: () => DesktopMissionLatestAttemptSchemaZ,
+  DesktopMissionProofSummarySchemaZ: () => DesktopMissionProofSummarySchemaZ,
+  DesktopMissionSummarySchemaZ: () => DesktopMissionSummarySchemaZ,
+  DesktopMissionWorkspaceResourceSchemaZ: () => DesktopMissionWorkspaceResourceSchemaZ,
+  DesktopOnboardingStateSchemaZ: () => DesktopOnboardingStateSchemaZ,
+  DesktopPlatformSchemaZ: () => DesktopPlatformSchemaZ,
+  DesktopRuntimeKindSchemaZ: () => DesktopRuntimeKindSchemaZ,
+  DesktopStartupReadinessSchemaZ: () => DesktopStartupReadinessSchemaZ,
+  DesktopThemeModeSchemaZ: () => DesktopThemeModeSchemaZ,
+  DesktopThemeStateSchemaZ: () => DesktopThemeStateSchemaZ,
+  DesktopUpdatePhaseSchemaZ: () => DesktopUpdatePhaseSchemaZ,
+  DesktopUpdateStatusSchemaZ: () => DesktopUpdateStatusSchemaZ,
+  DesktopWebHostClientIdSchemaZ: () => DesktopWebHostClientIdSchemaZ,
+  DesktopWindowStateSchemaZ: () => DesktopWindowStateSchemaZ,
+  DesktopWorkspaceNameSchemaZ: () => DesktopWorkspaceNameSchemaZ,
+  DockToolIdSchemaZ: () => DockToolIdSchemaZ,
+  DurationValueSchemaZ: () => DurationValueSchemaZ,
+  ELEVATION_TOKEN_ROLES: () => ELEVATION_TOKEN_ROLES,
+  EXPERIENCE_KERNEL_VERSION: () => EXPERIENCE_KERNEL_VERSION,
+  ElevationValueSchemaZ: () => ElevationValueSchemaZ,
+  EnvironmentIdSchema: () => EnvironmentIdSchema,
+  FLEET_AGENT_HARNESS_IDS: () => FLEET_AGENT_HARNESS_IDS,
+  FLEET_CATALOG_RESOURCE_VERSION: () => FLEET_CATALOG_RESOURCE_VERSION,
+  FLEET_ID_TOKEN_MAX: () => FLEET_ID_TOKEN_MAX,
+  FLEET_ID_TOKEN_MIN: () => FLEET_ID_TOKEN_MIN,
+  FLEET_LABEL_MAX_LENGTH: () => FLEET_LABEL_MAX_LENGTH,
+  FLEET_MAX_AGENTS_PER_SESSION: () => FLEET_MAX_AGENTS_PER_SESSION,
+  FLEET_MAX_PANES_PER_SESSION: () => FLEET_MAX_PANES_PER_SESSION,
+  FLEET_MAX_SESSIONS: () => FLEET_MAX_SESSIONS,
+  FLEET_MAX_TOTAL_AGENTS: () => FLEET_MAX_TOTAL_AGENTS,
+  FOCUS_TOKEN_ROLES: () => FOCUS_TOKEN_ROLES,
+  FleetAgentHarnessSchemaZ: () => FleetAgentHarnessSchemaZ,
+  FleetAgentIdSchemaZ: () => FleetAgentIdSchemaZ,
+  FleetAgentMutateArgumentsSchemaZ: () => FleetAgentMutateArgumentsSchemaZ,
+  FleetAgentMutateResultSchemaZ: () => FleetAgentMutateResultSchemaZ,
+  FleetAgentProvisionArgumentsSchemaZ: () => FleetAgentProvisionArgumentsSchemaZ,
+  FleetAgentProvisionResultSchemaZ: () => FleetAgentProvisionResultSchemaZ,
+  FleetCatalogAgentEntryV1SchemaZ: () => FleetCatalogAgentEntryV1SchemaZ,
+  FleetCatalogResourceV1SchemaZ: () => FleetCatalogResourceV1SchemaZ,
+  FleetCatalogRevisionSchemaZ: () => FleetCatalogRevisionSchemaZ,
+  FleetCatalogSessionEntryV1SchemaZ: () => FleetCatalogSessionEntryV1SchemaZ,
+  FleetLabelSchemaZ: () => FleetLabelSchemaZ,
+  FleetProjectLabelSchemaZ: () => FleetProjectLabelSchemaZ,
+  FleetSessionIdSchemaZ: () => FleetSessionIdSchemaZ,
+  FocusOverlayStateV1SchemaZ: () => FocusOverlayStateV1SchemaZ,
+  FocusZoneSchemaZ: () => FocusZoneSchemaZ,
+  HQConfigSchema: () => HQConfigSchema,
+  IdeConfigSchema: () => IdeConfigSchema,
+  InlinePaneImageWidgetArgsSchemaZ: () => InlinePaneImageWidgetArgsSchemaZ,
+  InlinePaneMarkdownWidgetArgsSchemaZ: () => InlinePaneMarkdownWidgetArgsSchemaZ,
+  InteractionOperationKindSchemaZ: () => InteractionOperationKindSchemaZ,
+  InteractionOriginSchemaZ: () => InteractionOriginSchemaZ,
+  InteractionPhaseSchemaZ: () => InteractionPhaseSchemaZ,
+  InteractionProofSchemaZ: () => InteractionProofSchemaZ,
+  InteractionReceiptSchemaZ: () => InteractionReceiptSchemaZ,
+  InteractionSafeSummarySchemaZ: () => InteractionSafeSummarySchemaZ,
+  InteractionTargetSchemaZ: () => InteractionTargetSchemaZ,
+  LEGACY_TERMINAL_ISSUE_ERROR_CODES: () => LEGACY_TERMINAL_ISSUE_ERROR_CODES,
+  LOCAL_MACHINE_ID: () => LOCAL_MACHINE_ID,
+  LOCAL_PERFORMANCE_SNAPSHOT_VERSION: () => LOCAL_PERFORMANCE_SNAPSHOT_VERSION,
+  LocalPerformanceAuthorityV1SchemaZ: () => LocalPerformanceAuthorityV1SchemaZ,
+  LocalPerformanceDistributionV1SchemaZ: () => LocalPerformanceDistributionV1SchemaZ,
+  LocalPerformanceQueueDepthV1SchemaZ: () => LocalPerformanceQueueDepthV1SchemaZ,
+  LocalPerformanceRevisionLagV1SchemaZ: () => LocalPerformanceRevisionLagV1SchemaZ,
+  LocalPerformanceSnapshotV1SchemaZ: () => LocalPerformanceSnapshotV1SchemaZ,
+  LocalPerformanceSourceSchemaZ: () => LocalPerformanceSourceSchemaZ,
+  MAX_SAVED_MACHINES: () => MAX_SAVED_MACHINES,
+  MOTION_DURATION_ROLES: () => MOTION_DURATION_ROLES,
+  MULTIPLEXER_VERB_IDS: () => MULTIPLEXER_VERB_IDS,
+  MULTIPLEXER_VERB_TABLE: () => MULTIPLEXER_VERB_TABLE,
+  MULTIPLEXER_VERB_TABLE_VERSION: () => MULTIPLEXER_VERB_TABLE_VERSION,
+  MissionActorSchemaZ: () => MissionActorSchemaZ,
+  MissionAttemptIdSchemaZ: () => MissionAttemptIdSchemaZ,
+  MissionAttemptOutcomeSchemaZ: () => MissionAttemptOutcomeSchemaZ,
+  MissionAttemptSchemaZ: () => MissionAttemptSchemaZ,
+  MissionAttemptStatusSchemaZ: () => MissionAttemptStatusSchemaZ,
+  MissionAttemptSummarySchemaZ: () => MissionAttemptSummarySchemaZ,
+  MissionBoardColumnSchemaZ: () => MissionBoardColumnSchemaZ,
+  MissionBoardViewSchemaZ: () => MissionBoardViewSchemaZ,
+  MissionCardViewSchemaZ: () => MissionCardViewSchemaZ,
+  MissionDetailViewSchemaZ: () => MissionDetailViewSchemaZ,
+  MissionDomainVersionSchemaZ: () => MissionDomainVersionSchemaZ,
+  MissionEventSchemaZ: () => MissionEventSchemaZ,
+  MissionHistoryEntrySchemaZ: () => MissionHistoryEntrySchemaZ,
+  MissionHistorySummarySchemaZ: () => MissionHistorySummarySchemaZ,
+  MissionIdSchemaZ: () => MissionIdSchemaZ,
+  MissionProgressSummarySchemaZ: () => MissionProgressSummarySchemaZ,
+  MissionProjectStateSchemaZ: () => MissionProjectStateSchemaZ,
+  MissionProjectionVersionSchemaZ: () => MissionProjectionVersionSchemaZ,
+  MissionProofIdSchemaZ: () => MissionProofIdSchemaZ,
+  MissionProofSchemaZ: () => MissionProofSchemaZ,
+  MissionProofSummarySchemaZ: () => MissionProofSummarySchemaZ,
+  MissionReferenceIdSchemaZ: () => MissionReferenceIdSchemaZ,
+  MissionSnapshotSchemaZ: () => MissionSnapshotSchemaZ,
+  MissionSourceSchemaZ: () => MissionSourceSchemaZ,
+  MissionStatusSchemaZ: () => MissionStatusSchemaZ,
+  MissionTaskIdSchemaZ: () => MissionTaskIdSchemaZ,
+  MissionTaskSchemaZ: () => MissionTaskSchemaZ,
+  MissionTaskStatusSchemaZ: () => MissionTaskStatusSchemaZ,
+  MissionTerminalReferenceSchemaZ: () => MissionTerminalReferenceSchemaZ,
+  MissionTimelineEntrySchemaZ: () => MissionTimelineEntrySchemaZ,
+  MonotonicClockKindSchemaZ: () => MonotonicClockKindSchemaZ,
+  MotionEasingSchemaZ: () => MotionEasingSchemaZ,
+  MultiplexerVerbAvailabilityInputSchemaZ: () => MultiplexerVerbAvailabilityInputSchemaZ,
+  MultiplexerVerbEntrySchemaZ: () => MultiplexerVerbEntrySchemaZ,
+  MultiplexerVerbExecutionSchemaZ: () => MultiplexerVerbExecutionSchemaZ,
+  MultiplexerVerbIdSchemaZ: () => MultiplexerVerbIdSchemaZ,
+  MultiplexerVerbInvocationSchemaZ: () => MultiplexerVerbInvocationSchemaZ,
+  MultiplexerVerbScopeSchemaZ: () => MultiplexerVerbScopeSchemaZ,
+  MutationQualificationAcceptanceV1SchemaZ: () => MutationQualificationAcceptanceV1SchemaZ,
+  MutationTerminalOutcomeV1SchemaZ: () => MutationTerminalOutcomeV1SchemaZ,
+  MutationTerminalStatusSchemaZ: () => MutationTerminalStatusSchemaZ,
+  OrchestratorYamlConfigSchema: () => OrchestratorYamlConfigSchema,
+  OverlayKindSchemaZ: () => OverlayKindSchemaZ,
+  PANE_ATTENTION_IDS: () => PANE_ATTENTION_IDS,
+  PANE_CARD_WIDGET_ID: () => PANE_CARD_WIDGET_ID,
+  PANE_IMAGE_WIDGET_ID: () => PANE_IMAGE_WIDGET_ID,
+  PANE_IMAGE_WIDGET_MEDIA_TYPES: () => PANE_IMAGE_WIDGET_MEDIA_TYPES,
+  PANE_MARKDOWN_WIDGET_ID: () => PANE_MARKDOWN_WIDGET_ID,
+  PANE_ROLE_IDS: () => PANE_ROLE_IDS,
+  PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1: () => PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1,
+  PANE_STREAM_ISSUE_PATH: () => PANE_STREAM_ISSUE_PATH,
+  PANE_STREAM_MAX_CLIENT_FRAME_BYTES: () => PANE_STREAM_MAX_CLIENT_FRAME_BYTES,
+  PANE_STREAM_MAX_GRID_CELLS: () => PANE_STREAM_MAX_GRID_CELLS,
+  PANE_STREAM_MAX_HELD_DELTAS: () => PANE_STREAM_MAX_HELD_DELTAS,
+  PANE_STREAM_MAX_INPUT_SEQUENCE: () => PANE_STREAM_MAX_INPUT_SEQUENCE,
+  PANE_STREAM_MAX_INPUT_TEXT_CHARS: () => PANE_STREAM_MAX_INPUT_TEXT_CHARS,
+  PANE_STREAM_MAX_LAYOUT_PANES: () => PANE_STREAM_MAX_LAYOUT_PANES,
+  PANE_STREAM_MAX_OUTPUT_BASE64_CHARS: () => PANE_STREAM_MAX_OUTPUT_BASE64_CHARS,
+  PANE_STREAM_MAX_OUTPUT_BYTES: () => PANE_STREAM_MAX_OUTPUT_BYTES,
+  PANE_STREAM_MAX_PANES: () => PANE_STREAM_MAX_PANES,
+  PANE_STREAM_MAX_SEED_BASE64_CHARS: () => PANE_STREAM_MAX_SEED_BASE64_CHARS,
+  PANE_STREAM_MAX_SEED_BYTES: () => PANE_STREAM_MAX_SEED_BYTES,
+  PANE_STREAM_PROTOCOL_VERSION: () => PANE_STREAM_PROTOCOL_VERSION,
+  PANE_STREAM_REDEEM_PATH: () => PANE_STREAM_REDEEM_PATH,
+  PANE_STREAM_WEBSOCKET_SUBPROTOCOL: () => PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
+  PANE_STRUCTURE_IDS: () => PANE_STRUCTURE_IDS,
+  PERFORMANCE_QUALIFICATION_CONTRACT_VERSION: () => PERFORMANCE_QUALIFICATION_CONTRACT_VERSION,
+  PERFORMANCE_QUALIFICATION_FRAME_BUDGET_MS: () => PERFORMANCE_QUALIFICATION_FRAME_BUDGET_MS,
+  PERFORMANCE_QUALIFICATION_MAX_QUEUE_BYTES: () => PERFORMANCE_QUALIFICATION_MAX_QUEUE_BYTES,
+  PERFORMANCE_QUALIFICATION_MAX_QUEUE_ITEMS: () => PERFORMANCE_QUALIFICATION_MAX_QUEUE_ITEMS,
+  PERFORMANCE_STAGE_ORDER: () => PERFORMANCE_STAGE_ORDER,
+  PORTABLE_WORKSPACE_ID_MAX_LENGTH: () => PORTABLE_WORKSPACE_ID_MAX_LENGTH,
+  PRIMARY_WORKSPACE_MODE_IDS: () => PRIMARY_WORKSPACE_MODE_IDS,
+  PRODUCT_SURFACE_IDS: () => PRODUCT_SURFACE_IDS,
+  PaneActionSchema: () => PaneActionSchema,
+  PaneAttentionSchemaZ: () => PaneAttentionSchemaZ,
+  PaneDisplayNameSourceSchemaZ: () => PaneDisplayNameSourceSchemaZ,
+  PaneImageWidgetArgsSchemaZ: () => PaneImageWidgetArgsSchemaZ,
+  PaneInfoSchemaZ: () => PaneInfoSchemaZ,
+  PaneMarkdownWidgetArgsSchemaZ: () => PaneMarkdownWidgetArgsSchemaZ,
+  PaneRoleIdSchemaZ: () => PaneRoleIdSchemaZ,
+  PaneSchema: () => PaneSchema,
+  PaneStreamActivityFrameSchemaZ: () => PaneStreamActivityFrameSchemaZ,
+  PaneStreamAuthorityReceiptFrameSchemaZ: () => PaneStreamAuthorityReceiptFrameSchemaZ,
+  PaneStreamAuthorityReleaseFrameSchemaZ: () => PaneStreamAuthorityReleaseFrameSchemaZ,
+  PaneStreamAuthorityRequestFrameSchemaZ: () => PaneStreamAuthorityRequestFrameSchemaZ,
+  PaneStreamAuthoritySnapshotFrameSchemaZ: () => PaneStreamAuthoritySnapshotFrameSchemaZ,
+  PaneStreamCausalCellFailureFrameSchemaZ: () => PaneStreamCausalCellFailureFrameSchemaZ,
+  PaneStreamCausalCellProofFrameSchemaZ: () => PaneStreamCausalCellProofFrameSchemaZ,
+  PaneStreamClientFrameSchemaZ: () => PaneStreamClientFrameSchemaZ,
+  PaneStreamClockProbeAckFrameSchemaZ: () => PaneStreamClockProbeAckFrameSchemaZ,
+  PaneStreamClockProbeFrameSchemaZ: () => PaneStreamClockProbeFrameSchemaZ,
+  PaneStreamClosedFrameSchemaZ: () => PaneStreamClosedFrameSchemaZ,
+  PaneStreamConsumedFrameSchemaZ: () => PaneStreamConsumedFrameSchemaZ,
+  PaneStreamCursorFrameSchemaZ: () => PaneStreamCursorFrameSchemaZ,
+  PaneStreamDiagnosticCapabilitySchemaZ: () => PaneStreamDiagnosticCapabilitySchemaZ,
+  PaneStreamErrorFrameCodeSchemaZ: () => PaneStreamErrorFrameCodeSchemaZ,
+  PaneStreamErrorFrameSchemaZ: () => PaneStreamErrorFrameSchemaZ,
+  PaneStreamFlowFrameSchemaZ: () => PaneStreamFlowFrameSchemaZ,
+  PaneStreamInputAckFrameSchemaZ: () => PaneStreamInputAckFrameSchemaZ,
+  PaneStreamInputFrameSchemaZ: () => PaneStreamInputFrameSchemaZ,
+  PaneStreamIssueDescriptorSchemaZ: () => PaneStreamIssueDescriptorSchemaZ,
+  PaneStreamIssueErrorCodeSchemaZ: () => PaneStreamIssueErrorCodeSchemaZ,
+  PaneStreamIssueErrorSchemaZ: () => PaneStreamIssueErrorSchemaZ,
+  PaneStreamIssueMutationRequestSchemaZ: () => PaneStreamIssueMutationRequestSchemaZ,
+  PaneStreamIssueResultSchemaZ: () => PaneStreamIssueResultSchemaZ,
+  PaneStreamKeyNameSchemaZ: () => PaneStreamKeyNameSchemaZ,
+  PaneStreamLayoutFrameSchemaZ: () => PaneStreamLayoutFrameSchemaZ,
+  PaneStreamLayoutSnapshotFrameSchemaZ: () => PaneStreamLayoutSnapshotFrameSchemaZ,
+  PaneStreamLeaseRequestSchemaZ: () => PaneStreamLeaseRequestSchemaZ,
+  PaneStreamLoopbackWebSocketUrlSchemaZ: () => PaneStreamLoopbackWebSocketUrlSchemaZ,
+  PaneStreamOutputFrameSchemaZ: () => PaneStreamOutputFrameSchemaZ,
+  PaneStreamPresenceFrameSchemaZ: () => PaneStreamPresenceFrameSchemaZ,
+  PaneStreamReadyFrameSchemaZ: () => PaneStreamReadyFrameSchemaZ,
+  PaneStreamRedeemFrameSchemaZ: () => PaneStreamRedeemFrameSchemaZ,
+  PaneStreamRedemptionTicketSchemaZ: () => PaneStreamRedemptionTicketSchemaZ,
+  PaneStreamSeedBatchFrameSchemaZ: () => PaneStreamSeedBatchFrameSchemaZ,
+  PaneStreamSemanticIntentAckFrameSchemaZ: () => PaneStreamSemanticIntentAckFrameSchemaZ,
+  PaneStreamSemanticIntentFrameSchemaZ: () => PaneStreamSemanticIntentFrameSchemaZ,
+  PaneStreamSemanticPaneIdSchemaZ: () => PaneStreamSemanticPaneIdSchemaZ,
+  PaneStreamServerFrameSchemaZ: () => PaneStreamServerFrameSchemaZ,
+  PaneStreamTerminalDeliveryAckFrameSchemaZ: () => PaneStreamTerminalDeliveryAckFrameSchemaZ,
+  PaneStreamTerminalDeliveryChunkFrameSchemaZ: () => PaneStreamTerminalDeliveryChunkFrameSchemaZ,
+  PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ: () => PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ,
+  PaneStreamTerminalDeliveryFaultFrameSchemaZ: () => PaneStreamTerminalDeliveryFaultFrameSchemaZ,
+  PaneStreamTerminalDeliveryNackFrameSchemaZ: () => PaneStreamTerminalDeliveryNackFrameSchemaZ,
+  PaneStreamTerminalDeliveryReadyFrameSchemaZ: () => PaneStreamTerminalDeliveryReadyFrameSchemaZ,
+  PaneStreamTerminalDeliveryVisibilityFrameSchemaZ: () => PaneStreamTerminalDeliveryVisibilityFrameSchemaZ,
+  PaneStreamViewerModeSchemaZ: () => PaneStreamViewerModeSchemaZ,
+  PaneStreamViewportAckFrameSchemaZ: () => PaneStreamViewportAckFrameSchemaZ,
+  PaneStreamViewportFrameSchemaZ: () => PaneStreamViewportFrameSchemaZ,
+  PaneStructureSchemaZ: () => PaneStructureSchemaZ,
+  PaneVisualStateV1SchemaZ: () => PaneVisualStateV1SchemaZ,
+  PaneWidgetDescriptorSchemaZ: () => PaneWidgetDescriptorSchemaZ,
+  PerformanceStageSchemaZ: () => PerformanceStageSchemaZ,
+  PerformanceStageSpanV1SchemaZ: () => PerformanceStageSpanV1SchemaZ,
+  PerformanceTraceV1SchemaZ: () => PerformanceTraceV1SchemaZ,
+  PortableWorkspaceIdSchemaZ: () => PortableWorkspaceIdSchemaZ,
+  PrimaryWorkspaceModeIdSchemaZ: () => PrimaryWorkspaceModeIdSchemaZ,
+  ProcessMonotonicSpanV1SchemaZ: () => ProcessMonotonicSpanV1SchemaZ,
+  ProductSurfaceDefinitionSchemaZ: () => ProductSurfaceDefinitionSchemaZ,
+  ProductSurfaceIdSchemaZ: () => ProductSurfaceIdSchemaZ,
+  ProjectActivateInputZ: () => ProjectActivateInputZ,
+  ProjectActivateResultZ: () => ProjectActivateResultZ,
+  ProjectLaunchInputZ: () => ProjectLaunchInputZ,
+  ProjectLaunchResultZ: () => ProjectLaunchResultZ,
+  ProjectOpenTerminalInputZ: () => ProjectOpenTerminalInputZ,
+  ProjectOpenTerminalResultZ: () => ProjectOpenTerminalResultZ,
+  ProjectRestartInputZ: () => ProjectRestartInputZ,
+  ProjectRestartResultZ: () => ProjectRestartResultZ,
+  ProjectStopInputZ: () => ProjectStopInputZ,
+  ProjectStopResultZ: () => ProjectStopResultZ,
+  QualifiedClientDispositionSchemaZ: () => QualifiedClientDispositionSchemaZ,
+  QualifiedQueueKindSchemaZ: () => QualifiedQueueKindSchemaZ,
+  RESERVED_DISCOVERED_TERMINAL_ID_PREFIX: () => RESERVED_DISCOVERED_TERMINAL_ID_PREFIX,
+  RatioValueSchemaZ: () => RatioValueSchemaZ,
+  RegistrationPayloadSchema: () => RegistrationPayloadSchema,
+  RendererNeutralColorSchemaZ: () => RendererNeutralColorSchemaZ,
+  RendererSafeIssueReasonSchemaZ: () => RendererSafeIssueReasonSchemaZ,
+  RhythmValueSchemaZ: () => RhythmValueSchemaZ,
+  RichCardItemSchemaZ: () => RichCardItemSchemaZ,
+  RichCardToneSchemaZ: () => RichCardToneSchemaZ,
+  RichCardWidgetArgsSchemaZ: () => RichCardWidgetArgsSchemaZ,
+  RowSchema: () => RowSchema,
+  SELECTION_TOKEN_ROLES: () => SELECTION_TOKEN_ROLES,
+  SEMANTIC_ICON_IDS: () => SEMANTIC_ICON_IDS,
+  SESSION_RUNTIME_CONTRACT_VERSION: () => SESSION_RUNTIME_CONTRACT_VERSION,
+  SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS: () => SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS,
+  SHAPE_TOKEN_ROLES: () => SHAPE_TOKEN_ROLES,
+  STARTUP_READINESS_RESOURCE_VERSION: () => STARTUP_READINESS_RESOURCE_VERSION,
+  STARTUP_READINESS_RUNG_ORDER: () => STARTUP_READINESS_RUNG_ORDER,
+  STARTUP_READINESS_RUNG_VOCABULARIES: () => STARTUP_READINESS_RUNG_VOCABULARIES,
+  STATUS_TONE_ROLES: () => STATUS_TONE_ROLES,
+  SURFACE_TOKEN_ROLES: () => SURFACE_TOKEN_ROLES,
+  SavedMachineIdSchema: () => SavedMachineIdSchema,
+  SavedMachineRegistrySchema: () => SavedMachineRegistrySchema,
+  SavedMachineSchema: () => SavedMachineSchema,
+  SemanticFocusTargetSchemaZ: () => SemanticFocusTargetSchemaZ,
+  SemanticIconIdSchemaZ: () => SemanticIconIdSchemaZ,
+  SemanticOverlaySchemaZ: () => SemanticOverlaySchemaZ,
+  SemanticProductIdSchemaZ: () => SemanticProductIdSchemaZ,
+  SessionOverviewSchemaZ: () => SessionOverviewSchemaZ,
+  SessionRuntimeActivityKindSchemaZ: () => SessionRuntimeActivityKindSchemaZ,
+  SessionRuntimeAuthorityKindSchemaZ: () => SessionRuntimeAuthorityKindSchemaZ,
+  SessionRuntimeAuthorityLeaseSchemaZ: () => SessionRuntimeAuthorityLeaseSchemaZ,
+  SessionRuntimeAuthoritySnapshotSchemaZ: () => SessionRuntimeAuthoritySnapshotSchemaZ,
+  SessionRuntimeClientIdSchemaZ: () => SessionRuntimeClientIdSchemaZ,
+  SessionRuntimeClientPresenceSchemaZ: () => SessionRuntimeClientPresenceSchemaZ,
+  SessionRuntimeClientSurfaceSchemaZ: () => SessionRuntimeClientSurfaceSchemaZ,
+  SessionRuntimeControllerLeaseSchemaZ: () => SessionRuntimeControllerLeaseSchemaZ,
+  SessionRuntimeControllerRoleSchemaZ: () => SessionRuntimeControllerRoleSchemaZ,
+  SessionRuntimeControllerSnapshotSchemaZ: () => SessionRuntimeControllerSnapshotSchemaZ,
+  SessionRuntimeGenerationSchemaZ: () => SessionRuntimeGenerationSchemaZ,
+  SessionRuntimePaneReadIntentSchemaZ: () => SessionRuntimePaneReadIntentSchemaZ,
+  SessionRuntimePresenceStateSchemaZ: () => SessionRuntimePresenceStateSchemaZ,
+  SessionRuntimeSemanticIntentSchemaZ: () => SessionRuntimeSemanticIntentSchemaZ,
+  SessionRuntimeTerminalBytesInputSchemaZ: () => SessionRuntimeTerminalBytesInputSchemaZ,
+  SessionRuntimeTerminalInputSchemaZ: () => SessionRuntimeTerminalInputSchemaZ,
+  SessionRuntimeTerminalKeyInputSchemaZ: () => SessionRuntimeTerminalKeyInputSchemaZ,
+  SessionRuntimeTerminalKeyNameSchemaZ: () => SessionRuntimeTerminalKeyNameSchemaZ,
+  SessionRuntimeTerminalTextInputSchemaZ: () => SessionRuntimeTerminalTextInputSchemaZ,
+  SessionStateSchema: () => SessionStateSchema,
+  ShellAreaIdSchemaZ: () => ShellAreaIdSchemaZ,
+  SidebarConfigSchema: () => SidebarConfigSchema,
+  StartupReadinessCatalogPopulationSchemaZ: () => StartupReadinessCatalogPopulationSchemaZ,
+  StartupReadinessLadderSchemaZ: () => StartupReadinessLadderSchemaZ,
+  StartupReadinessOwnReasonSchemaZ: () => StartupReadinessOwnReasonSchemaZ,
+  StartupReadinessResourceSchemaZ: () => StartupReadinessResourceSchemaZ,
+  StartupReadinessRungIdSchemaZ: () => StartupReadinessRungIdSchemaZ,
+  StartupReadinessRungSchemaZ: () => StartupReadinessRungSchemaZ,
+  StartupReadinessStuckReasonSchemaZ: () => StartupReadinessStuckReasonSchemaZ,
+  StateConvergenceIdentityV1SchemaZ: () => StateConvergenceIdentityV1SchemaZ,
+  SurfaceCommandTemplateSchemaZ: () => SurfaceCommandTemplateSchemaZ,
+  SurfaceKindSchemaZ: () => SurfaceKindSchemaZ,
+  TERMINAL_ATTACHMENT_ISSUE_PATH: () => TERMINAL_ATTACHMENT_ISSUE_PATH,
+  TERMINAL_ATTACHMENT_MAX_COLS: () => TERMINAL_ATTACHMENT_MAX_COLS,
+  TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS: () => TERMINAL_ATTACHMENT_MAX_ISSUE_DESCRIPTOR_LIFETIME_MS,
+  TERMINAL_ATTACHMENT_MAX_ROWS: () => TERMINAL_ATTACHMENT_MAX_ROWS,
+  TERMINAL_ATTACHMENT_MIN_COLS: () => TERMINAL_ATTACHMENT_MIN_COLS,
+  TERMINAL_ATTACHMENT_MIN_ROWS: () => TERMINAL_ATTACHMENT_MIN_ROWS,
+  TERMINAL_ATTACHMENT_PROTOCOL_VERSION: () => TERMINAL_ATTACHMENT_PROTOCOL_VERSION,
+  TERMINAL_ATTACHMENT_REDEEM_PATH: () => TERMINAL_ATTACHMENT_REDEEM_PATH,
+  TERMINAL_ATTACHMENT_RESERVED_PANE_ID_PREFIX: () => TERMINAL_ATTACHMENT_RESERVED_PANE_ID_PREFIX,
+  TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL: () => TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL,
+  TERMINAL_DELIVERY_CHUNK_BYTES: () => TERMINAL_DELIVERY_CHUNK_BYTES,
+  TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES: () => TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
+  TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES: () => TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES,
+  TERMINAL_DELIVERY_PROTOCOL_VERSION: () => TERMINAL_DELIVERY_PROTOCOL_VERSION,
+  TERMINAL_ISSUE_ERROR_CODES: () => TERMINAL_ISSUE_ERROR_CODES,
+  TERMINAL_REPLICA_ATTRIBUTE: () => TERMINAL_REPLICA_ATTRIBUTE,
+  TERMINAL_REPLICA_HASH_ALGORITHM: () => TERMINAL_REPLICA_HASH_ALGORITHM,
+  TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION: () => TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION,
+  TEXT_TOKEN_ROLES: () => TEXT_TOKEN_ROLES,
+  TYPOGRAPHY_TOKEN_ROLES: () => TYPOGRAPHY_TOKEN_ROLES,
+  TaskCardViewSchemaZ: () => TaskCardViewSchemaZ,
+  TerminalAttachRequestSchemaZ: () => TerminalAttachRequestSchemaZ,
+  TerminalAttachmentDescriptorSchemaZ: () => TerminalAttachmentDescriptorSchemaZ,
+  TerminalAttachmentErrorSchemaZ: () => TerminalAttachmentErrorSchemaZ,
+  TerminalAttachmentGeometryOwnershipSchemaZ: () => TerminalAttachmentGeometryOwnershipSchemaZ,
+  TerminalAttachmentIssueDescriptorSchemaZ: () => TerminalAttachmentIssueDescriptorSchemaZ,
+  TerminalAttachmentIssueErrorCodeSchemaZ: () => TerminalAttachmentIssueErrorCodeSchemaZ,
+  TerminalAttachmentIssueErrorSchemaZ: () => TerminalAttachmentIssueErrorSchemaZ,
+  TerminalAttachmentIssueMutationRequestSchemaZ: () => TerminalAttachmentIssueMutationRequestSchemaZ,
+  TerminalAttachmentIssueResultSchemaZ: () => TerminalAttachmentIssueResultSchemaZ,
+  TerminalAttachmentLoopbackWebSocketUrlSchemaZ: () => TerminalAttachmentLoopbackWebSocketUrlSchemaZ,
+  TerminalAttachmentPlanHandleSchemaZ: () => TerminalAttachmentPlanHandleSchemaZ,
+  TerminalAttachmentPlanResponseSchemaZ: () => TerminalAttachmentPlanResponseSchemaZ,
+  TerminalAttachmentRedemptionTicketSchemaZ: () => TerminalAttachmentRedemptionTicketSchemaZ,
+  TerminalAttachmentRequestIdSchemaZ: () => TerminalAttachmentRequestIdSchemaZ,
+  TerminalAttachmentSemanticPaneIdSchemaZ: () => TerminalAttachmentSemanticPaneIdSchemaZ,
+  TerminalAttachmentSemanticTargetSchemaZ: () => TerminalAttachmentSemanticTargetSchemaZ,
+  TerminalAttachmentSemanticWindowIdSchemaZ: () => TerminalAttachmentSemanticWindowIdSchemaZ,
+  TerminalAttachmentViewerModeSchemaZ: () => TerminalAttachmentViewerModeSchemaZ,
+  TerminalAttachmentViewportSchemaZ: () => TerminalAttachmentViewportSchemaZ,
+  TerminalDeliveryAckSchemaZ: () => TerminalDeliveryAckSchemaZ,
+  TerminalDeliveryChunkSchemaZ: () => TerminalDeliveryChunkSchemaZ,
+  TerminalDeliveryEncodingSchemaZ: () => TerminalDeliveryEncodingSchemaZ,
+  TerminalDeliveryEnvelopeSchemaZ: () => TerminalDeliveryEnvelopeSchemaZ,
+  TerminalDeliveryFaultSchemaZ: () => TerminalDeliveryFaultSchemaZ,
+  TerminalDeliveryNackSchemaZ: () => TerminalDeliveryNackSchemaZ,
+  TerminalDeliveryNegotiatedSchemaZ: () => TerminalDeliveryNegotiatedSchemaZ,
+  TerminalDeliveryNegotiationResultSchemaZ: () => TerminalDeliveryNegotiationResultSchemaZ,
+  TerminalDeliveryOfferSchemaZ: () => TerminalDeliveryOfferSchemaZ,
+  TerminalDeliveryVisibilitySchemaZ: () => TerminalDeliveryVisibilitySchemaZ,
+  TerminalIssueErrorCodeCompatSchemaZ: () => TerminalIssueErrorCodeCompatSchemaZ,
+  TerminalIssueErrorCodeSchemaZ: () => TerminalIssueErrorCodeSchemaZ,
+  TerminalIssueErrorCompatSchemaZ: () => TerminalIssueErrorCompatSchemaZ,
+  TerminalIssueErrorSchemaZ: () => TerminalIssueErrorSchemaZ,
+  TerminalReplicaCellAttributesSchemaZ: () => TerminalReplicaCellAttributesSchemaZ,
+  TerminalReplicaCellSchemaZ: () => TerminalReplicaCellSchemaZ,
+  TerminalReplicaColorSchemaZ: () => TerminalReplicaColorSchemaZ,
+  TerminalReplicaCursorSchemaZ: () => TerminalReplicaCursorSchemaZ,
+  TerminalReplicaFrameMetadataSchemaZ: () => TerminalReplicaFrameMetadataSchemaZ,
+  TerminalReplicaModesSchemaZ: () => TerminalReplicaModesSchemaZ,
+  TerminalReplicaPatchPayloadSchemaZ: () => TerminalReplicaPatchPayloadSchemaZ,
+  TerminalReplicaPlacementSchemaZ: () => TerminalReplicaPlacementSchemaZ,
+  TerminalReplicaRevisionSchemaZ: () => TerminalReplicaRevisionSchemaZ,
+  TerminalReplicaRowSchemaZ: () => TerminalReplicaRowSchemaZ,
+  TerminalReplicaSnapshotSchemaZ: () => TerminalReplicaSnapshotSchemaZ,
+  TerminalReplicaTombstonePayloadSchemaZ: () => TerminalReplicaTombstonePayloadSchemaZ,
+  TerminalResourceAttachabilitySchemaZ: () => TerminalResourceAttachabilitySchemaZ,
+  TerminalResourceUnavailableReasonSchemaZ: () => TerminalResourceUnavailableReasonSchemaZ,
+  TerminalRespawnInputZ: () => TerminalRespawnInputZ,
+  TerminalRespawnResultZ: () => TerminalRespawnResultZ,
+  TerminalRuntimeInventoryProjectionV1SchemaZ: () => TerminalRuntimeInventoryProjectionV1SchemaZ,
+  TerminalRuntimeInventoryResourceV1SchemaZ: () => TerminalRuntimeInventoryResourceV1SchemaZ,
+  TerminalSemanticDeliveryPayloadSchemaZ: () => TerminalSemanticDeliveryPayloadSchemaZ,
+  TerminalStopInputZ: () => TerminalStopInputZ,
+  TerminalStopResultZ: () => TerminalStopResultZ,
+  TerminalWindowResourceIdSchemaZ: () => TerminalWindowResourceIdSchemaZ,
+  ThemeAccessibilityPreferencesSchemaZ: () => ThemeAccessibilityPreferencesSchemaZ,
+  ThemeAppearanceSchemaZ: () => ThemeAppearanceSchemaZ,
+  ThemeConfigSchema: () => ThemeConfigSchema,
+  TmuxPaneSchemaZ: () => TmuxPaneSchemaZ,
+  TmuxPaneTargetSchemaZ: () => TmuxPaneTargetSchemaZ,
+  TmuxSessionSchemaZ: () => TmuxSessionSchemaZ,
+  TmuxWindowSchemaZ: () => TmuxWindowSchemaZ,
+  TunnelConfigSchema: () => TunnelConfigSchema,
+  TypographyValueSchemaZ: () => TypographyValueSchemaZ,
+  VISUAL_RECIPE_REGISTRY: () => VISUAL_RECIPE_REGISTRY,
+  VISUAL_THEME_PRESETS: () => VISUAL_THEME_PRESETS,
+  VISUAL_THEME_VERSION: () => VISUAL_THEME_VERSION,
+  VisualHostDefaultsV1SchemaZ: () => VisualHostDefaultsV1SchemaZ,
+  VisualThemeDocumentV0SchemaZ: () => VisualThemeDocumentV0SchemaZ,
+  VisualThemeDocumentV1SchemaZ: () => VisualThemeDocumentV1SchemaZ,
+  VisualTokenOverridesV1SchemaZ: () => VisualTokenOverridesV1SchemaZ,
+  VisualTokensV1SchemaZ: () => VisualTokensV1SchemaZ,
+  WIDGET_ASSET_MEDIA_TYPES: () => WIDGET_ASSET_MEDIA_TYPES,
+  WIDGET_MARKER_CONCEAL_PREFIX: () => WIDGET_MARKER_CONCEAL_PREFIX,
+  WIDGET_MARKER_CONCEAL_SUFFIX: () => WIDGET_MARKER_CONCEAL_SUFFIX,
+  WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS: () => WIDGET_MARKER_MAX_PAYLOAD_CHARACTERS,
+  WIDGET_MARKER_SENTINEL: () => WIDGET_MARKER_SENTINEL,
+  WINDOW_ACTIVITY_TOKEN_ROLES: () => WINDOW_ACTIVITY_TOKEN_ROLES,
+  WORKSPACE_CATALOG_RESOURCE_V2_VERSION: () => WORKSPACE_CATALOG_RESOURCE_V2_VERSION,
+  WORKSPACE_CATALOG_RESOURCE_V3_VERSION: () => WORKSPACE_CATALOG_RESOURCE_V3_VERSION,
+  WORKSPACE_CATALOG_RESOURCE_VERSION: () => WORKSPACE_CATALOG_RESOURCE_VERSION,
+  WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES: () => WORKSPACE_CHANGES_CATALOG_MAX_ENTRIES,
+  WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION: () => WORKSPACE_CHANGES_CATALOG_RESOURCE_VERSION,
+  WORKSPACE_CHANGE_BRANCH_MAX_LENGTH: () => WORKSPACE_CHANGE_BRANCH_MAX_LENGTH,
+  WORKSPACE_CHANGE_DIFF_MAX_HUNKS: () => WORKSPACE_CHANGE_DIFF_MAX_HUNKS,
+  WORKSPACE_CHANGE_DIFF_MAX_LINES: () => WORKSPACE_CHANGE_DIFF_MAX_LINES,
+  WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH: () => WORKSPACE_CHANGE_DIFF_MAX_LINE_LENGTH,
+  WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION: () => WORKSPACE_CHANGE_DIFF_RESOURCE_VERSION,
+  WORKSPACE_CHANGE_GROUP_ORDER: () => WORKSPACE_CHANGE_GROUP_ORDER,
+  WORKSPACE_CHANGE_MAX_LINE_DELTA: () => WORKSPACE_CHANGE_MAX_LINE_DELTA,
+  WORKSPACE_FILES_CATALOG_MAX_ENTRIES: () => WORKSPACE_FILES_CATALOG_MAX_ENTRIES,
+  WORKSPACE_FILES_CATALOG_RESOURCE_VERSION: () => WORKSPACE_FILES_CATALOG_RESOURCE_VERSION,
+  WORKSPACE_FILES_MAX_BREADCRUMBS: () => WORKSPACE_FILES_MAX_BREADCRUMBS,
+  WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS: () => WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS,
+  WORKSPACE_FILE_PREVIEW_MAX_LINES: () => WORKSPACE_FILE_PREVIEW_MAX_LINES,
+  WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION: () => WORKSPACE_FILE_PREVIEW_RESOURCE_VERSION,
+  WORKSPACE_FILE_TREE_MAX_ROWS: () => WORKSPACE_FILE_TREE_MAX_ROWS,
+  WORKSPACE_MISSIONS_RESOURCE_VERSION: () => WORKSPACE_MISSIONS_RESOURCE_VERSION,
+  WORKSPACE_PANE_CREATE_COMMAND_DESCRIPTOR: () => WORKSPACE_PANE_CREATE_COMMAND_DESCRIPTOR,
+  WORKSPACE_PANE_CREATE_COMMAND_ID: () => WORKSPACE_PANE_CREATE_COMMAND_ID,
+  WORKSPACE_SEMANTIC_PANE_OPTION: () => WORKSPACE_SEMANTIC_PANE_OPTION,
+  WORKSPACE_SEMANTIC_WINDOW_OPTION: () => WORKSPACE_SEMANTIC_WINDOW_OPTION,
+  WORKSPACE_STATE_MAX_CHECKOUTS: () => WORKSPACE_STATE_MAX_CHECKOUTS,
+  WORKSPACE_STATE_MAX_ID_LENGTH: () => WORKSPACE_STATE_MAX_ID_LENGTH,
+  WORKSPACE_STATE_MAX_LAYOUTS: () => WORKSPACE_STATE_MAX_LAYOUTS,
+  WORKSPACE_STATE_MAX_NAME_LENGTH: () => WORKSPACE_STATE_MAX_NAME_LENGTH,
+  WORKSPACE_STATE_MAX_PANES: () => WORKSPACE_STATE_MAX_PANES,
+  WORKSPACE_STATE_MAX_TREE_DEPTH: () => WORKSPACE_STATE_MAX_TREE_DEPTH,
+  WORKSPACE_STATE_MAX_TREE_NODES: () => WORKSPACE_STATE_MAX_TREE_NODES,
+  WORKSPACE_STATE_VERSION: () => WORKSPACE_STATE_VERSION,
+  WORKSPACE_WINDOW_MODE_COMMAND_IDS: () => WORKSPACE_WINDOW_MODE_COMMAND_IDS,
+  WebhookConfigSchema: () => WebhookConfigSchema,
+  WidgetAssetIdSchemaZ: () => WidgetAssetIdSchemaZ,
+  WidgetAssetMediaTypeSchemaZ: () => WidgetAssetMediaTypeSchemaZ,
+  WidgetAssetRequestSchemaZ: () => WidgetAssetRequestSchemaZ,
+  WidgetAssetResultSchemaZ: () => WidgetAssetResultSchemaZ,
+  WidgetAssetSchemaZ: () => WidgetAssetSchemaZ,
+  WidgetMarkerTooLargeError: () => WidgetMarkerTooLargeError,
+  WindowActivityValueSchemaZ: () => WindowActivityValueSchemaZ,
+  WorkspaceAddedFrameSchemaZ: () => WorkspaceAddedFrameSchemaZ,
+  WorkspaceAgentCreateArgumentsSchemaZ: () => WorkspaceAgentCreateArgumentsSchemaZ,
+  WorkspaceAgentProfileSchemaZ: () => WorkspaceAgentProfileSchemaZ,
+  WorkspaceAgentRoleSchemaZ: () => WorkspaceAgentRoleSchemaZ,
+  WorkspaceAppConfigSchemaZ: () => WorkspaceAppConfigSchemaZ,
+  WorkspaceAppLayoutNodeSchemaZ: () => WorkspaceAppLayoutNodeSchemaZ,
+  WorkspaceAppViewSchemaZ: () => WorkspaceAppViewSchemaZ,
+  WorkspaceCatalogEntryV1SchemaZ: () => WorkspaceCatalogEntryV1SchemaZ,
+  WorkspaceCatalogIntentV2SchemaZ: () => WorkspaceCatalogIntentV2SchemaZ,
+  WorkspaceCatalogLiveSessionIdSchemaZ: () => WorkspaceCatalogLiveSessionIdSchemaZ,
+  WorkspaceCatalogLiveSessionV2SchemaZ: () => WorkspaceCatalogLiveSessionV2SchemaZ,
+  WorkspaceCatalogLiveSessionV3SchemaZ: () => WorkspaceCatalogLiveSessionV3SchemaZ,
+  WorkspaceCatalogResourceV1SchemaZ: () => WorkspaceCatalogResourceV1SchemaZ,
+  WorkspaceCatalogResourceV2SchemaZ: () => WorkspaceCatalogResourceV2SchemaZ,
+  WorkspaceCatalogResourceV3SchemaZ: () => WorkspaceCatalogResourceV3SchemaZ,
+  WorkspaceChangeDiffEnvelopeV1SchemaZ: () => WorkspaceChangeDiffEnvelopeV1SchemaZ,
+  WorkspaceChangeDiffResourceV1SchemaZ: () => WorkspaceChangeDiffResourceV1SchemaZ,
+  WorkspaceChangeDiffUnavailableReasonSchemaZ: () => WorkspaceChangeDiffUnavailableReasonSchemaZ,
+  WorkspaceChangeEntrySchemaZ: () => WorkspaceChangeEntrySchemaZ,
+  WorkspaceChangeGroupSchemaZ: () => WorkspaceChangeGroupSchemaZ,
+  WorkspaceChangeResourceIdSchemaZ: () => WorkspaceChangeResourceIdSchemaZ,
+  WorkspaceChangeStatusSchemaZ: () => WorkspaceChangeStatusSchemaZ,
+  WorkspaceChangesCatalogEnvelopeV1SchemaZ: () => WorkspaceChangesCatalogEnvelopeV1SchemaZ,
+  WorkspaceChangesCatalogResourceV1SchemaZ: () => WorkspaceChangesCatalogResourceV1SchemaZ,
+  WorkspaceChangesCatalogUnavailableReasonSchemaZ: () => WorkspaceChangesCatalogUnavailableReasonSchemaZ,
+  WorkspaceChangesRevisionSchemaZ: () => WorkspaceChangesRevisionSchemaZ,
+  WorkspaceCheckoutStateSchemaZ: () => WorkspaceCheckoutStateSchemaZ,
+  WorkspaceCommandSchemaZ: () => WorkspaceCommandSchemaZ,
+  WorkspaceCompositeViewSchemaZ: () => WorkspaceCompositeViewSchemaZ,
+  WorkspaceConfigV1SchemaZ: () => WorkspaceConfigV1SchemaZ,
+  WorkspaceDiffHunkSchemaZ: () => WorkspaceDiffHunkSchemaZ,
+  WorkspaceDiffLineKindSchemaZ: () => WorkspaceDiffLineKindSchemaZ,
+  WorkspaceDiffLineSchemaZ: () => WorkspaceDiffLineSchemaZ,
+  WorkspaceDockSnapshotSchemaZ: () => WorkspaceDockSnapshotSchemaZ,
+  WorkspaceFileBreadcrumbSchemaZ: () => WorkspaceFileBreadcrumbSchemaZ,
+  WorkspaceFileEntryKindSchemaZ: () => WorkspaceFileEntryKindSchemaZ,
+  WorkspaceFileEntrySchemaZ: () => WorkspaceFileEntrySchemaZ,
+  WorkspaceFileGitStatusSchemaZ: () => WorkspaceFileGitStatusSchemaZ,
+  WorkspaceFilePreviewEnvelopeV1SchemaZ: () => WorkspaceFilePreviewEnvelopeV1SchemaZ,
+  WorkspaceFilePreviewResourceV1SchemaZ: () => WorkspaceFilePreviewResourceV1SchemaZ,
+  WorkspaceFilePreviewUnavailableReasonSchemaZ: () => WorkspaceFilePreviewUnavailableReasonSchemaZ,
+  WorkspaceFileResourceIdSchemaZ: () => WorkspaceFileResourceIdSchemaZ,
+  WorkspaceFilesCatalogEnvelopeV1SchemaZ: () => WorkspaceFilesCatalogEnvelopeV1SchemaZ,
+  WorkspaceFilesCatalogResourceV1SchemaZ: () => WorkspaceFilesCatalogResourceV1SchemaZ,
+  WorkspaceFilesCatalogUnavailableReasonSchemaZ: () => WorkspaceFilesCatalogUnavailableReasonSchemaZ,
+  WorkspaceFilesRevisionSchemaZ: () => WorkspaceFilesRevisionSchemaZ,
+  WorkspaceFullPanelViewSchemaZ: () => WorkspaceFullPanelViewSchemaZ,
+  WorkspaceHarnessProfileSchemaZ: () => WorkspaceHarnessProfileSchemaZ,
+  WorkspaceIdSchemaZ: () => WorkspaceIdSchemaZ,
+  WorkspaceLayoutApplyPlanSchemaZ: () => WorkspaceLayoutApplyPlanSchemaZ,
+  WorkspaceLayoutSnapshotSchemaZ: () => WorkspaceLayoutSnapshotSchemaZ,
+  WorkspaceListResponseSchemaZ: () => WorkspaceListResponseSchemaZ,
+  WorkspaceMissionDefaultsSchemaZ: () => WorkspaceMissionDefaultsSchemaZ,
+  WorkspaceMissionsEnvelopeV1SchemaZ: () => WorkspaceMissionsEnvelopeV1SchemaZ,
+  WorkspaceMissionsResourceV1SchemaZ: () => WorkspaceMissionsResourceV1SchemaZ,
+  WorkspaceMultiplexerHostResultSchemaZ: () => WorkspaceMultiplexerHostResultSchemaZ,
+  WorkspaceMultiplexerIntentSchemaZ: () => WorkspaceMultiplexerIntentSchemaZ,
+  WorkspaceMultiplexerMutationRequestSchemaZ: () => WorkspaceMultiplexerMutationRequestSchemaZ,
+  WorkspaceMultiplexerMutationResultSchemaZ: () => WorkspaceMultiplexerMutationResultSchemaZ,
+  WorkspaceMultiplexerNameSchemaZ: () => WorkspaceMultiplexerNameSchemaZ,
+  WorkspaceMultiplexerWindowTargetSchemaZ: () => WorkspaceMultiplexerWindowTargetSchemaZ,
+  WorkspaceNamedLayoutSchemaZ: () => WorkspaceNamedLayoutSchemaZ,
+  WorkspaceObservationSchemaZ: () => WorkspaceObservationSchemaZ,
+  WorkspaceObservedPaneSchemaZ: () => WorkspaceObservedPaneSchemaZ,
+  WorkspaceOpenArgumentsSchemaZ: () => WorkspaceOpenArgumentsSchemaZ,
+  WorkspaceOpenCancelInputZ: () => WorkspaceOpenCancelInputZ,
+  WorkspaceOpenCancelResultZ: () => WorkspaceOpenCancelResultZ,
+  WorkspaceOpenCancelledHostResultSchemaZ: () => WorkspaceOpenCancelledHostResultSchemaZ,
+  WorkspaceOpenCancelledResultSchemaZ: () => WorkspaceOpenCancelledResultSchemaZ,
+  WorkspaceOpenCommitInputZ: () => WorkspaceOpenCommitInputZ,
+  WorkspaceOpenCommitResultZ: () => WorkspaceOpenCommitResultZ,
+  WorkspaceOpenCommittedHostResultSchemaZ: () => WorkspaceOpenCommittedHostResultSchemaZ,
+  WorkspaceOpenCommittedResultSchemaZ: () => WorkspaceOpenCommittedResultSchemaZ,
+  WorkspaceOpenDecisionArgumentsSchemaZ: () => WorkspaceOpenDecisionArgumentsSchemaZ,
+  WorkspaceOpenHostResultSchemaZ: () => WorkspaceOpenHostResultSchemaZ,
+  WorkspaceOpenInputZ: () => WorkspaceOpenInputZ,
+  WorkspaceOpenMutationRequestSchemaZ: () => WorkspaceOpenMutationRequestSchemaZ,
+  WorkspaceOpenMutationResultSchemaZ: () => WorkspaceOpenMutationResultSchemaZ,
+  WorkspaceOpenPrepareArgumentsSchemaZ: () => WorkspaceOpenPrepareArgumentsSchemaZ,
+  WorkspaceOpenPrepareInputZ: () => WorkspaceOpenPrepareInputZ,
+  WorkspaceOpenPrepareResultZ: () => WorkspaceOpenPrepareResultZ,
+  WorkspaceOpenPreparedHostResultSchemaZ: () => WorkspaceOpenPreparedHostResultSchemaZ,
+  WorkspaceOpenPreparedProofSchemaZ: () => WorkspaceOpenPreparedProofSchemaZ,
+  WorkspaceOpenPreparedResultSchemaZ: () => WorkspaceOpenPreparedResultSchemaZ,
+  WorkspaceOpenResultZ: () => WorkspaceOpenResultZ,
+  WorkspaceOpenedResourceSchemaZ: () => WorkspaceOpenedResourceSchemaZ,
+  WorkspaceOperationIdSchemaZ: () => WorkspaceOperationIdSchemaZ,
+  WorkspacePaneBindingSchemaZ: () => WorkspacePaneBindingSchemaZ,
+  WorkspacePaneCreateArgumentsSchemaZ: () => WorkspacePaneCreateArgumentsSchemaZ,
+  WorkspacePaneCreateHostResultSchemaZ: () => WorkspacePaneCreateHostResultSchemaZ,
+  WorkspacePaneCreateInputZ: () => WorkspacePaneCreateInputZ,
+  WorkspacePaneCreateInvocationSchemaZ: () => WorkspacePaneCreateInvocationSchemaZ,
+  WorkspacePaneCreateMutationRequestSchemaZ: () => WorkspacePaneCreateMutationRequestSchemaZ,
+  WorkspacePaneCreateMutationResultSchemaZ: () => WorkspacePaneCreateMutationResultSchemaZ,
+  WorkspacePaneCreateResultZ: () => WorkspacePaneCreateResultZ,
+  WorkspacePaneCreatedResourceSchemaZ: () => WorkspacePaneCreatedResourceSchemaZ,
+  WorkspacePaneCreationPlacementSchemaZ: () => WorkspacePaneCreationPlacementSchemaZ,
+  WorkspacePaneCreationReferenceSchemaZ: () => WorkspacePaneCreationReferenceSchemaZ,
+  WorkspacePaneCreationWorkspaceNameSchemaZ: () => WorkspacePaneCreationWorkspaceNameSchemaZ,
+  WorkspacePaneCwdSchemaZ: () => WorkspacePaneCwdSchemaZ,
+  WorkspacePaneDefinitionSchemaZ: () => WorkspacePaneDefinitionSchemaZ,
+  WorkspacePaneDisplayTitleSchemaZ: () => WorkspacePaneDisplayTitleSchemaZ,
+  WorkspacePaneKillArgumentsSchemaZ: () => WorkspacePaneKillArgumentsSchemaZ,
+  WorkspacePaneKillInputZ: () => WorkspacePaneKillInputZ,
+  WorkspacePaneKillResultSchemaZ: () => WorkspacePaneKillResultSchemaZ,
+  WorkspacePaneKillResultZ: () => WorkspacePaneKillResultZ,
+  WorkspacePaneRectSchemaZ: () => WorkspacePaneRectSchemaZ,
+  WorkspacePaneResizeArgumentsSchemaZ: () => WorkspacePaneResizeArgumentsSchemaZ,
+  WorkspacePaneResizeInputZ: () => WorkspacePaneResizeInputZ,
+  WorkspacePaneResizeResultSchemaZ: () => WorkspacePaneResizeResultSchemaZ,
+  WorkspacePaneResizeResultZ: () => WorkspacePaneResizeResultZ,
+  WorkspacePaneSelectArgumentsSchemaZ: () => WorkspacePaneSelectArgumentsSchemaZ,
+  WorkspacePaneSelectInputZ: () => WorkspacePaneSelectInputZ,
+  WorkspacePaneSelectResultSchemaZ: () => WorkspacePaneSelectResultSchemaZ,
+  WorkspacePaneSelectResultZ: () => WorkspacePaneSelectResultZ,
+  WorkspacePaneSendArgumentsSchemaZ: () => WorkspacePaneSendArgumentsSchemaZ,
+  WorkspacePaneSendInputZ: () => WorkspacePaneSendInputZ,
+  WorkspacePaneSendResultSchemaZ: () => WorkspacePaneSendResultSchemaZ,
+  WorkspacePaneSendResultZ: () => WorkspacePaneSendResultZ,
+  WorkspacePaneSwapArgumentsSchemaZ: () => WorkspacePaneSwapArgumentsSchemaZ,
+  WorkspacePaneSwapInputZ: () => WorkspacePaneSwapInputZ,
+  WorkspacePaneSwapResultSchemaZ: () => WorkspacePaneSwapResultSchemaZ,
+  WorkspacePaneSwapResultZ: () => WorkspacePaneSwapResultZ,
+  WorkspacePaneTopologySchemaZ: () => WorkspacePaneTopologySchemaZ,
+  WorkspacePaneTreeNodeSchemaZ: () => WorkspacePaneTreeNodeSchemaZ,
+  WorkspacePaneZoomToggleArgumentsSchemaZ: () => WorkspacePaneZoomToggleArgumentsSchemaZ,
+  WorkspacePaneZoomToggleInputZ: () => WorkspacePaneZoomToggleInputZ,
+  WorkspacePaneZoomToggleResultSchemaZ: () => WorkspacePaneZoomToggleResultSchemaZ,
+  WorkspacePaneZoomToggleResultZ: () => WorkspacePaneZoomToggleResultZ,
+  WorkspacePanelKindSchemaZ: () => WorkspacePanelKindSchemaZ,
+  WorkspaceProjectIdentitySchemaZ: () => WorkspaceProjectIdentitySchemaZ,
+  WorkspacePromoteArgumentsSchemaZ: () => WorkspacePromoteArgumentsSchemaZ,
+  WorkspacePromoteHostResultSchemaZ: () => WorkspacePromoteHostResultSchemaZ,
+  WorkspacePromoteInputZ: () => WorkspacePromoteInputZ,
+  WorkspacePromoteMutationRequestSchemaZ: () => WorkspacePromoteMutationRequestSchemaZ,
+  WorkspacePromoteMutationResultSchemaZ: () => WorkspacePromoteMutationResultSchemaZ,
+  WorkspacePromoteResultZ: () => WorkspacePromoteResultZ,
+  WorkspacePromotedResourceSchemaZ: () => WorkspacePromotedResourceSchemaZ,
+  WorkspacePromotionFailureCodeSchemaZ: () => WorkspacePromotionFailureCodeSchemaZ,
+  WorkspacePromotionFailureSchemaZ: () => WorkspacePromotionFailureSchemaZ,
+  WorkspaceRecoveryStateSchemaZ: () => WorkspaceRecoveryStateSchemaZ,
+  WorkspaceRelativeDisplayPathSchemaZ: () => WorkspaceRelativeDisplayPathSchemaZ,
+  WorkspaceRemovedFrameSchemaZ: () => WorkspaceRemovedFrameSchemaZ,
+  WorkspaceRenameArgumentsSchemaZ: () => WorkspaceRenameArgumentsSchemaZ,
+  WorkspaceRenameInputZ: () => WorkspaceRenameInputZ,
+  WorkspaceRenameResultSchemaZ: () => WorkspaceRenameResultSchemaZ,
+  WorkspaceRenameResultZ: () => WorkspaceRenameResultZ,
+  WorkspaceResizeAxisSchemaZ: () => WorkspaceResizeAxisSchemaZ,
+  WorkspaceResourceNameSchemaZ: () => WorkspaceResourceNameSchemaZ,
+  WorkspaceResourceOpaqueTokenSchemaZ: () => WorkspaceResourceOpaqueTokenSchemaZ,
+  WorkspaceResourceWorkspaceNameSchemaZ: () => WorkspaceResourceWorkspaceNameSchemaZ,
+  WorkspaceSchemaZ: () => WorkspaceSchemaZ,
+  WorkspaceSessionCreateArgumentsSchemaZ: () => WorkspaceSessionCreateArgumentsSchemaZ,
+  WorkspaceSessionCreateResultSchemaZ: () => WorkspaceSessionCreateResultSchemaZ,
+  WorkspaceSessionKillArgumentsSchemaZ: () => WorkspaceSessionKillArgumentsSchemaZ,
+  WorkspaceSessionKillInputZ: () => WorkspaceSessionKillInputZ,
+  WorkspaceSessionKillResultSchemaZ: () => WorkspaceSessionKillResultSchemaZ,
+  WorkspaceSessionKillResultZ: () => WorkspaceSessionKillResultZ,
+  WorkspaceSplitDirectionSchemaZ: () => WorkspaceSplitDirectionSchemaZ,
+  WorkspaceStateDiagnosticSchemaZ: () => WorkspaceStateDiagnosticSchemaZ,
+  WorkspaceStateV1SchemaZ: () => WorkspaceStateV1SchemaZ,
+  WorkspaceTerminalConfigSchemaZ: () => WorkspaceTerminalConfigSchemaZ,
+  WorkspaceTerminalCreateArgumentsSchemaZ: () => WorkspaceTerminalCreateArgumentsSchemaZ,
+  WorkspaceTerminalPaneSchemaZ: () => WorkspaceTerminalPaneSchemaZ,
+  WorkspaceTerminalRowSchemaZ: () => WorkspaceTerminalRowSchemaZ,
+  WorkspaceTimestampSchemaZ: () => WorkspaceTimestampSchemaZ,
+  WorkspaceWindowKillArgumentsSchemaZ: () => WorkspaceWindowKillArgumentsSchemaZ,
+  WorkspaceWindowKillInputZ: () => WorkspaceWindowKillInputZ,
+  WorkspaceWindowKillResultSchemaZ: () => WorkspaceWindowKillResultSchemaZ,
+  WorkspaceWindowKillResultZ: () => WorkspaceWindowKillResultZ,
+  WorkspaceWindowSplitArgumentsSchemaZ: () => WorkspaceWindowSplitArgumentsSchemaZ,
+  WorkspaceWindowSplitInputZ: () => WorkspaceWindowSplitInputZ,
+  WorkspaceWindowSplitResultSchemaZ: () => WorkspaceWindowSplitResultSchemaZ,
+  WorkspaceWindowSplitResultZ: () => WorkspaceWindowSplitResultZ,
+  WorkspaceWorkbenchStateSchemaZ: () => WorkspaceWorkbenchStateSchemaZ,
+  agentStatusEventSchema: () => agentStatusEventSchema,
+  agentStatusSchema: () => agentStatusSchema,
+  agentsParamsSchema: () => agentsParamsSchema,
+  applicationShellActionTraceV1: () => applicationShellActionTraceV1,
+  applicationShellCommandArgumentSchema: () => applicationShellCommandArgumentSchema,
+  applicationShellCommandDescriptor: () => applicationShellCommandDescriptor,
+  applicationShellCommandInvocation: () => applicationShellCommandInvocation,
+  applyApplicationShellInvocationV1: () => applyApplicationShellInvocationV1,
+  buildStartupReadinessLadder: () => buildStartupReadinessLadder,
+  canonicalSurface: () => canonicalSurface,
+  closeTopOverlay: () => closeTopOverlay,
+  commandsToOpenSurface: () => commandsToOpenSurface,
+  compareWorkspaceChangeEntries: () => compareWorkspaceChangeEntries,
+  compareWorkspaceFileEntries: () => compareWorkspaceFileEntries,
+  contrastRatio: () => contrastRatio,
+  controlErrorSchema: () => controlErrorSchema,
+  controlEventSchema: () => controlEventSchema,
+  controlIdSchema: () => controlIdSchema,
+  controlRequestSchema: () => controlRequestSchema,
+  controlResponseSchema: () => controlResponseSchema,
+  createClientViewStateV1: () => createClientViewStateV1,
+  createDaemonResourceMethods: () => createDaemonResourceMethods,
+  createScriptTerminalId: () => createScriptTerminalId,
+  createWidgetMarkerByteWatcher: () => createWidgetMarkerByteWatcher,
+  daemonWorkspaceRouteName: () => daemonWorkspaceRouteName,
+  decodeBase64Url: () => decodeBase64Url,
+  decodeWidgetMarkerLine: () => decodeWidgetMarkerLine,
+  deriveAttentionBlend: () => deriveAttentionBlend,
+  deriveFocusedHeader: () => deriveFocusedHeader,
+  detectWidgetMarker: () => detectWidgetMarker,
+  detectWidgetMarkerFromReplicaRows: () => detectWidgetMarkerFromReplicaRows,
+  deterministicFocusFallback: () => deterministicFocusFallback,
+  encodeBase64Url: () => encodeBase64Url,
+  encodeWidgetMarkerLine: () => encodeWidgetMarkerLine,
+  explainParamsSchema: () => explainParamsSchema,
+  filterWorkspaceChanges: () => filterWorkspaceChanges,
+  findVisualThemePreset: () => findVisualThemePreset,
+  flattenWorkspaceChangesView: () => flattenWorkspaceChangesView,
+  flattenWorkspaceFileTree: () => flattenWorkspaceFileTree,
+  fleetActivityToNodeStatus: () => fleetActivityToNodeStatus,
+  fleetDisplayNodeId: () => fleetDisplayNodeId,
+  fleetSessionGroupId: () => fleetSessionGroupId,
+  groupWorkspaceChanges: () => groupWorkspaceChanges,
+  isActionName: () => isActionName,
+  isCancellableDaemonResourceKind: () => isCancellableDaemonResourceKind,
+  isDaemonResourceKind: () => isDaemonResourceKind,
+  isDaemonWireProtocolCompatible: () => isDaemonWireProtocolCompatible,
+  isInferredEdgeKind: () => isInferredEdgeKind,
+  isMultiplexerVerbId: () => isMultiplexerVerbId,
+  loadVisualThemeDocument: () => loadVisualThemeDocument,
+  mixSrgbColors: () => mixSrgbColors,
+  moveWorkspaceChangeSelection: () => moveWorkspaceChangeSelection,
+  moveWorkspaceFileSelection: () => moveWorkspaceFileSelection,
+  multiplexerVerb: () => multiplexerVerb,
+  multiplexerVerbAvailability: () => multiplexerVerbAvailability,
+  multiplexerVerbsForScope: () => multiplexerVerbsForScope,
+  projectAgentGraphOverlay: () => projectAgentGraphOverlay,
+  projectApplicationShellV1: () => projectApplicationShellV1,
+  projectDesktopStartupReadiness: () => projectDesktopStartupReadiness,
+  projectFleetAgentGraphOverlay: () => projectFleetAgentGraphOverlay,
+  projectWorkspaceCatalogV2: () => projectWorkspaceCatalogV2,
+  projectWorkspaceCatalogV3: () => projectWorkspaceCatalogV3,
+  readableForeground: () => readableForeground,
+  reconcileClientViewStateV1: () => reconcileClientViewStateV1,
+  refuseReadOnlyGeometryOwner: () => refuseReadOnlyGeometryOwner,
+  relativeLuminance: () => relativeLuminance,
+  replayApplicationShellActionTraceV1: () => replayApplicationShellActionTraceV1,
+  resolveAgentStatusPresentation: () => resolveAgentStatusPresentation,
+  resolvePaneAppearance: () => resolvePaneAppearance,
+  resolveSemanticInputLayer: () => resolveSemanticInputLayer,
+  resolveVisualTheme: () => resolveVisualTheme,
+  restartAgentParamsSchema: () => restartAgentParamsSchema,
+  richCardTextFallback: () => richCardTextFallback,
+  sendParamsSchema: () => sendParamsSchema,
+  sharedMonotonicMicros: () => sharedMonotonicMicros,
+  sortWorkspaceChangeEntries: () => sortWorkspaceChangeEntries,
+  sortWorkspaceFileEntries: () => sortWorkspaceFileEntries,
+  spawnParamsSchema: () => spawnParamsSchema,
+  spawnPlacementSchema: () => spawnPlacementSchema,
+  startupReadinessBlockingRung: () => startupReadinessBlockingRung,
+  statusToneForDomainStatus: () => statusToneForDomainStatus,
+  stopAgentParamsSchema: () => stopAgentParamsSchema,
+  subscribeParamsSchema: () => subscribeParamsSchema,
+  summarizeWorkspaceChanges: () => summarizeWorkspaceChanges,
+  terminalCreateRequestSchema: () => terminalCreateRequestSchema,
+  terminalKindSchema: () => terminalKindSchema,
+  terminalRenameRequestSchema: () => terminalRenameRequestSchema,
+  toggleWorkspaceFileExpansion: () => toggleWorkspaceFileExpansion,
+  waitParamsSchema: () => waitParamsSchema,
+  widgetLogicalLines: () => widgetLogicalLines,
+  widgetMarkerAnnouncement: () => widgetMarkerAnnouncement,
+  widgetMarkerDigest: () => widgetMarkerDigest,
+  workspacePaneCreateInvocation: () => workspacePaneCreateInvocation
+});
 var init_src = __esm({
   "packages/contracts/src/index.ts"() {
     "use strict";
@@ -11537,8 +13535,8 @@ var init_targeting = __esm({
 });
 
 // packages/tmux-bridge/src/index.ts
-var src_exports = {};
-__export(src_exports, {
+var src_exports2 = {};
+__export(src_exports2, {
   TmuxError: () => TmuxError,
   _getSpawner: () => _getSpawner,
   _setExecutor: () => _setExecutor,
@@ -19403,8 +21401,8 @@ async function launch(targetDir, {
     paneActions: paneActions2,
     diagnostics: launchDiagnostics
   } = collectPaneStartupPlan(rows, paneMap, firstPanesOfRows, dir);
-  for (const diagnostic4 of launchDiagnostics) {
-    console.error(`tmux-ide: warning: ${diagnostic4.message}`);
+  for (const diagnostic5 of launchDiagnostics) {
+    console.error(`tmux-ide: warning: ${diagnostic5.message}`);
   }
   setWindowOption(
     rootPaneId,
@@ -22049,13 +24047,13 @@ function dockTools(projectId) {
   const tools = [];
   for (const surface of CANONICAL_SURFACE_REGISTRY) {
     if (surface.kind !== "dock-tool") continue;
-    const unavailable = `${surface.label} capability is not available from the daemon application-shell resource yet`;
+    const unavailable2 = `${surface.label} capability is not available from the daemon application-shell resource yet`;
     const common = (id2) => ({
       id: id2,
       label: surface.label,
       shortcut: surface.shortcut,
       unreadCount: 0,
-      disabledReason: unavailable
+      disabledReason: unavailable2
     });
     switch (surface.id) {
       case "files":
@@ -24204,7 +26202,7 @@ async function openProjectRuntimeRepository(dir, options = {}) {
 }
 function parseDocumentEnvelope(path2, raw) {
   const value = parseJson(raw, () => new CorruptRuntimeDocumentError(path2, "invalid JSON"));
-  if (!isRecord(value)) throw new CorruptRuntimeDocumentError(path2, "envelope must be an object");
+  if (!isRecord2(value)) throw new CorruptRuntimeDocumentError(path2, "envelope must be an object");
   if (!sameKeys(Object.keys(value), ["version", "revision", "payload"])) {
     throw new CorruptRuntimeDocumentError(path2, "envelope has invalid keys");
   }
@@ -24277,7 +26275,7 @@ function parseEventLog(stream, raw) {
       line,
       () => new CorruptEventLogError(stream, lineNumber, "invalid JSON")
     );
-    if (!isRecord(value))
+    if (!isRecord2(value))
       throw new CorruptEventLogError(stream, lineNumber, "event must be an object");
     if (!sameKeys(Object.keys(value), ["version", "sequence", "timestamp", "payload"])) {
       throw new CorruptEventLogError(stream, lineNumber, "event has invalid keys");
@@ -24370,7 +26368,7 @@ function assertJsonPayload(value, errorFactory = (path2, reason) => new InvalidJ
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
-function isRecord(value) {
+function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function sameKeys(actual, expected) {
@@ -25077,10 +27075,10 @@ function fsWatchDirectory(dir, onChange, ignore2, debounceMs, requireInstalled, 
   let timeout = null;
   let handle = null;
   let stopping = false;
-  let unavailable = false;
+  let unavailable2 = false;
   const reportUnavailable = (error) => {
-    if (stopping || unavailable) return;
-    unavailable = true;
+    if (stopping || unavailable2) return;
+    unavailable2 = true;
     onUnavailable(error);
   };
   try {
@@ -25120,10 +27118,10 @@ async function watchDirectory(dir, onChange, options) {
   }
   let timeout = null;
   let stopping = false;
-  let unavailable = false;
+  let unavailable2 = false;
   const reportUnavailable = (error) => {
-    if (stopping || unavailable) return;
-    unavailable = true;
+    if (stopping || unavailable2) return;
+    unavailable2 = true;
     options?.onUnavailable?.(error);
   };
   const subscription = await native.subscribe(
@@ -25133,7 +27131,7 @@ async function watchDirectory(dir, onChange, options) {
         reportUnavailable(err);
         return;
       }
-      if (stopping || unavailable) return;
+      if (stopping || unavailable2) return;
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => onChange(events), debounceMs);
     },
@@ -33660,10 +35658,10 @@ function emptyAppWindowDocument(updatedAt) {
 }
 function parseAppWindowDocument(value, fallbackTimestamp) {
   const fallback = emptyAppWindowDocument(fallbackTimestamp);
-  if (!isRecord2(value)) {
+  if (!isRecord3(value)) {
     return {
       document: fallback,
-      diagnostics: [diagnostic("MALFORMED", "$", "app window document must be an object")],
+      diagnostics: [diagnostic2("MALFORMED", "$", "app window document must be an object")],
       writeProtected: false
     };
   }
@@ -33672,7 +35670,7 @@ function parseAppWindowDocument(value, fallbackTimestamp) {
     return {
       document: fallback,
       diagnostics: [
-        diagnostic(
+        diagnostic2(
           "UNSUPPORTED_VERSION",
           "$.version",
           `unsupported app window document version ${String(version)}`
@@ -33688,7 +35686,7 @@ function parseAppWindowDocument(value, fallbackTimestamp) {
   return {
     document: fallback,
     diagnostics: parsed.error.issues.map(
-      (issue) => diagnostic(
+      (issue) => diagnostic2(
         "INVALID_FIELD",
         issue.path.length === 0 ? "$" : `$.${issue.path.map(String).join(".")}`,
         issue.message
@@ -33699,19 +35697,19 @@ function parseAppWindowDocument(value, fallbackTimestamp) {
 }
 function migrateWorkspaceUiStateV2ToAppWindowDocument(value, options) {
   const migratedAt = AppWindowTimestampSchemaZ.parse(options.migratedAt);
-  if (!isRecord2(value) || ownValue(value, "version") !== 2) {
+  if (!isRecord3(value) || ownValue(value, "version") !== 2) {
     throw new Error("WorkspaceUiStateV2 is required for app window migration");
   }
   const diagnostics = [
-    diagnostic("MIGRATED", "$", "migrated WorkspaceUiStateV2 to app window document V1")
+    diagnostic2("MIGRATED", "$", "migrated WorkspaceUiStateV2 to app window document V1")
   ];
   const activeValue = ownValue(value, "active");
-  const active2 = isRecord2(activeValue) ? activeValue : null;
+  const active2 = isRecord3(activeValue) ? activeValue : null;
   const activeViewId = ownString(active2, "viewId");
   const activePanelValue = ownValue(active2, "panel");
   const activePanel = typeof activePanelValue === "string" && LEGACY_PANELS.has(activePanelValue) ? activePanelValue : "terminals";
   const dockValue = ownValue(value, "dock");
-  const dock = isRecord2(dockValue) ? dockValue : null;
+  const dock = isRecord3(dockValue) ? dockValue : null;
   const dockTabValue = ownValue(dock, "activeTab");
   const requestedDockTab = typeof dockTabValue === "string" && LEGACY_DOCK_TABS.has(dockTabValue) ? dockTabValue : "files";
   const dockMode = legacyDockMode(ownValue(dock, "mode"), diagnostics);
@@ -33724,7 +35722,7 @@ function migrateWorkspaceUiStateV2ToAppWindowDocument(value, options) {
   );
   if (activePanel === "terminals" && terminalSourceIds.length === 0) {
     diagnostics.push(
-      diagnostic(
+      diagnostic2(
         "TERMINAL_SOURCE_REQUIRED",
         "$.active",
         "terminal canvas was not persisted because no durable terminal source id was supplied"
@@ -33743,17 +35741,17 @@ function migrateWorkspaceUiStateV2ToAppWindowDocument(value, options) {
   const windowIdByViewId = /* @__PURE__ */ new Map();
   const deferredViewIds = /* @__PURE__ */ new Set();
   const viewsValue = ownValue(value, "views");
-  const views = isRecord2(viewsValue) ? viewsValue : {};
+  const views = isRecord3(viewsValue) ? viewsValue : {};
   for (const [viewId, rawView] of Object.entries(views).sort(
     ([left], [right]) => left.localeCompare(right)
   )) {
-    if (!isRecord2(rawView)) continue;
+    if (!isRecord3(rawView)) continue;
     const surface = legacyNativeSurface(ownValue(rawView, "panel"));
     if (!surface) continue;
     if (Object.hasOwn(rawView, "layout")) {
       deferredViewIds.add(viewId);
       diagnostics.push(
-        diagnostic(
+        diagnostic2(
           "COMPOSITE_LAYOUT_DEFERRED",
           `$.views.${viewId}.layout`,
           "composite layout state needs its configured layout tree before app-window migration"
@@ -33967,7 +35965,7 @@ function stableLegacyResourceId(viewId) {
 function legacyDockMode(value, diagnostics) {
   if (value === "collapsed" || value === "open" || value === "maximized") return value;
   diagnostics.push(
-    diagnostic("FIELD_DEFAULTED", "$.dock.mode", "invalid dock mode defaulted to open")
+    diagnostic2("FIELD_DEFAULTED", "$.dock.mode", "invalid dock mode defaulted to open")
   );
   return "open";
 }
@@ -33977,7 +35975,7 @@ function legacyPreferredHeight(value, diagnostics) {
     return value;
   }
   diagnostics.push(
-    diagnostic(
+    diagnostic2(
       "FIELD_DEFAULTED",
       "$.dock.preferredHeight",
       "invalid preferred dock height defaulted to automatic"
@@ -33988,7 +35986,7 @@ function legacyPreferredHeight(value, diagnostics) {
 function legacyFocusZone(value, diagnostics) {
   if (value === "canvas" || value === "dock-tabs" || value === "dock-body") return value;
   diagnostics.push(
-    diagnostic("FIELD_DEFAULTED", "$.dock.focusZone", "invalid focus zone defaulted to canvas")
+    diagnostic2("FIELD_DEFAULTED", "$.dock.focusZone", "invalid focus zone defaulted to canvas")
   );
   return "canvas";
 }
@@ -34036,10 +36034,10 @@ function canonicalScene(scene) {
     focusedWindowId: scene.focusedWindowId
   };
 }
-function diagnostic(code, path2, message) {
+function diagnostic2(code, path2, message) {
   return { code, path: path2, message };
 }
-function isRecord2(value) {
+function isRecord3(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 function ownValue(record, key) {
@@ -34665,7 +36663,7 @@ function loadAppWindowDocumentInternal(repository, options, writer) {
       document: emptyAppWindowDocument(options.loadedAt),
       revision: null,
       writeProtected: false,
-      diagnostics: [diagnostic2("MISSING", APP_WINDOW_DOCUMENT_PATH, "app window state is absent")],
+      diagnostics: [diagnostic3("MISSING", APP_WINDOW_DOCUMENT_PATH, "app window state is absent")],
       recoveryToken: null
     };
   }
@@ -34722,7 +36720,7 @@ function writeAppWindowDocumentLocked(repository, writer, expectedRevision, docu
     throw new AppWindowRepositoryError(
       "WRITE_FAILED",
       `app window state could not be written: ${error.message}`,
-      [diagnostic2("WRITE_FAILED", APP_WINDOW_DOCUMENT_PATH, error.message)],
+      [diagnostic3("WRITE_FAILED", APP_WINDOW_DOCUMENT_PATH, error.message)],
       error
     );
   }
@@ -34779,7 +36777,7 @@ function resetAppWindowDocumentLocked(repository, writer, request) {
       revision: recovered.revision,
       writeProtected: false,
       diagnostics: [
-        diagnostic2(
+        diagnostic3(
           "RECOVERED",
           APP_WINDOW_DOCUMENT_PATH,
           `app window state was explicitly reset; prior bytes preserved at ${recovered.backupPath}`
@@ -34838,7 +36836,7 @@ function withAppWindowWriterLock(repository, options, action) {
     throw new AppWindowRepositoryError(
       "WRITE_FAILED",
       `app window writer lock failed: ${error.message}`,
-      [diagnostic2("WRITE_FAILED", APP_WINDOW_DOCUMENT_PATH, error.message)],
+      [diagnostic3("WRITE_FAILED", APP_WINDOW_DOCUMENT_PATH, error.message)],
       error
     );
   }
@@ -34922,7 +36920,7 @@ function migrationFailure(repository, options, error, context) {
     revision: null,
     writeProtected: optOut === null,
     diagnostics: [
-      diagnostic2(
+      diagnostic3(
         "MIGRATION_FAILED",
         LEGACY_WORKSPACE_UI_PATH,
         `${context}: ${error.message}${suffix}`
@@ -34943,7 +36941,7 @@ function protectedReadFailure(repository, loadedAt, error) {
     revision: null,
     writeProtected: true,
     diagnostics: [
-      diagnostic2(
+      diagnostic3(
         "READ_FAILED",
         APP_WINDOW_DOCUMENT_PATH,
         `app window state could not be read safely: ${error.message}`
@@ -34959,7 +36957,7 @@ function assertWritable(loaded) {
     "app window state is not safe to overwrite without explicit recovery",
     [
       ...loaded.diagnostics,
-      diagnostic2(
+      diagnostic3(
         "WRITE_PROTECTED",
         APP_WINDOW_DOCUMENT_PATH,
         "preserved current app window bytes without writing"
@@ -34979,7 +36977,7 @@ function revisionError(expected, actual, cause) {
     "REVISION_CONFLICT",
     `app window revision conflict: expected ${String(expected)}, actual ${String(actual)}`,
     [
-      diagnostic2(
+      diagnostic3(
         "REVISION_CONFLICT",
         APP_WINDOW_DOCUMENT_PATH,
         `expected ${String(expected)}, actual ${String(actual)}`
@@ -35008,7 +37006,7 @@ function validateExpectedRevision(value) {
   }
   return value;
 }
-function diagnostic2(code, path2, message) {
+function diagnostic3(code, path2, message) {
   return { code, path: path2, message };
 }
 var APP_WINDOW_DOCUMENT_PATH, LEGACY_WORKSPACE_UI_PATH, AppWindowRepositoryError, AppWindowService;
@@ -38083,7 +40081,7 @@ function planWorkspaceTmuxReconciliation(input) {
   for (const pane of input.panes) {
     if (!RUNTIME_PANE_ID.test(pane.runtimePaneId)) {
       diagnostics.push(
-        diagnostic3(
+        diagnostic4(
           "INVALID_RUNTIME_PANE",
           null,
           pane.semanticPaneId,
@@ -38095,7 +40093,7 @@ function planWorkspaceTmuxReconciliation(input) {
     }
     if (runtimeIds.has(pane.runtimePaneId)) {
       diagnostics.push(
-        diagnostic3(
+        diagnostic4(
           "DUPLICATE_RUNTIME_PANE",
           pane.runtimePaneId,
           pane.semanticPaneId,
@@ -38125,7 +40123,7 @@ function planWorkspaceTmuxReconciliation(input) {
     const priorSemanticId = priorByRuntime.get(pane.runtimePaneId) ?? null;
     if (priorSemanticId && priorSemanticId !== (stampIsUnique ? rawStamp : null)) {
       diagnostics.push(
-        diagnostic3(
+        diagnostic4(
           "STALE_RUNTIME_BINDING_IGNORED",
           pane.runtimePaneId,
           priorSemanticId,
@@ -38145,7 +40143,7 @@ function planWorkspaceTmuxReconciliation(input) {
     }
     if (rawStamp === null || rawStamp.length === 0) {
       diagnostics.push(
-        diagnostic3(
+        diagnostic4(
           "MISSING_SEMANTIC_STAMP",
           pane.runtimePaneId,
           null,
@@ -38155,7 +40153,7 @@ function planWorkspaceTmuxReconciliation(input) {
       );
     } else if (!stampIsValid) {
       diagnostics.push(
-        diagnostic3(
+        diagnostic4(
           "INVALID_SEMANTIC_STAMP",
           pane.runtimePaneId,
           rawStamp,
@@ -38165,7 +40163,7 @@ function planWorkspaceTmuxReconciliation(input) {
       );
     } else {
       diagnostics.push(
-        diagnostic3(
+        diagnostic4(
           "DUPLICATE_SEMANTIC_STAMP",
           pane.runtimePaneId,
           rawStamp,
@@ -38181,7 +40179,7 @@ function planWorkspaceTmuxReconciliation(input) {
     );
     if (!generated) {
       diagnostics.push(
-        diagnostic3(
+        diagnostic4(
           "SEMANTIC_ID_GENERATION_FAILED",
           pane.runtimePaneId,
           rawStamp,
@@ -38228,7 +40226,7 @@ function finalizeWorkspaceTmuxReconciliation(plan, outcomes) {
     }
     const reason = outcome?.error?.trim();
     diagnostics.push(
-      diagnostic3(
+      diagnostic4(
         "SEMANTIC_STAMP_BACK_FAILED",
         pane.runtimePaneId,
         pane.semanticPaneId,
@@ -38265,7 +40263,7 @@ function previousBindingsByRuntime(bindings) {
   }
   return byRuntime;
 }
-function diagnostic3(code, runtimePaneId, semanticPaneId3, message, degraded) {
+function diagnostic4(code, runtimePaneId, semanticPaneId3, message, degraded) {
   return { code, runtimePaneId, semanticPaneId: semanticPaneId3, message, degraded };
 }
 var RUNTIME_PANE_ID, DEFAULT_GENERATION_ATTEMPTS;
@@ -40805,13 +42803,13 @@ var init_session_channel = __esm({
         const semanticByRuntime = new Map(
           reconciliation.panes.map((pane) => [pane.runtimePaneId, pane.semanticPaneId])
         );
-        this.diagnostics = reconciliation.diagnostics.map((diagnostic4) => ({
-          code: diagnostic4.code,
-          message: diagnostic4.message.replace(
+        this.diagnostics = reconciliation.diagnostics.map((diagnostic5) => ({
+          code: diagnostic5.code,
+          message: diagnostic5.message.replace(
             /%[0-9]+/gu,
             (runtime) => semanticByRuntime.get(runtime) ?? "(unidentified pane)"
           ),
-          degraded: diagnostic4.degraded
+          degraded: diagnostic5.degraded
         }));
         this.degraded = reconciliation.degraded;
         for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
@@ -40875,9 +42873,9 @@ var init_session_channel = __esm({
         }
         return { left: 0, top: 0, width: 1, height: 1 };
       }
-      pushDiagnostic(diagnostic4) {
-        this.diagnostics = [...this.diagnostics.slice(-31), diagnostic4];
-        if (diagnostic4.degraded) this.degraded = true;
+      pushDiagnostic(diagnostic5) {
+        this.diagnostics = [...this.diagnostics.slice(-31), diagnostic5];
+        if (diagnostic5.degraded) this.degraded = true;
       }
       onChannelExit() {
         if (this.disposed) return;
@@ -55187,7 +57185,7 @@ var init_causal_cell_ledger = __esm({
           }
         });
       }
-      #fail(reason, diagnostic4) {
+      #fail(reason, diagnostic5) {
         if (this.#state === "settled") return;
         this.#state = "settled";
         this.#expiry.cancel();
@@ -55195,7 +57193,7 @@ var init_causal_cell_ledger = __esm({
           status: "failed",
           traceId: this.#probe.traceId,
           reason,
-          ...diagnostic4 ? { diagnostic: diagnostic4 } : {}
+          ...diagnostic5 ? { diagnostic: diagnostic5 } : {}
         });
       }
     };
@@ -70536,7 +72534,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.8",
+      version: "2.9.0-beta.9",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
@@ -73230,8 +75228,8 @@ async function migrate(targetDir, {
     }
     if (write) console.log(`Created ${workspacePath}`);
     else console.log(workspaceYaml.trimEnd());
-    for (const diagnostic4 of result.diagnostics) {
-      console.log(`warning ${diagnostic4.code} at ${diagnostic4.path}: ${diagnostic4.message}`);
+    for (const diagnostic5 of result.diagnostics) {
+      console.log(`warning ${diagnostic5.code} at ${diagnostic5.path}: ${diagnostic5.message}`);
     }
     for (const warning of warnings) {
       console.log(`warning ${warning.code}: ${warning.message}`);
@@ -79677,6 +81675,7 @@ var { positionals, values } = parseArgs({
   options: {
     json: { type: "boolean" },
     headless: { type: "boolean" },
+    ssh: { type: "string" },
     row: { type: "string" },
     pane: { type: "string" },
     title: { type: "string" },
@@ -79823,6 +81822,7 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide attach")}             ${dim3("Reattach to a running session")}
   ${cyan2("tmux-ide team")} [--json]      ${dim3("TUI over all tmux sessions (--json prints fleet state)")}
   ${cyan2("tmux-ide app")} [session]      ${dim3("Unified app: fleet home + live session mirror (bare = home)")}
+  ${cyan2("tmux-ide app --ssh <host>")}   ${dim3("Open an existing remote daemon through your SSH configuration")}
   ${cyan2("tmux-ide app --detachable")}   ${dim3("Host the app in tmux and attach \u2014 survives the terminal, ^q detaches")}
   ${cyan2("tmux-ide app --hosted")}       ${dim3("Alias for --detachable")}
   ${cyan2("tmux-ide switcher")}           ${dim3("Compact session picker (opens in the M-p popup on adopted sessions)")}
@@ -80097,6 +82097,21 @@ async function launchTeamCockpit() {
   await execBunWidget("team", teamScriptPath, [], "team");
 }
 async function runApp(appArgs) {
+  const ssh = values.ssh;
+  if (ssh !== void 0) {
+    const { SavedMachineSchema: SavedMachineSchema2 } = await Promise.resolve().then(() => (init_src(), src_exports));
+    if (!SavedMachineSchema2.shape.sshTarget.safeParse(ssh).success)
+      throw new IdeError("--ssh requires an SSH alias or user@host", {
+        code: "USAGE",
+        exitCode: 2
+      });
+    if (values.hosted === true || values.detachable === true)
+      throw new IdeError(
+        "SSH app connections currently run in the foreground; omit --hosted and --detachable",
+        { code: "USAGE", exitCode: 2 }
+      );
+    appArgs = [...appArgs, `--ssh=${ssh}`];
+  }
   await ensureTuiLaunchAvailable(
     {
       surface: "app",
@@ -80110,8 +82125,8 @@ async function runApp(appArgs) {
     { log: (message) => process.stderr.write(`[tmux-ide] ${message}
 `) }
   );
-  await ensureCanonicalDaemon({ entryPath: nodeCliPath });
-  const hosted = wantsHostedApp({
+  if (ssh === void 0) await ensureCanonicalDaemon({ entryPath: nodeCliPath });
+  const hosted = ssh === void 0 && wantsHostedApp({
     flagDetachable: values.detachable === true,
     flagHosted: values.hosted === true,
     configDetachable: loadAppConfig().app.detachable,
@@ -80124,6 +82139,8 @@ function launchApp() {
   return runApp([]);
 }
 try {
+  if (values.ssh !== void 0 && (command !== "app" || values.headless))
+    throw new IdeError("--ssh is supported only by tmux-ide app", { code: "USAGE", exitCode: 2 });
   if (values.headless) {
     if (positionals.length > 0) {
       throw new IdeError("--headless cannot be combined with a command or project path", {
@@ -80899,7 +82916,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           closeSidebarPane2(existing);
           break;
         }
-        const { getSessionCwd: getSessionCwd3 } = await Promise.resolve().then(() => (init_src2(), src_exports));
+        const { getSessionCwd: getSessionCwd3 } = await Promise.resolve().then(() => (init_src2(), src_exports2));
         let dir = process.cwd();
         try {
           dir = getSessionCwd3(session) ?? dir;
@@ -80947,7 +82964,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         removeWorktree: removeWorktree2,
         WorktreeError: WorktreeError2
       } = await Promise.resolve().then(() => (init_worktree(), worktree_exports));
-      const { getSessionCwd: getSessionCwd3, hasSession: hasSession2, killSession: killSession2, createDetachedSession: createDetachedSession2 } = await Promise.resolve().then(() => (init_src2(), src_exports));
+      const { getSessionCwd: getSessionCwd3, hasSession: hasSession2, killSession: killSession2, createDetachedSession: createDetachedSession2 } = await Promise.resolve().then(() => (init_src2(), src_exports2));
       let repoDir = process.cwd();
       const sessionArg = typeof values.session === "string" ? values.session.trim() : "";
       if (sessionArg && !sessionArg.includes("#{")) {

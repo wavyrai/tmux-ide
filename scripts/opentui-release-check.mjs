@@ -2,6 +2,43 @@
 
 import { spawnSync } from "node:child_process";
 
+// Hermetic SSH proofs: no remote host, real SSH process, or live tmux mutation.
+const sshTests = [
+  "packages/daemon/src/lib/__tests__/ssh-cli-entrypoint.test.ts",
+  "packages/daemon/src/lib/ssh-daemon-transport.test.ts",
+  "packages/daemon/src/lib/remote-daemon-info.test.ts",
+  "packages/daemon/src/terminal/protocol/native-backing-client.test.ts",
+  "packages/daemon/src/tui/mirror/open-tui-verified-routing.test.ts",
+  "packages/daemon/src/tui/mirror/application-shell-daemon-connection.test.ts",
+  "packages/daemon/src/tui/mirror/agent-provisioning-executor.test.ts",
+  "packages/daemon/src/tui/mirror/configless-session-bootstrap.test.ts",
+  "packages/daemon/src/tui/mirror/multiplexer-action-executor.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-daemon-authority.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-daemon-authority-consumers.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-entry.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/open-tui-generation-host.test.ts",
+];
+
+const sshSources = [
+  "packages/daemon/src/lib/ssh-daemon-transport.ts",
+  "packages/daemon/src/lib/remote-daemon-info.ts",
+  "packages/daemon/src/terminal/protocol/native-backing-client.ts",
+  "packages/daemon/src/tui/mirror/open-tui-verified-routing.ts",
+  "packages/daemon/src/tui/mirror/application-shell-daemon-connection.ts",
+  "packages/daemon/src/tui/mirror/agent-provisioning-executor.ts",
+  "packages/daemon/src/tui/mirror/configless-session-bootstrap.ts",
+  "packages/daemon/src/tui/mirror/multiplexer-action-executor.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-daemon-authority.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-entry.ts",
+  "packages/daemon/src/tui/mirror/runtime/open-tui-generation-host.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-home-agent-transport.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-home-catalog-owner.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-home-catalog.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-shell-catalog.tsx",
+  "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
+  "packages/daemon/src/tui/mirror/runtime/fleet-lifecycle-client.ts",
+];
+
 const checks = [
   {
     boundary: "OpenTUI release lint",
@@ -10,6 +47,8 @@ const checks = [
       "exec",
       "eslint",
       "bin/cli.ts",
+      ...sshSources,
+      ...sshTests,
       "packages/daemon/src/tui/main.ts",
       "packages/daemon/src/tui/compiled.ts",
       "packages/daemon/src/tui/compiled.test.ts",
@@ -57,6 +96,8 @@ const checks = [
       ".github/workflows/release.yml",
       "package.json",
       "bin/cli.ts",
+      ...sshSources,
+      ...sshTests,
       "packages/daemon/src/tui/main.ts",
       "packages/daemon/src/tui/compiled.ts",
       "packages/daemon/src/tui/compiled.test.ts",
@@ -122,6 +163,16 @@ const checks = [
       "packages/daemon/src/tui/compiled.test.ts",
       "packages/daemon/src/lib/__tests__/tui-binary.test.ts",
     ],
+  },
+  {
+    boundary: "OpenTUI current CLI build",
+    command: "pnpm",
+    args: ["build:cli"],
+  },
+  {
+    boundary: "OpenTUI SSH routing and machine isolation tests",
+    command: "pnpm",
+    args: ["exec", "vitest", "run", ...sshTests],
   },
   {
     boundary: "OpenTUI app control unit tests",

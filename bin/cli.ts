@@ -70,6 +70,7 @@ const { positionals, values } = parseArgs({
   options: {
     json: { type: "boolean" },
     headless: { type: "boolean" },
+    ssh: { type: "string" },
     row: { type: "string" },
     pane: { type: "string" },
     title: { type: "string" },
@@ -224,6 +225,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
   ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
   ${cyan("tmux-ide app")} [session]      ${dim("Unified app: fleet home + live session mirror (bare = home)")}
+  ${cyan("tmux-ide app --ssh <host>")}   ${dim("Open an existing remote daemon through your SSH configuration")}
   ${cyan("tmux-ide app --detachable")}   ${dim("Host the app in tmux and attach — survives the terminal, ^q detaches")}
   ${cyan("tmux-ide app --hosted")}       ${dim("Alias for --detachable")}
   ${cyan("tmux-ide switcher")}           ${dim("Compact session picker (opens in the M-p popup on adopted sessions)")}
@@ -573,6 +575,21 @@ async function launchTeamCockpit(): Promise<void> {
 // else runs the app in this terminal as before. The HOSTED_ENV guard keeps the
 // app INSIDE the host session from re-hosting itself.
 async function runApp(appArgs: string[]): Promise<void> {
+  const ssh = values.ssh;
+  if (ssh !== undefined) {
+    const { SavedMachineSchema } = await import("@tmux-ide/contracts");
+    if (!SavedMachineSchema.shape.sshTarget.safeParse(ssh).success)
+      throw new IdeError("--ssh requires an SSH alias or user@host", {
+        code: "USAGE",
+        exitCode: 2,
+      });
+    if (values.hosted === true || values.detachable === true)
+      throw new IdeError(
+        "SSH app connections currently run in the foreground; omit --hosted and --detachable",
+        { code: "USAGE", exitCode: 2 },
+      );
+    appArgs = [...appArgs, `--ssh=${ssh}`];
+  }
   // A clean npm install has neither a checkout runtime nor Bun. Acquire the
   // exact-version OpenTUI release artifact on the first explicit app launch so
   // users never need a hidden setup command. This must complete before daemon
@@ -593,13 +610,15 @@ async function runApp(appArgs: string[]): Promise<void> {
   );
   // The app is a thin client. Establish the one persistent daemon generation
   // only after its renderer is known-runnable, then mount against that owner.
-  await ensureCanonicalDaemon({ entryPath: nodeCliPath });
-  const hosted = wantsHostedApp({
-    flagDetachable: values.detachable === true,
-    flagHosted: values.hosted === true,
-    configDetachable: loadAppConfig().app.detachable,
-    hostedEnv: process.env[HOSTED_ENV] === "1",
-  });
+  if (ssh === undefined) await ensureCanonicalDaemon({ entryPath: nodeCliPath });
+  const hosted =
+    ssh === undefined &&
+    wantsHostedApp({
+      flagDetachable: values.detachable === true,
+      flagHosted: values.hosted === true,
+      configDetachable: loadAppConfig().app.detachable,
+      hostedEnv: process.env[HOSTED_ENV] === "1",
+    });
   if (hosted) launchHostedApp(appScriptPath, appArgs);
   else await execBunWidget("app", appScriptPath, appArgs, "app");
 }
@@ -613,6 +632,8 @@ function launchApp(): Promise<void> {
 }
 
 try {
+  if (values.ssh !== undefined && (command !== "app" || values.headless))
+    throw new IdeError("--ssh is supported only by tmux-ide app", { code: "USAGE", exitCode: 2 });
   if (values.headless) {
     if (positionals.length > 0) {
       throw new IdeError("--headless cannot be combined with a command or project path", {

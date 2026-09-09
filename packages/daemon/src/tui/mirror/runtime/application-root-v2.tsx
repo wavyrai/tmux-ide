@@ -1,3 +1,7 @@
+import {
+  applicationDaemonEndpoint,
+  disposeApplicationDaemonAuthority,
+} from "./application-daemon-authority.ts";
 import { createTerminalLinkOpener } from "./terminal-link-opener.ts";
 import { createApplicationPaneActivityOwner } from "./application-pane-activity-owner.ts";
 import { createApplicationConnectionFeedback } from "../workspace/connection-feedback.ts";
@@ -98,6 +102,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
     },
     createLifecycle() {
       lifecycle = new TuiApplicationLifecycle({ destroyRenderer: () => renderer.destroy() });
+      lifecycle.signal.addEventListener("abort", disposeApplicationDaemonAuthority, { once: true });
       return lifecycle;
     },
     mountRoot({ config }) {
@@ -411,6 +416,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         return (
           <KeyboardRouteProvider owner={componentKeyboardRoutes}>
             <ApplicationShellView
+              machineLabel={applicationDaemonEndpoint().label}
               appearanceOwner={appearance}
               homeAgents={homeAgents.presentation}
               dimensions={dimensions}
@@ -467,7 +473,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onCreateWindow={recoverHostFocus(() =>
                 paletteCommands.activate("new-window", "mouse"),
               )}
-              onCreateSession={recoverHostFocus(() => void homeCatalog.createLocalSession())}
+              onCreateSession={
+                applicationDaemonEndpoint().kind === "local"
+                  ? recoverHostFocus(() => void homeCatalog.createLocalSession())
+                  : undefined
+              }
               onCycleTheme={recoverHostFocus(appearance.openPicker)}
               onBeginPaneRename={recoverHostFocus(paneRename.begin)}
               onCancelPaneRename={recoverHostFocus(paneRename.cancel)}

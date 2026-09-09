@@ -740,6 +740,47 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
+  it("labels an empty remote host without offering a local session action", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const setup = await renderForTest(
+      () => (
+        <ApplicationShellView
+          machineLabel="build-host"
+          dimensions={() => ({ width: 100, height: 24 })}
+          surface={() => "terminals"}
+          semantic={() => null}
+          generationStatus={() => "unavailable"}
+          sessions={[]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          catalogPhase={() => "live"}
+          catalogNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => null}
+          layout={() => ({ current: null, windows: [] })}
+          focusedPane={() => null}
+          theme={theme}
+          palette={createTerminalPaletteProjection(theme)}
+          onOpenSurface={() => undefined}
+          onOpenSession={() => undefined}
+          onSetPaletteOpen={() => undefined}
+          onSelectPane={() => undefined}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+        />
+      ),
+      { width: 100, height: 24 },
+    );
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("SSH build-host");
+    expect(frame).toContain("Start a tmux session on build-host");
+    expect(frame).not.toContain("New local session");
+    expect(frame).not.toContain("Start a local workspace");
+    expectFrameBounds(frame, 100, 24);
+    setup.renderer.destroy();
+  });
+
   it("turns an authoritative empty catalog into an actionable first-run screen", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const palette = createTerminalPaletteProjection(theme);

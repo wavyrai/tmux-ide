@@ -28,6 +28,7 @@ export async function readNativeBacking(options: {
   for (const [key, value] of Object.entries(options.expected))
     url.searchParams.set(key, String(value));
   const response = await fetch(url, {
+    redirect: "error",
     headers: { Authorization: `Bearer ${options.ownerToken}` },
     signal: AbortSignal.any([options.signal, AbortSignal.timeout(5500)]),
   });

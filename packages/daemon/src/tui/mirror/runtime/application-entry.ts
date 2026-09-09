@@ -107,6 +107,28 @@ export function abandonPreparedConnection(
   );
 }
 
+export function consumeApplicationSshTarget(argv: readonly string[]): {
+  sshTarget: string | null;
+  argv: string[];
+} {
+  let sshTarget: string | null = null;
+  const remaining: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "--") {
+      remaining.push(...argv.slice(i));
+      break;
+    }
+    if (arg === "--ssh" || arg.startsWith("--ssh=")) {
+      const value = arg === "--ssh" ? argv[++i] : arg.slice(6);
+      if (sshTarget !== null || !value || value.startsWith("-"))
+        throw new Error("Expected one SSH alias after --ssh");
+      sshTarget = value;
+    } else remaining.push(arg);
+  }
+  return { sshTarget, argv: remaining };
+}
+
 /**
  * Bundle-safe lazy boundary for the production OpenTUI root.
  *
@@ -152,7 +174,24 @@ export async function startApplicationEntry(): Promise<void> {
       import("../application-shell-daemon-connection.ts").OpenTuiApplicationShellConnection | null
     >
   > = null;
+  let disposeAuthority: (() => void) | null = null;
+  let removeStartupSignals = () => {};
   try {
+    const target = consumeApplicationSshTarget(process.argv.slice(2));
+    if (target.sshTarget !== null) {
+      process.argv.splice(2, process.argv.length - 2, ...target.argv);
+      const authority = await import("./application-daemon-authority.ts");
+      disposeAuthority = authority.disposeApplicationDaemonAuthority;
+      const startup = new AbortController();
+      const abort = () => startup.abort();
+      const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+      for (const signal of signals) process.on(signal, abort);
+      removeStartupSignals = () => {
+        for (const signal of signals) process.off(signal, abort);
+      };
+      process.stderr.write("Connecting to SSH machine…\n");
+      await authority.initializeApplicationSshAuthority(target.sshTarget, startup.signal);
+    }
     await mark("root-import-start");
     initialPreparation = prepareExplicitApplicationTarget(process.argv.slice(2), (explicitTarget) =>
       import("../application-shell-daemon-connection.ts").then(
@@ -178,8 +217,11 @@ export async function startApplicationEntry(): Promise<void> {
           }
         : {},
     );
+    removeStartupSignals();
     await mark("entry-ready");
   } catch (error) {
+    removeStartupSignals();
+    disposeAuthority?.();
     abandonPreparedConnection(initialPreparation?.prepared);
     await mark("entry-failed", {
       error: error instanceof Error ? (error.stack ?? error.message) : String(error),

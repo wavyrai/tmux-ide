@@ -1,4 +1,8 @@
 import {
+  readApplicationDaemonInfo as readCanonicalDaemonInfo,
+  isApplicationDaemonAlive as isCanonicalDaemonAlive,
+} from "./runtime/application-daemon-authority.ts";
+import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   type CanonicalDaemonInfo,
   type DesktopApplicationShellTarget,
@@ -15,11 +19,7 @@ import type { PreparedTerminalRuntimeInventory } from "@tmux-ide/daemon-client/w
 import type { WorkspaceClientCatalogPort } from "@tmux-ide/daemon-client/workspace-client-types";
 import { WebSocket } from "ws";
 
-import {
-  canonicalDaemonUrl,
-  isCanonicalDaemonAlive,
-  readCanonicalDaemonInfo,
-} from "../../lib/canonical-daemon.ts";
+import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
 import {
   fetchCanonicalLiveWorkspaceRouting,
   workspaceNameForLiveSession,

@@ -1,3 +1,4 @@
+import { readApplicationDaemonInfo as readCanonicalDaemonInfo } from "./application-daemon-authority.ts";
 import { randomUUID } from "node:crypto";
 import type {
   FleetAgentMutateArguments,
@@ -9,7 +10,7 @@ import type {
 } from "@tmux-ide/contracts";
 import { dispatchOwnerAction } from "@tmux-ide/daemon-client/owner-action-client";
 
-import { canonicalDaemonUrl, readCanonicalDaemonInfo } from "../../../lib/canonical-daemon.ts";
+import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
 
 const HOST_CLIENT_ID = `opentui:${process.pid}`;
 

@@ -59,6 +59,7 @@ export function applicationShellKeyAction(
 }
 
 export interface ApplicationShellViewProps {
+  readonly machineLabel?: string | null;
   readonly paneInteractions?: TerminalWorkspaceProps["paneInteractions"];
   readonly recentPaneActivity?: () => readonly InteractionReceipt[];
   readonly appearanceOwner?: ApplicationAppearanceOwner;
@@ -210,6 +211,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
       keyed
       fallback={
         <ApplicationCatalogShell
+          machineLabel={props.machineLabel}
           appearanceOwner={props.appearanceOwner}
           homeAgents={props.homeAgents}
           dimensions={props.dimensions}
@@ -326,6 +328,11 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
             }}
           >
             <ApplicationShell
+              rightChips={
+                props.machineLabel
+                  ? [{ id: "machine", label: `SSH ${props.machineLabel}`, context: true }]
+                  : undefined
+              }
               theme={appearance.theme}
               projection={shell}
               help="F5 commands"

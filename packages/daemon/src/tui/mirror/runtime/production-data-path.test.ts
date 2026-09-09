@@ -230,7 +230,9 @@ describe("production OpenTUI v2 data path", () => {
     // and the renderer-destroyed callback into the existing lifecycle (no new transport owner).
     // Two additional composition lines separate lifecycle logging from explicit
     // performance diagnostics; decoding and log policy remain outside this root.
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(522);
+    // Ten SSH composition lines attach authority disposal, identify the selected machine,
+    // and hide local-only creation. Transport, reconnect, and identity policy remain in their owner.
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(532);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.
@@ -268,6 +270,12 @@ describe("production OpenTUI v2 data path", () => {
     // Two pure pointer helpers and one explicit host URL opener add no stream,
     // replica, polling or daemon owner. The row cache above adds one pure
     // rendering module; keep its cost visible in this bound.
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(125);
+    // Selecting a remote machine adds one process-scoped authority and its owned SSH transport.
+    // They replace local discovery for that process; they do not add another terminal replica.
+    expect(authorityDataPathFiles).toContain(
+      "packages/daemon/src/tui/mirror/runtime/application-daemon-authority.ts",
+    );
+    expect(authorityDataPathFiles).toContain("packages/daemon/src/lib/ssh-daemon-transport.ts");
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(127);
   });
 });

@@ -1,3 +1,8 @@
+import { applicationDaemonEndpoint } from "./runtime/application-daemon-authority.ts";
+import {
+  readApplicationDaemonInfo as readCanonicalDaemonInfo,
+  isApplicationDaemonAlive as isCanonicalDaemonAlive,
+} from "./runtime/application-daemon-authority.ts";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -11,11 +16,7 @@ import {
   dispatchOwnerAction,
 } from "@tmux-ide/daemon-client/owner-action-client";
 
-import {
-  canonicalDaemonUrl,
-  isCanonicalDaemonAlive,
-  readCanonicalDaemonInfo,
-} from "../../lib/canonical-daemon.ts";
+import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
 import type { SessionPaneDescriptor } from "../../terminal/protocol/session-descriptor-discovery.ts";
 import {
   fetchCanonicalWorkspaceRouting,
@@ -329,6 +330,8 @@ export async function executeTuiMultiplexerAction(
   const command = localCommand(action, context);
   const canonical = deps.readCanonicalDaemonInfo();
   if (!canonical || !(await deps.isCanonicalDaemonAlive(canonical))) {
+    if (applicationDaemonEndpoint().kind === "ssh")
+      return { status: "error", message: "remote machine is disconnected; action was not sent" };
     if (!command) return { status: "error", message: "no active tmux pane" };
     try {
       await runLocal(command);

@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../../test-support/opentui-production-root-manifest.ts";
 import {
   abandonPreparedConnection,
+  consumeApplicationSshTarget,
   createApplicationShellDiagnosticHandoff,
   explicitApplicationTarget,
   prepareExplicitApplicationTarget,
@@ -272,5 +273,26 @@ describe("production OpenTUI entry boundary", () => {
     expect(abandonPreparedConnection(pending)).toBeUndefined();
     rejectPrepared(new Error("late route failure"));
     await Promise.resolve();
+  });
+});
+
+describe("SSH entry argument ownership", () => {
+  it("strips both SSH forms while preserving the selected session", () => {
+    expect(consumeApplicationSshTarget(["--ssh", "build", "--target", "work"])).toEqual({
+      sshTarget: "build",
+      argv: ["--target", "work"],
+    });
+    expect(consumeApplicationSshTarget(["work", "--ssh=build"])).toEqual({
+      sshTarget: "build",
+      argv: ["work"],
+    });
+    expect(consumeApplicationSshTarget(["--", "--ssh=literal"])).toEqual({
+      sshTarget: null,
+      argv: ["--", "--ssh=literal"],
+    });
+  });
+  it("rejects duplicate or missing aliases", () => {
+    for (const argv of [["--ssh"], ["--ssh="], ["--ssh", "--target"], ["--ssh=a", "--ssh=b"]])
+      expect(() => consumeApplicationSshTarget(argv)).toThrow("Expected one SSH alias");
   });
 });

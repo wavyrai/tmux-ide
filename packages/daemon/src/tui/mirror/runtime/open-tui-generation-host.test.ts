@@ -195,14 +195,14 @@ const flushHostStart = async (): Promise<void> => {
 };
 
 function canonicalObserver() {
-  let listener: ((daemonGeneration: string) => void) | null = null;
+  let listener: ((daemonGeneration: string | null) => void) | null = null;
   const stop = vi.fn();
   return {
-    observe: vi.fn(async (next: (daemonGeneration: string) => void) => {
+    observe: vi.fn(async (next: (daemonGeneration: string | null) => void) => {
       listener = next;
       return stop;
     }),
-    emit(daemonGeneration: string) {
+    emit(daemonGeneration: string | null) {
       listener?.(daemonGeneration);
     },
     stop,
@@ -1284,6 +1284,38 @@ describe("OpenTUI generation host", () => {
     await flushHostStart();
     expect(resolveConnection).toHaveBeenCalledOnce();
     expect(created.revokeSpy).not.toHaveBeenCalled();
+  });
+
+  it("retires a lost remote tunnel and reconnects even when daemon identity is unchanged", async () => {
+    const observer = canonicalObserver();
+    const view = presentation();
+    const bundles: FakeBundle[] = [];
+    const resolveConnection = vi.fn(async () => connection("daemon-a"));
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: observer.observe,
+      resolveConnection,
+      buildBundle: (resolved, callbacks) => {
+        const created = bundle(resolved, callbacks);
+        bundles.push(created);
+        return created;
+      },
+    });
+    const started = host.start();
+    await flushHostStart();
+    bundles[0]!.activate();
+    await started;
+    observer.emit(null);
+    expect(bundles[0]!.revokeSpy).toHaveBeenCalledOnce();
+    expect(host.getSnapshot().status).toBe("rebinding");
+    expect(await host.start()).toBe(false);
+    expect(resolveConnection).toHaveBeenCalledOnce();
+    observer.emit("daemon-a");
+    await flushHostStart();
+    expect(resolveConnection).toHaveBeenCalledTimes(2);
+    bundles[1]!.activate();
+    expect(host.getSnapshot().status).toBe("live");
+    expect(bundles[0]!.disposeSpy).toHaveBeenCalledOnce();
+    await host.dispose();
   });
 
   it("revokes once and atomically replaces on a new canonical generation", async () => {

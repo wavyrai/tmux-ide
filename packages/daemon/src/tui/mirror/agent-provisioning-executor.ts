@@ -1,3 +1,8 @@
+import { applicationDaemonEndpoint } from "./runtime/application-daemon-authority.ts";
+import {
+  readApplicationDaemonInfo as readCanonicalDaemonInfo,
+  isApplicationDaemonAlive as isCanonicalDaemonAlive,
+} from "./runtime/application-daemon-authority.ts";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -10,11 +15,7 @@ import { DaemonActionInvocationError } from "@tmux-ide/daemon-client/owner-actio
 import { createWorkspacePaneAsOwner } from "@tmux-ide/daemon-client/workspace-pane-client";
 import { provisioningPlacementForTarget } from "@tmux-ide/core";
 
-import {
-  canonicalDaemonUrl,
-  isCanonicalDaemonAlive,
-  readCanonicalDaemonInfo,
-} from "../../lib/canonical-daemon.ts";
+import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
 import { CUSTOM_KIND_ID, type SpawnWhere } from "./agent-lifecycle.ts";
 import {
   fetchCanonicalWorkspaceRouting,
@@ -84,8 +85,21 @@ export async function executeTuiAgentProvisioning(
   const deps = { ...DEFAULT_DEPS, ...overrides };
   const canonical = deps.readCanonicalDaemonInfo();
   if (!canonical || !(await deps.isCanonicalDaemonAlive(canonical))) {
+    if (applicationDaemonEndpoint().kind === "ssh")
+      return { status: "error", message: "remote machine is disconnected; action was not sent" };
     return { status: "legacy-local", reason: "no-daemon" };
   }
+
+  if (
+    applicationDaemonEndpoint().kind === "ssh" &&
+    (request.kind === CUSTOM_KIND_ID ||
+      request.placement === "session" ||
+      request.sessionName === null)
+  )
+    return {
+      status: "error",
+      message: "this agent launch is not yet supported on remote machines",
+    };
 
   if (request.kind === CUSTOM_KIND_ID) {
     return { status: "legacy-local", reason: "custom-command" };

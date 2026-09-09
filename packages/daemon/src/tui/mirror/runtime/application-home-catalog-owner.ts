@@ -9,6 +9,7 @@ import {
   type ApplicationHomeCatalogSnapshot,
 } from "./application-home-catalog.ts";
 import { createFleetSession } from "./fleet-lifecycle-client.ts";
+import { applicationDaemonEndpoint } from "./application-daemon-authority.ts";
 
 export interface ApplicationHomeCatalogOwner {
   readonly snapshot: Accessor<ApplicationHomeCatalogSnapshot>;
@@ -41,6 +42,10 @@ export function createApplicationHomeCatalogOwner(
   const selectedSessionIndex = () => selectedHomeCatalogIndex(sessions(), selectedSessionId());
   let creatingLocalSession = false;
   const createLocalSession = async (): Promise<void> => {
+    if (applicationDaemonEndpoint().kind === "ssh") {
+      options.setNote?.("Create a tmux session on the remote machine, then select it here.");
+      return;
+    }
     if (creatingLocalSession) return;
     creatingLocalSession = true;
     options.setNote?.("Creating tmux-ide-local…");
