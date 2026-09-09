@@ -42,6 +42,7 @@ export interface ApplicationMachineSidebarModel {
   readonly groups: Accessor<readonly ApplicationMachineGroup[]>;
   readonly activeMachineId: Accessor<string | null>;
   readonly activeSessionName: Accessor<string | null>;
+  readonly activePaneId?: Accessor<string | null>;
   readonly onOpen: (machineId: string, sessionName: string, source: "keyboard" | "mouse") => void;
   readonly onSelectMachine: (machineId: string, source: "keyboard" | "mouse") => void;
   readonly onOpenAgent?: (
@@ -85,7 +86,13 @@ export function ApplicationMachineSidebar(props: {
     Math.max(0, props.height - 1 - (props.model.onAddMachine ? 1 : 0) - agentHeight());
   const active = (row: Row) =>
     row.group.id === props.model.activeMachineId() &&
-    row.session?.name === props.model.activeSessionName();
+    (row.agent
+      ? row.group.state === "ready" &&
+        !row.agent.disabled &&
+        row.agent.sessionName === props.model.activeSessionName() &&
+        row.agent.paneId !== null &&
+        row.agent.paneId === props.model.activePaneId?.()
+      : row.session?.name === props.model.activeSessionName());
   const rows = createMemo<readonly Row[]>(() =>
     props.model.groups().flatMap((group) => [
       { key: JSON.stringify([group.id]), group },
@@ -268,9 +275,13 @@ export function ApplicationMachineSidebar(props: {
                 }
                 marker={
                   row.agent
-                    ? row.agent.attention
-                      ? "!"
-                      : "•"
+                    ? active(row)
+                      ? row.agent.attention
+                        ? "›!"
+                        : "›"
+                      : row.agent.attention
+                        ? "!"
+                        : "•"
                     : row.session
                       ? active(row)
                         ? " ›"
@@ -294,7 +305,7 @@ export function ApplicationMachineSidebar(props: {
                           ? "connecting"
                           : "offline"
                 }
-                selected={Boolean(row.session && active(row))}
+                selected={Boolean((row.session || row.agent) && active(row))}
                 focused={Boolean(focused() && row.key === selectedKey())}
                 attention={row.agent?.attention}
                 onActivate={(source) => activate(row, source)}

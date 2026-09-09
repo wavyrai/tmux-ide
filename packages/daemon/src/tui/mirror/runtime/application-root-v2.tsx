@@ -324,6 +324,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           },
           openAgent: (row, source) => machineAgentNavigator?.open(row.machineId, row, source),
           openSession: (name, source) => startGeneration(name, false, source),
+          activePaneId: () =>
+            generationMachineId() ===
+            applicationMachineAuthorityManager.snapshot().selectedMachineId
+              ? focusedPane()
+              : null,
           sessionName: () => {
             generation();
             return sessionOwner?.sessionName() ?? null;

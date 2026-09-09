@@ -269,7 +269,7 @@ describe("production OpenTUI v2 data path", () => {
     // late initial connection preparation; they add no discovery or transport owner.
     // One admission callback cancels initial auto-open after explicit machine navigation.
     // Machine-scoped agent navigation composes cancellation and exact-target input admission.
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(627);
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(632);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.

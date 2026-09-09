@@ -12,6 +12,70 @@ import {
 } from "./application-machine-sidebar.tsx";
 
 describe("machine sidebar", () => {
+  it("marks only the active machine/session/pane agent and follows pane focus", async () => {
+    const [machine, setMachine] = createSignal("local");
+    const [pane, setPane] = createSignal<string | null>("%1");
+    const [session, setSession] = createSignal("work");
+    const [offline, setOffline] = createSignal(false);
+    const setup = await renderForTest(
+      () => (
+        <ApplicationMachineSidebar
+          width={35}
+          height={20}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          model={{
+            groups: () =>
+              ["local", "remote"].map((id) => ({
+                id,
+                label: id,
+                state: offline() ? ("disconnected" as const) : ("ready" as const),
+                sessions: [{ id: "same", name: "work", paneCount: 2 }],
+                agents: [
+                  {
+                    id: "same-agent",
+                    name: `${id} agent`,
+                    sessionName: "work",
+                    paneId: "%1",
+                    activity: "idle" as const,
+                    attention: false,
+                  },
+                ],
+              })),
+            activeMachineId: machine,
+            activeSessionName: session,
+            activePaneId: pane,
+            onOpen: () => {},
+            onSelectMachine: () => {},
+          }}
+        />
+      ),
+      { width: 35, height: 20 },
+    );
+    const selected = async () => {
+      await setup.renderOnce();
+      return setup
+        .captureCharFrame()
+        .split("\n")
+        .filter((line) => line.includes("agent") && line.includes("›"));
+    };
+    expect((await selected())[0]).toContain("local agent");
+    expect((await selected()).length).toBe(1);
+    setMachine("remote");
+    expect((await selected())[0]).toContain("remote agent");
+    setPane("%2");
+    expect(await selected()).toEqual([]);
+    setPane("%1");
+    setSession("other");
+    expect(await selected()).toEqual([]);
+    setSession("work");
+    setOffline(true);
+    expect(await selected()).toEqual([]);
+    setOffline(false);
+    setPane(null);
+    expect(await selected()).toEqual([]);
+    setup.renderer.destroy();
+  });
+
   it("keeps identical session names scoped, shows status, and blocks stale sessions", async () => {
     const calls: string[][] = [];
     const groups: ApplicationMachineGroup[] = [

@@ -14,6 +14,7 @@ export function createApplicationMachineNavigation(options: {
   cancelOpen(): void;
   openSession(name: string, source: "keyboard" | "mouse"): Promise<unknown>;
   sessionName(): string | null;
+  activePaneId?(): string | null;
   setSurface(value: "home" | "terminals"): void;
   setNote(value: string | null): void;
 }) {
@@ -63,6 +64,7 @@ export function createApplicationMachineNavigation(options: {
       })),
     activeMachineId: () => snapshot().selectedMachineId,
     activeSessionName: options.sessionName,
+    activePaneId: options.activePaneId,
     focused,
     onFocus: () => {
       navigation++;
