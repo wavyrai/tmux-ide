@@ -34652,7 +34652,15 @@ var init_control_channel = __esm({
         return true;
       }
       pushCommandList(replyCount, resultIndex, onReply, budget) {
-        const state = { resultIndex, onReply, lines: budget?.lines ?? [], settled: false, budget };
+        const state = {
+          resultIndex,
+          onReply,
+          lines: budget?.lines ?? [],
+          leadingErrorLines: [],
+          leadingErrorBytes: 0,
+          settled: false,
+          budget
+        };
         for (let index = 0; index < replyCount; index += 1)
           this.pending.push({ kind: "command-list", state, index });
       }
@@ -34792,8 +34800,16 @@ var init_control_channel = __esm({
                 } else budget.lines.push(event.line);
               }
             } else if (head3?.kind === "promise" || head3?.kind === "inline") head3.lines.push(event.line);
-            else if (head3?.kind === "command-list" && head3.index === head3.state.resultIndex)
-              head3.state.lines.push(event.line);
+            else if (head3?.kind === "command-list") {
+              if (head3.index === head3.state.resultIndex) head3.state.lines.push(event.line);
+              else if (head3.index === 0 && head3.state.leadingErrorBytes <= 4096) {
+                head3.state.leadingErrorBytes += event.line.length + 1;
+                if (head3.state.leadingErrorBytes > 4096 || head3.state.leadingErrorLines.length >= 8) {
+                  head3.state.leadingErrorBytes = 4097;
+                  head3.state.leadingErrorLines.length = 0;
+                } else head3.state.leadingErrorLines.push(event.line);
+              }
+            }
             break;
           }
           case "end":
@@ -34810,6 +34826,7 @@ var init_control_channel = __esm({
             const sink = this.pending.shift();
             if (!sink) break;
             if (sink.kind === "command-list") {
+              if (event.kind === "end") sink.state.leadingErrorLines.length = 0;
               if (event.kind === "end" && sink.index < sink.state.resultIndex && sink.state.budget) {
                 sink.state.lines.length = 0;
                 sink.state.budget.bytes = 0;
@@ -34821,7 +34838,10 @@ var init_control_channel = __esm({
                   this.pending.shift();
                 if (!sink.state.settled) {
                   sink.state.settled = true;
-                  sink.state.onReply({ ok: false, lines: sink.state.lines });
+                  sink.state.onReply({
+                    ok: false,
+                    lines: sink.state.budget || sink.state.resultIndex === 0 ? sink.state.lines : sink.state.leadingErrorLines
+                  });
                 }
               } else if (sink.index === sink.state.resultIndex && !sink.state.settled) {
                 sink.state.settled = true;
@@ -36157,7 +36177,9 @@ import { hostname as hostname3 } from "node:os";
 function nativeBootstrapUnsupported(ok2, lines, native) {
   if (ok2)
     return native !== null && (native.version !== 2 || native.currentAttributes === void 0);
-  return lines.some((line) => /^(?:command capture-pane: )?unknown flag -R$/.test(line.trim()));
+  return lines.some(
+    (line) => /^(?:parse error: )?(?:command capture-pane: )?unknown flag -R$/.test(line.trim())
+  );
 }
 function snapshotFingerprint2(captureLines, cursorLine, fallbackSize) {
   const hash = createHash12("sha256");
