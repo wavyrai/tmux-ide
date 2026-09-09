@@ -7,6 +7,10 @@ import {
   TerminalDeliveryNegotiatedSchemaZ,
   TerminalDeliveryNackSchemaZ,
   TerminalSemanticDeliveryPayloadSchemaZ,
+  TerminalReplicaSnapshotSchemaZ,
+  TerminalReplicaRowSchemaZ,
+  TerminalReplicaCellSchemaZ,
+  TerminalReplicaPlacementSchemaZ,
   type TerminalDeliveryAck,
   type TerminalDeliveryChunk,
   type TerminalDeliveryEnvelope,
@@ -244,6 +248,177 @@ export function encodeCompactSemanticTerminalUpdate(
           };
   const bytes = UTF8_ENCODER.encode(JSON.stringify(wire));
   assertRepresentationSize(bytes);
+  return bytes;
+}
+
+// Keep the ordinary small-patch encoder unchanged. Large seeds are validated
+// and emitted in256-cell slices, not parsed or stringified as one giant object.
+export const TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS = 8192;
+const CompactSeedHeaderSchema =
+  /* @__PURE__ */ TerminalSemanticDeliveryPayloadSchemaZ.options[0].omit({ snapshot: true });
+const CompactSeedMetadataSchema = /* @__PURE__ */ TerminalReplicaSnapshotSchemaZ.omit({
+  grid: true,
+  history: true,
+  placements: true,
+});
+const CompactRowHeaderSchema = /* @__PURE__ */ TerminalReplicaRowSchemaZ.omit({ cells: true });
+const CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
+
+export function terminalSemanticUpdateNeedsCooperativeEncoding(
+  input: TerminalSemanticDeliveryPayload,
+): boolean {
+  return (
+    input?.frame === "seed" &&
+    Array.isArray(input.snapshot?.grid) &&
+    Array.isArray(input.snapshot?.history) &&
+    (input.snapshot.grid.length + input.snapshot.history.length) * input.snapshot.cols >=
+      TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS
+  );
+}
+
+/** Exact compact encoding with task checkpoints for large seeds. No validation
+ * bypass or producer capability: every header, row, cell and placement uses the
+ * same strict contract schemas as the synchronous encoder. Inputs must remain
+ * stable until completion (daemon canonical snapshots are immutable).
+ */
+export async function encodeCompactSemanticTerminalUpdateCooperatively(
+  input: TerminalSemanticDeliveryPayload,
+  options: { readonly yieldControl: () => Promise<void>; readonly signal?: AbortSignal },
+): Promise<Uint8Array> {
+  const check = () => options.signal?.throwIfAborted();
+  check();
+  if (input.frame !== "seed" || !terminalSemanticUpdateNeedsCooperativeEncoding(input))
+    return encodeCompactSemanticTerminalUpdate(input);
+  const yieldControl = async () => {
+    check();
+    await options.yieldControl();
+    check();
+  };
+  const { snapshot: source, ...headerInput } = input;
+  const header = CompactSeedHeaderSchema.parse(headerInput);
+  const { grid, history, placements, ...metadataInput } = source;
+  const metadata = CompactSeedMetadataSchema.parse(metadataInput);
+  if (!Array.isArray(grid) || !Array.isArray(history) || !Array.isArray(placements))
+    throw new TypeError("Invalid compact seed arrays");
+  if (
+    metadata.cols > COMPACT_MAX_DIMENSION ||
+    metadata.rows > COMPACT_MAX_DIMENSION ||
+    grid.length !== metadata.rows
+  )
+    compactEncodingLimit();
+  let rowCount = 0,
+    cellCount = 0,
+    runCount = 0,
+    work = 0,
+    encodedWork = 0;
+  const chunks: Uint8Array[] = [];
+  let fragments: string[] = [],
+    characters = 0,
+    total = 0;
+  const flush = () => {
+    if (fragments.length === 0) return;
+    const chunk = UTF8_ENCODER.encode(fragments.join(""));
+    total += chunk.byteLength;
+    if (total > TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES)
+      throw new TerminalDeliveryStateTooLargeError(total);
+    chunks.push(chunk);
+    fragments = [];
+    characters = 0;
+  };
+  const write = (fragment: string) => {
+    fragments.push(fragment);
+    characters += fragment.length;
+    if (characters >= 32 * 1024) flush();
+  };
+  write(
+    '{"f":"s","k":' +
+      JSON.stringify(COMPACT_SEMANTIC_KIND) +
+      ',"r":' +
+      header.revision +
+      ',"s":[' +
+      metadata.cols +
+      "," +
+      metadata.rows +
+      ",",
+  );
+  for (const rows of [grid, history]) {
+    write("[");
+    for (let index = 0; index < rows.length; index++) {
+      const { cells, ...rowHeaderInput } = rows[index]!;
+      const rowHeader = CompactRowHeaderSchema.parse(rowHeaderInput);
+      if (++rowCount > COMPACT_MAX_ROWS || !Array.isArray(cells) || cells.length !== metadata.cols)
+        compactEncodingLimit();
+      cellCount += cells.length;
+      if (cellCount > COMPACT_MAX_EXPANDED_CELLS) compactEncodingLimit();
+      if (index) write(",");
+      write("[" + (rowHeader.wrapped ? 1 : 0) + ",[");
+      let prior: CompactCellRun | null = null,
+        wroteRun = false;
+      const emitRun = () => {
+        if (!prior) return;
+        if (wroteRun) write(",");
+        write(JSON.stringify(prior));
+        wroteRun = true;
+      };
+      for (let offset = 0; offset < cells.length; offset += 256) {
+        const validated = CompactCellSliceSchema.parse(cells.slice(offset, offset + 256));
+        for (const cell of validated) {
+          const encoded = compactCell(cell);
+          if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;
+          else {
+            emitRun();
+            if (++runCount > COMPACT_MAX_RUNS) compactEncodingLimit();
+            prior = encoded;
+          }
+          work++;
+          encodedWork += cell.grapheme.length + 64;
+          if (work >= 256 || encodedWork >= 32 * 1024) {
+            work = 0;
+            encodedWork = 0;
+            await yieldControl();
+          }
+        }
+      }
+      emitRun();
+      write("]]");
+    }
+    write("],");
+  }
+  write(
+    JSON.stringify(compactCursor(metadata.cursor)) +
+      "," +
+      JSON.stringify(compactModes(metadata.modes)) +
+      ",[",
+  );
+  if (placements.length > COMPACT_MAX_PLACEMENTS) compactEncodingLimit();
+  for (let index = 0; index < placements.length; index++) {
+    const placement = TerminalReplicaPlacementSchemaZ.parse(placements[index]);
+    if (index) write(",");
+    const encoded = JSON.stringify(compactPlacement(placement));
+    write(encoded);
+    encodedWork += encoded.length;
+    if (++work >= 256 || encodedWork >= 32 * 1024) {
+      work = 0;
+      encodedWork = 0;
+      await yieldControl();
+    }
+  }
+  write("]," + JSON.stringify(compactBootstrap(metadata.bootstrap)) + '],"v":1}');
+  flush();
+  // No full-size JSON string or final synchronous whole-object serialization.
+  const bytes = new Uint8Array(total);
+  let offset = 0,
+    copied = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+    copied += chunk.byteLength;
+    if (copied >= 256 * 1024) {
+      copied = 0;
+      await yieldControl();
+    }
+  }
+  check();
   return bytes;
 }
 
