@@ -8,22 +8,28 @@ const daemonRoot = join(daemonSrc, "..");
 describe("terminal replica architecture", () => {
   it("keeps the pinned canonical xterm fork daemon-owned and singular", () => {
     const imports = sourceFiles(daemonSrc)
-      .filter((file) => !file.endsWith(".test.ts"))
+      .filter((file) => !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"))
       .filter((file) => readFileSync(file, "utf8").includes('from "@tmux-ide/xterm-headless"'))
       .map((file) => file.slice(daemonSrc.length + 1));
-    expect(imports).toEqual([
-      "terminal/session-runtime/xterm-terminal-interpreter-backend.ts",
-      "tui/mirror/pane-mirror.ts",
-    ]);
+    expect(imports).toEqual(["terminal/session-runtime/xterm-terminal-interpreter-backend.ts"]);
     const stockImports = sourceFiles(daemonSrc)
-      .filter((file) => !file.endsWith(".test.ts"))
+      .filter((file) => !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"))
       .filter((file) => readFileSync(file, "utf8").includes("@xterm/headless-stock"));
     expect(stockImports).toEqual([]);
   });
 
+  it("keeps historical parser test support out of production imports", () => {
+    const imports = sourceFiles(daemonSrc)
+      .filter((file) => !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"))
+      .filter((file) =>
+        /from\s+["'][^"']*test-support\/pane-mirror\.ts["']/u.test(readFileSync(file, "utf8")),
+      );
+    expect(imports).toEqual([]);
+  });
+
   it("keeps shadow projections out of production GUI/OpenTUI imports", () => {
     const consumers = sourceFiles(daemonSrc)
-      .filter((file) => !file.endsWith(".test.ts"))
+      .filter((file) => !file.endsWith(".test.ts") && !file.endsWith(".test.tsx"))
       .filter((file) => readFileSync(file, "utf8").includes("terminal-replica-shadow-projections"));
     expect(consumers).toEqual([]);
   });
@@ -73,6 +79,6 @@ describe("terminal replica architecture", () => {
 function sourceFiles(root: string): string[] {
   return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     const path = join(root, entry.name);
-    return entry.isDirectory() ? sourceFiles(path) : entry.name.endsWith(".ts") ? [path] : [];
+    return entry.isDirectory() ? sourceFiles(path) : /\.tsx?$/u.test(entry.name) ? [path] : [];
   });
 }
