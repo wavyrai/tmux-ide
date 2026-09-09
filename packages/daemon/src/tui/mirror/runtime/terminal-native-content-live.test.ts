@@ -1425,11 +1425,15 @@ describe.skipIf(!available)("native history reader continuity", () => {
     "reflow",
     "height",
     "active-reflow",
+    ...(nativeCapabilities.physicalGrid ? ["active-reflow-transient"] : []),
     "active-trim-reflow",
   ])(
     "keeps two readers on retained text through native %s",
     async (scenario) => {
       const session = `history-readers-${scenario}`;
+      const injectTransientCaptureFailure = scenario === "active-reflow-transient";
+      if (injectTransientCaptureFailure) scenario = "active-reflow";
+      let injectedCaptureFailures = 0;
       const script = join(directory, `${session}.mjs`);
       writeFileSync(
         script,
@@ -1453,6 +1457,15 @@ describe.skipIf(!available)("native history reader continuity", () => {
       // without printing terminal contents or adding another capture/decoder.
       const captureAttempts: Array<Readonly<Record<string, unknown>>> = [];
       const mirror = new MirrorService({
+        ...(injectTransientCaptureFailure
+          ? {
+              internalReadHookEmission: (pane: string, marker: string) => ({
+                bufferName: "history-recovery-observer",
+                signalChannel: "history-recovery-observer",
+                record: `${pane}|${marker}|workspace.pane.read|`,
+              }),
+            }
+          : {}),
         createIo: (name, handlers) => {
           const io = new MirrorControlChannel({
             session: name,
@@ -1472,6 +1485,18 @@ describe.skipIf(!available)("native history reader continuity", () => {
                   } catch {
                     // A malformed header is itself useful fallback evidence.
                   }
+                }
+                if (
+                  injectTransientCaptureFailure &&
+                  injectedCaptureFailures === 0 &&
+                  native &&
+                  reply.ok &&
+                  header?.cols === 8
+                ) {
+                  // A one-off native command failure must not poison future
+                  // captures into the lossy ANSI fallback for this connection.
+                  injectedCaptureFailures++;
+                  reply = { ok: false, lines: [] };
                 }
                 captureAttempts.push({
                   native,
@@ -1660,7 +1685,10 @@ describe.skipIf(!available)("native history reader continuity", () => {
             tmux("resize-window", "-t", target, "-x", String(width), "-y", "8");
             await vi.waitFor(
               () => {
-                expect(snapshot().cols).toBe(width);
+                expect(
+                  snapshot().cols,
+                  JSON.stringify({ scenario, width, seedCount, captureAttempts }),
+                ).toBe(width);
                 if (scenario.startsWith("active-"))
                   expect(text()).toContain(`DONE-${145 + step * 5}`);
                 let physical: string | null = null;
@@ -1713,6 +1741,8 @@ describe.skipIf(!available)("native history reader continuity", () => {
               },
               { timeout: 3000 },
             );
+            if (injectTransientCaptureFailure && width === 8)
+              expect(injectedCaptureFailures).toBe(1);
             if (scenario !== "reflow-content") {
               expect(tmux("capture-pane", "-p", "-J", "-S", "-", "-t", target)).toContain(held[1]);
               expect(logicalReadingText()).toBe(held[1]);
