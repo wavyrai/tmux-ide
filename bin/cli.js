@@ -10248,7 +10248,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.11",
+      version: "2.9.0-beta.12",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
@@ -18189,10 +18189,14 @@ var init_owner_authority = __esm({
 });
 
 // packages/daemon/src/terminal/mirror/native-grid-capture.ts
+function isNativeBootstrapCapture(snapshot) {
+  return uint(snapshot.cols, 16384) && snapshot.cols > 0 && uint(snapshot.rows, MAX_ROWS) && snapshot.rows > 0 && uint(snapshot.history, MAX_ROWS) && snapshot.version === 2 && snapshot.currentAttributes !== void 0 && snapshot.cols * (snapshot.history + snapshot.rows) <= MAX_CELLS;
+}
 function encodeNativeGridCapture(source) {
   const records = [
     JSON.stringify({
-      version: 1,
+      version: source.version ?? 1,
+      ...source.currentAttributes ? { currentAttributes: source.currentAttributes } : {},
       cols: source.cols,
       rows: source.rows,
       history: source.history,
@@ -18207,7 +18211,7 @@ function encodeNativeGridCapture(source) {
     const record = JSON.stringify({
       row: index,
       flags: row.flags,
-      used: row.cells.length,
+      used: row.used ?? row.cells.length,
       cells: row.cells.map((cell) => [
         cell.flags,
         cell.width,
@@ -18239,15 +18243,18 @@ function decodeNativeGridCapture(text) {
   };
   try {
     const header = next();
-    if (!object(header) || header.version !== 1 || !uint(header.cols, MAX_CELLS) || header.cols === 0 || !uint(header.rows, MAX_ROWS) || header.rows === 0 || !uint(header.history, MAX_ROWS) || header.history + header.rows > MAX_ROWS || !uint(header.hscrolled, header.history) || !uint(header.limit) || !Array.isArray(header.cursor) || header.cursor.length !== 2 || !uint(header.cursor[0], header.cols) || !uint(header.cursor[1], header.rows - 1))
+    if (!object(header) || header.version !== 1 && header.version !== 2 || !uint(header.cols, MAX_CELLS) || header.cols === 0 || !uint(header.rows, MAX_ROWS) || header.rows === 0 || !uint(header.history, MAX_ROWS) || header.history + header.rows > MAX_ROWS || !uint(header.hscrolled, header.history) || !uint(header.limit) || !Array.isArray(header.cursor) || header.cursor.length !== 2 || !uint(header.cursor[0], header.cols) || !uint(header.cursor[1], header.rows - 1))
+      return null;
+    const attrs = header.currentAttributes;
+    if (attrs != null && (header.version !== 2 || !Array.isArray(attrs) || attrs.length !== 4 || !uint(attrs[0], 65535) || !signed(attrs[1]) || !signed(attrs[2]) || !signed(attrs[3])))
       return null;
     const grid = [];
     let count = 0;
     for (let index = 0; index < header.history + header.rows; index++) {
       const row = next();
-      if (!object(row) || row.row !== index || !uint(row.flags) || !uint(row.used, MAX_CELLS - count) || !Array.isArray(row.cells) || row.cells.length !== row.used)
+      if (!object(row) || row.row !== index || !uint(row.flags) || !uint(row.used, MAX_CELLS - count) || !Array.isArray(row.cells) || row.cells.length > MAX_CELLS - count || (header.version === 1 ? row.cells.length !== row.used : row.cells.length < row.used))
         return null;
-      count += row.used;
+      count += row.cells.length;
       const cells = [];
       for (const raw of row.cells) {
         if (!Array.isArray(raw) || raw.length !== 9 || !uint(raw[0]) || !uint(raw[1], 255) || typeof raw[2] !== "string" || raw[2].length > 128 || raw[2].length % 2 !== 0 || !/^[0-9a-f]*$/.test(raw[2]) || !uint(raw[3], 65535) || !signed(raw[4]) || !signed(raw[5]) || !signed(raw[6]) || !uint(raw[7]) || !uint(raw[8], 255))
@@ -18267,10 +18274,20 @@ function decodeNativeGridCapture(text) {
           })
         );
       }
-      grid.push(Object.freeze({ flags: row.flags, cells: Object.freeze(cells) }));
+      grid.push(
+        Object.freeze({
+          flags: row.flags,
+          ...header.version === 2 ? { used: row.used } : {},
+          cells: Object.freeze(cells)
+        })
+      );
     }
     if (offset < text.length) return null;
     return Object.freeze({
+      version: header.version,
+      ...Array.isArray(attrs) ? {
+        currentAttributes: Object.freeze([...attrs])
+      } : {},
       cols: header.cols,
       rows: header.rows,
       history: header.history,
@@ -18319,12 +18336,19 @@ function mountTerminalNativeBackingRoute(app, options) {
     if (workspace.length > 512 || pane.length > 512) return c.json({ status: "invalid" }, 400);
     const session = options.resolveSession(workspace);
     if (!session) return c.json({ status: "unavailable" }, 404);
-    const key = JSON.stringify([session, pane]);
+    const key = JSON.stringify([
+      session,
+      pane,
+      expected.generation,
+      expected.incarnation,
+      expected.revision,
+      expected.stateHash
+    ]);
     if (readers >= 32 || !pending.has(key) && pending.size >= 16)
       return c.json({ status: "busy" }, 429);
     let capture = pending.get(key);
     if (!capture) {
-      const operation = Promise.resolve().then(() => options.capture(session, pane)).finally(() => {
+      const operation = Promise.resolve().then(() => options.capture(session, pane, expected)).finally(() => {
         if (pending.get(key) === operation) pending.delete(key);
       });
       capture = operation;
@@ -18333,17 +18357,17 @@ function mountTerminalNativeBackingRoute(app, options) {
     readers++;
     try {
       const result = await capture;
-      if (result.status !== "captured") return c.json({ status: result.status }, 409);
+      if (result.status !== "captured" && result.status !== "retained")
+        return c.json({ status: result.status }, 409);
       if (options.resolveSession(workspace) !== session || !result.isCurrent() || result.authority.generation !== expected.generation || result.authority.incarnation !== expected.incarnation || result.authority.revision !== expected.revision || result.authority.stateHash !== expected.stateHash || result.authority.semanticPaneId !== pane)
         return c.json({ status: "changed" }, 409);
-      const body = encodeNativeGridCapture(result.snapshot);
+      const prefix = JSON.stringify({ ...result.authority, workspaceName: workspace }) + "\n";
+      const body = result.status === "retained" ? result.encodeBody(new TextEncoder().encode(prefix)) : encodeNativeGridCapture(result.snapshot);
       if (!body) return c.json({ status: "unavailable" }, 413);
       if (!result.isCurrent()) return c.json({ status: "changed" }, 409);
       c.header("Cache-Control", "no-store");
       c.header("Content-Type", "application/x-ndjson");
-      return c.body(
-        JSON.stringify({ ...result.authority, workspaceName: workspace }) + "\n" + body
-      );
+      return typeof body === "string" ? c.body(prefix + body) : c.body(body);
     } catch {
       return c.json({ status: "unavailable" }, 503);
     } finally {
@@ -23585,7 +23609,9 @@ import { fileURLToPath as fileURLToPath7 } from "node:url";
 function validateBundledTmux(directory, platform2 = process.platform, arch = process.arch) {
   const root = realpathSync6(directory);
   const manifest = JSON.parse(readFileSync20(join28(root, "manifest.json"), "utf8"));
-  if (manifest.schemaVersion !== 1 || manifest.platform !== platform2 || manifest.arch !== arch || manifest.extension !== "tmux-ide-native-grid-v1" || !manifest.files || typeof manifest.files !== "object" || typeof manifest.files.tmux !== "string")
+  if (manifest.schemaVersion !== 1 || manifest.platform !== platform2 || manifest.arch !== arch || // Both known distributions remain usable; the live server capture probe
+  // decides bootstrap capability, independently of the installed client.
+  manifest.extension !== "tmux-ide-native-grid-v1" && manifest.extension !== "tmux-ide-native-grid-v2" || !manifest.files || typeof manifest.files !== "object" || typeof manifest.files.tmux !== "string")
     throw new Error("Invalid bundled tmux manifest");
   if (platform2 === "darwin") parseMacOSVersion(manifest.minimumMacOS);
   for (const [name, expected] of Object.entries(manifest.files)) {
@@ -29506,6 +29532,65 @@ function hashCanonicalTerminalValue(value) {
   hash.value(value);
   return hash.digest();
 }
+async function hashCanonicalTerminalValueCooperatively(value, yieldControl, workPerSlice = 4 * 1024) {
+  const hash = new CanonicalFnv64();
+  let work = 0;
+  const checkpoint = (amount) => {
+    work += amount;
+    if (work < workPerSlice) return false;
+    work = 0;
+    return true;
+  };
+  const stack = [{ kind: "value", value }];
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (item.kind === "ascii") {
+      if (checkpoint(hash.ascii(item.value))) await yieldControl();
+      continue;
+    }
+    if (item.kind === "string") {
+      if (checkpoint(hash.string(item.value) + 8)) await yieldControl();
+      continue;
+    }
+    const entry = item.value;
+    if (entry === null) {
+      hash.ascii("n;");
+      if (checkpoint(2)) await yieldControl();
+      continue;
+    }
+    if (typeof entry === "boolean") {
+      hash.boolean(entry);
+      if (checkpoint(3)) await yieldControl();
+      continue;
+    }
+    if (typeof entry === "number") {
+      hash.number(entry);
+      if (checkpoint(String(entry).length + 4)) await yieldControl();
+      continue;
+    }
+    if (typeof entry === "string") {
+      if (checkpoint(hash.string(entry) + 8)) await yieldControl();
+      continue;
+    }
+    if (Array.isArray(entry)) {
+      if (checkpoint(hash.ascii(`a${entry.length}:`) + 1)) await yieldControl();
+      stack.push({ kind: "ascii", value: ";" });
+      for (let index = entry.length - 1; index >= 0; index -= 1)
+        stack.push({ kind: "value", value: entry[index] });
+      continue;
+    }
+    const record = entry;
+    const keys = Object.keys(record).sort();
+    if (checkpoint(hash.ascii(`o${keys.length}:`) + keys.length)) await yieldControl();
+    stack.push({ kind: "ascii", value: ";" });
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const key = keys[index];
+      stack.push({ kind: "value", value: record[key] });
+      stack.push({ kind: "string", value: key });
+    }
+  }
+  return hash.digest();
+}
 function writeColor(hash, color3) {
   if (color3.kind === "default") {
     hash.ascii("o1:s4:kind;s7:default;;");
@@ -29535,6 +29620,35 @@ function hashTerminalReplicaRowCached(row, onMiss) {
     writeColor(hash, cell.background);
     hash.number(cell.attributes);
     hash.ascii(";");
+  }
+  hash.ascii(";;");
+  const digest3 = hash.digest();
+  if (isTerminalReplicaRowDeeplyFrozen(row)) {
+    DEEPLY_FROZEN_ROWS.add(row);
+    ROW_HASH_CACHE.set(row, digest3);
+  }
+  return digest3;
+}
+async function hashTerminalReplicaRowCooperatively(row, yieldControl, bytesPerSlice = 16 * 1024) {
+  const cached2 = ROW_HASH_CACHE.get(row);
+  if (cached2) return cached2;
+  const hash = new CanonicalFnv64();
+  hash.ascii("a2:");
+  hash.boolean(row.wrapped);
+  hash.ascii(`a${row.cells.length}:`);
+  let bytesSinceYield = 0;
+  for (const cell of row.cells) {
+    hash.ascii("a5:");
+    bytesSinceYield += hash.string(cell.grapheme) + 64;
+    hash.number(cell.width);
+    writeColor(hash, cell.foreground);
+    writeColor(hash, cell.background);
+    hash.number(cell.attributes);
+    hash.ascii(";");
+    if (bytesSinceYield >= bytesPerSlice) {
+      bytesSinceYield = 0;
+      await yieldControl();
+    }
   }
   hash.ascii(";;");
   const digest3 = hash.digest();
@@ -29709,49 +29823,9 @@ function applyTerminalReplicaUpdate(current, update, options = {}) {
     }
     const frozenSnapshot = trustedSnapshot2 ?? freezeSnapshot(update.snapshot);
     const hash2 = trustedSnapshot2 ? update.stateHash : hashTerminalReplicaSnapshot(frozenSnapshot);
-    if (current && (current.workspaceName !== update.workspaceName || current.semanticPaneId !== update.semanticPaneId)) {
-      return complete(protocolConflict(current, update.revision));
-    }
-    if (current && current.generation !== update.generation) {
-      return complete(protocolConflict(current, update.revision));
-    }
-    if (current && current.incarnation !== update.incarnation && (!isNewerIncarnation(current.incarnation, update.incarnation) || update.revision <= current.revision)) {
-      return complete(protocolConflict(current, update.revision));
-    }
-    if (current?.generation === update.generation && current.revision === update.revision && current.hash === hash2 && update.stateHash === hash2 && current.incarnation === update.incarnation && current.frameHash === receivedFrameHash) {
-      return complete({ status: "idempotent", state: current });
-    }
-    if (current?.generation === update.generation && current.revision === update.revision && current.hash !== update.stateHash) {
-      return complete({
-        status: "conflict",
-        state: current,
-        expectedRevision: current.revision,
-        receivedRevision: update.revision
-      });
-    }
-    if (hash2 !== update.stateHash || update.cols !== update.snapshot.cols || update.rows !== update.snapshot.rows) {
-      return complete({
-        status: "conflict",
-        state: current,
-        expectedRevision: current?.revision ?? 0,
-        receivedRevision: update.revision
-      });
-    }
-    if (current?.generation === update.generation && current.incarnation === update.incarnation && update.revision < current.revision) {
-      return complete({ status: "stale", state: current });
-    }
-    const state2 = Object.freeze({
-      workspaceName: update.workspaceName,
-      semanticPaneId: update.semanticPaneId,
-      generation: update.generation,
-      revision: update.revision,
-      incarnation: update.incarnation,
-      snapshot: frozenSnapshot,
-      tombstone: null,
-      hash: hash2,
-      frameHash: receivedFrameHash
-    });
-    return complete({ status: "applied", state: state2 });
+    return complete(
+      finishTerminalReplicaSeed(current, update, frozenSnapshot, hash2, receivedFrameHash)
+    );
   }
   if (current === null || current.generation !== update.generation) {
     return complete({
@@ -29864,6 +29938,183 @@ function applyTerminalReplicaUpdate(current, update, options = {}) {
     frameHash: receivedFrameHash
   });
   return complete({ status: "applied", state });
+}
+function finishTerminalReplicaSeed(current, update, frozenSnapshot, hash, receivedFrameHash) {
+  if (current && (current.workspaceName !== update.workspaceName || current.semanticPaneId !== update.semanticPaneId)) {
+    return protocolConflict(current, update.revision);
+  }
+  if (current && current.generation !== update.generation) {
+    return protocolConflict(current, update.revision);
+  }
+  if (current && current.incarnation !== update.incarnation && (!isNewerIncarnation(current.incarnation, update.incarnation) || update.revision <= current.revision)) {
+    return protocolConflict(current, update.revision);
+  }
+  if (current?.generation === update.generation && current.revision === update.revision && current.hash === hash && update.stateHash === hash && current.incarnation === update.incarnation && current.frameHash === receivedFrameHash) {
+    return { status: "idempotent", state: current };
+  }
+  if (current?.generation === update.generation && current.revision === update.revision && current.hash !== update.stateHash) {
+    return {
+      status: "conflict",
+      state: current,
+      expectedRevision: current.revision,
+      receivedRevision: update.revision
+    };
+  }
+  if (hash !== update.stateHash || update.cols !== update.snapshot.cols || update.rows !== update.snapshot.rows) {
+    return {
+      status: "conflict",
+      state: current,
+      expectedRevision: current?.revision ?? 0,
+      receivedRevision: update.revision
+    };
+  }
+  if (current?.generation === update.generation && current.incarnation === update.incarnation && update.revision < current.revision) {
+    return { status: "stale", state: current };
+  }
+  const state = Object.freeze({
+    workspaceName: update.workspaceName,
+    semanticPaneId: update.semanticPaneId,
+    generation: update.generation,
+    revision: update.revision,
+    incarnation: update.incarnation,
+    snapshot: frozenSnapshot,
+    tombstone: null,
+    hash,
+    frameHash: receivedFrameHash
+  });
+  return { status: "applied", state };
+}
+function terminalReplicaUpdateNeedsCooperativeReduction(update) {
+  return update.type === "terminal.seed" && (update.snapshot.grid.length + update.snapshot.history.length) * update.snapshot.cols >= TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS;
+}
+async function applyTerminalReplicaUpdateCooperatively(current, update, options) {
+  const check2 = () => options.signal?.throwIfAborted();
+  check2();
+  if (update.type !== "terminal.seed" || !terminalReplicaUpdateNeedsCooperativeReduction(update))
+    return applyTerminalReplicaUpdate(current, update, options);
+  const yieldControl = async () => {
+    check2();
+    await options.yieldControl();
+    check2();
+  };
+  const admitted = { ...update };
+  const profile = options.instrumentation ? createApplyProfile() : void 0;
+  const complete = (result) => {
+    check2();
+    if (profile && options.instrumentation) {
+      try {
+        options.instrumentation.onComplete(freezeProfile(profile));
+      } catch {
+      }
+    }
+    return result;
+  };
+  const conflict = () => current ? protocolConflict(current, admitted.revision) : {
+    status: "conflict",
+    state: null,
+    expectedRevision: 0,
+    receivedRevision: admitted.revision
+  };
+  const trusted = admitted.hashAlgorithm === "fnv1a64-v1" ? consumeCompactReplicaCapability(
+    admitted.snapshot,
+    current?.snapshot ?? null,
+    admitted.stateHash
+  ) : void 0;
+  if (admitted.hashAlgorithm !== "fnv1a64-v1" || trusted !== void 0 && trusted !== admitted.snapshot)
+    return complete(conflict());
+  let snapshot;
+  if (trusted !== void 0 && trusted !== null) {
+    snapshot = trusted;
+    if (profile) profile.trustedCompactAdoption = true;
+  } else {
+    const source = admitted.snapshot;
+    const cols = source.cols, rows = source.rows;
+    const cursor = Object.freeze({ ...source.cursor });
+    const modes = Object.freeze({ ...source.modes });
+    const bootstrap = Object.freeze({ ...source.bootstrap });
+    if (source.grid.length !== rows || cursor.x >= cols || cursor.y >= rows)
+      return complete(conflict());
+    const historySources = source.history.slice(), gridSources = source.grid.slice();
+    const placementsSources = source.placements.slice();
+    const history = [], grid = [];
+    let work = 0;
+    for (const [sources, target] of [
+      [historySources, history],
+      [gridSources, grid]
+    ]) {
+      for (const row of sources) {
+        if (row.cells.length !== cols) return complete(conflict());
+        const cells = [];
+        let priorWidth = -1;
+        const wrapped = row.wrapped;
+        for (let index = 0; index < cols; index++) {
+          const sourceCell = row.cells[index];
+          const cell = Object.freeze({
+            ...sourceCell,
+            foreground: Object.freeze({ ...sourceCell.foreground }),
+            background: Object.freeze({ ...sourceCell.background })
+          });
+          if (priorWidth === 2 && cell.width !== 0 || cell.width === 0 && priorWidth !== 2)
+            return complete(conflict());
+          priorWidth = cell.width;
+          cells.push(cell);
+          if (++work >= 256) {
+            work = 0;
+            await yieldControl();
+          }
+        }
+        if (priorWidth === 2) return complete(conflict());
+        target.push(
+          Object.freeze({
+            ...row,
+            wrapped,
+            cells: Object.freeze(cells)
+          })
+        );
+      }
+    }
+    const placements = [];
+    for (const value of placementsSources) {
+      const placement = Object.freeze({ ...value });
+      if (!(placement.row < rows && placement.column < cols && placement.row + placement.rows <= rows && placement.column + placement.columns <= cols))
+        return complete(conflict());
+      placements.push(placement);
+      if (++work >= 256) {
+        work = 0;
+        await yieldControl();
+      }
+    }
+    snapshot = Object.freeze({
+      ...source,
+      cols,
+      rows,
+      cursor,
+      modes,
+      bootstrap,
+      history: Object.freeze(history),
+      grid: Object.freeze(grid),
+      placements: Object.freeze(placements)
+    });
+  }
+  const authenticated = options.authenticatedFrameHash;
+  const frameStart = readProfileClock(options.instrumentation);
+  const frameHash = authenticated && /^[0-9a-f]{16}$/u.test(authenticated) ? authenticated : await hashCanonicalTerminalValueCooperatively(
+    { ...admitted, snapshot },
+    yieldControl,
+    // Bound frame hashing without scheduling a task per few cells.
+    32 * 1024
+  );
+  if (profile)
+    profile.reusedAuthenticatedFrameHash = Boolean(
+      authenticated && /^[0-9a-f]{16}$/u.test(authenticated)
+    );
+  addProfileDuration(profile, "updateHash", frameStart, options.instrumentation);
+  const hashStart = readProfileClock(options.instrumentation);
+  const hash = trusted ? admitted.stateHash : await hashTerminalReplicaSnapshotCooperatively(snapshot, yieldControl);
+  addProfileDuration(profile, "snapshotHash", hashStart, options.instrumentation);
+  return complete(
+    finishTerminalReplicaSeed(current, { ...admitted, snapshot }, snapshot, hash, frameHash)
+  );
 }
 function applyTerminalReplicaPatch(current, patch) {
   return applyTerminalReplicaPatchProfiled(current, patch);
@@ -29992,6 +30243,24 @@ function hashTerminalReplicaSnapshotProfiled(snapshot, profile, instrumentation)
   ]);
   addProfileDuration(profile, "snapshotHash", started, instrumentation);
   return hash;
+}
+async function hashTerminalReplicaSnapshotCooperatively(snapshot, yieldControl) {
+  await primeTerminalReplicaRowsHashCooperatively(snapshot.grid, yieldControl);
+  await primeTerminalReplicaRowsHashCooperatively(snapshot.history, yieldControl);
+  return hashCanonicalTerminalValueCooperatively(
+    [
+      "terminal-replica-v1",
+      snapshot.cols,
+      snapshot.rows,
+      hashTerminalReplicaRows(snapshot.grid),
+      hashTerminalReplicaRows(snapshot.history),
+      snapshot.cursor,
+      snapshot.modes,
+      snapshot.placements,
+      snapshot.bootstrap
+    ],
+    yieldControl
+  );
 }
 function hashTerminalReplicaTombstone(reason) {
   return hashStable(["tombstone", reason]);
@@ -30181,6 +30450,19 @@ function hashTerminalReplicaRows(rows, profile, instrumentation) {
     ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
   return hash.toString(16).padStart(16, "0");
 }
+async function primeTerminalReplicaRowsHashCooperatively(rows, yieldControl) {
+  if (ROW_ARRAY_HASH_CACHE.has(rows)) return;
+  let hash = 0n;
+  for (let index = 0; index < rows.length; index += 1) {
+    hash = BigInt.asUintN(
+      64,
+      hash * ROW_SEQUENCE_BASE + BigInt(`0x${await hashTerminalReplicaRowCooperatively(rows[index], yieldControl)}`)
+    );
+    if ((index + 1) % 64 === 0) await yieldControl();
+  }
+  if (Object.isFrozen(rows) && rows.every(isTerminalReplicaRowDeeplyFrozen))
+    ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
+}
 function registerTerminalReplicaRowsDeltaHash(previous, next, trim, append) {
   hashTerminalReplicaRows(previous);
   const prior = ROW_ARRAY_HASH_CACHE.get(previous);
@@ -30231,7 +30513,7 @@ function terminalReplicaRowIsValid(row) {
   }
   return true;
 }
-var VALIDATED_PATCH_ROWS, DEFAULT_COLOR, ROW_ARRAY_HASH_CACHE, ROW_SEQUENCE_BASE;
+var VALIDATED_PATCH_ROWS, DEFAULT_COLOR, ROW_ARRAY_HASH_CACHE, ROW_SEQUENCE_BASE, TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS;
 var init_terminal_replica2 = __esm({
   "packages/core/src/terminal-replica.ts"() {
     "use strict";
@@ -30241,6 +30523,7 @@ var init_terminal_replica2 = __esm({
     DEFAULT_COLOR = Object.freeze({ kind: "default" });
     ROW_ARRAY_HASH_CACHE = /* @__PURE__ */ new WeakMap();
     ROW_SEQUENCE_BASE = 0x100000001b3n;
+    TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS = 8192;
   }
 });
 
@@ -30369,6 +30652,122 @@ function encodeCompactSemanticTerminalUpdate(input) {
   };
   const bytes = UTF8_ENCODER2.encode(JSON.stringify(wire));
   assertRepresentationSize(bytes);
+  return bytes;
+}
+function terminalSemanticUpdateNeedsCooperativeEncoding(input) {
+  return input?.frame === "seed" && Array.isArray(input.snapshot?.grid) && Array.isArray(input.snapshot?.history) && (input.snapshot.grid.length + input.snapshot.history.length) * input.snapshot.cols >= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS;
+}
+async function encodeCompactSemanticTerminalUpdateCooperatively(input, options) {
+  const check2 = () => options.signal?.throwIfAborted();
+  check2();
+  if (input.frame !== "seed" || !terminalSemanticUpdateNeedsCooperativeEncoding(input))
+    return encodeCompactSemanticTerminalUpdate(input);
+  const yieldControl = async () => {
+    check2();
+    await options.yieldControl();
+    check2();
+  };
+  const { snapshot: source, ...headerInput } = input;
+  const header = CompactSeedHeaderSchema.parse(headerInput);
+  const { grid, history, placements, ...metadataInput } = source;
+  const metadata = CompactSeedMetadataSchema.parse(metadataInput);
+  if (!Array.isArray(grid) || !Array.isArray(history) || !Array.isArray(placements))
+    throw new TypeError("Invalid compact seed arrays");
+  if (metadata.cols > COMPACT_MAX_DIMENSION || metadata.rows > COMPACT_MAX_DIMENSION || grid.length !== metadata.rows)
+    compactEncodingLimit();
+  let rowCount = 0, cellCount = 0, runCount = 0, work = 0, encodedWork = 0;
+  const chunks = [];
+  let fragments = [], characters = 0, total = 0;
+  const flush = () => {
+    if (fragments.length === 0) return;
+    const chunk = UTF8_ENCODER2.encode(fragments.join(""));
+    total += chunk.byteLength;
+    if (total > TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES)
+      throw new TerminalDeliveryStateTooLargeError(total);
+    chunks.push(chunk);
+    fragments = [];
+    characters = 0;
+  };
+  const write = (fragment) => {
+    fragments.push(fragment);
+    characters += fragment.length;
+    if (characters >= 32 * 1024) flush();
+  };
+  write(
+    '{"f":"s","k":' + JSON.stringify(COMPACT_SEMANTIC_KIND) + ',"r":' + header.revision + ',"s":[' + metadata.cols + "," + metadata.rows + ","
+  );
+  for (const rows of [grid, history]) {
+    write("[");
+    for (let index = 0; index < rows.length; index++) {
+      const { cells, ...rowHeaderInput } = rows[index];
+      const rowHeader = CompactRowHeaderSchema.parse(rowHeaderInput);
+      if (++rowCount > COMPACT_MAX_ROWS || !Array.isArray(cells) || cells.length !== metadata.cols)
+        compactEncodingLimit();
+      cellCount += cells.length;
+      if (cellCount > COMPACT_MAX_EXPANDED_CELLS) compactEncodingLimit();
+      if (index) write(",");
+      write("[" + (rowHeader.wrapped ? 1 : 0) + ",[");
+      let prior = null, wroteRun = false;
+      const emitRun = () => {
+        if (!prior) return;
+        if (wroteRun) write(",");
+        write(JSON.stringify(prior));
+        wroteRun = true;
+      };
+      for (let offset2 = 0; offset2 < cells.length; offset2 += 256) {
+        const validated = CompactCellSliceSchema.parse(cells.slice(offset2, offset2 + 256));
+        for (const cell of validated) {
+          const encoded = compactCell(cell);
+          if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;
+          else {
+            emitRun();
+            if (++runCount > COMPACT_MAX_RUNS) compactEncodingLimit();
+            prior = encoded;
+          }
+          work++;
+          encodedWork += cell.grapheme.length + 64;
+          if (work >= 256 || encodedWork >= 32 * 1024) {
+            work = 0;
+            encodedWork = 0;
+            await yieldControl();
+          }
+        }
+      }
+      emitRun();
+      write("]]");
+    }
+    write("],");
+  }
+  write(
+    JSON.stringify(compactCursor(metadata.cursor)) + "," + JSON.stringify(compactModes(metadata.modes)) + ",["
+  );
+  if (placements.length > COMPACT_MAX_PLACEMENTS) compactEncodingLimit();
+  for (let index = 0; index < placements.length; index++) {
+    const placement = TerminalReplicaPlacementSchemaZ.parse(placements[index]);
+    if (index) write(",");
+    const encoded = JSON.stringify(compactPlacement(placement));
+    write(encoded);
+    encodedWork += encoded.length;
+    if (++work >= 256 || encodedWork >= 32 * 1024) {
+      work = 0;
+      encodedWork = 0;
+      await yieldControl();
+    }
+  }
+  write("]," + JSON.stringify(compactBootstrap(metadata.bootstrap)) + '],"v":1}');
+  flush();
+  const bytes = new Uint8Array(total);
+  let offset = 0, copied = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+    copied += chunk.byteLength;
+    if (copied >= 256 * 1024) {
+      copied = 0;
+      await yieldControl();
+    }
+  }
+  check2();
   return bytes;
 }
 function compactSnapshot(snapshot) {
@@ -30697,7 +31096,7 @@ function assertRepresentationSize(bytes) {
   if (bytes.byteLength > TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES)
     throw new TerminalDeliveryStateTooLargeError(bytes.byteLength);
 }
-var TerminalDeliveryStateTooLargeError, COMPACT_SEMANTIC_KIND, COMPACT_MAX_DIMENSION, COMPACT_MAX_ROWS, COMPACT_MAX_RUNS, COMPACT_MAX_EXPANDED_CELLS, COMPACT_MAX_PLACEMENTS, COMPACT_MAX_STRING_BYTES, UTF8_ENCODER2, COMPACT_DEFAULT_COLOR, COOPERATIVE_JSON_WORK_CHARS, COOPERATIVE_JSON_MAX_STRING_CHARS, TerminalDeliveryRepresentationHasher;
+var TerminalDeliveryStateTooLargeError, COMPACT_SEMANTIC_KIND, COMPACT_MAX_DIMENSION, COMPACT_MAX_ROWS, COMPACT_MAX_RUNS, COMPACT_MAX_EXPANDED_CELLS, COMPACT_MAX_PLACEMENTS, COMPACT_MAX_STRING_BYTES, UTF8_ENCODER2, COMPACT_DEFAULT_COLOR, TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS, CompactSeedHeaderSchema, CompactSeedMetadataSchema, CompactRowHeaderSchema, CompactCellSliceSchema, COOPERATIVE_JSON_WORK_CHARS, COOPERATIVE_JSON_MAX_STRING_CHARS, TerminalDeliveryRepresentationHasher;
 var init_terminal_delivery2 = __esm({
   "packages/core/src/terminal-delivery.ts"() {
     "use strict";
@@ -30724,6 +31123,15 @@ var init_terminal_delivery2 = __esm({
     COMPACT_MAX_STRING_BYTES = 4096;
     UTF8_ENCODER2 = new TextEncoder();
     COMPACT_DEFAULT_COLOR = Object.freeze({ kind: "default" });
+    TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS = 8192;
+    CompactSeedHeaderSchema = /* @__PURE__ */ TerminalSemanticDeliveryPayloadSchemaZ.options[0].omit({ snapshot: true });
+    CompactSeedMetadataSchema = /* @__PURE__ */ TerminalReplicaSnapshotSchemaZ.omit({
+      grid: true,
+      history: true,
+      placements: true
+    });
+    CompactRowHeaderSchema = /* @__PURE__ */ TerminalReplicaRowSchemaZ.omit({ cells: true });
+    CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
     COOPERATIVE_JSON_WORK_CHARS = 16 * 1024;
     COOPERATIVE_JSON_MAX_STRING_CHARS = COMPACT_MAX_STRING_BYTES * 6 + 2;
     TerminalDeliveryRepresentationHasher = class {
@@ -35578,6 +35986,7 @@ var init_pane_feed = __esm({
       static MAX_HELD_BYTES = 1024 * 1024;
       state = "live";
       epoch = 0;
+      nativeSeed = null;
       seedLines = null;
       held = [];
       heldBytes = 0;
@@ -35591,6 +36000,7 @@ var init_pane_feed = __esm({
         this.epoch += 1;
         this.state = "awaiting-capture";
         this.seedLines = null;
+        this.nativeSeed = null;
         this.held = [];
         this.heldBytes = 0;
         this.overflowed = false;
@@ -35606,6 +36016,7 @@ var init_pane_feed = __esm({
           if (this.held.length >= _PaneFeed.MAX_HELD_CHUNKS || this.heldBytes + data.byteLength > _PaneFeed.MAX_HELD_BYTES) {
             this.state = "quarantined";
             this.seedLines = null;
+            this.nativeSeed = null;
             this.held = [];
             this.heldBytes = 0;
             this.overflowed = true;
@@ -35627,6 +36038,11 @@ var init_pane_feed = __esm({
         this.seedLines = lines;
         this.state = "awaiting-cursor";
       }
+      captureNativeReply(epoch, snapshot) {
+        if (epoch !== this.epoch || this.state !== "awaiting-capture") return;
+        this.nativeSeed = snapshot;
+        this.state = "awaiting-cursor";
+      }
       /**
        * The cursor/size probe reply landed — emit the atomic seed batch:
        * `reset, seed, …held deltas, cursor`. On a malformed probe line the batch
@@ -35636,10 +36052,12 @@ var init_pane_feed = __esm({
        */
       cursorReply(epoch, line, fallbackSize = null) {
         if (epoch !== this.epoch || this.state !== "awaiting-cursor") return [];
+        const native = this.nativeSeed;
         const seed = seedBytesFromCapture(this.seedLines ?? []);
         const held = this.held;
         this.state = "live";
         this.seedLines = null;
+        this.nativeSeed = null;
         this.held = [];
         this.heldBytes = 0;
         const probe = parseCursorProbe(line);
@@ -35648,7 +36066,7 @@ var init_pane_feed = __esm({
         else if (fallbackSize) {
           events.push({ type: "reset", cols: fallbackSize.cols, rows: fallbackSize.rows });
         }
-        events.push({ type: "seed", data: seed });
+        events.push({ type: "seed", data: seed, ...native ? { native } : {} });
         for (const data of held) events.push({ type: "delta", data });
         if (probe) {
           const fields = line.trim().split(/\s+/);
@@ -35702,6 +36120,7 @@ var init_pane_feed = __esm({
         if (epoch !== this.epoch || this.state === "live") return;
         this.state = "quarantined";
         this.seedLines = null;
+        this.nativeSeed = null;
         this.held = [];
         this.heldBytes = 0;
         this.overflowed = false;
@@ -35710,6 +36129,7 @@ var init_pane_feed = __esm({
         this.epoch += 1;
         this.state = "quarantined";
         this.seedLines = null;
+        this.nativeSeed = null;
         this.held = [];
         this.heldBytes = 0;
         this.overflowed = false;
@@ -35767,6 +36187,7 @@ var TMUX_SERVER_HOSTNAME, STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS,
 var init_session_channel = __esm({
   "packages/daemon/src/terminal/mirror/session-channel.ts"() {
     "use strict";
+    init_native_grid_capture();
     init_src();
     init_control2();
     init_input_coalescer();
@@ -35839,6 +36260,7 @@ var init_session_channel = __esm({
       }
     });
     SessionChannel = class {
+      nativeBootstrapUnavailable = false;
       opts;
       io;
       ledger = new FlowLedger();
@@ -36065,13 +36487,14 @@ var init_session_channel = __esm({
           () => (this.outputOrdinals.get(runtimeId) ?? 0) === outputOrdinal && this.layoutTopologyEpoch === topologyEpoch && this.windowAuthorityOrdinal === authorityOrdinal
         );
       }
-      subscribePane(semanticPaneId3, onEvent, onLayout) {
+      subscribePane(semanticPaneId3, onEvent, onLayout, nativeBootstrap = false) {
         const pane = this.panesBySemantic.get(semanticPaneId3);
         if (!pane) {
           throw new Error(`unknown semantic pane ${semanticPaneId3} in session ${this.opts.session}`);
         }
         const sub = {
           feed: new PaneFeed(),
+          nativeBootstrap: nativeBootstrap && !this.nativeBootstrapUnavailable,
           onEvent,
           onLayout: onLayout ?? null,
           pane,
@@ -36353,11 +36776,23 @@ var init_session_channel = __esm({
           settle(FAILED_RESEED_RESULT);
         }, RECOVERY_ABSOLUTE_DEADLINE_MS);
         this.io.commandListInline(
-          `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
+          `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p ${sub.nativeBootstrap ? "-R" : "-e -J"} -S -${history} -t ${runtime}`,
           2,
           1,
           (reply) => {
             if (settled) return;
+            const native = sub.nativeBootstrap && reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
+            if (sub.nativeBootstrap && (!native || !isNativeBootstrapCapture(native))) {
+              settled = true;
+              retireMarker();
+              sub.feed.abort(epoch);
+              cancelDeadline?.();
+              sub.cancelCapture = null;
+              sub.nativeBootstrap = false;
+              this.nativeBootstrapUnavailable = true;
+              this.reseed(sub, onSettled, deferPublish);
+              return;
+            }
             if (!reply.ok) {
               retireMarker();
               sub.feed.abort(epoch);
@@ -36371,7 +36806,8 @@ var init_session_channel = __esm({
               return;
             }
             captureLines = [...reply.lines];
-            sub.feed.captureReply(epoch, reply.lines);
+            if (native) sub.feed.captureNativeReply(epoch, native);
+            else sub.feed.captureReply(epoch, reply.lines);
           }
         );
         this.io.commandInline(
@@ -36741,6 +37177,7 @@ var init_session_channel = __esm({
           return;
         }
         const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+        const nativeCapture = !this.nativeBootstrapUnavailable && participants.every(({ sub }) => sub.nativeBootstrap);
         const reseedOrdinal = ++recovery.reseedOrdinal;
         let settled = false;
         let captureSucceeded = false;
@@ -36770,7 +37207,7 @@ var init_session_channel = __esm({
           done(FAILED_RESEED_RESULT);
         };
         this.io.commandListInline(
-          `set-option -p -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${pane.runtimeId}`,
+          `set-option -p -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${history} -t ${pane.runtimeId}`,
           2,
           1,
           (reply) => {
@@ -36784,7 +37221,17 @@ var init_session_channel = __esm({
               return;
             }
             captureLines = Object.freeze([...reply.lines]);
-            for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+            const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
+            if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
+              this.nativeBootstrapUnavailable = true;
+              for (const { sub } of participants) sub.nativeBootstrap = false;
+              fail2();
+              return;
+            }
+            for (const { sub, epoch } of participants) {
+              if (native) sub.feed.captureNativeReply(epoch, native);
+              else sub.feed.captureReply(epoch, captureLines);
+            }
           }
         );
         this.io.commandInline(
@@ -36801,7 +37248,9 @@ var init_session_channel = __esm({
             const deliveries = participants.map(({ sub, epoch }) => ({
               sub,
               epoch,
-              events: sub.feed.cursorReply(epoch, cursorLine, fallbackSize)
+              events: sub.feed.cursorReply(epoch, cursorLine, fallbackSize).map(
+                (event) => event.type === "seed" && sub.nativeBootstrap && !nativeCapture ? { ...event, requiresNativeRecapture: true } : event
+              )
             }));
             if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
               fail2();
@@ -36838,6 +37287,7 @@ var init_session_channel = __esm({
           return;
         }
         const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+        const nativeCapture = !this.nativeBootstrapUnavailable && participants.every(({ sub }) => sub.nativeBootstrap);
         const reseedOrdinal = ++recovery.reseedOrdinal;
         const nonce = this.opts.generateAtomicHookNonce?.() ?? randomBytes4(24).toString("hex");
         if (!/^[0-9a-f]{32,128}$/u.test(nonce)) {
@@ -36923,7 +37373,7 @@ var init_session_channel = __esm({
         }
         const sentinel = (kind) => `display-message -p -l -t ${pane.runtimeId} "%tmux-ide-atomic-v1 ${nonce} ${kind}"`;
         const observerCommands = ` ; set-buffer -a -b ${observer.bufferName} ${tmuxSingleQuote(observer.record)} ; wait-for -S ${observer.signalChannel}`;
-        const body = `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; ${sentinel("start")} ; capture-pane -p -e -J -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId} ; ${sentinel("capture-end")} ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}" ; ${sentinel("cursor-end")} ; refresh-client -A ${tmuxSingleQuote(`${pane.runtimeId}:continue`)}` + observerCommands + ` ; if-shell -t ${pane.runtimeId} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION}`) + ` ${tmuxSingleQuote(`${sentinel("marker-rejected")}`)} ; ${sentinel("status-ok")} ; set-option -pu -t ${pane.runtimeId} ${hookName} ; ${sentinel("complete")}`;
+        const body = `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; ${sentinel("start")} ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId} ; ${sentinel("capture-end")} ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}" ; ${sentinel("cursor-end")} ; refresh-client -A ${tmuxSingleQuote(`${pane.runtimeId}:continue`)}` + observerCommands + ` ; if-shell -t ${pane.runtimeId} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION}`) + ` ${tmuxSingleQuote(`${sentinel("marker-rejected")}`)} ; ${sentinel("status-ok")} ; set-option -pu -t ${pane.runtimeId} ${hookName} ; ${sentinel("complete")}`;
         this.input.flush();
         const invoke = (reply) => {
           if (!reply.ok || !participantsExact()) {
@@ -36973,13 +37423,25 @@ var init_session_channel = __esm({
                   return;
                 }
                 const captureLines = Object.freeze([...result.captureLines]);
-                for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+                const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
+                if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
+                  this.nativeBootstrapUnavailable = true;
+                  for (const { sub } of participants) sub.nativeBootstrap = false;
+                  fail2(result.statusObserved);
+                  return;
+                }
+                for (const { sub, epoch } of participants) {
+                  if (native) sub.feed.captureNativeReply(epoch, native);
+                  else sub.feed.captureReply(epoch, captureLines);
+                }
                 const fallbackSize = this.layoutSizeFor(pane.runtimeId);
                 this.observeScrollOnClear(pane, result.cursorLine);
                 const deliveries = participants.map(({ sub, epoch }) => ({
                   sub,
                   epoch,
-                  events: sub.feed.cursorReply(epoch, result.cursorLine, fallbackSize)
+                  events: sub.feed.cursorReply(epoch, result.cursorLine, fallbackSize).map(
+                    (event) => event.type === "seed" && sub.nativeBootstrap && !nativeCapture ? { ...event, requiresNativeRecapture: true } : event
+                  )
                 }));
                 if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
                   fail2(true);
@@ -38235,7 +38697,8 @@ var init_mirror_service = __esm({
           handle = entry.channel.subscribePane(
             request.semanticPaneId,
             request.onEvent,
-            request.onLayout
+            request.onLayout,
+            request.nativeBootstrap
           );
         } catch (cause) {
           this.release(request.session, entry);
@@ -38636,6 +39099,10 @@ var init_runtime_scheduler = __esm({
       nowMs: () => performance.now(),
       createId: () => crypto.randomUUID(),
       microtask: (task) => queueMicrotask(task),
+      yieldTask: (task) => {
+        const handle = setImmediate(task);
+        return { cancel: () => clearImmediate(handle) };
+      },
       timer: (task, delayMs) => {
         const handle = setTimeout(task, delayMs);
         handle.unref?.();
@@ -39142,6 +39609,46 @@ var init_native_grid_projection = __esm({
     acsKeys = [..."+,-.0`abcdefghijklmnopqrstuvwxyz{|}~"];
     acsValues = [..."\u2192\u2190\u2191\u2193\u25AE\u25C6\u2592\u2409\u240C\u240D\u240A\xB0\xB1\u2424\u240B\u2518\u2510\u250C\u2514\u253C\u23BA\u23BB\u2500\u23BC\u23BD\u251C\u2524\u2534\u252C\u2502\u2264\u2265\u03C0\u2260\xA3\xB7"];
     acs = new Map(acsKeys.map((key, index) => [key, acsValues[index]]));
+  }
+});
+
+// packages/daemon/src/terminal/session-runtime/native-seed-backing.ts
+function rememberNativeSeedBacking(canonical, native) {
+  if (native.version !== 2 || native.cols !== canonical.cols || native.rows !== canonical.rows || native.history !== canonical.history.length || Math.min(native.cursor[0], native.cols - 1) !== canonical.cursor.x || native.cursor[1] !== canonical.cursor.y)
+    return false;
+  if (native.grid.length !== canonical.history.length + canonical.grid.length) return false;
+  for (let index = 0; index < native.grid.length; index++) {
+    const row = index < canonical.history.length ? canonical.history[index] : canonical.grid[index - canonical.history.length];
+    const projected = projectNativeGridRow(
+      native.grid[index],
+      native.cols,
+      0,
+      index > 0 && (native.grid[index - 1].flags & 1) !== 0
+    );
+    if (!projected || !terminalReplicaRowsEqual(row, projected)) return false;
+  }
+  const serialized = encodeNativeGridCapture(native);
+  if (serialized === null) return false;
+  const encoded = new TextEncoder().encode(serialized);
+  const chargedBytes = encoded.byteLength + 256;
+  if (chargedBytes > MAX_RETAINED_NATIVE_BACKING_BYTES) return false;
+  handoff.set(canonical, Object.freeze({ encoded, chargedBytes }));
+  return true;
+}
+function takeNativeSeedBacking(canonical) {
+  const backing = handoff.get(canonical);
+  handoff.delete(canonical);
+  return backing;
+}
+var MAX_RETAINED_NATIVE_BACKING_BYTES, handoff;
+var init_native_seed_backing = __esm({
+  "packages/daemon/src/terminal/session-runtime/native-seed-backing.ts"() {
+    "use strict";
+    init_src3();
+    init_native_grid_capture();
+    init_native_grid_projection();
+    MAX_RETAINED_NATIVE_BACKING_BYTES = 64 * 1024 * 1024;
+    handoff = /* @__PURE__ */ new WeakMap();
   }
 });
 
@@ -51912,10 +52419,20 @@ function cellColor(cell, channel) {
 function cellAttributes(cell) {
   return (cell.isBold() ? 1 : 0) | (cell.isDim() ? 2 : 0) | (cell.isItalic() ? 4 : 0) | (cell.isUnderline() ? 8 : 0) | (cell.isBlink() ? 16 : 0) | (cell.isInverse() ? 32 : 0) | (cell.isInvisible() ? 64 : 0) | (cell.isStrikethrough() ? 128 : 0);
 }
+function nativeImportAttributes(cell) {
+  const color3 = (value) => value.kind === "default" ? 0 : value.kind === "indexed" ? 33554432 | value.index : 50331648 | value.value;
+  const a = cell.attributes;
+  return [
+    color3(cell.foreground) | (a & 1 ? 134217728 : 0) | (a & 8 ? 268435456 : 0) | (a & 16 ? 536870912 : 0) | (a & 32 ? 67108864 : 0) | (a & 64 ? 1073741824 : 0) | (a & 128 ? 2147483648 : 0),
+    color3(cell.background) | (a & 2 ? 134217728 : 0) | (a & 4 ? 67108864 : 0)
+  ];
+}
 var import_addon_unicode11, XtermTerminalInterpreterBackend;
 var init_xterm_terminal_interpreter_backend = __esm({
   "packages/daemon/src/terminal/session-runtime/xterm-terminal-interpreter-backend.ts"() {
     "use strict";
+    init_native_grid_capture();
+    init_native_grid_projection();
     init_xterm_headless();
     import_addon_unicode11 = __toESM(require_addon_unicode11(), 1);
     init_src3();
@@ -51986,6 +52503,71 @@ var init_xterm_terminal_interpreter_backend = __esm({
       }
       write(data) {
         return new Promise((resolve38) => this.#terminal.write(data, resolve38));
+      }
+      canImportNativeGrid() {
+        const buffer = this.#terminal.buffer.active._buffer;
+        const handler = this.#terminal._core?._inputHandler;
+        return !!buffer && typeof buffer.getBlankLine === "function" && typeof buffer.getNullCell === "function" && typeof buffer.lines?.push === "function" && Number.isSafeInteger(buffer.lines.maxLength) && !!handler?._curAttrData && typeof this.#terminal.buffer.active.getNullCell().setFromCharData === "function" && typeof buffer.getBlankLine(void 0, false).setCell === "function";
+      }
+      importNativeGrid(snapshot) {
+        if (!this.canImportNativeGrid() || !isNativeBootstrapCapture(snapshot) || !snapshot.currentAttributes || snapshot.cols !== this.cols || snapshot.rows !== this.rows)
+          return false;
+        const buffer = this.#terminal.buffer.active._buffer;
+        const handler = this.#terminal._core._inputHandler;
+        if (!buffer || typeof buffer.getBlankLine !== "function" || typeof buffer.getNullCell !== "function" || typeof buffer.lines?.push !== "function" || !handler?._curAttrData)
+          throw new Error("Unsupported @tmux-ide/xterm-headless 6 native import shape");
+        const cell = this.#terminal.buffer.active.getNullCell();
+        if (typeof cell.setFromCharData !== "function")
+          throw new Error("Unsupported @tmux-ide/xterm-headless 6 native cell shape");
+        if (buffer.lines.maxLength < snapshot.grid.length) return false;
+        buffer.lines.length = 0;
+        for (let index = 0; index < snapshot.grid.length; index++) {
+          const row = projectNativeGridRow(
+            snapshot.grid[index],
+            snapshot.cols,
+            0,
+            index > 0 && (snapshot.grid[index - 1].flags & 1) !== 0
+          );
+          const line = buffer.getBlankLine(void 0, row.wrapped);
+          if (typeof line.setCell !== "function")
+            throw new Error("Unsupported @tmux-ide/xterm-headless 6 native line shape");
+          for (let column = 0; column < row.cells.length; column++) {
+            const projected = row.cells[column];
+            cell.setFromCharData([0, projected.grapheme, projected.width, 0]);
+            [cell.fg, cell.bg] = nativeImportAttributes(projected);
+            line.setCell(column, cell);
+          }
+          buffer.lines.push(line);
+        }
+        buffer.ybase = snapshot.history;
+        buffer.ydisp = snapshot.history;
+        buffer.x = snapshot.cursor[0];
+        buffer.y = snapshot.cursor[1];
+        const [attributes, foreground, background, underline] = snapshot.currentAttributes;
+        const current = projectNativeGridRow(
+          {
+            flags: 0,
+            used: 1,
+            cells: [
+              {
+                flags: 0,
+                width: 1,
+                text: "",
+                bytesHex: "",
+                attributes,
+                foreground,
+                background,
+                underline,
+                link: 0,
+                storageFlags: 0
+              }
+            ]
+          },
+          1
+        ).cells[0];
+        [handler._curAttrData.fg, handler._curAttrData.bg] = nativeImportAttributes(current);
+        this.#historyProjectionInvalidated = true;
+        return true;
       }
       prioritizeNextWrite() {
         this.#terminal.prioritizeNextWrite();
@@ -52460,6 +53042,7 @@ var TerminalReplicaInterpreter;
 var init_terminal_replica_interpreter = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-replica-interpreter.ts"() {
     "use strict";
+    init_native_seed_backing();
     init_src();
     init_src3();
     init_runtime_scheduler();
@@ -52467,6 +53050,7 @@ var init_terminal_replica_interpreter = __esm({
     init_xterm_terminal_interpreter_backend();
     init_causal_cell_ledger();
     TerminalReplicaInterpreter = class {
+      #nativeSeedBackingCandidate;
       #generation;
       #workspaceName;
       #semanticPaneId;
@@ -52628,6 +53212,9 @@ var init_terminal_replica_interpreter = __esm({
         this.#tail = run.catch(() => void 0);
         return run;
       }
+      supportsNativeBootstrap() {
+        return this.#backend.canImportNativeGrid?.() === true;
+      }
       async #apply(operation) {
         if (this.#closed) return;
         if (operation.type === "reseed") {
@@ -52636,7 +53223,8 @@ var init_terminal_replica_interpreter = __esm({
           const nativeRows = operation.nativeRows ?? operation.rows;
           const scrollback = Math.max(
             operation.historyLimit ?? this.#scrollback,
-            operation.historySize ?? 0
+            operation.historySize ?? 0,
+            operation.native?.history ?? 0
           );
           const replacement = this.#backendFactory({
             cols: nativeCols,
@@ -52645,6 +53233,8 @@ var init_terminal_replica_interpreter = __esm({
             historyLimit: operation.historyLimit ?? scrollback
           });
           try {
+            if (operation.native && !replacement.importNativeGrid?.(operation.native))
+              throw new Error("Native bootstrap requires a compatible interpreter");
             for (const chunk of operation.chunks) {
               await this.#writeToBackend(replacement, chunk);
             }
@@ -52675,7 +53265,12 @@ var init_terminal_replica_interpreter = __esm({
             kind: operation.bootstrap,
             hiddenState: operation.bootstrap === "authoritative-stream" ? "observed-from-start" : "unknown"
           };
-          this.#commit(true, void 0, operation.trace ?? null);
+          this.#nativeSeedBackingCandidate = operation.native;
+          try {
+            this.#commit(true, void 0, operation.trace ?? null);
+          } finally {
+            this.#nativeSeedBackingCandidate = void 0;
+          }
           previous.dispose();
           return;
         }
@@ -52920,6 +53515,8 @@ var init_terminal_replica_interpreter = __esm({
       }
       #seed() {
         const snapshot = this.#snapshot;
+        if (this.#nativeSeedBackingCandidate)
+          rememberNativeSeedBacking(snapshot, this.#nativeSeedBackingCandidate);
         return {
           type: "terminal.seed",
           ...this.#address(),
@@ -53068,6 +53665,7 @@ var init_terminal_replica_owner = __esm({
         this.#start = mirror.subscribe({
           session,
           semanticPaneId: semanticPaneId3,
+          nativeBootstrap: this.#interpreter.supportsNativeBootstrap(),
           onEvent: (event) => this.#observePane(event),
           onLayout: (event) => this.#observeLayout(event)
         }).then((subscription) => {
@@ -53144,6 +53742,7 @@ var init_terminal_replica_owner = __esm({
         };
         if (!isCurrent()) return { status: "changed" };
         const native = captured.snapshot;
+        if (native.version === 1) return { status: "unsupported" };
         const canonical = initial.snapshot;
         if (native.cols !== canonical.cols || native.rows !== canonical.rows || native.history !== canonical.history.length || Math.min(native.cursor[0], native.cols - 1) !== canonical.cursor.x || native.cursor[1] !== canonical.cursor.y)
           return { status: "mismatch" };
@@ -53271,8 +53870,12 @@ var init_terminal_replica_owner = __esm({
           };
         } else if (event.type === "seed" || event.type === "delta") {
           if (this.#waitingForGeometryCapture && !this.#reseed) return;
-          if (this.#reseed) this.#reseed.chunks.push(event.data.slice());
-          else
+          if (this.#reseed) {
+            if (event.type === "seed" && event.requiresNativeRecapture)
+              this.#reseed.requiresNativeRecapture = true;
+            if (event.type === "seed" && event.native) this.#reseed.native = event.native;
+            else this.#reseed.chunks.push(event.data.slice());
+          } else
             this.#supervise(
               this.#interpreter.enqueue({
                 type: "write",
@@ -53293,6 +53896,7 @@ var init_terminal_replica_owner = __esm({
               cols: reseed.nativeCols,
               rows: reseed.nativeRows,
               chunks: reseed.chunks,
+              native: reseed.native,
               historyLimit: event.historyLimit,
               historySize: event.historySize,
               trace: reseed.trace,
@@ -53386,6 +53990,9 @@ var init_terminal_replica_owner = __esm({
         };
       }
       #qualifyReseed(reseed, cursorX, cursorY) {
+        if (reseed.native && (reseed.native.cols !== reseed.nativeCols || reseed.native.rows !== reseed.nativeRows))
+          return null;
+        if (reseed.requiresNativeRecapture) return null;
         const lease = reseed.layoutLease;
         if (!lease || !this.#leaseIsCurrent(lease, reseed.subscriptionEpoch)) return null;
         if (lease.pane.width !== reseed.nativeCols) return null;
@@ -53638,6 +54245,13 @@ function semanticPayload(baselineRevision, baseline, target) {
     };
   return semanticSeed(target);
 }
+function canonicalUpdateCellCost(update) {
+  if (update.type === "terminal.tombstone") return 0;
+  if (update.type === "terminal.seed")
+    return update.snapshot.cols * (update.snapshot.grid.length + update.snapshot.history.length);
+  const rows = update.patch.rows.length + (update.patch.history?.length ?? 0) + (update.patch.historyDelta?.append.length ?? 0);
+  return Math.max(update.cols, update.patch.dimensions?.cols ?? update.cols) * rows;
+}
 function encodeLegacySemanticCandidate(payload) {
   const preaccounted = preaccountSemanticTerminalUpdateBytes(
     payload,
@@ -53685,10 +54299,11 @@ function joinBytes(chunks) {
   }
   return joined;
 }
-var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, ExactSemanticRepresentationSelectionError, TerminalDeliveryRepresentationSelectionError, TerminalDeliveryPreaccountLimitError, SessionRuntimeTerminalDeliveryHub;
+var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, MAX_PENDING_CANONICAL_CELLS, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, DeferredSeedEncoding, ExactSemanticRepresentationSelectionError, TerminalDeliveryRepresentationSelectionError, TerminalDeliveryPreaccountLimitError, SessionRuntimeTerminalDeliveryHub;
 var init_terminal_delivery_hub = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-delivery-hub.ts"() {
     "use strict";
+    init_native_seed_backing();
     init_src();
     init_src3();
     init_runtime_scheduler();
@@ -53700,8 +54315,16 @@ var init_terminal_delivery_hub = __esm({
     MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
     MAX_CLIENTS = 64;
     MAX_PANES = 32;
+    MAX_PENDING_CANONICAL_CELLS = 1e6;
     MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
     BACKGROUND_CADENCE_MS = 100;
+    DeferredSeedEncoding = class extends Error {
+      constructor(payload) {
+        super("Deferred compact seed encoding");
+        this.payload = payload;
+      }
+      payload;
+    };
     ExactSemanticRepresentationSelectionError = class extends TerminalDeliveryStateTooLargeError {
       selectionObservation;
       constructor(bytes, selectionObservation) {
@@ -53752,7 +54375,9 @@ var init_terminal_delivery_hub = __esm({
       /** Synchronous reservations held while an async pane source is starting. */
       #pendingClients = /* @__PURE__ */ new Map();
       #cache = /* @__PURE__ */ new Map();
+      #pendingEncodings = /* @__PURE__ */ new Map();
       #cacheBytes = 0;
+      #nativeBackingBytes = 0;
       #coalesced = 0;
       #reseeds = 0;
       #nacks = 0;
@@ -53806,6 +54431,7 @@ var init_terminal_delivery_hub = __esm({
             reseedRequired: false,
             inFlight: null,
             latestRevision: pane.latest?.update.revision ?? null,
+            encoding: null,
             scheduled: false,
             closed: false,
             lifecycleOpenRecorded: false,
@@ -53829,6 +54455,8 @@ var init_terminal_delivery_hub = __esm({
             setVisibility: (visibilityInput) => {
               if (client.closed) return;
               client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
+              if (client.visibility === "hidden" || client.visibility === "frozen")
+                this.#cancelEncoding(client);
               if (client.visibility === "visible" || client.visibility === "background")
                 this.#schedule(client);
               this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
@@ -53838,6 +54466,46 @@ var init_terminal_delivery_hub = __esm({
         } finally {
           this.#pendingClients.delete(key);
         }
+      }
+      retainedNativeBacking(paneId, expected) {
+        const pane = this.#panes.get(paneId);
+        const record = pane?.revisions.get(expected.revision);
+        const lease = record?.nativeBacking;
+        const backing = lease?.backing;
+        if (this.#closed || !pane || !record || !backing || expected.generation !== this.generation || record.update.incarnation !== expected.incarnation || record.update.stateHash !== expected.stateHash)
+          return null;
+        return {
+          status: "retained",
+          encodeBody: (prefix) => {
+            const encoded = lease.backing?.encoded;
+            if (!encoded) throw new Error("Native backing revision was retired");
+            const body = new Uint8Array(prefix.byteLength + encoded.byteLength);
+            body.set(prefix);
+            body.set(encoded, prefix.byteLength);
+            return body;
+          },
+          authority: {
+            generation: this.generation,
+            workspaceName: this.workspaceName,
+            semanticPaneId: paneId,
+            incarnation: expected.incarnation,
+            revision: expected.revision,
+            stateHash: expected.stateHash
+          },
+          isCurrent: () => !this.#closed && this.#panes.get(paneId) === pane && pane.revisions.get(expected.revision) === record && lease.backing !== null
+        };
+      }
+      #releaseNativeBacking(lease) {
+        if (!lease?.backing) return;
+        this.#nativeBackingBytes -= lease.backing.chargedBytes;
+        lease.backing = null;
+      }
+      #clearPendingNativeBacking(pane) {
+        for (const pending of pane.pendingCanonical) this.#releaseNativeBacking(pending.nativeBacking);
+        if (!pane.activeNativeBacking?.committed) this.#releaseNativeBacking(pane.activeNativeBacking);
+      }
+      #clearRetainedNativeBacking(pane) {
+        for (const record of pane.revisions.values()) this.#releaseNativeBacking(record.nativeBacking);
       }
       metrics() {
         const now = this.#scheduler.nowMs();
@@ -53857,6 +54525,7 @@ var init_terminal_delivery_hub = __esm({
             (sum, pane) => sum + pane.revisions.size,
             0
           ),
+          nativeBackingBytes: this.#nativeBackingBytes,
           representationCacheBytes: this.#cacheBytes,
           rawJournalBytes: [...this.#panes.values()].reduce((sum, pane) => sum + pane.rawBytes, 0),
           maxSlowClientMs: Math.max(this.#maxSlowClientMs, currentSlow),
@@ -53903,6 +54572,7 @@ var init_terminal_delivery_hub = __esm({
       }
       async resetForSessionRestart() {
         for (const client of this.#clients.values()) {
+          this.#cancelEncoding(client);
           client.outgoing.length = 0;
           client.inFlight = null;
           this.#enqueue(client, {
@@ -53916,7 +54586,11 @@ var init_terminal_delivery_hub = __esm({
         const panes = [...this.#panes.values()];
         this.#panes.clear();
         for (const pane of panes) {
+          this.#clearRetainedNativeBacking(pane);
+          pane.canonicalAbort.abort();
+          this.#clearPendingNativeBacking(pane);
           pane.pendingCanonical.length = 0;
+          pane.pendingCanonicalCells = 0;
           pane.canonicalScheduled = false;
         }
         await Promise.allSettled(panes.map((pane) => pane.source?.close()));
@@ -53950,47 +54624,164 @@ var init_terminal_delivery_hub = __esm({
           rawFloorRevision: 0,
           lastRawRevision: -1,
           pendingCanonical: [],
+          activeNativeBacking: null,
+          pendingCanonicalCells: 0,
           canonicalScheduled: false,
+          canonicalAbort: new AbortController(),
+          canonicalYieldStartedAt: -Infinity,
           pendingDeliveryTrace: null
         };
         this.#panes.set(semanticPaneId3, pane);
         pane.start = owner.subscribeSource(
-          (update, trace) => this.#observeCanonical(semanticPaneId3, update, trace),
-          (record) => this.#observeRaw(semanticPaneId3, record)
+          (update, trace) => {
+            if (this.#panes.get(semanticPaneId3) === pane)
+              this.#observeCanonical(semanticPaneId3, update, trace);
+            else if (update.type === "terminal.seed") takeNativeSeedBacking(update.snapshot);
+          },
+          (record) => {
+            if (this.#panes.get(semanticPaneId3) === pane) this.#observeRaw(semanticPaneId3, record);
+          }
         ).then(async (source) => {
-          if (this.#closed || this.#panes.get(semanticPaneId3) !== pane) {
+          if (this.#closed || this.#panes.get(semanticPaneId3) !== pane || pane?.canonicalAbort.signal.aborted) {
             await source.close();
             throw new Error("Terminal delivery source retired during startup");
           }
           pane.source = source;
         }).catch((error) => {
-          if (this.#panes.get(semanticPaneId3) === pane) this.#panes.delete(semanticPaneId3);
+          if (this.#panes.get(semanticPaneId3) === pane) {
+            this.#panes.delete(semanticPaneId3);
+            this.#clearPendingNativeBacking(pane);
+            this.#clearRetainedNativeBacking(pane);
+          }
           throw error;
         });
         await pane.start;
         return pane;
       }
       #observeCanonical(semanticPaneId3, update, trace) {
+        const backing = update.type === "terminal.seed" ? takeNativeSeedBacking(update.snapshot) : void 0;
         const pane = this.#panes.get(semanticPaneId3);
-        if (!pane) return;
-        pane.pendingCanonical.push({ update, trace });
+        if (!pane || pane.canonicalAbort.signal.aborted || this.#closed) return;
+        if (update.workspaceName !== this.workspaceName || update.semanticPaneId !== semanticPaneId3 || update.generation !== this.generation)
+          return;
+        const cells = canonicalUpdateCellCost(update);
+        if (!Number.isSafeInteger(cells) || cells < 0 || pane.pendingCanonical.length >= MAX_CANONICAL_REVISIONS || pane.pendingCanonical.length > 0 && cells > MAX_PENDING_CANONICAL_CELLS - pane.pendingCanonicalCells) {
+          pane.canonicalAbort.abort();
+          this.#clearPendingNativeBacking(pane);
+          pane.pendingCanonical.length = 0;
+          pane.pendingCanonicalCells = 0;
+          for (const client of this.#clients.values())
+            if (client.paneId === semanticPaneId3 && !client.closed)
+              this.#fault(
+                client,
+                "state-too-large",
+                "Terminal source exceeded the pending update budget; reopen for a fresh snapshot"
+              );
+          return;
+        }
+        const nativeBacking = backing && backing.chargedBytes <= MAX_RETAINED_NATIVE_BACKING_BYTES - this.#nativeBackingBytes ? { backing, committed: false } : null;
+        if (nativeBacking) this.#nativeBackingBytes += backing.chargedBytes;
+        pane.pendingCanonical.push({ update, trace, cells, nativeBacking });
+        pane.pendingCanonicalCells += cells;
         if (pane.canonicalScheduled) return;
         pane.canonicalScheduled = true;
         this.#scheduler.microtask(() => {
-          if (this.#panes.get(semanticPaneId3) !== pane) return;
-          pane.canonicalScheduled = false;
-          for (const pending of pane.pendingCanonical.splice(0))
-            this.#applyCanonical(semanticPaneId3, pane, pending.update, pending.trace);
+          void this.#drainCanonical(semanticPaneId3, pane);
         });
       }
-      #applyCanonical(semanticPaneId3, pane, update, trace) {
+      async #drainCanonical(semanticPaneId3, pane) {
+        try {
+          while (!this.#closed && this.#panes.get(semanticPaneId3) === pane && !pane.canonicalAbort.signal.aborted) {
+            const pending = pane.pendingCanonical.shift();
+            if (!pending) break;
+            pane.pendingCanonicalCells -= pending.cells;
+            pane.activeNativeBacking = pending.nativeBacking;
+            try {
+              const work = this.#applyCanonical(
+                semanticPaneId3,
+                pane,
+                pending.update,
+                pending.trace,
+                pending.nativeBacking
+              );
+              if (work) await work;
+            } finally {
+              if (!pending.nativeBacking?.committed) this.#releaseNativeBacking(pending.nativeBacking);
+              pane.activeNativeBacking = null;
+            }
+          }
+        } catch {
+          if (!pane.canonicalAbort.signal.aborted && this.#panes.get(semanticPaneId3) === pane) {
+            pane.canonicalAbort.abort();
+            this.#clearPendingNativeBacking(pane);
+            pane.pendingCanonical.length = 0;
+            pane.pendingCanonicalCells = 0;
+            for (const client of this.#clients.values())
+              if (client.paneId === semanticPaneId3 && !client.closed)
+                this.#fault(
+                  client,
+                  "protocol-violation",
+                  "Terminal source update could not be validated"
+                );
+          }
+        } finally {
+          pane.canonicalScheduled = false;
+        }
+      }
+      #yieldCanonical(pane) {
+        if (this.#scheduler.nowMs() - pane.canonicalYieldStartedAt < 2) return Promise.resolve();
+        return new Promise((resolve38) => {
+          let timer;
+          const finish = () => {
+            timer?.cancel();
+            pane.canonicalYieldStartedAt = this.#scheduler.nowMs();
+            pane.canonicalAbort.signal.removeEventListener("abort", finish);
+            resolve38();
+          };
+          pane.canonicalAbort.signal.addEventListener("abort", finish, { once: true });
+          if (pane.canonicalAbort.signal.aborted) finish();
+          else
+            timer = this.#scheduler.yieldTask ? this.#scheduler.yieldTask(finish) : this.#scheduler.timer(finish, 0);
+        });
+      }
+      #applyCanonical(semanticPaneId3, pane, update, trace, nativeBacking) {
         if (update.workspaceName !== this.workspaceName || update.semanticPaneId !== semanticPaneId3 || update.generation !== this.generation)
           return;
-        const result = applyTerminalReplicaUpdate(pane.current, update);
+        if (terminalReplicaUpdateNeedsCooperativeReduction(update)) {
+          const baseline = pane.current;
+          pane.canonicalYieldStartedAt = -Infinity;
+          return applyTerminalReplicaUpdateCooperatively(baseline, update, {
+            yieldControl: () => this.#yieldCanonical(pane),
+            signal: pane.canonicalAbort.signal
+          }).then((result) => {
+            if (this.#closed || pane.canonicalAbort.signal.aborted || this.#panes.get(semanticPaneId3) !== pane || pane.current !== baseline)
+              return;
+            this.#publishCanonical(semanticPaneId3, pane, update, trace, result, nativeBacking);
+          });
+        }
+        this.#publishCanonical(
+          semanticPaneId3,
+          pane,
+          update,
+          trace,
+          applyTerminalReplicaUpdate(pane.current, update),
+          nativeBacking
+        );
+      }
+      #publishCanonical(semanticPaneId3, pane, update, trace, result, nativeBacking) {
         if (result.status !== "applied" && result.status !== "idempotent") return;
         pane.current = result.state;
         if (trace) pane.pendingDeliveryTrace = trace;
-        const record = { update, state: result.state, trace: pane.pendingDeliveryTrace };
+        const previous = pane.revisions.get(update.revision);
+        const retained = nativeBacking ?? previous?.nativeBacking ?? null;
+        if (previous?.nativeBacking !== retained) this.#releaseNativeBacking(previous?.nativeBacking);
+        if (retained) retained.committed = true;
+        const record = {
+          update,
+          state: result.state,
+          trace: pane.pendingDeliveryTrace,
+          nativeBacking: retained
+        };
         pane.latest = record;
         pane.revisions.set(update.revision, record);
         this.#pruneCanonicalRevisions(semanticPaneId3);
@@ -53998,20 +54789,29 @@ var init_terminal_delivery_hub = __esm({
           if (client.paneId !== semanticPaneId3 || client.closed) continue;
           if (!client.lifecycleOpenRecorded)
             client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
-          if (update.type === "terminal.tombstone" && (client.inFlight !== null || client.visibility !== "visible")) {
+          if (update.type === "terminal.tombstone" && (client.inFlight !== null || client.encoding !== null || client.visibility !== "visible")) {
             this.#fault(client, "source-closed", "Terminal source closed before final state delivery");
             continue;
           }
+          if (client.encoding && client.encoding.target.update.incarnation !== update.incarnation)
+            this.#cancelEncoding(client);
           if (client.latestRevision !== null && client.latestRevision !== update.revision)
             this.#coalesced += 1;
           client.latestRevision = update.revision;
           this.#schedule(client);
         }
         if (update.type === "terminal.tombstone") {
+          pane.canonicalAbort.abort();
+          this.#clearPendingNativeBacking(pane);
+          pane.pendingCanonical.length = 0;
+          pane.pendingCanonicalCells = 0;
           this.#scheduler.timer(() => {
             if (this.#panes.get(semanticPaneId3) !== pane) return;
             this.#panes.delete(semanticPaneId3);
+            this.#clearRetainedNativeBacking(pane);
+            this.#clearPendingNativeBacking(pane);
             pane.pendingCanonical.length = 0;
+            pane.pendingCanonicalCells = 0;
             pane.canonicalScheduled = false;
             void pane.source?.close().catch(() => void 0);
             this.#clearCache();
@@ -54020,7 +54820,7 @@ var init_terminal_delivery_hub = __esm({
       }
       #observeRaw(semanticPaneId3, record) {
         const pane = this.#panes.get(semanticPaneId3);
-        if (!pane) return;
+        if (!pane || pane.canonicalAbort.signal.aborted) return;
         if (record.revision <= pane.lastRawRevision) return;
         if (record.baseRevision === record.revision || record.baseRevision !== record.revision - 1 || pane.lastRawRevision >= 0 && record.baseRevision !== pane.lastRawRevision) {
           pane.raw.clear();
@@ -54048,7 +54848,7 @@ var init_terminal_delivery_hub = __esm({
         }
       }
       #schedule(client) {
-        if (client.closed || client.inFlight || client.latestRevision === null || client.latestRevision === client.baselineRevision || client.visibility === "hidden" || client.visibility === "frozen")
+        if (client.closed || client.inFlight || client.encoding || client.latestRevision === null || client.latestRevision === client.baselineRevision || client.visibility === "hidden" || client.visibility === "frozen")
           return;
         if (client.visibility === "background") {
           if (client.backgroundTimer) return;
@@ -54067,17 +54867,19 @@ var init_terminal_delivery_hub = __esm({
             this.#deliver(client);
         });
       }
-      #deliver(client) {
+      #deliver(client, completed) {
         const pane = this.#panes.get(client.paneId);
-        const target = pane?.latest;
-        if (!pane || !target || target.update.revision !== client.latestRevision) return;
-        const traceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+        const target = completed?.target ?? pane?.latest;
+        if (!pane || !target || client.closed || client.inFlight || client.encoding || client.visibility === "hidden" || client.visibility === "frozen" || !completed && target.update.revision !== client.latestRevision)
+          return;
+        const traceStarted = completed?.traceStarted ?? (this.#observability.enabled ? this.#observability.nowMicros() : 0);
+        let deferred = false;
         let encodedRepresentation = null;
         let failedSelectionObservation = null;
         let deliveryEnvelope = null;
         let deliveryOrdinal = null;
         try {
-          const representation = this.#representation(client, pane, target);
+          const representation = this.#representation(client, pane, target, completed?.outcome);
           encodedRepresentation = representation;
           const transactionId = this.#scheduler.createId();
           const chunkCount = Math.max(1, Math.ceil(representation.bytes.byteLength / (256 * 1024)));
@@ -54118,6 +54920,11 @@ var init_terminal_delivery_hub = __esm({
           if (target.trace?.traceId === pane.pendingDeliveryTrace?.traceId)
             pane.pendingDeliveryTrace = null;
         } catch (error) {
+          if (error instanceof DeferredSeedEncoding) {
+            deferred = true;
+            this.#startEncoding(client, pane, target, error.payload, traceStarted);
+            return;
+          }
           failedSelectionObservation = semanticSelectionObservationFromError(error);
           this.#fault(
             client,
@@ -54126,7 +54933,7 @@ var init_terminal_delivery_hub = __esm({
             failedSelectionObservation
           );
         } finally {
-          if (this.#observability.enabled)
+          if (this.#observability.enabled && !deferred)
             try {
               const metrics = this.metrics();
               this.#observability.recordSpan(
@@ -54173,7 +54980,103 @@ var init_terminal_delivery_hub = __esm({
             }
         }
       }
-      #representation(client, pane, target) {
+      #startEncoding(client, pane, target, payload, traceStarted) {
+        const key = cacheKey([
+          target.update.workspaceName,
+          client.paneId,
+          target.update.generation,
+          target.update.incarnation,
+          target.update.revision,
+          target.update.stateHash,
+          client.negotiated.encoding,
+          client.negotiated.richPlacements ? "rich" : "plain"
+        ]);
+        let job = this.#pendingEncodings.get(key);
+        let created = false;
+        if (!job) {
+          if (this.#pendingEncodings.size >= MAX_PANES) {
+            this.#fault(
+              client,
+              "state-too-large",
+              "Too many terminal representations are pending; reopen to retry"
+            );
+            return;
+          }
+          job = {
+            key,
+            pane,
+            abort: new AbortController(),
+            clients: /* @__PURE__ */ new Set(),
+            yieldStartedAt: -Infinity
+          };
+          this.#pendingEncodings.set(key, job);
+          created = true;
+        }
+        const owned = job;
+        client.encoding = {
+          job: owned,
+          target,
+          baselineRevision: client.baselineRevision,
+          baselineHash: client.baselineHash,
+          reseedRequired: client.reseedRequired,
+          traceStarted
+        };
+        owned.clients.add(client);
+        if (!created) return;
+        void encodeCompactSemanticTerminalUpdateCooperatively(payload, {
+          signal: owned.abort.signal,
+          yieldControl: () => this.#yieldEncoding(owned)
+        }).then(
+          (bytes) => this.#completeEncoding(owned, { bytes }),
+          (error) => this.#completeEncoding(owned, { error })
+        );
+      }
+      #yieldEncoding(job) {
+        if (this.#scheduler.nowMs() - job.yieldStartedAt < 2) return Promise.resolve();
+        return new Promise((resolve38) => {
+          let timer;
+          const finish = () => {
+            timer?.cancel();
+            job.yieldStartedAt = this.#scheduler.nowMs();
+            job.abort.signal.removeEventListener("abort", finish);
+            resolve38();
+          };
+          job.abort.signal.addEventListener("abort", finish, { once: true });
+          if (job.abort.signal.aborted) finish();
+          else
+            timer = this.#scheduler.yieldTask ? this.#scheduler.yieldTask(finish) : this.#scheduler.timer(finish, 0);
+        });
+      }
+      #completeEncoding(job, outcome) {
+        if (this.#pendingEncodings.get(job.key) === job) this.#pendingEncodings.delete(job.key);
+        for (const client of job.clients) {
+          const encoding = client.encoding;
+          if (!encoding || encoding.job !== job) continue;
+          client.encoding = null;
+          if (job.abort.signal.aborted || this.#closed || client.closed || this.#clients.get(client.key) !== client || this.#panes.get(client.paneId) !== job.pane || client.baselineRevision !== encoding.baselineRevision || client.baselineHash !== encoding.baselineHash || client.reseedRequired !== encoding.reseedRequired || client.inFlight || client.visibility === "hidden" || client.visibility === "frozen" || job.pane.latest?.update.incarnation !== encoding.target.update.incarnation)
+            continue;
+          this.#deliver(client, {
+            target: encoding.target,
+            outcome,
+            traceStarted: encoding.traceStarted
+          });
+          this.#pruneCanonicalRevisions(client.paneId);
+        }
+        job.clients.clear();
+      }
+      #cancelEncoding(client) {
+        const encoding = client.encoding;
+        if (!encoding) return;
+        client.encoding = null;
+        const job = encoding.job;
+        job.clients.delete(client);
+        if (job.clients.size === 0) {
+          job.abort.abort();
+          if (this.#pendingEncodings.get(job.key) === job) this.#pendingEncodings.delete(job.key);
+        }
+        this.#pruneCanonicalRevisions(client.paneId);
+      }
+      #representation(client, pane, target, seedOutcome) {
         const key = cacheKey([
           target.update.workspaceName,
           target.update.semanticPaneId,
@@ -54194,7 +55097,16 @@ var init_terminal_delivery_hub = __esm({
         const snapshot = target.state.snapshot;
         let result = null;
         if (client.negotiated.encoding === "semantic-v1" || client.negotiated.encoding === "semantic-compact-v1") {
-          const encodeSemantic = client.negotiated.encoding === "semantic-compact-v1" ? encodeCompactSemanticTerminalUpdate : encodeSemanticTerminalUpdate;
+          const encodeSemantic = (payload) => {
+            if (client.negotiated.encoding !== "semantic-compact-v1")
+              return encodeSemanticTerminalUpdate(payload);
+            if (terminalSemanticUpdateNeedsCooperativeEncoding(payload)) {
+              if (!seedOutcome) throw new DeferredSeedEncoding(payload);
+              if ("error" in seedOutcome) throw seedOutcome.error;
+              return seedOutcome.bytes;
+            }
+            return encodeCompactSemanticTerminalUpdate(payload);
+          };
           if (client.reseedRequired) {
             const payload = semanticSeed(target);
             let bytes;
@@ -54581,6 +55493,7 @@ var init_terminal_delivery_hub = __esm({
             );
           } catch {
           }
+        this.#cancelEncoding(client);
         client.outgoing.length = 0;
         if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
         client.inFlight = null;
@@ -54647,6 +55560,7 @@ var init_terminal_delivery_hub = __esm({
       async #closeClient(client, reason = "closed") {
         if (client.closed) return;
         client.closed = true;
+        this.#cancelEncoding(client);
         client.resolveClosed(reason);
         if (client.lifecycleOpenRecorded)
           this.#recordDeliveryLifecycle(client, this.#panes.get(client.paneId), "close");
@@ -54658,7 +55572,11 @@ var init_terminal_delivery_hub = __esm({
         const pane = this.#panes.get(client.paneId);
         this.#panes.delete(client.paneId);
         if (pane) {
+          this.#clearRetainedNativeBacking(pane);
+          pane.canonicalAbort.abort();
+          this.#clearPendingNativeBacking(pane);
           pane.pendingCanonical.length = 0;
+          pane.pendingCanonicalCells = 0;
           pane.canonicalScheduled = false;
         }
         await pane?.source?.close().catch(() => void 0);
@@ -54781,11 +55699,16 @@ var init_terminal_delivery_hub = __esm({
           const baseline = pane.revisions.get(client.baselineRevision)?.update;
           if (!client.reseedRequired && baseline?.incarnation === latest.incarnation && baseline.stateHash === client.baselineHash)
             reachable.add(client.baselineRevision);
+          const encoding = client.encoding?.target.update;
+          if (encoding?.incarnation === latest.incarnation) reachable.add(encoding.revision);
           const flight = client.inFlight?.envelope;
           if (flight?.incarnation === latest.incarnation) reachable.add(flight.canonicalRevision);
         }
         for (const revision of pane.revisions.keys())
-          if (!reachable.has(revision)) pane.revisions.delete(revision);
+          if (!reachable.has(revision)) {
+            this.#releaseNativeBacking(pane.revisions.get(revision)?.nativeBacking);
+            pane.revisions.delete(revision);
+          }
       }
       #pruneAckSupersededCache(paneId) {
         const clients = [...this.#clients.values()].filter(
@@ -55479,10 +56402,10 @@ var init_registry2 = __esm({
       async describeSession(session) {
         return await this.#runtime(session).describe();
       }
-      async captureNativeBacking(session, semanticPaneId3) {
+      async captureNativeBacking(session, semanticPaneId3, expected) {
         const runtime = this.#sessions.get(session);
         if (this.#disposed || !runtime) return { status: "unavailable" };
-        const result = await runtime.captureNativeBacking(semanticPaneId3);
+        const result = await runtime.captureNativeBacking(semanticPaneId3, expected);
         if (this.#disposed || this.#sessions.get(session) !== runtime) return { status: "retired" };
         return result;
       }
@@ -56168,10 +57091,11 @@ var init_registry2 = __esm({
           throw error;
         }
       }
-      async captureNativeBacking(semanticPaneId3) {
+      async captureNativeBacking(semanticPaneId3, expected) {
         const owner = this.#terminalReplicas.get(semanticPaneId3);
         if (!owner) return { status: "unavailable" };
-        return await owner.captureNativeBacking();
+        const retained = expected ? this.#terminalDeliveryHub.retainedNativeBacking(semanticPaneId3, expected) : null;
+        return retained ?? await owner.captureNativeBacking();
       }
       async openTerminalDelivery(clientId, surface, deliverySubscriberId, deliveryRequestId, semanticPaneId3, offer, onMessage) {
         await this.whenReady();
@@ -73777,7 +74701,7 @@ async function startHttpServer({
     ownerToken: localBypassToken ?? null,
     generation: daemonIdentity.instanceId,
     resolveSession: (workspace) => workspaceRegistry.get(workspace)?.sessionName ?? null,
-    capture: (session, pane) => sessionRuntimeRegistry.captureNativeBacking(session, pane)
+    capture: (session, pane, expected) => sessionRuntimeRegistry.captureNativeBacking(session, pane, expected)
   });
   app.get("/api/daemon/health", (c) => {
     return c.json({
