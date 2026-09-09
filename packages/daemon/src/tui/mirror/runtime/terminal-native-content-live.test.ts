@@ -222,7 +222,7 @@ describe.skipIf(!available)("native transient capture recovery", () => {
         });
         const send = io.commandListInline.bind(io);
         io.commandListInline = (command, count, index, onReply) => {
-          if (injected === 0 && command.includes("capture-pane -p -e -J")) {
+          if (injected === 0 && /capture-pane -p -(?:R|e -J)(?: |$)/u.test(command)) {
             injected++;
             onReply({ ok: false, lines: [] });
           } else send(command, count, index, onReply);
@@ -1626,7 +1626,52 @@ describe.skipIf(!available)("native history reader continuity", () => {
                 expect(snapshot().cols).toBe(width);
                 if (scenario.startsWith("active-"))
                   expect(text()).toContain(`DONE-${145 + step * 5}`);
-                expect(text()).toBe(tmux("capture-pane", "-p", "-S", "-", "-t", target));
+                let physical: string | null = null;
+                if (width === 8) {
+                  try {
+                    physical = tmux("capture-pane", "-p", "-R", "-S", "-", "-t", target);
+                  } catch {
+                    // Stock tmux has no physical-grid export; retain its text oracle.
+                  }
+                }
+                if (physical !== null) {
+                  const [header, ...nativeRows] = physical
+                    .split("\n")
+                    .map((line) => JSON.parse(line));
+                  expect(header.cols).toBe(width);
+                  // Independently project physical occupancy. Native textual capture
+                  // omits orphan padding at column zero after a wide-cell reflow;
+                  // the display still has that blank column. Do not normalize it.
+                  const expected = nativeRows.map((row) => {
+                    const cells: Array<{ grapheme: string; width: number }> = [];
+                    for (let column = 0; column < width; column++) {
+                      const cell = row.cells[column];
+                      if (!cell || (cell[0] & (4 | 64 | 128)) !== 0) {
+                        cells.push({ grapheme: "", width: 1 });
+                      } else {
+                        cells.push({
+                          grapheme: Buffer.from(cell[2], "hex").toString("utf8"),
+                          width: cell[1],
+                        });
+                        if (cell[1] === 2) {
+                          cells.push({ grapheme: "", width: 0 });
+                          column++;
+                        }
+                      }
+                    }
+                    return cells;
+                  });
+                  if (scenario === "active-reflow") {
+                    expect(nativeRows.some((row) => (row.cells[0]?.[0] & 4) !== 0)).toBe(true);
+                  }
+                  expect(
+                    [...snapshot().history, ...snapshot().grid].map((row) =>
+                      row.cells.map(({ grapheme, width }) => ({ grapheme, width })),
+                    ),
+                  ).toEqual(expected);
+                } else {
+                  expect(text()).toBe(tmux("capture-pane", "-p", "-S", "-", "-t", target));
+                }
               },
               { timeout: 3000 },
             );
