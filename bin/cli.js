@@ -36290,6 +36290,8 @@ var init_session_channel = __esm({
     });
     SessionChannel = class {
       nativeBootstrapUnavailable = false;
+      nativeBootstrapConfirmed = false;
+      nativeProbeRetried = /* @__PURE__ */ new WeakSet();
       opts;
       io;
       ledger = new FlowLedger();
@@ -36762,7 +36764,7 @@ var init_session_channel = __esm({
         this.noteRecoveryOutput(pane, outputOrdinal);
       }
       // ── Seed / reseed (the atomic recipe) ────────────────────────────────────
-      reseed(sub, onSettled, deferPublish = false) {
+      reseed(sub, onSettled, deferPublish = false, deadlineAt = this.recoveryNowMs() + RECOVERY_ABSOLUTE_DEADLINE_MS) {
         if (sub.closed || sub.frozen || this.disposed) {
           onSettled?.(FAILED_RESEED_RESULT);
           return;
@@ -36798,12 +36800,15 @@ var init_session_channel = __esm({
           sub.feed.abort(epoch);
           if (!captureSucceeded) retireMarker();
         };
-        cancelDeadline = this.scheduleRecovery(() => {
-          if (settled) return;
-          sub.feed.abort(epoch);
-          if (!captureSucceeded) retireMarker();
-          settle(FAILED_RESEED_RESULT);
-        }, RECOVERY_ABSOLUTE_DEADLINE_MS);
+        cancelDeadline = this.scheduleRecovery(
+          () => {
+            if (settled) return;
+            sub.feed.abort(epoch);
+            if (!captureSucceeded) retireMarker();
+            settle(FAILED_RESEED_RESULT);
+          },
+          Math.max(0, deadlineAt - this.recoveryNowMs())
+        );
         this.io.commandListInline(
           `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p ${sub.nativeBootstrap ? "-R" : "-e -J"} -S -${history} -t ${runtime}`,
           2,
@@ -36812,6 +36817,16 @@ var init_session_channel = __esm({
             if (settled) return;
             const native = sub.nativeBootstrap && reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
             if (sub.nativeBootstrap && (!native || !isNativeBootstrapCapture(native)) && !nativeBootstrapUnsupported(reply.ok, reply.lines, native)) {
+              if (!this.nativeBootstrapConfirmed && !this.nativeProbeRetried.has(sub) && this.recoveryNowMs() < deadlineAt) {
+                this.nativeProbeRetried.add(sub);
+                settled = true;
+                sub.feed.abort(epoch);
+                cancelDeadline?.();
+                sub.cancelCapture = null;
+                retireMarker();
+                this.reseed(sub, onSettled, deferPublish, deadlineAt);
+                return;
+              }
               sub.feed.abort(epoch);
               retireMarker();
               settle(FAILED_RESEED_RESULT);
@@ -36825,7 +36840,7 @@ var init_session_channel = __esm({
               sub.cancelCapture = null;
               sub.nativeBootstrap = false;
               this.nativeBootstrapUnavailable = true;
-              this.reseed(sub, onSettled, deferPublish);
+              this.reseed(sub, onSettled, deferPublish, deadlineAt);
               return;
             }
             if (!reply.ok) {
@@ -36841,6 +36856,7 @@ var init_session_channel = __esm({
               return;
             }
             captureLines = [...reply.lines];
+            if (native) this.nativeBootstrapConfirmed = true;
             if (native) sub.feed.captureNativeReply(epoch, native);
             else sub.feed.captureReply(epoch, reply.lines);
           }
@@ -37269,6 +37285,7 @@ var init_session_channel = __esm({
               fail2();
               return;
             }
+            if (native) this.nativeBootstrapConfirmed = true;
             for (const { sub, epoch } of participants) {
               if (native) sub.feed.captureNativeReply(epoch, native);
               else sub.feed.captureReply(epoch, captureLines);
@@ -37473,6 +37490,7 @@ var init_session_channel = __esm({
                   fail2(result.statusObserved);
                   return;
                 }
+                if (native) this.nativeBootstrapConfirmed = true;
                 for (const { sub, epoch } of participants) {
                   if (native) sub.feed.captureNativeReply(epoch, native);
                   else sub.feed.captureReply(epoch, captureLines);
