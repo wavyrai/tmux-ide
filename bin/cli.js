@@ -10248,7 +10248,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.12",
+      version: "2.9.0-beta.13",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
@@ -18243,7 +18243,9 @@ function decodeNativeGridCapture(text) {
   };
   try {
     const header = next();
-    if (!object(header) || header.version !== 1 && header.version !== 2 || !uint(header.cols, MAX_CELLS) || header.cols === 0 || !uint(header.rows, MAX_ROWS) || header.rows === 0 || !uint(header.history, MAX_ROWS) || header.history + header.rows > MAX_ROWS || !uint(header.hscrolled, header.history) || !uint(header.limit) || !Array.isArray(header.cursor) || header.cursor.length !== 2 || !uint(header.cursor[0], header.cols) || !uint(header.cursor[1], header.rows - 1))
+    if (!object(header) || header.version !== 1 && header.version !== 2 || !uint(header.cols, MAX_CELLS) || header.cols === 0 || !uint(header.rows, MAX_ROWS) || header.rows === 0 || !uint(header.history, MAX_ROWS) || header.history + header.rows > MAX_ROWS || !uint(header.hscrolled, header.history) || !uint(header.limit) || !Array.isArray(header.cursor) || header.cursor.length !== 2 || // screen_resize_cursor preserves x after a non-reflow (alternate)
+    // shrink. Bound the source coordinate independently of current columns.
+    !uint(header.cursor[0], MAX_CELLS) || !uint(header.cursor[1], header.rows - 1))
       return null;
     const attrs = header.currentAttributes;
     if (attrs != null && (header.version !== 2 || !Array.isArray(attrs) || attrs.length !== 4 || !uint(attrs[0], 65535) || !signed(attrs[1]) || !signed(attrs[2]) || !signed(attrs[3])))
@@ -36152,6 +36154,11 @@ var init_pane_feed = __esm({
 // packages/daemon/src/terminal/mirror/session-channel.ts
 import { createHash as createHash12, randomBytes as randomBytes4 } from "node:crypto";
 import { hostname as hostname3 } from "node:os";
+function nativeBootstrapUnsupported(ok2, lines, native) {
+  if (ok2)
+    return native !== null && (native.version !== 2 || native.currentAttributes === void 0);
+  return lines.some((line) => /^(?:command capture-pane: )?unknown flag -R$/.test(line.trim()));
+}
 function snapshotFingerprint2(captureLines, cursorLine, fallbackSize) {
   const hash = createHash12("sha256");
   const append = (bytes) => {
@@ -36782,6 +36789,12 @@ var init_session_channel = __esm({
           (reply) => {
             if (settled) return;
             const native = sub.nativeBootstrap && reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
+            if (sub.nativeBootstrap && (!native || !isNativeBootstrapCapture(native)) && !nativeBootstrapUnsupported(reply.ok, reply.lines, native)) {
+              sub.feed.abort(epoch);
+              retireMarker();
+              settle(FAILED_RESEED_RESULT);
+              return;
+            }
             if (sub.nativeBootstrap && (!native || !isNativeBootstrapCapture(native))) {
               settled = true;
               retireMarker();
@@ -37212,6 +37225,10 @@ var init_session_channel = __esm({
           1,
           (reply) => {
             if (!reply.ok) {
+              if (nativeCapture && nativeBootstrapUnsupported(false, reply.lines, null)) {
+                this.nativeBootstrapUnavailable = true;
+                for (const { sub } of participants) sub.nativeBootstrap = false;
+              }
               fail2();
               return;
             }
@@ -37223,8 +37240,10 @@ var init_session_channel = __esm({
             captureLines = Object.freeze([...reply.lines]);
             const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
             if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
-              this.nativeBootstrapUnavailable = true;
-              for (const { sub } of participants) sub.nativeBootstrap = false;
+              if (nativeBootstrapUnsupported(true, captureLines, native)) {
+                this.nativeBootstrapUnavailable = true;
+                for (const { sub } of participants) sub.nativeBootstrap = false;
+              }
               fail2();
               return;
             }
@@ -37425,8 +37444,10 @@ var init_session_channel = __esm({
                 const captureLines = Object.freeze([...result.captureLines]);
                 const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
                 if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
-                  this.nativeBootstrapUnavailable = true;
-                  for (const { sub } of participants) sub.nativeBootstrap = false;
+                  if (nativeBootstrapUnsupported(true, captureLines, native)) {
+                    this.nativeBootstrapUnavailable = true;
+                    for (const { sub } of participants) sub.nativeBootstrap = false;
+                  }
                   fail2(result.statusObserved);
                   return;
                 }
