@@ -1,4 +1,10 @@
 import {
+  MAX_RETAINED_NATIVE_BACKING_BYTES,
+  takeNativeSeedBacking,
+  type VerifiedNativeSeedBacking,
+  type NativeBackingIdentity,
+} from "./native-seed-backing.ts";
+import {
   TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES,
   TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
   TerminalDeliveryEnvelopeSchemaZ,
@@ -34,6 +40,7 @@ import {
   type TerminalReplicaState,
 } from "@tmux-ide/core";
 import type {
+  TerminalReplicaNativeBackingResult,
   TerminalReplicaCommittedRaw,
   TerminalReplicaSourceSubscription,
 } from "./terminal-replica-owner.ts";
@@ -73,6 +80,8 @@ export interface TerminalDeliveryMetrics {
   readonly rawJournalBytes: number;
   /** Canonical snapshots reachable by current delivery baselines and transactions. */
   readonly canonicalRevisions: number;
+  /** Conservative object accounting for retained native backing, not RSS. */
+  readonly nativeBackingBytes: number;
   readonly maxSlowClientMs: number;
   readonly queueDepth: number;
   readonly maxQueueDepth: number;
@@ -108,13 +117,20 @@ export interface TerminalDeliveryConnection {
   close(): Promise<void>;
 }
 
+interface NativeBackingLease {
+  backing: VerifiedNativeSeedBacking | null;
+  committed: boolean;
+}
+
 interface RevisionRecord {
+  readonly nativeBacking: NativeBackingLease | null;
   readonly update: CanonicalTerminalReplicaUpdate;
   readonly state: TerminalReplicaState;
   readonly trace: SessionRuntimeTraceContext | null;
 }
 
 interface PendingCanonicalUpdate {
+  readonly nativeBacking: NativeBackingLease | null;
   readonly cells: number;
   readonly update: CanonicalTerminalReplicaUpdate;
   readonly trace: SessionRuntimeTraceContext | null;
@@ -132,6 +148,7 @@ interface PaneState {
   rawFloorRevision: number;
   lastRawRevision: number;
   readonly pendingCanonical: PendingCanonicalUpdate[];
+  activeNativeBacking: NativeBackingLease | null;
   pendingCanonicalCells: number;
   canonicalScheduled: boolean;
   readonly canonicalAbort: AbortController;
@@ -300,6 +317,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   readonly #cache = new Map<string, CachedRepresentation>();
   readonly #pendingEncodings = new Map<string, PendingSeedEncoding>();
   #cacheBytes = 0;
+  #nativeBackingBytes = 0;
   #coalesced = 0;
   #reseeds = 0;
   #nacks = 0;
@@ -420,6 +438,58 @@ export class SessionRuntimeTerminalDeliveryHub {
     }
   }
 
+  retainedNativeBacking(
+    paneId: string,
+    expected: NativeBackingIdentity,
+  ): TerminalReplicaNativeBackingResult | null {
+    const pane = this.#panes.get(paneId);
+    const record = pane?.revisions.get(expected.revision);
+    const lease = record?.nativeBacking;
+    const backing = lease?.backing;
+    if (
+      this.#closed ||
+      !pane ||
+      !record ||
+      !backing ||
+      expected.generation !== this.generation ||
+      record.update.incarnation !== expected.incarnation ||
+      record.update.stateHash !== expected.stateHash
+    )
+      return null;
+    return {
+      status: "captured",
+      snapshot: backing.snapshot,
+      authority: {
+        generation: this.generation,
+        workspaceName: this.workspaceName,
+        semanticPaneId: paneId,
+        incarnation: expected.incarnation,
+        revision: expected.revision,
+        stateHash: expected.stateHash,
+      },
+      isCurrent: () =>
+        !this.#closed &&
+        this.#panes.get(paneId) === pane &&
+        pane.revisions.get(expected.revision) === record &&
+        lease.backing === backing,
+    };
+  }
+
+  #releaseNativeBacking(lease: NativeBackingLease | null | undefined): void {
+    if (!lease?.backing) return;
+    this.#nativeBackingBytes -= lease.backing.chargedBytes;
+    lease.backing = null;
+  }
+
+  #clearPendingNativeBacking(pane: PaneState): void {
+    for (const pending of pane.pendingCanonical) this.#releaseNativeBacking(pending.nativeBacking);
+    if (!pane.activeNativeBacking?.committed) this.#releaseNativeBacking(pane.activeNativeBacking);
+  }
+
+  #clearRetainedNativeBacking(pane: PaneState): void {
+    for (const record of pane.revisions.values()) this.#releaseNativeBacking(record.nativeBacking);
+  }
+
   metrics(): TerminalDeliveryMetrics {
     const now = this.#scheduler.nowMs();
     const currentSlow = [...this.#clients.values()].reduce(
@@ -439,6 +509,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         (sum, pane) => sum + pane.revisions.size,
         0,
       ),
+      nativeBackingBytes: this.#nativeBackingBytes,
       representationCacheBytes: this.#cacheBytes,
       rawJournalBytes: [...this.#panes.values()].reduce((sum, pane) => sum + pane.rawBytes, 0),
       maxSlowClientMs: Math.max(this.#maxSlowClientMs, currentSlow),
@@ -503,7 +574,9 @@ export class SessionRuntimeTerminalDeliveryHub {
     const panes = [...this.#panes.values()];
     this.#panes.clear();
     for (const pane of panes) {
+      this.#clearRetainedNativeBacking(pane);
       pane.canonicalAbort.abort();
+      this.#clearPendingNativeBacking(pane);
       pane.pendingCanonical.length = 0;
       pane.pendingCanonicalCells = 0;
       pane.canonicalScheduled = false;
@@ -541,6 +614,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       rawFloorRevision: 0,
       lastRawRevision: -1,
       pendingCanonical: [],
+      activeNativeBacking: null,
       pendingCanonicalCells: 0,
       canonicalScheduled: false,
       canonicalAbort: new AbortController(),
@@ -553,6 +627,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         (update, trace) => {
           if (this.#panes.get(semanticPaneId) === pane)
             this.#observeCanonical(semanticPaneId, update, trace);
+          else if (update.type === "terminal.seed") takeNativeSeedBacking(update.snapshot);
         },
         (record) => {
           if (this.#panes.get(semanticPaneId) === pane) this.#observeRaw(semanticPaneId, record);
@@ -570,7 +645,11 @@ export class SessionRuntimeTerminalDeliveryHub {
         pane!.source = source;
       })
       .catch((error) => {
-        if (this.#panes.get(semanticPaneId) === pane) this.#panes.delete(semanticPaneId);
+        if (this.#panes.get(semanticPaneId) === pane) {
+          this.#panes.delete(semanticPaneId);
+          this.#clearPendingNativeBacking(pane!);
+          this.#clearRetainedNativeBacking(pane!);
+        }
         throw error;
       });
     await pane.start;
@@ -582,6 +661,10 @@ export class SessionRuntimeTerminalDeliveryHub {
     update: CanonicalTerminalReplicaUpdate,
     trace: SessionRuntimeTraceContext | null,
   ): void {
+    // Consume even rejected source updates; an uncharged handoff must not
+    // linger behind a still-reachable canonical snapshot.
+    const backing =
+      update.type === "terminal.seed" ? takeNativeSeedBacking(update.snapshot) : undefined;
     const pane = this.#panes.get(semanticPaneId);
     if (!pane || pane.canonicalAbort.signal.aborted || this.#closed) return;
     if (
@@ -601,6 +684,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         cells > MAX_PENDING_CANONICAL_CELLS - pane.pendingCanonicalCells)
     ) {
       pane.canonicalAbort.abort();
+      this.#clearPendingNativeBacking(pane);
       pane.pendingCanonical.length = 0;
       pane.pendingCanonicalCells = 0;
       for (const client of this.#clients.values())
@@ -612,7 +696,13 @@ export class SessionRuntimeTerminalDeliveryHub {
           );
       return;
     }
-    pane.pendingCanonical.push({ update, trace, cells });
+    const nativeBacking: NativeBackingLease | null =
+      backing &&
+      backing.chargedBytes <= MAX_RETAINED_NATIVE_BACKING_BYTES - this.#nativeBackingBytes
+        ? { backing, committed: false }
+        : null;
+    if (nativeBacking) this.#nativeBackingBytes += backing!.chargedBytes;
+    pane.pendingCanonical.push({ update, trace, cells, nativeBacking });
     pane.pendingCanonicalCells += cells;
     if (pane.canonicalScheduled) return;
     pane.canonicalScheduled = true;
@@ -631,13 +721,26 @@ export class SessionRuntimeTerminalDeliveryHub {
         const pending = pane.pendingCanonical.shift();
         if (!pending) break;
         pane.pendingCanonicalCells -= pending.cells;
-        const work = this.#applyCanonical(semanticPaneId, pane, pending.update, pending.trace);
-        // Keep the ordinary update burst synchronous; only large seeds yield.
-        if (work) await work;
+        pane.activeNativeBacking = pending.nativeBacking;
+        try {
+          const work = this.#applyCanonical(
+            semanticPaneId,
+            pane,
+            pending.update,
+            pending.trace,
+            pending.nativeBacking,
+          );
+          // Keep the ordinary update burst synchronous; only large seeds yield.
+          if (work) await work;
+        } finally {
+          if (!pending.nativeBacking?.committed) this.#releaseNativeBacking(pending.nativeBacking);
+          pane.activeNativeBacking = null;
+        }
       }
     } catch {
       if (!pane.canonicalAbort.signal.aborted && this.#panes.get(semanticPaneId) === pane) {
         pane.canonicalAbort.abort();
+        this.#clearPendingNativeBacking(pane);
         pane.pendingCanonical.length = 0;
         pane.pendingCanonicalCells = 0;
         for (const client of this.#clients.values())
@@ -679,6 +782,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     pane: PaneState,
     update: CanonicalTerminalReplicaUpdate,
     trace: SessionRuntimeTraceContext | null,
+    nativeBacking: NativeBackingLease | null,
   ): void | Promise<void> {
     if (
       update.workspaceName !== this.workspaceName ||
@@ -700,7 +804,7 @@ export class SessionRuntimeTerminalDeliveryHub {
           pane.current !== baseline
         )
           return;
-        this.#publishCanonical(semanticPaneId, pane, update, trace, result);
+        this.#publishCanonical(semanticPaneId, pane, update, trace, result, nativeBacking);
       });
     }
     this.#publishCanonical(
@@ -709,6 +813,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       update,
       trace,
       applyTerminalReplicaUpdate(pane.current, update),
+      nativeBacking,
     );
   }
 
@@ -718,11 +823,22 @@ export class SessionRuntimeTerminalDeliveryHub {
     update: CanonicalTerminalReplicaUpdate,
     trace: SessionRuntimeTraceContext | null,
     result: ReturnType<typeof applyTerminalReplicaUpdate>,
+    nativeBacking: NativeBackingLease | null,
   ): void {
     if (result.status !== "applied" && result.status !== "idempotent") return;
     pane.current = result.state;
     if (trace) pane.pendingDeliveryTrace = trace;
-    const record = { update, state: result.state, trace: pane.pendingDeliveryTrace };
+    const previous = pane.revisions.get(update.revision);
+    // Idempotent replay may not carry a new handoff; preserve the existing lease.
+    const retained = nativeBacking ?? previous?.nativeBacking ?? null;
+    if (previous?.nativeBacking !== retained) this.#releaseNativeBacking(previous?.nativeBacking);
+    if (retained) retained.committed = true;
+    const record = {
+      update,
+      state: result.state,
+      trace: pane.pendingDeliveryTrace,
+      nativeBacking: retained,
+    };
     pane.latest = record;
     pane.revisions.set(update.revision, record);
     this.#pruneCanonicalRevisions(semanticPaneId);
@@ -746,11 +862,14 @@ export class SessionRuntimeTerminalDeliveryHub {
     }
     if (update.type === "terminal.tombstone") {
       pane.canonicalAbort.abort();
+      this.#clearPendingNativeBacking(pane);
       pane.pendingCanonical.length = 0;
       pane.pendingCanonicalCells = 0;
       this.#scheduler.timer(() => {
         if (this.#panes.get(semanticPaneId) !== pane) return;
         this.#panes.delete(semanticPaneId);
+        this.#clearRetainedNativeBacking(pane);
+        this.#clearPendingNativeBacking(pane);
         pane.pendingCanonical.length = 0;
         pane.pendingCanonicalCells = 0;
         pane.canonicalScheduled = false;
@@ -1692,7 +1811,9 @@ export class SessionRuntimeTerminalDeliveryHub {
     const pane = this.#panes.get(client.paneId);
     this.#panes.delete(client.paneId);
     if (pane) {
+      this.#clearRetainedNativeBacking(pane);
       pane.canonicalAbort.abort();
+      this.#clearPendingNativeBacking(pane);
       pane.pendingCanonical.length = 0;
       pane.pendingCanonicalCells = 0;
       pane.canonicalScheduled = false;
@@ -1848,7 +1969,10 @@ export class SessionRuntimeTerminalDeliveryHub {
     // readers and skipped revisions already receive an atomic current seed.
     // MAX_CLIENTS bounds this set to 2 * MAX_CLIENTS + 1 per pane.
     for (const revision of pane.revisions.keys())
-      if (!reachable.has(revision)) pane.revisions.delete(revision);
+      if (!reachable.has(revision)) {
+        this.#releaseNativeBacking(pane.revisions.get(revision)?.nativeBacking);
+        pane.revisions.delete(revision);
+      }
   }
 
   #pruneAckSupersededCache(paneId: string): void {

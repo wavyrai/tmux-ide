@@ -100,3 +100,33 @@ describe("native backing owner read", () => {
     expect(capture).toHaveBeenCalledTimes(1);
   });
 });
+
+it("does not coalesce requests for different retained revisions", async () => {
+  let done!: (value: TerminalReplicaNativeBackingResult) => void;
+  const capture = vi.fn(
+    () =>
+      new Promise<TerminalReplicaNativeBackingResult>((resolve) => {
+        done = resolve;
+      }),
+  );
+  const { request, url } = fixture(capture);
+  const a = request();
+  await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
+  const firstDone = done;
+  const b = request(url.replace("revision=4", "revision=3"));
+  await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(2));
+  firstDone({ status: "captured", authority, snapshot, isCurrent: () => true });
+  done({
+    status: "captured",
+    authority: { ...authority, revision: 3 },
+    snapshot,
+    isCurrent: () => true,
+  });
+  expect((await a).status).toBe(200);
+  expect((await b).status).toBe(200);
+  expect(capture.mock.calls[0]).toEqual([
+    "session",
+    "pane",
+    { generation, incarnation: authority.incarnation, revision: 4, stateHash: "hash" },
+  ]);
+});

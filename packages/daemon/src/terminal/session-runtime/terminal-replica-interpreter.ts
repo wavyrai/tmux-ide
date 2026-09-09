@@ -1,3 +1,4 @@
+import { rememberNativeSeedBacking } from "./native-seed-backing.ts";
 import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import {
@@ -122,6 +123,7 @@ export interface TerminalReplicaInterpreterStats {
 
 /** Daemon-owned, sans-I/O VT interpreter with one FIFO for bytes and geometry. */
 export class TerminalReplicaInterpreter {
+  #nativeSeedBackingCandidate: NativeGridCapture | undefined;
   readonly #generation: SessionRuntimeGeneration;
   readonly #workspaceName: string;
   readonly #semanticPaneId: string;
@@ -387,7 +389,12 @@ export class TerminalReplicaInterpreter {
         hiddenState:
           operation.bootstrap === "authoritative-stream" ? "observed-from-start" : "unknown",
       };
-      this.#commit(true, undefined, operation.trace ?? null);
+      this.#nativeSeedBackingCandidate = operation.native;
+      try {
+        this.#commit(true, undefined, operation.trace ?? null);
+      } finally {
+        this.#nativeSeedBackingCandidate = undefined;
+      }
       previous.dispose();
       return;
     }
@@ -669,6 +676,8 @@ export class TerminalReplicaInterpreter {
 
   #seed(): CanonicalTerminalReplicaSeed {
     const snapshot = this.#snapshot;
+    if (this.#nativeSeedBackingCandidate)
+      rememberNativeSeedBacking(snapshot, this.#nativeSeedBackingCandidate);
     return {
       type: "terminal.seed",
       ...this.#address(),

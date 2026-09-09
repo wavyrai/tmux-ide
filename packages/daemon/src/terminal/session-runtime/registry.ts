@@ -1,3 +1,4 @@
+import type { NativeBackingIdentity } from "./native-seed-backing.ts";
 import {
   SessionRuntimeClientIdSchemaZ,
   SessionRuntimeAuthorityLeaseSchemaZ,
@@ -694,10 +695,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   async captureNativeBacking(
     session: string,
     semanticPaneId: string,
+    expected?: NativeBackingIdentity,
   ): Promise<TerminalReplicaNativeBackingResult> {
     const runtime = this.#sessions.get(session);
     if (this.#disposed || !runtime) return { status: "unavailable" };
-    const result = await runtime.captureNativeBacking(semanticPaneId);
+    const result = await runtime.captureNativeBacking(semanticPaneId, expected);
     if (this.#disposed || this.#sessions.get(session) !== runtime) return { status: "retired" };
     return result;
   }
@@ -1581,10 +1583,16 @@ class SessionRuntime {
     }
   }
 
-  async captureNativeBacking(semanticPaneId: string): Promise<TerminalReplicaNativeBackingResult> {
+  async captureNativeBacking(
+    semanticPaneId: string,
+    expected?: NativeBackingIdentity,
+  ): Promise<TerminalReplicaNativeBackingResult> {
     const owner = this.#terminalReplicas.get(semanticPaneId);
     if (!owner) return { status: "unavailable" };
-    return await owner.captureNativeBacking();
+    const retained = expected
+      ? this.#terminalDeliveryHub.retainedNativeBacking(semanticPaneId, expected)
+      : null;
+    return retained ?? (await owner.captureNativeBacking());
   }
 
   async openTerminalDelivery(

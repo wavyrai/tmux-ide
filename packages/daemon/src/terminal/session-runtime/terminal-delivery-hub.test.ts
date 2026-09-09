@@ -1,3 +1,6 @@
+import * as nativeSeeds from "./native-seed-backing.ts";
+import { rememberNativeSeedBacking, takeNativeSeedBacking } from "./native-seed-backing.ts";
+import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import { describe, expect, it, vi } from "vitest";
 import * as core from "@tmux-ide/core";
 import type {
@@ -2308,3 +2311,162 @@ describe("cooperative compact representation ownership", () => {
     },
   );
 });
+
+describe("native seed backing retention", () => {
+  it("enforces the aggregate charge budget and releases committed backing on close", async () => {
+    // Synthetic accounting isolates hub ownership from allocation cost. The
+    // producer's physical cell accounting is independently checked below.
+    const take = vi.spyOn(nativeSeeds, "takeNativeSeedBacking");
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    try {
+      await hub.open("reader", "pane-a", cooperativeOffer, () => {});
+      take.mockReturnValue({
+        snapshot: blankNative(),
+        chargedBytes: nativeSeeds.MAX_RETAINED_NATIVE_BACKING_BYTES,
+      });
+      owner.emit(seed());
+      await settle();
+      expect(hub.metrics().nativeBackingBytes).toBe(nativeSeeds.MAX_RETAINED_NATIVE_BACKING_BYTES);
+      owner.emit(seed(1));
+      await settle();
+      expect(hub.retainedNativeBacking("pane-a", seed(1))).toBeNull();
+      expect(hub.metrics().nativeBackingBytes).toBe(nativeSeeds.MAX_RETAINED_NATIVE_BACKING_BYTES);
+    } finally {
+      await hub.close();
+      take.mockRestore();
+    }
+    expect(hub.metrics().nativeBackingBytes).toBe(0);
+  });
+
+  it("rejects excessive native object accounting before row projection", () => {
+    const native = blankNative();
+    const huge = {
+      flags: 0,
+      width: 1,
+      bytesHex: "",
+      text: "",
+      attributes: 0,
+      foreground: 8,
+      background: 8,
+      underline: 8,
+      link: 0,
+      storageFlags: 0,
+    };
+    // Shared fixture objects avoid allocating tens of MiB merely to exercise
+    // the conservative per-cell ownership estimate.
+    expect(
+      rememberNativeSeedBacking(blankTerminalReplicaSnapshot(2, 1), {
+        ...native,
+        grid: [{ flags: 0, used: 0, cells: Array(530000).fill(huge) }],
+      }),
+    ).toBe(false);
+  });
+
+  it("retains an exact old revision until its reader advances, then releases its charge", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const messages: TerminalDeliveryServerMessage[] = [];
+    try {
+      const client = await hub.open("reader", "pane-a", cooperativeOffer, (m) => {
+        messages.push(m);
+      });
+      const initial = seed();
+      if (initial.type !== "terminal.seed") throw new Error("seed expected");
+      const native = blankNative();
+      expect(rememberNativeSeedBacking(initial.snapshot, native)).toBe(true);
+      owner.emit(initial);
+      // Ownership is acquired before the scheduled reducer runs.
+      expect(hub.metrics().nativeBackingBytes).toBeGreaterThan(0);
+      expect(takeNativeSeedBacking(initial.snapshot)).toBeUndefined();
+      await settle();
+      const first = messages.find(
+        (m) => m.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      owner.emit(patch(1, 1));
+      await settle();
+      const retained = hub.retainedNativeBacking("pane-a", initial);
+      expect(retained?.status).toBe("captured");
+      if (retained?.status !== "captured") throw new Error("capture expected");
+      expect(retained.snapshot).toBe(native);
+      expect(retained.isCurrent()).toBe(true);
+      expect(hub.retainedNativeBacking("pane-a", { ...initial, stateHash: "wrong" })).toBeNull();
+      client.ack(ack(first));
+      await settle();
+      const last = messages.findLast(
+        (m) => m.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      expect(last.canonicalRevision).toBe(1);
+      client.ack(ack(last));
+      expect(retained.isCurrent()).toBe(false);
+      expect(hub.retainedNativeBacking("pane-a", initial)).toBeNull();
+      expect(hub.metrics().nativeBackingBytes).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("releases a pending lease when the hub closes before reduction", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    await hub.open("reader", "pane-a", cooperativeOffer, () => {});
+    const initial = seed();
+    if (initial.type !== "terminal.seed") throw new Error("seed expected");
+    rememberNativeSeedBacking(initial.snapshot, blankNative());
+    owner.emit(initial);
+    expect(hub.metrics().nativeBackingBytes).toBeGreaterThan(0);
+    await hub.close();
+    expect(hub.metrics().nativeBackingBytes).toBe(0);
+  });
+
+  it("does not associate native backing after held output changes the canonical view", () => {
+    const snapshot = blankTerminalReplicaSnapshot(2, 1);
+    expect(
+      rememberNativeSeedBacking(
+        { ...snapshot, cursor: { ...snapshot.cursor, x: 1 } },
+        blankNative(),
+      ),
+    ).toBe(false);
+    const changed = {
+      ...snapshot,
+      grid: [
+        {
+          ...snapshot.grid[0]!,
+          cells: [{ ...snapshot.grid[0]!.cells[0]!, grapheme: "x" }, snapshot.grid[0]!.cells[1]!],
+        },
+      ],
+    };
+    expect(rememberNativeSeedBacking(changed, blankNative())).toBe(false);
+    expect(takeNativeSeedBacking(changed)).toBeUndefined();
+  });
+});
+
+function blankNative(): NativeGridCapture {
+  return {
+    version: 2,
+    cols: 2,
+    rows: 1,
+    history: 0,
+    hscrolled: 0,
+    limit: 100,
+    cursor: [0, 0],
+    grid: [
+      {
+        used: 2,
+        flags: 0,
+        cells: Array.from({ length: 2 }, () => ({
+          flags: 0,
+          width: 1,
+          bytesHex: "20",
+          text: " ",
+          attributes: 0,
+          foreground: 8,
+          background: 8,
+          underline: 8,
+          link: 0,
+          storageFlags: 0,
+        })),
+      },
+    ],
+  };
+}

@@ -1,3 +1,4 @@
+import type { NativeBackingIdentity } from "../../terminal/session-runtime/native-seed-backing.ts";
 import type { Hono } from "hono";
 import { z } from "zod";
 import { ownerAuthorityGate } from "../owner-authority.ts";
@@ -20,7 +21,11 @@ export function mountTerminalNativeBackingRoute(
     ownerToken: string | null;
     generation: string;
     resolveSession(workspace: string): string | null;
-    capture(session: string, pane: string): Promise<TerminalReplicaNativeBackingResult>;
+    capture(
+      session: string,
+      pane: string,
+      expected: NativeBackingIdentity,
+    ): Promise<TerminalReplicaNativeBackingResult>;
   },
 ): void {
   const authorize = ownerAuthorityGate(options.ownerToken, {
@@ -42,13 +47,20 @@ export function mountTerminalNativeBackingRoute(
     if (workspace.length > 512 || pane.length > 512) return c.json({ status: "invalid" }, 400);
     const session = options.resolveSession(workspace);
     if (!session) return c.json({ status: "unavailable" }, 404);
-    const key = JSON.stringify([session, pane]);
+    const key = JSON.stringify([
+      session,
+      pane,
+      expected.generation,
+      expected.incarnation,
+      expected.revision,
+      expected.stateHash,
+    ]);
     if (readers >= 32 || (!pending.has(key) && pending.size >= 16))
       return c.json({ status: "busy" }, 429);
     let capture = pending.get(key);
     if (!capture) {
       const operation = Promise.resolve()
-        .then(() => options.capture(session, pane))
+        .then(() => options.capture(session, pane, expected))
         .finally(() => {
           if (pending.get(key) === operation) pending.delete(key);
         });

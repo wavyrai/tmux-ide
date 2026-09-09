@@ -839,7 +839,8 @@ async function startHttpServer({
     ownerToken: localBypassToken ?? null,
     generation: daemonIdentity.instanceId,
     resolveSession: (workspace) => workspaceRegistry.get(workspace)?.sessionName ?? null,
-    capture: (session, pane) => sessionRuntimeRegistry.captureNativeBacking(session, pane),
+    capture: (session, pane, expected) =>
+      sessionRuntimeRegistry.captureNativeBacking(session, pane, expected),
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({

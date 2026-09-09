@@ -1,3 +1,5 @@
+import { takeNativeSeedBacking } from "./native-seed-backing.ts";
+import { decodeNativeGridCapture } from "../mirror/native-grid-capture.ts";
 import { describe, expect, it, vi } from "vitest";
 import * as core from "@tmux-ide/core";
 import { widgetMarkerAnnouncement, type CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
@@ -1398,3 +1400,33 @@ function attributeBits(attributes: readonly string[]): number {
   };
   return attributes.reduce((value, attribute) => value | (bits[attribute] ?? 0), 0);
 }
+
+it.each([false, true])(
+  "associates only a committed native seed without changed held output (%s)",
+  async (held) => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const interpreter = create(updates, 2, 1);
+    const native = decodeNativeGridCapture(
+      '{"version":2,"cols":2,"rows":1,"history":0,"hscrolled":0,"limit":100,"cursor":[0,0],"currentAttributes":[0,8,8,8]}\n{"row":0,"flags":0,"used":0,"cells":[]}',
+    )!;
+    try {
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 2,
+        rows: 1,
+        chunks: held ? [new TextEncoder().encode("X")] : [],
+        native,
+        cursor: { x: 0, y: 0 },
+        bootstrap: "authoritative-stream",
+      });
+      const seed = interpreter.currentSeed()!;
+      expect(seed.type).toBe("terminal.seed");
+      if (seed.type !== "terminal.seed") throw new Error("seed expected");
+      const backing = takeNativeSeedBacking(seed.snapshot);
+      if (held) expect(backing).toBeUndefined();
+      else expect(backing?.snapshot).toBe(native);
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  },
+);
