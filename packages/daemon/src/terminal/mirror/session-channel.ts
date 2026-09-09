@@ -1255,9 +1255,16 @@ export class SessionChannel {
     retireInternalReadOperation(marker, runtime);
     // Pane capture phases overlap under cancellation. Clear only the exact
     // failed marker so a late A callback cannot erase the newer B authority.
-    this.io.send(
+    // Both selected branches must emit one reply in addition to if-shell's
+    // own reply. An empty false branch emits none and shifts the control FIFO
+    // whenever the true branch runs during capture cancellation.
+    this.io.commandListInline(
       `if-shell -t ${runtime} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" ` +
-        `"set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" ""`,
+        `"set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" ` +
+        `"display-message -p -t ${runtime} ''"`,
+      2,
+      1,
+      () => {},
     );
   }
 

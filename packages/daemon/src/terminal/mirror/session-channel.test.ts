@@ -1802,7 +1802,7 @@ describe("flow control", () => {
     );
     expect(cleanup).toBe(
       `if-shell -t %1 -F "#{==:#{@tmux_ide_read_operation},${failedMarker}}" ` +
-        `"set-option -pu -t %1 @tmux_ide_read_operation" ""`,
+        `"set-option -pu -t %1 @tmux_ide_read_operation" "display-message -p -t %1 ''"`,
     );
     expect(
       rig.sim.written.some(
@@ -3060,6 +3060,36 @@ describe("native capture semantic ownership", () => {
 });
 
 describe("native bootstrap capability fallback", () => {
+  it("reserves both cleanup replies before the next native capture and cursor", async () => {
+    const rig = await startedRig();
+    try {
+      const commandList = vi.spyOn(rig.sim, "commandListInline");
+      const marker = registerInternalReadOperation("%1");
+      (
+        rig.channel as unknown as {
+          retireInternalReadMarker(runtime: string, marker: string): void;
+        }
+      ).retireInternalReadMarker("%1", marker);
+      expect(commandList).toHaveBeenCalledWith(
+        expect.stringContaining(`"display-message -p -t %1 ''"`),
+        2,
+        1,
+        expect.any(Function),
+      );
+      const first = collect();
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      rig.sim.reply(nativeBootstrapLines());
+      rig.sim.reply(["0 0 100 50"]);
+      expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
+        "native.version",
+        2,
+      );
+      expect(rig.sim.core.pendingCount).toBe(0);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
   it("keeps a confirmed native server on atomic recovery after a later failed capture", async () => {
     const rig = await startedRig({ atomicHook: true });
     try {
