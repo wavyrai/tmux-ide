@@ -1,3 +1,4 @@
+import { decodeNativeGridCapture, isNativeBootstrapCapture } from "./native-grid-capture.ts";
 /**
  * SessionChannel — one control-mode channel serving every pane subscription
  * of one tmux session (m43 card 1).
@@ -245,6 +246,7 @@ export interface LayoutSubscriptionHandle {
 }
 
 interface SubRecord {
+  nativeBootstrap?: boolean;
   cancelCapture?: (() => void) | null;
   readonly feed: PaneFeed;
   readonly onEvent: (event: MirrorPaneEvent) => void;
@@ -381,6 +383,7 @@ export function defaultMirrorWindowId(): string {
 }
 
 export class SessionChannel {
+  private nativeBootstrapUnavailable = false;
   private readonly opts: SessionChannelOptions;
   private readonly io: MirrorChannelIo;
   private readonly ledger = new FlowLedger();
@@ -674,6 +677,7 @@ export class SessionChannel {
     semanticPaneId: string,
     onEvent: (event: MirrorPaneEvent) => void,
     onLayout?: (event: MirrorLayoutEvent) => void,
+    nativeBootstrap = false,
   ): PaneSubscriptionHandle {
     const pane = this.panesBySemantic.get(semanticPaneId);
     if (!pane) {
@@ -681,6 +685,7 @@ export class SessionChannel {
     }
     const sub: SubRecord = {
       feed: new PaneFeed(),
+      nativeBootstrap: nativeBootstrap && !this.nativeBootstrapUnavailable,
       onEvent,
       onLayout: onLayout ?? null,
       pane,
@@ -1029,11 +1034,26 @@ export class SessionChannel {
     // no-ops so late responses cannot publish or consume a newer capture.
     // Both probes ride one write burst; the FIFO reply order is the seam.
     this.io.commandListInline(
-      `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
+      `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p ${sub.nativeBootstrap ? "-R" : "-e -J"} -S -${history} -t ${runtime}`,
       2,
       1,
       (reply) => {
         if (settled) return;
+        const native =
+          sub.nativeBootstrap && reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
+        if (sub.nativeBootstrap && (!native || !isNativeBootstrapCapture(native))) {
+          // Unsupported/backing-only native exports fall back at a new FIFO
+          // capture seam. Never replay held bytes across these two captures.
+          settled = true;
+          retireMarker();
+          sub.feed.abort(epoch);
+          cancelDeadline?.();
+          sub.cancelCapture = null;
+          sub.nativeBootstrap = false;
+          this.nativeBootstrapUnavailable = true;
+          this.reseed(sub, onSettled, deferPublish);
+          return;
+        }
         if (!reply.ok) {
           // Successful captures consume the marker atomically inside the tmux
           // after-capture-pane hook. The command-list also prevents a concurrent
@@ -1050,7 +1070,8 @@ export class SessionChannel {
           return;
         }
         captureLines = [...reply.lines];
-        sub.feed.captureReply(epoch, reply.lines);
+        if (native) sub.feed.captureNativeReply(epoch, native);
+        else sub.feed.captureReply(epoch, reply.lines);
       },
     );
     this.io.commandInline(
@@ -1483,6 +1504,8 @@ export class SessionChannel {
       return;
     }
     const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+    const nativeCapture =
+      !this.nativeBootstrapUnavailable && participants.every(({ sub }) => sub.nativeBootstrap);
     const reseedOrdinal = ++recovery.reseedOrdinal;
     let settled = false;
     let captureSucceeded = false;
@@ -1522,7 +1545,7 @@ export class SessionChannel {
       done(FAILED_RESEED_RESULT);
     };
     this.io.commandListInline(
-      `set-option -p -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${pane.runtimeId}`,
+      `set-option -p -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${history} -t ${pane.runtimeId}`,
       2,
       1,
       (reply) => {
@@ -1536,7 +1559,17 @@ export class SessionChannel {
           return;
         }
         captureLines = Object.freeze([...reply.lines]);
-        for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+        const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
+        if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
+          this.nativeBootstrapUnavailable = true;
+          for (const { sub } of participants) sub.nativeBootstrap = false;
+          fail();
+          return;
+        }
+        for (const { sub, epoch } of participants) {
+          if (native) sub.feed.captureNativeReply(epoch, native);
+          else sub.feed.captureReply(epoch, captureLines);
+        }
       },
     );
     this.io.commandInline(
@@ -1553,7 +1586,13 @@ export class SessionChannel {
         const deliveries = participants.map(({ sub, epoch }) => ({
           sub,
           epoch,
-          events: sub.feed.cursorReply(epoch, cursorLine, fallbackSize),
+          events: sub.feed
+            .cursorReply(epoch, cursorLine, fallbackSize)
+            .map((event) =>
+              event.type === "seed" && sub.nativeBootstrap && !nativeCapture
+                ? { ...event, requiresNativeRecapture: true }
+                : event,
+            ),
         }));
         if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
           fail();
@@ -1595,6 +1634,8 @@ export class SessionChannel {
       return;
     }
     const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+    const nativeCapture =
+      !this.nativeBootstrapUnavailable && participants.every(({ sub }) => sub.nativeBootstrap);
     const reseedOrdinal = ++recovery.reseedOrdinal;
     const nonce = this.opts.generateAtomicHookNonce?.() ?? randomBytes(24).toString("hex");
     if (!/^[0-9a-f]{32,128}$/u.test(nonce)) {
@@ -1704,7 +1745,7 @@ export class SessionChannel {
     const body =
       `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker}` +
       ` ; ${sentinel("start")}` +
-      ` ; capture-pane -p -e -J -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId}` +
+      ` ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId}` +
       ` ; ${sentinel("capture-end")}` +
       ` ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}"` +
       ` ; ${sentinel("cursor-end")}` +
@@ -1766,13 +1807,29 @@ export class SessionChannel {
               return;
             }
             const captureLines = Object.freeze([...result.captureLines]);
-            for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+            const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
+            if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
+              this.nativeBootstrapUnavailable = true;
+              for (const { sub } of participants) sub.nativeBootstrap = false;
+              fail(result.statusObserved);
+              return;
+            }
+            for (const { sub, epoch } of participants) {
+              if (native) sub.feed.captureNativeReply(epoch, native);
+              else sub.feed.captureReply(epoch, captureLines);
+            }
             const fallbackSize = this.layoutSizeFor(pane.runtimeId);
             this.observeScrollOnClear(pane, result.cursorLine!);
             const deliveries = participants.map(({ sub, epoch }) => ({
               sub,
               epoch,
-              events: sub.feed.cursorReply(epoch, result.cursorLine!, fallbackSize),
+              events: sub.feed
+                .cursorReply(epoch, result.cursorLine!, fallbackSize)
+                .map((event) =>
+                  event.type === "seed" && sub.nativeBootstrap && !nativeCapture
+                    ? { ...event, requiresNativeRecapture: true }
+                    : event,
+                ),
             }));
             if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
               fail(true);

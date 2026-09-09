@@ -936,3 +936,60 @@ function layoutFor(
     ],
   };
 }
+
+it("suppresses mixed-format recovery and ignores deltas until a fresh native owner capture", async () => {
+  let request: MirrorSubscribeRequest | undefined;
+  let reseeds = 0;
+  const updates: CanonicalTerminalReplicaUpdate[] = [];
+  const emit = (text: string, recapture = false) => {
+    request!.onEvent({ type: "reset", cols: 8, rows: 3 });
+    request!.onEvent({
+      type: "seed",
+      data: new TextEncoder().encode(text),
+      ...(recapture ? { requiresNativeRecapture: true } : {}),
+    });
+    request!.onEvent({ type: "cursor", x: 0, y: 0 });
+  };
+  const mirror = {
+    subscribe: async (candidate: MirrorSubscribeRequest) => {
+      request = candidate;
+      queueMicrotask(() => {
+        candidate.onLayout?.(layout(8, 3));
+        emit("INITIAL");
+      });
+      return {
+        ...subscription(candidate),
+        reseed: () => {
+          reseeds++;
+          emit("FRESH");
+        },
+      };
+    },
+  };
+  const owner = new SessionRuntimeTerminalReplicaOwner(
+    generation,
+    "workspace",
+    "pane-a",
+    mirror as never,
+    { incarnation: `${generation}:0`, initialRevision: 0 },
+  );
+  try {
+    await owner.subscribe((update) => updates.push(update));
+    emit("LOSSY", true);
+    request!.onEvent({ type: "delta", data: new TextEncoder().encode("DUPLICATE") });
+    await vi.waitFor(() => expect(reseeds).toBe(1));
+    await vi.waitFor(() => expect(updates).toHaveLength(2));
+    const texts = updates.map((update) =>
+      update.type === "terminal.seed"
+        ? update.snapshot.grid
+            .map((row) => row.cells.map((cell) => cell.grapheme).join(""))
+            .join("\n")
+        : "patch",
+    );
+    expect(texts[0]).toContain("INITIAL");
+    expect(texts[1]).toContain("FRESH");
+    expect(texts.join("")).not.toMatch(/LOSSY|DUPLICATE/);
+  } finally {
+    await owner.dispose();
+  }
+});

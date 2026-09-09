@@ -5,5 +5,5 @@
   "version": "3.7c",
   "extension": "tmux-ide-native-grid-v2",
   "patch": "native-grid.patch",
-  "patchSha256": "446d6931ff47c1b5d56c2cd748c909ded4bc04ccb248bee2e33f526fbf881f9b"
+  "patchSha256": "b0bedabf8e2bd055662f796609b8e8b9a8c8746c6f2a655b0d017872d4827f4f"
 }

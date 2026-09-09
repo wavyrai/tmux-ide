@@ -1,3 +1,4 @@
+import type { NativeGridCapture } from "./native-grid-capture.ts";
 /**
  * PaneFeed — PURE per-subscriber delivery gate implementing the atomic
  * seed/reseed recipe (m43 flood spike, verified on tmux 3.7b).
@@ -68,6 +69,7 @@ export class PaneFeed {
   static readonly MAX_HELD_BYTES = 1024 * 1024;
   private state: PaneFeedState = "live";
   private epoch = 0;
+  private nativeSeed: NativeGridCapture | null = null;
   private seedLines: readonly string[] | null = null;
   private held: Uint8Array[] = [];
   private heldBytes = 0;
@@ -83,6 +85,7 @@ export class PaneFeed {
     this.epoch += 1;
     this.state = "awaiting-capture";
     this.seedLines = null;
+    this.nativeSeed = null;
     this.held = [];
     this.heldBytes = 0;
     this.overflowed = false;
@@ -102,6 +105,7 @@ export class PaneFeed {
       ) {
         this.state = "quarantined";
         this.seedLines = null;
+        this.nativeSeed = null;
         this.held = [];
         this.heldBytes = 0;
         this.overflowed = true;
@@ -126,6 +130,12 @@ export class PaneFeed {
     this.state = "awaiting-cursor";
   }
 
+  captureNativeReply(epoch: number, snapshot: NativeGridCapture): void {
+    if (epoch !== this.epoch || this.state !== "awaiting-capture") return;
+    this.nativeSeed = snapshot;
+    this.state = "awaiting-cursor";
+  }
+
   /**
    * The cursor/size probe reply landed — emit the atomic seed batch:
    * `reset, seed, …held deltas, cursor`. On a malformed probe line the batch
@@ -139,10 +149,12 @@ export class PaneFeed {
     fallbackSize: { cols: number; rows: number } | null = null,
   ): MirrorPaneEvent[] {
     if (epoch !== this.epoch || this.state !== "awaiting-cursor") return [];
+    const native = this.nativeSeed;
     const seed = seedBytesFromCapture(this.seedLines ?? []);
     const held = this.held;
     this.state = "live";
     this.seedLines = null;
+    this.nativeSeed = null;
     this.held = [];
     this.heldBytes = 0;
 
@@ -152,7 +164,7 @@ export class PaneFeed {
     else if (fallbackSize) {
       events.push({ type: "reset", cols: fallbackSize.cols, rows: fallbackSize.rows });
     }
-    events.push({ type: "seed", data: seed });
+    events.push({ type: "seed", data: seed, ...(native ? { native } : {}) });
     for (const data of held) events.push({ type: "delta", data });
     if (probe) {
       const fields = line.trim().split(/\s+/);
@@ -229,6 +241,7 @@ export class PaneFeed {
     if (epoch !== this.epoch || this.state === "live") return;
     this.state = "quarantined";
     this.seedLines = null;
+    this.nativeSeed = null;
     this.held = [];
     this.heldBytes = 0;
     this.overflowed = false;
@@ -238,6 +251,7 @@ export class PaneFeed {
     this.epoch += 1;
     this.state = "quarantined";
     this.seedLines = null;
+    this.nativeSeed = null;
     this.held = [];
     this.heldBytes = 0;
     this.overflowed = false;

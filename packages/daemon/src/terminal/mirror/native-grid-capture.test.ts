@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { decodeNativeGridCapture, encodeNativeGridCapture } from "./native-grid-capture.ts";
+import {
+  decodeNativeGridCapture,
+  encodeNativeGridCapture,
+  isNativeBootstrapCapture,
+} from "./native-grid-capture.ts";
 
 function records() {
   return [
@@ -126,4 +130,35 @@ describe("native v2 allocated cells", () => {
     for (const used of [-1, 1.5, 5]) expect(decodeNativeGridCapture(fixture(used))).toBeNull();
     expect(decodeNativeGridCapture(encode(records()))!.version).toBe(1);
   });
+});
+
+it("validates current rendition independently of backing-only v2 capability", () => {
+  const value = records();
+  value[0]!.version = 2;
+  for (const currentAttributes of [[0, 8, 8, 8], null]) {
+    const source = decodeNativeGridCapture(
+      encode([{ ...value[0], currentAttributes }, ...value.slice(1)]),
+    )!;
+    expect(source).not.toBeNull();
+    expect(source.currentAttributes).toEqual(currentAttributes ?? undefined);
+    expect(decodeNativeGridCapture(encodeNativeGridCapture(source)!)).toEqual(source);
+  }
+  for (const currentAttributes of [
+    [0, 8],
+    [-1, 8, 8, 8],
+    [0, 8, "bad", 8],
+    [0, 8, 8, 0x100000000],
+  ]) {
+    expect(
+      decodeNativeGridCapture(encode([{ ...value[0], currentAttributes }, ...value.slice(1)])),
+    ).toBeNull();
+  }
+});
+
+it("bounds sparse native bootstrap width and dense parser allocation", () => {
+  const base = decodeNativeGridCapture(encode(records()))!;
+  const source = { ...base, version: 2 as const, currentAttributes: [0, 8, 8, 8] as const };
+  expect(isNativeBootstrapCapture(source)).toBe(true);
+  expect(isNativeBootstrapCapture({ ...source, cols: 16385 })).toBe(false);
+  expect(isNativeBootstrapCapture({ ...source, cols: 16384, history: 100 })).toBe(false);
 });

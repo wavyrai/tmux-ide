@@ -1,3 +1,5 @@
+import { isNativeBootstrapCapture, type NativeGridCapture } from "../mirror/native-grid-capture.ts";
+import { projectNativeGridRow } from "../mirror/native-grid-projection.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import { Terminal } from "@tmux-ide/xterm-headless";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -102,6 +104,107 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
 
   write(data: Uint8Array | string): Promise<void> {
     return new Promise((resolve) => this.#terminal.write(data, resolve));
+  }
+
+  canImportNativeGrid(): boolean {
+    const buffer = (this.#terminal.buffer.active as unknown as { _buffer?: NativeImportBuffer })
+      ._buffer;
+    const handler = (
+      this.#terminal as unknown as { _core?: { _inputHandler?: { _curAttrData?: unknown } } }
+    )._core?._inputHandler;
+    return (
+      !!buffer &&
+      typeof buffer.getBlankLine === "function" &&
+      typeof buffer.getNullCell === "function" &&
+      typeof buffer.lines?.push === "function" &&
+      Number.isSafeInteger(buffer.lines.maxLength) &&
+      !!handler?._curAttrData &&
+      typeof (this.#terminal.buffer.active.getNullCell() as unknown as NativeImportCell)
+        .setFromCharData === "function" &&
+      typeof buffer.getBlankLine(undefined, false).setCell === "function"
+    );
+  }
+
+  importNativeGrid(snapshot: NativeGridCapture): boolean {
+    if (
+      !this.canImportNativeGrid() ||
+      !isNativeBootstrapCapture(snapshot) ||
+      !snapshot.currentAttributes ||
+      snapshot.cols !== this.cols ||
+      snapshot.rows !== this.rows
+    )
+      return false;
+    // Version-pinned xterm 6 buffer seam. Import only into a fresh replacement,
+    // before any live bytes; normal parser BCE and SGR processing remain intact.
+    const buffer = (this.#terminal.buffer.active as unknown as { _buffer: NativeImportBuffer })
+      ._buffer;
+    const handler = (
+      this.#terminal as unknown as {
+        _core: { _inputHandler: { _curAttrData: { fg: number; bg: number } } };
+      }
+    )._core._inputHandler;
+    if (
+      !buffer ||
+      typeof buffer.getBlankLine !== "function" ||
+      typeof buffer.getNullCell !== "function" ||
+      typeof buffer.lines?.push !== "function" ||
+      !handler?._curAttrData
+    )
+      throw new Error("Unsupported @tmux-ide/xterm-headless 6 native import shape");
+    // Public getNullCell allocates a scratch cell. The private buffer method
+    // returns its shared erasure template, which must never receive text.
+    const cell = this.#terminal.buffer.active.getNullCell() as unknown as NativeImportCell;
+    if (typeof cell.setFromCharData !== "function")
+      throw new Error("Unsupported @tmux-ide/xterm-headless 6 native cell shape");
+    if (buffer.lines.maxLength < snapshot.grid.length) return false;
+    buffer.lines.length = 0;
+    for (let index = 0; index < snapshot.grid.length; index++) {
+      const row = projectNativeGridRow(
+        snapshot.grid[index],
+        snapshot.cols,
+        0,
+        index > 0 && (snapshot.grid[index - 1]!.flags & 1) !== 0,
+      )!;
+      const line = buffer.getBlankLine(undefined, row.wrapped);
+      if (typeof line.setCell !== "function")
+        throw new Error("Unsupported @tmux-ide/xterm-headless 6 native line shape");
+      for (let column = 0; column < row.cells.length; column++) {
+        const projected = row.cells[column]!;
+        cell.setFromCharData([0, projected.grapheme, projected.width, 0]);
+        [cell.fg, cell.bg] = nativeImportAttributes(projected);
+        line.setCell(column, cell);
+      }
+      buffer.lines.push(line);
+    }
+    buffer.ybase = snapshot.history;
+    buffer.ydisp = snapshot.history;
+    buffer.x = snapshot.cursor[0];
+    buffer.y = snapshot.cursor[1];
+    const [attributes, foreground, background, underline] = snapshot.currentAttributes;
+    const current = projectNativeGridRow(
+      {
+        flags: 0,
+        used: 1,
+        cells: [
+          {
+            flags: 0,
+            width: 1,
+            text: "",
+            bytesHex: "",
+            attributes,
+            foreground,
+            background,
+            underline,
+            link: 0,
+            storageFlags: 0,
+          },
+        ],
+      },
+      1,
+    )!.cells[0]!;
+    [handler._curAttrData.fg, handler._curAttrData.bg] = nativeImportAttributes(current);
+    this.#historyProjectionInvalidated = true;
+    return true;
   }
 
   prioritizeNextWrite(): void {
@@ -553,4 +656,42 @@ function cellAttributes(cell: ReturnType<Terminal["buffer"]["active"]["getNullCe
     (cell.isInvisible() ? 64 : 0) |
     (cell.isStrikethrough() ? 128 : 0)
   );
+}
+
+interface NativeImportCell {
+  fg: number;
+  bg: number;
+  setFromCharData(data: [number, string, number, number]): void;
+}
+interface NativeImportLine {
+  setCell(column: number, cell: NativeImportCell): void;
+}
+interface NativeImportBuffer {
+  lines: { length: number; maxLength: number; push(line: NativeImportLine): void };
+  getNullCell(): NativeImportCell;
+  getBlankLine(attrs: undefined, wrapped: boolean): NativeImportLine;
+  ybase: number;
+  ydisp: number;
+  x: number;
+  y: number;
+}
+/** Inverse of this pinned adapter's cellColor/cellAttributes projection. */
+function nativeImportAttributes(cell: TerminalReplicaCell): [number, number] {
+  const color = (value: TerminalReplicaColor) =>
+    value.kind === "default"
+      ? 0
+      : value.kind === "indexed"
+        ? 0x02000000 | value.index
+        : 0x03000000 | value.value;
+  const a = cell.attributes;
+  return [
+    color(cell.foreground) |
+      (a & 1 ? 0x08000000 : 0) |
+      (a & 8 ? 0x10000000 : 0) |
+      (a & 16 ? 0x20000000 : 0) |
+      (a & 32 ? 0x04000000 : 0) |
+      (a & 64 ? 0x40000000 : 0) |
+      (a & 128 ? 0x80000000 : 0),
+    color(cell.background) | (a & 2 ? 0x08000000 : 0) | (a & 4 ? 0x04000000 : 0),
+  ];
 }

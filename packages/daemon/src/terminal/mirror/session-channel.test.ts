@@ -3058,3 +3058,100 @@ describe("native capture semantic ownership", () => {
     expect(await rig.channel.captureNativeBacking("pane.alpha")).toEqual({ status: "retired" });
   });
 });
+
+describe("native bootstrap capability fallback", () => {
+  it("restarts at a fresh capture seam and caches backing-only capability", async () => {
+    const rig = await startedRig();
+    try {
+      const first = collect();
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      expect(rig.sim.written.some((command) => command.includes("capture-pane -p -R"))).toBe(true);
+      rig.sim.reply(["not a bootstrap-capable export"]);
+      rig.sim.reply(["0 0 100 50"]); // retired native cursor reply
+      rig.sim.feedLines("%output %1 discarded-before-fallback");
+      rig.sim.reply(["portable"]);
+      rig.sim.feedLines("%output %1 held-after-fallback");
+      rig.sim.reply(["0 0 100 50"]);
+      expect(bytesOf(first.events)).toEqual(["portable", "held-after-fallback"]);
+      expect(first.events.filter((event) => event.type === "seed")).toHaveLength(1);
+      const count = rig.sim.written.filter((command) =>
+        command.includes("capture-pane -p -R"),
+      ).length;
+      const peer = collect();
+      rig.channel.subscribePane("pane.alpha", peer.onEvent, undefined, true);
+      expect(
+        rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
+      ).toHaveLength(count);
+      rig.sim.reply(["peer"]);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(bytesOf(peer.events)).toEqual(["peer"]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+});
+
+describe("native recovery formats", () => {
+  it.each([false, true])(
+    "keeps native and mixed subscriber gates distinct (atomic=%s)",
+    async (atomicHook) => {
+      for (const mixed of [false, true]) {
+        const rig = await startedRig({ atomicHook });
+        const nativeLines = [
+          JSON.stringify({
+            version: 2,
+            currentAttributes: [0, 8, 8, 8],
+            cols: 100,
+            rows: 50,
+            history: 0,
+            hscrolled: 0,
+            limit: 2000,
+            cursor: [0, 0],
+          }),
+          ...Array.from({ length: 50 }, (_, row) =>
+            JSON.stringify({ row, flags: 0, used: 0, cells: [] }),
+          ),
+        ];
+        try {
+          const canonical = collect();
+          rig.channel.subscribePane("pane.alpha", canonical.onEvent, undefined, true);
+          rig.sim.reply(nativeLines);
+          rig.sim.reply(["0 0 100 50"]);
+          const legacy = collect();
+          if (mixed) {
+            rig.channel.subscribePane("pane.alpha", legacy.onEvent);
+            rig.sim.reply(["legacy initial"]);
+            rig.sim.reply(["0 0 100 50"]);
+          }
+          canonical.events.length = 0;
+          legacy.events.length = 0;
+          const capture = mixed ? ["legacy recovered"] : nativeLines;
+          rig.sim.feedLines("%pause %1");
+          for (let phase = 0; phase < 3; phase++) {
+            if (phase) runRecoveryTimer(rig);
+            if (atomicHook) completeAtomicRecoveryPhase(rig, capture, "0 0 100 50");
+            else {
+              rig.sim.reply(capture);
+              rig.sim.reply(["0 0 100 50"]);
+            }
+          }
+          const seed = canonical.events.find((event) => event.type === "seed");
+          expect(seed).toBeDefined();
+          if (mixed) {
+            expect(seed).toMatchObject({ requiresNativeRecapture: true });
+            expect(seed).not.toHaveProperty("native");
+            expect(bytesOf(legacy.events)).toEqual(["legacy recovered"]);
+            expect(legacy.events.find((event) => event.type === "seed")).not.toHaveProperty(
+              "requiresNativeRecapture",
+            );
+          } else {
+            expect(seed).toHaveProperty("native.version", 2);
+            expect(seed).not.toHaveProperty("requiresNativeRecapture");
+          }
+        } finally {
+          await rig.channel.dispose();
+        }
+      }
+    },
+  );
+});

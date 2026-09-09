@@ -1,3 +1,4 @@
+import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type {
   CanonicalTerminalReplicaUpdate,
   CausalCellFailureReasonV1,
@@ -62,6 +63,8 @@ export type TerminalReplicaNativeBackingResult =
     });
 
 interface ReseedCandidate {
+  native?: NativeGridCapture;
+  requiresNativeRecapture?: boolean;
   readonly nativeCols: number;
   readonly nativeRows: number;
   readonly layoutLease: LayoutLease | null;
@@ -182,6 +185,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       .subscribe({
         session,
         semanticPaneId,
+        nativeBootstrap: this.#interpreter.supportsNativeBootstrap(),
         onEvent: (event) => this.#observePane(event),
         onLayout: (event) => this.#observeLayout(event),
       })
@@ -422,8 +426,12 @@ export class SessionRuntimeTerminalReplicaOwner {
       };
     } else if (event.type === "seed" || event.type === "delta") {
       if (this.#waitingForGeometryCapture && !this.#reseed) return;
-      if (this.#reseed) this.#reseed.chunks.push(event.data.slice());
-      else
+      if (this.#reseed) {
+        if (event.type === "seed" && event.requiresNativeRecapture)
+          this.#reseed.requiresNativeRecapture = true;
+        if (event.type === "seed" && event.native) this.#reseed.native = event.native;
+        else this.#reseed.chunks.push(event.data.slice());
+      } else
         this.#supervise(
           this.#interpreter.enqueue({
             type: "write",
@@ -445,6 +453,7 @@ export class SessionRuntimeTerminalReplicaOwner {
               cols: reseed.nativeCols,
               rows: reseed.nativeRows,
               chunks: reseed.chunks,
+              native: reseed.native,
               historyLimit: event.historyLimit,
               historySize: event.historySize,
               trace: reseed.trace,
@@ -564,6 +573,12 @@ export class SessionRuntimeTerminalReplicaOwner {
   }
 
   #qualifyReseed(reseed: ReseedCandidate, cursorX: number, cursorY: number): LayoutLease | null {
+    if (
+      reseed.native &&
+      (reseed.native.cols !== reseed.nativeCols || reseed.native.rows !== reseed.nativeRows)
+    )
+      return null;
+    if (reseed.requiresNativeRecapture) return null;
     const lease = reseed.layoutLease;
     if (!lease || !this.#leaseIsCurrent(lease, reseed.subscriptionEpoch)) return null;
     if (lease.pane.width !== reseed.nativeCols) return null;

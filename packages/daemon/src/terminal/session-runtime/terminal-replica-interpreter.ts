@@ -1,3 +1,4 @@
+import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import {
   detectWidgetMarkerFromReplicaRows,
@@ -58,6 +59,7 @@ export type TerminalReplicaInterpreterOperation =
   | { readonly type: "resize"; readonly cols: number; readonly rows: number }
   | {
       readonly type: "reseed";
+      readonly native?: NativeGridCapture;
       /** Retention configured on the native pane, carried by its capture probe. */
       readonly historyLimit?: number;
       /** Actual captured retention can exceed the native limit after reflow. */
@@ -328,6 +330,10 @@ export class TerminalReplicaInterpreter {
     return run;
   }
 
+  supportsNativeBootstrap(): boolean {
+    return this.#backend.canImportNativeGrid?.() === true;
+  }
+
   async #apply(
     operation: Exclude<TerminalReplicaInterpreterOperation, { type: "write" }>,
   ): Promise<void> {
@@ -339,6 +345,7 @@ export class TerminalReplicaInterpreter {
       const scrollback = Math.max(
         operation.historyLimit ?? this.#scrollback,
         operation.historySize ?? 0,
+        operation.native?.history ?? 0,
       );
       const replacement = this.#backendFactory({
         cols: nativeCols,
@@ -347,6 +354,8 @@ export class TerminalReplicaInterpreter {
         historyLimit: operation.historyLimit ?? scrollback,
       });
       try {
+        if (operation.native && !replacement.importNativeGrid?.(operation.native))
+          throw new Error("Native bootstrap requires a compatible interpreter");
         for (const chunk of operation.chunks) {
           await this.#writeToBackend(replacement, chunk);
         }

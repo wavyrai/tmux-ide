@@ -22,6 +22,8 @@ export interface NativeGridCaptureRow {
 export interface NativeGridCapture {
   /** v1 omits allocated erased tails and is not complete painted backing. */
   readonly version?: 1 | 2;
+  /** Current rendition from the input parser; absent on backing-only captures. */
+  readonly currentAttributes?: readonly [number, number, number, number];
   readonly cols: number;
   readonly rows: number;
   readonly history: number;
@@ -35,11 +37,26 @@ const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_ROWS = MAX_BYTES / 64;
 const MAX_CELLS = 1_000_000;
 
+/** Dense parser import must also fit the cell budget, even for sparse exports. */
+export function isNativeBootstrapCapture(snapshot: NativeGridCapture): boolean {
+  return (
+    uint(snapshot.cols, 16384) &&
+    snapshot.cols > 0 &&
+    uint(snapshot.rows, MAX_ROWS) &&
+    snapshot.rows > 0 &&
+    uint(snapshot.history, MAX_ROWS) &&
+    snapshot.version === 2 &&
+    snapshot.currentAttributes !== undefined &&
+    snapshot.cols * (snapshot.history + snapshot.rows) <= MAX_CELLS
+  );
+}
+
 /** Compact renderer-neutral backing transport, using the same bounded native format. */
 export function encodeNativeGridCapture(source: NativeGridCapture): string | null {
   const records = [
     JSON.stringify({
       version: source.version ?? 1,
+      ...(source.currentAttributes ? { currentAttributes: source.currentAttributes } : {}),
       cols: source.cols,
       rows: source.rows,
       history: source.history,
@@ -120,6 +137,18 @@ export function decodeNativeGridCapture(text: string): NativeGridCapture | null 
       !uint(header.cursor[1], header.rows - 1)
     )
       return null;
+    const attrs = header.currentAttributes;
+    if (
+      attrs != null &&
+      (header.version !== 2 ||
+        !Array.isArray(attrs) ||
+        attrs.length !== 4 ||
+        !uint(attrs[0], 0xffff) ||
+        !signed(attrs[1]) ||
+        !signed(attrs[2]) ||
+        !signed(attrs[3]))
+    )
+      return null;
     const grid: NativeGridCaptureRow[] = [];
     let count = 0;
     for (let index = 0; index < header.history + header.rows; index++) {
@@ -180,6 +209,16 @@ export function decodeNativeGridCapture(text: string): NativeGridCapture | null 
     if (offset < text.length) return null;
     return Object.freeze({
       version: header.version,
+      ...(Array.isArray(attrs)
+        ? {
+            currentAttributes: Object.freeze([...attrs]) as readonly [
+              number,
+              number,
+              number,
+              number,
+            ],
+          }
+        : {}),
       cols: header.cols,
       rows: header.rows,
       history: header.history,

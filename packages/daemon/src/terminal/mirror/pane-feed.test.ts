@@ -1,3 +1,4 @@
+import type { NativeGridCapture } from "./native-grid-capture.ts";
 /**
  * Unit tests for the pure seed/reseed delivery gate.
  */
@@ -359,4 +360,34 @@ describe("PaneFeed", () => {
       "cursor",
     ]);
   });
+});
+
+it("native capture keeps the same discard/hold seam and rejects stale epochs", () => {
+  const feed = new PaneFeed();
+  const native: NativeGridCapture = {
+    version: 2,
+    currentAttributes: [0, 8, 8, 8],
+    cols: 2,
+    rows: 1,
+    history: 0,
+    hscrolled: 0,
+    limit: 2000,
+    cursor: [0, 0],
+    grid: [{ flags: 0, used: 0, cells: [] }],
+  };
+  const stale = feed.beginReseed();
+  const epoch = feed.beginReseed();
+  expect(feed.delta(new TextEncoder().encode("before"))).toEqual([]);
+  feed.captureNativeReply(stale, native);
+  expect(feed.currentState()).toBe("awaiting-capture");
+  feed.captureNativeReply(epoch, native);
+  const held = new TextEncoder().encode("after");
+  expect(feed.delta(held)).toEqual([]);
+  const events = feed.cursorReply(epoch, "0 0 2 1");
+  expect(events.map((event) => event.type)).toEqual(["reset", "seed", "delta", "cursor"]);
+  expect(events[1]).toMatchObject({ native, data: Buffer.alloc(0) });
+  expect(events[2]).toEqual({ type: "delta", data: held });
+  const fallback = feed.beginReseed();
+  feed.captureReply(fallback, ["plain"]);
+  expect(feed.cursorReply(fallback, "0 0 2 1")[1]).not.toHaveProperty("native");
 });
