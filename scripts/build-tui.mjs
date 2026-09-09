@@ -20,6 +20,10 @@
  * write somewhere other than the default dist path (the release workflow uses
  * this to emit per-platform artifacts side by side).
  *
+ * Qualified native release: --release-scroll-manifest <manifest> verifies the
+ * pinned recipe, patch, successful native tests/build and exact host library.
+ * Requires clean or version-aligned source. Linux musl retains stock fallback.
+ *
  * Research builds: --experimental-scroll-library <native-library> embeds the
  * pinned patched renderer. Requires a separate --outfile and host target.
  * TMUX_IDE_NATIVE_SCROLL_PROTOTYPE=1 enables row motion at runtime; unset it
@@ -32,17 +36,24 @@ import { mkdirSync, existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { releaseSourceState } from "./lib/release-source-state.mjs";
+import { validateNativeScrollReleaseManifest } from "./lib/native-scroll-release-manifest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 const scrollLibraryArg = process.argv.indexOf("--experimental-scroll-library");
-const scrollLibrary = scrollLibraryArg === -1 ? null : process.argv[scrollLibraryArg + 1];
+let scrollLibrary = scrollLibraryArg === -1 ? null : process.argv[scrollLibraryArg + 1];
+const releaseManifestArg = process.argv.indexOf("--release-scroll-manifest");
+const releaseManifest = releaseManifestArg === -1 ? null : process.argv[releaseManifestArg + 1];
+if (releaseManifestArg !== -1 && (!releaseManifest || !existsSync(releaseManifest)))
+  throw new Error("[build-tui] --release-scroll-manifest requires an existing manifest");
+if (releaseManifest && scrollLibraryArg !== -1)
+  throw new Error("[build-tui] release and experimental renderer options are mutually exclusive");
 if (scrollLibraryArg !== -1 && (!scrollLibrary || !existsSync(scrollLibrary))) {
   throw new Error("[build-tui] --experimental-scroll-library requires an existing native library");
 }
 const entry = resolve(
   repoRoot,
-  scrollLibrary
+  scrollLibrary || releaseManifest
     ? "scripts/lib/native-scroll-prototype-entry.ts"
     : "packages/daemon/src/tui/main.ts",
 );
@@ -78,10 +89,29 @@ const outfile =
     ? resolve(process.argv[outfileArg + 1])
     : resolve(defaultOutDir, "tmux-ide-tui");
 
+if (releaseManifest) {
+  const coreVersion = JSON.parse(
+    readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.resolve("@opentui/core"))), "package.json"),
+      "utf8",
+    ),
+  ).version;
+  scrollLibrary = validateNativeScrollReleaseManifest(releaseManifest, {
+    repository: repoRoot,
+    target,
+    sourceState,
+    coreVersion,
+  }).library;
+}
+const experimentalLibrary = Boolean(scrollLibrary && !releaseManifest);
+
 // This private native ABI is not a qualified release dependency. Require an
 // explicit separate output and host target so a probe cannot replace the
 // installed preview or accidentally bundle a host library for another OS.
-if (scrollLibrary && (outfileArg === -1 || outfile === resolve(defaultOutDir, "tmux-ide-tui"))) {
+if (
+  experimentalLibrary &&
+  (outfileArg === -1 || outfile === resolve(defaultOutDir, "tmux-ide-tui"))
+) {
   throw new Error("[build-tui] experimental scrolling requires a separate --outfile");
 }
 if (scrollLibrary && target !== `bun-${process.platform}-${process.arch}`) {
@@ -144,10 +174,11 @@ const result = await Bun.build({
   // native asset or the lazy surface dispatcher.
   minify: true,
   define: {
+    TMUX_IDE_RELEASE_NATIVE_SCROLL: JSON.stringify(Boolean(releaseManifest)),
     TMUX_IDE_BUILD_VERSION: JSON.stringify(packageVersion),
     TMUX_IDE_BUILD_COMMIT: JSON.stringify(sourceCommit),
     TMUX_IDE_BUILD_PLATFORM: JSON.stringify(platformTag),
-    TMUX_IDE_BUILD_SOURCE_STATE: JSON.stringify(scrollLibrary ? "dirty" : sourceState),
+    TMUX_IDE_BUILD_SOURCE_STATE: JSON.stringify(experimentalLibrary ? "dirty" : sourceState),
   },
   plugins: [workerAssetPlugin, createSolidTransformPlugin()],
 });
@@ -160,5 +191,5 @@ if (!result.success) {
 const bytes = statSync(outfile).size;
 const mb = (bytes / 1024 / 1024).toFixed(1);
 console.log(
-  `[build-tui] wrote ${outfile} (${mb} MB, version ${packageVersion}, commit ${sourceCommit.slice(0, 12)}, source ${scrollLibrary ? "dirty (experimental renderer)" : sourceState}, target ${target}, ${Date.now() - start}ms)`,
+  `[build-tui] wrote ${outfile} (${mb} MB, version ${packageVersion}, commit ${sourceCommit.slice(0, 12)}, source ${experimentalLibrary ? "dirty (experimental renderer)" : sourceState}, target ${target}, ${Date.now() - start}ms)`,
 );

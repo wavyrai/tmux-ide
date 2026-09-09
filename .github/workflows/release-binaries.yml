@@ -2,13 +2,13 @@ name: Release binaries
 
 # Per-platform prebuilt TUI binaries. The npm tarball ships the `.tsx` surfaces
 # (which need `bun` to run) but NOT the ~70MB compiled binary. This workflow
-# cross-compiles one binary per platform via `bun build --compile --target` and
+# builds and qualifies the pinned native renderer on each target platform and
 # uploads them as release assets, so the first `tmux-ide app` after a clean
 # `npm i -g tmux-ide` can download the exact-version runtime automatically
 # (`tmux-ide update --tui-binary` remains the explicit retry path — see
 # packages/daemon/src/lib/tui-binary.ts for the asset-name/URL contract).
 #
-# Cross-compile note: `@opentui/core` dynamically imports its platform-specific
+# Bundling note: `@opentui/core` dynamically imports its platform-specific
 # native package (`@opentui/core-<os>-<arch>`), so the target's native package
 # must be present before the build. We force-install it (npm's os/cpu guard
 # would otherwise refuse the non-host platforms) at the version pnpm resolved.
@@ -21,6 +21,10 @@ on:
       version:
         description: "Release version (e.g. 2.6.1)"
         required: true
+      qualification_only:
+        description: "Build and test all targets without creating a release or publishing"
+        type: boolean
+        default: false
 
 permissions:
   actions: write
@@ -62,6 +66,7 @@ jobs:
           echo "Resolved release v$version at $commit"
 
       - name: Ensure GitHub release exists
+        if: ${{ !inputs.qualification_only }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -134,11 +139,27 @@ jobs:
   binaries:
     name: Build ${{ matrix.platform }}
     needs: release
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        platform: [darwin-arm64, darwin-x64, linux-x64, linux-arm64]
+        include:
+          - platform: darwin-arm64
+            runner: macos-15
+            zig: aarch64-macos
+            zig_sha: 3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
+          - platform: darwin-x64
+            runner: macos-15-intel
+            zig: x86_64-macos
+            zig_sha: 375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f
+          - platform: linux-x64
+            runner: ubuntu-24.04
+            zig: x86_64-linux
+            zig_sha: 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            zig: aarch64-linux
+            zig_sha: 958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -201,10 +222,47 @@ jobs:
             linux-*) fetch "${{ matrix.platform }}-musl" ;;
           esac
 
-      - name: Cross-compile the TUI binary
+      - name: Prepare pinned native renderer toolchain
+        shell: bash
+        env:
+          ZIG_TARGET: ${{ matrix.zig }}
+          ZIG_SHA256: ${{ matrix.zig_sha }}
+        run: |
+          archive="$RUNNER_TEMP/zig.tar.xz"
+          curl -fsSL "https://ziglang.org/download/0.15.2/zig-${ZIG_TARGET}-0.15.2.tar.xz" -o "$archive"
+          node --input-type=module - "$archive" "$ZIG_SHA256" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          if (createHash('sha256').update(readFileSync(process.argv[2])).digest('hex') !== process.argv[3])
+            throw new Error('Pinned Zig checksum mismatch');
+          NODE
+          mkdir "$RUNNER_TEMP/zig"
+          tar -xJf "$archive" -C "$RUNNER_TEMP/zig" --strip-components=1
+          git clone --filter=blob:none --no-checkout https://github.com/anomalyco/opentui.git "$RUNNER_TEMP/opentui-source"
+          git -C "$RUNNER_TEMP/opentui-source" checkout --detach ad9a818d7a9d73f3386e92a445d0feb4b395c69e
+
+      - name: Select the pinned macOS SDK toolchain
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          developer_dir="/Applications/Xcode_16.4.app/Contents/Developer"
+          test -d "$developer_dir"
+          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+          sdk_root="$(DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-path)"
+          echo "SDKROOT=$sdk_root" >> "$GITHUB_ENV"
+
+      - name: Qualify and build the pinned native renderer
+        run: |
+          node scripts/native/build-opentui-scroll.mjs \
+            --source "$RUNNER_TEMP/opentui-source" \
+            --zig "$RUNNER_TEMP/zig/zig" \
+            --output "$RUNNER_TEMP/opentui-qualified"
+
+      - name: Build the TUI with the qualified renderer
         run: |
           bun scripts/build-tui.mjs \
             --target "bun-${{ matrix.platform }}" \
+            --release-scroll-manifest "$RUNNER_TEMP/opentui-qualified/release-manifest.json" \
             --outfile "dist-bin/tmux-ide-tui-${{ matrix.platform }}"
 
       - name: Verify the artifact
@@ -212,12 +270,31 @@ jobs:
         run: |
           bin="dist-bin/tmux-ide-tui-${{ matrix.platform }}"
           file "$bin"
-          bytes="$(stat -c%s "$bin")"
+          bytes="$(node -e 'process.stdout.write(String(require("node:fs").statSync(process.argv[1]).size))' "$bin")"
           echo "size: ${bytes} bytes"
           if [[ "$bytes" -lt 10485760 ]]; then
             echo "Binary is under 10MB — build looks broken." >&2
             exit 1
           fi
+          "$bin" __release-provenance > "$RUNNER_TEMP/runtime-provenance.json"
+          node --input-type=module - "$RUNNER_TEMP/runtime-provenance.json" "${{ needs.release.outputs.commit }}" "${{ needs.release.outputs.version }}" "${{ matrix.platform }}" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const value = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          if (value.commit !== process.argv[3] || value.version !== process.argv[4] || value.platform !== process.argv[5] ||
+              !['clean', 'version-aligned'].includes(value.sourceState) || value.nativeRenderer !== 'qualified-native-scroll')
+            throw new Error('Qualified renderer runtime provenance mismatch');
+          NODE
+
+      - name: Preserve native qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-renderer-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/opentui-qualified/*.json
+            ${{ runner.temp }}/opentui-qualified/*.log
+            ${{ runner.temp }}/runtime-provenance.json
+          if-no-files-found: warn
 
       - name: Compress and write integrity manifest
         shell: bash
@@ -225,8 +302,8 @@ jobs:
           binary="tmux-ide-tui-${{ matrix.platform }}"
           asset="${binary}.gz"
           gzip -9 -c "dist-bin/${binary}" > "$asset"
-          compressed_sha="$(sha256sum "$asset" | cut -d' ' -f1)"
-          binary_sha="$(sha256sum "dist-bin/${binary}" | cut -d' ' -f1)"
+          compressed_sha="$(shasum -a 256 "$asset" | cut -d' ' -f1)"
+          binary_sha="$(shasum -a 256 "dist-bin/${binary}" | cut -d' ' -f1)"
           version="${{ needs.release.outputs.version }}"
           {
             printf '%s  %s\n' "$compressed_sha" "$asset"
@@ -244,6 +321,7 @@ jobs:
           test "$(node -p "require('./packages/daemon/package.json').version")" = "$version"
 
       - name: Upload release asset
+        if: ${{ !inputs.qualification_only }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -259,7 +337,7 @@ jobs:
   # the npm workflow explicitly after every runtime asset is available.
   dispatch_npm_release:
     name: Dispatch npm release
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.qualification_only }}
     needs: [release, binaries]
     runs-on: ubuntu-24.04
     steps:

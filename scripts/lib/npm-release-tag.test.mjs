@@ -85,13 +85,34 @@ test("manual binary releases explicitly dispatch npm from the exact release tag"
 
   assert.match(workflow, /permissions:[\s\S]+actions: write[\s\S]+contents: write/u);
   assert.match(workflow, /dispatch_npm_release:[\s\S]+needs: \[release, binaries\]/u);
-  assert.match(workflow, /if: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}/u);
+  assert.match(
+    workflow,
+    /if: \$\{\{ github\.event_name == 'workflow_dispatch' && !inputs\.qualification_only \}\}/u,
+  );
   assert.match(workflow, /RELEASE_TAG: \$\{\{ needs\.release\.outputs\.tag \}\}/u);
   assert.match(workflow, /RELEASE_VERSION: \$\{\{ needs\.release\.outputs\.version \}\}/u);
   assert.match(
     workflow,
     /gh workflow run release\.yml[\s\S]+--ref "\$RELEASE_TAG"[\s\S]+--field "version=\$RELEASE_VERSION"/u,
   );
+});
+
+test("qualification-only builds cannot publish tags, assets, or npm", () => {
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/release-binaries.yml", import.meta.url),
+    "utf8",
+  );
+  for (const step of ["Ensure GitHub release exists", "Upload release asset"])
+    assert.ok(workflow.includes(`- name: ${step}\n        if: \${{ !inputs.qualification_only }}`));
+  assert.match(
+    workflow,
+    /dispatch_npm_release:[\s\S]+if: \$\{\{ github\.event_name == 'workflow_dispatch' && !inputs\.qualification_only \}\}/u,
+  );
+  assert.match(
+    workflow,
+    /--release-scroll-manifest "\$RUNNER_TEMP\/opentui-qualified\/release-manifest\.json"/u,
+  );
+  assert.match(workflow, /"\$bin" __release-provenance/u);
 });
 
 test("npm release uses OIDC trusted publishing instead of a repository token", () => {

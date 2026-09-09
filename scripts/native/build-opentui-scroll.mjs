@@ -17,7 +17,13 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const sourceCommit = "ad9a818d7a9d73f3386e92a445d0feb4b395c69e";
+import {
+  NATIVE_SCROLL_RELEASE_PINS,
+  nativeScrollSha256,
+  nativeScrollHostLibc,
+} from "../lib/native-scroll-release-manifest.mjs";
+
+const sourceCommit = NATIVE_SCROLL_RELEASE_PINS.sourceCommit;
 const zigVersion = "0.15.2";
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const patch = join(repository, "patches/opentui-native-scroll-ad9a818.patch");
@@ -31,7 +37,9 @@ OpenTUI/Zig is performed; Zig may fetch the upstream pinned build dependencies.
 
 The normal run clones the supplied source into output, applies the pinned patch,
 runs the full native test suite, and builds ReleaseFast. Logs and provenance.json
-remain in output, including on failure. Configure your host SDK through your
+remain in output, including on failure. Successful macOS/Linux glibc host builds
+also emit release-manifest.json for build-tui.mjs --release-scroll-manifest.
+Configure your host SDK through your
 normal toolchain environment; this script does not change SDK or host settings.
 
 The candidate remains opt-in at runtime: TMUX_IDE_NATIVE_SCROLL_PROTOTYPE=1.
@@ -156,6 +164,38 @@ function main() {
     );
     provenance.status = "passed";
     record();
+    // A release manifest is emitted only for the host ABI whose tests just ran.
+    // Experimental builds on other libc variants remain possible, not promoted.
+    const libc = nativeScrollHostLibc();
+    if (
+      ["darwin", "linux"].includes(process.platform) &&
+      ["arm64", "x64"].includes(process.arch) &&
+      (process.platform !== "linux" || libc === "glibc")
+    ) {
+      if (provenance.libraries.length !== 1)
+        throw new Error("Release manifest requires exactly one host native library.");
+      const artifact = (path) => ({
+        path: relative(output, path),
+        sha256: nativeScrollSha256(path),
+      });
+      const manifest = {
+        version: 1,
+        status: "passed",
+        ...NATIVE_SCROLL_RELEASE_PINS,
+        platform: process.platform,
+        arch: process.arch,
+        libc,
+        patchSha256: provenance.patchSha256,
+        recipeSha256: nativeScrollSha256(fileURLToPath(import.meta.url)),
+        tests: artifact(join(output, "native-tests.log")),
+        build: artifact(join(output, "native-build.log")),
+        library: artifact(provenance.libraries[0]),
+      };
+      writeFileSync(
+        join(output, "release-manifest.json"),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      );
+    }
     console.log(`Native tests and build passed. Libraries:\n${provenance.libraries.join("\n")}`);
   } catch (error) {
     provenance.status = "failed";

@@ -347,6 +347,7 @@ async function runInstalledTuiGate(installedCli) {
     commit: releaseCommit,
     platform: platformTag,
     sourceState: compiledSourceState,
+    nativeRenderer: "stock",
   };
   if (JSON.stringify(runtimeProvenance) !== JSON.stringify(expectedProvenance)) {
     throw new Error(
