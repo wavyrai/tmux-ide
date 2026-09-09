@@ -140,7 +140,7 @@ test("native qualification can retain failed build evidence without publishing n
   );
   assert.match(
     workflow,
-    /uses: actions\/upload-artifact@v4\n        if: always\(\)\n        with:\n          name: tmux-ide-native-tmux/u,
+    /uses: actions\/upload-artifact@v4\n {8}if: always\(\)\n {8}with:\n {10}name: tmux-ide-native-tmux/u,
   );
 });
 
