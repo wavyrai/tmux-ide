@@ -21,6 +21,8 @@ import {
 import {
   TerminalDeliveryStateTooLargeError,
   applyTerminalReplicaUpdate,
+  applyTerminalReplicaUpdateCooperatively,
+  terminalReplicaUpdateNeedsCooperativeReduction,
   encodeCompactSemanticTerminalUpdate,
   encodeAnsiTerminalRepresentation,
   encodeSemanticTerminalUpdate,
@@ -52,6 +54,7 @@ export const MAX_REPRESENTATION_CACHE_ENTRIES = 8;
 export const MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
 export const MAX_CLIENTS = 64;
 const MAX_PANES = 32;
+const MAX_PENDING_CANONICAL_CELLS = 1_000_000;
 const MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
 const BACKGROUND_CADENCE_MS = 100;
 
@@ -110,6 +113,7 @@ interface RevisionRecord {
 }
 
 interface PendingCanonicalUpdate {
+  readonly cells: number;
   readonly update: CanonicalTerminalReplicaUpdate;
   readonly trace: SessionRuntimeTraceContext | null;
 }
@@ -126,7 +130,10 @@ interface PaneState {
   rawFloorRevision: number;
   lastRawRevision: number;
   readonly pendingCanonical: PendingCanonicalUpdate[];
+  pendingCanonicalCells: number;
   canonicalScheduled: boolean;
+  readonly canonicalAbort: AbortController;
+  canonicalYieldStartedAt: number;
   pendingDeliveryTrace: SessionRuntimeTraceContext | null;
 }
 
@@ -466,7 +473,9 @@ export class SessionRuntimeTerminalDeliveryHub {
     const panes = [...this.#panes.values()];
     this.#panes.clear();
     for (const pane of panes) {
+      pane.canonicalAbort.abort();
       pane.pendingCanonical.length = 0;
+      pane.pendingCanonicalCells = 0;
       pane.canonicalScheduled = false;
     }
     await Promise.allSettled(panes.map((pane) => pane.source?.close()));
@@ -502,17 +511,29 @@ export class SessionRuntimeTerminalDeliveryHub {
       rawFloorRevision: 0,
       lastRawRevision: -1,
       pendingCanonical: [],
+      pendingCanonicalCells: 0,
       canonicalScheduled: false,
+      canonicalAbort: new AbortController(),
+      canonicalYieldStartedAt: -Infinity,
       pendingDeliveryTrace: null,
     };
     this.#panes.set(semanticPaneId, pane);
     pane.start = owner
       .subscribeSource(
-        (update, trace) => this.#observeCanonical(semanticPaneId, update, trace),
-        (record) => this.#observeRaw(semanticPaneId, record),
+        (update, trace) => {
+          if (this.#panes.get(semanticPaneId) === pane)
+            this.#observeCanonical(semanticPaneId, update, trace);
+        },
+        (record) => {
+          if (this.#panes.get(semanticPaneId) === pane) this.#observeRaw(semanticPaneId, record);
+        },
       )
       .then(async (source) => {
-        if (this.#closed || this.#panes.get(semanticPaneId) !== pane) {
+        if (
+          this.#closed ||
+          this.#panes.get(semanticPaneId) !== pane ||
+          pane?.canonicalAbort.signal.aborted
+        ) {
           await source.close();
           throw new Error("Terminal delivery source retired during startup");
         }
@@ -532,15 +553,94 @@ export class SessionRuntimeTerminalDeliveryHub {
     trace: SessionRuntimeTraceContext | null,
   ): void {
     const pane = this.#panes.get(semanticPaneId);
-    if (!pane) return;
-    pane.pendingCanonical.push({ update, trace });
+    if (!pane || pane.canonicalAbort.signal.aborted || this.#closed) return;
+    if (
+      update.workspaceName !== this.workspaceName ||
+      update.semanticPaneId !== semanticPaneId ||
+      update.generation !== this.generation
+    )
+      return;
+    const cells = canonicalUpdateCellCost(update);
+    // A single authoritative state retains its existing representation limits
+    // (including legacy fallback); this budget limits additional queued work.
+    if (
+      !Number.isSafeInteger(cells) ||
+      cells < 0 ||
+      pane.pendingCanonical.length >= MAX_CANONICAL_REVISIONS ||
+      (pane.pendingCanonical.length > 0 &&
+        cells > MAX_PENDING_CANONICAL_CELLS - pane.pendingCanonicalCells)
+    ) {
+      pane.canonicalAbort.abort();
+      pane.pendingCanonical.length = 0;
+      pane.pendingCanonicalCells = 0;
+      for (const client of this.#clients.values())
+        if (client.paneId === semanticPaneId && !client.closed)
+          this.#fault(
+            client,
+            "state-too-large",
+            "Terminal source exceeded the pending update budget; reopen for a fresh snapshot",
+          );
+      return;
+    }
+    pane.pendingCanonical.push({ update, trace, cells });
+    pane.pendingCanonicalCells += cells;
     if (pane.canonicalScheduled) return;
     pane.canonicalScheduled = true;
     this.#scheduler.microtask(() => {
-      if (this.#panes.get(semanticPaneId) !== pane) return;
+      void this.#drainCanonical(semanticPaneId, pane);
+    });
+  }
+
+  async #drainCanonical(semanticPaneId: string, pane: PaneState): Promise<void> {
+    try {
+      while (
+        !this.#closed &&
+        this.#panes.get(semanticPaneId) === pane &&
+        !pane.canonicalAbort.signal.aborted
+      ) {
+        const pending = pane.pendingCanonical.shift();
+        if (!pending) break;
+        pane.pendingCanonicalCells -= pending.cells;
+        const work = this.#applyCanonical(semanticPaneId, pane, pending.update, pending.trace);
+        // Keep the ordinary update burst synchronous; only large seeds yield.
+        if (work) await work;
+      }
+    } catch {
+      if (!pane.canonicalAbort.signal.aborted && this.#panes.get(semanticPaneId) === pane) {
+        pane.canonicalAbort.abort();
+        pane.pendingCanonical.length = 0;
+        pane.pendingCanonicalCells = 0;
+        for (const client of this.#clients.values())
+          if (client.paneId === semanticPaneId && !client.closed)
+            this.#fault(
+              client,
+              "protocol-violation",
+              "Terminal source update could not be validated",
+            );
+      }
+    } finally {
       pane.canonicalScheduled = false;
-      for (const pending of pane.pendingCanonical.splice(0))
-        this.#applyCanonical(semanticPaneId, pane, pending.update, pending.trace);
+    }
+  }
+
+  #yieldCanonical(pane: PaneState): Promise<void> {
+    // Core checkpoints are finer than an event-loop turn. Preserve cancellation
+    // checks there without paying a timer tick for every 256 cells.
+    if (this.#scheduler.nowMs() - pane.canonicalYieldStartedAt < 2) return Promise.resolve();
+    return new Promise((resolve) => {
+      let timer: SessionRuntimeTimer | undefined;
+      const finish = () => {
+        timer?.cancel();
+        pane.canonicalYieldStartedAt = this.#scheduler.nowMs();
+        pane.canonicalAbort.signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      pane.canonicalAbort.signal.addEventListener("abort", finish, { once: true });
+      if (pane.canonicalAbort.signal.aborted) finish();
+      else
+        timer = this.#scheduler.yieldTask
+          ? this.#scheduler.yieldTask(finish)
+          : this.#scheduler.timer(finish, 0);
     });
   }
 
@@ -549,14 +649,46 @@ export class SessionRuntimeTerminalDeliveryHub {
     pane: PaneState,
     update: CanonicalTerminalReplicaUpdate,
     trace: SessionRuntimeTraceContext | null,
-  ): void {
+  ): void | Promise<void> {
     if (
       update.workspaceName !== this.workspaceName ||
       update.semanticPaneId !== semanticPaneId ||
       update.generation !== this.generation
     )
       return;
-    const result = applyTerminalReplicaUpdate(pane.current, update);
+    if (terminalReplicaUpdateNeedsCooperativeReduction(update)) {
+      const baseline = pane.current;
+      pane.canonicalYieldStartedAt = -Infinity;
+      return applyTerminalReplicaUpdateCooperatively(baseline, update, {
+        yieldControl: () => this.#yieldCanonical(pane),
+        signal: pane.canonicalAbort.signal,
+      }).then((result) => {
+        if (
+          this.#closed ||
+          pane.canonicalAbort.signal.aborted ||
+          this.#panes.get(semanticPaneId) !== pane ||
+          pane.current !== baseline
+        )
+          return;
+        this.#publishCanonical(semanticPaneId, pane, update, trace, result);
+      });
+    }
+    this.#publishCanonical(
+      semanticPaneId,
+      pane,
+      update,
+      trace,
+      applyTerminalReplicaUpdate(pane.current, update),
+    );
+  }
+
+  #publishCanonical(
+    semanticPaneId: string,
+    pane: PaneState,
+    update: CanonicalTerminalReplicaUpdate,
+    trace: SessionRuntimeTraceContext | null,
+    result: ReturnType<typeof applyTerminalReplicaUpdate>,
+  ): void {
     if (result.status !== "applied" && result.status !== "idempotent") return;
     pane.current = result.state;
     if (trace) pane.pendingDeliveryTrace = trace;
@@ -581,10 +713,14 @@ export class SessionRuntimeTerminalDeliveryHub {
       this.#schedule(client);
     }
     if (update.type === "terminal.tombstone") {
+      pane.canonicalAbort.abort();
+      pane.pendingCanonical.length = 0;
+      pane.pendingCanonicalCells = 0;
       this.#scheduler.timer(() => {
         if (this.#panes.get(semanticPaneId) !== pane) return;
         this.#panes.delete(semanticPaneId);
         pane.pendingCanonical.length = 0;
+        pane.pendingCanonicalCells = 0;
         pane.canonicalScheduled = false;
         void pane.source?.close().catch(() => undefined);
         this.#clearCache();
@@ -594,7 +730,7 @@ export class SessionRuntimeTerminalDeliveryHub {
 
   #observeRaw(semanticPaneId: string, record: TerminalReplicaCommittedRaw): void {
     const pane = this.#panes.get(semanticPaneId);
-    if (!pane) return;
+    if (!pane || pane.canonicalAbort.signal.aborted) return;
     if (record.revision <= pane.lastRawRevision) return;
     if (
       record.baseRevision === record.revision ||
@@ -1368,7 +1504,9 @@ export class SessionRuntimeTerminalDeliveryHub {
     const pane = this.#panes.get(client.paneId);
     this.#panes.delete(client.paneId);
     if (pane) {
+      pane.canonicalAbort.abort();
       pane.pendingCanonical.length = 0;
+      pane.pendingCanonicalCells = 0;
       pane.canonicalScheduled = false;
     }
     await pane?.source?.close().catch(() => undefined);
@@ -1795,6 +1933,18 @@ function semanticPayload(
       patch: update.patch,
     };
   return semanticSeed(target);
+}
+
+/** Account represented cells without traversing/serializing the snapshot. */
+function canonicalUpdateCellCost(update: CanonicalTerminalReplicaUpdate): number {
+  if (update.type === "terminal.tombstone") return 0;
+  if (update.type === "terminal.seed")
+    return update.snapshot.cols * (update.snapshot.grid.length + update.snapshot.history.length);
+  const rows =
+    update.patch.rows.length +
+    (update.patch.history?.length ?? 0) +
+    (update.patch.historyDelta?.append.length ?? 0);
+  return Math.max(update.cols, update.patch.dimensions?.cols ?? update.cols) * rows;
 }
 
 function encodeLegacySemanticCandidate(payload: TerminalSemanticDeliveryPayload): Uint8Array {
