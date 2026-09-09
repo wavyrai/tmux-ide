@@ -1,5 +1,6 @@
 import type {
   CanonicalTerminalReplicaUpdate,
+  CanonicalTerminalReplicaSeed,
   SessionRuntimeGeneration,
   TerminalReplicaAddress,
   TerminalReplicaColor,
@@ -13,6 +14,7 @@ import {
   hashCanonicalTerminalValue,
   hashCanonicalTerminalValueCooperatively,
   hashTerminalReplicaRowCached,
+  hashTerminalReplicaRowCooperatively,
   isTerminalReplicaRowDeeplyFrozen,
 } from "./terminal-replica-hash-cache.ts";
 
@@ -171,80 +173,9 @@ export function applyTerminalReplicaUpdate(
     // second deep clone, this seeds the row Merkle cache for the first patch.
     const frozenSnapshot = trustedSnapshot ?? freezeSnapshot(update.snapshot);
     const hash = trustedSnapshot ? update.stateHash : hashTerminalReplicaSnapshot(frozenSnapshot);
-    if (
-      current &&
-      (current.workspaceName !== update.workspaceName ||
-        current.semanticPaneId !== update.semanticPaneId)
-    ) {
-      return complete(protocolConflict(current, update.revision));
-    }
-    // Generations are opaque UUIDs, not sortable epochs. A live reducer is
-    // generation-pinned; callers must discard it and bootstrap a new reducer
-    // from a seed during an authenticated daemon-generation transition.
-    if (current && current.generation !== update.generation) {
-      return complete(protocolConflict(current, update.revision));
-    }
-    if (
-      current &&
-      current.incarnation !== update.incarnation &&
-      (!isNewerIncarnation(current.incarnation, update.incarnation) ||
-        update.revision <= current.revision)
-    ) {
-      return complete(protocolConflict(current, update.revision));
-    }
-    if (
-      current?.generation === update.generation &&
-      current.revision === update.revision &&
-      current.hash === hash &&
-      update.stateHash === hash &&
-      current.incarnation === update.incarnation &&
-      current.frameHash === receivedFrameHash
-    ) {
-      return complete({ status: "idempotent", state: current });
-    }
-    if (
-      current?.generation === update.generation &&
-      current.revision === update.revision &&
-      current.hash !== update.stateHash
-    ) {
-      return complete({
-        status: "conflict",
-        state: current,
-        expectedRevision: current.revision,
-        receivedRevision: update.revision,
-      });
-    }
-    if (
-      hash !== update.stateHash ||
-      update.cols !== update.snapshot.cols ||
-      update.rows !== update.snapshot.rows
-    ) {
-      return complete({
-        status: "conflict",
-        state: current,
-        expectedRevision: current?.revision ?? 0,
-        receivedRevision: update.revision,
-      });
-    }
-    if (
-      current?.generation === update.generation &&
-      current.incarnation === update.incarnation &&
-      update.revision < current.revision
-    ) {
-      return complete({ status: "stale", state: current });
-    }
-    const state = Object.freeze({
-      workspaceName: update.workspaceName,
-      semanticPaneId: update.semanticPaneId,
-      generation: update.generation,
-      revision: update.revision,
-      incarnation: update.incarnation,
-      snapshot: frozenSnapshot,
-      tombstone: null,
-      hash,
-      frameHash: receivedFrameHash,
-    });
-    return complete({ status: "applied", state });
+    return complete(
+      finishTerminalReplicaSeed(current, update, frozenSnapshot, hash, receivedFrameHash),
+    );
   }
 
   if (current === null || current.generation !== update.generation) {
@@ -381,6 +312,273 @@ export function applyTerminalReplicaUpdate(
     frameHash: receivedFrameHash,
   });
   return complete({ status: "applied", state });
+}
+
+function finishTerminalReplicaSeed(
+  current: TerminalReplicaState | null,
+  update: CanonicalTerminalReplicaSeed,
+  frozenSnapshot: TerminalReplicaSnapshot,
+  hash: string,
+  receivedFrameHash: string,
+): TerminalReplicaApplyResult {
+  if (
+    current &&
+    (current.workspaceName !== update.workspaceName ||
+      current.semanticPaneId !== update.semanticPaneId)
+  ) {
+    return protocolConflict(current, update.revision);
+  }
+  // Generations are opaque UUIDs, not sortable epochs. A live reducer is
+  // generation-pinned; callers must discard it and bootstrap a new reducer
+  // from a seed during an authenticated daemon-generation transition.
+  if (current && current.generation !== update.generation) {
+    return protocolConflict(current, update.revision);
+  }
+  if (
+    current &&
+    current.incarnation !== update.incarnation &&
+    (!isNewerIncarnation(current.incarnation, update.incarnation) ||
+      update.revision <= current.revision)
+  ) {
+    return protocolConflict(current, update.revision);
+  }
+  if (
+    current?.generation === update.generation &&
+    current.revision === update.revision &&
+    current.hash === hash &&
+    update.stateHash === hash &&
+    current.incarnation === update.incarnation &&
+    current.frameHash === receivedFrameHash
+  ) {
+    return { status: "idempotent", state: current };
+  }
+  if (
+    current?.generation === update.generation &&
+    current.revision === update.revision &&
+    current.hash !== update.stateHash
+  ) {
+    return {
+      status: "conflict",
+      state: current,
+      expectedRevision: current.revision,
+      receivedRevision: update.revision,
+    };
+  }
+  if (
+    hash !== update.stateHash ||
+    update.cols !== update.snapshot.cols ||
+    update.rows !== update.snapshot.rows
+  ) {
+    return {
+      status: "conflict",
+      state: current,
+      expectedRevision: current?.revision ?? 0,
+      receivedRevision: update.revision,
+    };
+  }
+  if (
+    current?.generation === update.generation &&
+    current.incarnation === update.incarnation &&
+    update.revision < current.revision
+  ) {
+    return { status: "stale", state: current };
+  }
+  const state = Object.freeze({
+    workspaceName: update.workspaceName,
+    semanticPaneId: update.semanticPaneId,
+    generation: update.generation,
+    revision: update.revision,
+    incarnation: update.incarnation,
+    snapshot: frozenSnapshot,
+    tombstone: null,
+    hash,
+    frameHash: receivedFrameHash,
+  });
+  return { status: "applied", state };
+}
+
+// Below 8192 cells the existing synchronous path avoids task/Promise overhead.
+// Large seeds copy at most256 cells between turns, including wide rows; history
+// is never first cloned/validated in one uninterrupted whole-snapshot pass.
+export const TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS = 8192;
+
+export function terminalReplicaUpdateNeedsCooperativeReduction(
+  update: CanonicalTerminalReplicaUpdate,
+): boolean {
+  return (
+    update.type === "terminal.seed" &&
+    (update.snapshot.grid.length + update.snapshot.history.length) * update.snapshot.cols >=
+      TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS
+  );
+}
+
+/** Large-seed scheduling variant of the ordinary reducer, not a new trust boundary.
+ * It preserves the reducer's geometry/wide-cell validation; untrusted wire schema
+ * validation remains upstream. Callers supply a real task yield and abort retired
+ * work. No state is published and no capability is granted before completion.
+ */
+export async function applyTerminalReplicaUpdateCooperatively(
+  current: TerminalReplicaState | null,
+  update: CanonicalTerminalReplicaUpdate,
+  options: TerminalReplicaApplyOptions & {
+    readonly yieldControl: () => Promise<void>;
+    readonly signal?: AbortSignal;
+  },
+): Promise<TerminalReplicaApplyResult> {
+  const check = () => options.signal?.throwIfAborted();
+  check();
+  if (update.type !== "terminal.seed" || !terminalReplicaUpdateNeedsCooperativeReduction(update))
+    return applyTerminalReplicaUpdate(current, update, options);
+  const yieldControl = async () => {
+    check();
+    await options.yieldControl();
+    check();
+  };
+  // Capture identity and metadata before the first yield. Mutable caller cells
+  // are copied below; the copied snapshot still must match this admitted hash.
+  const admitted = { ...update };
+  const profile = options.instrumentation ? createApplyProfile() : undefined;
+  const complete = (result: TerminalReplicaApplyResult) => {
+    check();
+    if (profile && options.instrumentation) {
+      try {
+        options.instrumentation.onComplete(freezeProfile(profile));
+      } catch {
+        /* diagnostic only */
+      }
+    }
+    return result;
+  };
+  const conflict = () =>
+    current
+      ? protocolConflict(current, admitted.revision)
+      : {
+          status: "conflict" as const,
+          state: null,
+          expectedRevision: 0,
+          receivedRevision: admitted.revision,
+        };
+  const trusted =
+    admitted.hashAlgorithm === "fnv1a64-v1"
+      ? consumeCompactReplicaCapability(
+          admitted.snapshot,
+          current?.snapshot ?? null,
+          admitted.stateHash,
+        )
+      : undefined;
+  if (
+    admitted.hashAlgorithm !== "fnv1a64-v1" ||
+    (trusted !== undefined && trusted !== admitted.snapshot)
+  )
+    return complete(conflict());
+  let snapshot: TerminalReplicaSnapshot;
+  if (trusted !== undefined && trusted !== null) {
+    snapshot = trusted;
+    if (profile) profile.trustedCompactAdoption = true;
+  } else {
+    const source = admitted.snapshot;
+    const cols = source.cols,
+      rows = source.rows;
+    const cursor = Object.freeze({ ...source.cursor });
+    const modes = Object.freeze({ ...source.modes });
+    const bootstrap = Object.freeze({ ...source.bootstrap });
+    if (source.grid.length !== rows || cursor.x >= cols || cursor.y >= rows)
+      return complete(conflict());
+    const historySources = source.history.slice(),
+      gridSources = source.grid.slice();
+    const placementsSources = source.placements.slice();
+    const history: TerminalReplicaRow[] = [],
+      grid: TerminalReplicaRow[] = [];
+    let work = 0;
+    for (const [sources, target] of [
+      [historySources, history],
+      [gridSources, grid],
+    ] as const) {
+      for (const row of sources) {
+        if (row.cells.length !== cols) return complete(conflict());
+        const cells: TerminalReplicaRow["cells"] = [];
+        let priorWidth = -1;
+        const wrapped = row.wrapped;
+        for (let index = 0; index < cols; index++) {
+          const sourceCell = row.cells[index]!;
+          const cell = Object.freeze({
+            ...sourceCell,
+            foreground: Object.freeze({ ...sourceCell.foreground }),
+            background: Object.freeze({ ...sourceCell.background }),
+          });
+          if ((priorWidth === 2 && cell.width !== 0) || (cell.width === 0 && priorWidth !== 2))
+            return complete(conflict());
+          priorWidth = cell.width;
+          cells.push(cell);
+          if (++work >= 256) {
+            work = 0;
+            await yieldControl();
+          }
+        }
+        if (priorWidth === 2) return complete(conflict());
+        target.push(
+          Object.freeze({
+            ...row,
+            wrapped,
+            cells: Object.freeze(cells),
+          }) as unknown as TerminalReplicaRow,
+        );
+      }
+    }
+    const placements: TerminalReplicaSnapshot["placements"] = [];
+    for (const value of placementsSources) {
+      const placement = Object.freeze({ ...value });
+      if (
+        !(
+          placement.row < rows &&
+          placement.column < cols &&
+          placement.row + placement.rows <= rows &&
+          placement.column + placement.columns <= cols
+        )
+      )
+        return complete(conflict());
+      placements.push(placement);
+      if (++work >= 256) {
+        work = 0;
+        await yieldControl();
+      }
+    }
+    snapshot = Object.freeze({
+      ...source,
+      cols,
+      rows,
+      cursor,
+      modes,
+      bootstrap,
+      history: Object.freeze(history),
+      grid: Object.freeze(grid),
+      placements: Object.freeze(placements),
+    }) as unknown as TerminalReplicaSnapshot;
+  }
+  const authenticated = options.authenticatedFrameHash;
+  const frameStart = readProfileClock(options.instrumentation);
+  const frameHash =
+    authenticated && /^[0-9a-f]{16}$/u.test(authenticated)
+      ? authenticated
+      : await hashCanonicalTerminalValueCooperatively(
+          { ...admitted, snapshot },
+          yieldControl,
+          // Bound frame hashing without scheduling a task per few cells.
+          32 * 1024,
+        );
+  if (profile)
+    profile.reusedAuthenticatedFrameHash = Boolean(
+      authenticated && /^[0-9a-f]{16}$/u.test(authenticated),
+    );
+  addProfileDuration(profile, "updateHash", frameStart, options.instrumentation);
+  const hashStart = readProfileClock(options.instrumentation);
+  const hash = trusted
+    ? admitted.stateHash
+    : await hashTerminalReplicaSnapshotCooperatively(snapshot, yieldControl);
+  addProfileDuration(profile, "snapshotHash", hashStart, options.instrumentation);
+  return complete(
+    finishTerminalReplicaSeed(current, { ...admitted, snapshot }, snapshot, hash, frameHash),
+  );
 }
 
 export function applyTerminalReplicaPatch(
@@ -874,7 +1072,8 @@ export async function primeTerminalReplicaRowsHashCooperatively(
   for (let index = 0; index < rows.length; index += 1) {
     hash = BigInt.asUintN(
       64,
-      hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(rows[index]!)}`),
+      hash * ROW_SEQUENCE_BASE +
+        BigInt(`0x${await hashTerminalReplicaRowCooperatively(rows[index]!, yieldControl)}`),
     );
     if ((index + 1) % 64 === 0) await yieldControl();
   }
