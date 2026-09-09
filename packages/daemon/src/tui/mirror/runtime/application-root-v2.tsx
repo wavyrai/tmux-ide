@@ -1,3 +1,5 @@
+import { applicationMachineAuthorityManager } from "./application-machine-authority.ts";
+import { createApplicationMachineAgentNavigator } from "./application-machine-agent-navigation.ts";
 import { createApplicationMachineNavigation } from "./application-machine-navigation.ts";
 import { ApplicationAddMachineDialog } from "./application-add-machine-dialog.tsx";
 import { disposeApplicationDaemonAuthority } from "./application-daemon-authority.ts";
@@ -163,7 +165,10 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const [shell, setShell] = createSignal(shellBinding.getSnapshot());
         const stopShell = shellBinding.subscribe(setShell);
         let sessionOwnerEpoch = 0;
-        const makeSessionOwner = () => {
+        const [generationMachineId, setGenerationMachineId] = createSignal<string | null>(null);
+        const makeSessionOwner = (
+          machineId = applicationMachineAuthorityManager.snapshot().selectedMachineId,
+        ) => {
           const ownedEpoch = ++sessionOwnerEpoch;
           return createOpenTuiSessionOwner({
             prepareConnection: (sessionName) => {
@@ -185,6 +190,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               }),
             onSnapshot: (snapshot) => {
               if (ownedEpoch !== sessionOwnerEpoch) return;
+              setGenerationMachineId(snapshot ? machineId : null);
               let clientGeneration: number | null = null;
               try {
                 const value = snapshot?.client?.getSnapshot().generation;
@@ -295,8 +301,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           appearance.setNote,
         );
         const startGeneration = terminalInputIngress.wrapStarter(generationStarter);
+        let machineAgentNavigator:
+          | ReturnType<typeof createApplicationMachineAgentNavigator>
+          | undefined;
         const machines = createApplicationMachineNavigation({
-          resetWorkspace() {
+          resetWorkspace(machineId) {
             if (initialPreparation) {
               void initialPreparation.preparedConnection
                 .then(
@@ -307,9 +316,13 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               initialPreparation = null;
             }
             void sessionOwner?.dispose().catch(() => undefined);
-            sessionOwner = makeSessionOwner();
+            sessionOwner = makeSessionOwner(machineId);
           },
-          cancelOpen: startGeneration.cancel,
+          cancelOpen: () => {
+            machineAgentNavigator?.cancel();
+            startGeneration.cancel();
+          },
+          openAgent: (row, source) => machineAgentNavigator?.open(row.machineId, row, source),
           openSession: (name, source) => startGeneration(name, false, source),
           sessionName: () => {
             generation();
@@ -318,6 +331,18 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           setSurface,
           setNote: appearance.setNote,
         });
+        machineAgentNavigator = createApplicationMachineAgentNavigator({
+          isCurrentTarget: (machineId, row) => machines.agents.isCurrentTarget(machineId, row),
+          selectedMachineId: machines.selectedMachineId,
+          generationMachineId,
+          generation,
+          sessionName: () => sessionOwner?.sessionName() ?? null,
+          startGeneration,
+          selectPane: (paneId, source) => interaction.selectPane(paneId, source),
+          showTerminals: () => setSurface("terminals"),
+          setNote: setTransientNote,
+        });
+        onCleanup(() => machineAgentNavigator?.dispose());
         const homeCatalog = createApplicationHomeCatalogOwner({
           lifecycle,
           automaticOpen: config.target === null && machines.automaticOpen,
@@ -395,19 +420,21 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             return;
           }
           if (connectionFeedback() && name === "escape") {
+            machineAgentNavigator?.cancel();
             startGeneration.cancel();
             setSurface("home");
             return;
           }
           const chromeAction = applicationShellKeyAction(event, false);
           if (chromeAction) {
+            machineAgentNavigator?.cancel();
             if (chromeAction === "home") startGeneration.cancel();
             if (chromeAction === "home" || chromeAction === "terminals")
               paletteCommands.openSurface(chromeAction, "keyboard");
             else paletteCommands.setOpen(chromeAction === "palette-open", "keyboard");
             return;
           }
-          if (homeAgents?.opening()) return;
+          if (homeAgents?.opening() || machineAgentNavigator?.opening()) return;
           if (
             activeSurface() === "terminals" &&
             shell().semantic === null &&
@@ -443,7 +470,12 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           if (selectionOwner.blocksInput()) return;
           if (paletteCommands.handlePaste(event.bytes)) return;
           if (machines.focused()) return;
-          if (activeSurface() !== "terminals" || homeAgents?.opening()) return;
+          if (
+            activeSurface() !== "terminals" ||
+            homeAgents?.opening() ||
+            machineAgentNavigator?.opening()
+          )
+            return;
           selectionOwner.prepareInput();
           terminalInputIngress.routePaste(event.bytes);
         });
@@ -473,6 +505,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               bootstrapNote={() => connectionProgress.text() ?? appearance.note()}
               connectionFeedback={connectionFeedback}
               onCancelOpen={() => {
+                machineAgentNavigator?.cancel();
                 startGeneration.cancel();
                 setSurface("home");
               }}
@@ -499,14 +532,17 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               theme={theme()}
               palette={palette()}
               onOpenSurface={recoverHostFocus((surface, source) => {
+                machineAgentNavigator?.cancel();
                 if (surface === "home") startGeneration.cancel();
                 paletteCommands.openSurface(surface, source);
               })}
               onOpenSession={recoverHostFocus((sessionName, source) => {
+                machineAgentNavigator?.cancel();
                 homeAgents?.cancel();
                 void startGeneration(sessionName, false, source);
               })}
               onOpenAgent={recoverHostFocus((sessionName, paneId, source) => {
+                machineAgentNavigator?.cancel();
                 homeAgents?.cancel();
                 void openAgent(sessionName, paneId, source);
               })}
@@ -528,7 +564,10 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onCancelPaneRename={recoverHostFocus(paneRename.cancel)}
               onSubmitPaneRename={recoverHostFocus(paneRename.submit)}
               onDismissNotification={recoverHostFocus(() => setTransientNote(null))}
-              onSelectPane={recoverHostFocus(interaction.selectPane)}
+              onSelectPane={recoverHostFocus((paneId, source) => {
+                machineAgentNavigator?.cancel();
+                interaction.selectPane(paneId, source);
+              })}
               onResizePreview={recoverHostFocus(interaction.previewPaneResize)}
               onResizePane={recoverHostFocus(interaction.resizePane)}
               onResizePointerIngress={recoverHostFocus.optional(resizeIngress)}

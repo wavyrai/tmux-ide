@@ -1,3 +1,7 @@
+import {
+  createApplicationMachineAgents,
+  type ApplicationMachineAgent,
+} from "./application-machine-agents.ts";
 import { createSignal, onCleanup } from "solid-js";
 import { applicationMachineAuthorityManager as manager } from "./application-machine-authority.ts";
 import { createApplicationMachineCatalog } from "./application-machine-catalog.ts";
@@ -5,7 +9,8 @@ import { ephemeralMachineProfile } from "./application-machine-startup.ts";
 import type { ApplicationMachineSidebarModel } from "./application-machine-sidebar.tsx";
 
 export function createApplicationMachineNavigation(options: {
-  resetWorkspace(): void;
+  resetWorkspace(machineId: string): void;
+  openAgent?(agent: ApplicationMachineAgent, source: "keyboard" | "mouse"): Promise<unknown> | void;
   cancelOpen(): void;
   openSession(name: string, source: "keyboard" | "mouse"): Promise<unknown>;
   sessionName(): string | null;
@@ -13,6 +18,9 @@ export function createApplicationMachineNavigation(options: {
   setNote(value: string | null): void;
 }) {
   const catalog = createApplicationMachineCatalog();
+  const agents = createApplicationMachineAgents({ catalog });
+  const [agentGroups, setAgentGroups] = createSignal(agents.getSnapshot());
+  const stopAgents = agents.subscribe(setAgentGroups);
   const [snapshot, setSnapshot] = createSignal(catalog.getSnapshot());
   const [focused, setFocused] = createSignal(false);
   const [adding, setAdding] = createSignal(false);
@@ -26,12 +34,14 @@ export function createApplicationMachineNavigation(options: {
       navigation++;
       options.cancelOpen();
       // Synchronously remove the old input/shell owner before changing the route.
-      options.resetWorkspace();
+      options.resetWorkspace(id);
       manager.select(id);
     }
     return true;
   };
   const open = async (id: string, name: string, source: "keyboard" | "mouse") => {
+    // A same-machine session click supersedes any pending exact-agent focus too.
+    if (manager.snapshot().selectedMachineId === id) options.cancelOpen();
     if (!select(id)) return;
     const token = ++navigation;
     setFocused(false);
@@ -46,7 +56,11 @@ export function createApplicationMachineNavigation(options: {
     await options.openSession(name, source);
   };
   const sidebar: ApplicationMachineSidebarModel = {
-    groups: () => snapshot().groups,
+    groups: () =>
+      snapshot().groups.map((group) => ({
+        ...group,
+        agents: agentGroups().find((value) => value.machineId === group.id)?.agents ?? [],
+      })),
     activeMachineId: () => snapshot().selectedMachineId,
     activeSessionName: options.sessionName,
     focused,
@@ -57,6 +71,22 @@ export function createApplicationMachineNavigation(options: {
     },
     onBlur: () => setFocused(false),
     onOpen: (id, name, source) => void open(id, name, source),
+    onOpenAgent: (id, sessionName, paneId, source) => {
+      const row = agentGroups()
+        .find((group) => group.machineId === id)
+        ?.agents.find((agent) => agent.sessionName === sessionName && agent.paneId === paneId);
+      if (!row || !agents.isCurrentTarget(id, row)) {
+        options.setNote(
+          "That agent is unavailable or has changed. Wait for its machine to reconnect.",
+        );
+        return;
+      }
+      options.cancelOpen();
+      if (!select(id)) return;
+      navigation++;
+      setFocused(false);
+      void options.openAgent?.(row, source);
+    },
     onSelectMachine: (id) => {
       navigation++;
       options.cancelOpen();
@@ -75,11 +105,15 @@ export function createApplicationMachineNavigation(options: {
   };
   onCleanup(() => {
     navigation++;
+    stopAgents();
+    agents.dispose();
     stop();
     catalog.dispose();
   });
   return {
     catalog,
+    agents,
+    selectedMachineId: () => manager.snapshot().selectedMachineId,
     automaticOpen: manager.snapshot().machines.length === 1,
     automaticOpenAllowed: () =>
       navigation === 0 && manager.snapshot().selectedMachineId === "local",
@@ -127,6 +161,7 @@ export function createApplicationMachineNavigation(options: {
       }
     },
     start(target: string | null) {
+      agents.start();
       catalog.start();
       if (!target) return;
       const id = manager.snapshot().selectedMachineId;

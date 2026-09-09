@@ -170,3 +170,67 @@ for (const surface of ["home", "terminals"] as const) {
     setup.renderer.destroy();
   });
 }
+
+it("retains agents across machine selection and routes identical pane IDs only to their owning host", async () => {
+  const [activeMachine, setActiveMachine] = createSignal("local");
+  const [offline, setOffline] = createSignal(false);
+  const calls: string[][] = [];
+  const groups = (): ApplicationMachineGroup[] =>
+    ["local", "server"].map((id) => ({
+      id,
+      label: id,
+      state: id === "server" && offline() ? "disconnected" : "ready",
+      sessions: [{ id: "same", name: "work", paneCount: 1 }],
+      agents: [
+        {
+          id: "same-agent",
+          name: `${id} agent`,
+          sessionName: "work",
+          paneId: "%1",
+          activity: "running",
+          attention: false,
+          disabled: id === "server" && offline(),
+        },
+      ],
+    }));
+  const setup = await renderForTest(
+    () => (
+      <ApplicationMachineSidebar
+        width={34}
+        height={20}
+        theme={createSemanticThemeSnapshot({ mode: "dark" })}
+        model={{
+          groups,
+          activeMachineId: activeMachine,
+          activeSessionName: () => "work",
+          onOpen: () => calls.push(["wrong-session-route"]),
+          onSelectMachine: () => {},
+          onBlur: () => calls.push(["blur"]),
+          onOpenAgent: (machine, session, pane) => calls.push([machine, session, pane]),
+        }}
+      />
+    ),
+    { width: 34, height: 20 },
+  );
+  await setup.renderOnce();
+  const findAgent = () =>
+    setup
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((line) => line.includes("server agent"));
+  expect(setup.captureCharFrame()).toContain("local agent");
+  expect(setup.captureCharFrame()).toContain("server agent");
+  expect(setup.captureCharFrame()).toContain("WORKING");
+  setActiveMachine("server");
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("local agent");
+  await setup.mockMouse.click(5, findAgent(), MouseButtons.LEFT);
+  expect(calls).toEqual([["blur"], ["server", "work", "%1"]]);
+  setOffline(true);
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("server agent");
+  expect(setup.captureCharFrame()).toContain("unavailable");
+  await setup.mockMouse.click(5, findAgent(), MouseButtons.LEFT);
+  expect(calls).toHaveLength(2);
+  setup.renderer.destroy();
+});

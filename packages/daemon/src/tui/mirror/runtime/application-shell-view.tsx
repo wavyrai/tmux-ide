@@ -383,7 +383,13 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   {(model) => (
                     <ApplicationMachineSidebar
                       model={model()}
-                      agentRows={shell.semantic.sidebar.agents.length}
+                      agentRows={
+                        model()
+                          .groups()
+                          .some((group) => group.agents !== undefined)
+                          ? 0
+                          : shell.semantic.sidebar.agents.length
+                      }
                       agents={
                         <ApplicationSidebarAgents
                           shell={shell}

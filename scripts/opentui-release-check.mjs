@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 
 // Hermetic SSH proofs: no remote host, real SSH process, or live tmux mutation.
 const sshTests = [
+  "packages/daemon/src/tui/mirror/runtime/application-machine-agents.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-machine-agent-navigation.test.ts",
   "packages/daemon/src/lib/canonical-daemon-bootstrap.test.ts",
   "packages/daemon/src/tui/mirror/runtime/application-home-auto-open-fence.test.ts",
   "packages/daemon/src/tui/mirror/runtime/application-machine-authority.test.ts",
@@ -28,6 +30,8 @@ const sshTests = [
 ];
 
 const sshSources = [
+  "packages/daemon/src/tui/mirror/runtime/application-machine-agents.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-machine-agent-navigation.ts",
   "packages/daemon/src/lib/canonical-daemon-bootstrap.ts",
   "packages/daemon/src/tui/mirror/runtime/application-machine-authority.ts",
   "packages/daemon/src/tui/mirror/runtime/application-machine-catalog.ts",

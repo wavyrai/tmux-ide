@@ -38,7 +38,7 @@ export type ApplicationHomeAgentPresentation = Pick<
 >;
 
 /** Observe the existing client, never open a second shell or poll for readiness. */
-function waitForHomeAgentSemantic(
+export function waitForHomeAgentSemantic(
   generation: () => OpenTuiGenerationHostSnapshot | null,
   expectedKey: string,
   signal: AbortSignal,

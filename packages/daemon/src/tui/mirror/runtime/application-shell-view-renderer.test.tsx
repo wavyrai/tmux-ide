@@ -1660,7 +1660,7 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
-  it.each([false, true])(
+  it.each([false, true, "global"] as const)(
     "opens an agent's exact pane from the sidebar (grouped: %s)",
     async (grouped) => {
       const theme = createSemanticThemeSnapshot({ mode: "dark" });
@@ -1687,6 +1687,20 @@ describe("production ApplicationShellView", () => {
                         label: "Remote",
                         state: "ready",
                         sessions: [{ id: "s", name: "main", paneCount: 1 }],
+                        ...(grouped === "global"
+                          ? {
+                              agents: [
+                                {
+                                  id: "codex",
+                                  name: "Codex",
+                                  sessionName: "main",
+                                  paneId: "pane.main",
+                                  activity: "running" as const,
+                                  attention: false,
+                                },
+                              ],
+                            }
+                          : {}),
                       },
                     ],
                     activeMachineId: () => "remote",
@@ -1694,6 +1708,10 @@ describe("production ApplicationShellView", () => {
                     onOpen: () => opened.push("wrong-session-route"),
                     onSelectMachine: () => {},
                     onBlur: () => opened.push("blur-machines"),
+                    onOpenAgent: (machine, session, pane, source) => {
+                      expect(machine).toBe("remote");
+                      opened.push(`${source}:${session}:${pane}`);
+                    },
                   }
                 : undefined
             }
@@ -1730,6 +1748,12 @@ describe("production ApplicationShellView", () => {
         .split("\n")
         .findIndex((line) => line.includes("Codex"));
       expect(agentRow).toBeGreaterThan(0);
+      expect(
+        setup
+          .captureCharFrame()
+          .split("\n")
+          .filter((line) => line.includes("Codex")),
+      ).toHaveLength(1);
       expect(setup.captureCharFrame()).toContain("Agents");
       await setup.mockMouse.click(projected.layout.sidebar.x + 2, agentRow, MouseButtons.LEFT);
 

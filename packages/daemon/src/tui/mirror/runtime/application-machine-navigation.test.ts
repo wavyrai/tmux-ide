@@ -1,7 +1,10 @@
+import type { ApplicationMachineAgentGroup } from "./application-machine-agents.ts";
 import { createRoot } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   selected: "local",
+  agentGroups: [] as readonly ApplicationMachineAgentGroup[],
+  agentCurrent: true,
   handles: new Map<
     string,
     {
@@ -51,6 +54,15 @@ vi.mock("./application-machine-catalog.ts", () => ({
     dispose: state.catalogDispose,
   }),
 }));
+vi.mock("./application-machine-agents.ts", () => ({
+  createApplicationMachineAgents: () => ({
+    getSnapshot: () => state.agentGroups,
+    subscribe: () => () => {},
+    start: () => {},
+    dispose: () => {},
+    isCurrentTarget: () => state.agentCurrent,
+  }),
+}));
 import { createApplicationMachineNavigation } from "./application-machine-navigation.ts";
 let dispose: () => void;
 const options = () => ({
@@ -62,6 +74,9 @@ const options = () => ({
   }),
   openSession: vi.fn(async (name: string) => {
     state.trace.push(`open:${state.selected}:${name}`);
+  }),
+  openAgent: vi.fn(async () => {
+    state.trace.push(`agent:${state.selected}`);
   }),
   sessionName: () => null,
   setSurface: vi.fn(),
@@ -86,6 +101,8 @@ function machine(id: string, ready: Promise<boolean> = Promise.resolve(true), st
 }
 beforeEach(() => {
   state.selected = "local";
+  state.agentGroups = [];
+  state.agentCurrent = true;
   state.handles.clear();
   state.trace = [];
   state.catalogStart.mockReset();
@@ -97,6 +114,13 @@ beforeEach(() => {
 });
 afterEach(() => dispose?.());
 describe("machine navigation ownership", () => {
+  it("cancels agent admission before a same-machine session intent without resetting the workspace", () => {
+    const { owner, callbacks } = navigation();
+    owner.sidebar.onOpen("local", "same", "mouse");
+    expect(state.trace).toEqual(["cancel", "open:local:same"]);
+    expect(callbacks.cancelOpen).toHaveBeenCalledOnce();
+    expect(callbacks.resetWorkspace).not.toHaveBeenCalled();
+  });
   it("cancels and removes the old workspace before each rapid A to B to A switch", async () => {
     const { owner, callbacks } = navigation();
     let finish!: () => void;
@@ -235,4 +259,35 @@ describe("machine navigation ownership", () => {
     expect(owner.adding()).toBe(false);
     expect(owner.focused()).toBe(true);
   });
+});
+
+it("opens a background agent only after switching to its machine, even with a shared session name", () => {
+  const row = {
+    id: "A-agent",
+    machineId: "A",
+    disabled: false,
+    key: "key",
+    sessionKey: "session",
+    sessionName: "same",
+    liveSessionId: "live",
+    daemonInstanceId: "daemon",
+    agentId: "agent",
+    paneId: "pane",
+    name: "Codex",
+    harness: "codex",
+    activity: "running" as const,
+    attention: false,
+    projectName: "project",
+  };
+  state.agentGroups = [{ machineId: "A", agents: [row] }];
+  const { owner, callbacks } = navigation();
+  owner.sidebar.onOpenAgent?.("A", "same", "pane", "mouse");
+  expect(callbacks.openAgent).toHaveBeenCalledWith(row, "mouse");
+  expect(state.trace.indexOf("reset")).toBeLessThan(state.trace.indexOf("select:A"));
+  expect(state.trace.indexOf("select:A")).toBeLessThan(state.trace.indexOf("agent:A"));
+  expect(callbacks.openSession).not.toHaveBeenCalled();
+  state.agentCurrent = false;
+  owner.sidebar.onOpenAgent?.("A", "same", "pane", "mouse");
+  expect(callbacks.openAgent).toHaveBeenCalledTimes(1);
+  expect(callbacks.setNote).toHaveBeenCalledWith(expect.stringContaining("unavailable"));
 });

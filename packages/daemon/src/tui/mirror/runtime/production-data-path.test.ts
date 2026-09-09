@@ -237,19 +237,19 @@ describe("production OpenTUI v2 data path", () => {
     );
     expect(select.indexOf("options.cancelOpen()")).toBeGreaterThanOrEqual(0);
     expect(select.indexOf("options.cancelOpen()")).toBeLessThan(
-      select.indexOf("options.resetWorkspace()"),
+      select.indexOf("options.resetWorkspace(id)"),
     );
-    expect(select.indexOf("options.resetWorkspace()")).toBeLessThan(
+    expect(select.indexOf("options.resetWorkspace(id)")).toBeLessThan(
       select.indexOf("manager.select(id)"),
     );
     expect(applicationRootSource).toContain("createApplicationMachineNavigation({");
     const reset = applicationRootSource.slice(
-      applicationRootSource.indexOf("resetWorkspace() {"),
-      applicationRootSource.indexOf("cancelOpen: startGeneration.cancel"),
+      applicationRootSource.indexOf("resetWorkspace(machineId) {"),
+      applicationRootSource.indexOf("cancelOpen: () => {"),
     );
     expect(reset.indexOf("sessionOwner?.dispose()")).toBeGreaterThanOrEqual(0);
     expect(reset.indexOf("sessionOwner?.dispose()")).toBeLessThan(
-      reset.indexOf("sessionOwner = makeSessionOwner()"),
+      reset.indexOf("sessionOwner = makeSessionOwner(machineId)"),
     );
     expect(applicationRootSource).toContain("if (ownedEpoch !== sessionOwnerEpoch) return;");
   });
@@ -268,7 +268,8 @@ describe("production OpenTUI v2 data path", () => {
     // Four additional lines route focused input and absorb rejection when retiring
     // late initial connection preparation; they add no discovery or transport owner.
     // One admission callback cancels initial auto-open after explicit machine navigation.
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(588);
+    // Machine-scoped agent navigation composes cancellation and exact-target input admission.
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(627);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.
@@ -328,6 +329,7 @@ describe("production OpenTUI v2 data path", () => {
       );
     }
     expect(authorityDataPathFiles).toContain("packages/daemon/src/lib/saved-machines.ts");
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(133);
+    // Includes the background machine agent roster and its fenced navigation adapter.
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(135);
   });
 });
