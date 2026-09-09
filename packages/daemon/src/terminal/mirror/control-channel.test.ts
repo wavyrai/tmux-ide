@@ -638,7 +638,7 @@ describe("ControlChannelCore atomic pane snapshot collector", () => {
         "",
       ].join("\n"),
     );
-    expect(rejectedCleanup).toHaveBeenCalledWith({ ok: false, lines: [] });
+    expect(rejectedCleanup).toHaveBeenCalledWith({ ok: false, lines: ["can't find pane: %7"] });
     expect(afterLoss).toHaveBeenCalledWith({ ok: true, lines: ["later-result"] });
     expect(coreWithLostTarget.pendingCount).toBe(0);
   });
@@ -727,5 +727,40 @@ describe("bounded marked capture command lists", () => {
       lines: ["parse error: command capture-pane: unknown flag -R"],
     });
     expect(next).toHaveBeenCalledExactlyOnceWith({ ok: true, lines: ["next"] });
+  });
+});
+
+describe("inline command-list parse diagnostics", () => {
+  it.each([false, true])(
+    "preserves only bounded first-slot errors and keeps FIFO aligned (oversized=%s)",
+    (oversized) => {
+      const core = new ControlChannelCore({
+        onOutput: vi.fn(),
+        onNotify: vi.fn(),
+        onExit: vi.fn(),
+      });
+      core.feed("%begin 1 0 0\n%end 1 0 0\n");
+      const capture = vi.fn(),
+        next = vi.fn();
+      core.pushCommandList(2, 1, capture);
+      core.pushCommandList(1, 0, next);
+      const error = oversized
+        ? "x".repeat(4097)
+        : "parse error: command capture-pane: unknown flag -R";
+      core.feed(`%begin 1 1 1\n${error}\n%error 1 1 1\n%begin 1 2 1\nnext\n%end 1 2 1\n`);
+      expect(capture).toHaveBeenCalledExactlyOnceWith({
+        ok: false,
+        lines: oversized ? [] : [error],
+      });
+      expect(next).toHaveBeenCalledExactlyOnceWith({ ok: true, lines: ["next"] });
+    },
+  );
+  it("discards successful prefix diagnostics before returning selected output", () => {
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() });
+    core.feed("%begin 1 0 0\n%end 1 0 0\n");
+    const capture = vi.fn();
+    core.pushCommandList(2, 1, capture);
+    core.feed("%begin 1 1 1\nprefix\n%end 1 1 1\n%begin 1 2 1\nselected\n%end 1 2 1\n");
+    expect(capture).toHaveBeenCalledExactlyOnceWith({ ok: true, lines: ["selected"] });
   });
 });

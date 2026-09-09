@@ -183,7 +183,9 @@ function nativeBootstrapUnsupported(
 ): boolean {
   if (ok)
     return native !== null && (native.version !== 2 || native.currentAttributes === undefined);
-  return lines.some((line) => /^(?:command capture-pane: )?unknown flag -R$/.test(line.trim()));
+  return lines.some((line) =>
+    /^(?:parse error: )?(?:command capture-pane: )?unknown flag -R$/.test(line.trim()),
+  );
 }
 
 export interface MirrorFlowRecoveryObservation {
