@@ -83,8 +83,16 @@ export async function executeTuiAgentProvisioning(
   overrides: Partial<TuiAgentProvisioningDeps> = {},
 ): Promise<TuiAgentProvisioningResult> {
   const deps = { ...DEFAULT_DEPS, ...overrides };
+  const machineEpoch = applicationDaemonEndpoint().epoch;
+  const currentMachine = () => applicationDaemonEndpoint().epoch === machineEpoch;
+  const retired = {
+    status: "error",
+    message: "selected machine changed; return to it to check this action",
+  } as const;
   const canonical = deps.readCanonicalDaemonInfo();
-  if (!canonical || !(await deps.isCanonicalDaemonAlive(canonical))) {
+  const alive = canonical ? await deps.isCanonicalDaemonAlive(canonical) : false;
+  if (!currentMachine()) return retired;
+  if (!canonical || !alive) {
     if (applicationDaemonEndpoint().kind === "ssh")
       return { status: "error", message: "remote machine is disconnected; action was not sent" };
     return { status: "legacy-local", reason: "no-daemon" };
@@ -119,6 +127,7 @@ export async function executeTuiAgentProvisioning(
 
   try {
     const catalog = await fetchCanonicalWorkspaceRouting(canonical, deps.fetch);
+    if (!currentMachine()) return retired;
     const workspaceName = workspaceNameForLiveSession(catalog, request.sessionName);
     if (!workspaceName) {
       return {
@@ -144,6 +153,7 @@ export async function executeTuiAgentProvisioning(
       },
       { operationId: deps.operationId(), autostart: false },
     );
+    if (!currentMachine()) return retired;
     if (result === null) {
       return {
         status: "error",

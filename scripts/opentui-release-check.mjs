@@ -4,6 +4,13 @@ import { spawnSync } from "node:child_process";
 
 // Hermetic SSH proofs: no remote host, real SSH process, or live tmux mutation.
 const sshTests = [
+  "packages/daemon/src/tui/mirror/runtime/application-home-auto-open-fence.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-machine-authority.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-machine-catalog.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-machine-navigation.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-machine-startup.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-machine-mutation-fences.test.ts",
+
   "packages/daemon/src/lib/__tests__/ssh-cli-entrypoint.test.ts",
   "packages/daemon/src/lib/ssh-daemon-transport.test.ts",
   "packages/daemon/src/lib/remote-daemon-info.test.ts",
@@ -20,6 +27,12 @@ const sshTests = [
 ];
 
 const sshSources = [
+  "packages/daemon/src/tui/mirror/runtime/application-machine-authority.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-machine-catalog.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-machine-navigation.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-machine-startup.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-daemon-authority-owner.ts",
+  "packages/daemon/src/lib/saved-machines.ts",
   "packages/daemon/src/lib/ssh-daemon-transport.ts",
   "packages/daemon/src/lib/remote-daemon-info.ts",
   "packages/daemon/src/terminal/protocol/native-backing-client.ts",
@@ -118,6 +131,11 @@ const checks = [
       "packages/daemon/src/tui/mirror/runtime/production-data-path.test.ts",
       "packages/daemon/src/tui/mirror/runtime/terminal-dimensions-owner.ts",
       "packages/daemon/test-support/hosted-reattach-fixture.tsx",
+      "packages/daemon/src/tui/mirror/runtime/application-machine-sidebar.tsx",
+      "packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx",
+      "packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog.tsx",
+      "packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx",
+
       "scripts/opentui-release-check.mjs",
       "scripts/build-tui.mjs",
       "scripts/pack-check-run.mjs",
@@ -232,6 +250,9 @@ const checks = [
       "--preload",
       "./packages/daemon/test-support/opentui-renderer-preload.ts",
       "./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx",
+      "./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx",
+      "./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx",
+
       "./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx",
       "./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx",
       "./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx",

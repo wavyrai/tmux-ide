@@ -109,9 +109,10 @@ export function abandonPreparedConnection(
 
 export function consumeApplicationSshTarget(argv: readonly string[]): {
   sshTarget: string | null;
+  sshTargets: string[];
   argv: string[];
 } {
-  let sshTarget: string | null = null;
+  const sshTargets: string[] = [];
   const remaining: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -121,12 +122,11 @@ export function consumeApplicationSshTarget(argv: readonly string[]): {
     }
     if (arg === "--ssh" || arg.startsWith("--ssh=")) {
       const value = arg === "--ssh" ? argv[++i] : arg.slice(6);
-      if (sshTarget !== null || !value || value.startsWith("-"))
-        throw new Error("Expected one SSH alias after --ssh");
-      sshTarget = value;
+      if (!value || value.startsWith("-")) throw new Error("Expected one SSH alias after --ssh");
+      if (!sshTargets.includes(value)) sshTargets.push(value);
     } else remaining.push(arg);
   }
-  return { sshTarget, argv: remaining };
+  return { sshTarget: sshTargets[0] ?? null, sshTargets, argv: remaining };
 }
 
 /**
@@ -175,34 +175,26 @@ export async function startApplicationEntry(): Promise<void> {
     >
   > = null;
   let disposeAuthority: (() => void) | null = null;
-  let removeStartupSignals = () => {};
   try {
     const target = consumeApplicationSshTarget(process.argv.slice(2));
-    if (target.sshTarget !== null) {
-      process.argv.splice(2, process.argv.length - 2, ...target.argv);
-      const authority = await import("./application-daemon-authority.ts");
-      disposeAuthority = authority.disposeApplicationDaemonAuthority;
-      const startup = new AbortController();
-      const abort = () => startup.abort();
-      const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
-      for (const signal of signals) process.on(signal, abort);
-      removeStartupSignals = () => {
-        for (const signal of signals) process.off(signal, abort);
-      };
-      process.stderr.write("Connecting to SSH machine…\n");
-      await authority.initializeApplicationSshAuthority(target.sshTarget, startup.signal);
-    }
+    process.argv.splice(2, process.argv.length - 2, ...target.argv);
+    const { initializeApplicationMachines } = await import("./application-machine-startup.ts");
+    const authority = await import("./application-daemon-authority.ts");
+    disposeAuthority = authority.disposeApplicationDaemonAuthority;
+    initializeApplicationMachines(target.sshTargets);
     await mark("root-import-start");
-    initialPreparation = prepareExplicitApplicationTarget(process.argv.slice(2), (explicitTarget) =>
-      import("../application-shell-daemon-connection.ts").then(
-        ({ prepareOpenTuiApplicationShellConnection }) =>
-          diagnosticLog
-            ? prepareOpenTuiApplicationShellConnection(explicitTarget, {
-                onDiagnostic: applicationShellDiagnostics!.emit,
-              })
-            : prepareOpenTuiApplicationShellConnection(explicitTarget),
-      ),
-    );
+    initialPreparation = target.sshTarget
+      ? null
+      : prepareExplicitApplicationTarget(process.argv.slice(2), (explicitTarget) =>
+          import("../application-shell-daemon-connection.ts").then(
+            ({ prepareOpenTuiApplicationShellConnection }) =>
+              diagnosticLog
+                ? prepareOpenTuiApplicationShellConnection(explicitTarget, {
+                    onDiagnostic: applicationShellDiagnostics!.emit,
+                  })
+                : prepareOpenTuiApplicationShellConnection(explicitTarget),
+          ),
+        );
     const { startApplicationRoot } = await import("./application-root-v2.tsx");
     await mark("root-import-end");
     await mark("root-start");
@@ -217,10 +209,8 @@ export async function startApplicationEntry(): Promise<void> {
           }
         : {},
     );
-    removeStartupSignals();
     await mark("entry-ready");
   } catch (error) {
-    removeStartupSignals();
     disposeAuthority?.();
     abandonPreparedConnection(initialPreparation?.prepared);
     await mark("entry-failed", {

@@ -1547,6 +1547,65 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
+  it("never opens a stale flat session when grouped sidebar background receives a pointer", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const canonical = semantic();
+    const legacyOpens: string[] = [];
+    const surfaces: string[] = [];
+    const projected = projectApplicationShell({
+      width: 120,
+      height: 40,
+      preferredSidebarWidth: 28,
+      shell: canonical,
+      hoveredTabIndex: null,
+      quitHint: "^q quit",
+    });
+    const setup = await renderForTest(
+      () => (
+        <ApplicationShellView
+          dimensions={() => ({ width: 120, height: 40 })}
+          surface={() => "terminals"}
+          semantic={() => canonical}
+          generationStatus={() => "live"}
+          sessions={["main", "website"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => null}
+          layout={() => ({ current: null, windows: [] })}
+          focusedPane={() => null}
+          theme={theme}
+          palette={createTerminalPaletteProjection(theme)}
+          onOpenSurface={(name) => surfaces.push(name)}
+          onOpenSession={(name) => legacyOpens.push(name)}
+          onSetPaletteOpen={() => {}}
+          onSelectPane={() => {}}
+          onResizePreview={() => {}}
+          onResizePane={() => {}}
+          machineSidebar={{
+            groups: () => [],
+            activeMachineId: () => "remote",
+            activeSessionName: () => null,
+            onOpen: () => {},
+            onSelectMachine: () => {},
+          }}
+        />
+      ),
+      { width: 120, height: 40 },
+    );
+    await setup.renderOnce();
+    // A remote catalog may be empty/loading while the previous shell still has rows.
+    // No NavigationRow handles these blank cells; the outer hit tester must not
+    // reinterpret their coordinates as sessions belonging to the old machine.
+    await setup.mockMouse.click(2, projected.layout.sidebar.y + 1, MouseButtons.LEFT);
+    await setup.mockMouse.click(2, projected.layout.sidebar.y + 2, MouseButtons.LEFT);
+    expect(legacyOpens).toEqual([]);
+    const home = projected.tabs.find((tab) => tab.id === "home")!;
+    await setup.mockMouse.click(home.span.start + 1, 0, MouseButtons.LEFT);
+    expect(surfaces).toEqual(["home"]);
+    setup.renderer.destroy();
+  });
+
   it("routes tab, sidebar, and palette pointer selection through pure shell hit testing", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const palette = createTerminalPaletteProjection(theme);
@@ -1601,56 +1660,85 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
-  it("opens an agent's session before focusing its exact pane from the sidebar", async () => {
-    const theme = createSemanticThemeSnapshot({ mode: "dark" });
-    const palette = createTerminalPaletteProjection(theme);
-    const canonical = semantic();
-    const opened: string[] = [];
-    const projected = projectApplicationShell({
-      width: 120,
-      height: 40,
-      preferredSidebarWidth: 28,
-      shell: canonical,
-      hoveredTabIndex: null,
-      quitHint: "^q quit",
-    });
-    const setup = await renderForTest(
-      () => (
-        <ApplicationShellView
-          dimensions={() => ({ width: 120, height: 40 })}
-          surface={() => "terminals"}
-          semantic={() => canonical}
-          generationStatus={() => "live"}
-          sessions={["main", "website"]}
-          selectedSession={() => 0}
-          bootstrapNote={() => null}
-          paletteOpen={() => false}
-          terminalRendererSource={() => null}
-          layout={() => ({ current: null, windows: [] })}
-          focusedPane={() => null}
-          theme={theme}
-          palette={palette}
-          onOpenSurface={() => undefined}
-          onOpenSession={() => undefined}
-          onOpenAgent={(sessionName, paneId, source) =>
-            opened.push(`${source}:${sessionName}:${paneId}`)
-          }
-          onSetPaletteOpen={() => undefined}
-          onSelectPane={() => undefined}
-          onResizePreview={() => undefined}
-          onResizePane={() => undefined}
-        />
-      ),
-      { width: 120, height: 40 },
-    );
-    await setup.renderOnce();
+  it.each([false, true])(
+    "opens an agent's exact pane from the sidebar (grouped: %s)",
+    async (grouped) => {
+      const theme = createSemanticThemeSnapshot({ mode: "dark" });
+      const palette = createTerminalPaletteProjection(theme);
+      const canonical = semantic();
+      const opened: string[] = [];
+      const projected = projectApplicationShell({
+        width: 120,
+        height: 40,
+        preferredSidebarWidth: 28,
+        shell: canonical,
+        hoveredTabIndex: null,
+        quitHint: "^q quit",
+      });
+      const setup = await renderForTest(
+        () => (
+          <ApplicationShellView
+            machineSidebar={
+              grouped
+                ? {
+                    groups: () => [
+                      {
+                        id: "remote",
+                        label: "Remote",
+                        state: "ready",
+                        sessions: [{ id: "s", name: "main", paneCount: 1 }],
+                      },
+                    ],
+                    activeMachineId: () => "remote",
+                    activeSessionName: () => "main",
+                    onOpen: () => opened.push("wrong-session-route"),
+                    onSelectMachine: () => {},
+                    onBlur: () => opened.push("blur-machines"),
+                  }
+                : undefined
+            }
+            dimensions={() => ({ width: 120, height: 40 })}
+            surface={() => "terminals"}
+            semantic={() => canonical}
+            generationStatus={() => "live"}
+            sessions={["main", "website"]}
+            selectedSession={() => 0}
+            bootstrapNote={() => null}
+            paletteOpen={() => false}
+            terminalRendererSource={() => null}
+            layout={() => ({ current: null, windows: [] })}
+            focusedPane={() => null}
+            theme={theme}
+            palette={palette}
+            onOpenSurface={() => undefined}
+            onOpenSession={() => undefined}
+            onOpenAgent={(sessionName, paneId, source) =>
+              opened.push(`${source}:${sessionName}:${paneId}`)
+            }
+            onSetPaletteOpen={() => undefined}
+            onSelectPane={() => undefined}
+            onResizePreview={() => undefined}
+            onResizePane={() => undefined}
+          />
+        ),
+        { width: 120, height: 40 },
+      );
+      await setup.renderOnce();
 
-    const agentRow = projected.layout.sidebar.y + canonical.sidebar.sessions.length + 3;
-    await setup.mockMouse.click(projected.layout.sidebar.x + 2, agentRow, MouseButtons.LEFT);
+      const agentRow = setup
+        .captureCharFrame()
+        .split("\n")
+        .findIndex((line) => line.includes("Codex"));
+      expect(agentRow).toBeGreaterThan(0);
+      expect(setup.captureCharFrame()).toContain("Agents");
+      await setup.mockMouse.click(projected.layout.sidebar.x + 2, agentRow, MouseButtons.LEFT);
 
-    expect(opened).toEqual(["mouse:main:pane.main"]);
-    setup.renderer.destroy();
-  });
+      expect(opened).toEqual(
+        grouped ? ["blur-machines", "mouse:main:pane.main"] : ["mouse:main:pane.main"],
+      );
+      setup.renderer.destroy();
+    },
+  );
 
   it("routes focused session and agent rows through the same typed keyboard intents", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });

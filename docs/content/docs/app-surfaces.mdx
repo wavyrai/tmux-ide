@@ -7,7 +7,8 @@ description: Home, Terminals, contextual commands, and optional project views
 
 Home is the configless front door. It shows live tmux session count, aggregate
 agent status, the selected session, theme control, and the action to open
-Terminals. It intentionally has no persistent workspace sidebar.
+Terminals. The machine sidebar groups local and remote sessions, with connection status for
+each machine.
 
 When no tmux server exists, Home stays useful and offers a new-session action.
 The session list updates as ordinary tmux sessions appear or disappear.
@@ -90,12 +91,25 @@ On your local machine, open the remote session browser or a named session:
 ```bash
 tmux-ide app --ssh my-server
 tmux-ide app --ssh my-server work
+tmux-ide app --ssh my-server --ssh my-laptop
 ```
 
 `my-server` can be an alias from `~/.ssh/config` or `user@host`. The app opens an
 SSH tunnel to the existing remote daemon; it does not install software or start
-a daemon remotely. Home and Terminals show the selected host label. Each TUI
-connects to one machine; open another TUI for another host.
+a daemon remotely. Home and Terminals show the same machine sidebar and selected host label. Repeat
+`--ssh` to include several machines alongside Local. Opening a session switches
+the active terminal workspace to its machine; matching session names on different
+machines remain separate. If you also provide a session name, it opens on the
+first `--ssh` target.
+
+Click **Add machine**, or press Ctrl+G to focus the machine sidebar and then A,
+to connect another SSH target during this run. Enter an alias or `user@host` and
+choose Connect. These additions are not saved to a configuration file.
+
+With the sidebar focused, use Up/Down to move, Enter to open a session, and
+Left/Right to collapse or expand a machine. The active session remains visible
+when its group is collapsed. Escape returns focus to the workspace. Offline
+cached sessions are marked unavailable and cannot be opened until reconnected.
 
 If the connection drops, the app reconnects to that same host. It never silently
 switches to your local daemon. Remote sessions and their processes remain owned

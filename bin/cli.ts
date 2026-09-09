@@ -70,7 +70,7 @@ const { positionals, values } = parseArgs({
   options: {
     json: { type: "boolean" },
     headless: { type: "boolean" },
-    ssh: { type: "string" },
+    ssh: { type: "string", multiple: true },
     row: { type: "string" },
     pane: { type: "string" },
     title: { type: "string" },
@@ -578,7 +578,7 @@ async function runApp(appArgs: string[]): Promise<void> {
   const ssh = values.ssh;
   if (ssh !== undefined) {
     const { SavedMachineSchema } = await import("@tmux-ide/contracts");
-    if (!SavedMachineSchema.shape.sshTarget.safeParse(ssh).success)
+    if (ssh.some((alias) => !SavedMachineSchema.shape.sshTarget.safeParse(alias).success))
       throw new IdeError("--ssh requires an SSH alias or user@host", {
         code: "USAGE",
         exitCode: 2,
@@ -588,7 +588,7 @@ async function runApp(appArgs: string[]): Promise<void> {
         "SSH app connections currently run in the foreground; omit --hosted and --detachable",
         { code: "USAGE", exitCode: 2 },
       );
-    appArgs = [...appArgs, `--ssh=${ssh}`];
+    appArgs = [...appArgs, ...ssh.map((alias) => `--ssh=${alias}`)];
   }
   // A clean npm install has neither a checkout runtime nor Bun. Acquire the
   // exact-version OpenTUI release artifact on the first explicit app launch so
@@ -610,7 +610,14 @@ async function runApp(appArgs: string[]): Promise<void> {
   );
   // The app is a thin client. Establish the one persistent daemon generation
   // only after its renderer is known-runnable, then mount against that owner.
-  if (ssh === undefined) await ensureCanonicalDaemon({ entryPath: nodeCliPath });
+  try {
+    await ensureCanonicalDaemon({ entryPath: nodeCliPath });
+  } catch (error) {
+    if (ssh === undefined) throw error;
+    process.stderr.write(
+      "[tmux-ide] Local sessions are unavailable; continuing with SSH machines. Run tmux-ide doctor locally to investigate.\n",
+    );
+  }
   const hosted =
     ssh === undefined &&
     wantsHostedApp({

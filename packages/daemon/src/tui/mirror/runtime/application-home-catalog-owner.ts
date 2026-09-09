@@ -25,6 +25,7 @@ export interface ApplicationHomeCatalogOwner {
 export interface ApplicationHomeCatalogOwnerOptions {
   readonly lifecycle: Pick<TuiApplicationLifecycle, "registerCloser">;
   readonly automaticOpen: boolean;
+  readonly automaticOpenAllowed?: () => boolean;
   readonly startGeneration: (sessionName: string) => Promise<unknown> | void;
   readonly setNote?: (note: string | null) => void;
   readonly catalog?: ApplicationHomeCatalog;
@@ -47,6 +48,8 @@ export function createApplicationHomeCatalogOwner(
       return;
     }
     if (creatingLocalSession) return;
+    const machineEpoch = applicationDaemonEndpoint().epoch;
+    const currentMachine = () => applicationDaemonEndpoint().epoch === machineEpoch;
     creatingLocalSession = true;
     options.setNote?.("Creating tmux-ide-local…");
     try {
@@ -54,10 +57,12 @@ export function createApplicationHomeCatalogOwner(
         displayName: "tmux-ide-local",
         cwd: process.cwd(),
       });
+      if (!currentMachine()) return;
       if (!created) throw new Error("The tmux-ide daemon is unavailable.");
       options.setNote?.(`Opening ${created.displayName}…`);
       await options.startGeneration(created.workspaceName);
     } catch (error) {
+      if (!currentMachine()) return;
       options.setNote?.(
         error instanceof Error
           ? `Could not create a local session: ${error.message}`
@@ -68,7 +73,13 @@ export function createApplicationHomeCatalogOwner(
     }
   };
   let automaticOpen = options.automaticOpen;
+  const automaticOpenEpoch = applicationDaemonEndpoint().epoch;
   const stop = catalog.subscribe((next) => {
+    if (
+      applicationDaemonEndpoint().epoch !== automaticOpenEpoch ||
+      options.automaticOpenAllowed?.() === false
+    )
+      automaticOpen = false;
     setSnapshot(next);
     const current = selectedSessionId();
     const currentSessions = next.sessions;

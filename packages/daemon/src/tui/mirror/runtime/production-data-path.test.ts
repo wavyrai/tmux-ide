@@ -24,7 +24,7 @@ const applicationRootSource =
 const terminalRendererSourcesPath =
   "packages/daemon/src/tui/mirror/runtime/application-terminal-renderer-sources.ts";
 const PURE_PRESENTATION_MODULE =
-  /packages\/daemon\/src\/tui\/mirror\/(?:ui\/|workspace\/|shell-chrome-view\.tsx$|runtime\/application-shell-(?:catalog|home|overlay-stack|overlays|sidebar)\.tsx$)/u;
+  /packages\/daemon\/src\/tui\/mirror\/(?:ui\/|workspace\/|shell-chrome-view\.tsx$|runtime\/application-(?:shell-(?:catalog|home|overlay-stack|overlays|sidebar)|machine-sidebar|add-machine-dialog)\.tsx$)/u;
 
 const RETIRED_FEATURE_PATHS = [
   /\/runtime\/application-optional-features\.ts$/u,
@@ -210,6 +210,8 @@ describe("production OpenTUI v2 data path", () => {
       "packages/daemon/src/tui/mirror/runtime/terminal-links.ts",
       "packages/daemon/src/tui/mirror/runtime/terminal-selection-units.ts",
       "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
+      "packages/daemon/src/tui/mirror/runtime/application-machine-sidebar.tsx",
+      "packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog.tsx",
       "packages/daemon/src/tui/mirror/runtime/application-terminal-workspace.tsx",
       "packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface.tsx",
       "packages/daemon/src/tui/mirror/workspace/application-shell-view.tsx",
@@ -218,10 +220,38 @@ describe("production OpenTUI v2 data path", () => {
       const renderer = productionGraph.sourceByFile.get(path);
       expect(renderer, `production graph is missing pure renderer ${path}`).toBeDefined();
       expect(renderer).not.toMatch(
-        /(?:from\s+|import\s*\()["'](?:node:|[^"']*(?:canonical-daemon|daemon-transport|tmux-bridge))/u,
+        /(?:from\s+|import\s*\()["'](?:node:|[^"']*(?:canonical-daemon|daemon-transport|tmux-bridge|application-machine-authority|application-daemon-authority))/u,
       );
       expect(renderer).not.toMatch(/\b(?:useKeyboard|usePaste|createCliRenderer)\b/u);
     }
+  });
+
+  it("retires the active workspace before selecting another machine", () => {
+    const navigation = productionGraph.sourceByFile.get(
+      "packages/daemon/src/tui/mirror/runtime/application-machine-navigation.ts",
+    )!;
+    expect(navigation).toBeDefined();
+    const select = navigation.slice(
+      navigation.indexOf("const select ="),
+      navigation.indexOf("const open ="),
+    );
+    expect(select.indexOf("options.cancelOpen()")).toBeGreaterThanOrEqual(0);
+    expect(select.indexOf("options.cancelOpen()")).toBeLessThan(
+      select.indexOf("options.resetWorkspace()"),
+    );
+    expect(select.indexOf("options.resetWorkspace()")).toBeLessThan(
+      select.indexOf("manager.select(id)"),
+    );
+    expect(applicationRootSource).toContain("createApplicationMachineNavigation({");
+    const reset = applicationRootSource.slice(
+      applicationRootSource.indexOf("resetWorkspace() {"),
+      applicationRootSource.indexOf("cancelOpen: startGeneration.cancel"),
+    );
+    expect(reset.indexOf("sessionOwner?.dispose()")).toBeGreaterThanOrEqual(0);
+    expect(reset.indexOf("sessionOwner?.dispose()")).toBeLessThan(
+      reset.indexOf("sessionOwner = makeSessionOwner()"),
+    );
+    expect(applicationRootSource).toContain("if (ownedEpoch !== sessionOwnerEpoch) return;");
   });
 
   it("keeps the production root reviewable as a small renderer client", () => {
@@ -232,7 +262,13 @@ describe("production OpenTUI v2 data path", () => {
     // performance diagnostics; decoding and log policy remain outside this root.
     // Ten SSH composition lines attach authority disposal, identify the selected machine,
     // and hide local-only creation. Transport, reconnect, and identity policy remain in their owner.
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(532);
+    // Machine navigation adds workspace-owner retirement/recreation, keyboard focus,
+    // and the Add machine dialog composition. Per-machine discovery, catalog polling,
+    // reconnect and profile parsing stay in the separately bounded owners below.
+    // Four additional lines route focused input and absorb rejection when retiring
+    // late initial connection preparation; they add no discovery or transport owner.
+    // One admission callback cancels initial auto-open after explicit machine navigation.
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(588);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.
@@ -270,12 +306,28 @@ describe("production OpenTUI v2 data path", () => {
     // Two pure pointer helpers and one explicit host URL opener add no stream,
     // replica, polling or daemon owner. The row cache above adds one pure
     // rendering module; keep its cost visible in this bound.
-    // Selecting a remote machine adds one process-scoped authority and its owned SSH transport.
-    // They replace local discovery for that process; they do not add another terminal replica.
+    // The selected-authority facade now delegates to a machine registry. The six
+    // additional non-presentation modules are the extracted single-machine owner,
+    // registry, catalog, navigation, startup parsing, and existing saved-profile reader.
+    // Inactive machines own catalog/connection state, never terminal replicas.
     expect(authorityDataPathFiles).toContain(
       "packages/daemon/src/tui/mirror/runtime/application-daemon-authority.ts",
     );
     expect(authorityDataPathFiles).toContain("packages/daemon/src/lib/ssh-daemon-transport.ts");
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(127);
+    for (const name of [
+      "application-daemon-authority-owner",
+      "application-machine-authority",
+      "application-machine-catalog",
+      "application-machine-navigation",
+      "application-machine-startup",
+    ]) {
+      const path = `packages/daemon/src/tui/mirror/runtime/${name}.ts`;
+      expect(authorityDataPathFiles).toContain(path);
+      expect(productionGraph.sourceByFile.get(path)).not.toMatch(
+        /\b(?:createWorkspaceClient|createTerminalFastLane|createOpenTuiSessionOwner|TerminalFastLaneRendererAdapter)\s*\(/u,
+      );
+    }
+    expect(authorityDataPathFiles).toContain("packages/daemon/src/lib/saved-machines.ts");
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(133);
   });
 });

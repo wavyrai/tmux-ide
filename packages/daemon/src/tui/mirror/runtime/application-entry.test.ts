@@ -280,19 +280,28 @@ describe("SSH entry argument ownership", () => {
   it("strips both SSH forms while preserving the selected session", () => {
     expect(consumeApplicationSshTarget(["--ssh", "build", "--target", "work"])).toEqual({
       sshTarget: "build",
+      sshTargets: ["build"],
       argv: ["--target", "work"],
     });
     expect(consumeApplicationSshTarget(["work", "--ssh=build"])).toEqual({
       sshTarget: "build",
+      sshTargets: ["build"],
       argv: ["work"],
     });
     expect(consumeApplicationSshTarget(["--", "--ssh=literal"])).toEqual({
       sshTarget: null,
+      sshTargets: [],
       argv: ["--", "--ssh=literal"],
     });
   });
-  it("rejects duplicate or missing aliases", () => {
-    for (const argv of [["--ssh"], ["--ssh="], ["--ssh", "--target"], ["--ssh=a", "--ssh=b"]])
+  it("mounts multiple distinct aliases", () => {
+    expect(consumeApplicationSshTarget(["--ssh=a", "--ssh=b", "--ssh=a"]).sshTargets).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+  it("rejects missing aliases", () => {
+    for (const argv of [["--ssh"], ["--ssh="], ["--ssh", "--target"]])
       expect(() => consumeApplicationSshTarget(argv)).toThrow("Expected one SSH alias");
   });
 });
