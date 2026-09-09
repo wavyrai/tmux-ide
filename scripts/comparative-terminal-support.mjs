@@ -3,7 +3,7 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createRequire } from "node:module";
 const require = createRequire(new URL("../packages/daemon/package.json", import.meta.url));
-export const REPORT_VERSION = 1;
+export const REPORT_VERSION = 2;
 export const nowMs = () => Number(process.hrtime.bigint()) / 1e6;
 export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -93,6 +93,15 @@ export function validateOptions(options) {
     if (!Number.isSafeInteger(options[key]) || options[key] < min || options[key] > max)
       throw new Error(`Invalid ${key}`);
   }
+  if (
+    options.resizeSamples !== undefined &&
+    (!Number.isSafeInteger(options.resizeSamples) ||
+      options.resizeSamples < 0 ||
+      options.resizeSamples > 100)
+  )
+    throw new Error("Invalid resizeSamples");
+  if (options.resources !== undefined && typeof options.resources !== "boolean")
+    throw new Error("Invalid resources");
   const needed = new Set(
     options.targets.flatMap((target) =>
       target === "tmux-ide" ? ["tmux", "cli", "tui"] : [target],
@@ -104,9 +113,12 @@ export function validateOptions(options) {
 }
 
 /** Requested mode is separate from artifact provenance and detected host capabilities. */
-export function tuiRendererConfiguration(mode = "standard") {
+export function tuiRendererConfiguration(mode = "release-default") {
+  if (mode === "release-default") return { mode, environment: {} };
   if (!["standard", "framed", "scroll-preview"].includes(mode))
-    throw new Error("Invalid tuiRenderer: expected standard, framed, or scroll-preview");
+    throw new Error(
+      "Invalid tuiRenderer: expected release-default, standard, framed, or scroll-preview",
+    );
   return {
     mode,
     environment: {
@@ -141,4 +153,11 @@ export async function retirePrivateTmux(command, expectedPid, session) {
     throw new Error("Private tmux PID changed; cleanup refused");
   await command("kill-server");
   return { pid: ownedPid, recoveredIdentity: !expectedPid };
+}
+
+/** Rotate and reverse whole rounds so the same product is not always in the middle. */
+export function comparativeTargetOrder(targets, round) {
+  const offset = round % targets.length;
+  const order = [...targets.slice(offset), ...targets.slice(0, offset)];
+  return Math.floor(round / targets.length) % 2 ? order.reverse() : order;
 }

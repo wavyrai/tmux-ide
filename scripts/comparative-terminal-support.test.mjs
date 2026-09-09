@@ -8,10 +8,12 @@ import {
   shellQuote,
   validateOptions,
   tuiRendererConfiguration,
+  comparativeTargetOrder,
 } from "./comparative-terminal-support.mjs";
 
 test("renderer comparison modes explicitly control both output and scrolling", () => {
-  assert.deepEqual(tuiRendererConfiguration(), {
+  assert.deepEqual(tuiRendererConfiguration(), { mode: "release-default", environment: {} });
+  assert.deepEqual(tuiRendererConfiguration("standard"), {
     mode: "standard",
     environment: { TMUX_IDE_FRAME_OUTPUT: "0", TMUX_IDE_NATIVE_SCROLL_PROTOTYPE: "0" },
   });
@@ -189,4 +191,26 @@ test("key decoder increments once per literal x and line decoder retains split-f
   line(Buffer.from("001\rCBINPUT:000002\r"));
   assert.deepEqual(lines, [1, 2]);
   assert.throws(() => createProducerInputDecoder("paste", () => {}), /inputMode/);
+});
+
+test("comparison rounds balance product position rather than leaving one always in the middle", () => {
+  const targets = ["tmux", "tmux-ide", "herdr"];
+  const orders = Array.from({ length: 6 }, (_, round) => comparativeTargetOrder(targets, round));
+  for (const target of targets)
+    for (let position = 0; position < 3; position++)
+      assert.equal(orders.filter((order) => order[position] === target).length, 2);
+  assert.deepEqual(targets, ["tmux", "tmux-ide", "herdr"]);
+});
+test("resource and resize options must be bounded", () => {
+  const base = {
+    targets: ["tmux"],
+    binaries: { tmux: process.execPath },
+    cols: 66,
+    rows: 41,
+    samples: 2,
+    rounds: 1,
+  };
+  assert.throws(() => validateOptions({ ...base, resizeSamples: 101 }), /resizeSamples/);
+  assert.throws(() => validateOptions({ ...base, resources: "yes" }), /resources/);
+  assert.ok(validateOptions({ ...base, resizeSamples: 10, resources: true }));
 });

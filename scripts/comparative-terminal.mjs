@@ -3,6 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
+  existsSync,
   closeSync,
   mkdirSync,
   mkdtempSync,
@@ -17,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   REPORT_VERSION,
+  comparativeTargetOrder,
   nowMs,
   delay,
   shellQuote,
@@ -28,6 +30,8 @@ import {
   retireOwnedProcess,
   retirePrivateTmux,
 } from "./comparative-terminal-support.mjs";
+import { sampleProcessTree } from "./lib/comparative-terminal-resources.mjs";
+import { renderComparativeTerminalReport } from "./lib/comparative-terminal-report.mjs";
 const execute = promisify(execFile);
 const require = createRequire(new URL("../packages/daemon/package.json", import.meta.url));
 const pty = require("node-pty");
@@ -63,6 +67,8 @@ export async function runTarget(target, options, directory) {
     session,
     status: "failed",
     samples: [],
+    resizeSamples: [],
+    resources: [],
     observations: [],
     owned: [],
     cleanup: [],
@@ -296,6 +302,19 @@ export async function runTarget(target, options, directory) {
     }
     if (last.cols !== options.cols || last.rows !== options.rows)
       throw new Error("Could not match content geometry");
+    const sampleResources = async (phase) => {
+      if (!options.resources) return;
+      const producerPid = Number(readFileSync(`${receipt}.pid`, "utf8"));
+      if (!Number.isSafeInteger(producerPid) || producerPid <= 0)
+        throw new Error("Invalid producer PID");
+      const sample = await sampleProcessTree(
+        report.owned.map((item) => item.pid),
+        [producerPid],
+      );
+      report.resources.push({ phase, ...sample });
+      if (sample.missingRootPids.length) throw new Error("Owned resource roots disappeared");
+    };
+    await sampleResources("before-input");
     report.outerGeometry = { cols, rows };
     report.contentGeometry = { cols: last.cols, rows: last.rows };
     for (let sequence = 1; sequence <= options.samples + 2; sequence++) {
@@ -332,6 +351,45 @@ export async function runTarget(target, options, directory) {
     )
       throw new Error("Producer input mismatch");
     report.producer = received;
+    await sampleResources("after-input");
+    for (let index = 0; index < (options.resizeSamples ?? 0); index++) {
+      healthy();
+      const width = options.cols + (index % 2 === 0 ? 4 : 0);
+      const height = options.rows + (index % 2 === 0 ? 2 : 0);
+      const outerCols = report.outerGeometry.cols + width - options.cols;
+      const outerRows = report.outerGeometry.rows + height - options.rows;
+      last = null;
+      const atMs = nowMs();
+      screen.resize(outerCols, outerRows);
+      client.resize(outerCols, outerRows);
+      await until(
+        () => {
+          healthy();
+          return (
+            last?.cols === width && last?.rows === height && last?.sequence === options.samples + 2
+          );
+        },
+        `resize ${index}`,
+        5000,
+      );
+      const shown = report.observations.find(
+        (item) =>
+          item.atMs >= atMs &&
+          item.cols === width &&
+          item.rows === height &&
+          item.sequence === options.samples + 2,
+      );
+      if (!shown) throw new Error("Resize marker missing");
+      report.resizeSamples.push({
+        index,
+        cols: width,
+        rows: height,
+        inputAtMs: atMs,
+        visibleAtMs: shown.atMs,
+        latencyMs: shown.atMs - atMs,
+      });
+    }
+    await sampleResources("after-resize");
     report.status = "passed";
   } catch (error) {
     report.error = String(error.stack ?? error);
@@ -359,7 +417,8 @@ export async function main(options, output) {
       options.provenance?.[name] ??
       "unverified: binary hash identifies artifact; checkout equivalence unknown";
     if (name === "tui") {
-      entry.versionUnavailable = "No version probe: renderer entry may start a client";
+      entry.versionUnavailable =
+        "No automatic version probe: older renderer entries may start a client; supply provenance explicitly";
       continue;
     }
     const binary = name === "cli" ? process.execPath : entry.resolved;
@@ -374,6 +433,8 @@ export async function main(options, output) {
     }
   }
 
+  if (existsSync(join(output, "report.json")))
+    throw new Error("Output already contains a report; choose a fresh directory");
   mkdirSync(output, { recursive: true });
   const report = {
     schemaVersion: REPORT_VERSION,
@@ -394,15 +455,18 @@ export async function main(options, output) {
       "Herdr onboarding disabled; shell fixed to /bin/sh",
       "Sequential acknowledged echoes with two warmups; no throughput ranking",
       "Marker correctness does not qualify whole-frame coherence or physical scrolling smoothness",
-      "Resource and remote scenarios are pending",
+      "Resource snapshots report summed RSS (shared pages may be counted more than once); not physical footprint or a leak soak",
+      "Resize checks marker geometry, not complete-frame correctness",
+      "Scrolling, sustained output, multi-client and remote qualification remain pending",
     ],
     runs: [],
   };
   for (let round = 0; round < options.rounds; round++) {
-    const order = round % 2 ? [...options.targets].reverse() : options.targets;
+    const order = comparativeTargetOrder(options.targets, round);
     for (const target of order) {
       report.runs.push(await runTarget(target, options, join(output, `round-${round}-${target}`)));
       writeFileSync(join(output, "report.json"), JSON.stringify(report, null, 2));
+      writeFileSync(join(output, "report.md"), renderComparativeTerminalReport(report));
     }
   }
   return report;

@@ -71,6 +71,10 @@ save an options file outside the checkout with absolute paths to the artifacts:
   "rows": 41,
   "samples": 2,
   "rounds": 1,
+  "inputMode": "key",
+  "tuiRenderer": "release-default",
+  "resizeSamples": 4,
+  "resources": true,
   "binaries": {
     "tmux": "/absolute/path/to/tmux",
     "cli": "/absolute/path/to/tmux-ide/bin/cli.js",
@@ -91,16 +95,34 @@ its latency includes delivery of the entire burst and is not single-key latency.
 Both modes use the same producer redraw and marker oracle, and reports record
 the selected mode.
 
+The default `"tuiRenderer": "release-default"` preserves the binary's own rendering
+settings. Explicit `standard`, `framed`, and `scroll-preview` modes are diagnostic
+lanes and must not be presented as release defaults. Supply artifact source details
+in an optional `provenance` object keyed by binary name; hashes are recorded automatically.
+
+`resizeSamples` (0–100, default 0) alternates content dimensions and checks the
+producer's reported geometry after each resize. `resources: true` takes three
+process-tree snapshots around input and resize, counting shared servers once and
+excluding the identical workload producer. RSS can double-count shared pages;
+these snapshots are neither physical footprint measurements nor a memory-leak soak.
+
 Use a fresh results directory for each run. The runner creates private tmux
 sockets and configuration directories, matches content dimensions, checks ordered
 input echoes, and cleans up the processes it starts. Reports preserve artifact
 hashes, raw terminal output, geometry, samples, and cleanup outcomes. Temporary
 configuration directories remain available for diagnosis.
 
+The runner writes raw `report.json` and readable `report.md`, retaining failures
+and sample counts. Round order rotates and reverses to balance product positions.
+For exploratory comparisons use six rounds with at least 100 input samples;
+reported percentiles describe those observations, not confidence bounds or a
+universal product ranking. Startup is reported separately because adapters provision
+their panes differently.
+
 This small configuration checks harness correctness. Startup includes provisioning;
 latency ends when the shared terminal parser observes an echo. It does not measure
 physical display refresh, whole-frame coherence, scrolling smoothness, throughput,
-resource usage, or remote behavior. Run comparisons without concurrent builds or
+or remote behavior. Resource snapshots cover only the owned process trees. Run comparisons without concurrent builds or
 tests, and do not interpret a small smoke run as a performance ranking.
 
 ## CI

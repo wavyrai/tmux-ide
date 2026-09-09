@@ -1,5 +1,5 @@
 // Deterministic raw-input producer shared by every product adapter.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
@@ -25,6 +25,7 @@ export function createProducerInputDecoder(inputMode, accept) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const receipt = process.argv[2];
   const inputMode = process.argv[3] ?? "line";
+  writeFileSync(`${receipt}.pid`, String(process.pid));
   let sequence = 0;
   function paint() {
     const cols = process.stdout.columns;
