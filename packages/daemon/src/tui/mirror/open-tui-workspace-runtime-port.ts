@@ -66,6 +66,8 @@ export interface OpenTuiWorkspaceRuntimePort extends WorkspaceClientRuntimePort<
 }
 
 export interface ConnectOpenTuiWorkspaceRuntimePortOptions {
+  /** Opt in to per-delivery profiling; lifecycle callbacks alone never enable it. */
+  readonly performanceDiagnostics?: boolean;
   readonly inventory: WorkspaceClientRuntimeInventory;
   readonly routing: OpenTuiVerifiedRoutingContext;
   readonly signal?: AbortSignal;
@@ -920,7 +922,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
           });
           settleCoherent();
         },
-        ...(options.onDiagnostic
+        ...(options.performanceDiagnostics === true && options.onDiagnostic
           ? {
               compactDecodeProfile: (profile: CompactSemanticCommitProfile) =>
                 options.onDiagnostic?.("compact-decode", { ...profile }),

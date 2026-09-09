@@ -314,6 +314,25 @@ function rig(
 }
 
 describe("OpenTUI WorkspaceClient runtime port", () => {
+  it.each([false, true])(
+    "keeps lifecycle progress independent from compact profiling (detail: %s)",
+    async (performanceDiagnostics) => {
+      const test = rig(true, false, "semantic-compact-v1");
+      const diagnostic = vi.fn();
+      const port = await connectOpenTuiWorkspaceRuntimePort({
+        inventory: inventory(),
+        routing: test.routing,
+        onDiagnostic: diagnostic,
+        performanceDiagnostics,
+      });
+      const phases = diagnostic.mock.calls.map(([phase]) => phase);
+      expect(phases).toContain("seed");
+      expect(phases).toContain("coherent");
+      expect(phases.includes("compact-decode")).toBe(performanceDiagnostics);
+      await port.close();
+    },
+  );
+
   it("accepts native zoom visibility while retaining hidden pane subscriptions", async () => {
     const test = rig(true);
     const port = await connectOpenTuiWorkspaceRuntimePort({

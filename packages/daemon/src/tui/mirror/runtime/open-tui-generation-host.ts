@@ -120,6 +120,7 @@ export function openTuiGenerationRenderEqual(
 }
 
 interface BundleCallbacks {
+  readonly performanceDiagnostics?: boolean;
   readonly didActivateRuntime: (
     runtime: OpenTuiWorkspaceRuntimePort,
     inventory: WorkspaceClientRuntimeInventory,
@@ -159,6 +160,8 @@ export interface OpenTuiGenerationHostDependencies {
 }
 
 export interface OpenTuiGenerationHostOptions extends Partial<OpenTuiGenerationHostDependencies> {
+  /** Detailed client/decode profiling is independent from connection progress. */
+  readonly performanceDiagnostics?: boolean;
   readonly onConnectionProgress?: (
     phase: string,
     details: Readonly<Record<string, unknown>>,
@@ -271,6 +274,7 @@ function buildProductionBundle(
             prepareRuntime: prepare,
             onFault: (error) => callbacks.didFaultRuntime(connectedRuntime, error),
             onDiagnostic: callbacks.didRuntimeDiagnostic,
+            performanceDiagnostics: callbacks.performanceDiagnostics === true,
           });
           connectedRuntime = runtime;
           candidateStages.set(runtime, releaseStage);
@@ -688,6 +692,7 @@ export function createOpenTuiGenerationHost(
         let bundle: OpenTuiGenerationBundle;
         try {
           bundle = dependencies.buildBundle(connection, {
+            performanceDiagnostics: overrides.performanceDiagnostics === true,
             didActivateRuntime(runtime, inventory) {
               activeRuntimeInventory = inventory;
               if (!owner) {
@@ -767,62 +772,63 @@ export function createOpenTuiGenerationHost(
         const replacedCandidate = candidate;
         candidate = owned;
         if (replacedCandidate && replacedCandidate !== active) disposeCandidate(replacedCandidate);
-        emitWorkspaceClientState = diagnose
-          ? (() => {
-              let lastProjectionSignature: string | null = null;
-              return (): void => {
-                try {
-                  if (disposed || owned.settled) return;
-                  const snapshot = bundle.client.getSnapshot();
-                  if (snapshot.phase !== "live") return;
-                  const terminalResources =
-                    snapshot.authorityShell?.terminalInventory?.resources.map((resource) => ({
-                      resourceId: resource.id,
-                      windowResourceId: resource.windowResourceId ?? resource.id,
-                      resourceTitle: resource.title,
-                      active: resource.active,
-                      semanticPaneId:
-                        resource.attachability.status === "available"
-                          ? resource.attachability.semanticPaneId
-                          : null,
-                    })) ?? [];
-                  const projection = {
-                    daemonGeneration: owned.bundle.connection.target.daemon.instanceId,
-                    workspaceClient: {
-                      committed: {
-                        generation: snapshot.generation,
-                        target: snapshot.target,
-                        phase: snapshot.phase,
-                        authorityWorkspaceId: snapshot.authorityShell?.workspace.id ?? null,
-                        authorityWorkspaceName: snapshot.authorityShell?.workspace.name ?? null,
-                        catalog: snapshot.catalog,
-                        authority: snapshot.authority,
-                        terminalResources,
-                        terminalResourceRevision:
-                          activeRuntimeInventory?.terminalResourceRevision ?? null,
-                        lastReceipt: snapshot.operations.lastReceipt,
-                        lastResourceChangeAcknowledgement:
-                          snapshot.operations.lastResourceChangeAcknowledgement,
+        emitWorkspaceClientState =
+          diagnose && overrides.performanceDiagnostics
+            ? (() => {
+                let lastProjectionSignature: string | null = null;
+                return (): void => {
+                  try {
+                    if (disposed || owned.settled) return;
+                    const snapshot = bundle.client.getSnapshot();
+                    if (snapshot.phase !== "live") return;
+                    const terminalResources =
+                      snapshot.authorityShell?.terminalInventory?.resources.map((resource) => ({
+                        resourceId: resource.id,
+                        windowResourceId: resource.windowResourceId ?? resource.id,
+                        resourceTitle: resource.title,
+                        active: resource.active,
+                        semanticPaneId:
+                          resource.attachability.status === "available"
+                            ? resource.attachability.semanticPaneId
+                            : null,
+                      })) ?? [];
+                    const projection = {
+                      daemonGeneration: owned.bundle.connection.target.daemon.instanceId,
+                      workspaceClient: {
+                        committed: {
+                          generation: snapshot.generation,
+                          target: snapshot.target,
+                          phase: snapshot.phase,
+                          authorityWorkspaceId: snapshot.authorityShell?.workspace.id ?? null,
+                          authorityWorkspaceName: snapshot.authorityShell?.workspace.name ?? null,
+                          catalog: snapshot.catalog,
+                          authority: snapshot.authority,
+                          terminalResources,
+                          terminalResourceRevision:
+                            activeRuntimeInventory?.terminalResourceRevision ?? null,
+                          lastReceipt: snapshot.operations.lastReceipt,
+                          lastResourceChangeAcknowledgement:
+                            snapshot.operations.lastResourceChangeAcknowledgement,
+                        },
+                        pending: snapshot.operations.pending,
+                        derived: snapshot.semantic,
                       },
-                      pending: snapshot.operations.pending,
-                      derived: snapshot.semantic,
-                    },
-                  } as const;
-                  // Every subscribed scope can publish the same immutable
-                  // WorkspaceClient projection in one synchronous transition.
-                  // Retain only the immediately preceding normalized value for
-                  // this exact generation: distinct authority, receipt, ack,
-                  // semantic, catalog, or active-runtime revisions still emit.
-                  const signature = JSON.stringify(projection);
-                  if (signature === lastProjectionSignature) return;
-                  diagnose("workspace-client-state", projection);
-                  lastProjectionSignature = signature;
-                } catch {
-                  // Diagnostics and snapshot inspection never own generation lifecycle.
-                }
-              };
-            })()
-          : null;
+                    } as const;
+                    // Every subscribed scope can publish the same immutable
+                    // WorkspaceClient projection in one synchronous transition.
+                    // Retain only the immediately preceding normalized value for
+                    // this exact generation: distinct authority, receipt, ack,
+                    // semantic, catalog, or active-runtime revisions still emit.
+                    const signature = JSON.stringify(projection);
+                    if (signature === lastProjectionSignature) return;
+                    diagnose("workspace-client-state", projection);
+                    lastProjectionSignature = signature;
+                  } catch {
+                    // Diagnostics and snapshot inspection never own generation lifecycle.
+                  }
+                };
+              })()
+            : null;
         const stopLifecycle = bundle.client.subscribe("lifecycle", (lifecycle) => {
           if (disposed || owned.settled) return;
           diagnose?.("shell-lifecycle", {

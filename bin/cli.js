@@ -79824,7 +79824,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   }
   const launchEpochMs = Date.now();
   let automaticDiagnosticLog;
-  if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG) {
+  if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG && !process.env.TMUX_IDE_TUI_LOG) {
     try {
       const logDirectory = join42(stateHome(), "logs");
       mkdirSync26(logDirectory, { recursive: true, mode: 448 });
@@ -79849,7 +79849,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     TMUX_IDE_CWD: process.cwd(),
     TMUX_IDE_CLI: nodeCliPath,
     ...automaticDiagnosticLog ? {
-      TMUX_IDE_TUI_PERF_LOG: automaticDiagnosticLog,
+      TMUX_IDE_TUI_LOG: automaticDiagnosticLog,
       TMUX_IDE_TUI_LAUNCH_EPOCH_MS: String(launchEpochMs)
     } : {},
     ...extraEnv

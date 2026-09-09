@@ -40,14 +40,14 @@ describe("production OpenTUI entry boundary", () => {
     expect(appearance).toContain("terminalPaletteOwner.dispose()");
   });
 
-  it("injects application-shell evidence only when the existing perf writer is enabled", () => {
+  it("injects application-shell lifecycle evidence only when a diagnostic writer is enabled", () => {
     const entry = read("packages/daemon/src/tui/mirror/runtime/application-entry.ts");
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
     expect(entry).toMatch(
       /diagnosticLog\s*\?\s*prepareOpenTuiApplicationShellConnection[\s\S]*onDiagnostic:[\s\S]*:\s*prepareOpenTuiApplicationShellConnection/u,
     );
     expect(root).toMatch(
-      /tuiPerfStream\s*\?\s*prepareOpenTuiApplicationShellConnection[\s\S]*onDiagnostic:\s*tuiPerfMark[\s\S]*:\s*prepareOpenTuiApplicationShellConnection/u,
+      /tuiLifecycleStream\s*\?\s*prepareOpenTuiApplicationShellConnection[\s\S]*onDiagnostic:\s*tuiPerfMark[\s\S]*:\s*prepareOpenTuiApplicationShellConnection/u,
     );
   });
 
@@ -150,7 +150,7 @@ describe("production OpenTUI entry boundary", () => {
     const host = read("packages/daemon/src/tui/mirror/runtime/open-tui-generation-host.ts");
     const feedback = read("packages/daemon/src/tui/mirror/workspace/connection-feedback.ts");
     expect(root).toContain(
-      "connectionProgress.hostOptions(sessionName, tuiPerfStream, tuiPerfMark)",
+      "connectionProgress.hostOptions(sessionName, tuiLifecycleStream, tuiPerfMark)",
     );
     expect(feedback).toMatch(/performanceEnabled[\s\S]*onDiagnostic/u);
     expect(host).not.toContain("onDiagnostic: () => undefined");

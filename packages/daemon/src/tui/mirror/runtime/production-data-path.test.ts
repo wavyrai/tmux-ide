@@ -228,7 +228,9 @@ describe("production OpenTUI v2 data path", () => {
     // Includes the one root-owned keyboard/paste ingress and the three-line
     // composition seam for shared receipt presence, copy feedback, and link/activity callbacks
     // and the renderer-destroyed callback into the existing lifecycle (no new transport owner).
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(520);
+    // Two additional composition lines separate lifecycle logging from explicit
+    // performance diagnostics; decoding and log policy remain outside this root.
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(522);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.

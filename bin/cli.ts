@@ -334,7 +334,7 @@ async function execBunWidget(
 
   const launchEpochMs = Date.now();
   let automaticDiagnosticLog: string | undefined;
-  if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG) {
+  if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG && !process.env.TMUX_IDE_TUI_LOG) {
     try {
       const logDirectory = join(stateHome(), "logs");
       mkdirSync(logDirectory, { recursive: true, mode: 0o700 });
@@ -360,7 +360,7 @@ async function execBunWidget(
     TMUX_IDE_CLI: nodeCliPath,
     ...(automaticDiagnosticLog
       ? {
-          TMUX_IDE_TUI_PERF_LOG: automaticDiagnosticLog,
+          TMUX_IDE_TUI_LOG: automaticDiagnosticLog,
           TMUX_IDE_TUI_LAUNCH_EPOCH_MS: String(launchEpochMs),
         }
       : {}),

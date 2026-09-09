@@ -115,7 +115,7 @@ export function abandonPreparedConnection(
  * startup.
  */
 export async function startApplicationEntry(): Promise<void> {
-  const diagnosticLog = process.env.TMUX_IDE_TUI_PERF_LOG;
+  const diagnosticLog = process.env.TMUX_IDE_TUI_PERF_LOG || process.env.TMUX_IDE_TUI_LOG;
   const launchEpochMs = Number(process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ?? Date.now());
   const applicationShellDiagnostics = diagnosticLog
     ? createApplicationShellDiagnosticHandoff(launchEpochMs)

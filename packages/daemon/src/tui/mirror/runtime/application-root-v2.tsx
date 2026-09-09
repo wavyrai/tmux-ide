@@ -43,6 +43,7 @@ import {
   tuiPerfDiagnostics,
   tuiPerfMark,
   tuiPerfStream,
+  tuiLifecycleStream,
   tuiPerfWheelObservation,
 } from "./application-performance-log.ts";
 import { installApplicationPostRenderRuntime } from "./application-post-render-runtime.ts";
@@ -160,7 +161,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         sessionOwner = createOpenTuiSessionOwner({
           prepareConnection: (sessionName) => {
             if (initialPreparation?.sessionName !== sessionName)
-              return tuiPerfStream
+              return tuiLifecycleStream
                 ? prepareOpenTuiApplicationShellConnection(sessionName, {
                     onDiagnostic: tuiPerfMark,
                   })
@@ -172,7 +173,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           createHost: (sessionName, initialConnection) =>
             createOpenTuiGenerationHost(sessionName, presentation, {
               initialConnection,
-              ...connectionProgress.hostOptions(sessionName, tuiPerfStream, tuiPerfMark),
+              ...connectionProgress.hostOptions(sessionName, tuiLifecycleStream, tuiPerfMark),
+              performanceDiagnostics: Boolean(tuiPerfStream),
             }),
           onSnapshot: (snapshot) => {
             let clientGeneration: number | null = null;
