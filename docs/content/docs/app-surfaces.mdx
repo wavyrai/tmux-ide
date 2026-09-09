@@ -37,10 +37,15 @@ daemon replacement, and viewer reattachment. tmux remains the source of truth.
 
 ### Scrolling
 
-The mouse wheel scrolls pane history locally, including when a running application
-requests mouse input. Shift+wheel uses the same path. Press Escape to return to
-live output. To send wheel input to the application itself, return to live output
-and hold Alt/Option while scrolling. Shift takes precedence over Alt/Option.
+The mouse wheel acts on the pane under the pointer. At live output, applications
+that request mouse input receive ordinary wheel events; otherwise, the wheel
+scrolls terminal history locally. Hold Shift while scrolling to explicitly read
+terminal history, including inside a mouse-enabled application.
+
+While reading history or selecting text, scrolling stays local. Returning to the
+bottom during a continuous history gesture does not send its remaining events to
+the application. Press Escape to return to live output. Alt/Option+wheel remains
+available for application scrolling at live output; Shift takes precedence.
 Clicks and drags continue to follow the application's mouse mode.
 
 ### Selection and links

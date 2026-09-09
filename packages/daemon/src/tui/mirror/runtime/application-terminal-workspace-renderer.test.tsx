@@ -1178,11 +1178,13 @@ describe("ApplicationTerminalWorkspace", () => {
 
   it.each(
     [false, true].flatMap((retainView) =>
-      (["sgr", "default", "utf8"] as const).map((encoding) => ({ retainView, encoding })),
+      (["sgr", "default", "utf8"] as const).flatMap((encoding) =>
+        [false, true].map((alternateScreen) => ({ retainView, encoding, alternateScreen })),
+      ),
     ),
   )(
-    "forwards $encoding app mouse until explicit selection (retained view: $retainView)",
-    async ({ retainView, encoding }) => {
+    "forwards $encoding app mouse until explicit selection (retained: $retainView, alternate: $alternateScreen)",
+    async ({ retainView, encoding, alternateScreen }) => {
       registerPaneSurface();
       const theme = createSemanticThemeSnapshot({ mode: "dark" });
       const palette = createTerminalPaletteProjection(theme);
@@ -1203,7 +1205,7 @@ describe("ApplicationTerminalWorkspace", () => {
         })),
         cursor: { x: 0, y: 0, hidden: true, style: "block", blink: false },
         modes: {
-          alternateScreen: false,
+          alternateScreen,
           applicationCursor: false,
           applicationKeypad: false,
           bracketedPaste: false,
@@ -1332,15 +1334,20 @@ describe("ApplicationTerminalWorkspace", () => {
       expect(paneActions.at(-1)).toEqual({ paneId: "pane.a", action: "close-pane" });
       await setup.renderOnce();
 
-      // Ordinary wheel stays local even when the application requests mouse input.
+      // Mouse-reporting apps own ordinary wheel input on either screen.
       await setup.mockMouse.scroll(2, 3, "up");
-      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { shift: true } });
-      expect(forwarded).toEqual([]);
-      // Alt is a routing modifier, not part of the application's wheel event.
-      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { alt: true } });
       expect(forwarded).toEqual(encoding === "sgr" ? ["\u001b[<64;3;1M"] : ["1b5b4d602321"]);
+      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { ctrl: true } });
+      expect(forwarded.at(-1)).toBe(encoding === "sgr" ? "\u001b[<80;3;1M" : "1b5b4d702321");
+      // Shift always selects local history, including when Alt is also held.
+      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { shift: true } });
+      expect(forwarded).toHaveLength(2);
+      // Alt remains a compatibility routing modifier, stripped before delivery.
+      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { alt: true } });
+      expect(forwarded.at(-1)).toBe(encoding === "sgr" ? "\u001b[<64;3;1M" : "1b5b4d602321");
+      expect(forwarded).toHaveLength(3);
       await setup.mockMouse.scroll(2, 3, "up", { modifiers: { alt: true, shift: true } });
-      expect(forwarded).toHaveLength(1);
+      expect(forwarded).toHaveLength(3);
       forwarded.length = 0;
       wireEncodings.length = 0;
 
@@ -1586,6 +1593,115 @@ it.each([false, true])(
     setup.renderer.destroy();
   },
 );
+
+it("keeps history local through app-mode changes and fences automatic wheel delivery", async () => {
+  registerPaneSurface();
+  const { blankTerminalReplicaSnapshot } = await import("@tmux-ide/core");
+  const blank = blankTerminalReplicaSnapshot(10, 8);
+  let replica: TerminalReplicaSnapshot = {
+    ...blank,
+    history: Array.from({ length: 10 }, () => blank.grid[0]!),
+  };
+  const live = adapter({ "pane.a": "A", "pane.b": "B" }, []);
+  live.paneSelectionSnapshot = () => replica;
+  live.renderSource.scrollbackDepth = () => replica.history.length;
+  live.renderSource.paneCanonicalIdentity = () => ({
+    generation: "generation",
+    incarnation: "generation:0",
+    revision: 1,
+    stateHash: "state",
+    cols: replica.cols,
+    rows: replica.rows,
+    sourceEpoch: 1,
+    historyTrim: 0,
+  });
+  const connection = {};
+  const client = {};
+  let staleRuntime = false;
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const inputs: Array<{ paneId: string; data: string }> = [];
+  const selected: string[] = [];
+  const deliveryOrder: string[] = [];
+  const [focusedPane, setFocusedPane] = createSignal("pane.a");
+  const theme = createSemanticThemeSnapshot({ mode: "dark" });
+  const setup = await renderForTest(
+    () => (
+      <ApplicationTerminalWorkspace
+        layout={layout}
+        adapter={live}
+        rendererEpoch={1}
+        terminalGestureRuntime={() => ({
+          daemonGeneration: "daemon",
+          clientGeneration: 1,
+          connection: staleRuntime ? {} : connection,
+          client,
+          adapter: live,
+          rendererEpoch: 1,
+        })}
+        width={30}
+        height={9}
+        focusedPane={focusedPane()}
+        theme={theme}
+        palette={createTerminalPaletteProjection(theme)}
+        onSelectPane={(paneId) => {
+          selected.push(paneId);
+          deliveryOrder.push(`select:${paneId}`);
+          setFocusedPane(paneId);
+        }}
+        onWheelObservation={(event) => events.push(event)}
+        onTerminalInput={(paneId, input) => {
+          deliveryOrder.push(`input:${paneId}`);
+          inputs.push({ paneId, data: input.data });
+        }}
+      />
+    ),
+    { width: 30, height: 11 },
+  );
+  try {
+    await setup.renderOnce();
+    // A shell gesture starts in host history, then the app enables mouse mode.
+    await setup.mockMouse.scroll(2, 3, "up");
+    expect(events.at(-1)).toMatchObject({ route: "local-history", offsetAfter: 5 });
+    replica = {
+      ...replica,
+      modes: { ...replica.modes, mouseTracking: true, mouseProtocol: "drag", mouseEncoding: "sgr" },
+    };
+    await setup.mockMouse.scroll(2, 3, "down");
+    expect(events.at(-1)).toMatchObject({ route: "local-history", offsetAfter: 0 });
+    await setup.mockMouse.scroll(2, 3, "down");
+    expect(events.at(-1)).toMatchObject({ route: "local-history", offsetAfter: 0 });
+    expect(inputs).toEqual([]);
+    expect(selected).toEqual([]);
+
+    // A new gesture at live bottom follows the application's negotiated mode.
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await setup.mockMouse.scroll(2, 3, "up");
+    expect(inputs).toEqual([{ paneId: "pane.a", data: "\u001b[<64;3;1M" }]);
+    // An inactive app must become the input target before wheel delivery.
+    await setup.mockMouse.scroll(13, 3, "down");
+    expect(inputs.at(-1)).toEqual({ paneId: "pane.b", data: "\u001b[<65;3;1M" });
+    expect(deliveryOrder.slice(-2)).toEqual(["select:pane.b", "input:pane.b"]);
+    await setup.mockMouse.scroll(13, 3, "down");
+    expect(selected).toEqual(["pane.b"]);
+    expect(inputs).toHaveLength(3);
+
+    // A runtime replacement between lease capture and dispatch must fail closed.
+    staleRuntime = true;
+    await setup.mockMouse.scroll(23, 3, "up");
+    expect(inputs).toHaveLength(3);
+    staleRuntime = false;
+
+    // Explicit selection owns scrolling even after the pointer crosses an app pane.
+    await setup.mockMouse.pressDown(2, 3, MouseButtons.LEFT, { modifiers: { shift: true } });
+    await setup.mockMouse.moveTo(4, 3, { modifiers: { shift: true } });
+    await setup.mockMouse.scroll(13, 3, "up");
+    expect(events.at(-1)).toMatchObject({ paneId: "pane.a", route: "local-history" });
+    expect(inputs).toHaveLength(3);
+    await setup.mockMouse.release(4, 3, MouseButtons.LEFT, { modifiers: { shift: true } });
+  } finally {
+    setup.renderer.destroy();
+  }
+});
 
 it("routes raw mouse multi-click, wheel-drag, edge scrolling and Ctrl-link activation", async () => {
   registerPaneSurface();

@@ -752,6 +752,11 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       snapshot.modes.mouseEncoding,
     );
     if (!encoded) return false;
+    if ((action === "wheel-up" || action === "wheel-down") && props.focusedPane !== lease.paneId) {
+      // The input router queues this wheel behind selection acknowledgement;
+      // it still refuses input if selection or write authority is rejected.
+      props.onSelectPane(lease.paneId);
+    }
     props.onTerminalInput?.(lease.paneId, {
       kind: "application-mouse",
       data: encoded.data,
@@ -1223,6 +1228,14 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         observe("unsupported-direction");
         return;
       }
+      if (
+        event.scroll.delta !== undefined &&
+        (!Number.isFinite(event.scroll.delta) || event.scroll.delta === 0)
+      ) {
+        event.stopPropagation?.();
+        observe("invalid-delta");
+        return;
+      }
       const snapshot = hit ? props.adapter.paneSelectionSnapshot(hit.frame.paneId) : null;
       const lease = hit ? captureGestureLease(hit.frame.paneId, hit.frame) : null;
       const action = event.scroll?.direction === "up" ? "wheel-up" : "wheel-down";
@@ -1232,11 +1245,17 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         return;
       }
       const identity = props.adapter.renderSource.paneCanonicalIdentity?.(hit.frame.paneId);
-      const applicationWheel = event.modifiers?.alt === true && !event.modifiers?.shift;
+      // Applications own ordinary wheel input only when their terminal mode
+      // requests it. Shift is the explicit local-history override; Alt remains
+      // a compatible routing modifier and is not sent to the application.
+      const applicationWheel =
+        !event.modifiers?.shift && terminalMouseActionSupported(snapshot, action);
       const motion = wheelGesture.consume(
         JSON.stringify([
           hit.frame.paneId,
-          applicationWheel ? "application" : "history",
+          // A mode change must not turn an ongoing history gesture into app
+          // input. Only an explicit modifier change starts a different route.
+          event.modifiers?.shift ? "history" : event.modifiers?.alt ? "application" : "auto",
           identity?.generation,
           identity?.incarnation,
           identity?.sourceEpoch,
@@ -1251,6 +1270,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         !motion.local &&
         scrollback.offset(hit.frame.paneId) === 0 &&
         applicationWheel &&
+        !activeSelection &&
         selectModePane() !== hit.frame.paneId &&
         retainedSelectionPane() !== hit.frame.paneId &&
         forwardMouse(
@@ -1258,12 +1278,16 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           action,
           hit,
           undefined,
-          { ...event.modifiers, alt: false },
+          {
+            shift: false,
+            alt: false,
+            ctrl: event.modifiers?.ctrl === true,
+          },
           applicationIngress(),
         )
       ) {
         event.stopPropagation?.();
-        observe("application");
+        observe("application-requested");
       } else if (hit && snapshot) {
         wheelGesture.retainLocal();
         event.stopPropagation?.();

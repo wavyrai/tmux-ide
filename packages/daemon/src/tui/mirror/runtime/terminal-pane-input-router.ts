@@ -76,8 +76,9 @@ export class TerminalPaneInputRouter<Input> {
         return false;
       }
     }
-    await this.#options.send(paneId, input);
-    return true;
+    // Legacy senders resolve void; explicit transport refusal must survive
+    // routing so callers do not report rejected input as delivered.
+    return (await this.#options.send(paneId, input)) !== false;
   }
 
   async sendInputToPane(paneId: string, input: Input): Promise<boolean> {

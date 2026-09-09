@@ -40,6 +40,43 @@ function splitLayout(): OpenTuiWorkspaceLayoutSnapshot {
 }
 
 describe("application terminal interaction controller", () => {
+  it.each(["sent", "read-only", "disconnected"])(
+    "reports the actual %s transport outcome for pane-targeted input",
+    async (status) => {
+      const sendInput = vi.fn(async () => ({ status }));
+      const controller = createApplicationTerminalInteractionController({
+        generation: () =>
+          ({
+            status: "live",
+            fastLane: { lane: { sendInput } },
+          }) as never,
+        layout: () => layout(),
+        setFocusedPane: () => undefined,
+        diagnosticsEnabled: false,
+        diagnose: () => undefined,
+      });
+      controller.adoptLayout(layout());
+      await expect(
+        controller.sendInputToPane("pane.main", { kind: "text", data: "wheel" }),
+      ).resolves.toBe(status === "sent");
+      expect(sendInput).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("refuses pane-targeted input when its live generation disappears", async () => {
+    const controller = createApplicationTerminalInteractionController({
+      generation: () => null,
+      layout: () => layout(),
+      setFocusedPane: () => undefined,
+      diagnosticsEnabled: false,
+      diagnose: () => undefined,
+    });
+    controller.adoptLayout(layout());
+    await expect(
+      controller.sendInputToPane("pane.main", { kind: "text", data: "wheel" }),
+    ).resolves.toBe(false);
+  });
+
   it("uses exact native pane zoom state and rejects missing targets", async () => {
     const dispatch = vi.fn(async (_command: unknown) => ({
       kind: "owner-action",

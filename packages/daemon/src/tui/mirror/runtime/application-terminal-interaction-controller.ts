@@ -681,7 +681,7 @@ export function createApplicationTerminalInteractionController(
     send: async (paneId, routed) => {
       const { input, parserOrigin } = routed;
       const active = options.generation();
-      if (active?.status !== "live" || !active.fastLane) return;
+      if (active?.status !== "live" || !active.fastLane) return false;
       let fixtureEnabled: boolean;
       let canonical: ReturnType<typeof active.fastLane.lane.paneState> = null;
       let trace: TuiTerminalInputTrace | undefined;
@@ -755,6 +755,7 @@ export function createApplicationTerminalInteractionController(
             // Diagnostics fail open after the product transport outcome.
           }
       }
+      return outcome.status === "sent";
     },
     onFocusedPane: options.setFocusedPane,
   });

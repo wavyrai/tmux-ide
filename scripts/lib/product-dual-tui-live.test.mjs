@@ -533,19 +533,22 @@ process.stdout.write('\\x1b[?1000h\\x1b[?1006h'+Array.from({length:120},(_,i)=>'
       const nativeOriginY = nativeRows.findIndex((line) => line.startsWith("HISTORY_101"));
       assert.ok(nativeOriginY >= 0, "live cropped row has a native coordinate");
       const expectedMouse = `\x1b[<64;${40 - contentLeft + 1};${nativeOriginY + 5 - 3 + 1}M`;
+      const waitForMouseBytes = async (expected) => {
+        const deadline = Date.now() + 5_000;
+        while (
+          readFileSync(mouseInput).length < Buffer.byteLength(expected) &&
+          Date.now() < deadline
+        )
+          await delay(25);
+        assert.equal(readFileSync(mouseInput, "utf8"), expected);
+      };
       wheel("wheel-up");
+      await waitForMouseBytes(expectedMouse);
       await frame(
-        "ordinary-wheel-local",
+        "ordinary-wheel-application",
         "second",
-        (rows) => rows[2].includes("Scrollback") && rows[3].includes("HISTORY_096"),
+        (rows) => mouseBaseline(rows) && !rows[2].includes("Scrollback"),
       );
-      assert.equal(
-        readFileSync(mouseInput).length,
-        0,
-        "ordinary wheel must stay local with app mouse enabled",
-      );
-      tui("second", "key", "Escape");
-      await frame("ordinary-wheel-return-live", "second", mouseBaseline);
       tui(
         "second",
         "input",
@@ -558,12 +561,11 @@ process.stdout.write('\\x1b[?1000h\\x1b[?1006h'+Array.from({length:120},(_,i)=>'
           modifiers: ["alt"],
         }),
       );
-      const inputDeadline = Date.now() + 5_000;
-      while (readFileSync(mouseInput).length === 0 && Date.now() < inputDeadline) await delay(25);
       // Derive terminal coordinates from the actual accepted frame/native row,
-      // including sidebar, header and cropped native viewport. The routing Alt
-      // modifier is consumed by the TUI, so the application receives ordinary wheel.
-      assert.equal(readFileSync(mouseInput, "utf8"), expectedMouse);
+      // including sidebar, header and cropped native viewport. Ordinary wheel
+      // reaches the mouse-enabled application automatically; compatibility Alt
+      // is consumed so the second event has the same application encoding.
+      await waitForMouseBytes(expectedMouse.repeat(2));
       await frame("mouse-forwarded", "second", mouseBaseline);
       tui(
         "second",
@@ -591,7 +593,7 @@ process.stdout.write('\\x1b[?1000h\\x1b[?1006h'+Array.from({length:120},(_,i)=>'
       await frame("reading-wheel-local", "second", mouseBaseline);
       assert.equal(
         readFileSync(mouseInput, "utf8"),
-        expectedMouse,
+        expectedMouse.repeat(2),
         "local reading leaked wheel input to application",
       );
       assert.equal(geometry(), dimensions, "application mouse routing changed native geometry");
