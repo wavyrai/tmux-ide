@@ -1,3 +1,4 @@
+import { projectNativeGridRow } from "../../../terminal/mirror/native-grid-projection.ts";
 import { decodeNativeGridCapture } from "../../../terminal/mirror/native-grid-capture.ts";
 import { describe, expect, it, spyOn } from "bun:test";
 import type {
@@ -209,6 +210,105 @@ describe("TerminalFastLaneRendererAdapter", () => {
         stopPeer();
         adapter.dispose();
         peer.dispose();
+        lane.dispose();
+      }
+    },
+  );
+
+  it.each(["native", "missing", "error"] as const)(
+    "preserves wheel motion while delayed %s backing resolves",
+    async (result) => {
+      const source = new Source();
+      const lane = createTerminalFastLane({
+        address: { workspaceName, generation },
+        source,
+        repair: { request: () => undefined },
+        control: {
+          owns: () => true,
+          request: async () => true,
+          write: async () => "ok",
+          resize: async () => "ok",
+        },
+      });
+      const backing = decodeNativeGridCapture(
+        [
+          JSON.stringify({
+            version: 2,
+            cols: 8,
+            rows: 2,
+            history: 12,
+            hscrolled: 0,
+            limit: 100,
+            cursor: [0, 0],
+          }),
+          ...Array.from({ length: 14 }, (_, row) =>
+            JSON.stringify({
+              row,
+              flags: 0,
+              used: 1,
+              cells: [[0, 1, (65 + row).toString(16), 0, 8, 8, 8, 0, 0]],
+            }),
+          ),
+          "",
+        ].join("\n"),
+      )!;
+      let finish!: (value: typeof backing | null) => void;
+      let fail!: (error: Error) => void;
+      let signal!: AbortSignal;
+      const pending = new Promise<typeof backing | null>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      const adapter = new TerminalFastLaneRendererAdapter(
+        lane,
+        1,
+        null,
+        null,
+        async (_pane, _expected, input) => {
+          signal = input;
+          return pending;
+        },
+      );
+      const unsubscribe = adapter.subscribePaneVersion("pane.editor", () => {});
+      const reading = createTerminalScrollback(adapter, undefined, undefined, (id) =>
+        adapter.retainPaneView(id),
+      );
+      try {
+        const blank = blankTerminalReplicaSnapshot(8, 2);
+        const rows = backing.grid.map((row) => projectNativeGridRow(row, 8)!);
+        const snapshot = { ...blank, history: rows.slice(0, 12), grid: rows.slice(12) };
+        source.emit("pane.editor", {
+          ...seed("pane.editor", "A"),
+          cols: 8,
+          snapshot,
+          stateHash: hashTerminalReplicaSnapshot(snapshot),
+        });
+        const original = adapter.paneSelectionSnapshot("pane.editor");
+        adapter.setNativePaneGeometries([{ paneId: "pane.editor", cols: 4, rows: 2 }]);
+        reading.move("pane.editor", 5);
+        expect(reading.offset("pane.editor")).toBe(5);
+        expect(adapter.paneSelectionSnapshot("pane.editor")).toBe(original);
+        for (let i = 0; i < 150; i++)
+          adapter.setNativePaneGeometries([{ paneId: "pane.editor", cols: 4, rows: 2 }]);
+        expect(signal.aborted).toBe(false);
+        expect(adapter.paneRetainedBackingStatus("pane.editor")).toBe("pending");
+        reading.move("pane.editor", 2);
+        expect(reading.offset("pane.editor")).toBe(7);
+        if (result === "error") fail(new Error("unavailable"));
+        else finish(result === "native" ? backing : null);
+        await pending.catch(() => {});
+        for (let i = 0; i < 4; i++) await Promise.resolve();
+        expect(adapter.paneRetainedBackingStatus("pane.editor")).toBe(
+          result === "native" ? "native" : "compatible",
+        );
+        expect(adapter.paneSelectionSnapshot("pane.editor")?.cols).toBe(4);
+        expect(reading.offset("pane.editor")).toBe(7);
+        reading.move("pane.editor", -2);
+        expect(reading.offset("pane.editor")).toBe(5);
+      } finally {
+        reading.dispose();
+        unsubscribe();
+        adapter.dispose();
         lane.dispose();
       }
     },

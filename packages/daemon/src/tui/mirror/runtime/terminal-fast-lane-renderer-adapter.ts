@@ -208,17 +208,23 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     const geometry = this.#nativePaneGeometries.get(interest.paneId) ?? fallback;
     if (!retained || !geometry) return false;
     const { cols, rows } = geometry;
+    if (retained.backingStatus === "pending") {
+      const last = retained.pendingSizes.at(-1) ?? retained.snapshot;
+      if (last.cols === cols && last.rows === rows) return false;
+      retained.pendingSizes.push({ cols, rows });
+      if (retained.pendingSizes.length > 128) {
+        retained.capture?.abort();
+        this.#finishRetainedBacking(interest, retained, false);
+      }
+      // Keep exact original rows until backing admission. A speculative
+      // compatible reflow cannot later be mapped to native physical padding.
+      return false;
+    }
     if (
       (retained.snapshot.cols === cols && retained.snapshot.rows === rows) ||
       (retained.rejectedResize?.cols === cols && retained.rejectedResize.rows === rows)
     )
       return false;
-    if (retained.backingStatus === "pending") {
-      if (retained.pendingSizes.length >= 128) {
-        retained.capture?.abort();
-        retained.backingStatus = "compatible";
-      } else retained.pendingSizes.push({ cols, rows });
-    }
     const resized = reflowRetainedTerminalSnapshot(retained.snapshot, cols, rows);
     if (!resized) {
       retained.rejectedResize = { cols, rows };
@@ -264,38 +270,20 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
             interest.retainedView !== retained
           )
             return;
-          retained.backingStatus = "compatible";
-          if (!backing || !retainNativeTerminalBacking(original, backing)) return;
-          let snapshot = original;
-          for (const size of retained.pendingSizes) {
-            const next = reflowRetainedTerminalSnapshot(snapshot, size.cols, size.rows);
-            if (!next) return;
-            snapshot = next;
-          }
-          retained.snapshot = snapshot;
-          retained.backingStatus = "native";
-          retained.backingRevision++;
-          retained.pendingSizes = [];
-          delete retained.rejectedResize;
-          interest.paintedRows = [];
-          interest.rowProjectionCache?.clear();
-          interest.projectionViewport = undefined;
-          interest.version++;
-          for (const listener of [...interest.listeners]) {
-            try {
-              listener(
-                interest.version,
-                this.#sourceEpoch,
-                interest.presentationVersion,
-                "content",
-              );
-            } catch {
-              /* Isolate observers. */
-            }
-          }
+          this.#finishRetainedBacking(
+            interest,
+            retained,
+            Boolean(backing && retainNativeTerminalBacking(original, backing)),
+          );
         })
         .catch(() => {
-          if (interest.retainedView === retained) retained.backingStatus = "compatible";
+          if (
+            !capture.signal.aborted &&
+            !this.#disposed &&
+            this.#panes.get(paneId) === interest &&
+            interest.retainedView === retained
+          )
+            this.#finishRetainedBacking(interest, retained, false);
         });
     }
     this.#resizeRetainedView(interest);
@@ -324,6 +312,38 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         }
       }
     };
+  }
+
+  #finishRetainedBacking(
+    interest: PaneRendererInterest,
+    retained: NonNullable<PaneRendererInterest["retainedView"]>,
+    native: boolean,
+  ): void {
+    let snapshot = retained.snapshot;
+    for (const size of retained.pendingSizes) {
+      const next = reflowRetainedTerminalSnapshot(snapshot, size.cols, size.rows);
+      if (!next) {
+        retained.rejectedResize = size;
+        break;
+      }
+      snapshot = next;
+      delete retained.rejectedResize;
+    }
+    retained.snapshot = snapshot;
+    retained.backingStatus = native ? "native" : "compatible";
+    retained.pendingSizes = [];
+    retained.backingRevision++;
+    interest.paintedRows = [];
+    interest.rowProjectionCache?.clear();
+    interest.projectionViewport = undefined;
+    interest.version++;
+    for (const listener of [...interest.listeners]) {
+      try {
+        listener(interest.version, this.#sourceEpoch, interest.presentationVersion, "content");
+      } catch {
+        /* Isolate observers. */
+      }
+    }
   }
 
   paneRetainedBackingStatus(paneId: string): "pending" | "native" | "compatible" | null {
