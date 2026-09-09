@@ -16,7 +16,10 @@ export function validateBundledTmux(
     manifest.schemaVersion !== 1 ||
     manifest.platform !== platform ||
     manifest.arch !== arch ||
-    manifest.extension !== "tmux-ide-native-grid-v1" ||
+    // Both known distributions remain usable; the live server capture probe
+    // decides bootstrap capability, independently of the installed client.
+    (manifest.extension !== "tmux-ide-native-grid-v1" &&
+      manifest.extension !== "tmux-ide-native-grid-v2") ||
     !manifest.files ||
     typeof manifest.files !== "object" ||
     typeof manifest.files.tmux !== "string"
