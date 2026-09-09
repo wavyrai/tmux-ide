@@ -647,6 +647,22 @@ describe("PaneStreamAdmissionCoordinator", () => {
           const sim = new SimulatedChannel(handlers, (command) => {
             const reply = fixtureAutoReply(state)(command);
             if (reply) return reply;
+            if (command.includes("capture-pane -p -R")) {
+              // This portable fixture has backing-only v1 capability. Returning
+              // ANSI text as native JSON would instead model a corrupt capture.
+              return [
+                JSON.stringify({
+                  version: 1,
+                  cols: 1,
+                  rows: 1,
+                  history: 0,
+                  hscrolled: 0,
+                  limit: 2000,
+                  cursor: [0, 0],
+                }),
+                JSON.stringify({ row: 0, flags: 0, used: 0, cells: [] }),
+              ];
+            }
             if (command.includes("capture-pane")) return ["seed"];
             if (command.includes("display-message")) {
               if (command.includes("-t %2")) return ["0 0 99 50"];
