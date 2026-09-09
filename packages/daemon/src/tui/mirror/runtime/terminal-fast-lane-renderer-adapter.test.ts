@@ -111,9 +111,14 @@ function paintViewport(
 }
 
 describe("TerminalFastLaneRendererAdapter", () => {
-  it.each([false, true])(
-    "fences asynchronous native backing to the retained view (released: %s)",
-    async (released) => {
+  it.each([
+    [false, 1],
+    [true, 1],
+    [false, 2],
+    [true, 2],
+  ] as const)(
+    "fences asynchronous native backing to the retained view (released: %s, version: %s)",
+    async (released, version) => {
       const source = new Source();
       const lane = createTerminalFastLane({
         address: { workspaceName, generation },
@@ -128,7 +133,7 @@ describe("TerminalFastLaneRendererAdapter", () => {
       });
       const backing = decodeNativeGridCapture(
         JSON.stringify({
-          version: 1,
+          version,
           cols: 4,
           rows: 2,
           history: 0,
@@ -190,7 +195,9 @@ describe("TerminalFastLaneRendererAdapter", () => {
         await Promise.resolve();
         expect(calls).toBe(1);
         expect(signal?.aborted).toBe(released);
-        expect(adapter.paneRetainedBackingStatus("pane.editor")).toBe(released ? null : "native");
+        expect(adapter.paneRetainedBackingStatus("pane.editor")).toBe(
+          released ? null : version === 2 ? "native" : "compatible",
+        );
         const heldSnapshot = adapter.paneSelectionSnapshot("pane.editor")!;
         expect([...heldSnapshot.history, ...heldSnapshot.grid][0]?.cells[0]?.grapheme).toBe(
           released ? "B" : "A",
