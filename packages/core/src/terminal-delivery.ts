@@ -579,7 +579,7 @@ interface CompactDecodeBudget {
   maxCells: number;
   rowCache?: Map<string, Readonly<{ row: TerminalReplicaRow; runs: number; cells: number }>>;
   rowReuseIndex?: ReadonlyMap<string, TerminalReplicaRow | readonly TerminalReplicaRow[]>;
-  rawRowReuseIndex?: ValidatedCompactRawRowIndex;
+  rawRowReuseIndexes?: readonly ValidatedCompactRawRowIndex[];
   transactionRows?: Map<number, ValidatedCompactRawRowCandidate>;
   transactionRowBytes?: number;
   transactionRowCount?: number;
@@ -613,8 +613,10 @@ interface ValidatedCompactRawRowCandidate {
   readonly collisions?: readonly ValidatedCompactRawRowCandidate[];
 }
 type ValidatedCompactRawRowIndex = ReadonlyMap<number, ValidatedCompactRawRowCandidate>;
+// Each index owns only rows from its exact immutable array. Shared rows never
+// anchor other collections, and a changed grid does not invalidate history.
 const VALIDATED_COMPACT_RAW_ROW_INDEX = new WeakMap<
-  TerminalReplicaRow,
+  readonly TerminalReplicaRow[],
   ValidatedCompactRawRowIndex
 >();
 
@@ -1126,46 +1128,10 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
   };
   if (baseline) {
     budget.rowReuseIndex = await compactBaselineRowReuseIndex(baseline, control);
-    let rawRows: ValidatedCompactRawRowIndex | undefined;
-    for (const rows of [baseline.grid, baseline.history])
-      for (const row of rows) {
-        rawRows = VALIDATED_COMPACT_RAW_ROW_INDEX.get(row);
-        if (rawRows) break;
-      }
-    if (!rawRows) {
-      const nextRawRows = new Map<number, ValidatedCompactRawRowCandidate>();
-      let indexedRows = 0;
-      for (const rows of [baseline.grid, baseline.history])
-        for (const row of rows) {
-          const cached = VALIDATED_COMPACT_RAW_ROW.get(row);
-          if (cached) {
-            const existing = nextRawRows.get(cached.rawHash);
-            if (!existing) nextRawRows.set(cached.rawHash, cached);
-            else if (
-              existing.row !== row &&
-              !existing.collisions?.some((entry) => entry.row === row)
-            )
-              nextRawRows.set(
-                cached.rawHash,
-                Object.freeze({
-                  ...existing,
-                  collisions: Object.freeze([...(existing.collisions ?? []), cached]),
-                }),
-              );
-          }
-          indexedRows += 1;
-          if (indexedRows % control.rowsPerSlice === 0) await control.yieldControl();
-        }
-      rawRows = nextRawRows;
-      let installedRows = 0;
-      for (const rows of [baseline.grid, baseline.history])
-        for (const row of rows) {
-          VALIDATED_COMPACT_RAW_ROW_INDEX.set(row, rawRows);
-          installedRows += 1;
-          if (installedRows % control.rowsPerSlice === 0) await control.yieldControl();
-        }
-    }
-    budget.rawRowReuseIndex = rawRows;
+    budget.rawRowReuseIndexes = [
+      await compactRawRowReuseIndex(baseline.grid, control),
+      await compactRawRowReuseIndex(baseline.history, control),
+    ];
   }
   let payload: TerminalSemanticDeliveryPayload;
   if (qualifiedWire.f === "s") {
@@ -1221,7 +1187,7 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
   // bounded changed rows. Parser/reuse scratch cannot affect canonical hashing
   // or publication, so release it before the longest cooperative phase.
   budget.rowReuseIndex = undefined;
-  budget.rawRowReuseIndex = undefined;
+  budget.rawRowReuseIndexes = undefined;
   budget.transactionRows = undefined;
   budget.transactionRowBytes = undefined;
   budget.transactionRowCount = undefined;
@@ -1662,6 +1628,36 @@ function compactRowReuseCollision(
   return Array.isArray(value);
 }
 
+async function compactRawRowReuseIndex(
+  rows: readonly TerminalReplicaRow[],
+  control: CompactCooperativeControl,
+): Promise<ValidatedCompactRawRowIndex> {
+  const cacheable = Object.isFrozen(rows);
+  const cachedIndex = cacheable ? VALIDATED_COMPACT_RAW_ROW_INDEX.get(rows) : undefined;
+  if (cachedIndex) return cachedIndex;
+  const index = new Map<number, ValidatedCompactRawRowCandidate>();
+  let indexedRows = 0;
+  for (const row of rows) {
+    const cached = VALIDATED_COMPACT_RAW_ROW.get(row);
+    if (cached) {
+      const existing = index.get(cached.rawHash);
+      if (!existing) index.set(cached.rawHash, cached);
+      else if (existing.row !== row && !existing.collisions?.some((entry) => entry.row === row))
+        index.set(
+          cached.rawHash,
+          Object.freeze({
+            ...existing,
+            collisions: Object.freeze([...(existing.collisions ?? []), cached]),
+          }),
+        );
+    }
+    indexedRows += 1;
+    if (indexedRows % control.rowsPerSlice === 0) await control.yieldControl();
+  }
+  if (cacheable) VALIDATED_COMPACT_RAW_ROW_INDEX.set(rows, index);
+  return index;
+}
+
 async function compactBaselineRowReuseIndex(
   baseline: TerminalReplicaSnapshot,
   control: CompactCooperativeControl,
@@ -1847,24 +1843,22 @@ async function expandRowCooperatively(
       ? (value as CompactParsedRowSlice)
       : null;
   const rawHash = parsedSlice ? parsedSlice.source.hash(parsedSlice.start, parsedSlice.end) : null;
-  const rawIndexed = rawHash === null ? undefined : budget.rawRowReuseIndex?.get(rawHash);
   const transactionIndexed = rawHash === null ? undefined : budget.transactionRows?.get(rawHash);
-  const transactionReuse = !transactionIndexed
-    ? undefined
-    : parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, transactionIndexed.raw)
-      ? transactionIndexed
-      : transactionIndexed.collisions?.find((candidate) =>
-          parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, candidate.raw),
-        );
-  const rawReuse =
-    transactionReuse ??
-    (!rawIndexed
+  const match = (candidate: ValidatedCompactRawRowCandidate | undefined) =>
+    !candidate || !parsedSlice
       ? undefined
-      : parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, rawIndexed.raw)
-        ? rawIndexed
-        : rawIndexed.collisions?.find((candidate) =>
-            parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, candidate.raw),
-          ));
+      : parsedSlice.source.equals(parsedSlice.start, parsedSlice.end, candidate.raw)
+        ? candidate
+        : candidate.collisions?.find((entry) =>
+            parsedSlice.source.equals(parsedSlice.start, parsedSlice.end, entry.raw),
+          );
+  let rawReuse = match(transactionIndexed);
+  if (!rawReuse && rawHash !== null) {
+    for (const index of budget.rawRowReuseIndexes ?? []) {
+      rawReuse = match(index.get(rawHash));
+      if (rawReuse) break;
+    }
+  }
   if (rawReuse) {
     if (cols !== null && rawReuse.cells !== cols) throw new TypeError("Compact row width mismatch");
     budget.runs += rawReuse.runs;
