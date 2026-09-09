@@ -1,4 +1,10 @@
+import { projectNativeGridRow } from "../mirror/native-grid-projection.ts";
+import { decodeNativeGridCapture } from "../mirror/native-grid-capture.ts";
+import * as nativeSeeds from "./native-seed-backing.ts";
+import { rememberNativeSeedBacking, takeNativeSeedBacking } from "./native-seed-backing.ts";
+import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import { describe, expect, it, vi } from "vitest";
+import * as core from "@tmux-ide/core";
 import type {
   CanonicalTerminalReplicaUpdate,
   TerminalReplicaSnapshot,
@@ -756,60 +762,141 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     },
   );
 
-  it("lets fast clients advance while a stalled sink retains only one flight and latest pointer", async () => {
+  it.each(["semantic-v1", "semantic-compact-v1"] as const)(
+    "lets %s fast clients advance while a stalled sink retains only one flight and latest pointer",
+    async (encoding) => {
+      const owner = new FakeOwner();
+      const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+      const slowMessages: TerminalDeliveryServerMessage[] = [];
+      const fastMessages: TerminalDeliveryServerMessage[] = [];
+      let releaseSlow!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        releaseSlow = resolve;
+      });
+      const slow = await hub.open(
+        "slow",
+        "pane-a",
+        { protocolVersions: [1], encodings: [encoding], richPlacements: false },
+        (message) => {
+          slowMessages.push(message);
+          return blocked;
+        },
+      );
+      const fast = await hub.open(
+        "fast",
+        "pane-a",
+        { protocolVersions: [1], encodings: [encoding], richPlacements: false },
+        (message) => fastMessages.push(message),
+      );
+      owner.emit(seed());
+      await settle();
+      fast.ack(ack(fastMessages[0] as TerminalDeliveryEnvelope));
+      for (let revision = 1; revision <= 20; revision += 1)
+        owner.emit(patch(revision, revision % 2));
+      await settle();
+      const latest = fastMessages.findLast(
+        (message) => message.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      expect(latest.canonicalRevision).toBe(20);
+      expect(latest.encoding).toBe(encoding);
+      fast.ack(ack(latest));
+      expect(hub.metrics()).toMatchObject({ clients: 2, inFlight: 1, latestPointers: 1 });
+      expect(hub.metrics().maxQueueDepth).toBeLessThanOrEqual(2);
+      expect(hub.convergenceSnapshot().clients).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ clientId: "slow", inFlightRevision: 0, latestRevision: 20 }),
+          expect.objectContaining({ clientId: "fast", baselineRevision: 20 }),
+        ]),
+      );
+      expect(slowMessages.filter((message) => message.type === "terminal.delivery")).toHaveLength(
+        1,
+      );
+      releaseSlow();
+      await settle();
+      slow.ack(ack(slowMessages[0] as TerminalDeliveryEnvelope));
+      await settle();
+      const resumed = slowMessages.findLast(
+        (message) => message.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      expect(resumed.canonicalRevision).toBe(20);
+      expect(resumed.frame).toBe("seed");
+      expect(resumed.encoding).toBe(encoding);
+      expect(resumed.canonicalStateHash).toBe(latest.canonicalStateHash);
+      slow.ack(ack(resumed));
+      await Promise.all([slow.close(), fast.close()]);
+      await hub.close();
+    },
+  );
+
+  it("reports a stalled sink retirement while a healthy sibling keeps advancing", async () => {
     const owner = new FakeOwner();
-    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const timers = new Set<() => void>();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
+      scheduler: {
+        nowMs: () => 0,
+        createId: () => crypto.randomUUID(),
+        microtask: queueMicrotask,
+        timer: (callback) => {
+          timers.add(callback);
+          return {
+            cancel: () => {
+              timers.delete(callback);
+            },
+          };
+        },
+      },
+    });
     const slowMessages: TerminalDeliveryServerMessage[] = [];
     const fastMessages: TerminalDeliveryServerMessage[] = [];
-    let releaseSlow!: () => void;
+    let release!: () => void;
     const blocked = new Promise<void>((resolve) => {
-      releaseSlow = resolve;
+      release = resolve;
     });
-    const slow = await hub.open(
-      "slow",
-      "pane-a",
-      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
-      (message) => {
-        slowMessages.push(message);
-        return blocked;
-      },
-    );
-    const fast = await hub.open(
-      "fast",
-      "pane-a",
-      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
-      (message) => fastMessages.push(message),
-    );
+    const offer = {
+      protocolVersions: [1] as const,
+      encodings: ["semantic-v1"] as const,
+      richPlacements: false,
+    };
+    const slow = await hub.open("slow-timeout", "pane-a", offer, (message) => {
+      slowMessages.push(message);
+      return blocked;
+    });
+    const fast = await hub.open("fast", "pane-a", offer, (message) => {
+      fastMessages.push(message);
+    });
+    let retirement: string | undefined;
+    void slow.closed?.then((reason) => {
+      retirement = reason;
+    });
     owner.emit(seed());
     await settle();
     fast.ack(ack(fastMessages[0] as TerminalDeliveryEnvelope));
-    for (let revision = 1; revision <= 20; revision += 1) owner.emit(patch(revision, revision % 2));
     await settle();
-    const latest = fastMessages.findLast(
-      (message) => message.type === "terminal.delivery",
-    ) as TerminalDeliveryEnvelope;
-    expect(latest.canonicalRevision).toBe(20);
-    fast.ack(ack(latest));
-    expect(hub.metrics()).toMatchObject({ clients: 2, inFlight: 1, latestPointers: 1 });
-    expect(hub.metrics().maxQueueDepth).toBeLessThanOrEqual(2);
-    expect(hub.convergenceSnapshot().clients).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ clientId: "slow", inFlightRevision: 0, latestRevision: 20 }),
-        expect.objectContaining({ clientId: "fast", baselineRevision: 20 }),
-      ]),
-    );
-    expect(slowMessages.filter((message) => message.type === "terminal.delivery")).toHaveLength(1);
-    releaseSlow();
+    expect(timers.size).toBe(1);
+    for (const callback of [...timers]) callback();
     await settle();
+    expect(retirement).toBe("sink-failed");
+    expect(hub.metrics().clients).toBe(1);
+    expect(owner.closes).toBe(0);
+    release();
     slow.ack(ack(slowMessages[0] as TerminalDeliveryEnvelope));
+    owner.emit(patch(1, 1));
     await settle();
-    const resumed = slowMessages.findLast(
+    expect(slowMessages).toHaveLength(1);
+    const advanced = fastMessages.findLast(
       (message) => message.type === "terminal.delivery",
     ) as TerminalDeliveryEnvelope;
-    expect(resumed.canonicalRevision).toBe(20);
-    expect(resumed.frame).toBe("seed");
-    slow.ack(ack(resumed));
-    await Promise.all([slow.close(), fast.close()]);
+    expect(advanced.canonicalRevision).toBe(1);
+    fast.ack(ack(advanced));
+    const reconnectMessages: TerminalDeliveryServerMessage[] = [];
+    const reconnect = await hub.open("slow-timeout", "pane-a", offer, (message) => {
+      reconnectMessages.push(message);
+    });
+    await settle();
+    expect(owner.subscriptions).toBe(1);
+    expect(reconnectMessages[0]).toMatchObject({ frame: "seed", canonicalRevision: 1 });
+    await reconnect.close();
+    await fast.close();
     await hub.close();
   });
 
@@ -1384,7 +1471,10 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
           };
 
     owner.emit(canonicalUpdate(0, snapshots[0]!));
-    await settle();
+    await vi.waitFor(
+      () => expect(messages.some((message) => message.type === "terminal.delivery")).toBe(true),
+      { timeout: 10_000 },
+    );
     const first = messages.find(
       (message) => message.type === "terminal.delivery",
     ) as TerminalDeliveryEnvelope;
@@ -1430,7 +1520,13 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     }
     await settle();
     connection.ack(firstCommit.ack);
-    await settle();
+    await vi.waitFor(
+      () =>
+        expect(messages.findLast((message) => message.type === "terminal.delivery")).toMatchObject({
+          canonicalRevision: 2,
+        }),
+      { timeout: 10_000 },
+    );
     const coalesced = messages.findLast(
       (message) => message.type === "terminal.delivery",
     ) as TerminalDeliveryEnvelope;
@@ -1470,7 +1566,13 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
       },
       (message) => reconnectMessages.push(message),
     );
-    await settle();
+    await vi.waitFor(
+      () =>
+        expect(reconnectMessages.some((message) => message.type === "terminal.delivery")).toBe(
+          true,
+        ),
+      { timeout: 10_000 },
+    );
     const reseed = reconnectMessages[0] as TerminalDeliveryEnvelope;
     expect(reseed).toMatchObject({ frame: "seed", canonicalRevision: 3 });
     expect(decodeCompactSemanticTerminalUpdate(assembledBytes(reseed, reconnectMessages))).toEqual({
@@ -1535,7 +1637,11 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
       hashAlgorithm: "fnv1a64-v1",
       snapshot,
     });
-    await settle();
+    await vi.waitFor(
+      () =>
+        expect(messages.some((message) => message.type === "terminal.delivery.fault")).toBe(true),
+      { timeout: 10_000 },
+    );
     expect(
       messages.findLast((message) => message.type === "terminal.delivery.fault"),
     ).toMatchObject({ reason: "state-too-large" });
@@ -1719,3 +1825,677 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     await hub.close();
   });
 });
+
+/** Explicitly release I/O turns while observing a suspended large reduction. */
+function cooperativeScheduler() {
+  const timers = new Set<{ task: () => void; delay: number }>();
+  return {
+    scheduler: {
+      nowMs: () => performance.now(),
+      createId: () => crypto.randomUUID(),
+      microtask: (task: () => void) => queueMicrotask(task),
+      timer: (task: () => void, delay: number) => {
+        const timer = { task, delay };
+        timers.add(timer);
+        return {
+          cancel: () => {
+            timers.delete(timer);
+          },
+        };
+      },
+    },
+    async until(done: () => boolean) {
+      for (let turn = 0; turn < 400; turn += 1) {
+        if (done()) return;
+        for (const timer of [...timers])
+          if (timer.delay === 0) {
+            timers.delete(timer);
+            timer.task();
+          }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      expect(done()).toBe(true);
+    },
+  };
+}
+
+function largeSeed(): Extract<CanonicalTerminalReplicaUpdate, { type: "terminal.seed" }> {
+  const snapshot = blankTerminalReplicaSnapshot(80, 104);
+  return {
+    ...seed(),
+    type: "terminal.seed",
+    cols: 80,
+    rows: 104,
+    snapshot,
+    stateHash: hashTerminalReplicaSnapshot(snapshot),
+  } as Extract<CanonicalTerminalReplicaUpdate, { type: "terminal.seed" }>;
+}
+const cooperativeOffer = {
+  protocolVersions: [1],
+  encodings: ["semantic-compact-v1" as const],
+  richPlacements: false,
+};
+
+describe("cooperative canonical hub reduction", () => {
+  it("lets another pane deliver while serializing a patch behind an unfinished seed", async () => {
+    const clock = cooperativeScheduler();
+    const a = new FakeOwner();
+    const b = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(
+      generation,
+      "workspace",
+      (id) => (id === "pane-a" ? a : b),
+      clock,
+    );
+    const messagesA: TerminalDeliveryServerMessage[] = [];
+    const messagesB: TerminalDeliveryServerMessage[] = [];
+    const client = await hub.open("a", "pane-a", cooperativeOffer, (m) => {
+      messagesA.push(m);
+    });
+    await hub.open("b", "pane-b", cooperativeOffer, (m) => {
+      messagesB.push(m);
+    });
+    const initial = largeSeed();
+    a.emit(initial);
+    b.emit({ ...seed(), semanticPaneId: "pane-b" });
+    await settle();
+    expect(messagesA).toHaveLength(0);
+    expect(messagesB.some((m) => m.type === "terminal.delivery")).toBe(true);
+    expect(hub.convergenceSnapshot().panes.map((p) => p.semanticPaneId)).toEqual(["pane-b"]);
+    const snapshot = { ...initial.snapshot, cursor: { ...initial.snapshot.cursor, x: 1 } };
+    a.emit({
+      ...patch(1, 1),
+      cols: 80,
+      rows: 104,
+      stateHash: hashTerminalReplicaSnapshot(snapshot),
+      type: "terminal.patch",
+      patch: { rows: [], cursor: snapshot.cursor },
+    });
+    await clock.until(() =>
+      hub
+        .convergenceSnapshot()
+        .panes.some((p) => p.semanticPaneId === "pane-a" && p.revision === 1),
+    );
+    await clock.until(() => messagesA.some((m) => m.type === "terminal.delivery"));
+    const first = messagesA.find((m) => m.type === "terminal.delivery") as TerminalDeliveryEnvelope;
+    if (first.canonicalRevision === 0) client.ack(ack(first));
+    await settle();
+    expect(messagesA.findLast((m) => m.type === "terminal.delivery")).toMatchObject({
+      canonicalRevision: 1,
+      canonicalStateHash: hashTerminalReplicaSnapshot(snapshot),
+    });
+    await hub.close();
+  });
+
+  it("processes a queued tombstone after the seed and stops subsequent work", async () => {
+    const clock = cooperativeScheduler();
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, clock);
+    const messages: TerminalDeliveryServerMessage[] = [];
+    await hub.open("a", "pane-a", cooperativeOffer, (message) => {
+      messages.push(message);
+    });
+    owner.emit(largeSeed());
+    await settle();
+    owner.emit({ ...tombstone(1), cols: 80, rows: 104 });
+    owner.emit(seed(2));
+    await clock.until(() => messages.some((message) => message.type === "terminal.delivery.fault"));
+    expect(
+      messages.findLast((message) => message.type === "terminal.delivery.fault"),
+    ).toMatchObject({ reason: "source-closed" });
+    expect(
+      messages
+        .filter((message) => message.type === "terminal.delivery")
+        .every((message) => message.canonicalRevision < 2),
+    ).toBe(true);
+    await hub.close();
+  });
+
+  it.each(["connection", "reset", "hub"])(
+    "cancels suspended work on %s retirement",
+    async (mode) => {
+      const clock = cooperativeScheduler();
+      const owner = new FakeOwner();
+      const hub = new SessionRuntimeTerminalDeliveryHub(
+        generation,
+        "workspace",
+        () => owner,
+        clock,
+      );
+      const messages: TerminalDeliveryServerMessage[] = [];
+      const client = await hub.open("a", "pane-a", cooperativeOffer, (m) => {
+        messages.push(m);
+      });
+      owner.emit(largeSeed());
+      await settle();
+      const retiredListener = owner.listener!;
+      const retiredRaw = owner.raw!;
+      if (mode === "connection") await client.close();
+      else if (mode === "reset") await hub.resetForSessionRestart();
+      else await hub.close();
+      await settle();
+      expect(messages.some((m) => m.type === "terminal.delivery")).toBe(false);
+      expect(hub.convergenceSnapshot().panes).toHaveLength(0);
+      if (mode !== "hub") {
+        const fresh: TerminalDeliveryServerMessage[] = [];
+        await hub.open("fresh", "pane-a", cooperativeOffer, (m) => {
+          fresh.push(m);
+        });
+        retiredListener(seed(100), null);
+        retiredRaw({
+          baseRevision: 99,
+          revision: 100,
+          bytes: new Uint8Array([65]),
+          contiguous: true,
+        });
+        owner.emit(seed());
+        await settle();
+        expect(fresh.find((m) => m.type === "terminal.delivery")).toMatchObject({
+          canonicalRevision: 0,
+        });
+        expect(hub.metrics().rawJournalBytes).toBe(0);
+      }
+      await hub.close();
+    },
+  );
+
+  it.each(["count", "cells", "unsafe"])(
+    "bounds pending %s and permits a fresh source without disturbing another pane",
+    async (kind) => {
+      const clock = cooperativeScheduler();
+      const a = new FakeOwner();
+      const b = new FakeOwner();
+      const hub = new SessionRuntimeTerminalDeliveryHub(
+        generation,
+        "workspace",
+        (id) => (id === "pane-a" ? a : b),
+        clock,
+      );
+      const messages: TerminalDeliveryServerMessage[] = [];
+      const sibling: TerminalDeliveryServerMessage[] = [];
+      await hub.open("a", "pane-a", cooperativeOffer, (m) => {
+        messages.push(m);
+      });
+      await hub.open("b", "pane-b", cooperativeOffer, (m) => {
+        sibling.push(m);
+      });
+      a.emit(largeSeed());
+      await settle();
+      if (kind === "count") for (let i = 1; i <= 129; i += 1) a.emit(patch(i, i % 2));
+      else {
+        const oversized = largeSeed();
+        a.emit({
+          ...oversized,
+          snapshot: {
+            ...oversized.snapshot,
+            cols: kind === "unsafe" ? Number.MAX_SAFE_INTEGER : 80,
+            history: kind === "cells" ? Array(13_000).fill(oversized.snapshot.grid[0]) : [],
+          },
+        });
+      }
+      if (kind === "cells") a.emit(patch(1, 1));
+      b.emit({ ...seed(), semanticPaneId: "pane-b" });
+      await settle();
+      expect(messages.find((m) => m.type === "terminal.delivery.fault")).toMatchObject({
+        reason: "state-too-large",
+      });
+      expect(messages.some((m) => m.type === "terminal.delivery")).toBe(false);
+      expect(sibling.some((m) => m.type === "terminal.delivery")).toBe(true);
+      const fresh: TerminalDeliveryServerMessage[] = [];
+      await hub.open("fresh", "pane-a", cooperativeOffer, (m) => {
+        fresh.push(m);
+      });
+      a.emit(seed());
+      await settle();
+      expect(fresh.find((m) => m.type === "terminal.delivery")).toMatchObject({
+        canonicalRevision: 0,
+      });
+      expect(a.subscriptions).toBe(2);
+      await hub.close();
+    },
+  );
+
+  it("rejects an overflowing synchronous startup and closes its source", async () => {
+    let closes = 0;
+    const owner: TerminalDeliverySourceOwner = {
+      async subscribeSource(listener) {
+        for (let revision = 0; revision < 130; revision += 1) listener(seed(revision), null);
+        return {
+          generation,
+          semanticPaneId: "pane-a",
+          close: async () => {
+            closes += 1;
+          },
+        };
+      },
+    };
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    await expect(hub.open("a", "pane-a", cooperativeOffer, () => {})).rejects.toThrow(
+      "retired during startup",
+    );
+    expect(closes).toBe(1);
+    expect(hub.metrics().connections).toBe(0);
+    await hub.close();
+  });
+
+  it.each(["hidden", "frozen"] as const)(
+    "retains %s visibility while a seed finishes",
+    async (visibility) => {
+      const clock = cooperativeScheduler();
+      const owner = new FakeOwner();
+      const hub = new SessionRuntimeTerminalDeliveryHub(
+        generation,
+        "workspace",
+        () => owner,
+        clock,
+      );
+      const messages: TerminalDeliveryServerMessage[] = [];
+      const client = await hub.open("a", "pane-a", cooperativeOffer, (m) => {
+        messages.push(m);
+      });
+      owner.emit(largeSeed());
+      await settle();
+      client.setVisibility(visibility);
+      await clock.until(() => hub.convergenceSnapshot().panes.length === 1);
+      expect(messages).toHaveLength(0);
+      client.setVisibility("visible");
+      await clock.until(() => messages.some((message) => message.type === "terminal.delivery"));
+      expect(messages.find((m) => m.type === "terminal.delivery")).toMatchObject({
+        frame: "seed",
+        canonicalRevision: 0,
+      });
+      await hub.close();
+    },
+  );
+});
+
+describe("cooperative compact representation ownership", () => {
+  it("shares one pending encode, keeps ACK state empty, and lets one subscriber leave", async () => {
+    const encode = vi.spyOn(core, "encodeCompactSemanticTerminalUpdateCooperatively");
+    const clock = cooperativeScheduler();
+    const owner = new FakeOwner();
+    const sibling = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(
+      generation,
+      "workspace",
+      (id) => (id === "pane-a" ? owner : sibling),
+      clock,
+    );
+    const a: TerminalDeliveryServerMessage[] = [];
+    const b: TerminalDeliveryServerMessage[] = [];
+    const other: TerminalDeliveryServerMessage[] = [];
+    try {
+      const first = await hub.open("a", "pane-a", cooperativeOffer, (m) => {
+        a.push(m);
+      });
+      await hub.open("b", "pane-a", cooperativeOffer, (m) => {
+        b.push(m);
+      });
+      await hub.open("other", "pane-b", cooperativeOffer, (m) => {
+        other.push(m);
+      });
+      const initial = largeSeed();
+      owner.emit(initial);
+      await clock.until(() => encode.mock.calls.length === 1);
+      expect(a).toHaveLength(0);
+      expect(b).toHaveLength(0);
+      expect(hub.metrics().inFlight).toBe(0);
+      expect(hub.metrics().representationCacheBytes).toBe(0);
+      const signal = encode.mock.calls[0]![1].signal!;
+      await first.close();
+      expect(signal.aborted).toBe(false);
+      sibling.emit({ ...seed(), semanticPaneId: "pane-b" });
+      await settle();
+      expect(other.some((m) => m.type === "terminal.delivery")).toBe(true);
+      expect(b).toHaveLength(0);
+      await clock.until(() => b.some((m) => m.type === "terminal.delivery"));
+      expect(encode).toHaveBeenCalledTimes(1);
+      const envelope = b.find((m) => m.type === "terminal.delivery") as TerminalDeliveryEnvelope;
+      expect(core.decodeCompactSemanticTerminalUpdate(assembledBytes(envelope, b))).toEqual({
+        frame: "seed",
+        revision: 0,
+        snapshot: initial.snapshot,
+      });
+      expect(a).toHaveLength(0);
+    } finally {
+      await hub.close();
+      encode.mockRestore();
+    }
+  });
+
+  it("pins the encoding revision while a newer canonical update arrives", async () => {
+    const encode = vi.spyOn(core, "encodeCompactSemanticTerminalUpdateCooperatively");
+    const clock = cooperativeScheduler();
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, clock);
+    const messages: TerminalDeliveryServerMessage[] = [];
+    try {
+      const client = await hub.open("a", "pane-a", cooperativeOffer, (m) => {
+        messages.push(m);
+      });
+      const initial = largeSeed();
+      owner.emit(initial);
+      await clock.until(() => encode.mock.calls.length === 1);
+      const next = { ...initial.snapshot, cursor: { ...initial.snapshot.cursor, x: 1 } };
+      owner.emit({
+        ...patch(1, 1),
+        cols: 80,
+        rows: 104,
+        stateHash: hashTerminalReplicaSnapshot(next),
+        type: "terminal.patch",
+        patch: { rows: [], cursor: next.cursor },
+      });
+      await settle();
+      expect(hub.convergenceSnapshot().panes[0]?.revision).toBe(1);
+      expect(hub.metrics().canonicalRevisions).toBe(2);
+      expect(messages).toHaveLength(0);
+      await clock.until(() => messages.some((m) => m.type === "terminal.delivery"));
+      const initialEnvelope = messages.find(
+        (m) => m.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      expect(initialEnvelope.canonicalRevision).toBe(0);
+      client.ack(ack(initialEnvelope));
+      await settle();
+      const latest = messages.findLast(
+        (m) => m.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      expect(latest).toMatchObject({ frame: "patch", canonicalRevision: 1, baseRevision: 0 });
+      expect(encode).toHaveBeenCalledTimes(1);
+      client.ack(ack(latest));
+      expect(hub.metrics().canonicalRevisions).toBe(1);
+    } finally {
+      await hub.close();
+      encode.mockRestore();
+    }
+  });
+
+  it("bounds distinct pending encodes while another pane stays responsive", async () => {
+    const signals: AbortSignal[] = [];
+    const encode = vi
+      .spyOn(core, "encodeCompactSemanticTerminalUpdateCooperatively")
+      .mockImplementation(
+        (_payload, options) =>
+          new Promise((_resolve, reject) => {
+            const signal = options.signal!;
+            signals.push(signal);
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      );
+    const clock = cooperativeScheduler();
+    const owner = new FakeOwner();
+    const sibling = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(
+      generation,
+      "workspace",
+      (paneId) => (paneId === "pane-a" ? owner : sibling),
+      clock,
+    );
+    const messages: TerminalDeliveryServerMessage[] = [];
+    try {
+      await hub.open("client-0", "pane-a", cooperativeOffer, () => {});
+      const initial = largeSeed();
+      owner.emit(initial);
+      await clock.until(() => signals.length === 1);
+      for (let revision = 1; revision <= 32; revision += 1) {
+        const next = { ...initial.snapshot, cursor: { ...initial.snapshot.cursor, x: revision } };
+        owner.emit({
+          ...patch(revision, revision),
+          cols: 80,
+          rows: 104,
+          stateHash: hashTerminalReplicaSnapshot(next),
+          type: "terminal.patch",
+          patch: { rows: [], cursor: next.cursor },
+        });
+        await settle();
+        await hub.open(`client-${revision}`, "pane-a", cooperativeOffer, (m) => {
+          messages.push(m);
+        });
+        await settle();
+      }
+      expect(encode).toHaveBeenCalledTimes(32);
+      expect(messages).toContainEqual(expect.objectContaining({ reason: "state-too-large" }));
+      expect(hub.metrics().inFlight).toBe(0);
+      const other: TerminalDeliveryServerMessage[] = [];
+      await hub.open("client-0", "pane-b", cooperativeOffer, (m) => {
+        other.push(m);
+      });
+      sibling.emit({ ...seed(), semanticPaneId: "pane-b" });
+      await settle();
+      expect(other.some((m) => m.type === "terminal.delivery")).toBe(true);
+    } finally {
+      await hub.close();
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      encode.mockRestore();
+    }
+  });
+
+  it.each(["close", "hide", "reset", "tombstone"])(
+    "cancels unfinished bytes on %s",
+    async (retirement) => {
+      const encode = vi.spyOn(core, "encodeCompactSemanticTerminalUpdateCooperatively");
+      const clock = cooperativeScheduler();
+      const owner = new FakeOwner();
+      const hub = new SessionRuntimeTerminalDeliveryHub(
+        generation,
+        "workspace",
+        () => owner,
+        clock,
+      );
+      const messages: TerminalDeliveryServerMessage[] = [];
+      try {
+        const client = await hub.open("a", "pane-a", cooperativeOffer, (m) => {
+          messages.push(m);
+        });
+        owner.emit(largeSeed());
+        await clock.until(() => encode.mock.calls.length === 1);
+        const signal = encode.mock.calls[0]![1].signal!;
+        if (retirement === "close") await client.close();
+        else if (retirement === "hide") client.setVisibility("hidden");
+        else if (retirement === "reset") await hub.resetForSessionRestart();
+        else {
+          owner.emit({ ...tombstone(1), cols: 80, rows: 104 });
+          await settle();
+        }
+        expect(signal.aborted).toBe(true);
+        await settle();
+        expect(messages.some((m) => m.type === "terminal.delivery")).toBe(false);
+        expect(hub.metrics().representationCacheBytes).toBe(0);
+        expect(hub.metrics().inFlight).toBe(0);
+        if (retirement === "hide") {
+          client.setVisibility("visible");
+          await clock.until(() => messages.some((m) => m.type === "terminal.delivery"));
+          expect(encode).toHaveBeenCalledTimes(2);
+        }
+      } finally {
+        await hub.close();
+        encode.mockRestore();
+      }
+    },
+  );
+});
+
+describe("native seed backing retention", () => {
+  it("roundtrips allocated erased tails independently of the used boundary", () => {
+    const native = blankNative();
+    const colored = {
+      ...native,
+      grid: [
+        {
+          ...native.grid[0]!,
+          used: 0,
+          cells: native.grid[0]!.cells.map((cell) => ({ ...cell, background: 16777233 })),
+        },
+      ],
+    };
+    const canonical = {
+      ...blankTerminalReplicaSnapshot(2, 1),
+      grid: [projectNativeGridRow(colored.grid[0], 2)!],
+    };
+    expect(rememberNativeSeedBacking(canonical, colored)).toBe(true);
+    const backing = takeNativeSeedBacking(canonical)!;
+    expect(backing.chargedBytes).toBe(backing.encoded.byteLength + 256);
+    expect(decodeNativeGridCapture(new TextDecoder().decode(backing.encoded))).toEqual(colored);
+  });
+
+  it("enforces the aggregate charge budget and releases committed backing on close", async () => {
+    // Synthetic accounting isolates hub ownership from allocation cost. The
+    // producer's serialized payload bound is independently checked below.
+    const take = vi.spyOn(nativeSeeds, "takeNativeSeedBacking");
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    try {
+      await hub.open("reader", "pane-a", cooperativeOffer, () => {});
+      take.mockReturnValue({
+        encoded: new Uint8Array([1]),
+        chargedBytes: nativeSeeds.MAX_RETAINED_NATIVE_BACKING_BYTES,
+      });
+      owner.emit(seed());
+      await settle();
+      expect(hub.metrics().nativeBackingBytes).toBe(nativeSeeds.MAX_RETAINED_NATIVE_BACKING_BYTES);
+      owner.emit(seed(1));
+      await settle();
+      expect(hub.retainedNativeBacking("pane-a", seed(1))).toBeNull();
+      expect(hub.metrics().nativeBackingBytes).toBe(nativeSeeds.MAX_RETAINED_NATIVE_BACKING_BYTES);
+    } finally {
+      await hub.close();
+      take.mockRestore();
+    }
+    expect(hub.metrics().nativeBackingBytes).toBe(0);
+  });
+
+  it("rejects an oversized native payload", () => {
+    const native = blankNative();
+    const huge = {
+      flags: 0,
+      width: 1,
+      bytesHex: "",
+      text: "",
+      attributes: 0,
+      foreground: 8,
+      background: 8,
+      underline: 8,
+      link: 0,
+      storageFlags: 0,
+    };
+    // Shared fixture cells exercise the serializer limit without first
+    // allocating a million independent native objects.
+    const large = { ...native, grid: [{ flags: 0, used: 0, cells: Array(1000000).fill(huge) }] };
+    const canonical = {
+      ...blankTerminalReplicaSnapshot(2, 1),
+      grid: [projectNativeGridRow(large.grid[0], 2)!],
+    };
+    expect(rememberNativeSeedBacking(canonical, large)).toBe(false);
+  });
+
+  it("retains an exact old revision until its reader advances, then releases its charge", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const messages: TerminalDeliveryServerMessage[] = [];
+    try {
+      const client = await hub.open("reader", "pane-a", cooperativeOffer, (m) => {
+        messages.push(m);
+      });
+      const initial = seed();
+      if (initial.type !== "terminal.seed") throw new Error("seed expected");
+      const native = blankNative();
+      expect(rememberNativeSeedBacking(initial.snapshot, native)).toBe(true);
+      owner.emit(initial);
+      // Ownership is acquired before the scheduled reducer runs.
+      expect(hub.metrics().nativeBackingBytes).toBeGreaterThan(0);
+      expect(takeNativeSeedBacking(initial.snapshot)).toBeUndefined();
+      await settle();
+      const first = messages.find(
+        (m) => m.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      owner.emit(patch(1, 1));
+      await settle();
+      const retained = hub.retainedNativeBacking("pane-a", initial);
+      expect(retained?.status).toBe("retained");
+      if (retained?.status !== "retained") throw new Error("capture expected");
+      const response = retained.encodeBody(new Uint8Array());
+      expect(decodeNativeGridCapture(new TextDecoder().decode(response))).toMatchObject(native);
+      response.fill(0);
+      expect(
+        decodeNativeGridCapture(new TextDecoder().decode(retained.encodeBody(new Uint8Array()))),
+      ).toMatchObject(native);
+      expect(retained.isCurrent()).toBe(true);
+      expect(hub.retainedNativeBacking("pane-a", { ...initial, stateHash: "wrong" })).toBeNull();
+      client.ack(ack(first));
+      await settle();
+      const last = messages.findLast(
+        (m) => m.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      expect(last.canonicalRevision).toBe(1);
+      client.ack(ack(last));
+      expect(retained.isCurrent()).toBe(false);
+      expect(hub.retainedNativeBacking("pane-a", initial)).toBeNull();
+      expect(hub.metrics().nativeBackingBytes).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("releases a pending lease when the hub closes before reduction", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    await hub.open("reader", "pane-a", cooperativeOffer, () => {});
+    const initial = seed();
+    if (initial.type !== "terminal.seed") throw new Error("seed expected");
+    rememberNativeSeedBacking(initial.snapshot, blankNative());
+    owner.emit(initial);
+    expect(hub.metrics().nativeBackingBytes).toBeGreaterThan(0);
+    await hub.close();
+    expect(hub.metrics().nativeBackingBytes).toBe(0);
+  });
+
+  it("does not associate native backing after held output changes the canonical view", () => {
+    const snapshot = blankTerminalReplicaSnapshot(2, 1);
+    expect(
+      rememberNativeSeedBacking(
+        { ...snapshot, cursor: { ...snapshot.cursor, x: 1 } },
+        blankNative(),
+      ),
+    ).toBe(false);
+    const changed = {
+      ...snapshot,
+      grid: [
+        {
+          ...snapshot.grid[0]!,
+          cells: [{ ...snapshot.grid[0]!.cells[0]!, grapheme: "x" }, snapshot.grid[0]!.cells[1]!],
+        },
+      ],
+    };
+    expect(rememberNativeSeedBacking(changed, blankNative())).toBe(false);
+    expect(takeNativeSeedBacking(changed)).toBeUndefined();
+  });
+});
+
+function blankNative(): NativeGridCapture {
+  return {
+    version: 2,
+    cols: 2,
+    rows: 1,
+    history: 0,
+    hscrolled: 0,
+    limit: 100,
+    cursor: [0, 0],
+    grid: [
+      {
+        used: 2,
+        flags: 0,
+        cells: Array.from({ length: 2 }, () => ({
+          flags: 0,
+          width: 1,
+          bytesHex: "20",
+          text: " ",
+          attributes: 0,
+          foreground: 8,
+          background: 8,
+          underline: 8,
+          link: 0,
+          storageFlags: 0,
+        })),
+      },
+    ],
+  };
+}

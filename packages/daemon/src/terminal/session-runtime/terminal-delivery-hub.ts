@@ -1,4 +1,11 @@
 import {
+  MAX_RETAINED_NATIVE_BACKING_BYTES,
+  takeNativeSeedBacking,
+  type VerifiedNativeSeedBacking,
+  type NativeBackingIdentity,
+  type RetainedNativeBackingResult,
+} from "./native-seed-backing.ts";
+import {
   TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES,
   TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
   TerminalDeliveryEnvelopeSchemaZ,
@@ -21,7 +28,11 @@ import {
 import {
   TerminalDeliveryStateTooLargeError,
   applyTerminalReplicaUpdate,
+  applyTerminalReplicaUpdateCooperatively,
+  terminalReplicaUpdateNeedsCooperativeReduction,
   encodeCompactSemanticTerminalUpdate,
+  encodeCompactSemanticTerminalUpdateCooperatively,
+  terminalSemanticUpdateNeedsCooperativeEncoding,
   encodeAnsiTerminalRepresentation,
   encodeSemanticTerminalUpdate,
   hashTerminalDeliveryRepresentation,
@@ -52,6 +63,7 @@ export const MAX_REPRESENTATION_CACHE_ENTRIES = 8;
 export const MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
 export const MAX_CLIENTS = 64;
 const MAX_PANES = 32;
+const MAX_PENDING_CANONICAL_CELLS = 1_000_000;
 const MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
 const BACKGROUND_CADENCE_MS = 100;
 
@@ -68,6 +80,8 @@ export interface TerminalDeliveryMetrics {
   readonly rawJournalBytes: number;
   /** Canonical snapshots reachable by current delivery baselines and transactions. */
   readonly canonicalRevisions: number;
+  /** Encoded payload bytes plus metadata for retained native backing, not RSS. */
+  readonly nativeBackingBytes: number;
   readonly maxSlowClientMs: number;
   readonly queueDepth: number;
   readonly maxQueueDepth: number;
@@ -94,6 +108,8 @@ export interface TerminalDeliveryConvergenceSnapshot {
 }
 
 export interface TerminalDeliveryConnection {
+  /** Local lifecycle notification; sink failure requires transport reconnection. */
+  readonly closed: Promise<"closed" | "sink-failed">;
   readonly negotiation: TerminalDeliveryNegotiationResult;
   ack(ack: TerminalDeliveryAck): void;
   nack(nack: TerminalDeliveryNack): void;
@@ -101,13 +117,21 @@ export interface TerminalDeliveryConnection {
   close(): Promise<void>;
 }
 
+interface NativeBackingLease {
+  backing: VerifiedNativeSeedBacking | null;
+  committed: boolean;
+}
+
 interface RevisionRecord {
+  readonly nativeBacking: NativeBackingLease | null;
   readonly update: CanonicalTerminalReplicaUpdate;
   readonly state: TerminalReplicaState;
   readonly trace: SessionRuntimeTraceContext | null;
 }
 
 interface PendingCanonicalUpdate {
+  readonly nativeBacking: NativeBackingLease | null;
+  readonly cells: number;
   readonly update: CanonicalTerminalReplicaUpdate;
   readonly trace: SessionRuntimeTraceContext | null;
 }
@@ -124,7 +148,11 @@ interface PaneState {
   rawFloorRevision: number;
   lastRawRevision: number;
   readonly pendingCanonical: PendingCanonicalUpdate[];
+  activeNativeBacking: NativeBackingLease | null;
+  pendingCanonicalCells: number;
   canonicalScheduled: boolean;
+  readonly canonicalAbort: AbortController;
+  canonicalYieldStartedAt: number;
   pendingDeliveryTrace: SessionRuntimeTraceContext | null;
 }
 
@@ -160,9 +188,11 @@ interface ClientState {
     sentAt: number;
   } | null;
   latestRevision: number | null;
+  encoding: PendingClientEncoding | null;
   scheduled: boolean;
   closed: boolean;
   lifecycleOpenRecorded: boolean;
+  readonly resolveClosed: (reason: "closed" | "sink-failed") => void;
   readonly outgoing: Array<() => TerminalDeliveryServerMessage>;
   sending: boolean;
   retireAfterDrain: boolean;
@@ -170,6 +200,28 @@ interface ClientState {
   /** Delivery displaced by authoritative source close; its racing ACK is benign. */
   sourceClosedFlight: TerminalDeliveryEnvelope | null;
   backgroundTimer: SessionRuntimeTimer | null;
+}
+
+type SeedEncodingOutcome = { readonly bytes: Uint8Array } | { readonly error: unknown };
+interface PendingSeedEncoding {
+  readonly key: string;
+  readonly pane: PaneState;
+  readonly abort: AbortController;
+  readonly clients: Set<ClientState>;
+  yieldStartedAt: number;
+}
+interface PendingClientEncoding {
+  readonly job: PendingSeedEncoding;
+  readonly target: RevisionRecord;
+  readonly baselineRevision: number;
+  readonly baselineHash: string | null;
+  readonly reseedRequired: boolean;
+  readonly traceStarted: number;
+}
+class DeferredSeedEncoding extends Error {
+  constructor(readonly payload: TerminalSemanticDeliveryPayload) {
+    super("Deferred compact seed encoding");
+  }
 }
 
 interface CachedRepresentation {
@@ -263,7 +315,9 @@ export class SessionRuntimeTerminalDeliveryHub {
   /** Synchronous reservations held while an async pane source is starting. */
   readonly #pendingClients = new Map<string, string>();
   readonly #cache = new Map<string, CachedRepresentation>();
+  readonly #pendingEncodings = new Map<string, PendingSeedEncoding>();
   #cacheBytes = 0;
+  #nativeBackingBytes = 0;
   #coalesced = 0;
   #reseeds = 0;
   #nacks = 0;
@@ -327,6 +381,10 @@ export class SessionRuntimeTerminalDeliveryHub {
     try {
       const pane = await this.#ensurePane(semanticPaneId);
       if (this.#closed) throw new Error("Terminal delivery hub is closed");
+      let resolveClosed!: (reason: "closed" | "sink-failed") => void;
+      const closed = new Promise<"closed" | "sink-failed">((resolve) => {
+        resolveClosed = resolve;
+      });
       const client: ClientState = {
         key,
         clientId,
@@ -343,9 +401,11 @@ export class SessionRuntimeTerminalDeliveryHub {
         reseedRequired: false,
         inFlight: null,
         latestRevision: pane.latest?.update.revision ?? null,
+        encoding: null,
         scheduled: false,
         closed: false,
         lifecycleOpenRecorded: false,
+        resolveClosed,
         outgoing: [],
         sending: false,
         retireAfterDrain: false,
@@ -359,11 +419,14 @@ export class SessionRuntimeTerminalDeliveryHub {
       this.#recordDeliveryStatus(client, pane);
       return {
         negotiation,
+        closed,
         ack: (ack) => this.#ack(client, ack),
         nack: (nack) => this.#nack(client, nack),
         setVisibility: (visibilityInput) => {
           if (client.closed) return;
           client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
+          if (client.visibility === "hidden" || client.visibility === "frozen")
+            this.#cancelEncoding(client);
           if (client.visibility === "visible" || client.visibility === "background")
             this.#schedule(client);
           this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
@@ -373,6 +436,65 @@ export class SessionRuntimeTerminalDeliveryHub {
     } finally {
       this.#pendingClients.delete(key);
     }
+  }
+
+  retainedNativeBacking(
+    paneId: string,
+    expected: NativeBackingIdentity,
+  ): RetainedNativeBackingResult | null {
+    const pane = this.#panes.get(paneId);
+    const record = pane?.revisions.get(expected.revision);
+    const lease = record?.nativeBacking;
+    const backing = lease?.backing;
+    if (
+      this.#closed ||
+      !pane ||
+      !record ||
+      !backing ||
+      expected.generation !== this.generation ||
+      record.update.incarnation !== expected.incarnation ||
+      record.update.stateHash !== expected.stateHash
+    )
+      return null;
+    return {
+      status: "retained",
+      encodeBody: (prefix) => {
+        const encoded = lease.backing?.encoded;
+        if (!encoded) throw new Error("Native backing revision was retired");
+        const body = new Uint8Array(prefix.byteLength + encoded.byteLength);
+        body.set(prefix);
+        body.set(encoded, prefix.byteLength);
+        return body;
+      },
+      authority: {
+        generation: this.generation,
+        workspaceName: this.workspaceName,
+        semanticPaneId: paneId,
+        incarnation: expected.incarnation,
+        revision: expected.revision,
+        stateHash: expected.stateHash,
+      },
+      isCurrent: () =>
+        !this.#closed &&
+        this.#panes.get(paneId) === pane &&
+        pane.revisions.get(expected.revision) === record &&
+        lease.backing !== null,
+    };
+  }
+
+  #releaseNativeBacking(lease: NativeBackingLease | null | undefined): void {
+    if (!lease?.backing) return;
+    this.#nativeBackingBytes -= lease.backing.chargedBytes;
+    lease.backing = null;
+  }
+
+  #clearPendingNativeBacking(pane: PaneState): void {
+    for (const pending of pane.pendingCanonical) this.#releaseNativeBacking(pending.nativeBacking);
+    if (!pane.activeNativeBacking?.committed) this.#releaseNativeBacking(pane.activeNativeBacking);
+  }
+
+  #clearRetainedNativeBacking(pane: PaneState): void {
+    for (const record of pane.revisions.values()) this.#releaseNativeBacking(record.nativeBacking);
   }
 
   metrics(): TerminalDeliveryMetrics {
@@ -394,6 +516,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         (sum, pane) => sum + pane.revisions.size,
         0,
       ),
+      nativeBackingBytes: this.#nativeBackingBytes,
       representationCacheBytes: this.#cacheBytes,
       rawJournalBytes: [...this.#panes.values()].reduce((sum, pane) => sum + pane.rawBytes, 0),
       maxSlowClientMs: Math.max(this.#maxSlowClientMs, currentSlow),
@@ -444,6 +567,7 @@ export class SessionRuntimeTerminalDeliveryHub {
 
   async resetForSessionRestart(): Promise<void> {
     for (const client of this.#clients.values()) {
+      this.#cancelEncoding(client);
       client.outgoing.length = 0;
       client.inFlight = null;
       this.#enqueue(client, {
@@ -457,7 +581,11 @@ export class SessionRuntimeTerminalDeliveryHub {
     const panes = [...this.#panes.values()];
     this.#panes.clear();
     for (const pane of panes) {
+      this.#clearRetainedNativeBacking(pane);
+      pane.canonicalAbort.abort();
+      this.#clearPendingNativeBacking(pane);
       pane.pendingCanonical.length = 0;
+      pane.pendingCanonicalCells = 0;
       pane.canonicalScheduled = false;
     }
     await Promise.allSettled(panes.map((pane) => pane.source?.close()));
@@ -493,24 +621,42 @@ export class SessionRuntimeTerminalDeliveryHub {
       rawFloorRevision: 0,
       lastRawRevision: -1,
       pendingCanonical: [],
+      activeNativeBacking: null,
+      pendingCanonicalCells: 0,
       canonicalScheduled: false,
+      canonicalAbort: new AbortController(),
+      canonicalYieldStartedAt: -Infinity,
       pendingDeliveryTrace: null,
     };
     this.#panes.set(semanticPaneId, pane);
     pane.start = owner
       .subscribeSource(
-        (update, trace) => this.#observeCanonical(semanticPaneId, update, trace),
-        (record) => this.#observeRaw(semanticPaneId, record),
+        (update, trace) => {
+          if (this.#panes.get(semanticPaneId) === pane)
+            this.#observeCanonical(semanticPaneId, update, trace);
+          else if (update.type === "terminal.seed") takeNativeSeedBacking(update.snapshot);
+        },
+        (record) => {
+          if (this.#panes.get(semanticPaneId) === pane) this.#observeRaw(semanticPaneId, record);
+        },
       )
       .then(async (source) => {
-        if (this.#closed || this.#panes.get(semanticPaneId) !== pane) {
+        if (
+          this.#closed ||
+          this.#panes.get(semanticPaneId) !== pane ||
+          pane?.canonicalAbort.signal.aborted
+        ) {
           await source.close();
           throw new Error("Terminal delivery source retired during startup");
         }
         pane!.source = source;
       })
       .catch((error) => {
-        if (this.#panes.get(semanticPaneId) === pane) this.#panes.delete(semanticPaneId);
+        if (this.#panes.get(semanticPaneId) === pane) {
+          this.#panes.delete(semanticPaneId);
+          this.#clearPendingNativeBacking(pane!);
+          this.#clearRetainedNativeBacking(pane!);
+        }
         throw error;
       });
     await pane.start;
@@ -522,16 +668,119 @@ export class SessionRuntimeTerminalDeliveryHub {
     update: CanonicalTerminalReplicaUpdate,
     trace: SessionRuntimeTraceContext | null,
   ): void {
+    // Consume even rejected source updates; an uncharged handoff must not
+    // linger behind a still-reachable canonical snapshot.
+    const backing =
+      update.type === "terminal.seed" ? takeNativeSeedBacking(update.snapshot) : undefined;
     const pane = this.#panes.get(semanticPaneId);
-    if (!pane) return;
-    pane.pendingCanonical.push({ update, trace });
+    if (!pane || pane.canonicalAbort.signal.aborted || this.#closed) return;
+    if (
+      update.workspaceName !== this.workspaceName ||
+      update.semanticPaneId !== semanticPaneId ||
+      update.generation !== this.generation
+    )
+      return;
+    const cells = canonicalUpdateCellCost(update);
+    // A single authoritative state retains its existing representation limits
+    // (including legacy fallback); this budget limits additional queued work.
+    if (
+      !Number.isSafeInteger(cells) ||
+      cells < 0 ||
+      pane.pendingCanonical.length >= MAX_CANONICAL_REVISIONS ||
+      (pane.pendingCanonical.length > 0 &&
+        cells > MAX_PENDING_CANONICAL_CELLS - pane.pendingCanonicalCells)
+    ) {
+      pane.canonicalAbort.abort();
+      this.#clearPendingNativeBacking(pane);
+      pane.pendingCanonical.length = 0;
+      pane.pendingCanonicalCells = 0;
+      for (const client of this.#clients.values())
+        if (client.paneId === semanticPaneId && !client.closed)
+          this.#fault(
+            client,
+            "state-too-large",
+            "Terminal source exceeded the pending update budget; reopen for a fresh snapshot",
+          );
+      return;
+    }
+    const nativeBacking: NativeBackingLease | null =
+      backing &&
+      backing.chargedBytes <= MAX_RETAINED_NATIVE_BACKING_BYTES - this.#nativeBackingBytes
+        ? { backing, committed: false }
+        : null;
+    if (nativeBacking) this.#nativeBackingBytes += backing!.chargedBytes;
+    pane.pendingCanonical.push({ update, trace, cells, nativeBacking });
+    pane.pendingCanonicalCells += cells;
     if (pane.canonicalScheduled) return;
     pane.canonicalScheduled = true;
     this.#scheduler.microtask(() => {
-      if (this.#panes.get(semanticPaneId) !== pane) return;
+      void this.#drainCanonical(semanticPaneId, pane);
+    });
+  }
+
+  async #drainCanonical(semanticPaneId: string, pane: PaneState): Promise<void> {
+    try {
+      while (
+        !this.#closed &&
+        this.#panes.get(semanticPaneId) === pane &&
+        !pane.canonicalAbort.signal.aborted
+      ) {
+        const pending = pane.pendingCanonical.shift();
+        if (!pending) break;
+        pane.pendingCanonicalCells -= pending.cells;
+        pane.activeNativeBacking = pending.nativeBacking;
+        try {
+          const work = this.#applyCanonical(
+            semanticPaneId,
+            pane,
+            pending.update,
+            pending.trace,
+            pending.nativeBacking,
+          );
+          // Keep the ordinary update burst synchronous; only large seeds yield.
+          if (work) await work;
+        } finally {
+          if (!pending.nativeBacking?.committed) this.#releaseNativeBacking(pending.nativeBacking);
+          pane.activeNativeBacking = null;
+        }
+      }
+    } catch {
+      if (!pane.canonicalAbort.signal.aborted && this.#panes.get(semanticPaneId) === pane) {
+        pane.canonicalAbort.abort();
+        this.#clearPendingNativeBacking(pane);
+        pane.pendingCanonical.length = 0;
+        pane.pendingCanonicalCells = 0;
+        for (const client of this.#clients.values())
+          if (client.paneId === semanticPaneId && !client.closed)
+            this.#fault(
+              client,
+              "protocol-violation",
+              "Terminal source update could not be validated",
+            );
+      }
+    } finally {
       pane.canonicalScheduled = false;
-      for (const pending of pane.pendingCanonical.splice(0))
-        this.#applyCanonical(semanticPaneId, pane, pending.update, pending.trace);
+    }
+  }
+
+  #yieldCanonical(pane: PaneState): Promise<void> {
+    // Core checkpoints are finer than an event-loop turn. Preserve cancellation
+    // checks there without paying a timer tick for every 256 cells.
+    if (this.#scheduler.nowMs() - pane.canonicalYieldStartedAt < 2) return Promise.resolve();
+    return new Promise((resolve) => {
+      let timer: SessionRuntimeTimer | undefined;
+      const finish = () => {
+        timer?.cancel();
+        pane.canonicalYieldStartedAt = this.#scheduler.nowMs();
+        pane.canonicalAbort.signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      pane.canonicalAbort.signal.addEventListener("abort", finish, { once: true });
+      if (pane.canonicalAbort.signal.aborted) finish();
+      else
+        timer = this.#scheduler.yieldTask
+          ? this.#scheduler.yieldTask(finish)
+          : this.#scheduler.timer(finish, 0);
     });
   }
 
@@ -540,18 +789,63 @@ export class SessionRuntimeTerminalDeliveryHub {
     pane: PaneState,
     update: CanonicalTerminalReplicaUpdate,
     trace: SessionRuntimeTraceContext | null,
-  ): void {
+    nativeBacking: NativeBackingLease | null,
+  ): void | Promise<void> {
     if (
       update.workspaceName !== this.workspaceName ||
       update.semanticPaneId !== semanticPaneId ||
       update.generation !== this.generation
     )
       return;
-    const result = applyTerminalReplicaUpdate(pane.current, update);
+    if (terminalReplicaUpdateNeedsCooperativeReduction(update)) {
+      const baseline = pane.current;
+      pane.canonicalYieldStartedAt = -Infinity;
+      return applyTerminalReplicaUpdateCooperatively(baseline, update, {
+        yieldControl: () => this.#yieldCanonical(pane),
+        signal: pane.canonicalAbort.signal,
+      }).then((result) => {
+        if (
+          this.#closed ||
+          pane.canonicalAbort.signal.aborted ||
+          this.#panes.get(semanticPaneId) !== pane ||
+          pane.current !== baseline
+        )
+          return;
+        this.#publishCanonical(semanticPaneId, pane, update, trace, result, nativeBacking);
+      });
+    }
+    this.#publishCanonical(
+      semanticPaneId,
+      pane,
+      update,
+      trace,
+      applyTerminalReplicaUpdate(pane.current, update),
+      nativeBacking,
+    );
+  }
+
+  #publishCanonical(
+    semanticPaneId: string,
+    pane: PaneState,
+    update: CanonicalTerminalReplicaUpdate,
+    trace: SessionRuntimeTraceContext | null,
+    result: ReturnType<typeof applyTerminalReplicaUpdate>,
+    nativeBacking: NativeBackingLease | null,
+  ): void {
     if (result.status !== "applied" && result.status !== "idempotent") return;
     pane.current = result.state;
     if (trace) pane.pendingDeliveryTrace = trace;
-    const record = { update, state: result.state, trace: pane.pendingDeliveryTrace };
+    const previous = pane.revisions.get(update.revision);
+    // Idempotent replay may not carry a new handoff; preserve the existing lease.
+    const retained = nativeBacking ?? previous?.nativeBacking ?? null;
+    if (previous?.nativeBacking !== retained) this.#releaseNativeBacking(previous?.nativeBacking);
+    if (retained) retained.committed = true;
+    const record = {
+      update,
+      state: result.state,
+      trace: pane.pendingDeliveryTrace,
+      nativeBacking: retained,
+    };
     pane.latest = record;
     pane.revisions.set(update.revision, record);
     this.#pruneCanonicalRevisions(semanticPaneId);
@@ -561,21 +855,30 @@ export class SessionRuntimeTerminalDeliveryHub {
         client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
       if (
         update.type === "terminal.tombstone" &&
-        (client.inFlight !== null || client.visibility !== "visible")
+        (client.inFlight !== null || client.encoding !== null || client.visibility !== "visible")
       ) {
         this.#fault(client, "source-closed", "Terminal source closed before final state delivery");
         continue;
       }
+      if (client.encoding && client.encoding.target.update.incarnation !== update.incarnation)
+        this.#cancelEncoding(client);
       if (client.latestRevision !== null && client.latestRevision !== update.revision)
         this.#coalesced += 1;
       client.latestRevision = update.revision;
       this.#schedule(client);
     }
     if (update.type === "terminal.tombstone") {
+      pane.canonicalAbort.abort();
+      this.#clearPendingNativeBacking(pane);
+      pane.pendingCanonical.length = 0;
+      pane.pendingCanonicalCells = 0;
       this.#scheduler.timer(() => {
         if (this.#panes.get(semanticPaneId) !== pane) return;
         this.#panes.delete(semanticPaneId);
+        this.#clearRetainedNativeBacking(pane);
+        this.#clearPendingNativeBacking(pane);
         pane.pendingCanonical.length = 0;
+        pane.pendingCanonicalCells = 0;
         pane.canonicalScheduled = false;
         void pane.source?.close().catch(() => undefined);
         this.#clearCache();
@@ -585,7 +888,7 @@ export class SessionRuntimeTerminalDeliveryHub {
 
   #observeRaw(semanticPaneId: string, record: TerminalReplicaCommittedRaw): void {
     const pane = this.#panes.get(semanticPaneId);
-    if (!pane) return;
+    if (!pane || pane.canonicalAbort.signal.aborted) return;
     if (record.revision <= pane.lastRawRevision) return;
     if (
       record.baseRevision === record.revision ||
@@ -621,6 +924,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     if (
       client.closed ||
       client.inFlight ||
+      client.encoding ||
       client.latestRevision === null ||
       client.latestRevision === client.baselineRevision ||
       client.visibility === "hidden" ||
@@ -645,17 +949,37 @@ export class SessionRuntimeTerminalDeliveryHub {
     });
   }
 
-  #deliver(client: ClientState): void {
+  #deliver(
+    client: ClientState,
+    completed?: {
+      readonly target: RevisionRecord;
+      readonly outcome: SeedEncodingOutcome;
+      readonly traceStarted: number;
+    },
+  ): void {
     const pane = this.#panes.get(client.paneId);
-    const target = pane?.latest;
-    if (!pane || !target || target.update.revision !== client.latestRevision) return;
-    const traceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+    const target = completed?.target ?? pane?.latest;
+    if (
+      !pane ||
+      !target ||
+      client.closed ||
+      client.inFlight ||
+      client.encoding ||
+      client.visibility === "hidden" ||
+      client.visibility === "frozen" ||
+      (!completed && target.update.revision !== client.latestRevision)
+    )
+      return;
+    const traceStarted =
+      completed?.traceStarted ??
+      (this.#observability.enabled ? this.#observability.nowMicros() : 0);
+    let deferred = false;
     let encodedRepresentation: CachedRepresentation | null = null;
     let failedSelectionObservation: SemanticSelectionObservation | null = null;
     let deliveryEnvelope: TerminalDeliveryEnvelope | null = null;
     let deliveryOrdinal: number | null = null;
     try {
-      const representation = this.#representation(client, pane, target);
+      const representation = this.#representation(client, pane, target, completed?.outcome);
       encodedRepresentation = representation;
       const transactionId = this.#scheduler.createId();
       const chunkCount = Math.max(1, Math.ceil(representation.bytes.byteLength / (256 * 1024)));
@@ -698,6 +1022,11 @@ export class SessionRuntimeTerminalDeliveryHub {
       if (target.trace?.traceId === pane.pendingDeliveryTrace?.traceId)
         pane.pendingDeliveryTrace = null;
     } catch (error) {
+      if (error instanceof DeferredSeedEncoding) {
+        deferred = true;
+        this.#startEncoding(client, pane, target, error.payload, traceStarted);
+        return;
+      }
       failedSelectionObservation = semanticSelectionObservationFromError(error);
       this.#fault(
         client,
@@ -708,7 +1037,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         failedSelectionObservation,
       );
     } finally {
-      if (this.#observability.enabled)
+      if (this.#observability.enabled && !deferred)
         try {
           const metrics = this.metrics();
           this.#observability.recordSpan(
@@ -769,10 +1098,132 @@ export class SessionRuntimeTerminalDeliveryHub {
     }
   }
 
+  #startEncoding(
+    client: ClientState,
+    pane: PaneState,
+    target: RevisionRecord,
+    payload: TerminalSemanticDeliveryPayload,
+    traceStarted: number,
+  ): void {
+    const key = cacheKey([
+      target.update.workspaceName,
+      client.paneId,
+      target.update.generation,
+      target.update.incarnation,
+      target.update.revision,
+      target.update.stateHash,
+      client.negotiated.encoding,
+      client.negotiated.richPlacements ? "rich" : "plain",
+    ]);
+    let job = this.#pendingEncodings.get(key);
+    let created = false;
+    if (!job) {
+      if (this.#pendingEncodings.size >= MAX_PANES) {
+        this.#fault(
+          client,
+          "state-too-large",
+          "Too many terminal representations are pending; reopen to retry",
+        );
+        return;
+      }
+      job = {
+        key,
+        pane,
+        abort: new AbortController(),
+        clients: new Set(),
+        yieldStartedAt: -Infinity,
+      };
+      this.#pendingEncodings.set(key, job);
+      created = true;
+    }
+    const owned = job;
+    client.encoding = {
+      job: owned,
+      target,
+      baselineRevision: client.baselineRevision,
+      baselineHash: client.baselineHash,
+      reseedRequired: client.reseedRequired,
+      traceStarted,
+    };
+    owned.clients.add(client);
+    if (!created) return;
+    void encodeCompactSemanticTerminalUpdateCooperatively(payload, {
+      signal: owned.abort.signal,
+      yieldControl: () => this.#yieldEncoding(owned),
+    }).then(
+      (bytes) => this.#completeEncoding(owned, { bytes }),
+      (error) => this.#completeEncoding(owned, { error }),
+    );
+  }
+
+  #yieldEncoding(job: PendingSeedEncoding): Promise<void> {
+    if (this.#scheduler.nowMs() - job.yieldStartedAt < 2) return Promise.resolve();
+    return new Promise((resolve) => {
+      let timer: SessionRuntimeTimer | undefined;
+      const finish = () => {
+        timer?.cancel();
+        job.yieldStartedAt = this.#scheduler.nowMs();
+        job.abort.signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      job.abort.signal.addEventListener("abort", finish, { once: true });
+      if (job.abort.signal.aborted) finish();
+      else
+        timer = this.#scheduler.yieldTask
+          ? this.#scheduler.yieldTask(finish)
+          : this.#scheduler.timer(finish, 0);
+    });
+  }
+
+  #completeEncoding(job: PendingSeedEncoding, outcome: SeedEncodingOutcome): void {
+    if (this.#pendingEncodings.get(job.key) === job) this.#pendingEncodings.delete(job.key);
+    for (const client of job.clients) {
+      const encoding = client.encoding;
+      if (!encoding || encoding.job !== job) continue;
+      client.encoding = null;
+      if (
+        job.abort.signal.aborted ||
+        this.#closed ||
+        client.closed ||
+        this.#clients.get(client.key) !== client ||
+        this.#panes.get(client.paneId) !== job.pane ||
+        client.baselineRevision !== encoding.baselineRevision ||
+        client.baselineHash !== encoding.baselineHash ||
+        client.reseedRequired !== encoding.reseedRequired ||
+        client.inFlight ||
+        client.visibility === "hidden" ||
+        client.visibility === "frozen" ||
+        job.pane.latest?.update.incarnation !== encoding.target.update.incarnation
+      )
+        continue;
+      this.#deliver(client, {
+        target: encoding.target,
+        outcome,
+        traceStarted: encoding.traceStarted,
+      });
+      this.#pruneCanonicalRevisions(client.paneId);
+    }
+    job.clients.clear();
+  }
+
+  #cancelEncoding(client: ClientState): void {
+    const encoding = client.encoding;
+    if (!encoding) return;
+    client.encoding = null;
+    const job = encoding.job;
+    job.clients.delete(client);
+    if (job.clients.size === 0) {
+      job.abort.abort();
+      if (this.#pendingEncodings.get(job.key) === job) this.#pendingEncodings.delete(job.key);
+    }
+    this.#pruneCanonicalRevisions(client.paneId);
+  }
+
   #representation(
     client: ClientState,
     pane: PaneState,
     target: RevisionRecord,
+    seedOutcome?: SeedEncodingOutcome,
   ): CachedRepresentation {
     const key = cacheKey([
       target.update.workspaceName,
@@ -799,10 +1250,16 @@ export class SessionRuntimeTerminalDeliveryHub {
       client.negotiated.encoding === "semantic-v1" ||
       client.negotiated.encoding === "semantic-compact-v1"
     ) {
-      const encodeSemantic =
-        client.negotiated.encoding === "semantic-compact-v1"
-          ? encodeCompactSemanticTerminalUpdate
-          : encodeSemanticTerminalUpdate;
+      const encodeSemantic = (payload: TerminalSemanticDeliveryPayload): Uint8Array => {
+        if (client.negotiated.encoding !== "semantic-compact-v1")
+          return encodeSemanticTerminalUpdate(payload);
+        if (terminalSemanticUpdateNeedsCooperativeEncoding(payload)) {
+          if (!seedOutcome) throw new DeferredSeedEncoding(payload);
+          if ("error" in seedOutcome) throw seedOutcome.error;
+          return seedOutcome.bytes;
+        }
+        return encodeCompactSemanticTerminalUpdate(payload);
+      };
       if (client.reseedRequired) {
         const payload = semanticSeed(target);
         let bytes: Uint8Array;
@@ -1271,6 +1728,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       } catch {
         // Detailed fault diagnostics never own delivery failure handling.
       }
+    this.#cancelEncoding(client);
     client.outgoing.length = 0;
     if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
     client.inFlight = null;
@@ -1331,7 +1789,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         client.outgoing.length = 0;
         try {
           client.outgoing.length = 0;
-          await this.#closeClient(client);
+          await this.#closeClient(client, "sink-failed");
         } catch {
           // Closing a failed source is best effort and cannot escape this task.
         }
@@ -1342,9 +1800,14 @@ export class SessionRuntimeTerminalDeliveryHub {
     });
   }
 
-  async #closeClient(client: ClientState): Promise<void> {
+  async #closeClient(
+    client: ClientState,
+    reason: "closed" | "sink-failed" = "closed",
+  ): Promise<void> {
     if (client.closed) return;
     client.closed = true;
+    this.#cancelEncoding(client);
+    client.resolveClosed(reason);
     if (client.lifecycleOpenRecorded)
       this.#recordDeliveryLifecycle(client, this.#panes.get(client.paneId), "close");
     client.backgroundTimer?.cancel();
@@ -1355,7 +1818,11 @@ export class SessionRuntimeTerminalDeliveryHub {
     const pane = this.#panes.get(client.paneId);
     this.#panes.delete(client.paneId);
     if (pane) {
+      this.#clearRetainedNativeBacking(pane);
+      pane.canonicalAbort.abort();
+      this.#clearPendingNativeBacking(pane);
       pane.pendingCanonical.length = 0;
+      pane.pendingCanonicalCells = 0;
       pane.canonicalScheduled = false;
     }
     await pane?.source?.close().catch(() => undefined);
@@ -1499,6 +1966,8 @@ export class SessionRuntimeTerminalDeliveryHub {
         baseline.stateHash === client.baselineHash
       )
         reachable.add(client.baselineRevision);
+      const encoding = client.encoding?.target.update;
+      if (encoding?.incarnation === latest.incarnation) reachable.add(encoding.revision);
       const flight = client.inFlight?.envelope;
       if (flight?.incarnation === latest.incarnation) reachable.add(flight.canonicalRevision);
     }
@@ -1507,7 +1976,10 @@ export class SessionRuntimeTerminalDeliveryHub {
     // readers and skipped revisions already receive an atomic current seed.
     // MAX_CLIENTS bounds this set to 2 * MAX_CLIENTS + 1 per pane.
     for (const revision of pane.revisions.keys())
-      if (!reachable.has(revision)) pane.revisions.delete(revision);
+      if (!reachable.has(revision)) {
+        this.#releaseNativeBacking(pane.revisions.get(revision)?.nativeBacking);
+        pane.revisions.delete(revision);
+      }
   }
 
   #pruneAckSupersededCache(paneId: string): void {
@@ -1784,6 +2256,18 @@ function semanticPayload(
   return semanticSeed(target);
 }
 
+/** Account represented cells without traversing/serializing the snapshot. */
+function canonicalUpdateCellCost(update: CanonicalTerminalReplicaUpdate): number {
+  if (update.type === "terminal.tombstone") return 0;
+  if (update.type === "terminal.seed")
+    return update.snapshot.cols * (update.snapshot.grid.length + update.snapshot.history.length);
+  const rows =
+    update.patch.rows.length +
+    (update.patch.history?.length ?? 0) +
+    (update.patch.historyDelta?.append.length ?? 0);
+  return Math.max(update.cols, update.patch.dimensions?.cols ?? update.cols) * rows;
+}
+
 function encodeLegacySemanticCandidate(payload: TerminalSemanticDeliveryPayload): Uint8Array {
   const preaccounted = preaccountSemanticTerminalUpdateBytes(
     payload,
@@ -1820,6 +2304,7 @@ function rejectedConnection(
 ): TerminalDeliveryConnection {
   return {
     negotiation,
+    closed: Promise.resolve("closed"),
     ack: () => undefined,
     nack: () => undefined,
     setVisibility: () => undefined,

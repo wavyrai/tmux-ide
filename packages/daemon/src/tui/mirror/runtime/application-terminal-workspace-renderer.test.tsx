@@ -1178,11 +1178,13 @@ describe("ApplicationTerminalWorkspace", () => {
 
   it.each(
     [false, true].flatMap((retainView) =>
-      (["sgr", "default", "utf8"] as const).map((encoding) => ({ retainView, encoding })),
+      (["sgr", "default", "utf8"] as const).flatMap((encoding) =>
+        [false, true].map((alternateScreen) => ({ retainView, encoding, alternateScreen })),
+      ),
     ),
   )(
-    "forwards $encoding app mouse until explicit selection (retained view: $retainView)",
-    async ({ retainView, encoding }) => {
+    "forwards $encoding app mouse until explicit selection (retained: $retainView, alternate: $alternateScreen)",
+    async ({ retainView, encoding, alternateScreen }) => {
       registerPaneSurface();
       const theme = createSemanticThemeSnapshot({ mode: "dark" });
       const palette = createTerminalPaletteProjection(theme);
@@ -1203,7 +1205,7 @@ describe("ApplicationTerminalWorkspace", () => {
         })),
         cursor: { x: 0, y: 0, hidden: true, style: "block", blink: false },
         modes: {
-          alternateScreen: false,
+          alternateScreen,
           applicationCursor: false,
           applicationKeypad: false,
           bracketedPaste: false,
@@ -1332,6 +1334,23 @@ describe("ApplicationTerminalWorkspace", () => {
       expect(paneActions.at(-1)).toEqual({ paneId: "pane.a", action: "close-pane" });
       await setup.renderOnce();
 
+      // Mouse-reporting apps own ordinary wheel input on either screen.
+      await setup.mockMouse.scroll(2, 3, "up");
+      expect(forwarded).toEqual(encoding === "sgr" ? ["\u001b[<64;3;1M"] : ["1b5b4d602321"]);
+      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { ctrl: true } });
+      expect(forwarded.at(-1)).toBe(encoding === "sgr" ? "\u001b[<80;3;1M" : "1b5b4d702321");
+      // Shift always selects local history, including when Alt is also held.
+      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { shift: true } });
+      expect(forwarded).toHaveLength(2);
+      // Alt remains a compatibility routing modifier, stripped before delivery.
+      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { alt: true } });
+      expect(forwarded.at(-1)).toBe(encoding === "sgr" ? "\u001b[<64;3;1M" : "1b5b4d602321");
+      expect(forwarded).toHaveLength(3);
+      await setup.mockMouse.scroll(2, 3, "up", { modifiers: { alt: true, shift: true } });
+      expect(forwarded).toHaveLength(3);
+      forwarded.length = 0;
+      wireEncodings.length = 0;
+
       await setup.mockMouse.click(2, 3, MouseButtons.LEFT);
       expect(forwarded).toEqual(
         encoding === "sgr"
@@ -1387,7 +1406,7 @@ describe("ApplicationTerminalWorkspace", () => {
       expect(copyCurrent?.()).toBe(retainView);
       if (retainView) {
         await setup.renderOnce();
-        expect(setup.captureCharFrame()).toContain("Esc live");
+        expect(setup.captureCharFrame().split("\n")[2]).toContain("select");
         expect(copied.at(-1)).toEqual({ text: "elec", bytes: 4 });
         for (const name of ["up", "down", "pageup", "pagedown", "home", "end"]) {
           expect(handleSelectionKey?.(name), name).toBe(true);
@@ -1404,12 +1423,12 @@ describe("ApplicationTerminalWorkspace", () => {
         await setup.renderOnce();
         expect(retained).not.toBeNull();
         expect(copyCurrent?.()).toBe(false);
-        expect(setup.captureCharFrame()).toContain("Esc live");
+        expect(setup.captureCharFrame().split("\n")[2]).toContain("select");
         expect(handleSelectionKey?.("escape")).toBe(true);
         expect(retained).toBeNull();
         expect(copyCurrent?.()).toBe(false);
         await setup.renderOnce();
-        expect(setup.captureCharFrame()).not.toContain("Esc live");
+        expect(setup.captureCharFrame().split("\n")[2]).not.toContain("select");
       }
       expect(copied).toHaveLength(retainView ? 3 : 2);
       if (retainView) {
@@ -1442,95 +1461,624 @@ describe("ApplicationTerminalWorkspace", () => {
   );
 });
 
-it("shows the final row under stacked headers and scrolls locally without repainting siblings", async () => {
+it.each([false, true])(
+  "preserves sibling content and headers while scrolling (side by side: %s)",
+  async (sideBySide) => {
+    registerPaneSurface();
+    const { blankTerminalReplicaSnapshot } = await import("@tmux-ide/core");
+    const { blitSemanticRow, visibleTerminalRowAt } =
+      await import("../semantic-pane-render-source.ts");
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const blank = blankTerminalReplicaSnapshot(24, 3);
+    const textRow = (text: string) => ({
+      ...blank.grid[0]!,
+      cells: blank.grid[0]!.cells.map((cell, index) => ({ ...cell, grapheme: text[index] ?? " " })),
+    });
+    const snapshots = new Map(
+      ["a", "b"].map((id) => [
+        id,
+        {
+          ...blank,
+          history: Array.from({ length: 20 }, (_, i) => textRow(`history-${i}`)),
+          grid: Array.from({ length: 3 }, (_, i) => textRow(`${id}-row-${i}`)),
+        },
+      ]),
+    );
+    const observations: Readonly<Record<string, unknown>>[] = [];
+    const paints: string[] = [];
+    const source: PaneScopedTerminalAdapter = {
+      ...adapter({}, []),
+      paneSelectionSnapshot: (id) => snapshots.get(id) ?? null,
+      renderSource: {
+        scrollbackDepth: (id) => snapshots.get(id)?.history.length ?? 0,
+        cursorState: () => null,
+        blitPane: (id, buffers, width, height, offset, fg, bg, options) => {
+          paints.push(id);
+          for (let row = 0; row < height; row++) {
+            blitSemanticRow(
+              visibleTerminalRowAt(snapshots.get(id) ?? null, offset, row),
+              buffers,
+              row,
+              width,
+              fg,
+              bg,
+              options.graphemes,
+              options.palette,
+            );
+            options.dirtyRows.push(row);
+          }
+          return null;
+        },
+      },
+    };
+    const current = {
+      ...layout().current!,
+      cols: sideBySide ? 49 : 24,
+      rows: sideBySide ? 3 : 7,
+      panes: [
+        { pane: "a", left: 0, top: 0, width: 24, height: 3, active: true },
+        {
+          pane: "b",
+          left: sideBySide ? 25 : 0,
+          top: sideBySide ? 0 : 4,
+          width: 24,
+          height: 3,
+          active: false,
+        },
+      ],
+    };
+    let key: PaneMenuKeyHandler | null = null;
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={() => ({ current, windows: [current] })}
+          adapter={source}
+          rendererEpoch={1}
+          width={sideBySide ? 49 : 24}
+          height={sideBySide ? 4 : 8}
+          topOffset={1}
+          focusedPane="a"
+          theme={theme}
+          palette={createTerminalPaletteProjection(theme)}
+          onWheelObservation={(event) => observations.push(event)}
+          onSelectPane={() => {}}
+          onSelectionKeyOwner={(handler) => {
+            key = handler;
+          }}
+        />
+      ),
+      { width: sideBySide ? 49 : 24, height: sideBySide ? 5 : 9 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("a-row-2");
+    expect(setup.captureCharFrame()).toContain("b-row-2");
+    const beforeScroll = setup.captureCharFrame();
+    paints.length = 0;
+    await setup.mockMouse.scroll(5, 3, "up");
+    await setup.renderOnce();
+    expect(observations.at(-1)).toMatchObject({
+      direction: "up",
+      shift: false,
+      route: "local-history",
+      offsetBefore: 0,
+      offsetAfter: 5,
+    });
+    await setup.mockMouse.scroll(5, 3, "right", { modifiers: { shift: true } });
+    expect(observations.at(-1)).toMatchObject({
+      direction: "right",
+      shift: true,
+      route: "unsupported-direction",
+      offsetBefore: 5,
+      offsetAfter: 5,
+    });
+    expect(setup.captureCharFrame()).toContain("history-15");
+    expect(setup.captureCharFrame()).toContain("Scrollback");
+    expect(paints).not.toContain("b");
+    if (sideBySide) {
+      const sibling = (frame: string) =>
+        frame
+          .split("\n")
+          .slice(1)
+          .map((row) => row.slice(25, 49));
+      expect(sibling(setup.captureCharFrame())).toEqual(sibling(beforeScroll));
+    }
+    const regularScrollFrame = setup.captureCharFrame();
+    expect(key!("escape")).toBe(true);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("a-row-2");
+    expect(setup.captureCharFrame()).not.toContain("Scrollback");
+    await setup.mockMouse.scroll(5, 3, "up", { modifiers: { shift: true } });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toBe(regularScrollFrame);
+    setup.renderer.destroy();
+  },
+);
+
+it("keeps history local through app-mode changes and fences automatic wheel delivery", async () => {
   registerPaneSurface();
   const { blankTerminalReplicaSnapshot } = await import("@tmux-ide/core");
-  const { blitSemanticRow, visibleTerminalRowAt } =
-    await import("../semantic-pane-render-source.ts");
-  const theme = createSemanticThemeSnapshot({ mode: "dark" });
-  const blank = blankTerminalReplicaSnapshot(24, 3);
-  const textRow = (text: string) => ({
-    ...blank.grid[0]!,
-    cells: blank.grid[0]!.cells.map((cell, index) => ({ ...cell, grapheme: text[index] ?? " " })),
-  });
-  const snapshots = new Map(
-    ["a", "b"].map((id) => [
-      id,
-      {
-        ...blank,
-        history: Array.from({ length: 20 }, (_, i) => textRow(`history-${i}`)),
-        grid: Array.from({ length: 3 }, (_, i) => textRow(`${id}-row-${i}`)),
-      },
-    ]),
-  );
-  const paints: string[] = [];
-  const source: PaneScopedTerminalAdapter = {
-    ...adapter({}, []),
-    paneSelectionSnapshot: (id) => snapshots.get(id) ?? null,
-    renderSource: {
-      scrollbackDepth: (id) => snapshots.get(id)?.history.length ?? 0,
-      cursorState: () => null,
-      blitPane: (id, buffers, width, height, offset, fg, bg, options) => {
-        paints.push(id);
-        for (let row = 0; row < height; row++) {
-          blitSemanticRow(
-            visibleTerminalRowAt(snapshots.get(id) ?? null, offset, row),
-            buffers,
-            row,
-            width,
-            fg,
-            bg,
-            options.graphemes,
-            options.palette,
-          );
-          options.dirtyRows.push(row);
-        }
-        return null;
-      },
-    },
+  const blank = blankTerminalReplicaSnapshot(10, 8);
+  let replica: TerminalReplicaSnapshot = {
+    ...blank,
+    history: Array.from({ length: 10 }, () => blank.grid[0]!),
   };
+  const live = adapter({ "pane.a": "A", "pane.b": "B" }, []);
+  live.paneSelectionSnapshot = () => replica;
+  live.renderSource.scrollbackDepth = () => replica.history.length;
+  live.renderSource.paneCanonicalIdentity = () => ({
+    generation: "generation",
+    incarnation: "generation:0",
+    revision: 1,
+    stateHash: "state",
+    cols: replica.cols,
+    rows: replica.rows,
+    sourceEpoch: 1,
+    historyTrim: 0,
+  });
+  const connection = {};
+  const client = {};
+  let staleRuntime = false;
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const inputs: Array<{ paneId: string; data: string }> = [];
+  const selected: string[] = [];
+  const deliveryOrder: string[] = [];
+  const [focusedPane, setFocusedPane] = createSignal("pane.a");
+  const theme = createSemanticThemeSnapshot({ mode: "dark" });
+  const setup = await renderForTest(
+    () => (
+      <ApplicationTerminalWorkspace
+        layout={layout}
+        adapter={live}
+        rendererEpoch={1}
+        terminalGestureRuntime={() => ({
+          daemonGeneration: "daemon",
+          clientGeneration: 1,
+          connection: staleRuntime ? {} : connection,
+          client,
+          adapter: live,
+          rendererEpoch: 1,
+        })}
+        width={30}
+        height={9}
+        focusedPane={focusedPane()}
+        theme={theme}
+        palette={createTerminalPaletteProjection(theme)}
+        onSelectPane={(paneId) => {
+          selected.push(paneId);
+          deliveryOrder.push(`select:${paneId}`);
+          setFocusedPane(paneId);
+        }}
+        onWheelObservation={(event) => events.push(event)}
+        onTerminalInput={(paneId, input) => {
+          deliveryOrder.push(`input:${paneId}`);
+          inputs.push({ paneId, data: input.data });
+        }}
+      />
+    ),
+    { width: 30, height: 11 },
+  );
+  try {
+    await setup.renderOnce();
+    // A shell gesture starts in host history, then the app enables mouse mode.
+    await setup.mockMouse.scroll(2, 3, "up");
+    expect(events.at(-1)).toMatchObject({ route: "local-history", offsetAfter: 5 });
+    replica = {
+      ...replica,
+      modes: { ...replica.modes, mouseTracking: true, mouseProtocol: "drag", mouseEncoding: "sgr" },
+    };
+    await setup.mockMouse.scroll(2, 3, "down");
+    expect(events.at(-1)).toMatchObject({ route: "local-history", offsetAfter: 0 });
+    await setup.mockMouse.scroll(2, 3, "down");
+    expect(events.at(-1)).toMatchObject({ route: "local-history", offsetAfter: 0 });
+    expect(inputs).toEqual([]);
+    expect(selected).toEqual([]);
+
+    // A new gesture at live bottom follows the application's negotiated mode.
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await setup.mockMouse.scroll(2, 3, "up");
+    expect(inputs).toEqual([{ paneId: "pane.a", data: "\u001b[<64;3;1M" }]);
+    // An inactive app must become the input target before wheel delivery.
+    await setup.mockMouse.scroll(13, 3, "down");
+    expect(inputs.at(-1)).toEqual({ paneId: "pane.b", data: "\u001b[<65;3;1M" });
+    expect(deliveryOrder.slice(-2)).toEqual(["select:pane.b", "input:pane.b"]);
+    await setup.mockMouse.scroll(13, 3, "down");
+    expect(selected).toEqual(["pane.b"]);
+    expect(inputs).toHaveLength(3);
+
+    // A runtime replacement between lease capture and dispatch must fail closed.
+    staleRuntime = true;
+    await setup.mockMouse.scroll(23, 3, "up");
+    expect(inputs).toHaveLength(3);
+    staleRuntime = false;
+
+    // Explicit selection owns scrolling even after the pointer crosses an app pane.
+    await setup.mockMouse.pressDown(2, 3, MouseButtons.LEFT, { modifiers: { shift: true } });
+    await setup.mockMouse.moveTo(4, 3, { modifiers: { shift: true } });
+    await setup.mockMouse.scroll(13, 3, "up");
+    expect(events.at(-1)).toMatchObject({ paneId: "pane.a", route: "local-history" });
+    expect(inputs).toHaveLength(3);
+    await setup.mockMouse.release(4, 3, MouseButtons.LEFT, { modifiers: { shift: true } });
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+it("routes raw mouse multi-click, wheel-drag, edge scrolling and Ctrl-link activation", async () => {
+  registerPaneSurface();
+  const theme = createSemanticThemeSnapshot({ mode: "dark" });
+  const { blankTerminalReplicaSnapshot } = await import("@tmux-ide/core");
+  const blank = blankTerminalReplicaSnapshot(30, 9);
+  const makeRow = (text: string) => ({
+    wrapped: false,
+    cells: [...text.padEnd(30)]
+      .slice(0, 30)
+      .map((grapheme) => ({ ...blank.grid[0]!.cells[0]!, grapheme })),
+  });
+  const replica = {
+    ...blank,
+    history: Array.from({ length: 20 }, (_, i) => makeRow(`history-${i}`)),
+    grid: Array.from({ length: 9 }, () => makeRow("hello world https://a.test")),
+  };
+  const live = adapter({ "pane.a": "A", "pane.b": "B" }, []);
+  const scrollOffsets = new Map<string, number>();
+  const blit = live.renderSource.blitPane;
+  live.renderSource.blitPane = (...args) => {
+    scrollOffsets.set(args[0], args[4]);
+    return blit(...args);
+  };
+  live.paneSelectionSnapshot = () => replica;
+  live.renderSource.scrollbackDepth = () => replica.history.length;
+  live.renderSource.paneCanonicalIdentity = () => ({
+    generation: "gen",
+    incarnation: "gen:0",
+    revision: 1,
+    stateHash: "hash",
+    cols: 30,
+    rows: 9,
+    sourceEpoch: 1,
+    historyTrim: 0,
+  });
+  const connection = {},
+    client = {};
   const current = {
     ...layout().current!,
-    cols: 24,
-    rows: 7,
+    cols: 60,
     panes: [
-      { pane: "a", left: 0, top: 0, width: 24, height: 3, active: true },
-      { pane: "b", left: 0, top: 4, width: 24, height: 3, active: false },
+      { pane: "pane.a", left: 0, top: 0, width: 30, height: 9, active: true },
+      { pane: "pane.b", left: 30, top: 0, width: 30, height: 9, active: false },
     ],
   };
-  let key: PaneMenuKeyHandler | null = null;
+  let copy: (() => boolean) | null = null;
+  const copied: string[] = [],
+    opened: string[] = [];
   const setup = await renderForTest(
     () => (
       <ApplicationTerminalWorkspace
         layout={() => ({ current, windows: [current] })}
-        adapter={source}
+        adapter={live}
         rendererEpoch={1}
-        width={24}
-        height={8}
-        topOffset={1}
-        focusedPane="a"
+        terminalGestureRuntime={() => ({
+          daemonGeneration: "daemon",
+          clientGeneration: 1,
+          connection,
+          client,
+          adapter: live,
+          rendererEpoch: 1,
+        })}
+        width={60}
+        height={10}
+        focusedPane="pane.a"
         theme={theme}
         palette={createTerminalPaletteProjection(theme)}
         onSelectPane={() => {}}
-        onSelectionKeyOwner={(handler) => {
-          key = handler;
+        onCopyText={(text) => {
+          copied.push(text);
+          return true;
         }}
+        onSelectionCopyOwner={(value) => {
+          copy = value;
+        }}
+        onOpenLink={(url) => opened.push(url)}
       />
     ),
-    { width: 24, height: 9 },
+    { width: 60, height: 11 },
   );
-  await setup.renderOnce();
-  expect(setup.captureCharFrame()).toContain("a-row-2");
-  expect(setup.captureCharFrame()).toContain("b-row-2");
-  paints.length = 0;
-  await setup.mockMouse.scroll(5, 3, "up");
-  await setup.renderOnce();
-  expect(setup.captureCharFrame()).toContain("history-19");
-  expect(setup.captureCharFrame()).toContain("Scrollback");
-  expect(paints).not.toContain("b");
-  expect(key!("escape")).toBe(true);
-  await setup.renderOnce();
-  expect(setup.captureCharFrame()).toContain("a-row-2");
-  expect(setup.captureCharFrame()).not.toContain("Scrollback");
-  setup.renderer.destroy();
+  try {
+    await setup.renderOnce();
+    await setup.mockMouse.doubleClick(1, 3);
+    await setup.renderOnce();
+    expect(copy?.()).toBe(true);
+    expect(copied.at(-1)).toBe("hello");
+    await setup.mockMouse.click(1, 3);
+    await setup.renderOnce();
+    expect(copy?.()).toBe(true);
+    expect(copied.at(-1)).toBe("hello world https://a.test");
+    await setup.mockMouse.click(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toEqual(["https://a.test/"]);
+    await setup.mockMouse.pressDown(2, 5);
+    await setup.mockMouse.scroll(40, 5, "up");
+    await setup.mockMouse.moveTo(2, 3);
+    await setup.mockMouse.release(2, 3);
+    await setup.renderOnce();
+    expect(copy?.()).toBe(true);
+    expect(copied.at(-1)).toContain("history-");
+    expect(copied.at(-1)).toContain("hello world");
+    expect(scrollOffsets.get("pane.a")).toBe(5);
+    expect(scrollOffsets.get("pane.b")).toBe(0);
+    await setup.mockMouse.pressDown(2, 4);
+    await setup.renderOnce();
+    await setup.mockMouse.moveTo(2, 0);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await setup.mockMouse.release(2, 0);
+    expect(copy?.()).toBe(true);
+    expect(copied.at(-1)).toContain("history-");
+    expect(copied.at(-1)).toContain("history-14");
+  } finally {
+    setup.renderer.destroy();
+  }
 });
+
+it.each([false, true])(
+  "focuses the inactive pane for Shift-drag while output updates (retention reflow: %s)",
+  async (reflowOnRetain) => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const { blankTerminalReplicaSnapshot } = await import("@tmux-ide/core");
+    const blank = blankTerminalReplicaSnapshot(30, 9);
+    const makeSnapshot = (label: string) => ({
+      ...blank,
+      modes: {
+        ...blank.modes,
+        mouseProtocol: "drag" as const,
+        mouseEncoding: "sgr" as const,
+        mouseTracking: true,
+      },
+      grid: blank.grid.map((row) => ({
+        ...row,
+        cells: row.cells.map((cell, i) => ({ ...cell, grapheme: label.padEnd(30)[i]! })),
+      })),
+    });
+    const replicas = new Map([
+      ["pane.a", makeSnapshot("first pane")],
+      ["pane.b", makeSnapshot("working pane")],
+    ]);
+    let revision = 1;
+    const held = new Map<string, ReturnType<typeof makeSnapshot>>();
+    const live = adapter({ "pane.a": "A", "pane.b": "B" }, []);
+    const originalBlit = live.renderSource.blitPane;
+    live.renderSource.blitPane = (...args) => {
+      const result = originalBlit(...args);
+      const buffers = args[1];
+      for (let offset = 0; offset < buffers.fg.length; offset += 4) {
+        buffers.fg.set([210, 220, 230, 255], offset);
+        buffers.bg.set([20, 30, 40, 255], offset);
+      }
+      return result;
+    };
+    live.paneSelectionSnapshot = (pane) => held.get(pane) ?? replicas.get(pane) ?? null;
+    live.retainPaneView = (pane) => {
+      const snapshot = replicas.get(pane)!;
+      held.set(
+        pane,
+        reflowOnRetain
+          ? {
+              ...snapshot,
+              cols: 29,
+              grid: snapshot.grid.map((row) => ({ ...row, cells: row.cells.slice(0, 29) })),
+            }
+          : snapshot,
+      );
+      return () => {
+        held.delete(pane);
+      };
+    };
+    live.renderSource.paneCanonicalIdentity = (pane) => ({
+      generation: "gen",
+      incarnation: "gen:0",
+      revision: held.has(pane) ? 1 : revision,
+      stateHash: held.has(pane) || revision === 1 ? "original" : "updated",
+      cols: 30,
+      rows: 9,
+      ...(held.has(pane) && reflowOnRetain ? { viewCols: 29, viewRows: 9 } : {}),
+      sourceEpoch: 1,
+      historyTrim: 0,
+    });
+    const current = {
+      ...layout().current!,
+      cols: 60,
+      panes: [
+        { pane: "pane.a", left: 0, top: 0, width: 30, height: 9, active: true },
+        { pane: "pane.b", left: 30, top: 0, width: 30, height: 9, active: false },
+      ],
+    };
+    const connection = {},
+      client = {};
+    const [feedback, setFeedback] = createSignal<{ paneId: string; copied: boolean } | null>(null);
+    const [focus, setFocus] = createSignal("pane.a");
+    let copy: (() => boolean) | null = null;
+    const copied: Array<{ text: string; pane: string }> = [],
+      forwarded: string[] = [];
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={() => ({ current, windows: [current] })}
+          adapter={live}
+          rendererEpoch={1}
+          terminalGestureRuntime={() => ({
+            daemonGeneration: "daemon",
+            clientGeneration: 1,
+            connection,
+            client,
+            adapter: live,
+            rendererEpoch: 1,
+          })}
+          width={60}
+          height={10}
+          focusedPane={focus()}
+          theme={theme}
+          palette={createTerminalPaletteProjection(theme)}
+          copyFeedback={feedback()}
+          onSelectPane={setFocus}
+          onTerminalInput={(pane) => forwarded.push(pane)}
+          onCopyText={(text, evidence) => {
+            copied.push({ text, pane: evidence.semanticPaneId });
+            setFeedback({ paneId: evidence.semanticPaneId, copied: true });
+            return true;
+          }}
+          onSelectionCopyOwner={(value) => {
+            copy = value;
+          }}
+        />
+      ),
+      { width: 60, height: 11 },
+    );
+    try {
+      await setup.renderOnce();
+      await setup.mockMouse.pressDown(31, 3, MouseButtons.LEFT, { modifiers: { shift: true } });
+      expect(focus()).toBe("pane.b");
+      revision = 2;
+      replicas.set("pane.b", makeSnapshot("new application output"));
+      await setup.renderOnce();
+      await setup.mockMouse.moveTo(45, 3, { modifiers: { shift: true } });
+      await setup.mockMouse.release(45, 3, MouseButtons.LEFT, { modifiers: { shift: true } });
+      expect(copy?.()).toBe(true);
+      expect(copied.at(-1)).toEqual({ text: "orking pane", pane: "pane.b" });
+      await setup.renderOnce();
+      const expectRetainedHighlight = () => {
+        let x = 0;
+        const selected = setup.captureSpans().lines[3]!.spans.find((span) => {
+          const contains = x <= 32 && x + span.text.length > 32;
+          x += span.text.length;
+          return contains;
+        });
+        expect(selected).toBeDefined();
+        expect(colorToThemeBytes(selected!.fg)).toEqual([20, 30, 40, 255]);
+        expect(colorToThemeBytes(selected!.bg)).toEqual([210, 220, 230, 255]);
+      };
+      expectRetainedHighlight();
+      await setup.renderOnce();
+      expectRetainedHighlight();
+      const feedbackFrame = setup.captureCharFrame();
+      expect(feedbackFrame.split("\n").some((line) => line.slice(30).includes("Copied"))).toBe(
+        true,
+      );
+      expect(feedbackFrame.split("\n").some((line) => line.slice(0, 30).includes("Copied"))).toBe(
+        false,
+      );
+      expect(copy?.()).toBe(true);
+      setFeedback({ paneId: "pane.b", copied: false });
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("Copy unavailable");
+
+      await setup.renderOnce();
+      await setup.mockMouse.pressDown(31, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
+      await setup.renderOnce();
+      await setup.mockMouse.moveTo(1, 4, { modifiers: { shift: true } });
+      await setup.mockMouse.release(1, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
+      expect(copy?.()).toBe(true);
+      expect(copied.at(-1)).toEqual({ text: "wo", pane: "pane.b" });
+      expect(focus()).toBe("pane.b");
+      expect(forwarded).toEqual([]);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
+
+it.each([12, 30])(
+  "returns only the clicked inactive history pane to live at width %s",
+  async (width) => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const { blankTerminalReplicaSnapshot } = await import("@tmux-ide/core");
+    const blank = blankTerminalReplicaSnapshot(width, 9);
+    const replica = { ...blank, history: Array.from({ length: 20 }, () => blank.grid[0]!) };
+    const live = adapter({ "pane.a": "A", "pane.b": "B" }, []);
+    const offsets = new Map<string, number>();
+    const blit = live.renderSource.blitPane;
+    live.renderSource.blitPane = (...args) => {
+      offsets.set(args[0], args[4]);
+      return blit(...args);
+    };
+    live.renderSource.scrollbackDepth = () => 20;
+    live.paneSelectionSnapshot = () => replica;
+    live.renderSource.paneCanonicalIdentity = () => ({
+      generation: "g",
+      incarnation: "g:0",
+      revision: 1,
+      stateHash: "hash",
+      cols: width,
+      rows: 9,
+      sourceEpoch: 1,
+      historyTrim: 0,
+    });
+    const current = {
+      ...layout().current!,
+      cols: width * 2,
+      panes: [
+        { pane: "pane.a", left: 0, top: 0, width, height: 9, active: true },
+        { pane: "pane.b", left: width, top: 0, width, height: 9, active: false },
+      ],
+    };
+    const connection = {},
+      client = {};
+    const selected: string[] = [],
+      inputs: string[] = [];
+    const [feedback, setFeedback] = createSignal<{ paneId: string; copied: boolean } | null>(null);
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={() => ({ current, windows: [current] })}
+          adapter={live}
+          rendererEpoch={1}
+          terminalGestureRuntime={() => ({
+            daemonGeneration: "d",
+            clientGeneration: 1,
+            connection,
+            client,
+            adapter: live,
+            rendererEpoch: 1,
+          })}
+          width={width * 2}
+          height={10}
+          focusedPane="pane.a"
+          theme={theme}
+          palette={createTerminalPaletteProjection(theme)}
+          copyFeedback={feedback()}
+          onSelectPane={(pane) => selected.push(pane)}
+          onTerminalInput={(pane) => inputs.push(pane)}
+        />
+      ),
+      { width: width * 2, height: 11 },
+    );
+    try {
+      await setup.renderOnce();
+      await setup.mockMouse.scroll(2, 3, "up");
+      await setup.mockMouse.scroll(width + 2, 3, "up");
+      setFeedback({ paneId: "pane.b", copied: true });
+      await setup.renderOnce();
+      expect(offsets.get("pane.a")).toBe(5);
+      expect(offsets.get("pane.b")).toBe(5);
+      expect(setup.captureCharFrame()).toContain(width < 22 ? "✓ · Live" : "Copied · Live");
+      await setup.mockMouse.pressDown(2, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
+      await setup.renderOnce();
+      await setup.mockMouse.moveTo(width * 2 - 3, 2, { modifiers: { shift: true } });
+      await setup.mockMouse.release(width * 2 - 3, 2, MouseButtons.LEFT, {
+        modifiers: { shift: true },
+      });
+      await setup.renderOnce();
+      expect(offsets.get("pane.b")).toBe(5);
+      expect(selected).toEqual(["pane.a"]);
+      selected.length = 0;
+      await setup.mockMouse.click(width * 2 - 3, 2);
+      await setup.renderOnce();
+      expect(offsets.get("pane.a")).toBe(5);
+      expect(offsets.get("pane.b")).toBe(0);
+      expect(selected).toEqual([]);
+      expect(inputs).toEqual([]);
+      expect(setup.captureCharFrame()).toContain("Copied");
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);

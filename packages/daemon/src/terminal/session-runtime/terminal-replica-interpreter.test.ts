@@ -1,7 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { takeNativeSeedBacking } from "./native-seed-backing.ts";
+import { decodeNativeGridCapture } from "../mirror/native-grid-capture.ts";
+import { describe, expect, it, vi } from "vitest";
+import * as core from "@tmux-ide/core";
 import { widgetMarkerAnnouncement, type CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
 import type { CausalCellProbeV1 } from "@tmux-ide/contracts";
-import { hashTerminalReplicaSnapshot, TERMINAL_CONFORMANCE_FIXTURES } from "@tmux-ide/core";
+import {
+  applyTerminalReplicaUpdate,
+  hashTerminalReplicaSnapshot,
+  TERMINAL_CONFORMANCE_FIXTURES,
+} from "@tmux-ide/core";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
 import type {
   TerminalInterpreterBackend,
@@ -26,6 +33,186 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it("hashes each new projection once while reusing committed hashes for seeds and no-ops", async () => {
+    const hash = vi.spyOn(core, "hashTerminalReplicaSnapshot");
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const interpreter = create(updates);
+    const reseed = (text: string) =>
+      interpreter.enqueue({
+        type: "reseed",
+        cols: 12,
+        rows: 3,
+        chunks: [new TextEncoder().encode(text)],
+        cursor: { x: 0, y: 0 },
+        bootstrap: "authoritative-stream",
+      });
+    try {
+      await reseed("one");
+      expect(hash).toHaveBeenCalledTimes(1);
+      const first = interpreter.currentSeed()!;
+      expect(first.stateHash).toBe(hash.mock.results[0]!.value);
+      expect(hash).toHaveBeenCalledTimes(1);
+
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 12,
+        rows: 3,
+        chunks: [new TextEncoder().encode("stale")],
+        cursor: { x: 0, y: 0 },
+        bootstrap: "authoritative-stream",
+        validateBeforeCommit: () => false,
+      });
+      expect(interpreter.currentSeed()).toEqual(first);
+      expect(hash).toHaveBeenCalledTimes(1);
+
+      await interpreter.enqueue({ type: "cursor", x: 0, y: 0 });
+      expect(hash).toHaveBeenCalledTimes(2);
+      expect(updates).toHaveLength(1);
+      expect(interpreter.currentSeed()).toEqual(first);
+      expect(hash).toHaveBeenCalledTimes(2);
+
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("X") });
+      expect(hash).toHaveBeenCalledTimes(3);
+      expect(interpreter.currentSeed()!.stateHash).toBe(hash.mock.results[2]!.value);
+      expect(hash).toHaveBeenCalledTimes(3);
+      await interpreter.enqueue({ type: "resize", cols: 16, rows: 4 });
+      expect(hash).toHaveBeenCalledTimes(4);
+      await reseed("replacement");
+      expect(hash).toHaveBeenCalledTimes(5);
+      expect(interpreter.currentSeed()!.stateHash).toBe(hash.mock.results[4]!.value);
+      expect(hash).toHaveBeenCalledTimes(5);
+
+      // Independent receiver validation still recomputes and verifies every
+      // published hash, including the changed geometry and replacement seed.
+      hash.mockRestore();
+      let receiver: ReturnType<typeof applyTerminalReplicaUpdate>["state"] = null;
+      for (const update of updates) {
+        const result = applyTerminalReplicaUpdate(receiver, update);
+        expect(result.status).toBe("applied");
+        if (result.status === "applied") receiver = result.state;
+      }
+      expect(receiver?.snapshot).toEqual(interpreter.currentSnapshot());
+    } finally {
+      hash.mockRestore();
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
+  it("holds a native main-screen clear until its unknown history policy is recaptured", async () => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    let reseeds = 0;
+    const interpreter = new TerminalReplicaInterpreter({
+      generation,
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: `${generation}:0`,
+      cols: 8,
+      rows: 3,
+      onUpdate: (update) => updates.push(update),
+      onNativeReseedRequired: () => {
+        reseeds++;
+      },
+    });
+    try {
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 8,
+        rows: 3,
+        chunks: [new TextEncoder().encode("BEFORE")],
+        cursor: { x: 6, y: 0 },
+        observedModes: { alternateScreen: false },
+        bootstrap: "painted-capture",
+      });
+      const before = interpreter.currentSnapshot();
+      await interpreter.enqueue({
+        type: "write",
+        data: new TextEncoder().encode("\x1b[2J\x1b[HAFTER"),
+      });
+      expect(reseeds).toBe(1);
+      expect(interpreter.currentSnapshot()).toBe(before);
+      expect(updates).toHaveLength(1);
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
+  it("retains captured overflow history while applying the actual tmux clear-history limit", async () => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const interpreter = create(updates, 8, 3);
+    const rowText = (row: { cells: readonly { grapheme: string }[] }) =>
+      row.cells
+        .map((cell) => cell.grapheme)
+        .join("")
+        .trimEnd();
+    try {
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 8,
+        rows: 3,
+        historyLimit: 20,
+        historySize: 25,
+        chunks: [
+          new TextEncoder().encode(
+            [
+              ...Array.from({ length: 25 }, (_, index) => `row${index}`),
+              "FIRST",
+              "SECOND",
+              "",
+            ].join("\r\n"),
+          ),
+        ],
+        cursor: { x: 6, y: 1 },
+        observedModes: { alternateScreen: false, scrollOnClear: true },
+        bootstrap: "painted-capture",
+      });
+      expect(interpreter.currentSnapshot().history).toHaveLength(25);
+      expect(rowText(interpreter.currentSnapshot().history[0]!)).toBe("row0");
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("\x1b[2J") });
+      const snapshot = interpreter.currentSnapshot();
+      expect(snapshot.history.map(rowText)).toEqual([
+        ...Array.from({ length: 21 }, (_, index) => `row${index + 4}`),
+        "FIRST",
+        "SECOND",
+      ]);
+      expect(snapshot.grid.map(rowText)).toEqual(["", "", ""]);
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
+  it("publishes the validated snapshot rows for downstream reducer reuse", async () => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const interpreter = create(updates);
+    try {
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("A") });
+      let state = applyTerminalReplicaUpdate(null, updates.at(-1)!).state;
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("B") });
+      const update = updates.at(-1)!;
+      expect(update.type).toBe("terminal.patch");
+      if (update.type !== "terminal.patch") throw new Error("expected patch");
+      for (const change of update.patch.rows)
+        expect(change.row).toBe(interpreter.currentSnapshot().grid[change.index]);
+      let profile: unknown;
+      const applied = applyTerminalReplicaUpdate(state, update, {
+        instrumentation: {
+          nowMicros: () => 0,
+          onComplete: (value) => {
+            profile = value;
+          },
+        },
+      });
+      state = applied.state;
+      expect(applied.status).toBe("applied");
+      expect(state?.hash).toBe(hashTerminalReplicaSnapshot(interpreter.currentSnapshot()));
+      expect(profile).toMatchObject({
+        counts: { validatedCells: 0, frozenCells: 0, rowHashMisses: 0 },
+      });
+      expect(applyTerminalReplicaUpdate(state, update).status).toBe("idempotent");
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
   it.each([false, true])(
     "holds unknown shell output until a native replacement (same-batch reentry: %s)",
     async (reenter) => {
@@ -1213,3 +1400,34 @@ function attributeBits(attributes: readonly string[]): number {
   };
   return attributes.reduce((value, attribute) => value | (bits[attribute] ?? 0), 0);
 }
+
+it.each([false, true])(
+  "associates only a committed native seed without changed held output (%s)",
+  async (held) => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const interpreter = create(updates, 2, 1);
+    const native = decodeNativeGridCapture(
+      '{"version":2,"cols":2,"rows":1,"history":0,"hscrolled":0,"limit":100,"cursor":[0,0],"currentAttributes":[0,8,8,8]}\n{"row":0,"flags":0,"used":0,"cells":[]}',
+    )!;
+    try {
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 2,
+        rows: 1,
+        chunks: held ? [new TextEncoder().encode("X")] : [],
+        native,
+        cursor: { x: 0, y: 0 },
+        bootstrap: "authoritative-stream",
+      });
+      const seed = interpreter.currentSeed()!;
+      expect(seed.type).toBe("terminal.seed");
+      if (seed.type !== "terminal.seed") throw new Error("seed expected");
+      const backing = takeNativeSeedBacking(seed.snapshot);
+      if (held) expect(backing).toBeUndefined();
+      else
+        expect(decodeNativeGridCapture(new TextDecoder().decode(backing?.encoded))).toEqual(native);
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  },
+);

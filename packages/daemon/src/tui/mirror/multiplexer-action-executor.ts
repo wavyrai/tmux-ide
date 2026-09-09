@@ -1,3 +1,8 @@
+import { applicationDaemonEndpoint } from "./runtime/application-daemon-authority.ts";
+import {
+  readApplicationDaemonInfo as readCanonicalDaemonInfo,
+  isApplicationDaemonAlive as isCanonicalDaemonAlive,
+} from "./runtime/application-daemon-authority.ts";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -11,11 +16,7 @@ import {
   dispatchOwnerAction,
 } from "@tmux-ide/daemon-client/owner-action-client";
 
-import {
-  canonicalDaemonUrl,
-  isCanonicalDaemonAlive,
-  readCanonicalDaemonInfo,
-} from "../../lib/canonical-daemon.ts";
+import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
 import type { SessionPaneDescriptor } from "../../terminal/protocol/session-descriptor-discovery.ts";
 import {
   fetchCanonicalWorkspaceRouting,
@@ -326,12 +327,23 @@ export async function executeTuiMultiplexerAction(
   overrides: Partial<TuiMultiplexerExecutorDeps> = {},
 ): Promise<TuiMultiplexerExecutionResult> {
   const deps = { ...DEFAULT_DEPS, ...overrides };
+  const machineEpoch = applicationDaemonEndpoint().epoch;
+  const currentMachine = () => applicationDaemonEndpoint().epoch === machineEpoch;
+  const retired = {
+    status: "error",
+    message: "selected machine changed; return to it to check this action",
+  } as const;
   const command = localCommand(action, context);
   const canonical = deps.readCanonicalDaemonInfo();
-  if (!canonical || !(await deps.isCanonicalDaemonAlive(canonical))) {
+  const alive = canonical ? await deps.isCanonicalDaemonAlive(canonical) : false;
+  if (!currentMachine()) return retired;
+  if (!canonical || !alive) {
+    if (applicationDaemonEndpoint().kind === "ssh")
+      return { status: "error", message: "remote machine is disconnected; action was not sent" };
     if (!command) return { status: "error", message: "no active tmux pane" };
     try {
       await runLocal(command);
+      if (!currentMachine()) return retired;
       return { status: "local", message: successMessage(action) };
     } catch (error) {
       return {
@@ -347,6 +359,7 @@ export async function executeTuiMultiplexerAction(
 
   try {
     const catalog = await fetchCanonicalWorkspaceRouting(canonical, deps.fetch);
+    if (!currentMachine()) return retired;
     const workspaceName = workspaceNameForLiveSession(catalog, context.sessionName);
     if (!workspaceName) {
       return {
@@ -362,6 +375,7 @@ export async function executeTuiMultiplexerAction(
       deps.operationId(),
       deps,
     );
+    if (!currentMachine()) return retired;
     if (result === null) {
       return {
         status: "error",

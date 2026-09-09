@@ -1,3 +1,5 @@
+import { isNativeBootstrapCapture, type NativeGridCapture } from "../mirror/native-grid-capture.ts";
+import { projectNativeGridRow } from "../mirror/native-grid-projection.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import { Terminal } from "@tmux-ide/xterm-headless";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -25,20 +27,28 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   #lastViewportY = 0;
   #lastBufferType = "normal";
   #hasProjected = false;
+  #bufferChangedSinceProjection = false;
   #mouseUtf8 = false;
   #capturedAlternate = false;
   #nativeReseedRequired = false;
+  #nativeModesObserved = false;
+  #historyProjectionInvalidated = false;
+  #scrollOnClear: boolean | undefined;
 
   constructor(options: TerminalInterpreterBackendFactoryOptions) {
     this.#terminal = new Terminal({
       cols: options.cols,
       rows: options.rows,
       scrollback: options.scrollback,
+      tmuxHistoryLimit: options.historyLimit ?? options.scrollback,
       allowProposedApi: true,
     });
     this.#terminal.loadAddon(new Unicode11Addon());
     this.#terminal.unicode.activeVersion = "11";
     this.#terminal.buffer.onBufferChange((buffer) => {
+      // A normal→alternate→normal round trip can occur within one write.
+      // Its scroll notifications are not normal-history append operations.
+      this.#bufferChangedSinceProjection = true;
       if (this.#capturedAlternate && buffer.type === "normal") this.#nativeReseedRequired = true;
     });
     // Stock tmux retains DECSET 1005 independently of SGR. xterm no longer
@@ -54,13 +64,24 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     }
     this.#terminal.parser.registerEscHandler({ final: "c" }, () => {
       this.#mouseUtf8 = false;
+      this.#historyProjectionInvalidated = true;
+      return false;
+    });
+    this.#terminal.parser.registerCsiHandler({ final: "J" }, (params) => {
+      if (params[0] === 3) this.#historyProjectionInvalidated = true;
+      if (
+        params[0] === 2 &&
+        this.#nativeModesObserved &&
+        this.#scrollOnClear === undefined &&
+        this.#terminal.buffer.active.type === "normal"
+      )
+        this.#nativeReseedRequired = true;
       return false;
     });
     this.#terminal.onScroll(() => {
-      // Captured native history stays in normal while alternate rows scroll
-      // without adding history. Do not turn those scrolls into history trims.
-      if (!this.#capturedAlternate || this.#terminal.buffer.active.type === "normal")
-        this.#scrollEpoch += 1;
+      // tmux retains normal history while alternate rows scroll independently.
+      // Neither captured nor live alternate scrolling may trim that history.
+      if (this.#terminal.buffer.active.type === "normal") this.#scrollEpoch += 1;
     });
     const core = (
       this.#terminal as unknown as {
@@ -85,6 +106,107 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     return new Promise((resolve) => this.#terminal.write(data, resolve));
   }
 
+  canImportNativeGrid(): boolean {
+    const buffer = (this.#terminal.buffer.active as unknown as { _buffer?: NativeImportBuffer })
+      ._buffer;
+    const handler = (
+      this.#terminal as unknown as { _core?: { _inputHandler?: { _curAttrData?: unknown } } }
+    )._core?._inputHandler;
+    return (
+      !!buffer &&
+      typeof buffer.getBlankLine === "function" &&
+      typeof buffer.getNullCell === "function" &&
+      typeof buffer.lines?.push === "function" &&
+      Number.isSafeInteger(buffer.lines.maxLength) &&
+      !!handler?._curAttrData &&
+      typeof (this.#terminal.buffer.active.getNullCell() as unknown as NativeImportCell)
+        .setFromCharData === "function" &&
+      typeof buffer.getBlankLine(undefined, false).setCell === "function"
+    );
+  }
+
+  importNativeGrid(snapshot: NativeGridCapture): boolean {
+    if (
+      !this.canImportNativeGrid() ||
+      !isNativeBootstrapCapture(snapshot) ||
+      !snapshot.currentAttributes ||
+      snapshot.cols !== this.cols ||
+      snapshot.rows !== this.rows
+    )
+      return false;
+    // Version-pinned xterm 6 buffer seam. Import only into a fresh replacement,
+    // before any live bytes; normal parser BCE and SGR processing remain intact.
+    const buffer = (this.#terminal.buffer.active as unknown as { _buffer: NativeImportBuffer })
+      ._buffer;
+    const handler = (
+      this.#terminal as unknown as {
+        _core: { _inputHandler: { _curAttrData: { fg: number; bg: number } } };
+      }
+    )._core._inputHandler;
+    if (
+      !buffer ||
+      typeof buffer.getBlankLine !== "function" ||
+      typeof buffer.getNullCell !== "function" ||
+      typeof buffer.lines?.push !== "function" ||
+      !handler?._curAttrData
+    )
+      throw new Error("Unsupported @tmux-ide/xterm-headless 6 native import shape");
+    // Public getNullCell allocates a scratch cell. The private buffer method
+    // returns its shared erasure template, which must never receive text.
+    const cell = this.#terminal.buffer.active.getNullCell() as unknown as NativeImportCell;
+    if (typeof cell.setFromCharData !== "function")
+      throw new Error("Unsupported @tmux-ide/xterm-headless 6 native cell shape");
+    if (buffer.lines.maxLength < snapshot.grid.length) return false;
+    buffer.lines.length = 0;
+    for (let index = 0; index < snapshot.grid.length; index++) {
+      const row = projectNativeGridRow(
+        snapshot.grid[index],
+        snapshot.cols,
+        0,
+        index > 0 && (snapshot.grid[index - 1]!.flags & 1) !== 0,
+      )!;
+      const line = buffer.getBlankLine(undefined, row.wrapped);
+      if (typeof line.setCell !== "function")
+        throw new Error("Unsupported @tmux-ide/xterm-headless 6 native line shape");
+      for (let column = 0; column < row.cells.length; column++) {
+        const projected = row.cells[column]!;
+        cell.setFromCharData([0, projected.grapheme, projected.width, 0]);
+        [cell.fg, cell.bg] = nativeImportAttributes(projected);
+        line.setCell(column, cell);
+      }
+      buffer.lines.push(line);
+    }
+    buffer.ybase = snapshot.history;
+    buffer.ydisp = snapshot.history;
+    buffer.x = snapshot.cursor[0];
+    buffer.y = snapshot.cursor[1];
+    const [attributes, foreground, background, underline] = snapshot.currentAttributes;
+    const current = projectNativeGridRow(
+      {
+        flags: 0,
+        used: 1,
+        cells: [
+          {
+            flags: 0,
+            width: 1,
+            text: "",
+            bytesHex: "",
+            attributes,
+            foreground,
+            background,
+            underline,
+            link: 0,
+            storageFlags: 0,
+          },
+        ],
+      },
+      1,
+    )!.cells[0]!;
+    [handler._curAttrData.fg, handler._curAttrData.bg] = nativeImportAttributes(current);
+    this.#historyProjectionInvalidated = true;
+    return true;
+  }
+
   prioritizeNextWrite(): void {
     this.#terminal.prioritizeNextWrite();
   }
@@ -98,6 +220,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     // Native tmux is authoritative for transitions through one column. The
     // parser deliberately skips its incompatible wide-cell reflow in this case.
     if (cols !== this.cols && (cols === 1 || this.cols === 1)) this.#nativeReseedRequired = true;
+    if (cols !== this.cols || rows !== this.rows) this.#historyProjectionInvalidated = true;
     this.#terminal.resize(cols, rows);
   }
 
@@ -163,6 +286,11 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   }
 
   setAuthoritativeModes(modes: MirrorObservedTerminalModes): void {
+    this.#nativeModesObserved = true;
+    if (modes.scrollOnClear !== undefined) {
+      this.#scrollOnClear = modes.scrollOnClear;
+      this.#terminal.options.tmuxScrollOnClear = modes.scrollOnClear;
+    }
     if (modes.alternateScreen === true) this.#restoreCapturedAlternate();
     const core = (
       this.#terminal as unknown as {
@@ -289,13 +417,15 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     dirty?: { start: number; end: number },
   ): TerminalInterpreterBackendProjection {
     const buffer = this.#terminal.buffer.active;
-    const historyBuffer = this.#capturedAlternate ? this.#terminal.buffer.normal : buffer;
+    const historyBuffer = this.#terminal.buffer.normal;
     // A newly constructed xterm and the interpreter's blank snapshot already
     // describe the same zero-history geometry. Requiring a prior projection
     // turns the first dirty write into an unnecessary full-grid walk.
     const ownsPrevious = this.#hasProjected || isCanonicalBlankSnapshot(previous);
     const geometryStable =
       ownsPrevious &&
+      !this.#historyProjectionInvalidated &&
+      !this.#bufferChangedSinceProjection &&
       historyBuffer.viewportY === this.#lastViewportY &&
       buffer.type === this.#lastBufferType &&
       previous.cols === this.#terminal.cols;
@@ -308,11 +438,15 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     const nextLength = historyBuffer.viewportY;
     const incrementalHistory =
       !canReuseHistory &&
+      !this.#historyProjectionInvalidated &&
+      !this.#bufferChangedSinceProjection &&
       this.#lastBufferType === buffer.type &&
       previous.cols === this.#terminal.cols &&
-      nextLength >= previousLength &&
       scrolls > 0;
     if (incrementalHistory) {
+      // ED2 may collect ten percent of native history before appending.
+      // A negative length delta is still an incremental trim/append when
+      // no reset, resize, or buffer transition invalidated scroll accounting.
       const appended = nextLength - previousLength;
       const trim = Math.min(previousLength, Math.max(0, scrolls - appended));
       const retained = previousLength - trim;
@@ -346,6 +480,8 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     this.#lastBufferType = buffer.type;
     this.#lastScrollEpoch = this.#scrollEpoch;
     this.#hasProjected = true;
+    this.#bufferChangedSinceProjection = false;
+    this.#historyProjectionInvalidated = false;
     return {
       cols: this.#terminal.cols,
       rows: this.#terminal.rows,
@@ -520,4 +656,42 @@ function cellAttributes(cell: ReturnType<Terminal["buffer"]["active"]["getNullCe
     (cell.isInvisible() ? 64 : 0) |
     (cell.isStrikethrough() ? 128 : 0)
   );
+}
+
+interface NativeImportCell {
+  fg: number;
+  bg: number;
+  setFromCharData(data: [number, string, number, number]): void;
+}
+interface NativeImportLine {
+  setCell(column: number, cell: NativeImportCell): void;
+}
+interface NativeImportBuffer {
+  lines: { length: number; maxLength: number; push(line: NativeImportLine): void };
+  getNullCell(): NativeImportCell;
+  getBlankLine(attrs: undefined, wrapped: boolean): NativeImportLine;
+  ybase: number;
+  ydisp: number;
+  x: number;
+  y: number;
+}
+/** Inverse of this pinned adapter's cellColor/cellAttributes projection. */
+function nativeImportAttributes(cell: TerminalReplicaCell): [number, number] {
+  const color = (value: TerminalReplicaColor) =>
+    value.kind === "default"
+      ? 0
+      : value.kind === "indexed"
+        ? 0x02000000 | value.index
+        : 0x03000000 | value.value;
+  const a = cell.attributes;
+  return [
+    color(cell.foreground) |
+      (a & 1 ? 0x08000000 : 0) |
+      (a & 8 ? 0x10000000 : 0) |
+      (a & 16 ? 0x20000000 : 0) |
+      (a & 32 ? 0x04000000 : 0) |
+      (a & 64 ? 0x40000000 : 0) |
+      (a & 128 ? 0x80000000 : 0),
+    color(cell.background) | (a & 2 ? 0x08000000 : 0) | (a & 4 ? 0x04000000 : 0),
+  ];
 }

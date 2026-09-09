@@ -1,10 +1,10 @@
 ---
 title: CLI reference
-description: The supported tmux-ide commands and flags in 2.9.0-beta.8
+description: The supported tmux-ide commands and flags in 2.9.0-beta.11
 ---
 
 This page follows the public surface printed by `tmux-ide --help` in
-`2.9.0-beta.8`. `--json` is available on the scripting commands that explicitly
+`2.9.0-beta.11`. `--json` is available on the scripting commands that explicitly
 list it below; interactive commands do not emit JSON.
 
 ## Open tmux-ide
@@ -156,3 +156,10 @@ Stop it with `SIGINT` or `SIGTERM`; do not wrap it in a second daemonizer.
 | `--headless`      | Run only the canonical daemon in this process                  |
 
 Command-specific flags are documented with their command above.
+
+## Upgrade the local daemon
+
+`tmux-ide update --daemon` starts or upgrades the local daemon to the installed
+version, preserving tmux sessions. Add `--if-running` to leave fresh installs
+idle, and `--json` for structured status. This command does not update a remote
+machine; install the beta there or run the command in its shell.

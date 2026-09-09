@@ -50,8 +50,13 @@ export function createApplicationConnectionFeedback(
       const value = snapshot();
       return value ? `${value.stage} · ${value.seconds}s` : null;
     },
-    copy: (copyText: (text: string) => boolean) => {
-      if (current) copyText(JSON.stringify(current, null, 2));
+    copy: (copyText: (text: string) => boolean | Promise<boolean>) => {
+      if (!current) return;
+      try {
+        void Promise.resolve(copyText(JSON.stringify(current, null, 2))).catch(() => undefined);
+      } catch {
+        // Clipboard failure must not escape the connection controls.
+      }
     },
     note(note: string | null) {
       if (note?.startsWith("opening ")) {

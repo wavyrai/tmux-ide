@@ -62,6 +62,7 @@ import {
 } from "./workspace-registry.ts";
 import {
   createPinnedWorkspaceTmuxRunner,
+  createPinnedWorkspaceTmuxAsyncRunner,
   resolveWorkspacePaneTmuxAuthority,
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
@@ -838,7 +839,8 @@ async function startHttpServer({
     ownerToken: localBypassToken ?? null,
     generation: daemonIdentity.instanceId,
     resolveSession: (workspace) => workspaceRegistry.get(workspace)?.sessionName ?? null,
-    capture: (session, pane) => sessionRuntimeRegistry.captureNativeBacking(session, pane),
+    capture: (session, pane, expected) =>
+      sessionRuntimeRegistry.captureNativeBacking(session, pane, expected),
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({
@@ -1016,6 +1018,7 @@ async function startEmbeddedDaemonGeneration(
     // caller's ambient TMUX/PATH happens to select.
     const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
     const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
+    const fleetFactsTmuxRunner = createPinnedWorkspaceTmuxAsyncRunner(tmuxAuthority);
     const tmuxAuthorityReplaced = createTmuxAuthorityReplacementProbe(
       tmuxAuthority,
       catalogTmuxRunner,
@@ -1382,7 +1385,7 @@ async function startEmbeddedDaemonGeneration(
           paneSourceCredentials.resolve(credential, resolvedSession, claimedSource),
       });
       await externalInteractionObserver.start();
-      setFleetFactsTmuxRunner(catalogTmuxRunner);
+      setFleetFactsTmuxRunner(fleetFactsTmuxRunner);
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,

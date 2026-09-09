@@ -7,6 +7,10 @@ import {
   TerminalDeliveryNegotiatedSchemaZ,
   TerminalDeliveryNackSchemaZ,
   TerminalSemanticDeliveryPayloadSchemaZ,
+  TerminalReplicaSnapshotSchemaZ,
+  TerminalReplicaRowSchemaZ,
+  TerminalReplicaCellSchemaZ,
+  TerminalReplicaPlacementSchemaZ,
   type TerminalDeliveryAck,
   type TerminalDeliveryChunk,
   type TerminalDeliveryEnvelope,
@@ -213,34 +217,208 @@ export function encodeCompactSemanticTerminalUpdate(
   input: TerminalSemanticDeliveryPayload,
 ): Uint8Array {
   const update = TerminalSemanticDeliveryPayloadSchemaZ.parse(input);
+  // Compact payloads contain only arrays and primitives below this object.
+  // Insert root keys in canonical order so the native serializer emits exactly
+  // the same representation without recursively allocating JSON fragments.
   const wire =
     update.frame === "seed"
       ? {
-          v: 1,
-          k: COMPACT_SEMANTIC_KIND,
           f: "s",
+          k: COMPACT_SEMANTIC_KIND,
           r: update.revision,
           s: compactSnapshot(update.snapshot),
+          v: 1,
         }
       : update.frame === "patch"
         ? {
-            v: 1,
-            k: COMPACT_SEMANTIC_KIND,
-            f: "p",
             b: update.baseRevision,
-            r: update.revision,
+            f: "p",
+            k: COMPACT_SEMANTIC_KIND,
             p: compactPatch(update.patch),
+            r: update.revision,
+            v: 1,
           }
         : {
-            v: 1,
-            k: COMPACT_SEMANTIC_KIND,
-            f: "t",
             b: update.baseRevision,
+            f: "t",
+            k: COMPACT_SEMANTIC_KIND,
             r: update.revision,
             t: update.tombstone.reason,
+            v: 1,
           };
-  const bytes = UTF8_ENCODER.encode(canonicalJson(wire));
+  const bytes = UTF8_ENCODER.encode(JSON.stringify(wire));
   assertRepresentationSize(bytes);
+  return bytes;
+}
+
+// Keep the ordinary small-patch encoder unchanged. Large seeds are validated
+// and emitted in256-cell slices, not parsed or stringified as one giant object.
+export const TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS = 8192;
+const CompactSeedHeaderSchema =
+  /* @__PURE__ */ TerminalSemanticDeliveryPayloadSchemaZ.options[0].omit({ snapshot: true });
+const CompactSeedMetadataSchema = /* @__PURE__ */ TerminalReplicaSnapshotSchemaZ.omit({
+  grid: true,
+  history: true,
+  placements: true,
+});
+const CompactRowHeaderSchema = /* @__PURE__ */ TerminalReplicaRowSchemaZ.omit({ cells: true });
+const CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
+
+export function terminalSemanticUpdateNeedsCooperativeEncoding(
+  input: TerminalSemanticDeliveryPayload,
+): boolean {
+  return (
+    input?.frame === "seed" &&
+    Array.isArray(input.snapshot?.grid) &&
+    Array.isArray(input.snapshot?.history) &&
+    (input.snapshot.grid.length + input.snapshot.history.length) * input.snapshot.cols >=
+      TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS
+  );
+}
+
+/** Exact compact encoding with task checkpoints for large seeds. No validation
+ * bypass or producer capability: every header, row, cell and placement uses the
+ * same strict contract schemas as the synchronous encoder. Inputs must remain
+ * stable until completion (daemon canonical snapshots are immutable).
+ */
+export async function encodeCompactSemanticTerminalUpdateCooperatively(
+  input: TerminalSemanticDeliveryPayload,
+  options: { readonly yieldControl: () => Promise<void>; readonly signal?: AbortSignal },
+): Promise<Uint8Array> {
+  const check = () => options.signal?.throwIfAborted();
+  check();
+  if (input.frame !== "seed" || !terminalSemanticUpdateNeedsCooperativeEncoding(input))
+    return encodeCompactSemanticTerminalUpdate(input);
+  const yieldControl = async () => {
+    check();
+    await options.yieldControl();
+    check();
+  };
+  const { snapshot: source, ...headerInput } = input;
+  const header = CompactSeedHeaderSchema.parse(headerInput);
+  const { grid, history, placements, ...metadataInput } = source;
+  const metadata = CompactSeedMetadataSchema.parse(metadataInput);
+  if (!Array.isArray(grid) || !Array.isArray(history) || !Array.isArray(placements))
+    throw new TypeError("Invalid compact seed arrays");
+  if (
+    metadata.cols > COMPACT_MAX_DIMENSION ||
+    metadata.rows > COMPACT_MAX_DIMENSION ||
+    grid.length !== metadata.rows
+  )
+    compactEncodingLimit();
+  let rowCount = 0,
+    cellCount = 0,
+    runCount = 0,
+    work = 0,
+    encodedWork = 0;
+  const chunks: Uint8Array[] = [];
+  let fragments: string[] = [],
+    characters = 0,
+    total = 0;
+  const flush = () => {
+    if (fragments.length === 0) return;
+    const chunk = UTF8_ENCODER.encode(fragments.join(""));
+    total += chunk.byteLength;
+    if (total > TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES)
+      throw new TerminalDeliveryStateTooLargeError(total);
+    chunks.push(chunk);
+    fragments = [];
+    characters = 0;
+  };
+  const write = (fragment: string) => {
+    fragments.push(fragment);
+    characters += fragment.length;
+    if (characters >= 32 * 1024) flush();
+  };
+  write(
+    '{"f":"s","k":' +
+      JSON.stringify(COMPACT_SEMANTIC_KIND) +
+      ',"r":' +
+      header.revision +
+      ',"s":[' +
+      metadata.cols +
+      "," +
+      metadata.rows +
+      ",",
+  );
+  for (const rows of [grid, history]) {
+    write("[");
+    for (let index = 0; index < rows.length; index++) {
+      const { cells, ...rowHeaderInput } = rows[index]!;
+      const rowHeader = CompactRowHeaderSchema.parse(rowHeaderInput);
+      if (++rowCount > COMPACT_MAX_ROWS || !Array.isArray(cells) || cells.length !== metadata.cols)
+        compactEncodingLimit();
+      cellCount += cells.length;
+      if (cellCount > COMPACT_MAX_EXPANDED_CELLS) compactEncodingLimit();
+      if (index) write(",");
+      write("[" + (rowHeader.wrapped ? 1 : 0) + ",[");
+      let prior: CompactCellRun | null = null,
+        wroteRun = false;
+      const emitRun = () => {
+        if (!prior) return;
+        if (wroteRun) write(",");
+        write(JSON.stringify(prior));
+        wroteRun = true;
+      };
+      for (let offset = 0; offset < cells.length; offset += 256) {
+        const validated = CompactCellSliceSchema.parse(cells.slice(offset, offset + 256));
+        for (const cell of validated) {
+          const encoded = compactCell(cell);
+          if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;
+          else {
+            emitRun();
+            if (++runCount > COMPACT_MAX_RUNS) compactEncodingLimit();
+            prior = encoded;
+          }
+          work++;
+          encodedWork += cell.grapheme.length + 64;
+          if (work >= 256 || encodedWork >= 32 * 1024) {
+            work = 0;
+            encodedWork = 0;
+            await yieldControl();
+          }
+        }
+      }
+      emitRun();
+      write("]]");
+    }
+    write("],");
+  }
+  write(
+    JSON.stringify(compactCursor(metadata.cursor)) +
+      "," +
+      JSON.stringify(compactModes(metadata.modes)) +
+      ",[",
+  );
+  if (placements.length > COMPACT_MAX_PLACEMENTS) compactEncodingLimit();
+  for (let index = 0; index < placements.length; index++) {
+    const placement = TerminalReplicaPlacementSchemaZ.parse(placements[index]);
+    if (index) write(",");
+    const encoded = JSON.stringify(compactPlacement(placement));
+    write(encoded);
+    encodedWork += encoded.length;
+    if (++work >= 256 || encodedWork >= 32 * 1024) {
+      work = 0;
+      encodedWork = 0;
+      await yieldControl();
+    }
+  }
+  write("]," + JSON.stringify(compactBootstrap(metadata.bootstrap)) + '],"v":1}');
+  flush();
+  // No full-size JSON string or final synchronous whole-object serialization.
+  const bytes = new Uint8Array(total);
+  let offset = 0,
+    copied = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+    copied += chunk.byteLength;
+    if (copied >= 256 * 1024) {
+      copied = 0;
+      await yieldControl();
+    }
+  }
+  check();
   return bytes;
 }
 
@@ -576,7 +754,10 @@ interface CompactDecodeBudget {
   maxCells: number;
   rowCache?: Map<string, Readonly<{ row: TerminalReplicaRow; runs: number; cells: number }>>;
   rowReuseIndex?: ReadonlyMap<string, TerminalReplicaRow | readonly TerminalReplicaRow[]>;
-  rawRowReuseIndex?: ValidatedCompactRawRowIndex;
+  rawRowReuseIndexes?: readonly ValidatedCompactRawRowIndex[];
+  transactionRows?: Map<number, ValidatedCompactRawRowCandidate>;
+  transactionRowBytes?: number;
+  transactionRowCount?: number;
   reusedRows: number;
   allocatedCells: number;
   canonicalUtf8Allocations: number;
@@ -607,8 +788,10 @@ interface ValidatedCompactRawRowCandidate {
   readonly collisions?: readonly ValidatedCompactRawRowCandidate[];
 }
 type ValidatedCompactRawRowIndex = ReadonlyMap<number, ValidatedCompactRawRowCandidate>;
+// Each index owns only rows from its exact immutable array. Shared rows never
+// anchor other collections, and a changed grid does not invalidate history.
 const VALIDATED_COMPACT_RAW_ROW_INDEX = new WeakMap<
-  TerminalReplicaRow,
+  readonly TerminalReplicaRow[],
   ValidatedCompactRawRowIndex
 >();
 
@@ -1108,6 +1291,9 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
   // Cooperative validation never serializes a whole row to form an interning
   // key; that would recreate an unbounded synchronous phase.
   budget.rowCache = undefined;
+  budget.transactionRows = new Map();
+  budget.transactionRowBytes = 0;
+  budget.transactionRowCount = 0;
   budget.runEncodingCache = new TerminalReplicaRunEncodingCache();
   budget.decodedCellCache = new Map();
   const control = {
@@ -1115,48 +1301,20 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
     rowsPerSlice: Math.min(Math.max(options.rowsPerSlice ?? 64, 1), 64),
     rowsSinceYield: 0,
   };
-  if (baseline) {
+  // Canonical rows have exactly their snapshot's width. A full resized seed
+  // cannot reuse any old-width row, so avoid scanning/indexing old history.
+  // This only removes an optimization candidate: normal seed validation and
+  // canonical hashing still run below, with the original adoption baseline.
+  const seedChangesWidth =
+    qualifiedWire.f === "s" &&
+    Array.isArray(qualifiedWire.s) &&
+    qualifiedWire.s[0] !== baseline?.cols;
+  if (baseline && !seedChangesWidth) {
     budget.rowReuseIndex = await compactBaselineRowReuseIndex(baseline, control);
-    let rawRows: ValidatedCompactRawRowIndex | undefined;
-    for (const rows of [baseline.grid, baseline.history])
-      for (const row of rows) {
-        rawRows = VALIDATED_COMPACT_RAW_ROW_INDEX.get(row);
-        if (rawRows) break;
-      }
-    if (!rawRows) {
-      const nextRawRows = new Map<number, ValidatedCompactRawRowCandidate>();
-      let indexedRows = 0;
-      for (const rows of [baseline.grid, baseline.history])
-        for (const row of rows) {
-          const cached = VALIDATED_COMPACT_RAW_ROW.get(row);
-          if (cached) {
-            const existing = nextRawRows.get(cached.rawHash);
-            if (!existing) nextRawRows.set(cached.rawHash, cached);
-            else if (
-              existing.row !== row &&
-              !existing.collisions?.some((entry) => entry.row === row)
-            )
-              nextRawRows.set(
-                cached.rawHash,
-                Object.freeze({
-                  ...existing,
-                  collisions: Object.freeze([...(existing.collisions ?? []), cached]),
-                }),
-              );
-          }
-          indexedRows += 1;
-          if (indexedRows % control.rowsPerSlice === 0) await control.yieldControl();
-        }
-      rawRows = nextRawRows;
-      let installedRows = 0;
-      for (const rows of [baseline.grid, baseline.history])
-        for (const row of rows) {
-          VALIDATED_COMPACT_RAW_ROW_INDEX.set(row, rawRows);
-          installedRows += 1;
-          if (installedRows % control.rowsPerSlice === 0) await control.yieldControl();
-        }
-    }
-    budget.rawRowReuseIndex = rawRows;
+    budget.rawRowReuseIndexes = [
+      await compactRawRowReuseIndex(baseline.grid, control),
+      await compactRawRowReuseIndex(baseline.history, control),
+    ];
   }
   let payload: TerminalSemanticDeliveryPayload;
   if (qualifiedWire.f === "s") {
@@ -1212,7 +1370,10 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
   // bounded changed rows. Parser/reuse scratch cannot affect canonical hashing
   // or publication, so release it before the longest cooperative phase.
   budget.rowReuseIndex = undefined;
-  budget.rawRowReuseIndex = undefined;
+  budget.rawRowReuseIndexes = undefined;
+  budget.transactionRows = undefined;
+  budget.transactionRowBytes = undefined;
+  budget.transactionRowCount = undefined;
   budget.runEncodingCache = undefined;
   budget.decodedCellCache = undefined;
   const hash = snapshot
@@ -1650,6 +1811,36 @@ function compactRowReuseCollision(
   return Array.isArray(value);
 }
 
+async function compactRawRowReuseIndex(
+  rows: readonly TerminalReplicaRow[],
+  control: CompactCooperativeControl,
+): Promise<ValidatedCompactRawRowIndex> {
+  const cacheable = Object.isFrozen(rows);
+  const cachedIndex = cacheable ? VALIDATED_COMPACT_RAW_ROW_INDEX.get(rows) : undefined;
+  if (cachedIndex) return cachedIndex;
+  const index = new Map<number, ValidatedCompactRawRowCandidate>();
+  let indexedRows = 0;
+  for (const row of rows) {
+    const cached = VALIDATED_COMPACT_RAW_ROW.get(row);
+    if (cached) {
+      const existing = index.get(cached.rawHash);
+      if (!existing) index.set(cached.rawHash, cached);
+      else if (existing.row !== row && !existing.collisions?.some((entry) => entry.row === row))
+        index.set(
+          cached.rawHash,
+          Object.freeze({
+            ...existing,
+            collisions: Object.freeze([...(existing.collisions ?? []), cached]),
+          }),
+        );
+    }
+    indexedRows += 1;
+    if (indexedRows % control.rowsPerSlice === 0) await control.yieldControl();
+  }
+  if (cacheable) VALIDATED_COMPACT_RAW_ROW_INDEX.set(rows, index);
+  return index;
+}
+
 async function compactBaselineRowReuseIndex(
   baseline: TerminalReplicaSnapshot,
   control: CompactCooperativeControl,
@@ -1807,6 +1998,11 @@ async function expandRowsSliceCooperatively(
     rowSlice.start = start;
     rowSlice.end = index;
     rows.push(await expandRowCooperatively(rowSlice, budget, cols, control));
+    control.rowsSinceYield += 1;
+    if (control.rowsSinceYield >= control.rowsPerSlice) {
+      control.rowsSinceYield = 0;
+      await control.yieldControl();
+    }
     const separator = slice.source.byteAt(index++);
     if (separator === 0x5d) break;
     if (separator !== 0x2c) throw new SyntaxError("Invalid compact JSON rows");
@@ -1830,14 +2026,22 @@ async function expandRowCooperatively(
       ? (value as CompactParsedRowSlice)
       : null;
   const rawHash = parsedSlice ? parsedSlice.source.hash(parsedSlice.start, parsedSlice.end) : null;
-  const rawIndexed = rawHash === null ? undefined : budget.rawRowReuseIndex?.get(rawHash);
-  const rawReuse = !rawIndexed
-    ? undefined
-    : parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, rawIndexed.raw)
-      ? rawIndexed
-      : rawIndexed.collisions?.find((candidate) =>
-          parsedSlice!.source.equals(parsedSlice!.start, parsedSlice!.end, candidate.raw),
-        );
+  const transactionIndexed = rawHash === null ? undefined : budget.transactionRows?.get(rawHash);
+  const match = (candidate: ValidatedCompactRawRowCandidate | undefined) =>
+    !candidate || !parsedSlice
+      ? undefined
+      : parsedSlice.source.equals(parsedSlice.start, parsedSlice.end, candidate.raw)
+        ? candidate
+        : candidate.collisions?.find((entry) =>
+            parsedSlice.source.equals(parsedSlice.start, parsedSlice.end, entry.raw),
+          );
+  let rawReuse = match(transactionIndexed);
+  if (!rawReuse && rawHash !== null) {
+    for (const index of budget.rawRowReuseIndexes ?? []) {
+      rawReuse = match(index.get(rawHash));
+      if (rawReuse) break;
+    }
+  }
   if (rawReuse) {
     if (cols !== null && rawReuse.cells !== cols) throw new TypeError("Compact row width mismatch");
     budget.runs += rawReuse.runs;
@@ -1931,6 +2135,7 @@ async function expandRowCooperatively(
           cells: cellCount,
         }),
       );
+    rememberTransactionRow(budget, indexed);
     return indexed;
   }
   if (indexed && compactRowReuseCollision(indexed)) {
@@ -1949,6 +2154,7 @@ async function expandRowCooperatively(
             cells: cellCount,
           }),
         );
+      rememberTransactionRow(budget, candidate);
       return candidate;
     }
   }
@@ -1981,7 +2187,31 @@ async function expandRowCooperatively(
         cells: cellCount,
       }),
     );
+  rememberTransactionRow(budget, row);
   return row;
+}
+
+// Keep current-message reuse separate from the immutable baseline index. Cache
+// saturation only forfeits an optimization; it never changes validation.
+function rememberTransactionRow(budget: CompactDecodeBudget, row: TerminalReplicaRow): void {
+  const cache = budget.transactionRows;
+  const entry = VALIDATED_COMPACT_RAW_ROW.get(row);
+  if (!cache || !entry) return;
+  const bucket = cache.get(entry.rawHash);
+  if (
+    (bucket ? 1 + (bucket.collisions?.length ?? 0) : 0) >= 4 ||
+    (budget.transactionRowCount ?? 0) >= 1024 ||
+    (budget.transactionRowBytes ?? 0) + entry.raw.byteLength > 256 * 1024
+  )
+    return;
+  if (bucket)
+    cache.set(entry.rawHash, {
+      ...bucket,
+      collisions: [...(bucket.collisions ?? []), entry],
+    });
+  else cache.set(entry.rawHash, entry);
+  budget.transactionRowBytes = (budget.transactionRowBytes ?? 0) + entry.raw.byteLength;
+  budget.transactionRowCount = (budget.transactionRowCount ?? 0) + 1;
 }
 
 async function expandParsedRowSlice(
@@ -1995,6 +2225,12 @@ async function expandParsedRowSlice(
   )
     return value;
   const slice = value as CompactParsedRowSlice;
+  // Ordinary terminal rows are small. Parsing their individual JSON tokens
+  // through async methods adds thousands of microtasks to a full redraw.
+  // Bound native parsing by encoded bytes; all row/run/cell validation and
+  // expansion budgets still run below, and larger rows remain cooperative.
+  if (slice.end - slice.start <= 8 * 1_024)
+    return JSON.parse(slice.source.slice(slice.start, slice.end));
   const rowSource = new CooperativeJsonSource(slice.source.bytes(slice.start, slice.end));
   return new CooperativeJsonParser(rowSource, control.yieldControl).parse();
 }

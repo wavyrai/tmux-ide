@@ -103,3 +103,23 @@ describe("native backing paint projection", () => {
     expect(Object.isFrozen(row.cells[0])).toBe(true);
   });
 });
+
+it("preserves erased background and distinguishes it from explicitly written spaces", () => {
+  const background = 0x01000011;
+  const row = projectNativeGridRow(
+    {
+      flags: 0,
+      used: 1,
+      cells: [
+        { ...cell(" "), background },
+        { ...cell(" ", 1, 64), background },
+      ],
+    },
+    2,
+  )!;
+  expect(row.cells.map((cell) => cell.grapheme)).toEqual([" ", ""]);
+  expect(row.cells.map((cell) => cell.background)).toEqual([
+    { kind: "indexed", index: 17 },
+    { kind: "indexed", index: 17 },
+  ]);
+});

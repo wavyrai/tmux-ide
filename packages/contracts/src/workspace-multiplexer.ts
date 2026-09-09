@@ -17,7 +17,7 @@
  */
 import { z } from "zod";
 
-import { DesktopDaemonCapabilityErrorSchemaZ } from "./desktop-host.ts";
+import { DesktopDaemonCapabilityErrorSchemaZ } from "./desktop-daemon-capability-error.ts";
 import {
   TerminalAttachmentSemanticPaneIdSchemaZ,
   TerminalAttachmentSemanticWindowIdSchemaZ,

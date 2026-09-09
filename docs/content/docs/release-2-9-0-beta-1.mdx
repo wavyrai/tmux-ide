@@ -1,12 +1,12 @@
 ---
-title: OpenTUI 2.9 beta.8
-description: The current 2.9.0-beta.8 visual tmux release with agent-aware chrome
+title: OpenTUI 2.9 beta.11
+description: The current 2.9.0-beta.11 visual tmux release with agent-aware chrome
 ---
 
-The current package is `2.9.0-beta.8`. It ships an OpenTUI client around ordinary tmux
-sessions. tmux owns PTYs, processes, topology, persistence, and SSH; the daemon
-publishes semantic workspace state and pane streams; OpenTUI owns presentation
-and input.
+The current package is `2.9.0-beta.11`. It ships an OpenTUI client around ordinary tmux
+sessions. tmux owns PTYs, processes, topology, and persistence. Each machine has
+its own daemon, which publishes workspace state and pane streams. The local TUI
+connects through SSH tunnels and owns presentation and input.
 
 ## Install
 
@@ -21,7 +21,27 @@ Pass a session name to bypass Home:
 tmux-ide app work
 ```
 
-## New in beta.8
+## New in beta.11
+
+- Global installation upgrades an older running daemon without stopping tmux
+  sessions. App and headless launch repeat the check when install scripts were
+  skipped. Use `tmux-ide update --daemon` to trigger it explicitly. Fresh installs
+  leave the daemon stopped, and older clients never downgrade newer daemons.
+
+- One TUI shows Local and multiple SSH machines in a grouped sidebar. Repeat
+  `--ssh` to connect multiple hosts, or use Add machine during a run.
+- Session names are scoped to their machine. Switching hosts retires the previous
+  input route; a disconnected remote cannot redirect an action to Local.
+- Background machines supply session metadata, while only the selected workspace
+  streams terminal panes. Each remote connection reconnects independently.
+- Ctrl+G focuses the machine sidebar. Use arrows to navigate and Enter to open a
+  session. Agent rows still open the exact pane in the selected workspace.
+
+See [SSH setup and limitations](/docs/app-surfaces#connect-to-another-machine-over-ssh).
+Machines added during a run are not saved automatically. Remote daemons and
+sessions must already be running; this beta does not provision remote hosts.
+
+## Earlier 2.9 beta improvements
 
 - Pane headers show recent input and pane reads, with external tmux activity
   distinguished from attributed agent activity. Failed and disconnected states

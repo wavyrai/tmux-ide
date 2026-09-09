@@ -83,6 +83,7 @@ export interface MirrorServiceOptions {
 }
 
 export interface MirrorSubscribeRequest {
+  nativeBootstrap?: boolean;
   session: string;
   semanticPaneId: string;
   onEvent: (event: MirrorPaneEvent) => void;
@@ -211,6 +212,7 @@ export class MirrorService {
         request.semanticPaneId,
         request.onEvent,
         request.onLayout,
+        request.nativeBootstrap,
       );
     } catch (cause) {
       this.release(request.session, entry);

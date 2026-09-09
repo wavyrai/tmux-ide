@@ -2,8 +2,9 @@ import { createWriteStream } from "node:fs";
 import { BoundedPerformanceRecordWriter } from "./bounded-performance-record-writer.ts";
 
 const TUI_PERF_LOG = process.env.TMUX_IDE_TUI_PERF_LOG;
-const stream = TUI_PERF_LOG
-  ? createWriteStream(TUI_PERF_LOG, { flags: "a", highWaterMark: 64 * 1_024 })
+const TUI_LOG = TUI_PERF_LOG || process.env.TMUX_IDE_TUI_LOG;
+const stream = TUI_LOG
+  ? createWriteStream(TUI_LOG, { flags: "a", highWaterMark: 64 * 1_024 })
   : null;
 const TUI_LAUNCH_EPOCH_MS = stream
   ? Number(process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ?? Date.now())
@@ -26,11 +27,50 @@ stream?.on("drain", drain);
  * renderer uses this as a feature flag; stream ownership remains in this
  * host-only module so Solid presentation never imports node:fs.
  */
-export const tuiPerfStream = stream ? Object.freeze({ enabled: true as const }) : null;
+export const tuiLifecycleStream = stream ? Object.freeze({ enabled: true as const }) : null;
+export const tuiPerfStream = TUI_PERF_LOG ? tuiLifecycleStream : null;
+
+const LIFECYCLE_PHASES = new Set([
+  "generation-status",
+  "generation-connection-start",
+  "generation-connection-resolved",
+  "generation-runtime-fault",
+  "generation-shell-lifecycle",
+  "application-shell-prewarm-start",
+  "application-shell-prewarm-settled",
+  "application-shell-command-rejected",
+  "solid-root-evaluate",
+  "solid-mounted",
+  "first-frame",
+  "terminal-host-focus-control-gate-ready",
+]);
+const LIFECYCLE_RUNTIME_PHASES = new Set([
+  "seed",
+  "physical-ready",
+  "coherent",
+  "stream-open-start",
+  "stream-open-resolved",
+]);
+
+const lifecycleRecords = new Map<string, string>();
 
 function serializeMark(phase: string, details?: Readonly<Record<string, unknown>>): string | null {
-  if (!stream) return null;
+  if (
+    !stream ||
+    (!tuiPerfStream &&
+      !LIFECYCLE_PHASES.has(phase) &&
+      !(
+        phase === "generation-runtime-progress" &&
+        LIFECYCLE_RUNTIME_PHASES.has(String(details?.runtimePhase))
+      ))
+  )
+    return null;
   try {
+    if (!tuiPerfStream) {
+      const identity = JSON.stringify(details ?? null);
+      if (lifecycleRecords.get(phase) === identity) return null;
+      lifecycleRecords.set(phase, identity);
+    }
     return `${JSON.stringify({
       phase,
       elapsedMs: Date.now() - TUI_LAUNCH_EPOCH_MS,
@@ -48,6 +88,22 @@ function serializeMark(phase: string, details?: Readonly<Record<string, unknown>
 export function tuiPerfMark(phase: string, details?: Readonly<Record<string, unknown>>): void {
   const record = serializeMark(phase, details);
   if (record) writer?.write(record);
+}
+
+/** Optional stable callback keeps wheel diagnostics absent from the disabled path. */
+export const tuiPerfWheelObservation = tuiPerfStream
+  ? (observation: Readonly<Record<string, unknown>>): void =>
+      tuiPerfMark("terminal-wheel-route", observation)
+  : undefined;
+
+export function markGenerationStatus(
+  snapshot: { readonly status: string; readonly daemonGeneration: string | null } | null,
+): void {
+  if (snapshot)
+    tuiPerfMark("generation-status", {
+      status: snapshot.status,
+      daemonGeneration: snapshot.daemonGeneration,
+    });
 }
 
 export function tuiPerfCriticalMark(

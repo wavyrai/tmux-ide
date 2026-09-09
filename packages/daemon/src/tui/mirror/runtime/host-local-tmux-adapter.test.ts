@@ -1,8 +1,21 @@
+import * as childProcess from "node:child_process";
+import * as performanceLog from "./application-performance-log.ts";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
-import { createOpenTuiHostLocalTmuxAdapter, writeAllSync } from "./host-local-tmux-adapter.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createOpenTuiHostLocalTmuxAdapter,
+  writeAllSync,
+  writeMacClipboard,
+} from "./host-local-tmux-adapter.ts";
 import { applicationClipboardReadiness } from "./application-terminal-selection-owner.ts";
+
+// Never allow clipboard fixtures to launch a real host process, even on regression.
+vi.mock("node:child_process", () => ({
+  execFile: vi.fn(() => {
+    throw new Error("Unexpected real subprocess in clipboard test");
+  }),
+}));
 
 const source = readFileSync(
   fileURLToPath(new URL("./host-local-tmux-adapter.ts", import.meta.url)),
@@ -10,6 +23,11 @@ const source = readFileSync(
 );
 
 describe("host-local tmux adapter boundary", () => {
+  beforeEach(() => {
+    vi.stubEnv("TMUX", "/private/test-tmux,123,0");
+    vi.stubEnv("SSH_TTY", "/private/test-ssh");
+  });
+  afterEach(() => vi.unstubAllEnvs());
   it("contains only clipboard policy commands", () => {
     expect(source.match(/run\(\[/gu)).toBeNull();
     expect(source.match(/boundedClipboardPolicyRun\(run,/gu)).toHaveLength(2);
@@ -58,16 +76,44 @@ describe("host-local tmux adapter boundary", () => {
     expect(writes).toEqual(["\u001b]52;c;Y29weSBtZQ==\u0007"]);
   });
 
-  it("a cleared TMUX readiness contract emits no OSC52 and no policy request", async () => {
+  it("copies outside tmux even when root skips policy readiness", async () => {
     const policy = vi.fn(async () => undefined);
     const writeClipboard = vi.fn(() => true);
-    const adapter = createOpenTuiHostLocalTmuxAdapter(true, policy, writeClipboard);
+    const adapter = createOpenTuiHostLocalTmuxAdapter(false, policy, writeClipboard, false);
     await expect(applicationClipboardReadiness(adapter.configureClipboard, false)).resolves.toBe(
       undefined,
     );
     expect(policy).not.toHaveBeenCalled();
-    expect(adapter.copyText("copy me")).toBe(false);
-    expect(writeClipboard).not.toHaveBeenCalled();
+    expect(adapter.copyText("copy me")).toBe(true);
+    expect(writeClipboard).toHaveBeenCalledWith("\u001b]52;c;Y29weSBtZQ==\u0007");
+    await expect(adapter.configureClipboard()).resolves.toBe(true);
+    expect(policy).not.toHaveBeenCalled();
+  });
+
+  it("honors explicit OSC52 routing on a local host without starting a native helper", async () => {
+    vi.stubEnv("SSH_TTY", "");
+    vi.stubEnv("SSH_CONNECTION", "");
+    vi.stubEnv("TMUX_IDE_CLIPBOARD_BACKEND", "osc52");
+    const launch = vi.mocked(childProcess.execFile);
+    launch.mockClear();
+    try {
+      const writeClipboard = vi.fn(() => true);
+      const adapter = createOpenTuiHostLocalTmuxAdapter(
+        false,
+        async () => undefined,
+        writeClipboard,
+        false,
+      );
+      const copied = adapter.copyText("route through terminal");
+      await Promise.resolve();
+      expect(copied).toBe(true);
+      expect(writeClipboard).toHaveBeenCalledWith(
+        "\u001b]52;c;cm91dGUgdGhyb3VnaCB0ZXJtaW5hbA==\u0007",
+      );
+      expect(launch).not.toHaveBeenCalled();
+    } finally {
+      launch.mockClear();
+    }
   });
 
   it("handles partial writes exactly and fails on a stalled writer", () => {
@@ -101,9 +147,217 @@ describe("host-local tmux adapter boundary", () => {
     }
   });
 
+  it("logs terminal transport submission without claiming an OS clipboard acknowledgement", () => {
+    const mark = vi.spyOn(performanceLog, "tuiPerfMark").mockImplementation(() => undefined);
+    try {
+      const adapter = createOpenTuiHostLocalTmuxAdapter(
+        false,
+        async () => undefined,
+        () => true,
+        false,
+        null,
+      );
+      expect(adapter.copyText("PRIVATE_SELECTED_TEXT")).toBe(true);
+      expect(mark.mock.calls).toEqual([
+        ["terminal-clipboard", { backend: "osc52", outcome: "submitted" }],
+        ["terminal-clipboard", { backend: "osc52", outcome: "transport-written" }],
+      ]);
+      expect(JSON.stringify(mark.mock.calls)).not.toContain("PRIVATE");
+    } finally {
+      mark.mockRestore();
+    }
+  });
+
   it("retains the hosted marker without exposing client mutation", () => {
     const adapter = createOpenTuiHostLocalTmuxAdapter(false);
     expect(adapter.hosted).toBe(false);
     expect(adapter).not.toHaveProperty("putAway");
+  });
+});
+
+describe("native macOS clipboard", () => {
+  it.skipIf(process.platform !== "darwin")(
+    "selects native clipboard by default outside tmux and waits for its actual completion",
+    async () => {
+      for (const variable of ["TMUX", "SSH_TTY", "SSH_CONNECTION", "TMUX_IDE_CLIPBOARD_BACKEND"])
+        vi.stubEnv(variable, undefined);
+      const launch = vi.mocked(childProcess.execFile);
+      let finish!: (error: Error | null) => void;
+      const end = vi.fn();
+      const fakeLaunch = (
+        _path: unknown,
+        _args: unknown,
+        _options: unknown,
+        callback: (error: Error | null) => void,
+      ) => {
+        finish = callback;
+        return { kill: vi.fn(), stdin: { on: vi.fn(), end } };
+      };
+      launch.mockImplementationOnce(fakeLaunch as unknown as typeof childProcess.execFile);
+      try {
+        const policy = vi.fn(async () => undefined);
+        const osc = vi.fn(() => true);
+        const adapter = createOpenTuiHostLocalTmuxAdapter(false, policy, osc);
+        await applicationClipboardReadiness(adapter.configureClipboard, false);
+        let settled = false;
+        const result = adapter.copyText("local selection λ\n");
+        const observed = Promise.resolve(result).then((copied) => {
+          settled = true;
+          return copied;
+        });
+        await Promise.resolve();
+        expect(launch).toHaveBeenCalledWith(
+          "/usr/bin/pbcopy",
+          [],
+          { timeout: 1500, killSignal: "SIGKILL", maxBuffer: 4096 },
+          expect.any(Function),
+        );
+        expect(end).toHaveBeenCalledWith("local selection λ\n", "utf8");
+        expect(settled).toBe(false);
+        expect(policy).not.toHaveBeenCalled();
+        expect(osc).not.toHaveBeenCalled();
+        finish(null);
+        await expect(observed).resolves.toBe(true);
+      } finally {
+        vi.unstubAllEnvs();
+        launch.mockReset();
+        launch.mockImplementation(() => {
+          throw new Error("Unexpected real subprocess in clipboard test");
+        });
+      }
+    },
+  );
+
+  it("waits for helper completion and rejects failed exit or stdin", async () => {
+    for (const failure of ["none", "exit", "stdin"] as const) {
+      let finish!: (error: Error | null) => void;
+      let inputError!: () => void;
+      const end = vi.fn();
+      const launch = vi.fn((_path, _args, options, callback) => {
+        expect(options).toEqual({ timeout: 1500, killSignal: "SIGKILL", maxBuffer: 4096 });
+        finish = callback;
+        return {
+          kill: vi.fn(),
+          stdin: {
+            on: (_event: string, handler: () => void) => {
+              inputError = handler;
+            },
+            end,
+          },
+        };
+      });
+      const result = writeMacClipboard(
+        "exact unicode λ\n",
+        launch as unknown as typeof import("node:child_process").execFile,
+      );
+      expect(launch.mock.calls[0]?.slice(0, 2)).toEqual(["/usr/bin/pbcopy", []]);
+      expect(end).toHaveBeenCalledWith("exact unicode λ\n", "utf8");
+      if (failure === "stdin") inputError();
+      finish(failure === "exit" ? new Error("timed out or nonzero exit") : null);
+      await expect(result).resolves.toBe(failure === "none");
+    }
+  });
+
+  it("reports bounded native outcomes without clipboard payload or helper error details", async () => {
+    const cases = [
+      "copied",
+      "spawn-failed",
+      "timeout",
+      "stdin-failed",
+      "stdin-unavailable",
+      "exit-failed",
+    ] as const;
+    for (const outcome of cases) {
+      const diagnostics = vi.fn();
+      let finish!: (error: unknown) => void;
+      let inputError!: () => void;
+      const launch = vi.fn((_path, _args, _options, callback) => {
+        if (outcome === "spawn-failed") throw new Error("PRIVATE_HELPER_DETAIL");
+        finish = callback;
+        return {
+          kill: vi.fn(),
+          stdin:
+            outcome === "stdin-unavailable"
+              ? null
+              : {
+                  on: (_event: string, handler: () => void) => {
+                    inputError = handler;
+                  },
+                  end: vi.fn(),
+                },
+        };
+      });
+      const result = writeMacClipboard(
+        "PRIVATE_SELECTED_TEXT",
+        launch as unknown as typeof childProcess.execFile,
+        diagnostics,
+      );
+      if (outcome === "stdin-failed") inputError();
+      if (outcome !== "spawn-failed" && outcome !== "stdin-unavailable") {
+        finish(
+          outcome === "timeout"
+            ? Object.assign(new Error("PRIVATE_HELPER_DETAIL"), { killed: true, signal: "SIGKILL" })
+            : outcome === "exit-failed"
+              ? Object.assign(new Error("PRIVATE_HELPER_DETAIL"), { code: 1 })
+              : null,
+        );
+      }
+      await expect(result).resolves.toBe(outcome === "copied");
+      expect(diagnostics.mock.calls).toEqual([["native-macos", outcome]]);
+      expect(JSON.stringify(diagnostics.mock.calls)).not.toContain("PRIVATE");
+    }
+  });
+
+  it("contains diagnostic sink exceptions and classifies synchronous stdin errors", async () => {
+    const kill = vi.fn();
+    const launch = vi.fn(() => ({
+      kill,
+      stdin: {
+        on: vi.fn(),
+        end: () => {
+          throw new Error("private");
+        },
+      },
+    }));
+    const diagnostics = vi.fn(() => {
+      throw new Error("diagnostic sink failure");
+    });
+    await expect(
+      writeMacClipboard("private", launch as unknown as typeof childProcess.execFile, diagnostics),
+    ).resolves.toBe(false);
+    expect(diagnostics).toHaveBeenCalledWith("native-macos", "stdin-failed");
+    expect(kill).toHaveBeenCalledOnce();
+  });
+
+  it("serializes native copies, retains only the latest pending text and recovers after failure", async () => {
+    let finish!: (value: boolean) => void;
+    const native = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const policy = vi.fn(async () => undefined);
+    const osc = vi.fn(() => true);
+    const adapter = createOpenTuiHostLocalTmuxAdapter(false, policy, osc, false, native);
+    const result = adapter.copyText("first");
+    await Promise.resolve();
+    const superseded = adapter.copyText("superseded");
+    const newest = adapter.copyText("newest");
+    await expect(superseded).resolves.toBe(false);
+    expect(adapter.copyText("x".repeat(1_000_001))).toBe(false);
+    expect(native).toHaveBeenCalledTimes(1);
+    finish(false);
+    await expect(result).resolves.toBe(false);
+    await Promise.resolve();
+    expect(native).toHaveBeenNthCalledWith(2, "newest");
+    finish(true);
+    await expect(newest).resolves.toBe(true);
+    const next = adapter.copyText("next");
+    await Promise.resolve();
+    finish(true);
+    await expect(next).resolves.toBe(true);
+    expect(osc).not.toHaveBeenCalled();
+    expect(policy).not.toHaveBeenCalled();
   });
 });

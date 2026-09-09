@@ -11,6 +11,26 @@ function deferred<T>() {
 }
 
 describe("TerminalPaneInputRouter", () => {
+  test("preserves transport refusal after successful pane selection", async () => {
+    const selection = deferred<boolean>();
+    const sent: string[] = [];
+    const router = new TerminalPaneInputRouter<string>({
+      select: () => selection.promise,
+      send: async (paneId) => {
+        sent.push(paneId);
+        return false;
+      },
+      onFocusedPane: () => undefined,
+    });
+    router.adoptCanonicalPane("one");
+    router.selectPane("two");
+    const pending = router.sendInputToPane("two", "wheel");
+    expect(sent).toEqual([]);
+    selection.resolve(true);
+    await expect(pending).resolves.toBe(false);
+    expect(sent).toEqual(["two"]);
+  });
+
   test("current canonical pane selection is a no-op and input sends once", async () => {
     const selected: string[] = [];
     const sent: string[] = [];

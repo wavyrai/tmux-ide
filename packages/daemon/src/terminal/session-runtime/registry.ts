@@ -1,3 +1,7 @@
+import type {
+  NativeBackingIdentity,
+  TerminalNativeBackingResponse,
+} from "./native-seed-backing.ts";
 import {
   SessionRuntimeClientIdSchemaZ,
   SessionRuntimeAuthorityLeaseSchemaZ,
@@ -56,7 +60,6 @@ import {
   SessionRuntimeTerminalReplicaOwner,
   type TerminalReplicaQualificationSnapshot,
   type TerminalReplicaSubscription,
-  type TerminalReplicaNativeBackingResult,
 } from "./terminal-replica-owner.ts";
 import {
   SessionRuntimeTerminalDeliveryHub,
@@ -694,10 +697,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   async captureNativeBacking(
     session: string,
     semanticPaneId: string,
-  ): Promise<TerminalReplicaNativeBackingResult> {
+    expected?: NativeBackingIdentity,
+  ): Promise<TerminalNativeBackingResponse> {
     const runtime = this.#sessions.get(session);
     if (this.#disposed || !runtime) return { status: "unavailable" };
-    const result = await runtime.captureNativeBacking(semanticPaneId);
+    const result = await runtime.captureNativeBacking(semanticPaneId, expected);
     if (this.#disposed || this.#sessions.get(session) !== runtime) return { status: "retired" };
     return result;
   }
@@ -1581,10 +1585,16 @@ class SessionRuntime {
     }
   }
 
-  async captureNativeBacking(semanticPaneId: string): Promise<TerminalReplicaNativeBackingResult> {
+  async captureNativeBacking(
+    semanticPaneId: string,
+    expected?: NativeBackingIdentity,
+  ): Promise<TerminalNativeBackingResponse> {
     const owner = this.#terminalReplicas.get(semanticPaneId);
     if (!owner) return { status: "unavailable" };
-    return await owner.captureNativeBacking();
+    const retained = expected
+      ? this.#terminalDeliveryHub.retainedNativeBacking(semanticPaneId, expected)
+      : null;
+    return retained ?? (await owner.captureNativeBacking());
   }
 
   async openTerminalDelivery(
@@ -2036,6 +2046,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     let closed = false;
     const connection: TerminalDeliveryConnection = {
       negotiation: upstream.negotiation,
+      closed: upstream.closed,
       ack: (ack: TerminalDeliveryAck) => upstream.ack(ack),
       nack: (nack: TerminalDeliveryNack) => upstream.nack(nack),
       setVisibility: (visibility: TerminalDeliveryVisibility) => upstream.setVisibility(visibility),

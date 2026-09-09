@@ -647,6 +647,22 @@ describe("PaneStreamAdmissionCoordinator", () => {
           const sim = new SimulatedChannel(handlers, (command) => {
             const reply = fixtureAutoReply(state)(command);
             if (reply) return reply;
+            if (command.includes("capture-pane -p -R")) {
+              // This portable fixture has backing-only v1 capability. Returning
+              // ANSI text as native JSON would instead model a corrupt capture.
+              return [
+                JSON.stringify({
+                  version: 1,
+                  cols: 1,
+                  rows: 1,
+                  history: 0,
+                  hscrolled: 0,
+                  limit: 2000,
+                  cursor: [0, 0],
+                }),
+                JSON.stringify({ row: 0, flags: 0, used: 0, cells: [] }),
+              ];
+            }
             if (command.includes("capture-pane")) return ["seed"];
             if (command.includes("display-message")) {
               if (command.includes("-t %2")) return ["0 0 99 50"];
@@ -698,13 +714,35 @@ describe("PaneStreamAdmissionCoordinator", () => {
     if (!decision.accepted) throw new Error(`upgrade rejected: ${decision.code}`);
     const socket = new FakeSocket();
     decision.admission.bind(socket);
-    socket.message({
-      type: "redeem",
-      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
-      ticket: descriptor.redemptionTicket,
-      requestId,
-      daemonInstanceId: INSTANCE,
-    });
+    const clientSocket = new LoopbackClientSocket(socket, () => undefined);
+    socket.onTransmit = (text) => queueMicrotask(() => clientSocket.message(text));
+    const onFault = vi.fn();
+    const client = await connectIssuedPaneStreamRuntimeClient(
+      {
+        createSocket: () => {
+          queueMicrotask(() => clientSocket.open());
+          return clientSocket;
+        },
+        origin: ORIGIN,
+        hostClientId: `test-host:${requestId}`,
+        stream: {
+          protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+          workspaceName: "workspace.alpha",
+          panes,
+          viewerMode: "read-only",
+          terminalDelivery: {
+            protocolVersions: [1],
+            encodings: ["semantic-v1"],
+            richPlacements: false,
+          },
+        },
+        requestInitialInputAuthority: false,
+        onNegotiated: () => undefined,
+        onTerminalDelivery: () => undefined,
+        onFault,
+      },
+      descriptor,
+    );
     await vi.waitFor(() =>
       expect(socket.framesOfType("terminal-delivery-ready").length).toBe(panes.length),
     );
@@ -724,7 +762,23 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(operations.indexOf("pane-stream-layout-validated")).toBeLessThan(
       operations.indexOf("pane-stream-delivery-open"),
     );
-    socket.close();
+    // Repeated native events while geometry is ownerless must remain valid
+    // through the real registry, stream publication and client replay guard.
+    let previousAuthority = registry.authoritySnapshot(FIXTURE.session);
+    for (let index = 0; index < 2; index++) {
+      await settled();
+      registry.noteNativeGeometryActivity(FIXTURE.session);
+      await settled();
+      const next = registry.authoritySnapshot(FIXTURE.session);
+      expect(next.nativeGeometryYieldUntilMs).toBeGreaterThan(
+        previousAuthority.nativeGeometryYieldUntilMs,
+      );
+      expect(next.revision).toBeGreaterThan(previousAuthority.revision);
+      expect(clientSocket.readyState).toBe(1);
+      expect(onFault).not.toHaveBeenCalled();
+      previousAuthority = next;
+    }
+    client.close();
     await runtime.dispose();
     await registry.dispose();
   });
@@ -2117,6 +2171,64 @@ describe("PaneStreamAdmissionCoordinator", () => {
     });
     expect(socket.framesOfType("layout-snapshot")).toHaveLength(2);
     expect(socket.framesOfType("error").at(-1)?.code).toBe("topology-changed");
+  });
+
+  it("retires only the socket whose delivery sink failed and admits its reconnect", async () => {
+    const retirements: Array<(reason: "closed" | "sink-failed") => void> = [];
+    const h = harness({
+      openTerminalDelivery: async () => {
+        let retire!: (reason: "closed" | "sink-failed") => void;
+        const closed = new Promise<"closed" | "sink-failed">((resolve) => {
+          retire = resolve;
+        });
+        retirements.push(retire);
+        return {
+          closed,
+          negotiation: {
+            accepted: true,
+            negotiated: {
+              protocolVersion: 1,
+              encoding: "semantic-v1",
+              richPlacements: false,
+              generation: INSTANCE,
+              deliveryNonce: "00000000-0000-4000-8000-000000000098",
+            },
+          },
+          ack: () => undefined,
+          nack: () => undefined,
+          setVisibility: () => undefined,
+          close: async () => {
+            retire("closed");
+          },
+        };
+      },
+    });
+    const options = { semanticDelivery: true, panes: ["pane.editor"] };
+    const slow = await connect(h, options);
+    const healthy = await connect(h, options);
+    await vi.waitFor(() =>
+      expect(healthy.socket.framesOfType("terminal-delivery-ready")).toHaveLength(1),
+    );
+    retirements[0]!("sink-failed");
+    await vi.waitFor(() =>
+      expect(slow.socket.closed).toEqual({ code: 1013, reason: "output-backpressure" }),
+    );
+    expect(healthy.socket.closed).toBeNull();
+    expect(slow.socket.framesOfType("terminal-delivery-fault")).toHaveLength(0);
+    const reconnect = await connect(h, options);
+    await vi.waitFor(() =>
+      expect(reconnect.socket.framesOfType("terminal-delivery-ready")).toHaveLength(1),
+    );
+    // Retired delivery callbacks cannot close a replacement transport.
+    retirements[0]!("sink-failed");
+    await Promise.resolve();
+    expect(reconnect.socket.closed).toBeNull();
+    // Ordinary source retirement preserves existing pane lifecycle semantics.
+    retirements[1]!("closed");
+    await Promise.resolve();
+    expect(healthy.socket.closed).toBeNull();
+    healthy.socket.close();
+    reconnect.socket.close();
   });
 
   it("opens pane deliveries concurrently but publishes readiness in descriptor order", async () => {

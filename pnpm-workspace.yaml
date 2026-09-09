@@ -13,14 +13,15 @@ overrides:
   "@babel/core": 7.29.6
   browserslist: 4.28.8
   flatted: 3.4.2
-  "minimatch@8>brace-expansion": 2.1.4
+  minimatch@8>brace-expansion: 2.1.4
   nanoid: 3.3.18
   path-to-regexp: 8.4.2
   picomatch: 4.0.7
   postcss: 8.5.26
-  "tsx>esbuild": 0.28.2
+  tsx>esbuild: 0.28.2
   undici: 7.29.0
   zod: 4.3.6
 
 patchedDependencies:
+  "@opentui/core@0.5.1": patches/@opentui__core@0.5.1.patch
   "@opentui/solid@0.5.1": patches/@opentui__solid@0.5.1.patch

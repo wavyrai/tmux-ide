@@ -195,14 +195,14 @@ const flushHostStart = async (): Promise<void> => {
 };
 
 function canonicalObserver() {
-  let listener: ((daemonGeneration: string) => void) | null = null;
+  let listener: ((daemonGeneration: string | null) => void) | null = null;
   const stop = vi.fn();
   return {
-    observe: vi.fn(async (next: (daemonGeneration: string) => void) => {
+    observe: vi.fn(async (next: (daemonGeneration: string | null) => void) => {
       listener = next;
       return stop;
     }),
-    emit(daemonGeneration: string) {
+    emit(daemonGeneration: string | null) {
       listener?.(daemonGeneration);
     },
     stop,
@@ -323,6 +323,7 @@ describe("OpenTUI generation host", () => {
       observeCanonicalGeneration: inertCanonicalObserver,
       resolveConnection: vi.fn(async () => connection("daemon-b")),
       buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      performanceDiagnostics: true,
       onDiagnostic: (phase, details) => phases.push(`${phase}:${String(details.daemonGeneration)}`),
     });
 
@@ -428,6 +429,7 @@ describe("OpenTUI generation host", () => {
       observeCanonicalGeneration: inertCanonicalObserver,
       resolveConnection: vi.fn(async () => firstConnection),
       buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      performanceDiagnostics: true,
       onDiagnostic: (phase, details) => {
         if (phase === "host-internal-snapshot-publication") {
           diagnosticStates.push(
@@ -595,6 +597,7 @@ describe("OpenTUI generation host", () => {
       observeCanonicalGeneration: inertCanonicalObserver,
       resolveConnection: vi.fn(async () => connection("daemon-a")),
       buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      performanceDiagnostics: true,
       onDiagnostic: (phase, details) => {
         if (phase === "workspace-client-state") diagnostics.push(details);
       },
@@ -730,6 +733,7 @@ describe("OpenTUI generation host", () => {
       observeCanonicalGeneration: inertCanonicalObserver,
       resolveConnection: vi.fn(async () => connection("daemon-a")),
       buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      performanceDiagnostics: true,
       onDiagnostic: (phase, details) => {
         if (phase === "workspace-client-state") diagnostics.push(details);
       },
@@ -825,6 +829,7 @@ describe("OpenTUI generation host", () => {
       observeCanonicalGeneration: inertCanonicalObserver,
       resolveConnection: vi.fn(async () => connection("daemon-a")),
       buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      performanceDiagnostics: true,
       onDiagnostic: (phase, details) => {
         writer.write(`${JSON.stringify({ phase: `generation-${phase}`, ...details })}\n`);
       },
@@ -933,6 +938,7 @@ describe("OpenTUI generation host", () => {
           },
           cancel: vi.fn(),
         }),
+      performanceDiagnostics: true,
       onDiagnostic: (phase, details) => {
         if (phase === "workspace-client-state")
           diagnosticGenerations.push(String(details.daemonGeneration));
@@ -966,23 +972,27 @@ describe("OpenTUI generation host", () => {
     await host.dispose();
   });
 
-  it("does no WorkspaceClient snapshot work when generation diagnostics are absent", async () => {
-    const view = presentation();
-    let created!: FakeBundle;
-    const host = createOpenTuiGenerationHost("alpha", view.value, {
-      observeCanonicalGeneration: inertCanonicalObserver,
-      resolveConnection: vi.fn(async () => connection("daemon-a")),
-      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
-    });
-    const started = host.start();
-    await flushHostStart();
-    created.emitLifecycle(liveEmpty("daemon-a"));
-    created.emitScope("authority");
-    expect(created.getSnapshotSpy).not.toHaveBeenCalled();
-    created.activate();
-    await started;
-    await host.dispose();
-  });
+  it.each([false, true])(
+    "does no WorkspaceClient profiling for ordinary lifecycle logging (enabled: %s)",
+    async (lifecycleLogging) => {
+      const view = presentation();
+      let created!: FakeBundle;
+      const host = createOpenTuiGenerationHost("alpha", view.value, {
+        onDiagnostic: lifecycleLogging ? vi.fn() : undefined,
+        observeCanonicalGeneration: inertCanonicalObserver,
+        resolveConnection: vi.fn(async () => connection("daemon-a")),
+        buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      });
+      const started = host.start();
+      await flushHostStart();
+      created.emitLifecycle(liveEmpty("daemon-a"));
+      created.emitScope("authority");
+      expect(created.getSnapshotSpy).not.toHaveBeenCalled();
+      created.activate();
+      await started;
+      await host.dispose();
+    },
+  );
 
   it("keeps synchronous diagnostic snapshot failures fail-open", async () => {
     const view = presentation();
@@ -997,6 +1007,7 @@ describe("OpenTUI generation host", () => {
         });
         return created;
       },
+      performanceDiagnostics: true,
       onDiagnostic: vi.fn(),
     });
     const started = host.start();
@@ -1018,6 +1029,7 @@ describe("OpenTUI generation host", () => {
       observeCanonicalGeneration: inertCanonicalObserver,
       resolveConnection: vi.fn(async () => connection("daemon-a")),
       buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      performanceDiagnostics: true,
       onDiagnostic: sink,
     });
     const started = host.start();
@@ -1272,6 +1284,38 @@ describe("OpenTUI generation host", () => {
     await flushHostStart();
     expect(resolveConnection).toHaveBeenCalledOnce();
     expect(created.revokeSpy).not.toHaveBeenCalled();
+  });
+
+  it("retires a lost remote tunnel and reconnects even when daemon identity is unchanged", async () => {
+    const observer = canonicalObserver();
+    const view = presentation();
+    const bundles: FakeBundle[] = [];
+    const resolveConnection = vi.fn(async () => connection("daemon-a"));
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: observer.observe,
+      resolveConnection,
+      buildBundle: (resolved, callbacks) => {
+        const created = bundle(resolved, callbacks);
+        bundles.push(created);
+        return created;
+      },
+    });
+    const started = host.start();
+    await flushHostStart();
+    bundles[0]!.activate();
+    await started;
+    observer.emit(null);
+    expect(bundles[0]!.revokeSpy).toHaveBeenCalledOnce();
+    expect(host.getSnapshot().status).toBe("rebinding");
+    expect(await host.start()).toBe(false);
+    expect(resolveConnection).toHaveBeenCalledOnce();
+    observer.emit("daemon-a");
+    await flushHostStart();
+    expect(resolveConnection).toHaveBeenCalledTimes(2);
+    bundles[1]!.activate();
+    expect(host.getSnapshot().status).toBe("live");
+    expect(bundles[0]!.disposeSpy).toHaveBeenCalledOnce();
+    await host.dispose();
   });
 
   it("revokes once and atomically replaces on a new canonical generation", async () => {

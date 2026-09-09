@@ -1,3 +1,4 @@
+import type { NativeGridCapture } from "./native-grid-capture.ts";
 /**
  * Public event contract of the daemon MirrorService (m43 card 1).
  *
@@ -18,6 +19,8 @@
 
 /** Modes observed at the native capture seam; omitted fields stay unknown. */
 export interface MirrorObservedTerminalModes {
+  /** Authoritative tmux pane option; absent when the capture cannot resolve it. */
+  readonly scrollOnClear?: boolean;
   readonly alternateScreen?: boolean;
   readonly applicationCursor?: boolean;
   readonly applicationKeypad?: boolean;
@@ -42,6 +45,10 @@ export type MirrorPaneEvent =
   | {
       /** Screen + history bytes captured at ONE instant (`capture-pane -e -J`). */
       type: "seed";
+      /** Only requested by the canonical parser owner. */
+      native?: NativeGridCapture;
+      /** Mixed-format recovery: canonical owner waits for its own fresh seed. */
+      requiresNativeRecapture?: boolean;
       data: Uint8Array;
     }
   | {

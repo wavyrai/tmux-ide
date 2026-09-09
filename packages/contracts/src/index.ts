@@ -33,6 +33,13 @@ export * from "./terminal-attachments.ts";
 export * from "./pane-stream.ts";
 export * from "./control.ts";
 export * from "./commands.ts";
+// Explicit leaf exports let bundled transport clients avoid desktop resources.
+export {
+  DesktopDaemonCapabilityErrorCodeSchemaZ,
+  DesktopDaemonCapabilityErrorSchemaZ,
+  type DesktopDaemonCapabilityErrorCode,
+  type DesktopDaemonCapabilityError,
+} from "./desktop-daemon-capability-error.ts";
 export * from "./desktop-host.ts";
 export * from "./desktop-workspace-name.ts";
 export * from "./daemon-resource-request.ts";
@@ -84,3 +91,5 @@ export * from "./causal-cell.ts";
 export * from "./shared-monotonic-clock.ts";
 
 export * from "./visual-theme-presets.ts";
+
+export * from "./saved-machines.ts";

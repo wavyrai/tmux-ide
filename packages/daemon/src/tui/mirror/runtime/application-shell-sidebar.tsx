@@ -120,6 +120,30 @@ export function ApplicationShellSidebar(props: ApplicationShellSidebarProps): JS
           );
         }}
       </For>
+      <ApplicationSidebarAgents {...props} />
+      <box flexGrow={1} />
+    </Surface>
+  );
+}
+
+/** Agent rows for the selected workspace, shared by flat and machine sidebars. */
+export function ApplicationSidebarAgents(
+  props: ApplicationShellSidebarProps & { readonly width?: number },
+): JSX.Element {
+  const rowWidth = () => Math.max(1, (props.width ?? props.shell.layout.sidebar.width) - 1);
+  const sidebarFocused = () => props.shell.semantic.focus.zone === "sidebar";
+  const focusedAgentPane = () => props.shell.semantic.focus.appFocusedPaneId;
+  return (
+    <box
+      width={props.width ?? props.shell.layout.sidebar.width}
+      height={
+        props.shell.semantic.sidebar.agents.length > 0
+          ? props.shell.semantic.sidebar.agents.length + 2
+          : 0
+      }
+      flexDirection="column"
+      flexShrink={0}
+    >
       <For each={props.shell.semantic.sidebar.agents.length > 0 ? [true] : []}>
         {() => (
           <Surface theme={props.theme} variant="panel" height={1} marginTop={1}>
@@ -159,7 +183,6 @@ export function ApplicationShellSidebar(props: ApplicationShellSidebarProps): JS
           );
         }}
       </For>
-      <box flexGrow={1} />
-    </Surface>
+    </box>
   );
 }

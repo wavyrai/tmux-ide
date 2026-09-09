@@ -1,6 +1,6 @@
 {
   "name": "@tmux-ide/daemon",
-  "version": "2.9.0-beta.8",
+  "version": "2.9.0-beta.14",
   "private": true,
   "description": "Singleton background daemon for tmux-ide — embeddable workspace registry, command-center API, and chat/codex orchestration.",
   "type": "module",
@@ -61,7 +61,7 @@
     "@tmux-ide/daemon-client": "workspace:*",
     "@tmux-ide/presentation": "workspace:*",
     "@tmux-ide/tmux-bridge": "workspace:*",
-    "@tmux-ide/xterm-headless": "file:native/xterm/tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.3.tgz",
+    "@tmux-ide/xterm-headless": "file:native/xterm/tmux-ide-xterm-headless-6.0.0-tmuxide.3-local.5.tgz",
     "@xterm/addon-unicode11": "0.9.0",
     "hono": "^4.12.34",
     "ignore": "^7.0.5",

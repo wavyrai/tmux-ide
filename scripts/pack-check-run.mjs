@@ -347,11 +347,40 @@ async function runInstalledTuiGate(installedCli) {
     commit: releaseCommit,
     platform: platformTag,
     sourceState: compiledSourceState,
+    nativeRenderer: "stock",
   };
   if (JSON.stringify(runtimeProvenance) !== JSON.stringify(expectedProvenance)) {
     throw new Error(
       `Compiled runtime provenance disagrees: ${JSON.stringify(runtimeProvenance)} != ${JSON.stringify(expectedProvenance)}`,
     );
+  }
+  // Exercise the executable directly: CLI cwd isolation must not hide a
+  // standalone runtime accidentally loading a caller's development Bun config.
+  for (const preload of ["missing-preload.cjs", "unexpected-preload.cjs"]) {
+    const configuredCwd = join(tmpRoot, `runtime-bunfig-${preload}`);
+    mkdirSync(configuredCwd);
+    writeFileSync(join(configuredCwd, "bunfig.toml"), `preload = ["./${preload}"]\n`);
+    if (preload === "unexpected-preload.cjs") {
+      writeFileSync(
+        join(configuredCwd, preload),
+        'process.stdout.write("UNEXPECTED_PROJECT_PRELOAD\\n"); process.exit(87);\n',
+      );
+    }
+    const isolatedProvenance = spawnSync(mockReleaseBinaryPath, ["__release-provenance"], {
+      cwd: configuredCwd,
+      env: { ...process.env, ...tmuxEnv(dirname(installedCli)) },
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    if (
+      isolatedProvenance.status !== 0 ||
+      isolatedProvenance.stderr !== "" ||
+      isolatedProvenance.stdout !== runtimeProvenanceResult.stdout
+    ) {
+      throw new Error(
+        `Standalone runtime consumed caller Bun config (${preload}):\n${isolatedProvenance.stdout}${isolatedProvenance.stderr}`,
+      );
+    }
   }
   const mockBinary = readFileSync(mockReleaseBinaryPath);
   const mockAsset = gzipSync(mockBinary);
@@ -699,6 +728,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       launcherPath,
       [
         "#!/bin/sh",
+        "export TMUX_IDE_CLIPBOARD_BACKEND=osc52",
         `export TMUX_IDE_TUI_READY_FILE=${shQuote(readyPath)}`,
         `export TMUX_IDE_TUI_PERF_LOG=${shQuote(performancePath)}`,
         ...(hosted ? ["export TMUX_IDE_HOSTED=1"] : []),

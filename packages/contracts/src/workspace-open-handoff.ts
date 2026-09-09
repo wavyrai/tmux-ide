@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { DesktopWorkspaceNameSchemaZ } from "./desktop-host.ts";
-import { DesktopDaemonCapabilityErrorSchemaZ } from "./desktop-host.ts";
+import { DesktopWorkspaceNameSchemaZ } from "./desktop-workspace-name.ts";
+import { DesktopDaemonCapabilityErrorSchemaZ } from "./desktop-daemon-capability-error.ts";
 import { FleetSessionIdSchemaZ } from "./fleet-catalog.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./terminal-attachments.ts";
 

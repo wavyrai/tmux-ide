@@ -422,13 +422,13 @@ export function setFleetFactsObserverDiagnostics(
 
 /** Pin fleet invalidations to the same tmux authority as catalog HTTP reads. */
 export function setFleetFactsTmuxRunner(
-  runTmux: ((args: readonly string[]) => string) | null,
+  runTmux: ((args: readonly string[]) => string | Promise<string>) | null,
 ): void {
   stopFleetFactsObserver();
   sessionCompositionReaderOverride = runTmux
     ? async () => {
         try {
-          return parseSessionCompositionFacts(runTmux(SESSION_COMPOSITION_TMUX_ARGS));
+          return parseSessionCompositionFacts(await runTmux(SESSION_COMPOSITION_TMUX_ARGS));
         } catch (error) {
           // A daemon may legitimately precede the first tmux server. Socket
           // absence is an authoritative empty fleet baseline, not a failed
@@ -441,7 +441,7 @@ export function setFleetFactsTmuxRunner(
   agentStateReaderOverride = runTmux
     ? async () => {
         try {
-          return parseAgentStateFacts(runTmux(AGENT_STATE_TMUX_ARGS));
+          return parseAgentStateFacts(await runTmux(AGENT_STATE_TMUX_ARGS));
         } catch {
           return null;
         }

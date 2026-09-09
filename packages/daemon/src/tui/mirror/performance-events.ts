@@ -453,6 +453,12 @@ export interface TuiTerminalResourceSampleEvent {
 }
 
 export interface TuiTerminalDeliveryPerformanceEvent {
+  readonly decodeStrategy?: "compact-sync" | "compact-cooperative" | "legacy";
+  readonly representationBytes?: number;
+  readonly baselineCols?: number;
+  readonly baselineRows?: number;
+  readonly baselineHistoryRows?: number;
+  readonly traceId?: string;
   readonly parseMs: number;
   readonly queuePeak: number;
   readonly queueCapacity: number | null;

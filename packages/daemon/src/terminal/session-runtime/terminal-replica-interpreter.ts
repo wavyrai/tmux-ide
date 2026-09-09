@@ -1,3 +1,5 @@
+import { rememberNativeSeedBacking } from "./native-seed-backing.ts";
+import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import {
   detectWidgetMarkerFromReplicaRows,
@@ -58,6 +60,7 @@ export type TerminalReplicaInterpreterOperation =
   | { readonly type: "resize"; readonly cols: number; readonly rows: number }
   | {
       readonly type: "reseed";
+      readonly native?: NativeGridCapture;
       /** Retention configured on the native pane, carried by its capture probe. */
       readonly historyLimit?: number;
       /** Actual captured retention can exceed the native limit after reflow. */
@@ -120,6 +123,7 @@ export interface TerminalReplicaInterpreterStats {
 
 /** Daemon-owned, sans-I/O VT interpreter with one FIFO for bytes and geometry. */
 export class TerminalReplicaInterpreter {
+  #nativeSeedBackingCandidate: NativeGridCapture | undefined;
   readonly #generation: SessionRuntimeGeneration;
   readonly #workspaceName: string;
   readonly #semanticPaneId: string;
@@ -141,6 +145,9 @@ export class TerminalReplicaInterpreter {
   #tail: Promise<void> = Promise.resolve();
   #revision = 0;
   #snapshot: TerminalReplicaSnapshot;
+  // Only committed, immutable snapshots enter this slot; backend resets do not
+  // change its hash until their validated projection is committed.
+  #snapshotHash: string | null = null;
   #needsSeed = true;
   #closed = false;
   #walkCount = 0;
@@ -249,7 +256,7 @@ export class TerminalReplicaInterpreter {
   }
 
   currentSeed(): CanonicalTerminalReplicaSeed | null {
-    return this.#needsSeed ? null : this.#seed(this.#revision, this.#snapshot);
+    return this.#needsSeed ? null : this.#seed();
   }
 
   /** Prioritize one future parser admission, independent of diagnostic tracing. */
@@ -325,6 +332,10 @@ export class TerminalReplicaInterpreter {
     return run;
   }
 
+  supportsNativeBootstrap(): boolean {
+    return this.#backend.canImportNativeGrid?.() === true;
+  }
+
   async #apply(
     operation: Exclude<TerminalReplicaInterpreterOperation, { type: "write" }>,
   ): Promise<void> {
@@ -336,13 +347,17 @@ export class TerminalReplicaInterpreter {
       const scrollback = Math.max(
         operation.historyLimit ?? this.#scrollback,
         operation.historySize ?? 0,
+        operation.native?.history ?? 0,
       );
       const replacement = this.#backendFactory({
         cols: nativeCols,
         rows: nativeRows,
         scrollback,
+        historyLimit: operation.historyLimit ?? scrollback,
       });
       try {
+        if (operation.native && !replacement.importNativeGrid?.(operation.native))
+          throw new Error("Native bootstrap requires a compatible interpreter");
         for (const chunk of operation.chunks) {
           await this.#writeToBackend(replacement, chunk);
         }
@@ -374,7 +389,12 @@ export class TerminalReplicaInterpreter {
         hiddenState:
           operation.bootstrap === "authoritative-stream" ? "observed-from-start" : "unknown",
       };
-      this.#commit(true, undefined, operation.trace ?? null);
+      this.#nativeSeedBackingCandidate = operation.native;
+      try {
+        this.#commit(true, undefined, operation.trace ?? null);
+      } finally {
+        this.#nativeSeedBackingCandidate = undefined;
+      }
       previous.dispose();
       return;
     }
@@ -532,8 +552,7 @@ export class TerminalReplicaInterpreter {
       bootstrap: projected.bootstrap,
     });
     const nextHash = hashTerminalReplicaSnapshot(next);
-    const priorHash = hashTerminalReplicaSnapshot(previous);
-    if (!forceSeed && nextHash === priorHash) {
+    if (!forceSeed && nextHash === this.#currentSnapshotHash()) {
       this.#causalCell?.observeCommit(next, this.#revision, nextHash);
       this.#recordReduceSpan(reduceStarted, trace, "terminal-replica-project-noop");
       return;
@@ -542,10 +561,11 @@ export class TerminalReplicaInterpreter {
       const revision = this.#needsSeed ? this.#revision : this.#revision + 1;
       this.#revision = revision;
       this.#snapshot = next;
+      this.#snapshotHash = nextHash;
       this.#needsSeed = false;
       this.#resolveSeedReady();
       this.#emitRaw(revision, revision);
-      this.#emit(this.#seed(revision, next), trace);
+      this.#emit(this.#seed(), trace);
       this.#causalCell?.observeCommit(next, revision, nextHash);
       this.#recordReduceSpan(reduceStarted, trace);
       return;
@@ -565,7 +585,8 @@ export class TerminalReplicaInterpreter {
         ...(next.cols !== previous.cols || next.rows !== previous.rows
           ? { dimensions: { cols: next.cols, rows: next.rows } }
           : {}),
-        rows: dirtyRows,
+        // Publish the validated row identities whose hashes were just computed.
+        rows: dirtyRows.map(({ index }) => ({ index, row: next.grid[index]! })),
         ...(historyChanged ? (historyDelta ? { historyDelta } : { history: next.history }) : {}),
         cursor: next.cursor,
         modes: next.modes,
@@ -575,6 +596,7 @@ export class TerminalReplicaInterpreter {
     };
     this.#revision = revision;
     this.#snapshot = next;
+    this.#snapshotHash = nextHash;
     this.#emitRaw(baseRevision, revision);
     this.#emit(update, trace);
     this.#causalCell?.observeCommit(next, revision, nextHash);
@@ -648,14 +670,21 @@ export class TerminalReplicaInterpreter {
     });
   }
 
-  #seed(revision: number, snapshot: TerminalReplicaSnapshot): CanonicalTerminalReplicaSeed {
+  #currentSnapshotHash(): string {
+    return (this.#snapshotHash ??= hashTerminalReplicaSnapshot(this.#snapshot));
+  }
+
+  #seed(): CanonicalTerminalReplicaSeed {
+    const snapshot = this.#snapshot;
+    if (this.#nativeSeedBackingCandidate)
+      rememberNativeSeedBacking(snapshot, this.#nativeSeedBackingCandidate);
     return {
       type: "terminal.seed",
       ...this.#address(),
-      revision,
+      revision: this.#revision,
       cols: snapshot.cols,
       rows: snapshot.rows,
-      stateHash: hashTerminalReplicaSnapshot(snapshot),
+      stateHash: this.#currentSnapshotHash(),
       hashAlgorithm: "fnv1a64-v1",
       snapshot,
     };

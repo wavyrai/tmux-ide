@@ -1,3 +1,8 @@
+import {
+  ApplicationMachineSidebar,
+  type ApplicationMachineSidebarModel,
+} from "./application-machine-sidebar.tsx";
+import type { InteractionReceipt } from "@tmux-ide/contracts";
 import type { ApplicationConnectionFeedback } from "../workspace/connection-feedback.ts";
 import { appearanceDialogLayer } from "./application-shell-overlays.tsx";
 import type { ApplicationAppearanceOwner } from "./application-appearance-owner.ts";
@@ -23,7 +28,7 @@ import {
 import type { ApplicationPaneRenameDraft } from "./application-pane-rename-input.ts";
 import { applicationShellViewport } from "./application-shell-viewport.ts";
 import type { OverlayLayer } from "../ui/overlay-host.tsx";
-import { ApplicationShellSidebar } from "./application-shell-sidebar.tsx";
+import { ApplicationShellSidebar, ApplicationSidebarAgents } from "./application-shell-sidebar.tsx";
 import { ApplicationShellOverlayStack } from "./application-shell-overlay-stack.tsx";
 import { ApplicationHomeSurface } from "./application-shell-home.tsx";
 import type { ApplicationHomeAgentPresentation } from "./application-home-agents-owner.ts";
@@ -58,7 +63,10 @@ export function applicationShellKeyAction(
 }
 
 export interface ApplicationShellViewProps {
+  readonly machineSidebar?: ApplicationMachineSidebarModel;
+  readonly machineLabel?: string | null;
   readonly paneInteractions?: TerminalWorkspaceProps["paneInteractions"];
+  readonly recentPaneActivity?: () => readonly InteractionReceipt[];
   readonly appearanceOwner?: ApplicationAppearanceOwner;
   readonly homeAgents?: ApplicationHomeAgentPresentation;
   readonly dimensions: Accessor<{ readonly width: number; readonly height: number }>;
@@ -112,9 +120,12 @@ export interface ApplicationShellViewProps {
   readonly onResizePreview: TerminalWorkspaceProps["onResizePreview"];
   readonly onResizePane: TerminalWorkspaceProps["onResizePane"];
   readonly onResizePointerIngress?: TerminalWorkspaceProps["onResizePointerIngress"];
+  readonly onWheelObservation?: TerminalWorkspaceProps["onWheelObservation"];
   readonly onTerminalInput?: TerminalWorkspaceProps["onTerminalInput"];
   readonly terminalGestureRuntime?: TerminalWorkspaceProps["terminalGestureRuntime"];
   readonly onApplicationMousePointerIngress?: TerminalWorkspaceProps["onApplicationMousePointerIngress"];
+  readonly onOpenLink?: TerminalWorkspaceProps["onOpenLink"];
+  readonly copyFeedback?: TerminalWorkspaceProps["copyFeedback"];
   readonly onCopyText?: TerminalWorkspaceProps["onCopyText"];
   readonly onSelectionCopyOwner?: TerminalWorkspaceProps["onSelectionCopyOwner"];
   readonly onSelectionKeyOwner?: TerminalWorkspaceProps["onSelectionKeyOwner"];
@@ -193,6 +204,17 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
     if (props.appearanceOwner?.pickerOpen()) return;
     const shell = projection();
     if (!shell) return;
+    if (props.machineSidebar) {
+      const sidebar = shell.layout.sidebar;
+      if (
+        x >= sidebar.x &&
+        x < sidebar.x + sidebar.width &&
+        y >= sidebar.y &&
+        y < sidebar.y + sidebar.height
+      )
+        return;
+      props.machineSidebar.onBlur?.();
+    }
     const hit = applicationShellHitTest(shell, x, y);
     if (hit?.kind === "view") props.onOpenSurface(hit.viewId, "mouse");
     else if (hit?.kind === "session") props.onOpenSession(hit.session, "mouse");
@@ -205,6 +227,8 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
       keyed
       fallback={
         <ApplicationCatalogShell
+          machineSidebar={props.machineSidebar}
+          machineLabel={props.machineLabel}
           appearanceOwner={props.appearanceOwner}
           homeAgents={props.homeAgents}
           dimensions={props.dimensions}
@@ -321,6 +345,11 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
             }}
           >
             <ApplicationShell
+              rightChips={
+                props.machineLabel
+                  ? [{ id: "machine", label: `SSH ${props.machineLabel}`, context: true }]
+                  : undefined
+              }
               theme={appearance.theme}
               projection={shell}
               help="F5 commands"
@@ -332,29 +361,63 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   : props.generationStatus())
               }
               showToolStatus={false}
-              showSidebar={props.surface() === "terminals"}
+              showSidebar={Boolean(props.machineSidebar) || props.surface() === "terminals"}
               sidebar={
-                <ApplicationShellSidebar
-                  shell={shell}
-                  liveSessions={
-                    typeof props.sessions === "function" ? props.sessions() : props.sessions
+                <Show
+                  when={props.machineSidebar}
+                  fallback={
+                    <ApplicationShellSidebar
+                      shell={shell}
+                      liveSessions={
+                        typeof props.sessions === "function" ? props.sessions() : props.sessions
+                      }
+                      theme={appearance.theme}
+                      onIntent={(intent) => {
+                        if (intent.type === "session.open")
+                          props.onOpenSession(intent.sessionName, intent.source);
+                        else props.onOpenAgent?.(intent.sessionName, intent.paneId, intent.source);
+                      }}
+                    />
                   }
-                  theme={appearance.theme}
-                  onIntent={(intent) => {
-                    if (intent.type === "session.open")
-                      props.onOpenSession(intent.sessionName, intent.source);
-                    else props.onOpenAgent?.(intent.sessionName, intent.paneId, intent.source);
-                  }}
-                />
+                >
+                  {(model) => (
+                    <ApplicationMachineSidebar
+                      model={model()}
+                      agentRows={
+                        model()
+                          .groups()
+                          .some((group) => group.agents !== undefined)
+                          ? 0
+                          : shell.semantic.sidebar.agents.length
+                      }
+                      agents={
+                        <ApplicationSidebarAgents
+                          shell={shell}
+                          theme={appearance.theme}
+                          width={Math.max(1, shell.layout.sidebar.width - 1)}
+                          onIntent={(intent) => {
+                            if (intent.type !== "agent.open") return;
+                            model().onBlur?.();
+                            props.onOpenAgent?.(intent.sessionName, intent.paneId, intent.source);
+                          }}
+                        />
+                      }
+                      width={shell.layout.sidebar.width}
+                      height={shell.layout.sidebar.height}
+                      theme={appearance.theme}
+                    />
+                  )}
+                </Show>
               }
             >
               <Show when={props.surface() !== "terminals"}>
                 <ApplicationHomeSurface
                   {...props.homeAgents}
+                  recentPaneActivity={props.recentPaneActivity?.()}
                   project={shell.semantic.project.name}
                   status={props.generationStatus()}
                   note={props.bootstrapNote()}
-                  width={shell.layout.width}
+                  width={props.machineSidebar ? shell.content.width : shell.layout.width}
                   height={shell.content.height}
                   sessionCount={shell.semantic.sidebar.sessions.length}
                   session={friendlySessionLabel(shell.activeSession)}
@@ -429,9 +492,12 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       onResizePreview={props.onResizePreview}
                       onResizePane={props.onResizePane}
                       onResizePointerIngress={props.onResizePointerIngress}
+                      onWheelObservation={props.onWheelObservation}
                       onTerminalInput={props.onTerminalInput}
                       terminalGestureRuntime={props.terminalGestureRuntime}
                       onApplicationMousePointerIngress={props.onApplicationMousePointerIngress}
+                      onOpenLink={props.onOpenLink}
+                      copyFeedback={props.copyFeedback}
                       onCopyText={props.onCopyText}
                       onSelectionCopyOwner={props.onSelectionCopyOwner}
                       onSelectionKeyOwner={props.onSelectionKeyOwner}

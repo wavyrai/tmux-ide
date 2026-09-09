@@ -575,6 +575,29 @@ describe("terminal delivery client", () => {
     expect(decodeCompactSemanticTerminalUpdate(encodeCompactSemanticTerminalUpdate(patch))).toEqual(
       patch,
     );
+    const canonicalJsonReference = (value: unknown): string => {
+      if (value === null || typeof value !== "object") return JSON.stringify(value);
+      if (Array.isArray(value)) return `[${value.map(canonicalJsonReference).join(",")}]`;
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonicalJsonReference(record[key])}`)
+        .join(",")}}`;
+    };
+    for (const payload of [
+      seed,
+      patch,
+      {
+        frame: "tombstone" as const,
+        baseRevision: 8,
+        revision: 9,
+        tombstone: { reason: "pane-closed" as const },
+      },
+    ]) {
+      const text = new TextDecoder().decode(encodeCompactSemanticTerminalUpdate(payload));
+      expect(text).toBe(canonicalJsonReference(JSON.parse(text)));
+      expect(decodeCompactSemanticTerminalUpdate(new TextEncoder().encode(text))).toEqual(payload);
+    }
   });
 
   it("deep-freezes compact decodes and adopts only the decoder-owned verified snapshot", () => {
@@ -733,6 +756,77 @@ describe("terminal delivery client", () => {
       snapshot,
     });
   }, 30_000);
+
+  it("skips impossible old-width history reuse while preserving seed validation and adoption", async () => {
+    const oldBlank = blankTerminalReplicaSnapshot(80, 2);
+    const oldSnapshot = {
+      ...oldBlank,
+      history: Array.from({ length: 256 }, () => oldBlank.grid[0]!),
+    };
+    const oldBytes = encodeCompactSemanticTerminalUpdate({
+      frame: "seed",
+      revision: 0,
+      snapshot: oldSnapshot,
+    });
+    const baseline = decodeVerifiedCompactSemanticTerminalUpdate(
+      oldBytes,
+      null,
+      hashTerminalReplicaSnapshot(oldSnapshot),
+    ).canonicalSnapshot!;
+    const resizedBlank = blankTerminalReplicaSnapshot(66, 2);
+    const resized = {
+      ...resizedBlank,
+      history: Array.from({ length: 256 }, () => resizedBlank.grid[0]!),
+    };
+    const bytes = encodeCompactSemanticTerminalUpdate({
+      frame: "seed",
+      revision: 1,
+      snapshot: resized,
+    });
+    const hash = hashTerminalReplicaSnapshot(resized);
+    const counts: number[] = [];
+    for (const prior of [baseline, null]) {
+      let yields = 0;
+      const decoded = await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        prior,
+        hash,
+        {
+          yieldControl: async () => {
+            yields++;
+          },
+          grantReducerAdoption: true,
+        },
+      );
+      expect(decoded.canonicalSnapshot).toEqual(resized);
+      counts.push(yields);
+    }
+    // The resized decode does no additional baseline indexing work. It still
+    // yields during parsing, expansion and verification just like a cold seed.
+    expect(counts[0]).toBeGreaterThan(0);
+    expect(counts[0]).toBe(counts[1]);
+    await expect(
+      decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        baseline,
+        "0000000000000000",
+        { yieldControl: async () => {} },
+      ),
+    ).rejects.toThrow(/hash mismatch/);
+    let sameWidthProfile: CompactSemanticCommitProfile | undefined;
+    await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+      oldBytes,
+      baseline,
+      hashTerminalReplicaSnapshot(oldSnapshot),
+      {
+        yieldControl: async () => {},
+        onComplete: (profile) => {
+          sameWidthProfile = profile;
+        },
+      },
+    );
+    expect(sameWidthProfile!.reusedRows).toBeGreaterThan(0);
+  });
 
   it("reuses authenticated baseline rows before allocating repeated compact history", async () => {
     const blank = blankTerminalReplicaSnapshot(132, 41);
@@ -933,6 +1027,165 @@ describe("terminal delivery client", () => {
         snapshot: oversizedString,
       }),
     ).toMatchObject({ exact: true, bytes: expect.any(Number) });
+  });
+
+  it("reuses identical current-message rows without skipping aggregate validation", async () => {
+    const snapshot = blankTerminalReplicaSnapshot(66, 41);
+    const bytes = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+    let profile: unknown;
+    const verified = await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+      bytes,
+      null,
+      hashTerminalReplicaSnapshot(snapshot),
+      {
+        yieldControl: async () => {},
+        onComplete: (value) => {
+          profile = value;
+        },
+      },
+    );
+    expect(verified.canonicalSnapshot).toEqual(snapshot);
+    expect(profile).toMatchObject({
+      expandedRows: 41,
+      reusedRows: 40,
+      allocatedCells: 66,
+      expandedCells: 2706,
+    });
+    expect(verified.canonicalSnapshot!.grid[0]).toBe(verified.canonicalSnapshot!.grid[40]);
+    const wire = JSON.parse(new TextDecoder().decode(bytes));
+    wire.s[0] = 4096;
+    wire.s[1] = 245;
+    wire.s[2] = Array.from({ length: 245 }, () => [0, [[4096, " ", 1, 0, 0, 0]]]);
+    await expect(
+      decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        new TextEncoder().encode(JSON.stringify(wire)),
+        null,
+        "unused",
+        { yieldControl: async () => {} },
+      ),
+    ).rejects.toThrow("expanded cell budget exceeded");
+    wire.s[0] = 66;
+    wire.s[1] = 41;
+    wire.s[2] = Array.from({ length: 41 }, (_, index) => [
+      0,
+      [[index === 40 ? 65 : 66, " ", 1, 0, 0, 0]],
+    ]);
+    await expect(
+      decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        new TextEncoder().encode(JSON.stringify(wire)),
+        null,
+        "unused",
+        { yieldControl: async () => {} },
+      ),
+    ).rejects.toThrow("width mismatch");
+  });
+
+  it("checks exact bytes within raw-row hash collisions and stops caching at its entry limit", async () => {
+    for (const labels of [
+      ["dkzbb9", "1mu5745", "dkzbb9", "1mu5745"],
+      [...Array.from({ length: 1025 }, (_, index) => String(index)), "0", "1024"],
+    ]) {
+      const blank = blankTerminalReplicaSnapshot(1, labels.length);
+      const snapshot = {
+        ...blank,
+        grid: labels.map((grapheme) => ({
+          wrapped: false,
+          cells: [{ ...blank.grid[0]!.cells[0]!, grapheme }],
+        })),
+      };
+      const bytes = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+      let profile: unknown;
+      const verified = await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        null,
+        hashTerminalReplicaSnapshot(snapshot),
+        {
+          yieldControl: async () => {},
+          onComplete: (value) => {
+            profile = value;
+          },
+        },
+      );
+      expect(verified.canonicalSnapshot).toEqual(snapshot);
+      expect(profile).toMatchObject({ reusedRows: labels.length === 4 ? 2 : 1 });
+    }
+  });
+
+  it("keeps cancellation checkpoints while expanding cached rows", async () => {
+    const snapshot = blankTerminalReplicaSnapshot(1, 128);
+    const bytes = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+    await expect(
+      decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        null,
+        hashTerminalReplicaSnapshot(snapshot),
+        {
+          yieldControl: async () => {
+            throw new Error("retired");
+          },
+        },
+      ),
+    ).rejects.toThrow("retired");
+  });
+
+  it("preserves verified rows below and above the bounded native JSON row size", async () => {
+    for (const length of [1, 3_000]) {
+      const blank = blankTerminalReplicaSnapshot(4, 1);
+      const snapshot = {
+        ...blank,
+        grid: [
+          {
+            wrapped: false,
+            cells: blank.grid[0]!.cells.map((cell, index) => ({
+              ...cell,
+              grapheme: "x".repeat(length) + index,
+            })),
+          },
+        ],
+      };
+      const bytes = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+      const wire = JSON.parse(new TextDecoder().decode(bytes)) as { s: unknown[] };
+      const rowBytes = new TextEncoder().encode(JSON.stringify((wire.s[2] as unknown[])[0])).length;
+      expect(rowBytes > 8 * 1_024).toBe(length === 3_000);
+      const verified = await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        null,
+        hashTerminalReplicaSnapshot(snapshot),
+        { yieldControl: async () => {} },
+      );
+      expect(verified.payload).toEqual(decodeCompactSemanticTerminalUpdate(bytes));
+      expect(verified.canonicalSnapshot).toEqual(snapshot);
+    }
+  });
+
+  it("rejects invalid bounded JSON rows before verified adoption", async () => {
+    const snapshot = blankTerminalReplicaSnapshot(1, 1);
+    const seed = encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+    let deep: unknown = "x";
+    for (let index = 0; index < 70; index++) deep = [deep];
+    const invalidRows = [
+      [0, [[1, deep, 1, 0, 0, 0]]],
+      [0, [[1, "x".repeat(4_097), 1, 0, 0, 0]]],
+      [0, [[1, "x", 2, 0, 0, 0]]],
+      [0, [[1, "x", 1, 0, 0, 256]]],
+      [0, [[2, "x", 1, 0, 0, 0]]],
+      [0, [[0, "x", 1, 0, 0, 0]]],
+    ];
+    for (const row of invalidRows) {
+      const wire = JSON.parse(new TextDecoder().decode(seed)) as { s: unknown[] };
+      (wire.s[2] as unknown[])[0] = row;
+      expect(new TextEncoder().encode(JSON.stringify(row)).length).toBeLessThan(8 * 1_024);
+      const bytes = new TextEncoder().encode(JSON.stringify(wire));
+      expect(() => decodeCompactSemanticTerminalUpdate(bytes)).toThrow();
+      await expect(
+        decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+          bytes,
+          null,
+          hashTerminalReplicaSnapshot(snapshot),
+          { yieldControl: async () => {} },
+        ),
+      ).rejects.toThrow();
+    }
   });
 
   it("keeps cooperative compact JSON syntax exact with the synchronous decoder", async () => {

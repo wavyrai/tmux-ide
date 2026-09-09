@@ -298,6 +298,8 @@ export interface SessionRuntimePaneStreamTransportBinding {
 }
 
 export interface SessionRuntimeTerminalDeliveryConnection {
+  /** Optional for legacy adapters; current delivery hubs report local sink retirement. */
+  readonly closed?: Promise<"closed" | "sink-failed">;
   readonly negotiation: TerminalDeliveryNegotiationResult;
   ack(ack: TerminalDeliveryAck): void;
   nack(nack: TerminalDeliveryNack): void;
@@ -1523,6 +1525,15 @@ export class PaneStreamLiveConnection {
       // publication boundary so an invalid negotiation cannot leak a nonce.
       if (!delivery.negotiation.accepted) continue;
       channel.delivery = delivery;
+      void delivery.closed?.then((reason) => {
+        if (
+          reason === "sink-failed" &&
+          !this.#closed &&
+          !channel.closed &&
+          channel.delivery === delivery
+        )
+          this.close(1013, "output-backpressure");
+      });
       channel.deliveryAddress = {
         workspaceName: this.#descriptor.workspaceName,
         generation: delivery.negotiation.negotiated.generation,

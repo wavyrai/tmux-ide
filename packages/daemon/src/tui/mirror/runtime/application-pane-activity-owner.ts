@@ -1,3 +1,4 @@
+import type { InteractionReceipt } from "@tmux-ide/contracts";
 import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
 import {
   INTERACTION_PRESENCE_MS,
@@ -8,11 +9,16 @@ import {
 } from "@tmux-ide/core";
 import type { OpenTuiGenerationHostSnapshot } from "./open-tui-generation-host.ts";
 
+export type ApplicationPaneActivity = Accessor<ReadonlyMap<string, PaneInteractionProjection>> & {
+  readonly activity: Accessor<readonly InteractionReceipt[]>;
+};
+
 /** Receipt presence shares the existing client subscription, never a polling connection. */
 export function createApplicationPaneActivityOwner(
   generation: Accessor<OpenTuiGenerationHostSnapshot | null>,
-): Accessor<ReadonlyMap<string, PaneInteractionProjection>> {
+): ApplicationPaneActivity {
   const [panes, setPanes] = createSignal<ReadonlyMap<string, PaneInteractionProjection>>(new Map());
+  const [activity, setActivity] = createSignal<readonly InteractionReceipt[]>([]);
   const clientOwner = createMemo(() => {
     const host = generation();
     return host?.status === "live" ? host.client : null;
@@ -20,6 +26,7 @@ export function createApplicationPaneActivityOwner(
   createEffect(() => {
     const client = clientOwner();
     setPanes(new Map());
+    setActivity([]);
     if (!client) return;
     let clientGeneration = client.getSnapshot().generation;
     let feed = initialInteractionFeedState();
@@ -33,6 +40,13 @@ export function createApplicationPaneActivityOwner(
         .slice(-128);
       feed = { ...feed, panes: Object.fromEntries(entries) };
       setPanes(new Map(entries));
+      setActivity(
+        feed.activity.filter(
+          (receipt) =>
+            receipt.operationKind === "workspace.pane.read" ||
+            receipt.operationKind === "workspace.pane.send",
+        ),
+      );
       if (entries.length) {
         const deadline = Math.min(
           ...entries.map(([, value]) => Date.parse(value.at) + INTERACTION_PRESENCE_MS),
@@ -61,5 +75,5 @@ export function createApplicationPaneActivityOwner(
       if (timer !== null) clearTimeout(timer);
     });
   });
-  return panes;
+  return Object.assign(panes, { activity });
 }

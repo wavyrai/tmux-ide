@@ -1,3 +1,4 @@
+import { readApplicationDaemonInfo as readCanonicalDaemonInfo } from "./application-daemon-authority.ts";
 import {
   ApplicationShellResourceV2SchemaZ,
   DaemonEventClientFrameSchemaZ,
@@ -8,7 +9,7 @@ import {
 } from "@tmux-ide/contracts";
 import WebSocket from "ws";
 
-import { canonicalDaemonUrl, readCanonicalDaemonInfo } from "../../../lib/canonical-daemon.ts";
+import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
 import type { ApplicationHomeAgentDependencies } from "./application-home-agent-observer.ts";
 
 export function sameHomeAgentDaemon(

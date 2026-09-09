@@ -1,6 +1,8 @@
+import type { InteractionReceipt } from "@tmux-ide/contracts";
+import { interactionReceiptTargetLabel } from "@tmux-ide/core";
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "solid-js";
-import { Show } from "solid-js";
+import { For, Show } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
@@ -35,6 +37,7 @@ export interface ApplicationHomeSurfaceProps {
   readonly onOpenCommands: () => void;
   readonly onCycleTheme?: () => void;
   readonly agentRoster?: HomeAgentSnapshot;
+  readonly recentPaneActivity?: readonly InteractionReceipt[];
   readonly agentSelection?: HomeAgentSelectionSnapshot;
   readonly agentInputActive?: boolean;
   readonly onSelectAgent?: (key: string) => void;
@@ -72,15 +75,42 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
       naturalButtonWidth("Commands", "F5") +
       (props.onCycleTheme ? naturalButtonWidth(themeLabel()) + 2 : 0) +
       2;
-  const rosterHeight = () =>
-    Math.max(
+  const reservedRows = () =>
+    (spacious() ? 4 : 2) +
+    (actionsInRow() ? 1 : props.onCycleTheme ? 3 : 2) +
+    (spacious() ? 1 : 0) +
+    (props.note ? (spacious() ? 2 : 1) : 0);
+  const recentActivity = () =>
+    (props.recentPaneActivity ?? []).slice(
       0,
-      height() -
-        (spacious() ? 4 : 2) -
-        (actionsInRow() ? 1 : props.onCycleTheme ? 3 : 2) -
-        (spacious() ? 1 : 0) -
-        (props.note ? (spacious() ? 2 : 1) : 0),
+      spacious()
+        ? Math.max(0, Math.min(3, height() - reservedRows() - (props.agentRoster ? 4 : 2) - 2))
+        : 0,
     );
+  const activityHeight = () => (recentActivity().length > 0 ? recentActivity().length + 2 : 0);
+  const paneLabel = (paneId: string) => {
+    const matches = props.agentRoster?.rows.filter((row) => row.paneId === paneId) ?? [];
+    return matches.length === 1 ? matches[0]!.name : paneId;
+  };
+  const activityTime = (receipt: InteractionReceipt) => {
+    const at = Date.parse(receipt.at);
+    return Number.isFinite(at)
+      ? `${new Date(at).toISOString().slice(5, 16).replace("T", " ")}Z`
+      : "Time unknown";
+  };
+  const activityPhase = (receipt: InteractionReceipt) =>
+    receipt.phase === "accepted"
+      ? receipt.operationKind === "workspace.pane.read"
+        ? "reading"
+        : "sending"
+      : receipt.phase === "observed"
+        ? receipt.operationKind === "workspace.pane.read"
+          ? "read"
+          : "sent"
+        : receipt.phase === "rejected"
+          ? "failed"
+          : "timed out";
+  const rosterHeight = () => Math.max(0, height() - reservedRows() - activityHeight());
 
   return (
     <box
@@ -140,6 +170,32 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
               onLoadMore={props.onLoadMoreAgents}
             />
           )}
+        </Show>
+        <Show when={activityHeight() > 0}>
+          <box
+            width={bodyWidth()}
+            height={activityHeight()}
+            flexShrink={0}
+            flexDirection="column"
+            overflow="hidden"
+          >
+            <text height={1} width={bodyWidth()} fg={props.theme.roles.text.secondary}>
+              {clipTerminal("Recent pane activity", bodyWidth())}
+            </text>
+            <For each={recentActivity()}>
+              {(receipt) => (
+                <text height={1} width={bodyWidth()} fg={props.theme.roles.text.primary}>
+                  {clipTerminal(
+                    `${activityTime(receipt)} · ${interactionReceiptTargetLabel(receipt, paneLabel)} · ${activityPhase(receipt)}`,
+                    bodyWidth(),
+                  )}
+                </text>
+              )}
+            </For>
+            <text height={1} width={bodyWidth()} fg={props.theme.roles.text.muted}>
+              {clipTerminal("Activity reported through tmux-ide", bodyWidth())}
+            </text>
+          </box>
         </Show>
         <box height={spacious() ? 1 : 0} flexShrink={0} />
         <box

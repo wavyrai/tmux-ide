@@ -3,7 +3,6 @@ import { batch, createSignal, type Accessor } from "solid-js";
 
 import { updateAppConfig, type AppConfig } from "../../../lib/app-config.ts";
 import {
-  DARK_THEME,
   createSemanticThemeStore,
   createTerminalPaletteProjection,
   deriveSystemVisualHostDefaults,
@@ -70,16 +69,11 @@ export function createAppearanceOwner(
     hostDefaults: hostDefaults(initialHostPalette),
   });
   const initialTheme = store.getSnapshot();
-  // Mirrored programs are foreign terminal applications, not semantic app
-  // components. They are launched with tmux-ide's dark terminal contract and
-  // may retain default-colour cells indefinitely. Keep that cell contract
-  // stable while app-owned overlays continue to follow the selected theme.
-  const terminalCellDefaults = DARK_THEME;
   const [appearance, setAppearance] = createSignal<ApplicationAppearanceSnapshot>(
     Object.freeze({
       generation: 0,
       theme: initialTheme,
-      palette: createTerminalPaletteProjection(initialTheme, terminalCellDefaults),
+      palette: createTerminalPaletteProjection(initialTheme, initialHostPalette.palette),
     }),
   );
   const publishTheme = (): void => {
@@ -88,7 +82,10 @@ export function createAppearanceOwner(
       Object.freeze({
         generation: current.generation + 1,
         theme: nextTheme,
-        palette: createTerminalPaletteProjection(nextTheme, terminalCellDefaults),
+        palette: createTerminalPaletteProjection(
+          nextTheme,
+          terminalPaletteOwner.getSnapshot().palette,
+        ),
       }),
     );
   };
@@ -104,7 +101,9 @@ export function createAppearanceOwner(
       // The store publishes at most one complete semantic snapshot. Explicit
       // dark/light settings retain these defaults without changing colours;
       // switching back to system applies the latest valid host palette.
+      const before = appearance();
       store.setHostDefaults(hostDefaults(next));
+      if (theme().setting === "system" && appearance() === before) publishTheme();
     });
   });
   const [note, setNote] = createSignal<string | null>(null);

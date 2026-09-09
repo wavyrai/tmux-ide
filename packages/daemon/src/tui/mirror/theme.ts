@@ -171,7 +171,7 @@ export interface TerminalPaletteProjection {
   /** Packed `0xRRGGBB` defaults used by cells with no explicit SGR color. */
   readonly foreground: number;
   readonly background: number;
-  /** Complete, protocol-faithful indexed ANSI colors. */
+  /** Theme-aware ANSI 0–15; source-faithful extended cube and grayscale. */
   readonly ansiForeground: readonly number[];
   readonly ansiBackground: readonly number[];
   /** Identity-preserving SGR 38;2 / 48;2 truecolor resolution. */
@@ -535,28 +535,48 @@ export function deriveSystemVisualHostDefaults(
   return Object.freeze({ appearance, overrides });
 }
 
-/** Build the terminal-cell view of a semantic OpenTUI theme. Explicit terminal
- * colors remain protocol-faithful: all 256 xterm slots and 24-bit truecolor pass
- * through unchanged. `cellDefaults` owns cells that use SGR 39/49 while
- * `snapshot` owns tmux-ide overlays such as selection and search.
- *
- * Keeping those inputs separate is important for mirrored applications. A
- * running TUI chose its colours against the terminal defaults it started with;
- * changing those defaults underneath its retained framebuffer can collapse
- * contrast even though every source cell is still present. */
+/** Theme terminal defaults and ANSI slots 0–15 at presentation time.
+ * Explicit RGB and the extended xterm cube/grayscale remain source-faithful. */
 export function createTerminalPaletteProjection(
   snapshot: SemanticThemeSnapshot,
-  cellDefaults: SemanticThemeSnapshot = snapshot,
+  hostPalette?: readonly (string | null)[],
 ): TerminalPaletteProjection {
   const p = colorToPackedRgb;
-  const foreground = p(cellDefaults.roles.text.primary);
-  const background = p(cellDefaults.roles.surfaces.terminal);
-
+  const foreground = p(snapshot.roles.text.primary);
+  const background = p(snapshot.roles.surfaces.terminal);
+  const normal = [
+    background,
+    p(snapshot.roles.statusTone.danger),
+    p(snapshot.roles.statusTone.success),
+    p(snapshot.roles.statusTone.warning),
+    p(snapshot.roles.text.link),
+    p(snapshot.colors.accent),
+    p(snapshot.roles.statusTone.info),
+    p(snapshot.roles.text.secondary),
+  ];
+  const brighten = (color: number): number => {
+    const channel = (shift: number) =>
+      Math.round(((color >>> shift) & 255) * 0.8 + ((foreground >>> shift) & 255) * 0.2);
+    return (channel(16) << 16) | (channel(8) << 8) | channel(0);
+  };
+  const ansi = [
+    ...normal,
+    p(snapshot.roles.text.muted),
+    ...normal.slice(1, 7).map(brighten),
+    p(snapshot.roles.text.bright),
+    ...XTERM_PALETTE.slice(16),
+  ];
+  if (snapshot.setting === "system" && hostPalette)
+    for (let index = 0; index < 16; index++) {
+      const detected = parseTerminalHostColor(hostPalette[index]);
+      if (detected) ansi[index] = (detected.red << 16) | (detected.green << 8) | detected.blue;
+    }
+  const indexed = Object.freeze(ansi);
   return Object.freeze({
     foreground,
     background,
-    ansiForeground: XTERM_PALETTE,
-    ansiBackground: XTERM_PALETTE,
+    ansiForeground: indexed,
+    ansiBackground: indexed,
     resolveForeground: (color: number) => color & 0xffffff,
     resolveBackground: (color: number) => color & 0xffffff,
     cursorMarker: p(snapshot.roles.selection.hover),

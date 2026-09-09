@@ -1,3 +1,4 @@
+import { createRoot, createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -146,4 +147,146 @@ describe("application terminal selection owner", () => {
     expect(owner.beginPointerIngress({ action: "down", x: 1, y: 2, atMicros: 3 })).toBeNull();
     expect(generation).not.toHaveBeenCalled();
   });
+});
+
+describe("pane-local copy feedback", () => {
+  const evidence = {
+    semanticPaneId: "pane.b",
+    bytes: 4,
+    start: { row: 0, col: 0 },
+    end: { row: 0, col: 3 },
+  };
+  it("reports the source pane and actual submission result, replacing one bounded timer", () => {
+    vi.useFakeTimers();
+    let succeeds = true;
+    const owner = createApplicationTerminalSelectionOwner({
+      copyText: () => succeeds,
+      diagnosticsEnabled: false,
+      generation: () => null,
+    });
+    try {
+      expect(owner.copy("text", evidence)).toBe(true);
+      expect(owner.feedback()).toEqual({ paneId: "pane.b", copied: true });
+      vi.advanceTimersByTime(1_000);
+      succeeds = false;
+      expect(owner.copy("secret", { ...evidence, semanticPaneId: "pane.a" })).toBe(false);
+      expect(owner.feedback()).toEqual({ paneId: "pane.a", copied: false });
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(1_000);
+      expect(owner.feedback()).not.toBeNull();
+      vi.advanceTimersByTime(800);
+      expect(owner.feedback()).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      owner.clearFeedback();
+      vi.useRealTimers();
+    }
+  });
+  it("contains clipboard exceptions and shows failure instead of crashing the renderer", () => {
+    const owner = createApplicationTerminalSelectionOwner({
+      copyText: () => {
+        throw new Error("unavailable");
+      },
+      diagnosticsEnabled: false,
+      generation: () => null,
+    });
+    try {
+      expect(owner.copy("text", evidence)).toBe(false);
+      expect(owner.feedback()).toEqual({ paneId: "pane.b", copied: false });
+    } finally {
+      owner.clearFeedback();
+    }
+  });
+  it("clears feedback on generation replacement and disposes its timer with the owner", async () => {
+    vi.useFakeTimers();
+    let dispose!: () => void;
+    const rig = createRoot((cleanup) => {
+      dispose = cleanup;
+      const [generation, setGeneration] = createSignal(null as never);
+      return {
+        owner: createApplicationTerminalSelectionOwner({
+          copyText: () => true,
+          diagnosticsEnabled: false,
+          generation,
+        }),
+        setGeneration,
+      };
+    });
+    try {
+      await Promise.resolve();
+      rig.owner.copy("text", evidence);
+      rig.setGeneration({ status: "live" } as never);
+      await Promise.resolve();
+      expect(rig.owner.feedback()).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      rig.owner.copy("text", evidence);
+      dispose();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+});
+
+it("awaits async clipboard results and fences superseded, cleared and disposed completions", async () => {
+  vi.useFakeTimers();
+  const pending: Array<{ resolve: (value: boolean) => void; reject: (error: Error) => void }> = [];
+  let dispose!: () => void;
+  const rig = createRoot((cleanup) => {
+    dispose = cleanup;
+    const [generation, setGeneration] = createSignal(null as never);
+    const owner = createApplicationTerminalSelectionOwner({
+      copyText: () => new Promise<boolean>((resolve, reject) => pending.push({ resolve, reject })),
+      diagnosticsEnabled: false,
+      generation,
+    });
+    return { owner, setGeneration };
+  });
+  const evidence = {
+    semanticPaneId: "pane.a",
+    bytes: 1,
+    start: { row: 0, col: 0 },
+    end: { row: 0, col: 0 },
+  };
+  try {
+    await Promise.resolve();
+    expect(rig.owner.copy("a", evidence)).toBe(true);
+    expect(rig.owner.feedback()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(rig.owner.copy("b", { ...evidence, semanticPaneId: "pane.b" })).toBe(true);
+    pending[1]!.resolve(true);
+    await Promise.resolve();
+    expect(rig.owner.feedback()).toEqual({ paneId: "pane.b", copied: true });
+    expect(vi.getTimerCount()).toBe(1);
+    pending[0]!.reject(new Error("old failure"));
+    await Promise.resolve();
+    expect(rig.owner.feedback()).toEqual({ paneId: "pane.b", copied: true });
+    rig.owner.copy("c", evidence);
+    pending[2]!.reject(new Error("clipboard failed"));
+    await Promise.resolve();
+    expect(rig.owner.feedback()).toEqual({ paneId: "pane.a", copied: false });
+    expect(vi.getTimerCount()).toBe(1);
+    rig.owner.copy("d", evidence);
+    rig.setGeneration({ status: "live" } as never);
+    pending[3]!.resolve(true);
+    await Promise.resolve();
+    expect(rig.owner.feedback()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+    rig.owner.copy("e", evidence);
+    rig.owner.clearFeedback();
+    pending[4]!.resolve(true);
+    await Promise.resolve();
+    expect(rig.owner.feedback()).toBeNull();
+    rig.owner.copy("f", evidence);
+    dispose();
+    pending[5]!.resolve(true);
+    await Promise.resolve();
+    expect(rig.owner.feedback()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(rig.owner.copy("after disposal", evidence)).toBe(false);
+  } finally {
+    dispose();
+    vi.useRealTimers();
+  }
 });

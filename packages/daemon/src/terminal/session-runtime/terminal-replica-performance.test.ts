@@ -74,6 +74,111 @@ describe("terminal replica performance invariants", () => {
     }
   });
 
+  it("projects only appended rows when ED2 collects ten percent of history", async () => {
+    for (const clears of [1, 3]) {
+      const updates: CanonicalTerminalReplicaUpdate[] = [];
+      const replica = interpreter(updates, 20);
+      await replica.enqueue({
+        type: "reseed",
+        cols: 80,
+        rows: 3,
+        historyLimit: 20,
+        chunks: [
+          new TextEncoder().encode(Array.from({ length: 23 }, (_, i) => `line-${i}`).join("\r\n")),
+        ],
+        cursor: { x: 0, y: 0 },
+        observedModes: { scrollOnClear: true },
+        bootstrap: "authoritative-stream",
+      });
+      // Erase visible rows without pushing them into history, leaving one used row.
+      await replica.enqueue({
+        type: "write",
+        data: new TextEncoder().encode("\x1b[H\x1b[Jinitial"),
+      });
+      const previous = replica.currentSnapshot();
+      const before = replica.stats();
+      await replica.enqueue({
+        type: "write",
+        data: new TextEncoder().encode("\x1b[2J\x1b[Hnext".repeat(clears)),
+      });
+      const next = replica.currentSnapshot();
+      const expectedTrim = clears === 1 ? 2 : 4;
+      expect(next.history).toHaveLength(20 - expectedTrim + clears);
+      expect(next.history[0]).toBe(previous.history[expectedTrim]);
+      expect(replica.stats().historyRowsRead - before.historyRowsRead).toBe(clears);
+      const update = updates.at(-1);
+      expect(update?.type).toBe("terminal.patch");
+      if (update?.type === "terminal.patch") {
+        expect(update.patch.history).toBeUndefined();
+        expect(update.patch.historyDelta?.trim).toBe(expectedTrim);
+        expect(update.patch.historyDelta?.append).toHaveLength(clears);
+      }
+    }
+  });
+
+  it("bounds projection reads at a 2000-row native history cap", async () => {
+    const replica = interpreter([], 2000);
+    await replica.enqueue({
+      type: "reseed",
+      cols: 80,
+      rows: 3,
+      historyLimit: 2000,
+      chunks: [
+        new TextEncoder().encode(Array.from({ length: 2003 }, (_, i) => `line-${i}`).join("\r\n")),
+      ],
+      cursor: { x: 0, y: 0 },
+      observedModes: { scrollOnClear: true },
+      bootstrap: "authoritative-stream",
+    });
+    await replica.enqueue({ type: "write", data: new TextEncoder().encode("\x1b[H\x1b[Jinitial") });
+    const previous = replica.currentSnapshot();
+    const before = replica.stats();
+    await replica.enqueue({ type: "write", data: new TextEncoder().encode("\x1b[2J\x1b[Hnext") });
+    const after = replica.stats();
+    expect(replica.currentSnapshot().history).toHaveLength(1801);
+    expect({
+      historyRowsRead: after.historyRowsRead - before.historyRowsRead,
+      gridRowsRead: after.gridRowsRead - before.gridRowsRead,
+      cellsRead: after.cellsRead - before.cellsRead,
+    }).toEqual({ historyRowsRead: 1, gridRowsRead: 3, cellsRead: 320 });
+    expect(replica.currentSnapshot().history[0]).toBe(previous.history[200]);
+  });
+
+  it("does not interpret history clearing, reset, or alternate trips as incremental scrolls", async () => {
+    for (const control of ["\x1b[3J", "\x1bc", "\x1b[?1049halt\n\x1b[?1049l"]) {
+      const updates: CanonicalTerminalReplicaUpdate[] = [];
+      const replica = interpreter(updates, 20);
+      await replica.enqueue({
+        type: "reseed",
+        cols: 80,
+        rows: 3,
+        historyLimit: 20,
+        chunks: [
+          new TextEncoder().encode(Array.from({ length: 23 }, (_, i) => `line-${i}`).join("\r\n")),
+        ],
+        cursor: { x: 0, y: 0 },
+        observedModes: { scrollOnClear: true },
+        bootstrap: "authoritative-stream",
+      });
+      await replica.enqueue({
+        type: "write",
+        data: new TextEncoder().encode(control + "\x1b[H\x1b[Jfresh\x1b[2J"),
+      });
+      const update = updates.at(-1);
+      expect(update?.type).toBe("terminal.patch");
+      if (update?.type === "terminal.patch") expect(update.patch.historyDelta).toBeUndefined();
+      const history = replica.currentSnapshot().history;
+      expect(
+        history
+          .at(-1)
+          ?.cells.map((cell) => cell.grapheme)
+          .join("")
+          .trim(),
+      ).toBe("fresh");
+      if (control !== "\x1b[?1049halt\n\x1b[?1049l") expect(history).toHaveLength(1);
+    }
+  });
+
   it("releases canonical scrollback authority when the terminal clears history", async () => {
     const replica = interpreter([]);
     await replica.enqueue({

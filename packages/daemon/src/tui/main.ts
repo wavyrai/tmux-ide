@@ -70,6 +70,9 @@ async function main(): Promise<void> {
         commit: TMUX_IDE_BUILD_COMMIT,
         platform: TMUX_IDE_BUILD_PLATFORM,
         sourceState: TMUX_IDE_BUILD_SOURCE_STATE,
+        nativeRenderer:
+          (globalThis as typeof globalThis & { __tmuxIdeNativeRenderer?: string })
+            .__tmuxIdeNativeRenderer ?? "stock",
       })}\n`,
     );
     return;

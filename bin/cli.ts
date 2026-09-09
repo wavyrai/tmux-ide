@@ -17,11 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // to it — can still find the CLI to run its subprocesses.
 const selfPath = fileURLToPath(import.meta.url);
 const nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve(__dirname, "cli.js");
-import { launch } from "../packages/daemon/src/launch.ts";
 import { resolveEntry } from "../packages/daemon/src/tui/team/entry.ts";
-import { loadAppConfig } from "../packages/daemon/src/lib/app-config.ts";
-import { resolveConfig } from "../packages/daemon/src/lib/resolved-config.ts";
-import { resolveProjectConfigContext } from "../packages/daemon/src/lib/config-context.ts";
 import {
   ensureCompiledTuiRuntimeDir,
   ensureTuiLaunchAvailable,
@@ -31,24 +27,8 @@ import {
   isBunAvailable,
   openTuiLaunchEnvironment,
 } from "../packages/daemon/src/tui/compiled.ts";
-import { init } from "../packages/daemon/src/init.ts";
-import { stop } from "../packages/daemon/src/stop.ts";
-import { attach } from "../packages/daemon/src/attach.ts";
-import { ls } from "../packages/daemon/src/ls.ts";
-import { doctor } from "../packages/daemon/src/doctor.ts";
-import { status } from "../packages/daemon/src/status.ts";
-import { inspect } from "../packages/daemon/src/inspect.ts";
-import { validate } from "../packages/daemon/src/validate.ts";
-import { detect } from "../packages/daemon/src/detect.ts";
-import { config } from "../packages/daemon/src/config.ts";
-import { migrate } from "../packages/daemon/src/migrate.ts";
-import { restart } from "../packages/daemon/src/restart.ts";
-import { restore } from "../packages/daemon/src/restore.ts";
-import { send } from "../packages/daemon/src/send.ts";
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
-import { runHeadlessDaemon } from "../packages/daemon/src/lib/headless-daemon.ts";
-import { ensureCanonicalDaemon } from "../packages/daemon/src/lib/canonical-daemon-bootstrap.ts";
 import { stateHome } from "../packages/daemon/src/lib/state-home.ts";
 import {
   wantsHostedApp,
@@ -64,12 +44,17 @@ import {
   HOSTED_ENV,
 } from "../packages/daemon/src/tui/mirror/hosted.ts";
 
+// Command implementations load only after dispatch; help/version and the daemon
+// must not initialize unrelated workspace commands or their schema graphs.
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
   options: {
     json: { type: "boolean" },
     headless: { type: "boolean" },
+    daemon: { type: "boolean" },
+    "if-running": { type: "boolean" },
+    ssh: { type: "string", multiple: true },
     row: { type: "string" },
     pane: { type: "string" },
     title: { type: "string" },
@@ -138,6 +123,7 @@ const knownCommands = new Set([
   "restore",
   "ls",
   "doctor",
+  "remote-daemon-info",
   "status",
   "inspect",
   "validate",
@@ -223,6 +209,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
   ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
   ${cyan("tmux-ide app")} [session]      ${dim("Unified app: fleet home + live session mirror (bare = home)")}
+  ${cyan("tmux-ide app --ssh <host>")}   ${dim("Open an existing remote daemon through your SSH configuration")}
   ${cyan("tmux-ide app --detachable")}   ${dim("Host the app in tmux and attach — survives the terminal, ^q detaches")}
   ${cyan("tmux-ide app --hosted")}       ${dim("Alias for --detachable")}
   ${cyan("tmux-ide switcher")}           ${dim("Compact session picker (opens in the M-p popup on adopted sessions)")}
@@ -256,6 +243,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
   ${cyan("tmux-ide doctor")}             ${dim("Check system requirements")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
+  ${cyan("tmux-ide update --daemon")}     ${dim("Upgrade the local daemon while preserving tmux sessions")}
   ${cyan("tmux-ide update --tui-binary")} ${dim("Download and verify this version's compiled OpenTUI runtime")}
   ${cyan("tmux-ide update --manifests")} ${dim("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan("tmux-ide skill-sync")}         ${dim("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
@@ -334,7 +322,7 @@ async function execBunWidget(
 
   const launchEpochMs = Date.now();
   let automaticDiagnosticLog: string | undefined;
-  if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG) {
+  if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG && !process.env.TMUX_IDE_TUI_LOG) {
     try {
       const logDirectory = join(stateHome(), "logs");
       mkdirSync(logDirectory, { recursive: true, mode: 0o700 });
@@ -360,7 +348,7 @@ async function execBunWidget(
     TMUX_IDE_CLI: nodeCliPath,
     ...(automaticDiagnosticLog
       ? {
-          TMUX_IDE_TUI_PERF_LOG: automaticDiagnosticLog,
+          TMUX_IDE_TUI_LOG: automaticDiagnosticLog,
           TMUX_IDE_TUI_LAUNCH_EPOCH_MS: String(launchEpochMs),
         }
       : {}),
@@ -572,6 +560,21 @@ async function launchTeamCockpit(): Promise<void> {
 // else runs the app in this terminal as before. The HOSTED_ENV guard keeps the
 // app INSIDE the host session from re-hosting itself.
 async function runApp(appArgs: string[]): Promise<void> {
+  const ssh = values.ssh;
+  if (ssh !== undefined) {
+    const { SavedMachineSchema } = await import("@tmux-ide/contracts/saved-machines");
+    if (ssh.some((alias) => !SavedMachineSchema.shape.sshTarget.safeParse(alias).success))
+      throw new IdeError("--ssh requires an SSH alias or user@host", {
+        code: "USAGE",
+        exitCode: 2,
+      });
+    if (values.hosted === true || values.detachable === true)
+      throw new IdeError(
+        "SSH app connections currently run in the foreground; omit --hosted and --detachable",
+        { code: "USAGE", exitCode: 2 },
+      );
+    appArgs = [...appArgs, ...ssh.map((alias) => `--ssh=${alias}`)];
+  }
   // A clean npm install has neither a checkout runtime nor Bun. Acquire the
   // exact-version OpenTUI release artifact on the first explicit app launch so
   // users never need a hidden setup command. This must complete before daemon
@@ -592,13 +595,28 @@ async function runApp(appArgs: string[]): Promise<void> {
   );
   // The app is a thin client. Establish the one persistent daemon generation
   // only after its renderer is known-runnable, then mount against that owner.
-  await ensureCanonicalDaemon({ entryPath: nodeCliPath });
-  const hosted = wantsHostedApp({
-    flagDetachable: values.detachable === true,
-    flagHosted: values.hosted === true,
-    configDetachable: loadAppConfig().app.detachable,
-    hostedEnv: process.env[HOSTED_ENV] === "1",
-  });
+  try {
+    await (
+      await import("../packages/daemon/src/lib/canonical-daemon-bootstrap.ts")
+    ).ensureCanonicalDaemon({
+      entryPath: nodeCliPath,
+      expectedProductVersion: (await import("../package.json")).version,
+    });
+  } catch (error) {
+    if (ssh === undefined) throw error;
+    process.stderr.write(
+      "[tmux-ide] Local sessions are unavailable; continuing with SSH machines. Run tmux-ide doctor locally to investigate.\n",
+    );
+  }
+  const hosted =
+    ssh === undefined &&
+    wantsHostedApp({
+      flagDetachable: values.detachable === true,
+      flagHosted: values.hosted === true,
+      configDetachable: (await import("../packages/daemon/src/lib/app-config.ts")).loadAppConfig()
+        .app.detachable,
+      hostedEnv: process.env[HOSTED_ENV] === "1",
+    });
   if (hosted) launchHostedApp(appScriptPath, appArgs);
   else await execBunWidget("app", appScriptPath, appArgs, "app");
 }
@@ -612,6 +630,15 @@ function launchApp(): Promise<void> {
 }
 
 try {
+  if (values.ssh !== undefined && (command !== "app" || values.headless))
+    throw new IdeError("--ssh is supported only by tmux-ide app", { code: "USAGE", exitCode: 2 });
+  if ((values.daemon || values["if-running"]) && command !== "update")
+    throw new IdeError("--daemon and --if-running are supported only by tmux-ide update", {
+      code: "USAGE",
+      exitCode: 2,
+    });
+  if (values["if-running"] && !values.daemon)
+    throw new IdeError("--if-running requires --daemon", { code: "USAGE", exitCode: 2 });
   if (values.headless) {
     if (positionals.length > 0) {
       throw new IdeError("--headless cannot be combined with a command or project path", {
@@ -620,7 +647,15 @@ try {
       });
     }
     const pkg = await import("../package.json");
-    await runHeadlessDaemon({
+    const { retireOutdatedCanonicalDaemon } =
+      await import("../packages/daemon/src/lib/canonical-daemon-bootstrap.ts");
+    await retireOutdatedCanonicalDaemon({
+      entryPath: nodeCliPath,
+      expectedProductVersion: pkg.version,
+    });
+    await (
+      await import("../packages/daemon/src/lib/headless-daemon.ts")
+    ).runHeadlessDaemon({
       port: values.port,
       json,
       expectedVersion: pkg.version,
@@ -658,7 +693,9 @@ try {
           { code: "CONFIG_NOT_FOUND", exitCode: 1 },
         );
       }
-      const configContext = await resolveProjectConfigContext(targetDir);
+      const configContext = await (
+        await import("../packages/daemon/src/lib/config-context.ts")
+      ).resolveProjectConfigContext(targetDir);
       // M22.6 — the front-door decision. `--team` always means the classic
       // cockpit; a present project config still auto-launches the project; otherwise
       // `app.frontDoor` flips the default no-project entry to the unified app.
@@ -668,7 +705,8 @@ try {
         hasWorkspaceConfig: configContext.hasWorkspaceConfig,
         hasIdeYml: configContext.hasIdeYml,
         teamFlag: values.team === true,
-        frontDoor: loadAppConfig().app.frontDoor,
+        frontDoor: (await import("../packages/daemon/src/lib/app-config.ts")).loadAppConfig().app
+          .frontDoor,
       });
       if (entry !== "project") {
         // No project to launch here. `--json` is a scripting surface — it always
@@ -681,28 +719,32 @@ try {
         else await launchTeamCockpit();
         break;
       }
-      await launch(startTargetDir, { json });
+      await (await import("../packages/daemon/src/launch.ts")).launch(startTargetDir, { json });
       break;
     }
 
     case "init":
-      await init({ template: values.template, json });
+      await (
+        await import("../packages/daemon/src/init.ts")
+      ).init({ template: values.template, json });
       break;
 
     case "stop":
-      await stop(positionals[1], { json });
+      await (await import("../packages/daemon/src/stop.ts")).stop(positionals[1], { json });
       break;
 
     case "attach":
-      await attach(positionals[1], { json });
+      await (await import("../packages/daemon/src/attach.ts")).attach(positionals[1], { json });
       break;
 
     case "restart":
-      await restart(positionals[1], { json });
+      await (await import("../packages/daemon/src/restart.ts")).restart(positionals[1], { json });
       break;
 
     case "restore":
-      await restore({
+      await (
+        await import("../packages/daemon/src/restore.ts")
+      ).restore({
         json,
         dryRun: values["dry-run"] === true,
         runCommands: values["run-commands"] === true,
@@ -711,31 +753,44 @@ try {
       break;
 
     case "ls":
-      await ls({ json });
+      await (await import("../packages/daemon/src/ls.ts")).ls({ json });
       break;
 
     case "doctor":
-      await doctor({ json });
+      await (await import("../packages/daemon/src/doctor.ts")).doctor({ json });
       break;
 
+    case "remote-daemon-info": {
+      if (!json || positionals.length !== 1)
+        throw new IdeError("remote-daemon-info requires --json and no arguments");
+      const { readRemoteDaemonHandshake } =
+        await import("../packages/daemon/src/lib/remote-daemon-info.ts");
+      process.stdout.write(`${JSON.stringify(await readRemoteDaemonHandshake())}\n`);
+      break;
+    }
+
     case "status":
-      await status(positionals[1], { json });
+      await (await import("../packages/daemon/src/status.ts")).status(positionals[1], { json });
       break;
 
     case "inspect":
-      await inspect(positionals[1], { json });
+      await (await import("../packages/daemon/src/inspect.ts")).inspect(positionals[1], { json });
       break;
 
     case "validate":
-      await validate(positionals[1], { json });
+      await (await import("../packages/daemon/src/validate.ts")).validate(positionals[1], { json });
       break;
 
     case "detect":
-      await detect(positionals[1], { json, write: values.write });
+      await (
+        await import("../packages/daemon/src/detect.ts")
+      ).detect(positionals[1], { json, write: values.write });
       break;
 
     case "migrate":
-      await migrate(positionals[1], { json, dryRun: values["dry-run"], write: values.write });
+      await (
+        await import("../packages/daemon/src/migrate.ts")
+      ).migrate(positionals[1], { json, dryRun: values["dry-run"], write: values.write });
       break;
 
     case "config": {
@@ -780,7 +835,9 @@ try {
         break;
       }
 
-      await config(null, { json, action, args: configArgs });
+      await (
+        await import("../packages/daemon/src/config.ts")
+      ).config(null, { json, action, args: configArgs });
       break;
     }
 
@@ -801,7 +858,9 @@ try {
         const { readFileSync } = await import("node:fs");
         message = readFileSync(0, "utf-8").trim();
       }
-      await send(null, { json, to: target, message, noEnter: values["no-enter"] });
+      await (
+        await import("../packages/daemon/src/send.ts")
+      ).send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
     }
 
@@ -1614,7 +1673,9 @@ try {
         let width = DEFAULT_SIDEBAR_WIDTH;
         let theme = null;
         try {
-          const resolved = await resolveConfig(dir);
+          const resolved = await (
+            await import("../packages/daemon/src/lib/resolved-config.ts")
+          ).resolveConfig(dir);
           const config = resolved.launchConfig;
           theme = config?.theme ?? null;
           const sb = resolveSidebarConfig(config?.sidebar);
@@ -1672,7 +1733,11 @@ try {
       // (or its dir basename). `git worktree list` returns the main checkout first.
       const worktrees = listWorktrees(repoDir);
       const mainPath = worktrees[0]?.path ?? repoDir;
-      const projectName = (await resolveProjectConfigContext(mainPath)).sessionName;
+      const projectName = (
+        await (
+          await import("../packages/daemon/src/lib/config-context.ts")
+        ).resolveProjectConfigContext(mainPath)
+      ).sessionName;
 
       // Start a session in a worktree checkout: full IDE layout when it has a
       // workspace config (launch under the worktree's own session name so it never
@@ -1680,9 +1745,13 @@ try {
       // Never auto-attaches — the caller may be inside tmux (the menu) — it prints
       // how to switch instead.
       async function openWorktreeSession(wtPath: string, name: string): Promise<void> {
-        const worktreeContext = await resolveProjectConfigContext(wtPath);
+        const worktreeContext = await (
+          await import("../packages/daemon/src/lib/config-context.ts")
+        ).resolveProjectConfigContext(wtPath);
         if (worktreeContext.configKind !== "none") {
-          await launch(wtPath, { attach: false, sessionName: name });
+          await (
+            await import("../packages/daemon/src/launch.ts")
+          ).launch(wtPath, { attach: false, sessionName: name });
         } else {
           if (!hasSession(name)) createDetachedSession(name, wtPath);
           const { adoptSession } = await import("../packages/daemon/src/tui/chrome/statusline.ts");
@@ -1847,6 +1916,49 @@ try {
     }
 
     case "update": {
+      if (values.daemon) {
+        if (values["tui-binary"] || values.manifests || values["dry-run"] || positionals.length > 1)
+          throw new IdeError(
+            "update --daemon cannot be combined with other update modes or arguments",
+            { code: "USAGE", exitCode: 2 },
+          );
+        const { inspectCanonicalDaemonInfo, isCanonicalDaemonAlive } =
+          await import("../packages/daemon/src/lib/canonical-daemon.ts");
+        const state = inspectCanonicalDaemonInfo();
+        if (
+          values["if-running"] &&
+          (state.status === "missing" ||
+            (state.status === "valid" && !(await isCanonicalDaemonAlive(state.info))))
+        ) {
+          console.log(
+            json
+              ? JSON.stringify({ ok: true, status: "not-running" })
+              : "No running daemon to update.",
+          );
+          break;
+        }
+        await (
+          await import("../packages/daemon/src/lib/canonical-daemon-bootstrap.ts")
+        ).ensureCanonicalDaemon({
+          entryPath: nodeCliPath,
+          expectedProductVersion: (await import("../package.json")).version,
+        });
+        const current = inspectCanonicalDaemonInfo();
+        if (current.status !== "valid")
+          throw new IdeError("Daemon upgrade did not publish a current owner");
+        console.log(
+          json
+            ? JSON.stringify({
+                ok: true,
+                status: "ready",
+                productVersion: current.info.productVersion,
+                instanceId: current.info.instanceId,
+              })
+            : `Daemon ready: ${current.info.productVersion}`,
+        );
+        break;
+      }
+
       // `--manifests`: fetch the agent-detection manifest pack (versioned JSON,
       // a GitHub release asset) into ~/.tmux-ide/agent-detection/pack/ — the
       // loader hot-merges it under bundled<pack<user precedence. Schema-invalid

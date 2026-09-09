@@ -1,10 +1,8 @@
 import { z } from "zod";
 
 import { AppWindowIdSchemaZ, AppWindowRectSchemaZ } from "./app-window-state.ts";
-import {
-  DesktopDaemonCapabilityErrorSchemaZ,
-  DesktopWorkspaceNameSchemaZ,
-} from "./desktop-host.ts";
+import { DesktopDaemonCapabilityErrorSchemaZ } from "./desktop-daemon-capability-error.ts";
+import { DesktopWorkspaceNameSchemaZ } from "./desktop-workspace-name.ts";
 
 /** Renderer-authored semantic mutation. Runtime paths and tmux identities are excluded. */
 export const AppWindowMutationCommandSchemaZ = z.discriminatedUnion("type", [

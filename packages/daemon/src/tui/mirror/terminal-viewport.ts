@@ -20,6 +20,9 @@ export function retainNativeTerminalBacking(
   backing: NativeGridCapture,
 ): boolean {
   if (
+    // Version one omitted allocated erased cells beyond the used-text edge.
+    // Matching its projection cannot establish faithful native reflow backing.
+    backing.version === 1 ||
     snapshot.cols !== backing.cols ||
     snapshot.rows !== backing.rows ||
     snapshot.history.length !== backing.history
@@ -137,10 +140,21 @@ function* logicalRanges(
   if (count > 0) yield { start, end: count };
 }
 
+function unusedTerminalCell(cell: TerminalReplicaCell): boolean {
+  return (
+    cell.width === 1 &&
+    cell.grapheme === "" &&
+    cell.attributes === 0 &&
+    cell.foreground.kind === "default" &&
+    cell.background.kind === "default"
+  );
+}
+
 /** Walk logical text without copying history or allocating a token array. */
 function* logicalTokens(
   snapshot: TerminalReplicaSnapshot,
   range?: LogicalRange,
+  retained = false,
 ): Generator<PositionToken, undefined, void> {
   const count = snapshot.history.length + snapshot.grid.length;
   const rowAt = (index: number) =>
@@ -153,7 +167,13 @@ function* logicalTokens(
     const continues = next?.wrapped === true;
     let used = current.cells.length;
     if (!continues) {
-      while (used > 0 && (retainedTerminalCell(current, used - 1)!.grapheme || " ") === " ") used--;
+      // Match the retained reflow's tail policy: written/styled blanks can
+      // wrap into continuation rows and remain part of the logical line.
+      while (used > 0) {
+        const cell = retainedTerminalCell(current, used - 1)!;
+        if (retained ? !unusedTerminalCell(cell) : (cell.grapheme || " ") !== " ") break;
+        used--;
+      }
     }
     for (let column = 0; column < used; column++) {
       const cell = retainedTerminalCell(current, column)!;
@@ -183,11 +203,12 @@ function matchLogicalPosition(
   origin: TerminalViewportOrigin,
   beforeRange?: LogicalRange,
   afterRange?: LogicalRange,
+  retained = false,
 ): TerminalViewportOrigin | null {
   if (previous.modes.alternateScreen || next.modes.alternateScreen) return null;
   const oldRow = previous.history.length + origin.y;
-  const before = logicalTokens(previous, beforeRange);
-  const after = logicalTokens(next, afterRange);
+  const before = logicalTokens(previous, beforeRange, retained);
+  const after = logicalTokens(next, afterRange, retained);
   let a = before.next().value;
   let b = after.next().value;
   let mapped: { row: number; column: number } | null = null;
@@ -224,13 +245,26 @@ function matchLogicalPosition(
   return mapped ? { x: mapped.column, y: mapped.row - next.history.length } : null;
 }
 
-/** Preserve an ordered prefix, or a unique retained line after logical rows were removed. */
+/** Preserve an ordered prefix, or a corroborated unique retained reading line. */
 export function reflowTerminalPosition(
   previous: TerminalReplicaSnapshot,
   next: TerminalReplicaSnapshot,
   origin: TerminalViewportOrigin,
   frozen = false,
 ): TerminalViewportOrigin | null {
+  // Native backing can arrive without replacing the immutable retained view.
+  // Its coordinates are already exact; avoid walking the entire history just
+  // to rediscover the same row (including the native cell-identity search).
+  if (
+    previous === next &&
+    Number.isInteger(origin.x) &&
+    origin.x >= 0 &&
+    origin.x < previous.cols &&
+    Number.isInteger(origin.y) &&
+    origin.y >= -previous.history.length &&
+    origin.y < previous.grid.length
+  )
+    return { ...origin };
   const beforeBacking = nativeBacking.get(previous);
   const afterBacking = nativeBacking.get(next);
   if (beforeBacking && afterBacking) {
@@ -277,28 +311,55 @@ export function reflowTerminalPosition(
     }
     if (sharedPrefix) return { x: origin.x, y: oldRow - next.history.length };
   }
-  const prefix = matchLogicalPosition(previous, next, origin);
+  const prefix = matchLogicalPosition(previous, next, origin, undefined, undefined, frozen);
   if (prefix || previous.modes.alternateScreen || next.modes.alternateScreen) return prefix;
   let anchored: LogicalRange | undefined;
-  let oldLines = 0;
-  for (const range of logicalRanges(previous)) {
-    oldLines++;
+  const beforeRanges = [...logicalRanges(previous)];
+  for (const range of beforeRanges) {
     if (oldRow >= range.start && oldRow < range.end) anchored = range;
   }
   if (!anchored) return null;
   let candidate: TerminalViewportOrigin | null = null;
-  let newLines = 0;
-  for (const range of logicalRanges(next)) {
-    newLines++;
-    const match = matchLogicalPosition(previous, next, origin, anchored, range);
+  let candidateRange: LogicalRange | undefined;
+  const afterRanges = [...logicalRanges(next)];
+  for (const range of afterRanges) {
+    const match = matchLogicalPosition(previous, next, origin, anchored, range, frozen);
     if (match) {
       // A repeated paragraph has no unique correspondence. Never pick its
       // first occurrence merely because its text looks plausible.
       if (candidate) return null;
       candidate = match;
+      candidateRange = range;
     }
   }
-  return newLines < oldLines ? candidate : null;
+  if (afterRanges.length < beforeRanges.length) return candidate;
+  // A native width change can alter a preceding wide-glyph padding slot without
+  // deleting logical lines. Recover only a unique unchanged paragraph in the
+  // same ordinal position, corroborated by its complete following paragraph.
+  // A lone matching tail after changed output is not evidence of continuity.
+  if (!candidate || previous.cols === next.cols) return null;
+  const index = beforeRanges.indexOf(anchored);
+  if (afterRanges[index] !== candidateRange) return null;
+  for (const range of beforeRanges) {
+    if (
+      range !== anchored &&
+      matchLogicalPosition(previous, previous, origin, anchored, range, frozen)
+    )
+      return null;
+  }
+  const beforeFollowing = beforeRanges[index + 1];
+  const afterFollowing = afterRanges[index + 1];
+  if (!beforeFollowing || !afterFollowing) return null;
+  return matchLogicalPosition(
+    previous,
+    next,
+    { x: 0, y: beforeFollowing.start - previous.history.length },
+    beforeFollowing,
+    afterFollowing,
+    frozen,
+  )
+    ? candidate
+    : null;
 }
 
 /** Bound expanded presentation storage independently of compact wire size. */
@@ -429,14 +490,7 @@ export function reflowRetainedTerminalSnapshot(
     // Preserve written spaces and styled blanks; discard only unused tail cells.
     while (used > 0) {
       const cell = retainedTerminalCell(row, used - 1)!;
-      if (
-        cell.width !== 1 ||
-        cell.grapheme !== "" ||
-        cell.attributes !== 0 ||
-        cell.foreground.kind !== "default" ||
-        cell.background.kind !== "default"
-      )
-        break;
+      if (!unusedTerminalCell(cell)) break;
       used--;
     }
     for (let column = 0; column < used; column++) {

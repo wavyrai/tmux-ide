@@ -107,6 +107,28 @@ export function abandonPreparedConnection(
   );
 }
 
+export function consumeApplicationSshTarget(argv: readonly string[]): {
+  sshTarget: string | null;
+  sshTargets: string[];
+  argv: string[];
+} {
+  const sshTargets: string[] = [];
+  const remaining: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "--") {
+      remaining.push(...argv.slice(i));
+      break;
+    }
+    if (arg === "--ssh" || arg.startsWith("--ssh=")) {
+      const value = arg === "--ssh" ? argv[++i] : arg.slice(6);
+      if (!value || value.startsWith("-")) throw new Error("Expected one SSH alias after --ssh");
+      if (!sshTargets.includes(value)) sshTargets.push(value);
+    } else remaining.push(arg);
+  }
+  return { sshTarget: sshTargets[0] ?? null, sshTargets, argv: remaining };
+}
+
 /**
  * Bundle-safe lazy boundary for the production OpenTUI root.
  *
@@ -115,7 +137,7 @@ export function abandonPreparedConnection(
  * startup.
  */
 export async function startApplicationEntry(): Promise<void> {
-  const diagnosticLog = process.env.TMUX_IDE_TUI_PERF_LOG;
+  const diagnosticLog = process.env.TMUX_IDE_TUI_PERF_LOG || process.env.TMUX_IDE_TUI_LOG;
   const launchEpochMs = Number(process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ?? Date.now());
   const applicationShellDiagnostics = diagnosticLog
     ? createApplicationShellDiagnosticHandoff(launchEpochMs)
@@ -152,18 +174,27 @@ export async function startApplicationEntry(): Promise<void> {
       import("../application-shell-daemon-connection.ts").OpenTuiApplicationShellConnection | null
     >
   > = null;
+  let disposeAuthority: (() => void) | null = null;
   try {
+    const target = consumeApplicationSshTarget(process.argv.slice(2));
+    process.argv.splice(2, process.argv.length - 2, ...target.argv);
+    const { initializeApplicationMachines } = await import("./application-machine-startup.ts");
+    const authority = await import("./application-daemon-authority.ts");
+    disposeAuthority = authority.disposeApplicationDaemonAuthority;
+    initializeApplicationMachines(target.sshTargets);
     await mark("root-import-start");
-    initialPreparation = prepareExplicitApplicationTarget(process.argv.slice(2), (explicitTarget) =>
-      import("../application-shell-daemon-connection.ts").then(
-        ({ prepareOpenTuiApplicationShellConnection }) =>
-          diagnosticLog
-            ? prepareOpenTuiApplicationShellConnection(explicitTarget, {
-                onDiagnostic: applicationShellDiagnostics!.emit,
-              })
-            : prepareOpenTuiApplicationShellConnection(explicitTarget),
-      ),
-    );
+    initialPreparation = target.sshTarget
+      ? null
+      : prepareExplicitApplicationTarget(process.argv.slice(2), (explicitTarget) =>
+          import("../application-shell-daemon-connection.ts").then(
+            ({ prepareOpenTuiApplicationShellConnection }) =>
+              diagnosticLog
+                ? prepareOpenTuiApplicationShellConnection(explicitTarget, {
+                    onDiagnostic: applicationShellDiagnostics!.emit,
+                  })
+                : prepareOpenTuiApplicationShellConnection(explicitTarget),
+          ),
+        );
     const { startApplicationRoot } = await import("./application-root-v2.tsx");
     await mark("root-import-end");
     await mark("root-start");
@@ -180,6 +211,7 @@ export async function startApplicationEntry(): Promise<void> {
     );
     await mark("entry-ready");
   } catch (error) {
+    disposeAuthority?.();
     abandonPreparedConnection(initialPreparation?.prepared);
     await mark("entry-failed", {
       error: error instanceof Error ? (error.stack ?? error.message) : String(error),

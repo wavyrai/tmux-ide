@@ -13,3 +13,5 @@ export * from "./optimistic-projection.ts";
 export * from "./optimistic-projection-store.ts";
 export * from "./optimistic-projection-conformance.ts";
 export * from "./app-window-identity.ts";
+
+export * from "./saved-machines.ts";

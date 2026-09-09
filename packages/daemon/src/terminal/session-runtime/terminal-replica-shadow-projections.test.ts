@@ -6,7 +6,7 @@ import {
   type TerminalReplicaState,
 } from "@tmux-ide/core";
 import type { CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
-import { PaneMirror } from "../../tui/mirror/pane-mirror.ts";
+import { PaneMirror } from "../../../test-support/pane-mirror.ts";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
 import {
   projectTerminalReplicaForOpenTui,

@@ -1,3 +1,8 @@
+import {
+  decodeNativeGridCapture,
+  isNativeBootstrapCapture,
+  type NativeGridCapture,
+} from "./native-grid-capture.ts";
 /**
  * SessionChannel — one control-mode channel serving every pane subscription
  * of one tmux session (m43 card 1).
@@ -146,6 +151,7 @@ const RECOVERY_CURSOR_PROBE_FORMAT = [
   "#{mouse_utf8_flag}",
   "#{scroll_region_upper}",
   "#{scroll_region_lower}",
+  "#{scroll-on-clear}",
 ].join(" ");
 
 export type MirrorFlowRecoveryPhase =
@@ -168,6 +174,19 @@ export type MirrorFlowRecoveryFailureReason =
   | "no-progress"
   | "absolute-deadline"
   | "attempts-exhausted";
+
+/** Cache only proven server capability; malformed or failed reads can recover. */
+function nativeBootstrapUnsupported(
+  ok: boolean,
+  lines: readonly string[],
+  native: NativeGridCapture | null,
+): boolean {
+  if (ok)
+    return native !== null && (native.version !== 2 || native.currentAttributes === undefined);
+  return lines.some((line) =>
+    /^(?:parse error: )?(?:command capture-pane: )?unknown flag -R$/.test(line.trim()),
+  );
+}
 
 export interface MirrorFlowRecoveryObservation {
   readonly semanticPaneId: string;
@@ -244,6 +263,7 @@ export interface LayoutSubscriptionHandle {
 }
 
 interface SubRecord {
+  nativeBootstrap?: boolean;
   cancelCapture?: (() => void) | null;
   readonly feed: PaneFeed;
   readonly onEvent: (event: MirrorPaneEvent) => void;
@@ -255,6 +275,7 @@ interface SubRecord {
 
 interface PaneRecord {
   historySize?: number;
+  scrollOnClear?: boolean;
   runtimeId: string;
   semanticId: string;
   descriptor: SessionPaneDescriptor | null;
@@ -379,6 +400,9 @@ export function defaultMirrorWindowId(): string {
 }
 
 export class SessionChannel {
+  private nativeBootstrapUnavailable = false;
+  private nativeBootstrapConfirmed = false;
+  private readonly nativeProbeRetried = new WeakSet<SubRecord>();
   private readonly opts: SessionChannelOptions;
   private readonly io: MirrorChannelIo;
   private readonly ledger = new FlowLedger();
@@ -532,6 +556,7 @@ export class SessionChannel {
     this.io.send("refresh-client -B 'tmux-ide-pane-borders:@*:#{pane-border-status}'");
     this.io.send("refresh-client -B 'tmux-ide-copy-keys:@*:#{mode-keys}'");
     this.io.send("refresh-client -B 'tmux-ide-pane-history:%*:#{history_size}'");
+    this.io.send("refresh-client -B 'tmux-ide-scroll-on-clear:%*:#{scroll-on-clear}'");
     if (this.opts.onNativeClientActivity) {
       // tmux does not guarantee `%client-attached` is broadcast to an
       // existing control client. A format subscription is the documented,
@@ -671,6 +696,7 @@ export class SessionChannel {
     semanticPaneId: string,
     onEvent: (event: MirrorPaneEvent) => void,
     onLayout?: (event: MirrorLayoutEvent) => void,
+    nativeBootstrap = false,
   ): PaneSubscriptionHandle {
     const pane = this.panesBySemantic.get(semanticPaneId);
     if (!pane) {
@@ -678,6 +704,7 @@ export class SessionChannel {
     }
     const sub: SubRecord = {
       feed: new PaneFeed(),
+      nativeBootstrap: nativeBootstrap && !this.nativeBootstrapUnavailable,
       onEvent,
       onLayout: onLayout ?? null,
       pane,
@@ -979,6 +1006,7 @@ export class SessionChannel {
     sub: SubRecord,
     onSettled?: (result: ReseedResult) => void,
     deferPublish = false,
+    deadlineAt = this.recoveryNowMs() + RECOVERY_ABSOLUTE_DEADLINE_MS,
   ): void {
     if (sub.closed || sub.frozen || this.disposed) {
       onSettled?.(FAILED_RESEED_RESULT);
@@ -1016,21 +1044,66 @@ export class SessionChannel {
       sub.feed.abort(epoch);
       if (!captureSucceeded) retireMarker();
     };
-    cancelDeadline = this.scheduleRecovery(() => {
-      if (settled) return;
-      sub.feed.abort(epoch);
-      if (!captureSucceeded) retireMarker();
-      settle(FAILED_RESEED_RESULT);
-    }, RECOVERY_ABSOLUTE_DEADLINE_MS);
+    cancelDeadline = this.scheduleRecovery(
+      () => {
+        if (settled) return;
+        sub.feed.abort(epoch);
+        if (!captureSucceeded) retireMarker();
+        settle(FAILED_RESEED_RESULT);
+      },
+      Math.max(0, deadlineAt - this.recoveryNowMs()),
+    );
     // Keep retired reply slots in the control FIFO; their callbacks become
     // no-ops so late responses cannot publish or consume a newer capture.
     // Both probes ride one write burst; the FIFO reply order is the seam.
     this.io.commandListInline(
-      `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
+      `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p ${sub.nativeBootstrap ? "-R" : "-e -J"} -S -${history} -t ${runtime}`,
       2,
       1,
       (reply) => {
         if (settled) return;
+        const native =
+          sub.nativeBootstrap && reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
+        if (
+          sub.nativeBootstrap &&
+          (!native || !isNativeBootstrapCapture(native)) &&
+          !nativeBootstrapUnsupported(reply.ok, reply.lines, native)
+        ) {
+          if (
+            !this.nativeBootstrapConfirmed &&
+            !this.nativeProbeRetried.has(sub) &&
+            this.recoveryNowMs() < deadlineAt
+          ) {
+            // An unknown server can swallow an unsupported command inside a
+            // dynamic hook. Retry the ordinary probe once, with a fresh FIFO
+            // seam and the original deadline, before invoking native recovery.
+            this.nativeProbeRetried.add(sub);
+            settled = true;
+            sub.feed.abort(epoch);
+            cancelDeadline?.();
+            sub.cancelCapture = null;
+            retireMarker();
+            this.reseed(sub, onSettled, deferPublish, deadlineAt);
+            return;
+          }
+          sub.feed.abort(epoch);
+          retireMarker();
+          settle(FAILED_RESEED_RESULT);
+          return;
+        }
+        if (sub.nativeBootstrap && (!native || !isNativeBootstrapCapture(native))) {
+          // Unsupported/backing-only native exports fall back at a new FIFO
+          // capture seam. Never replay held bytes across these two captures.
+          settled = true;
+          retireMarker();
+          sub.feed.abort(epoch);
+          cancelDeadline?.();
+          sub.cancelCapture = null;
+          sub.nativeBootstrap = false;
+          this.nativeBootstrapUnavailable = true;
+          this.reseed(sub, onSettled, deferPublish, deadlineAt);
+          return;
+        }
         if (!reply.ok) {
           // Successful captures consume the marker atomically inside the tmux
           // after-capture-pane hook. The command-list also prevents a concurrent
@@ -1047,7 +1120,9 @@ export class SessionChannel {
           return;
         }
         captureLines = [...reply.lines];
-        sub.feed.captureReply(epoch, reply.lines);
+        if (native) this.nativeBootstrapConfirmed = true;
+        if (native) sub.feed.captureNativeReply(epoch, native);
+        else sub.feed.captureReply(epoch, reply.lines);
       },
     );
     this.io.commandInline(
@@ -1070,6 +1145,7 @@ export class SessionChannel {
         if (Number.isSafeInteger(historySize) && historySize >= 0)
           sub.pane.historySize = historySize;
         const fallbackSize = this.layoutSizeFor(runtime);
+        this.observeScrollOnClear(sub.pane, cursorLine);
         const events = sub.feed.cursorReply(epoch, cursorLine, fallbackSize);
         let published = false;
         const publish = (): boolean => {
@@ -1179,9 +1255,16 @@ export class SessionChannel {
     retireInternalReadOperation(marker, runtime);
     // Pane capture phases overlap under cancellation. Clear only the exact
     // failed marker so a late A callback cannot erase the newer B authority.
-    this.io.send(
+    // Both selected branches must emit one reply in addition to if-shell's
+    // own reply. An empty false branch emits none and shifts the control FIFO
+    // whenever the true branch runs during capture cancellation.
+    this.io.commandListInline(
       `if-shell -t ${runtime} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" ` +
-        `"set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" ""`,
+        `"set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" ` +
+        `"display-message -p -t ${runtime} ''"`,
+      2,
+      1,
+      () => {},
     );
   }
 
@@ -1479,6 +1562,8 @@ export class SessionChannel {
       return;
     }
     const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+    const nativeCapture =
+      !this.nativeBootstrapUnavailable && participants.every(({ sub }) => sub.nativeBootstrap);
     const reseedOrdinal = ++recovery.reseedOrdinal;
     let settled = false;
     let captureSucceeded = false;
@@ -1518,11 +1603,15 @@ export class SessionChannel {
       done(FAILED_RESEED_RESULT);
     };
     this.io.commandListInline(
-      `set-option -p -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${pane.runtimeId}`,
+      `set-option -p -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${history} -t ${pane.runtimeId}`,
       2,
       1,
       (reply) => {
         if (!reply.ok) {
+          if (nativeCapture && nativeBootstrapUnsupported(false, reply.lines, null)) {
+            this.nativeBootstrapUnavailable = true;
+            for (const { sub } of participants) sub.nativeBootstrap = false;
+          }
           fail();
           return;
         }
@@ -1532,7 +1621,20 @@ export class SessionChannel {
           return;
         }
         captureLines = Object.freeze([...reply.lines]);
-        for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+        const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
+        if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
+          if (nativeBootstrapUnsupported(true, captureLines, native)) {
+            this.nativeBootstrapUnavailable = true;
+            for (const { sub } of participants) sub.nativeBootstrap = false;
+          }
+          fail();
+          return;
+        }
+        if (native) this.nativeBootstrapConfirmed = true;
+        for (const { sub, epoch } of participants) {
+          if (native) sub.feed.captureNativeReply(epoch, native);
+          else sub.feed.captureReply(epoch, captureLines);
+        }
       },
     );
     this.io.commandInline(
@@ -1545,10 +1647,17 @@ export class SessionChannel {
         }
         const cursorLine = reply.lines[0] ?? "";
         const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+        this.observeScrollOnClear(pane, cursorLine);
         const deliveries = participants.map(({ sub, epoch }) => ({
           sub,
           epoch,
-          events: sub.feed.cursorReply(epoch, cursorLine, fallbackSize),
+          events: sub.feed
+            .cursorReply(epoch, cursorLine, fallbackSize)
+            .map((event) =>
+              event.type === "seed" && sub.nativeBootstrap && !nativeCapture
+                ? { ...event, requiresNativeRecapture: true }
+                : event,
+            ),
         }));
         if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
           fail();
@@ -1590,6 +1699,8 @@ export class SessionChannel {
       return;
     }
     const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+    const nativeCapture =
+      !this.nativeBootstrapUnavailable && participants.every(({ sub }) => sub.nativeBootstrap);
     const reseedOrdinal = ++recovery.reseedOrdinal;
     const nonce = this.opts.generateAtomicHookNonce?.() ?? randomBytes(24).toString("hex");
     if (!/^[0-9a-f]{32,128}$/u.test(nonce)) {
@@ -1699,7 +1810,7 @@ export class SessionChannel {
     const body =
       `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker}` +
       ` ; ${sentinel("start")}` +
-      ` ; capture-pane -p -e -J -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId}` +
+      ` ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId}` +
       ` ; ${sentinel("capture-end")}` +
       ` ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}"` +
       ` ; ${sentinel("cursor-end")}` +
@@ -1761,12 +1872,32 @@ export class SessionChannel {
               return;
             }
             const captureLines = Object.freeze([...result.captureLines]);
-            for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+            const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
+            if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
+              if (nativeBootstrapUnsupported(true, captureLines, native)) {
+                this.nativeBootstrapUnavailable = true;
+                for (const { sub } of participants) sub.nativeBootstrap = false;
+              }
+              fail(result.statusObserved);
+              return;
+            }
+            if (native) this.nativeBootstrapConfirmed = true;
+            for (const { sub, epoch } of participants) {
+              if (native) sub.feed.captureNativeReply(epoch, native);
+              else sub.feed.captureReply(epoch, captureLines);
+            }
             const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+            this.observeScrollOnClear(pane, result.cursorLine!);
             const deliveries = participants.map(({ sub, epoch }) => ({
               sub,
               epoch,
-              events: sub.feed.cursorReply(epoch, result.cursorLine!, fallbackSize),
+              events: sub.feed
+                .cursorReply(epoch, result.cursorLine!, fallbackSize)
+                .map((event) =>
+                  event.type === "seed" && sub.nativeBootstrap && !nativeCapture
+                    ? { ...event, requiresNativeRecapture: true }
+                    : event,
+                ),
             }));
             if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
               fail(true);
@@ -2105,8 +2236,33 @@ export class SessionChannel {
 
   // ── Notifications (channel order is the invariant) ──────────────────────
 
+  private observeScrollOnClear(pane: PaneRecord, cursorLine: string): void {
+    const value = cursorLine.trim().split(/\s+/)[22];
+    pane.scrollOnClear = value === "0" || value === "1" ? value === "1" : undefined;
+  }
+
   private onNotify(name: string, rest: string): void {
     if (name === "subscription-changed") {
+      const policy =
+        /^tmux-ide-scroll-on-clear\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([01])\s*$/u.exec(
+          rest,
+        );
+      if (policy) {
+        const pane = this.panesByRuntime.get(policy[1]!);
+        const enabled = policy[2] === "1";
+        if (pane && pane.scrollOnClear !== enabled) {
+          pane.scrollOnClear = enabled;
+          // A pending capture already reads policy in its ordered cursor
+          // probe. Cancelling it here can repeatedly retire opening recipes
+          // while tmux delivers the initial sampled option notification.
+          // Live feeds instead replace content and policy together.
+          if (!this.recoveries.has(pane.runtimeId))
+            for (const sub of pane.subs)
+              if (!sub.closed && !sub.frozen && sub.feed.currentState() === "live")
+                this.reseedPlain(sub);
+        }
+        return;
+      }
       const history =
         /^tmux-ide-pane-history\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([0-9]+)\s*$/u.exec(
           rest,

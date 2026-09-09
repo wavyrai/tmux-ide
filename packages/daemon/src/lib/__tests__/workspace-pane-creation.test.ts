@@ -760,7 +760,8 @@ describe("WorkspacePaneCreationAuthority", () => {
       options: { env?: NodeJS.ProcessEnv },
     ) => {
       captured.push({ executable, environment: { ...(options.env ?? {}) } });
-      return fake.run(args.slice(2));
+      expect(args[2]).toBe("-u");
+      return fake.run(args.slice(3));
     }) as Parameters<typeof _setExecutor>[0]);
     const hostileEnvironment: NodeJS.ProcessEnv = {
       TERM: "screen-256color",

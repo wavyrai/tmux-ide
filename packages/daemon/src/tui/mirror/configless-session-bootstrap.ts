@@ -1,3 +1,7 @@
+import {
+  readApplicationDaemonInfo as readCanonicalDaemonInfo,
+  isApplicationDaemonAlive as isCanonicalDaemonAlive,
+} from "./runtime/application-daemon-authority.ts";
 import { randomUUID } from "node:crypto";
 import type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
 import {
@@ -5,11 +9,7 @@ import {
   dispatchOwnerAction,
 } from "@tmux-ide/daemon-client/owner-action-client";
 
-import {
-  canonicalDaemonUrl,
-  isCanonicalDaemonAlive,
-  readCanonicalDaemonInfo,
-} from "../../lib/canonical-daemon.ts";
+import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
 import { fetchCanonicalWorkspaceRouting } from "./canonical-workspace-routing.ts";
 import { OPEN_TUI_HOST_CLIENT_ID } from "./open-tui-workspace-runtime-port.ts";
 

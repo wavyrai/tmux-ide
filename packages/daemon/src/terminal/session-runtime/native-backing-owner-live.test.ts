@@ -23,7 +23,17 @@ for (const target of [
   describe.skipIf(!available)(`native backing revision admission: ${target.name}`, () => {
     it.each(
       target.native
-        ? ["plain", "wide", "history", "wrapped", "one-column", "alternate"]
+        ? [
+            "plain",
+            "wide",
+            "history",
+            "wrapped",
+            "one-column",
+            "alternate",
+            "erased-tail",
+            "reset-after-paint",
+            "colored-current",
+          ]
         : ["plain"],
     )(
       "qualifies %s content without changing system tmux",
@@ -37,15 +47,21 @@ for (const target of [
           }).trimEnd();
         const script = join(directory, "paint.mjs");
         const content =
-          mode === "alternate"
-            ? "\x1b[?1049hALT-READY"
-            : mode === "wide" || mode === "one-column"
-              ? "\x1b[31m界e\u0301\x1b[0mREADY"
-              : mode === "history"
-                ? Array.from({ length: 40 }, (_, i) => `HISTORY-${i}\r\n`).join("") + "READY"
-                : mode === "wrapped"
-                  ? "A".repeat(50) + "READY"
-                  : "READY";
+          mode === "reset-after-paint"
+            ? "\x1b[31mREADY\x1b[0m"
+            : mode === "colored-current"
+              ? "READY\x1b[31m"
+              : mode === "erased-tail"
+                ? "\x1b[48;5;17m\x1b[2J\x1b[HREADY"
+                : mode === "alternate"
+                  ? "\x1b[?1049hALT-READY"
+                  : mode === "wide" || mode === "one-column"
+                    ? "\x1b[31m界e\u0301\x1b[0mREADY"
+                    : mode === "history"
+                      ? Array.from({ length: 40 }, (_, i) => `HISTORY-${i}\r\n`).join("") + "READY"
+                      : mode === "wrapped"
+                        ? "A".repeat(50) + "READY"
+                        : "READY";
         writeFileSync(
           script,
           `process.stdin.setRawMode(true);process.stdin.on('data',data=>process.stdout.write(data));process.stdout.write(${JSON.stringify(content)});setInterval(()=>{},10000);`,

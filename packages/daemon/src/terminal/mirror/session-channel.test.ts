@@ -1802,7 +1802,7 @@ describe("flow control", () => {
     );
     expect(cleanup).toBe(
       `if-shell -t %1 -F "#{==:#{@tmux_ide_read_operation},${failedMarker}}" ` +
-        `"set-option -pu -t %1 @tmux_ide_read_operation" ""`,
+        `"set-option -pu -t %1 @tmux_ide_read_operation" "display-message -p -t %1 ''"`,
     );
     expect(
       rig.sim.written.some(
@@ -2484,6 +2484,68 @@ describe("layout push", () => {
     await rig.channel.dispose();
   });
 
+  it.each(["awaiting-capture", "awaiting-cursor"] as const)(
+    "keeps the opening capture alive when policy is observed while %s",
+    async (phase) => {
+      const rig = await startedRig();
+      const collected = collect();
+      try {
+        rig.channel.subscribePane("pane.alpha", collected.onEvent);
+        const captures = () =>
+          rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+        const before = captures();
+        if (phase === "awaiting-cursor") rig.sim.reply(["opening history"]);
+        rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 1");
+        // Even a policy change during the capture must be read by its pending
+        // authoritative cursor probe, not cancel the ordered capture recipe.
+        rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 0");
+        expect(captures()).toBe(before);
+        if (phase === "awaiting-capture") rig.sim.reply(["opening history"]);
+        rig.sim.output("%1", "held-output");
+        rig.sim.reply(["0 0 100 50 0 1 0 0 0 0 0 0 0 1 12 2000 0 0 0 0 0 49 0"]);
+        expect(collected.events.filter((event) => event.type === "seed")).toHaveLength(1);
+        expect(bytesOf(collected.events)).toContain("held-output");
+        const cursor = collected.events.at(-1);
+        expect(cursor?.type === "cursor" && cursor.observedModes?.scrollOnClear).toBe(false);
+        rig.sim.output("%1", "live-output");
+        expect(bytesOf(collected.events)).toContain("live-output");
+        expect(captures()).toBe(before);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it("reseeds on observed scroll-on-clear changes without guessing unknown policy", async () => {
+    const rig = await startedRig();
+    const collected = collect();
+    rig.channel.subscribePane("pane.alpha", collected.onEvent);
+    rig.sim.reply(["old history"]);
+    const probe = (policy: string) =>
+      `0 0 100 50 0 1 0 0 0 0 0 0 0 1 12 2000 0 0 0 0 0 49 ${policy}`;
+    rig.sim.reply([probe("1")]);
+    const captures = () =>
+      rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+    const before = captures();
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 1");
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : unknown");
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %999 : 0");
+    expect(captures()).toBe(before);
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 0");
+    expect(captures()).toBe(before + 1);
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 0");
+    expect(captures()).toBe(before + 1);
+    rig.sim.reply(["updated history"]);
+    rig.sim.reply([probe("0")]);
+    const cursor = collected.events.at(-1);
+    expect(cursor?.type === "cursor" && cursor.observedModes?.scrollOnClear).toBe(false);
+    rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 1");
+    expect(captures()).toBe(before + 2);
+    rig.sim.reply(["restored history"]);
+    rig.sim.reply([probe("1")]);
+    await rig.channel.dispose();
+  });
+
   it("reseeds a watched pane once for a quiet native history clear", async () => {
     const rig = await startedRig();
     const collected = collect();
@@ -2996,3 +3058,341 @@ describe("native capture semantic ownership", () => {
     expect(await rig.channel.captureNativeBacking("pane.alpha")).toEqual({ status: "retired" });
   });
 });
+
+describe("native bootstrap capability fallback", () => {
+  it("reserves both cleanup replies before the next native capture and cursor", async () => {
+    const rig = await startedRig();
+    try {
+      const commandList = vi.spyOn(rig.sim, "commandListInline");
+      const marker = registerInternalReadOperation("%1");
+      (
+        rig.channel as unknown as {
+          retireInternalReadMarker(runtime: string, marker: string): void;
+        }
+      ).retireInternalReadMarker("%1", marker);
+      expect(commandList).toHaveBeenCalledWith(
+        expect.stringContaining(`"display-message -p -t %1 ''"`),
+        2,
+        1,
+        expect.any(Function),
+      );
+      const first = collect();
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      rig.sim.reply(nativeBootstrapLines());
+      rig.sim.reply(["0 0 100 50"]);
+      expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
+        "native.version",
+        2,
+      );
+      expect(rig.sim.core.pendingCount).toBe(0);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("keeps a confirmed native server on atomic recovery after a later failed capture", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    try {
+      const first = collect();
+      const subscription = rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      rig.sim.reply(nativeBootstrapLines());
+      rig.sim.reply(["0 0 100 50"]);
+      first.events.length = 0;
+      subscription.reseed();
+      rig.sim.reply([], false);
+      rig.sim.reply(["0 0 100 50"]);
+      const plainAttempts = () =>
+        rig.sim.written.filter(
+          (command) =>
+            command.startsWith("set-option -p -t") && command.includes("capture-pane -p -R"),
+        ).length;
+      expect(plainAttempts()).toBe(2);
+      for (let phase = 0; phase < 3; phase++) {
+        if (phase) runRecoveryTimer(rig);
+        completeAtomicRecoveryPhase(rig, nativeBootstrapLines(), "0 0 100 50");
+      }
+      expect(plainAttempts()).toBe(2);
+      expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
+        "native.version",
+        2,
+      );
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("retries unknown native capability once within the original deadline", async () => {
+    const rig = await startedRig();
+    try {
+      const first = collect();
+      const subscription = rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      advanceRecoveryClock(rig, 4000);
+      rig.sim.reply([], false);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(
+        rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
+      ).toHaveLength(2);
+      const deadlines = rig.pendingRecoveries.filter((task) => !task.cancelled);
+      expect(deadlines.some((task) => task.dueAtMs === 5000)).toBe(true);
+      expect(deadlines.some((task) => task.dueAtMs > 5000)).toBe(false);
+      subscription.close();
+      advanceRecoveryClock(rig, 10000);
+      rig.sim.reply(nativeBootstrapLines());
+      rig.sim.reply(["0 0 100 50"]);
+      expect(first.events.filter((event) => event.type === "seed")).toHaveLength(0);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("recovers unknown stock capability after one transient initial probe failure", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    try {
+      const first = collect();
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      rig.sim.reply([], false);
+      rig.sim.reply(["0 0 100 50"]);
+      rig.sim.reply(["parse error: command capture-pane: unknown flag -R"], false);
+      rig.sim.reply(["0 0 100 50"]);
+      rig.sim.reply(["portable recovered"]);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(bytesOf(first.events)).toEqual(["portable recovered"]);
+      expect(
+        rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
+      ).toHaveLength(2);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("bounds persistent malformed captures without publishing portable content", async () => {
+    const rig = await startedRig();
+    try {
+      const first = collect();
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      rig.sim.reply(["malformed native capture"]);
+      rig.sim.reply(["0 0 100 50"]);
+      rig.sim.reply(["second malformed capability probe"]);
+      rig.sim.reply(["0 0 100 50"]);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        rig.sim.reply(["still malformed"]);
+        rig.sim.reply(["0 0 100 50"]);
+        if (attempt < 2) runRecoveryTimer(rig);
+      }
+      advanceRecoveryClock(rig, 10000);
+      expect(first.events.filter((event) => event.type === "fault")).toHaveLength(1);
+      expect(first.events.filter((event) => event.type === "seed")).toHaveLength(0);
+      expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
+        false,
+      );
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it.each([false, true])(
+    "recovers native after malformed shared capture (atomic=%s)",
+    async (atomicHook) => {
+      const rig = await startedRig({ atomicHook });
+      const native = nativeBootstrapLines();
+      try {
+        const first = collect();
+        rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+        rig.sim.reply(native);
+        rig.sim.reply(["0 0 100 50"]);
+        first.events.length = 0;
+        rig.sim.feedLines("%pause %1");
+        if (atomicHook) completeAtomicRecoveryPhase(rig, ["malformed"], "0 0 100 50");
+        else {
+          rig.sim.reply(["malformed"]);
+          rig.sim.reply(["0 0 100 50"]);
+        }
+        for (let phase = 0; phase < 3; phase++) {
+          runRecoveryTimer(rig);
+          if (atomicHook) completeAtomicRecoveryPhase(rig, native, "0 0 100 50");
+          else {
+            rig.sim.reply(native);
+            rig.sim.reply(["0 0 100 50"]);
+          }
+        }
+        expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
+          "native.version",
+          2,
+        );
+        expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
+          false,
+        );
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it.each(["failed", "malformed"])(
+    "recovers native capability after a transient %s capture",
+    async (kind) => {
+      const rig = await startedRig();
+      const native = nativeBootstrapLines();
+      try {
+        const first = collect();
+        rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+        rig.sim.reply(
+          [kind === "failed" ? "temporary capture failure" : "truncated native JSON"],
+          kind !== "failed",
+        );
+        rig.sim.reply(["0 0 100 50"]); // retired native cursor probe
+        rig.sim.reply(native); // one fresh ordinary capability probe
+        rig.sim.reply(["0 0 100 50"]);
+        expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
+          "native.version",
+          2,
+        );
+        expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
+          false,
+        );
+        const before = rig.sim.written.filter((command) =>
+          command.includes("capture-pane -p -R"),
+        ).length;
+        const peer = collect();
+        rig.channel.subscribePane("pane.alpha", peer.onEvent, undefined, true);
+        expect(
+          rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
+        ).toHaveLength(before + 1);
+        rig.sim.reply(native);
+        rig.sim.reply(["0 0 100 50"]);
+        expect(peer.events.find((event) => event.type === "seed")).toHaveProperty(
+          "native.version",
+          2,
+        );
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it.each(["stock", "v1", "backing-only-v2"])(
+    "restarts at a fresh capture seam and caches explicit %s capability",
+    async (capability) => {
+      const rig = await startedRig();
+      try {
+        const first = collect();
+        rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+        expect(rig.sim.written.some((command) => command.includes("capture-pane -p -R"))).toBe(
+          true,
+        );
+        if (capability === "stock") rig.sim.reply(["command capture-pane: unknown flag -R"], false);
+        else {
+          const lines = nativeBootstrapLines();
+          const header = JSON.parse(lines[0]!);
+          delete header.currentAttributes;
+          if (capability === "v1") header.version = 1;
+          lines[0] = JSON.stringify(header);
+          rig.sim.reply(lines);
+        }
+        rig.sim.reply(["0 0 100 50"]); // retired native cursor reply
+        rig.sim.feedLines("%output %1 discarded-before-fallback");
+        rig.sim.reply(["portable"]);
+        rig.sim.feedLines("%output %1 held-after-fallback");
+        rig.sim.reply(["0 0 100 50"]);
+        expect(bytesOf(first.events)).toEqual(["portable", "held-after-fallback"]);
+        expect(first.events.filter((event) => event.type === "seed")).toHaveLength(1);
+        const count = rig.sim.written.filter((command) =>
+          command.includes("capture-pane -p -R"),
+        ).length;
+        const peer = collect();
+        rig.channel.subscribePane("pane.alpha", peer.onEvent, undefined, true);
+        expect(
+          rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
+        ).toHaveLength(count);
+        rig.sim.reply(["peer"]);
+        rig.sim.reply(["0 0 100 50"]);
+        expect(bytesOf(peer.events)).toEqual(["peer"]);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+});
+
+describe("native recovery formats", () => {
+  it.each([false, true])(
+    "keeps native and mixed subscriber gates distinct (atomic=%s)",
+    async (atomicHook) => {
+      for (const mixed of [false, true]) {
+        const rig = await startedRig({ atomicHook });
+        const nativeLines = [
+          JSON.stringify({
+            version: 2,
+            currentAttributes: [0, 8, 8, 8],
+            cols: 100,
+            rows: 50,
+            history: 0,
+            hscrolled: 0,
+            limit: 2000,
+            cursor: [0, 0],
+          }),
+          ...Array.from({ length: 50 }, (_, row) =>
+            JSON.stringify({ row, flags: 0, used: 0, cells: [] }),
+          ),
+        ];
+        try {
+          const canonical = collect();
+          rig.channel.subscribePane("pane.alpha", canonical.onEvent, undefined, true);
+          rig.sim.reply(nativeLines);
+          rig.sim.reply(["0 0 100 50"]);
+          const legacy = collect();
+          if (mixed) {
+            rig.channel.subscribePane("pane.alpha", legacy.onEvent);
+            rig.sim.reply(["legacy initial"]);
+            rig.sim.reply(["0 0 100 50"]);
+          }
+          canonical.events.length = 0;
+          legacy.events.length = 0;
+          const capture = mixed ? ["legacy recovered"] : nativeLines;
+          rig.sim.feedLines("%pause %1");
+          for (let phase = 0; phase < 3; phase++) {
+            if (phase) runRecoveryTimer(rig);
+            if (atomicHook) completeAtomicRecoveryPhase(rig, capture, "0 0 100 50");
+            else {
+              rig.sim.reply(capture);
+              rig.sim.reply(["0 0 100 50"]);
+            }
+          }
+          const seed = canonical.events.find((event) => event.type === "seed");
+          expect(seed).toBeDefined();
+          if (mixed) {
+            expect(seed).toMatchObject({ requiresNativeRecapture: true });
+            expect(seed).not.toHaveProperty("native");
+            expect(bytesOf(legacy.events)).toEqual(["legacy recovered"]);
+            expect(legacy.events.find((event) => event.type === "seed")).not.toHaveProperty(
+              "requiresNativeRecapture",
+            );
+          } else {
+            expect(seed).toHaveProperty("native.version", 2);
+            expect(seed).not.toHaveProperty("requiresNativeRecapture");
+          }
+        } finally {
+          await rig.channel.dispose();
+        }
+      }
+    },
+  );
+});
+
+function nativeBootstrapLines(): string[] {
+  return [
+    JSON.stringify({
+      version: 2,
+      currentAttributes: [0, 8, 8, 8],
+      cols: 100,
+      rows: 50,
+      history: 0,
+      hscrolled: 0,
+      limit: 2000,
+      cursor: [0, 0],
+    }),
+    ...Array.from({ length: 50 }, (_, row) =>
+      JSON.stringify({ row, flags: 0, used: 0, cells: [] }),
+    ),
+  ];
+}
