@@ -24,6 +24,8 @@ import {
   applyTerminalReplicaUpdateCooperatively,
   terminalReplicaUpdateNeedsCooperativeReduction,
   encodeCompactSemanticTerminalUpdate,
+  encodeCompactSemanticTerminalUpdateCooperatively,
+  terminalSemanticUpdateNeedsCooperativeEncoding,
   encodeAnsiTerminalRepresentation,
   encodeSemanticTerminalUpdate,
   hashTerminalDeliveryRepresentation,
@@ -169,6 +171,7 @@ interface ClientState {
     sentAt: number;
   } | null;
   latestRevision: number | null;
+  encoding: PendingClientEncoding | null;
   scheduled: boolean;
   closed: boolean;
   lifecycleOpenRecorded: boolean;
@@ -180,6 +183,28 @@ interface ClientState {
   /** Delivery displaced by authoritative source close; its racing ACK is benign. */
   sourceClosedFlight: TerminalDeliveryEnvelope | null;
   backgroundTimer: SessionRuntimeTimer | null;
+}
+
+type SeedEncodingOutcome = { readonly bytes: Uint8Array } | { readonly error: unknown };
+interface PendingSeedEncoding {
+  readonly key: string;
+  readonly pane: PaneState;
+  readonly abort: AbortController;
+  readonly clients: Set<ClientState>;
+  yieldStartedAt: number;
+}
+interface PendingClientEncoding {
+  readonly job: PendingSeedEncoding;
+  readonly target: RevisionRecord;
+  readonly baselineRevision: number;
+  readonly baselineHash: string | null;
+  readonly reseedRequired: boolean;
+  readonly traceStarted: number;
+}
+class DeferredSeedEncoding extends Error {
+  constructor(readonly payload: TerminalSemanticDeliveryPayload) {
+    super("Deferred compact seed encoding");
+  }
 }
 
 interface CachedRepresentation {
@@ -273,6 +298,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   /** Synchronous reservations held while an async pane source is starting. */
   readonly #pendingClients = new Map<string, string>();
   readonly #cache = new Map<string, CachedRepresentation>();
+  readonly #pendingEncodings = new Map<string, PendingSeedEncoding>();
   #cacheBytes = 0;
   #coalesced = 0;
   #reseeds = 0;
@@ -357,6 +383,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         reseedRequired: false,
         inFlight: null,
         latestRevision: pane.latest?.update.revision ?? null,
+        encoding: null,
         scheduled: false,
         closed: false,
         lifecycleOpenRecorded: false,
@@ -380,6 +407,8 @@ export class SessionRuntimeTerminalDeliveryHub {
         setVisibility: (visibilityInput) => {
           if (client.closed) return;
           client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
+          if (client.visibility === "hidden" || client.visibility === "frozen")
+            this.#cancelEncoding(client);
           if (client.visibility === "visible" || client.visibility === "background")
             this.#schedule(client);
           this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
@@ -460,6 +489,7 @@ export class SessionRuntimeTerminalDeliveryHub {
 
   async resetForSessionRestart(): Promise<void> {
     for (const client of this.#clients.values()) {
+      this.#cancelEncoding(client);
       client.outgoing.length = 0;
       client.inFlight = null;
       this.#enqueue(client, {
@@ -702,11 +732,13 @@ export class SessionRuntimeTerminalDeliveryHub {
         client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
       if (
         update.type === "terminal.tombstone" &&
-        (client.inFlight !== null || client.visibility !== "visible")
+        (client.inFlight !== null || client.encoding !== null || client.visibility !== "visible")
       ) {
         this.#fault(client, "source-closed", "Terminal source closed before final state delivery");
         continue;
       }
+      if (client.encoding && client.encoding.target.update.incarnation !== update.incarnation)
+        this.#cancelEncoding(client);
       if (client.latestRevision !== null && client.latestRevision !== update.revision)
         this.#coalesced += 1;
       client.latestRevision = update.revision;
@@ -766,6 +798,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     if (
       client.closed ||
       client.inFlight ||
+      client.encoding ||
       client.latestRevision === null ||
       client.latestRevision === client.baselineRevision ||
       client.visibility === "hidden" ||
@@ -790,17 +823,37 @@ export class SessionRuntimeTerminalDeliveryHub {
     });
   }
 
-  #deliver(client: ClientState): void {
+  #deliver(
+    client: ClientState,
+    completed?: {
+      readonly target: RevisionRecord;
+      readonly outcome: SeedEncodingOutcome;
+      readonly traceStarted: number;
+    },
+  ): void {
     const pane = this.#panes.get(client.paneId);
-    const target = pane?.latest;
-    if (!pane || !target || target.update.revision !== client.latestRevision) return;
-    const traceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+    const target = completed?.target ?? pane?.latest;
+    if (
+      !pane ||
+      !target ||
+      client.closed ||
+      client.inFlight ||
+      client.encoding ||
+      client.visibility === "hidden" ||
+      client.visibility === "frozen" ||
+      (!completed && target.update.revision !== client.latestRevision)
+    )
+      return;
+    const traceStarted =
+      completed?.traceStarted ??
+      (this.#observability.enabled ? this.#observability.nowMicros() : 0);
+    let deferred = false;
     let encodedRepresentation: CachedRepresentation | null = null;
     let failedSelectionObservation: SemanticSelectionObservation | null = null;
     let deliveryEnvelope: TerminalDeliveryEnvelope | null = null;
     let deliveryOrdinal: number | null = null;
     try {
-      const representation = this.#representation(client, pane, target);
+      const representation = this.#representation(client, pane, target, completed?.outcome);
       encodedRepresentation = representation;
       const transactionId = this.#scheduler.createId();
       const chunkCount = Math.max(1, Math.ceil(representation.bytes.byteLength / (256 * 1024)));
@@ -843,6 +896,11 @@ export class SessionRuntimeTerminalDeliveryHub {
       if (target.trace?.traceId === pane.pendingDeliveryTrace?.traceId)
         pane.pendingDeliveryTrace = null;
     } catch (error) {
+      if (error instanceof DeferredSeedEncoding) {
+        deferred = true;
+        this.#startEncoding(client, pane, target, error.payload, traceStarted);
+        return;
+      }
       failedSelectionObservation = semanticSelectionObservationFromError(error);
       this.#fault(
         client,
@@ -853,7 +911,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         failedSelectionObservation,
       );
     } finally {
-      if (this.#observability.enabled)
+      if (this.#observability.enabled && !deferred)
         try {
           const metrics = this.metrics();
           this.#observability.recordSpan(
@@ -914,10 +972,132 @@ export class SessionRuntimeTerminalDeliveryHub {
     }
   }
 
+  #startEncoding(
+    client: ClientState,
+    pane: PaneState,
+    target: RevisionRecord,
+    payload: TerminalSemanticDeliveryPayload,
+    traceStarted: number,
+  ): void {
+    const key = cacheKey([
+      target.update.workspaceName,
+      client.paneId,
+      target.update.generation,
+      target.update.incarnation,
+      target.update.revision,
+      target.update.stateHash,
+      client.negotiated.encoding,
+      client.negotiated.richPlacements ? "rich" : "plain",
+    ]);
+    let job = this.#pendingEncodings.get(key);
+    let created = false;
+    if (!job) {
+      if (this.#pendingEncodings.size >= MAX_PANES) {
+        this.#fault(
+          client,
+          "state-too-large",
+          "Too many terminal representations are pending; reopen to retry",
+        );
+        return;
+      }
+      job = {
+        key,
+        pane,
+        abort: new AbortController(),
+        clients: new Set(),
+        yieldStartedAt: -Infinity,
+      };
+      this.#pendingEncodings.set(key, job);
+      created = true;
+    }
+    const owned = job;
+    client.encoding = {
+      job: owned,
+      target,
+      baselineRevision: client.baselineRevision,
+      baselineHash: client.baselineHash,
+      reseedRequired: client.reseedRequired,
+      traceStarted,
+    };
+    owned.clients.add(client);
+    if (!created) return;
+    void encodeCompactSemanticTerminalUpdateCooperatively(payload, {
+      signal: owned.abort.signal,
+      yieldControl: () => this.#yieldEncoding(owned),
+    }).then(
+      (bytes) => this.#completeEncoding(owned, { bytes }),
+      (error) => this.#completeEncoding(owned, { error }),
+    );
+  }
+
+  #yieldEncoding(job: PendingSeedEncoding): Promise<void> {
+    if (this.#scheduler.nowMs() - job.yieldStartedAt < 2) return Promise.resolve();
+    return new Promise((resolve) => {
+      let timer: SessionRuntimeTimer | undefined;
+      const finish = () => {
+        timer?.cancel();
+        job.yieldStartedAt = this.#scheduler.nowMs();
+        job.abort.signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      job.abort.signal.addEventListener("abort", finish, { once: true });
+      if (job.abort.signal.aborted) finish();
+      else
+        timer = this.#scheduler.yieldTask
+          ? this.#scheduler.yieldTask(finish)
+          : this.#scheduler.timer(finish, 0);
+    });
+  }
+
+  #completeEncoding(job: PendingSeedEncoding, outcome: SeedEncodingOutcome): void {
+    if (this.#pendingEncodings.get(job.key) === job) this.#pendingEncodings.delete(job.key);
+    for (const client of job.clients) {
+      const encoding = client.encoding;
+      if (!encoding || encoding.job !== job) continue;
+      client.encoding = null;
+      if (
+        job.abort.signal.aborted ||
+        this.#closed ||
+        client.closed ||
+        this.#clients.get(client.key) !== client ||
+        this.#panes.get(client.paneId) !== job.pane ||
+        client.baselineRevision !== encoding.baselineRevision ||
+        client.baselineHash !== encoding.baselineHash ||
+        client.reseedRequired !== encoding.reseedRequired ||
+        client.inFlight ||
+        client.visibility === "hidden" ||
+        client.visibility === "frozen" ||
+        job.pane.latest?.update.incarnation !== encoding.target.update.incarnation
+      )
+        continue;
+      this.#deliver(client, {
+        target: encoding.target,
+        outcome,
+        traceStarted: encoding.traceStarted,
+      });
+      this.#pruneCanonicalRevisions(client.paneId);
+    }
+    job.clients.clear();
+  }
+
+  #cancelEncoding(client: ClientState): void {
+    const encoding = client.encoding;
+    if (!encoding) return;
+    client.encoding = null;
+    const job = encoding.job;
+    job.clients.delete(client);
+    if (job.clients.size === 0) {
+      job.abort.abort();
+      if (this.#pendingEncodings.get(job.key) === job) this.#pendingEncodings.delete(job.key);
+    }
+    this.#pruneCanonicalRevisions(client.paneId);
+  }
+
   #representation(
     client: ClientState,
     pane: PaneState,
     target: RevisionRecord,
+    seedOutcome?: SeedEncodingOutcome,
   ): CachedRepresentation {
     const key = cacheKey([
       target.update.workspaceName,
@@ -944,10 +1124,16 @@ export class SessionRuntimeTerminalDeliveryHub {
       client.negotiated.encoding === "semantic-v1" ||
       client.negotiated.encoding === "semantic-compact-v1"
     ) {
-      const encodeSemantic =
-        client.negotiated.encoding === "semantic-compact-v1"
-          ? encodeCompactSemanticTerminalUpdate
-          : encodeSemanticTerminalUpdate;
+      const encodeSemantic = (payload: TerminalSemanticDeliveryPayload): Uint8Array => {
+        if (client.negotiated.encoding !== "semantic-compact-v1")
+          return encodeSemanticTerminalUpdate(payload);
+        if (terminalSemanticUpdateNeedsCooperativeEncoding(payload)) {
+          if (!seedOutcome) throw new DeferredSeedEncoding(payload);
+          if ("error" in seedOutcome) throw seedOutcome.error;
+          return seedOutcome.bytes;
+        }
+        return encodeCompactSemanticTerminalUpdate(payload);
+      };
       if (client.reseedRequired) {
         const payload = semanticSeed(target);
         let bytes: Uint8Array;
@@ -1416,6 +1602,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       } catch {
         // Detailed fault diagnostics never own delivery failure handling.
       }
+    this.#cancelEncoding(client);
     client.outgoing.length = 0;
     if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
     client.inFlight = null;
@@ -1493,6 +1680,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   ): Promise<void> {
     if (client.closed) return;
     client.closed = true;
+    this.#cancelEncoding(client);
     client.resolveClosed(reason);
     if (client.lifecycleOpenRecorded)
       this.#recordDeliveryLifecycle(client, this.#panes.get(client.paneId), "close");
@@ -1650,6 +1838,8 @@ export class SessionRuntimeTerminalDeliveryHub {
         baseline.stateHash === client.baselineHash
       )
         reachable.add(client.baselineRevision);
+      const encoding = client.encoding?.target.update;
+      if (encoding?.incarnation === latest.incarnation) reachable.add(encoding.revision);
       const flight = client.inFlight?.envelope;
       if (flight?.incarnation === latest.incarnation) reachable.add(flight.canonicalRevision);
     }
