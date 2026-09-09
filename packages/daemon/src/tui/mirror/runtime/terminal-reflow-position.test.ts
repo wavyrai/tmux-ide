@@ -146,6 +146,63 @@ describe("logical terminal reflow position", () => {
     expect(reflowTerminalPosition(before, after, { x: 0, y: -2 })).toBeNull();
   });
 
+  it("preserves a unique reading paragraph after native padding changes earlier text", () => {
+    const before = snapshot(8, 2, [
+      ["abc界def", false],
+      ["READ", false],
+      ["TAIL", false],
+    ]);
+    const after = snapshot(4, 3, [
+      ["abc", false],
+      ["界 d", true],
+      ["ef", true],
+      ["READ", false],
+      ["TAIL", false],
+    ]);
+    expect(reflowTerminalPosition(before, after, { x: 1, y: -1 })).toEqual({ x: 1, y: 0 });
+    const appended = {
+      ...after,
+      rows: after.rows + 1,
+      grid: [...after.grid, snapshot(4, 0, [["MORE", false]]).grid[0]!],
+    };
+    expect(reflowTerminalPosition(before, appended, { x: 1, y: -1 })).toEqual({ x: 1, y: 0 });
+    const changed = snapshot(4, 3, [
+      ["abc", false],
+      ["界 d", true],
+      ["ef", true],
+      ["READ", false],
+      ["FAIL", false],
+    ]);
+    expect(reflowTerminalPosition(before, changed, { x: 1, y: -1 })).toBeNull();
+  });
+
+  it("rejects equal-count recovery when the old or new reading paragraph repeats", () => {
+    const before = snapshot(8, 2, [
+      ["same", false],
+      ["same", false],
+      ["TAIL", false],
+    ]);
+    const after = snapshot(4, 2, [
+      ["NEW", false],
+      ["same", false],
+      ["TAIL", false],
+    ]);
+    expect(reflowTerminalPosition(before, after, { x: 0, y: -1 })).toBeNull();
+    const unique = snapshot(8, 3, [
+      ["OLD", false],
+      ["same", false],
+      ["diff", false],
+      ["TAIL", false],
+    ]);
+    const repeated = snapshot(4, 3, [
+      ["NEW", false],
+      ["same", false],
+      ["same", false],
+      ["TAIL", false],
+    ]);
+    expect(reflowTerminalPosition(unique, repeated, { x: 0, y: -2 })).toBeNull();
+  });
+
   it("preserves a complete reading line while later output changes during resize", () => {
     const before = snapshot(8, 1, [
       ["ABCDEFGH", false],

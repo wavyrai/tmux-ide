@@ -245,7 +245,7 @@ function matchLogicalPosition(
   return mapped ? { x: mapped.column, y: mapped.row - next.history.length } : null;
 }
 
-/** Preserve an ordered prefix, or a unique retained line after logical rows were removed. */
+/** Preserve an ordered prefix, or a corroborated unique retained reading line. */
 export function reflowTerminalPosition(
   previous: TerminalReplicaSnapshot,
   next: TerminalReplicaSnapshot,
@@ -314,25 +314,52 @@ export function reflowTerminalPosition(
   const prefix = matchLogicalPosition(previous, next, origin, undefined, undefined, frozen);
   if (prefix || previous.modes.alternateScreen || next.modes.alternateScreen) return prefix;
   let anchored: LogicalRange | undefined;
-  let oldLines = 0;
-  for (const range of logicalRanges(previous)) {
-    oldLines++;
+  const beforeRanges = [...logicalRanges(previous)];
+  for (const range of beforeRanges) {
     if (oldRow >= range.start && oldRow < range.end) anchored = range;
   }
   if (!anchored) return null;
   let candidate: TerminalViewportOrigin | null = null;
-  let newLines = 0;
-  for (const range of logicalRanges(next)) {
-    newLines++;
+  let candidateRange: LogicalRange | undefined;
+  const afterRanges = [...logicalRanges(next)];
+  for (const range of afterRanges) {
     const match = matchLogicalPosition(previous, next, origin, anchored, range, frozen);
     if (match) {
       // A repeated paragraph has no unique correspondence. Never pick its
       // first occurrence merely because its text looks plausible.
       if (candidate) return null;
       candidate = match;
+      candidateRange = range;
     }
   }
-  return newLines < oldLines ? candidate : null;
+  if (afterRanges.length < beforeRanges.length) return candidate;
+  // A native width change can alter a preceding wide-glyph padding slot without
+  // deleting logical lines. Recover only a unique unchanged paragraph in the
+  // same ordinal position, corroborated by its complete following paragraph.
+  // A lone matching tail after changed output is not evidence of continuity.
+  if (!candidate || previous.cols === next.cols) return null;
+  const index = beforeRanges.indexOf(anchored);
+  if (afterRanges[index] !== candidateRange) return null;
+  for (const range of beforeRanges) {
+    if (
+      range !== anchored &&
+      matchLogicalPosition(previous, previous, origin, anchored, range, frozen)
+    )
+      return null;
+  }
+  const beforeFollowing = beforeRanges[index + 1];
+  const afterFollowing = afterRanges[index + 1];
+  if (!beforeFollowing || !afterFollowing) return null;
+  return matchLogicalPosition(
+    previous,
+    next,
+    { x: 0, y: beforeFollowing.start - previous.history.length },
+    beforeFollowing,
+    afterFollowing,
+    frozen,
+  )
+    ? candidate
+    : null;
 }
 
 /** Bound expanded presentation storage independently of compact wire size. */
