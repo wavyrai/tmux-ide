@@ -3060,6 +3060,81 @@ describe("native capture semantic ownership", () => {
 });
 
 describe("native bootstrap capability fallback", () => {
+  it("keeps a confirmed native server on atomic recovery after a later failed capture", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    try {
+      const first = collect();
+      const subscription = rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      rig.sim.reply(nativeBootstrapLines());
+      rig.sim.reply(["0 0 100 50"]);
+      first.events.length = 0;
+      subscription.reseed();
+      rig.sim.reply([], false);
+      rig.sim.reply(["0 0 100 50"]);
+      const plainAttempts = () =>
+        rig.sim.written.filter(
+          (command) =>
+            command.startsWith("set-option -p -t") && command.includes("capture-pane -p -R"),
+        ).length;
+      expect(plainAttempts()).toBe(2);
+      for (let phase = 0; phase < 3; phase++) {
+        if (phase) runRecoveryTimer(rig);
+        completeAtomicRecoveryPhase(rig, nativeBootstrapLines(), "0 0 100 50");
+      }
+      expect(plainAttempts()).toBe(2);
+      expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
+        "native.version",
+        2,
+      );
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("retries unknown native capability once within the original deadline", async () => {
+    const rig = await startedRig();
+    try {
+      const first = collect();
+      const subscription = rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      advanceRecoveryClock(rig, 4000);
+      rig.sim.reply([], false);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(
+        rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
+      ).toHaveLength(2);
+      const deadlines = rig.pendingRecoveries.filter((task) => !task.cancelled);
+      expect(deadlines.some((task) => task.dueAtMs === 5000)).toBe(true);
+      expect(deadlines.some((task) => task.dueAtMs > 5000)).toBe(false);
+      subscription.close();
+      advanceRecoveryClock(rig, 10000);
+      rig.sim.reply(nativeBootstrapLines());
+      rig.sim.reply(["0 0 100 50"]);
+      expect(first.events.filter((event) => event.type === "seed")).toHaveLength(0);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("recovers unknown stock capability after one transient initial probe failure", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    try {
+      const first = collect();
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      rig.sim.reply([], false);
+      rig.sim.reply(["0 0 100 50"]);
+      rig.sim.reply(["parse error: command capture-pane: unknown flag -R"], false);
+      rig.sim.reply(["0 0 100 50"]);
+      rig.sim.reply(["portable recovered"]);
+      rig.sim.reply(["0 0 100 50"]);
+      expect(bytesOf(first.events)).toEqual(["portable recovered"]);
+      expect(
+        rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
+      ).toHaveLength(2);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
   it("bounds persistent malformed captures without publishing portable content", async () => {
     const rig = await startedRig();
     try {
@@ -3067,7 +3142,8 @@ describe("native bootstrap capability fallback", () => {
       rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
       rig.sim.reply(["malformed native capture"]);
       rig.sim.reply(["0 0 100 50"]);
-      acknowledgeContinue(rig, "%1");
+      rig.sim.reply(["second malformed capability probe"]);
+      rig.sim.reply(["0 0 100 50"]);
       for (let attempt = 0; attempt < 3; attempt++) {
         rig.sim.reply(["still malformed"]);
         rig.sim.reply(["0 0 100 50"]);
@@ -3135,12 +3211,8 @@ describe("native bootstrap capability fallback", () => {
           kind !== "failed",
         );
         rig.sim.reply(["0 0 100 50"]); // retired native cursor probe
-        acknowledgeContinue(rig, "%1");
-        for (let phase = 0; phase < 3; phase++) {
-          if (phase) runRecoveryTimer(rig);
-          rig.sim.reply(native);
-          rig.sim.reply(["0 0 100 50"]);
-        }
+        rig.sim.reply(native); // one fresh ordinary capability probe
+        rig.sim.reply(["0 0 100 50"]);
         expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
           "native.version",
           2,

@@ -401,6 +401,8 @@ export function defaultMirrorWindowId(): string {
 
 export class SessionChannel {
   private nativeBootstrapUnavailable = false;
+  private nativeBootstrapConfirmed = false;
+  private readonly nativeProbeRetried = new WeakSet<SubRecord>();
   private readonly opts: SessionChannelOptions;
   private readonly io: MirrorChannelIo;
   private readonly ledger = new FlowLedger();
@@ -1004,6 +1006,7 @@ export class SessionChannel {
     sub: SubRecord,
     onSettled?: (result: ReseedResult) => void,
     deferPublish = false,
+    deadlineAt = this.recoveryNowMs() + RECOVERY_ABSOLUTE_DEADLINE_MS,
   ): void {
     if (sub.closed || sub.frozen || this.disposed) {
       onSettled?.(FAILED_RESEED_RESULT);
@@ -1041,12 +1044,15 @@ export class SessionChannel {
       sub.feed.abort(epoch);
       if (!captureSucceeded) retireMarker();
     };
-    cancelDeadline = this.scheduleRecovery(() => {
-      if (settled) return;
-      sub.feed.abort(epoch);
-      if (!captureSucceeded) retireMarker();
-      settle(FAILED_RESEED_RESULT);
-    }, RECOVERY_ABSOLUTE_DEADLINE_MS);
+    cancelDeadline = this.scheduleRecovery(
+      () => {
+        if (settled) return;
+        sub.feed.abort(epoch);
+        if (!captureSucceeded) retireMarker();
+        settle(FAILED_RESEED_RESULT);
+      },
+      Math.max(0, deadlineAt - this.recoveryNowMs()),
+    );
     // Keep retired reply slots in the control FIFO; their callbacks become
     // no-ops so late responses cannot publish or consume a newer capture.
     // Both probes ride one write burst; the FIFO reply order is the seam.
@@ -1063,6 +1069,23 @@ export class SessionChannel {
           (!native || !isNativeBootstrapCapture(native)) &&
           !nativeBootstrapUnsupported(reply.ok, reply.lines, native)
         ) {
+          if (
+            !this.nativeBootstrapConfirmed &&
+            !this.nativeProbeRetried.has(sub) &&
+            this.recoveryNowMs() < deadlineAt
+          ) {
+            // An unknown server can swallow an unsupported command inside a
+            // dynamic hook. Retry the ordinary probe once, with a fresh FIFO
+            // seam and the original deadline, before invoking native recovery.
+            this.nativeProbeRetried.add(sub);
+            settled = true;
+            sub.feed.abort(epoch);
+            cancelDeadline?.();
+            sub.cancelCapture = null;
+            retireMarker();
+            this.reseed(sub, onSettled, deferPublish, deadlineAt);
+            return;
+          }
           sub.feed.abort(epoch);
           retireMarker();
           settle(FAILED_RESEED_RESULT);
@@ -1078,7 +1101,7 @@ export class SessionChannel {
           sub.cancelCapture = null;
           sub.nativeBootstrap = false;
           this.nativeBootstrapUnavailable = true;
-          this.reseed(sub, onSettled, deferPublish);
+          this.reseed(sub, onSettled, deferPublish, deadlineAt);
           return;
         }
         if (!reply.ok) {
@@ -1097,6 +1120,7 @@ export class SessionChannel {
           return;
         }
         captureLines = [...reply.lines];
+        if (native) this.nativeBootstrapConfirmed = true;
         if (native) sub.feed.captureNativeReply(epoch, native);
         else sub.feed.captureReply(epoch, reply.lines);
       },
@@ -1599,6 +1623,7 @@ export class SessionChannel {
           fail();
           return;
         }
+        if (native) this.nativeBootstrapConfirmed = true;
         for (const { sub, epoch } of participants) {
           if (native) sub.feed.captureNativeReply(epoch, native);
           else sub.feed.captureReply(epoch, captureLines);
@@ -1849,6 +1874,7 @@ export class SessionChannel {
               fail(result.statusObserved);
               return;
             }
+            if (native) this.nativeBootstrapConfirmed = true;
             for (const { sub, epoch } of participants) {
               if (native) sub.feed.captureNativeReply(epoch, native);
               else sub.feed.captureReply(epoch, captureLines);
