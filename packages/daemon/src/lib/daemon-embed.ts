@@ -62,6 +62,7 @@ import {
 } from "./workspace-registry.ts";
 import {
   createPinnedWorkspaceTmuxRunner,
+  createPinnedWorkspaceTmuxAsyncRunner,
   resolveWorkspacePaneTmuxAuthority,
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
@@ -1016,6 +1017,7 @@ async function startEmbeddedDaemonGeneration(
     // caller's ambient TMUX/PATH happens to select.
     const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
     const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
+    const fleetFactsTmuxRunner = createPinnedWorkspaceTmuxAsyncRunner(tmuxAuthority);
     const tmuxAuthorityReplaced = createTmuxAuthorityReplacementProbe(
       tmuxAuthority,
       catalogTmuxRunner,
@@ -1382,7 +1384,7 @@ async function startEmbeddedDaemonGeneration(
           paneSourceCredentials.resolve(credential, resolvedSession, claimedSource),
       });
       await externalInteractionObserver.start();
-      setFleetFactsTmuxRunner(catalogTmuxRunner);
+      setFleetFactsTmuxRunner(fleetFactsTmuxRunner);
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,

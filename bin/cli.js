@@ -25750,14 +25750,14 @@ function setFleetFactsTmuxRunner(runTmux2) {
   stopFleetFactsObserver();
   sessionCompositionReaderOverride = runTmux2 ? async () => {
     try {
-      return parseSessionCompositionFacts(runTmux2(SESSION_COMPOSITION_TMUX_ARGS));
+      return parseSessionCompositionFacts(await runTmux2(SESSION_COMPOSITION_TMUX_ARGS));
     } catch (error) {
       return isTmuxServerUnavailableError(error) ? parseSessionCompositionFacts("") : null;
     }
   } : null;
   agentStateReaderOverride = runTmux2 ? async () => {
     try {
-      return parseAgentStateFacts(runTmux2(AGENT_STATE_TMUX_ARGS));
+      return parseAgentStateFacts(await runTmux2(AGENT_STATE_TMUX_ARGS));
     } catch {
       return null;
     }
@@ -78598,6 +78598,7 @@ async function startEmbeddedDaemonGeneration(opts) {
     }
     const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
     const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
+    const fleetFactsTmuxRunner = createPinnedWorkspaceTmuxAsyncRunner(tmuxAuthority);
     const tmuxAuthorityReplaced = createTmuxAuthorityReplacementProbe(
       tmuxAuthority,
       catalogTmuxRunner
@@ -78913,7 +78914,7 @@ async function startEmbeddedDaemonGeneration(opts) {
         resolvePaneSourceCredential: (credential, resolvedSession, claimedSource) => paneSourceCredentials.resolve(credential, resolvedSession, claimedSource)
       });
       await externalInteractionObserver.start();
-      setFleetFactsTmuxRunner(catalogTmuxRunner);
+      setFleetFactsTmuxRunner(fleetFactsTmuxRunner);
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,
