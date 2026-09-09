@@ -256,6 +256,8 @@ export class SessionRuntimeTerminalReplicaOwner {
     };
     if (!isCurrent()) return { status: "changed" };
     const native = captured.snapshot;
+    // v1 omits allocated BCE tails, so equality cannot establish paint fidelity.
+    if (native.version === 1) return { status: "unsupported" };
     const canonical = initial.snapshot;
     if (
       native.cols !== canonical.cols ||

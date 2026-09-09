@@ -3,7 +3,7 @@
   "repository": "https://github.com/tmux/tmux.git",
   "commit": "e476c1230b958df0cb12977517d24b3dc931375b",
   "version": "3.7c",
-  "extension": "tmux-ide-native-grid-v1",
+  "extension": "tmux-ide-native-grid-v2",
   "patch": "native-grid.patch",
-  "patchSha256": "dcde10a3d82e53b087741aa46fdb9e92dd753769ae150bc6f14bfb22afe93814"
+  "patchSha256": "446d6931ff47c1b5d56c2cd748c909ded4bc04ccb248bee2e33f526fbf881f9b"
 }

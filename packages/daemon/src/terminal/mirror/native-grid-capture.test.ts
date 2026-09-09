@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeNativeGridCapture } from "./native-grid-capture.ts";
+import { decodeNativeGridCapture, encodeNativeGridCapture } from "./native-grid-capture.ts";
 
 function records() {
   return [
@@ -46,7 +46,7 @@ describe("decodeNativeGridCapture", () => {
   });
 
   it.each([
-    { version: 2 },
+    { version: 3 },
     { cols: 0 },
     { rows: 0 },
     { history: -1 },
@@ -96,5 +96,34 @@ describe("decodeNativeGridCapture", () => {
     expect(decodeNativeGridCapture(encode([...records(), {}]))).toBeNull();
     expect(decodeNativeGridCapture(encode(records()) + "\n")).toBeNull();
     expect(decodeNativeGridCapture(" ".repeat(16 * 1024 * 1024 + 1))).toBeNull();
+  });
+});
+
+describe("native v2 allocated cells", () => {
+  const fixture = (used = 1) =>
+    encode([
+      { version: 2, cols: 4, rows: 1, history: 0, hscrolled: 0, limit: 2000, cursor: [1, 0] },
+      {
+        row: 0,
+        flags: 0,
+        used,
+        cells: [
+          [0, 1, "61", 0, 8, 16777233, 8, 0, 2],
+          ...Array.from({ length: 3 }, () => [64, 1, "20", 0, 8, 16777233, 8, 0, 66]),
+        ],
+      },
+    ]);
+  it("round trips allocated colored erased tails independently of written cells", () => {
+    const source = decodeNativeGridCapture(fixture())!;
+    expect(source.version).toBe(2);
+    expect(source.grid[0]!.used).toBe(1);
+    expect(source.grid[0]!.cells).toHaveLength(4);
+    expect(source.grid[0]!.cells[3]!.background).toBe(16777233);
+    expect(decodeNativeGridCapture(encodeNativeGridCapture(source)!)).toEqual(source);
+    expect(decodeNativeGridCapture(fixture(0))!.grid[0]!.used).toBe(0);
+  });
+  it("rejects corrupt logical boundaries and preserves the v1 capability marker", () => {
+    for (const used of [-1, 1.5, 5]) expect(decodeNativeGridCapture(fixture(used))).toBeNull();
+    expect(decodeNativeGridCapture(encode(records()))!.version).toBe(1);
   });
 });

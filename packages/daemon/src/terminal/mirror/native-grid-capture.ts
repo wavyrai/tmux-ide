@@ -13,11 +13,15 @@ export interface NativeGridCaptureCell {
 }
 
 export interface NativeGridCaptureRow {
+  /** Logical reflow boundary; allocation may contain erased cells beyond it. */
+  readonly used?: number;
   readonly flags: number;
   readonly cells: readonly NativeGridCaptureCell[];
 }
 
 export interface NativeGridCapture {
+  /** v1 omits allocated erased tails and is not complete painted backing. */
+  readonly version?: 1 | 2;
   readonly cols: number;
   readonly rows: number;
   readonly history: number;
@@ -35,7 +39,7 @@ const MAX_CELLS = 1_000_000;
 export function encodeNativeGridCapture(source: NativeGridCapture): string | null {
   const records = [
     JSON.stringify({
-      version: 1,
+      version: source.version ?? 1,
       cols: source.cols,
       rows: source.rows,
       history: source.history,
@@ -51,7 +55,7 @@ export function encodeNativeGridCapture(source: NativeGridCapture): string | nul
       JSON.stringify({
         row: index,
         flags: row.flags,
-        used: row.cells.length,
+        used: row.used ?? row.cells.length,
         cells: row.cells.map((cell) => [
           cell.flags,
           cell.width,
@@ -101,7 +105,7 @@ export function decodeNativeGridCapture(text: string): NativeGridCapture | null 
     const header = next();
     if (
       !object(header) ||
-      header.version !== 1 ||
+      (header.version !== 1 && header.version !== 2) ||
       !uint(header.cols, MAX_CELLS) ||
       header.cols === 0 ||
       !uint(header.rows, MAX_ROWS) ||
@@ -126,10 +130,11 @@ export function decodeNativeGridCapture(text: string): NativeGridCapture | null 
         !uint(row.flags) ||
         !uint(row.used, MAX_CELLS - count) ||
         !Array.isArray(row.cells) ||
-        row.cells.length !== row.used
+        row.cells.length > MAX_CELLS - count ||
+        (header.version === 1 ? row.cells.length !== row.used : row.cells.length < row.used)
       )
         return null;
-      count += row.used;
+      count += row.cells.length;
       const cells: NativeGridCaptureCell[] = [];
       for (const raw of row.cells) {
         if (
@@ -164,10 +169,17 @@ export function decodeNativeGridCapture(text: string): NativeGridCapture | null 
           }),
         );
       }
-      grid.push(Object.freeze({ flags: row.flags, cells: Object.freeze(cells) }));
+      grid.push(
+        Object.freeze({
+          flags: row.flags,
+          ...(header.version === 2 ? { used: row.used } : {}),
+          cells: Object.freeze(cells),
+        }),
+      );
     }
     if (offset < text.length) return null;
     return Object.freeze({
+      version: header.version,
       cols: header.cols,
       rows: header.rows,
       history: header.history,

@@ -33,7 +33,7 @@
 +		u_int x, k;
 +		char record[512], hex[sizeof cell.data.data * 2 + 1];
 +		n = snprintf(record, sizeof record,
-+		    "{\"version\":1,\"cols\":%u,\"rows\":%u,"
++		    "{\"version\":2,\"cols\":%u,\"rows\":%u,"
 +		    "\"history\":%u,\"hscrolled\":%u,\"limit\":%u,"
 +		    "\"cursor\":[%u,%u]}\n",
 +		    gd->sx, gd->sy, gd->hsize, gd->hscrolled, gd->hlimit,
@@ -45,7 +45,7 @@
 +			    "{\"row\":%u,\"flags\":%d,\"used\":%u,\"cells\":[",
 +			    i, gl->flags, gl->cellused);
 +			buf = cmd_capture_pane_append(buf, len, record, n);
-+			for (x = 0; x < gl->cellused; x++) {
++			for (x = 0; x < gl->cellsize; x++) {
 +				grid_get_cell(gd, x, i, &cell);
 +				for (k = 0; k < cell.data.size; k++)
 +					snprintf(hex + k * 2, 3, "%02x", cell.data.data[k]);

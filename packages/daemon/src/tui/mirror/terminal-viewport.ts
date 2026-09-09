@@ -20,6 +20,9 @@ export function retainNativeTerminalBacking(
   backing: NativeGridCapture,
 ): boolean {
   if (
+    // Version one omitted allocated erased cells beyond the used-text edge.
+    // Matching its projection cannot establish faithful native reflow backing.
+    backing.version === 1 ||
     snapshot.cols !== backing.cols ||
     snapshot.rows !== backing.rows ||
     snapshot.history.length !== backing.history
