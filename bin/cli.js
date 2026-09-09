@@ -10248,7 +10248,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.13",
+      version: "2.9.0-beta.14",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
@@ -36971,8 +36971,12 @@ var init_session_channel = __esm({
         if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtime))
           throw new TypeError("internal read cleanup requires a runtime pane id");
         retireInternalReadOperation(marker, runtime);
-        this.io.send(
-          `if-shell -t ${runtime} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" "set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" ""`
+        this.io.commandListInline(
+          `if-shell -t ${runtime} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" "set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" "display-message -p -t ${runtime} ''"`,
+          2,
+          1,
+          () => {
+          }
         );
       }
       layoutSizeFor(runtime) {
