@@ -1,4 +1,7 @@
-import type { NativeBackingIdentity } from "./native-seed-backing.ts";
+import type {
+  NativeBackingIdentity,
+  TerminalNativeBackingResponse,
+} from "./native-seed-backing.ts";
 import {
   SessionRuntimeClientIdSchemaZ,
   SessionRuntimeAuthorityLeaseSchemaZ,
@@ -57,7 +60,6 @@ import {
   SessionRuntimeTerminalReplicaOwner,
   type TerminalReplicaQualificationSnapshot,
   type TerminalReplicaSubscription,
-  type TerminalReplicaNativeBackingResult,
 } from "./terminal-replica-owner.ts";
 import {
   SessionRuntimeTerminalDeliveryHub,
@@ -696,7 +698,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     session: string,
     semanticPaneId: string,
     expected?: NativeBackingIdentity,
-  ): Promise<TerminalReplicaNativeBackingResult> {
+  ): Promise<TerminalNativeBackingResponse> {
     const runtime = this.#sessions.get(session);
     if (this.#disposed || !runtime) return { status: "unavailable" };
     const result = await runtime.captureNativeBacking(semanticPaneId, expected);
@@ -1586,7 +1588,7 @@ class SessionRuntime {
   async captureNativeBacking(
     semanticPaneId: string,
     expected?: NativeBackingIdentity,
-  ): Promise<TerminalReplicaNativeBackingResult> {
+  ): Promise<TerminalNativeBackingResponse> {
     const owner = this.#terminalReplicas.get(semanticPaneId);
     if (!owner) return { status: "unavailable" };
     const retained = expected

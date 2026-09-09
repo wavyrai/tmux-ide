@@ -1,3 +1,5 @@
+import { projectNativeGridRow } from "../mirror/native-grid-projection.ts";
+import { decodeNativeGridCapture } from "../mirror/native-grid-capture.ts";
 import * as nativeSeeds from "./native-seed-backing.ts";
 import { rememberNativeSeedBacking, takeNativeSeedBacking } from "./native-seed-backing.ts";
 import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
@@ -2313,16 +2315,38 @@ describe("cooperative compact representation ownership", () => {
 });
 
 describe("native seed backing retention", () => {
+  it("roundtrips allocated erased tails independently of the used boundary", () => {
+    const native = blankNative();
+    const colored = {
+      ...native,
+      grid: [
+        {
+          ...native.grid[0]!,
+          used: 0,
+          cells: native.grid[0]!.cells.map((cell) => ({ ...cell, background: 16777233 })),
+        },
+      ],
+    };
+    const canonical = {
+      ...blankTerminalReplicaSnapshot(2, 1),
+      grid: [projectNativeGridRow(colored.grid[0], 2)!],
+    };
+    expect(rememberNativeSeedBacking(canonical, colored)).toBe(true);
+    const backing = takeNativeSeedBacking(canonical)!;
+    expect(backing.chargedBytes).toBe(backing.encoded.byteLength + 256);
+    expect(decodeNativeGridCapture(new TextDecoder().decode(backing.encoded))).toEqual(colored);
+  });
+
   it("enforces the aggregate charge budget and releases committed backing on close", async () => {
     // Synthetic accounting isolates hub ownership from allocation cost. The
-    // producer's physical cell accounting is independently checked below.
+    // producer's serialized payload bound is independently checked below.
     const take = vi.spyOn(nativeSeeds, "takeNativeSeedBacking");
     const owner = new FakeOwner();
     const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
     try {
       await hub.open("reader", "pane-a", cooperativeOffer, () => {});
       take.mockReturnValue({
-        snapshot: blankNative(),
+        encoded: new Uint8Array([1]),
         chargedBytes: nativeSeeds.MAX_RETAINED_NATIVE_BACKING_BYTES,
       });
       owner.emit(seed());
@@ -2339,7 +2363,7 @@ describe("native seed backing retention", () => {
     expect(hub.metrics().nativeBackingBytes).toBe(0);
   });
 
-  it("rejects excessive native object accounting before row projection", () => {
+  it("rejects an oversized native payload", () => {
     const native = blankNative();
     const huge = {
       flags: 0,
@@ -2353,14 +2377,14 @@ describe("native seed backing retention", () => {
       link: 0,
       storageFlags: 0,
     };
-    // Shared fixture objects avoid allocating tens of MiB merely to exercise
-    // the conservative per-cell ownership estimate.
-    expect(
-      rememberNativeSeedBacking(blankTerminalReplicaSnapshot(2, 1), {
-        ...native,
-        grid: [{ flags: 0, used: 0, cells: Array(530000).fill(huge) }],
-      }),
-    ).toBe(false);
+    // Shared fixture cells exercise the serializer limit without first
+    // allocating a million independent native objects.
+    const large = { ...native, grid: [{ flags: 0, used: 0, cells: Array(1000000).fill(huge) }] };
+    const canonical = {
+      ...blankTerminalReplicaSnapshot(2, 1),
+      grid: [projectNativeGridRow(large.grid[0], 2)!],
+    };
+    expect(rememberNativeSeedBacking(canonical, large)).toBe(false);
   });
 
   it("retains an exact old revision until its reader advances, then releases its charge", async () => {
@@ -2386,9 +2410,14 @@ describe("native seed backing retention", () => {
       owner.emit(patch(1, 1));
       await settle();
       const retained = hub.retainedNativeBacking("pane-a", initial);
-      expect(retained?.status).toBe("captured");
-      if (retained?.status !== "captured") throw new Error("capture expected");
-      expect(retained.snapshot).toBe(native);
+      expect(retained?.status).toBe("retained");
+      if (retained?.status !== "retained") throw new Error("capture expected");
+      const response = retained.encodeBody(new Uint8Array());
+      expect(decodeNativeGridCapture(new TextDecoder().decode(response))).toMatchObject(native);
+      response.fill(0);
+      expect(
+        decodeNativeGridCapture(new TextDecoder().decode(retained.encodeBody(new Uint8Array()))),
+      ).toMatchObject(native);
       expect(retained.isCurrent()).toBe(true);
       expect(hub.retainedNativeBacking("pane-a", { ...initial, stateHash: "wrong" })).toBeNull();
       client.ack(ack(first));

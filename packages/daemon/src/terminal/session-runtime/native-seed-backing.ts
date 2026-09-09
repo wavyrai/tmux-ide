@@ -1,12 +1,13 @@
 import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 import { terminalReplicaRowsEqual } from "@tmux-ide/core";
-import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
+import { encodeNativeGridCapture, type NativeGridCapture } from "../mirror/native-grid-capture.ts";
+import type { TerminalReplicaNativeBackingResult } from "./terminal-replica-owner.ts";
 import { projectNativeGridRow } from "../mirror/native-grid-projection.ts";
 
-/** Conservative retained object accounting, not an RSS measurement. */
+/** Encoded payload bytes plus fixed metadata, not an RSS measurement. */
 export const MAX_RETAINED_NATIVE_BACKING_BYTES = 64 * 1024 * 1024;
 export interface VerifiedNativeSeedBacking {
-  readonly snapshot: NativeGridCapture;
+  readonly encoded: Uint8Array;
   readonly chargedBytes: number;
 }
 export interface NativeBackingIdentity {
@@ -32,13 +33,6 @@ export function rememberNativeSeedBacking(
     native.cursor[1] !== canonical.cursor.y
   )
     return false;
-  let chargedBytes = 256;
-  for (const row of native.grid) {
-    chargedBytes += 96;
-    for (const cell of row.cells)
-      chargedBytes += 128 + 2 * (cell.text.length + cell.bytesHex.length);
-    if (chargedBytes > MAX_RETAINED_NATIVE_BACKING_BYTES) return false;
-  }
   if (native.grid.length !== canonical.history.length + canonical.grid.length) return false;
   for (let index = 0; index < native.grid.length; index++) {
     const row =
@@ -53,7 +47,12 @@ export function rememberNativeSeedBacking(
     );
     if (!projected || !terminalReplicaRowsEqual(row, projected)) return false;
   }
-  handoff.set(canonical, Object.freeze({ snapshot: native, chargedBytes }));
+  const serialized = encodeNativeGridCapture(native);
+  if (serialized === null) return false;
+  const encoded = new TextEncoder().encode(serialized);
+  const chargedBytes = encoded.byteLength + 256;
+  if (chargedBytes > MAX_RETAINED_NATIVE_BACKING_BYTES) return false;
+  handoff.set(canonical, Object.freeze({ encoded, chargedBytes }));
   return true;
 }
 
@@ -64,3 +63,18 @@ export function takeNativeSeedBacking(
   handoff.delete(canonical);
   return backing;
 }
+
+/** Encoded backing never exposes its retained buffer to a response consumer. */
+export interface RetainedNativeBackingResult {
+  readonly status: "retained";
+  readonly authority: Extract<
+    TerminalReplicaNativeBackingResult,
+    { status: "captured" }
+  >["authority"];
+  readonly isCurrent: () => boolean;
+  /** Returns fresh response-owned bytes; mutating or transferring them is safe. */
+  readonly encodeBody: (prefix: Uint8Array) => Uint8Array<ArrayBuffer>;
+}
+export type TerminalNativeBackingResponse =
+  | TerminalReplicaNativeBackingResult
+  | RetainedNativeBackingResult;

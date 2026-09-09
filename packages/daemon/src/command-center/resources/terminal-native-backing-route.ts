@@ -1,9 +1,11 @@
-import type { NativeBackingIdentity } from "../../terminal/session-runtime/native-seed-backing.ts";
+import type {
+  NativeBackingIdentity,
+  TerminalNativeBackingResponse,
+} from "../../terminal/session-runtime/native-seed-backing.ts";
 import type { Hono } from "hono";
 import { z } from "zod";
 import { ownerAuthorityGate } from "../owner-authority.ts";
 import { encodeNativeGridCapture } from "../../terminal/mirror/native-grid-capture.ts";
-import type { TerminalReplicaNativeBackingResult } from "../../terminal/session-runtime/terminal-replica-owner.ts";
 
 const requestSchema = z
   .object({
@@ -25,7 +27,7 @@ export function mountTerminalNativeBackingRoute(
       session: string,
       pane: string,
       expected: NativeBackingIdentity,
-    ): Promise<TerminalReplicaNativeBackingResult>;
+    ): Promise<TerminalNativeBackingResponse>;
   },
 ): void {
   const authorize = ownerAuthorityGate(options.ownerToken, {
@@ -33,7 +35,7 @@ export function mountTerminalNativeBackingRoute(
     unavailableMessage: "Terminal backing is unavailable",
     mismatchMessage: "Terminal backing requires owner authority",
   });
-  const pending = new Map<string, Promise<TerminalReplicaNativeBackingResult>>();
+  const pending = new Map<string, Promise<TerminalNativeBackingResponse>>();
   let readers = 0;
   app.get("/api/project/:name/terminal-native-backing/:pane", async (c) => {
     const gate = authorize(c);
@@ -70,7 +72,8 @@ export function mountTerminalNativeBackingRoute(
     readers++;
     try {
       const result = await capture;
-      if (result.status !== "captured") return c.json({ status: result.status }, 409);
+      if (result.status !== "captured" && result.status !== "retained")
+        return c.json({ status: result.status }, 409);
       if (
         options.resolveSession(workspace) !== session ||
         !result.isCurrent() ||
@@ -81,15 +84,17 @@ export function mountTerminalNativeBackingRoute(
         result.authority.semanticPaneId !== pane
       )
         return c.json({ status: "changed" }, 409);
-      const body = encodeNativeGridCapture(result.snapshot);
+      const prefix = JSON.stringify({ ...result.authority, workspaceName: workspace }) + "\n";
+      const body =
+        result.status === "retained"
+          ? result.encodeBody(new TextEncoder().encode(prefix))
+          : encodeNativeGridCapture(result.snapshot);
       if (!body) return c.json({ status: "unavailable" }, 413);
       // No await between this final admission check and handing off immutable bytes.
       if (!result.isCurrent()) return c.json({ status: "changed" }, 409);
       c.header("Cache-Control", "no-store");
       c.header("Content-Type", "application/x-ndjson");
-      return c.body(
-        JSON.stringify({ ...result.authority, workspaceName: workspace }) + "\n" + body,
-      );
+      return typeof body === "string" ? c.body(prefix + body) : c.body(body);
     } catch {
       return c.json({ status: "unavailable" }, 503);
     } finally {

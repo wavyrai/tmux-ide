@@ -3,6 +3,7 @@ import {
   takeNativeSeedBacking,
   type VerifiedNativeSeedBacking,
   type NativeBackingIdentity,
+  type RetainedNativeBackingResult,
 } from "./native-seed-backing.ts";
 import {
   TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES,
@@ -40,7 +41,6 @@ import {
   type TerminalReplicaState,
 } from "@tmux-ide/core";
 import type {
-  TerminalReplicaNativeBackingResult,
   TerminalReplicaCommittedRaw,
   TerminalReplicaSourceSubscription,
 } from "./terminal-replica-owner.ts";
@@ -80,7 +80,7 @@ export interface TerminalDeliveryMetrics {
   readonly rawJournalBytes: number;
   /** Canonical snapshots reachable by current delivery baselines and transactions. */
   readonly canonicalRevisions: number;
-  /** Conservative object accounting for retained native backing, not RSS. */
+  /** Encoded payload bytes plus metadata for retained native backing, not RSS. */
   readonly nativeBackingBytes: number;
   readonly maxSlowClientMs: number;
   readonly queueDepth: number;
@@ -441,7 +441,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   retainedNativeBacking(
     paneId: string,
     expected: NativeBackingIdentity,
-  ): TerminalReplicaNativeBackingResult | null {
+  ): RetainedNativeBackingResult | null {
     const pane = this.#panes.get(paneId);
     const record = pane?.revisions.get(expected.revision);
     const lease = record?.nativeBacking;
@@ -457,8 +457,15 @@ export class SessionRuntimeTerminalDeliveryHub {
     )
       return null;
     return {
-      status: "captured",
-      snapshot: backing.snapshot,
+      status: "retained",
+      encodeBody: (prefix) => {
+        const encoded = lease.backing?.encoded;
+        if (!encoded) throw new Error("Native backing revision was retired");
+        const body = new Uint8Array(prefix.byteLength + encoded.byteLength);
+        body.set(prefix);
+        body.set(encoded, prefix.byteLength);
+        return body;
+      },
       authority: {
         generation: this.generation,
         workspaceName: this.workspaceName,
@@ -471,7 +478,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         !this.#closed &&
         this.#panes.get(paneId) === pane &&
         pane.revisions.get(expected.revision) === record &&
-        lease.backing === backing,
+        lease.backing !== null,
     };
   }
 

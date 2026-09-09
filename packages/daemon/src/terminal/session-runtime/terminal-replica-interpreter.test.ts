@@ -1424,7 +1424,8 @@ it.each([false, true])(
       if (seed.type !== "terminal.seed") throw new Error("seed expected");
       const backing = takeNativeSeedBacking(seed.snapshot);
       if (held) expect(backing).toBeUndefined();
-      else expect(backing?.snapshot).toBe(native);
+      else
+        expect(decodeNativeGridCapture(new TextDecoder().decode(backing?.encoded))).toEqual(native);
     } finally {
       await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
     }

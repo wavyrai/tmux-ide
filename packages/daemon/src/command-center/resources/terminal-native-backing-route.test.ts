@@ -1,7 +1,11 @@
+import type { TerminalNativeBackingResponse } from "../../terminal/session-runtime/native-seed-backing.ts";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { mountTerminalNativeBackingRoute } from "./terminal-native-backing-route.ts";
-import { decodeNativeGridCapture } from "../../terminal/mirror/native-grid-capture.ts";
+import {
+  decodeNativeGridCapture,
+  encodeNativeGridCapture,
+} from "../../terminal/mirror/native-grid-capture.ts";
 import type { TerminalReplicaNativeBackingResult } from "../../terminal/session-runtime/terminal-replica-owner.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
@@ -17,7 +21,7 @@ const snapshot = decodeNativeGridCapture(
   '{"version":1,"cols":1,"rows":1,"history":0,"hscrolled":0,"limit":100,"cursor":[0,0]}\n{"row":0,"flags":0,"used":1,"cells":[[0,1,"41",0,8,8,8,0,0]]}\n',
 )!;
 function fixture(
-  capture = vi.fn<() => Promise<TerminalReplicaNativeBackingResult>>(async () => ({
+  capture = vi.fn<() => Promise<TerminalNativeBackingResponse>>(async () => ({
     status: "captured",
     authority,
     snapshot,
@@ -129,4 +133,32 @@ it("does not coalesce requests for different retained revisions", async () => {
     "pane",
     { generation, incarnation: authority.incarnation, revision: 4, stateHash: "hash" },
   ]);
+});
+
+it("serves retained bytes directly without exposing the retained payload", async () => {
+  const encoded = new TextEncoder().encode(encodeNativeGridCapture(snapshot)!);
+  const capture = vi.fn(
+    async (): Promise<TerminalNativeBackingResponse> => ({
+      status: "retained",
+      authority,
+      isCurrent: () => true,
+      encodeBody: (prefix) => {
+        const body = new Uint8Array(prefix.length + encoded.length);
+        body.set(prefix);
+        body.set(encoded, prefix.length);
+        return body;
+      },
+    }),
+  );
+  const { request } = fixture(capture);
+  const first = await request();
+  expect(first.status).toBe(200);
+  const bytes = new Uint8Array(await first.arrayBuffer());
+  bytes.fill(0);
+  const body = await (await request()).text();
+  expect(JSON.parse(body.slice(0, body.indexOf("\n")))).toEqual({
+    ...authority,
+    workspaceName: "workspace",
+  });
+  expect(decodeNativeGridCapture(body.slice(body.indexOf("\n") + 1))).toEqual(snapshot);
 });
