@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 
 // Hermetic SSH proofs: no remote host, real SSH process, or live tmux mutation.
 const sshTests = [
+  "packages/daemon/src/lib/canonical-daemon-bootstrap.test.ts",
   "packages/daemon/src/tui/mirror/runtime/application-home-auto-open-fence.test.ts",
   "packages/daemon/src/tui/mirror/runtime/application-machine-authority.test.ts",
   "packages/daemon/src/tui/mirror/runtime/application-machine-catalog.test.ts",
@@ -27,6 +28,7 @@ const sshTests = [
 ];
 
 const sshSources = [
+  "packages/daemon/src/lib/canonical-daemon-bootstrap.ts",
   "packages/daemon/src/tui/mirror/runtime/application-machine-authority.ts",
   "packages/daemon/src/tui/mirror/runtime/application-machine-catalog.ts",
   "packages/daemon/src/tui/mirror/runtime/application-machine-navigation.ts",
@@ -60,6 +62,7 @@ const checks = [
       "exec",
       "eslint",
       "bin/cli.ts",
+      "packages/daemon/src/lib/__tests__/installed-daemon-upgrade-live.test.ts",
       ...sshSources,
       ...sshTests,
       "packages/daemon/src/tui/main.ts",
@@ -109,6 +112,7 @@ const checks = [
       ".github/workflows/release.yml",
       "package.json",
       "bin/cli.ts",
+      "packages/daemon/src/lib/__tests__/installed-daemon-upgrade-live.test.ts",
       ...sshSources,
       ...sshTests,
       "packages/daemon/src/tui/main.ts",
@@ -160,6 +164,7 @@ const checks = [
     command: "node",
     args: [
       "--test",
+      "scripts/postinstall-daemon-upgrade.test.mjs",
       "scripts/lib/native-scroll-runtime-policy.test.mjs",
       "scripts/lib/native-scroll-release-manifest.test.mjs",
       "scripts/lib/packed-opentui-frame.test.mjs",
@@ -222,6 +227,20 @@ const checks = [
       "src/tui/mirror/runtime/host-local-tmux-adapter.test.ts",
       "src/tui/mirror/runtime/hosted-tty-size-bridge.test.ts",
       "src/tui/mirror/runtime/production-data-path.test.ts",
+    ],
+  },
+  {
+    boundary: "OpenTUI installed daemon upgrade preserves tmux",
+    command: "pnpm",
+    args: [
+      "--filter",
+      "@tmux-ide/daemon",
+      "exec",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.live.config.ts",
+      "src/lib/__tests__/installed-daemon-upgrade-live.test.ts",
     ],
   },
   {

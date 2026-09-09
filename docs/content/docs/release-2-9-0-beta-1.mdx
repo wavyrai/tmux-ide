@@ -1,9 +1,9 @@
 ---
-title: OpenTUI 2.9 beta.10
-description: The current 2.9.0-beta.10 visual tmux release with agent-aware chrome
+title: OpenTUI 2.9 beta.11
+description: The current 2.9.0-beta.11 visual tmux release with agent-aware chrome
 ---
 
-The current package is `2.9.0-beta.10`. It ships an OpenTUI client around ordinary tmux
+The current package is `2.9.0-beta.11`. It ships an OpenTUI client around ordinary tmux
 sessions. tmux owns PTYs, processes, topology, and persistence. Each machine has
 its own daemon, which publishes workspace state and pane streams. The local TUI
 connects through SSH tunnels and owns presentation and input.
@@ -21,7 +21,12 @@ Pass a session name to bypass Home:
 tmux-ide app work
 ```
 
-## New in beta.10
+## New in beta.11
+
+- Global installation upgrades an older running daemon without stopping tmux
+  sessions. App and headless launch repeat the check when install scripts were
+  skipped. Use `tmux-ide update --daemon` to trigger it explicitly. Fresh installs
+  leave the daemon stopped, and older clients never downgrade newer daemons.
 
 - One TUI shows Local and multiple SSH machines in a grouped sidebar. Repeat
   `--ssh` to connect multiple hosts, or use Add machine during a run.

@@ -1,6 +1,6 @@
 {
   "name": "tmux-ide",
-  "version": "2.9.0-beta.10",
+  "version": "2.9.0-beta.11",
   "description": "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
   "type": "module",
   "bin": {
@@ -58,7 +58,7 @@
     "test:pack-installed": "node scripts/pack-check-run.mjs",
     "release:opentui:check": "node scripts/opentui-release-check.mjs",
     "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-    "check": "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:portable-release-contract && pnpm run test:benchmark-comparative && pnpm run test:unit && pnpm run test:tui-testdrive && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
+    "check": "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:postinstall && pnpm run test:portable-release-contract && pnpm run test:benchmark-comparative && pnpm run test:unit && pnpm run test:tui-testdrive && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
     "postinstall": "node scripts/postinstall.js",
     "docs": "turbo run dev --filter=@tmux-ide/docs",
     "demo:tui": "bun --preload @opentui/solid/preload docs/scripts/render-tui-demo.tsx",
@@ -87,7 +87,8 @@
     "test:dual-tui-live": "TMUX_IDE_DUAL_TUI_LIVE=1 node --test scripts/lib/product-dual-tui-live.test.mjs",
     "test:multi-tui-recovery-live": "TMUX_IDE_TUI_RECOVERY_LIVE=1 node --test scripts/lib/product-tui-recovery-live.test.mjs",
     "build:tmux": "node scripts/build-bundled-tmux.mjs",
-    "build:terminal-parser": "node scripts/build-xterm-native-parser.mjs"
+    "build:terminal-parser": "node scripts/build-xterm-native-parser.mjs",
+    "test:postinstall": "node --test scripts/postinstall-daemon-upgrade.test.mjs"
   },
   "keywords": [
     "tmux",

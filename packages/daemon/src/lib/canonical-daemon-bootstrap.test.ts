@@ -4,6 +4,7 @@ import type { CanonicalDaemonInfo } from "./canonical-daemon.ts";
 import {
   createCanonicalDaemonBootstrapCoordinator,
   ensureCanonicalDaemon,
+  retireOutdatedCanonicalDaemon,
 } from "./canonical-daemon-bootstrap.ts";
 
 const info: CanonicalDaemonInfo = {
@@ -291,5 +292,154 @@ describe("canonical daemon bootstrap adapter", () => {
     );
 
     expect(result).toMatchObject({ source: "existing", candidate: current });
+  });
+});
+
+describe("product version upgrades", () => {
+  function fixture(version: string) {
+    let current: CanonicalDaemonInfo | null = { ...info, productVersion: version };
+    const shutdownOlderOwner = vi.fn(async () => {
+      current = null;
+    });
+    const spawnOwner = vi.fn(async () => {
+      current = {
+        ...info,
+        productVersion: "2.8.0-beta.11",
+        pid: 84,
+        instanceId: "1d78b1af-d7b7-4d30-84af-54e337f02b49",
+      };
+    });
+    const dependencies = {
+      inspect: () =>
+        current
+          ? { status: "valid" as const, info: current, observation: { path: "/tmp/daemon.json" } }
+          : { status: "missing" as const, observation: { path: "/tmp/daemon.json" } },
+      alive: async () => true,
+      identity: async (candidate: CanonicalDaemonInfo) => ({ ...candidate, ok: true as const }),
+      health: async (candidate: CanonicalDaemonInfo) => ({
+        ok: true as const,
+        protocolVersion: candidate.protocolVersion,
+        productVersion: candidate.productVersion,
+        uptime: 1,
+      }),
+      shutdownOlderOwner,
+      spawnOwner,
+    };
+    return { dependencies, shutdownOlderOwner, spawnOwner };
+  }
+  const options = {
+    entryPath: "/tmp/cli.js",
+    expectedProductVersion: "2.8.0-beta.11",
+    timeoutMs: 100,
+  };
+
+  it.each(["2.8.0-beta.9", "2.8.0-beta.10", "2.7.99", "2.8.0-alpha.99"])(
+    "upgrades older %s through authenticated retirement and election",
+    async (version) => {
+      const f = fixture(version);
+      await expect(ensureCanonicalDaemon(options, f.dependencies)).resolves.toMatchObject({
+        candidate: { productVersion: options.expectedProductVersion },
+      });
+      expect(f.shutdownOlderOwner).toHaveBeenCalledTimes(1);
+      expect(f.spawnOwner).toHaveBeenCalledTimes(1);
+    },
+  );
+  it.each(["2.8.0-beta.11", "2.8.0-beta.11+other", "2.8.0-beta.12", "2.8.0", "3.0.0"])(
+    "does not downgrade or restart %s",
+    async (version) => {
+      const f = fixture(version);
+      await expect(ensureCanonicalDaemon(options, f.dependencies)).resolves.toMatchObject({
+        source: "existing",
+      });
+      expect(f.shutdownOlderOwner).not.toHaveBeenCalled();
+      expect(f.spawnOwner).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["unknown", "2.8", "2.8.0-beta.01", "02.8.0", ""])(
+    "does not retire unverifiable version %s",
+    async (version) => {
+      const f = fixture(version);
+      await expect(ensureCanonicalDaemon(options, f.dependencies)).rejects.toMatchObject({
+        reason: "product-version-mismatch",
+      });
+      expect(f.shutdownOlderOwner).not.toHaveBeenCalled();
+      expect(f.spawnOwner).not.toHaveBeenCalled();
+    },
+  );
+  it("reproves product identity before shutdown", async () => {
+    const f = fixture("2.8.0-beta.9");
+    let probes = 0;
+    f.dependencies.identity = async (candidate) => ({
+      ...candidate,
+      ok: true,
+      productVersion: ++probes === 1 ? candidate.productVersion : "2.8.0-beta.12",
+    });
+    await expect(ensureCanonicalDaemon(options, f.dependencies)).rejects.toMatchObject({
+      reason: "identity-mismatch",
+    });
+    expect(f.shutdownOlderOwner).not.toHaveBeenCalled();
+  });
+  it("concurrent product upgraders converge on the elected replacement", async () => {
+    const f = fixture("2.8.0-beta.9");
+    const results = await Promise.all([
+      ensureCanonicalDaemon(options, f.dependencies),
+      ensureCanonicalDaemon(options, f.dependencies),
+    ]);
+    expect(results.map((result) => result.candidate.productVersion)).toEqual([
+      options.expectedProductVersion,
+      options.expectedProductVersion,
+    ]);
+  });
+  it("does not retire an owner without authentication", async () => {
+    const f = fixture("2.8.0-beta.9");
+    const inspect = f.dependencies.inspect;
+    f.dependencies.inspect = () => {
+      const state = inspect();
+      return state.status === "valid"
+        ? { ...state, info: { ...state.info, authToken: undefined } }
+        : state;
+    };
+    await expect(ensureCanonicalDaemon(options, f.dependencies)).rejects.toMatchObject({
+      reason: "identity-mismatch",
+    });
+    expect(f.shutdownOlderOwner).not.toHaveBeenCalled();
+  });
+  it.each([
+    [200, "shutdown_already_in_progress"],
+    [409, "shutdown_already_in_progress"],
+    [200, "daemon_instance_mismatch"],
+    [409, "daemon_instance_mismatch"],
+  ] as const)("only adopts the exact already-retiring conflict: %s %s", async (status, code) => {
+    const f = fixture("2.8.0-beta.9");
+    const request = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({ authorization: "Bearer owner" });
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        expectedInstanceId: info.instanceId,
+      });
+      expect(init?.redirect).toBe("error");
+      return new Response(JSON.stringify({ ok: false, error: { code } }), { status: 409 });
+    });
+    vi.stubGlobal("fetch", request);
+    try {
+      const { shutdownOlderOwner, ...rest } = f.dependencies;
+      void shutdownOlderOwner;
+      const dependencies = { ...rest, alive: async () => request.mock.calls.length === 0 };
+      if (code === "shutdown_already_in_progress") {
+        await expect(retireOutdatedCanonicalDaemon(options, dependencies)).resolves.toBe(true);
+      } else {
+        await expect(retireOutdatedCanonicalDaemon(options, dependencies)).rejects.toMatchObject({
+          code: "incompatible",
+        });
+      }
+      expect(request).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("can retire for foreground startup without spawning a background owner", async () => {
+    const f = fixture("2.8.0-beta.9");
+    await expect(retireOutdatedCanonicalDaemon(options, f.dependencies)).resolves.toBe(true);
+    expect(f.shutdownOlderOwner).toHaveBeenCalledTimes(1);
+    expect(f.spawnOwner).not.toHaveBeenCalled();
   });
 });

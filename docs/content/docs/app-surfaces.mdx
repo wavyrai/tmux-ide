@@ -75,6 +75,12 @@ SSH commands. Configure an SSH alias, key authentication, and host trust first:
 the app uses `BatchMode=yes`, so it cannot prompt for a password or accept an
 unknown host key.
 
+Global installation upgrades an older running daemon on that machine. Its tmux
+sessions keep running while TUI clients reconnect. A fresh install does not start
+a daemon. If lifecycle scripts were skipped, app and headless launch also check
+for an older daemon; you can explicitly run `tmux-ide update --daemon` to upgrade
+it. An older CLI never replaces a newer daemon.
+
 On the remote machine, start the daemon:
 
 ```bash

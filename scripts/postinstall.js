@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -47,6 +48,33 @@ try {
   }
 } catch {
   // linking is best-effort; the CLI's TUI fallback message covers the gap
+}
+
+// Refresh only an already-running, user-owned daemon on global upgrade. Fresh
+// installs stay idle. Launch also checks versions when lifecycle scripts are skipped.
+if (process.env.npm_config_global === "true") {
+  try {
+    const upgrade = spawnSync(
+      process.execPath,
+      [
+        resolve(dirname(import.meta.dirname), "bin/cli.js"),
+        "update",
+        "--daemon",
+        "--if-running",
+        "--json",
+      ],
+      { env: process.env, encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    if (upgrade.error || upgrade.status !== 0) {
+      console.warn(
+        "[tmux-ide] Daemon update could not finish. Run tmux-ide update --daemon after installation.",
+      );
+    }
+  } catch {
+    console.warn(
+      "[tmux-ide] Daemon update could not finish. Run tmux-ide update --daemon after installation.",
+    );
+  }
 }
 
 const claudeDir = resolve(homedir(), ".claude");

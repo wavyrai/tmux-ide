@@ -22041,6 +22041,12 @@ var init_bootstrap_coordinator = __esm({
 });
 
 // packages/daemon/src/lib/canonical-daemon-bootstrap.ts
+var canonical_daemon_bootstrap_exports = {};
+__export(canonical_daemon_bootstrap_exports, {
+  createCanonicalDaemonBootstrapCoordinator: () => createCanonicalDaemonBootstrapCoordinator,
+  ensureCanonicalDaemon: () => ensureCanonicalDaemon,
+  retireOutdatedCanonicalDaemon: () => retireOutdatedCanonicalDaemon
+});
 import { spawn as spawn5 } from "node:child_process";
 import { resolve as resolve23 } from "node:path";
 function spawnOwner(entryPath, cwd) {
@@ -22072,19 +22078,22 @@ async function shutdownOlderOwner(info) {
     canonicalDaemonUrl("http", info.bindHostname, info.port, "/api/v2/action/daemon.shutdown"),
     {
       method: "POST",
+      redirect: "error",
       headers,
       body: JSON.stringify({
-        reason: "wire-protocol-upgrade",
+        reason: "daemon-version-upgrade",
         expectedInstanceId: info.instanceId
       }),
       signal: AbortSignal.timeout(2e3)
     }
   );
   const envelope = await response3.json().catch(() => null);
+  if ((response3.status === 200 || response3.status === 409) && envelope?.ok === false && envelope.error?.code === "shutdown_already_in_progress")
+    return;
   if (!response3.ok || envelope?.ok !== true || envelope.result?.stopping !== true) {
     throw new DaemonBootstrapError(
       "incompatible",
-      `The older canonical daemon refused a wire-protocol upgrade (HTTP ${response3.status}).`,
+      `The older canonical daemon refused a version upgrade (HTTP ${response3.status}).`,
       { reason: "protocol-mismatch" }
     );
   }
@@ -22092,8 +22101,48 @@ async function shutdownOlderOwner(info) {
 function sameCanonicalInstance(left, right) {
   return left.pid === right.pid && left.port === right.port && left.instanceId === right.instanceId && left.startedAt === right.startedAt;
 }
-async function replaceOlderCanonicalDaemon(deps2, info, timeoutMs) {
-  if (info.protocolVersion >= DAEMON_WIRE_PROTOCOL_VERSION) {
+function compareProductVersions(actual, expected) {
+  const parse3 = (value) => {
+    if (value.length > 256) return null;
+    const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
+      value
+    );
+    if (!match) return null;
+    const pre = match[4]?.split(".") ?? [];
+    if (pre.some((part) => /^0\d+$/.test(part))) return null;
+    return { core: match.slice(1, 4).map(BigInt), pre };
+  };
+  const a = parse3(actual);
+  const b = parse3(expected);
+  if (!a || !b) return null;
+  for (let i = 0; i < 3; i++) {
+    if (a.core[i] !== b.core[i]) return a.core[i] < b.core[i] ? -1 : 1;
+  }
+  if (!a.pre.length || !b.pre.length)
+    return a.pre.length === b.pre.length ? 0 : a.pre.length ? -1 : 1;
+  for (let i = 0; i < Math.max(a.pre.length, b.pre.length); i++) {
+    const left = a.pre[i];
+    const right = b.pre[i];
+    if (left === right) continue;
+    if (left === void 0 || right === void 0) return left === void 0 ? -1 : 1;
+    const ln = /^\d+$/.test(left);
+    const rn = /^\d+$/.test(right);
+    if (ln !== rn) return ln ? -1 : 1;
+    return ln ? BigInt(left) < BigInt(right) ? -1 : 1 : left < right ? -1 : 1;
+  }
+  return 0;
+}
+function needsReplacement(info, expected) {
+  if (info.protocolVersion > DAEMON_WIRE_PROTOCOL_VERSION) return false;
+  if (expected !== void 0) {
+    const comparison = compareProductVersions(info.productVersion, expected);
+    if (comparison === null || comparison > 0) return false;
+    if (comparison < 0) return true;
+  }
+  return info.protocolVersion < DAEMON_WIRE_PROTOCOL_VERSION;
+}
+async function replaceOlderCanonicalDaemon(deps2, info, timeoutMs, expectedProductVersion) {
+  if (!needsReplacement(info, expectedProductVersion)) {
     throw new DaemonBootstrapError(
       "incompatible",
       `Canonical daemon protocol ${info.protocolVersion} cannot be replaced by older protocol ${DAEMON_WIRE_PROTOCOL_VERSION}.`,
@@ -22101,12 +22150,18 @@ async function replaceOlderCanonicalDaemon(deps2, info, timeoutMs) {
     );
   }
   const [identity, health] = await Promise.all([deps2.identity(info), deps2.health(info)]);
-  if (!identity || !health || identity.pid !== info.pid || identity.instanceId !== info.instanceId || identity.startedAt !== info.startedAt || identity.protocolVersion !== info.protocolVersion || health.protocolVersion !== info.protocolVersion) {
+  if (!info.authToken || !identity || !health || identity.pid !== info.pid || identity.instanceId !== info.instanceId || identity.startedAt !== info.startedAt || identity.protocolVersion !== info.protocolVersion || health.protocolVersion !== info.protocolVersion || identity.productVersion !== info.productVersion || health.productVersion !== info.productVersion) {
     throw new DaemonBootstrapError(
       "incompatible",
-      "The older canonical daemon changed identity before the protocol upgrade.",
+      "The older canonical daemon changed identity before the version upgrade.",
       { reason: "identity-mismatch" }
     );
+  }
+  const latest = deps2.inspect();
+  if (latest.status !== "valid" || !sameCanonicalInstance(latest.info, info) || latest.info.authToken !== info.authToken || latest.info.bindHostname !== info.bindHostname || latest.info.productVersion !== info.productVersion || latest.info.protocolVersion !== info.protocolVersion) {
+    throw new DaemonBootstrapError("incompatible", "Canonical daemon changed before upgrade.", {
+      reason: "identity-mismatch"
+    });
   }
   await deps2.shutdownOlderOwner(info);
   const deadline = deps2.now() + timeoutMs;
@@ -22119,11 +22174,11 @@ async function replaceOlderCanonicalDaemon(deps2, info, timeoutMs) {
   }
   throw new DaemonBootstrapError(
     "control-timeout",
-    "The older canonical daemon did not retire after accepting the protocol upgrade.",
+    "The older canonical daemon did not retire after accepting the version upgrade.",
     { reason: "protocol-mismatch" }
   );
 }
-async function probeCanonical(deps2) {
+async function probeCanonical(deps2, expectedProductVersion) {
   const state = deps2.inspect();
   if (state.status === "missing") return { status: "absent-or-stale" };
   if (state.status === "invalid") {
@@ -22141,12 +22196,20 @@ async function probeCanonical(deps2) {
   if (state.info.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION || identity.protocolVersion !== state.info.protocolVersion || health.protocolVersion !== state.info.protocolVersion) {
     return { status: "incompatible", reason: "protocol-mismatch" };
   }
+  if (expectedProductVersion !== void 0) {
+    const comparison = compareProductVersions(state.info.productVersion, expectedProductVersion);
+    if (identity.productVersion !== state.info.productVersion || health.productVersion !== state.info.productVersion) {
+      return { status: "incompatible", reason: "identity-mismatch" };
+    }
+    if (comparison === null || comparison < 0)
+      return { status: "incompatible", reason: "product-version-mismatch" };
+  }
   return { status: "compatible", candidate: state.info };
 }
 function createCanonicalDaemonBootstrapCoordinator(options, dependencies = {}) {
   const deps2 = { ...defaultDependencies, ...dependencies };
   return new DaemonBootstrapCoordinator({
-    probe: () => probeCanonical(deps2),
+    probe: () => probeCanonical(deps2, options.expectedProductVersion),
     spawn: () => deps2.spawnOwner(resolve23(options.entryPath), resolve23(options.cwd ?? process.cwd())),
     timeoutMs: options.timeoutMs,
     onPhaseChanged: options.onPhaseChanged
@@ -22156,12 +22219,12 @@ function ensureCanonicalDaemon(options, dependencies = {}) {
   const deps2 = { ...defaultDependencies, ...dependencies };
   const ensure = () => createCanonicalDaemonBootstrapCoordinator(options, deps2).ensure();
   return ensure().catch(async (error) => {
-    if (!(error instanceof DaemonBootstrapError) || error.code !== "incompatible" || error.reason !== "protocol-mismatch") {
+    if (!(error instanceof DaemonBootstrapError) || error.code !== "incompatible" || error.reason !== "protocol-mismatch" && error.reason !== "product-version-mismatch") {
       throw error;
     }
     const state = deps2.inspect();
     if (state.status === "missing") return ensure();
-    if (state.status === "valid" && state.info.protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION) {
+    if (state.status === "valid" && state.info.protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION && !needsReplacement(state.info, options.expectedProductVersion)) {
       return ensure();
     }
     if (state.status !== "valid" || state.info.protocolVersion > DAEMON_WIRE_PROTOCOL_VERSION) {
@@ -22169,7 +22232,12 @@ function ensureCanonicalDaemon(options, dependencies = {}) {
     }
     const replacing = state.info;
     try {
-      await replaceOlderCanonicalDaemon(deps2, replacing, options.timeoutMs ?? 15e3);
+      await replaceOlderCanonicalDaemon(
+        deps2,
+        replacing,
+        options.timeoutMs ?? 15e3,
+        options.expectedProductVersion
+      );
     } catch (replacementError) {
       const after = deps2.inspect();
       if (after.status === "missing" || after.status === "valid" && !sameCanonicalInstance(after.info, replacing)) {
@@ -22179,6 +22247,26 @@ function ensureCanonicalDaemon(options, dependencies = {}) {
     }
     return ensure();
   });
+}
+async function retireOutdatedCanonicalDaemon(options, dependencies = {}) {
+  const deps2 = { ...defaultDependencies, ...dependencies };
+  const state = deps2.inspect();
+  if (state.status !== "valid" || !needsReplacement(state.info, options.expectedProductVersion) || !await deps2.alive(state.info))
+    return false;
+  try {
+    await replaceOlderCanonicalDaemon(
+      deps2,
+      state.info,
+      options.timeoutMs ?? 15e3,
+      options.expectedProductVersion
+    );
+    return true;
+  } catch (error) {
+    const after = deps2.inspect();
+    if (after.status === "missing" || after.status === "valid" && !sameCanonicalInstance(after.info, state.info))
+      return false;
+    throw error;
+  }
 }
 var defaultDependencies;
 var init_canonical_daemon_bootstrap = __esm({
@@ -72534,7 +72622,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.10",
+      version: "2.9.0-beta.11",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
@@ -72592,7 +72680,7 @@ var require_package = __commonJS({
         "test:pack-installed": "node scripts/pack-check-run.mjs",
         "release:opentui:check": "node scripts/opentui-release-check.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:portable-release-contract && pnpm run test:benchmark-comparative && pnpm run test:unit && pnpm run test:tui-testdrive && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
+        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:postinstall && pnpm run test:portable-release-contract && pnpm run test:benchmark-comparative && pnpm run test:unit && pnpm run test:tui-testdrive && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "demo:tui": "bun --preload @opentui/solid/preload docs/scripts/render-tui-demo.tsx",
@@ -72621,7 +72709,8 @@ var require_package = __commonJS({
         "test:dual-tui-live": "TMUX_IDE_DUAL_TUI_LIVE=1 node --test scripts/lib/product-dual-tui-live.test.mjs",
         "test:multi-tui-recovery-live": "TMUX_IDE_TUI_RECOVERY_LIVE=1 node --test scripts/lib/product-tui-recovery-live.test.mjs",
         "build:tmux": "node scripts/build-bundled-tmux.mjs",
-        "build:terminal-parser": "node scripts/build-xterm-native-parser.mjs"
+        "build:terminal-parser": "node scripts/build-xterm-native-parser.mjs",
+        "test:postinstall": "node --test scripts/postinstall-daemon-upgrade.test.mjs"
       },
       keywords: [
         "tmux",
@@ -81675,6 +81764,8 @@ var { positionals, values } = parseArgs({
   options: {
     json: { type: "boolean" },
     headless: { type: "boolean" },
+    daemon: { type: "boolean" },
+    "if-running": { type: "boolean" },
     ssh: { type: "string", multiple: true },
     row: { type: "string" },
     pane: { type: "string" },
@@ -81856,6 +81947,7 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide inspect")} [--json]   ${dim3("Show effective config and runtime state")}
   ${cyan2("tmux-ide doctor")}             ${dim3("Check system requirements")}
   ${cyan2("tmux-ide update")} [--dry-run] ${dim3("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
+  ${cyan2("tmux-ide update --daemon")}     ${dim3("Upgrade the local daemon while preserving tmux sessions")}
   ${cyan2("tmux-ide update --tui-binary")} ${dim3("Download and verify this version's compiled OpenTUI runtime")}
   ${cyan2("tmux-ide update --manifests")} ${dim3("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan2("tmux-ide skill-sync")}         ${dim3("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
@@ -82126,7 +82218,10 @@ async function runApp(appArgs) {
 `) }
   );
   try {
-    await ensureCanonicalDaemon({ entryPath: nodeCliPath });
+    await ensureCanonicalDaemon({
+      entryPath: nodeCliPath,
+      expectedProductVersion: (await Promise.resolve().then(() => __toESM(require_package(), 1))).version
+    });
   } catch (error) {
     if (ssh === void 0) throw error;
     process.stderr.write(
@@ -82148,6 +82243,13 @@ function launchApp() {
 try {
   if (values.ssh !== void 0 && (command !== "app" || values.headless))
     throw new IdeError("--ssh is supported only by tmux-ide app", { code: "USAGE", exitCode: 2 });
+  if ((values.daemon || values["if-running"]) && command !== "update")
+    throw new IdeError("--daemon and --if-running are supported only by tmux-ide update", {
+      code: "USAGE",
+      exitCode: 2
+    });
+  if (values["if-running"] && !values.daemon)
+    throw new IdeError("--if-running requires --daemon", { code: "USAGE", exitCode: 2 });
   if (values.headless) {
     if (positionals.length > 0) {
       throw new IdeError("--headless cannot be combined with a command or project path", {
@@ -82156,6 +82258,11 @@ try {
       });
     }
     const pkg = await Promise.resolve().then(() => __toESM(require_package(), 1));
+    const { retireOutdatedCanonicalDaemon: retireOutdatedCanonicalDaemon2 } = await Promise.resolve().then(() => (init_canonical_daemon_bootstrap(), canonical_daemon_bootstrap_exports));
+    await retireOutdatedCanonicalDaemon2({
+      entryPath: nodeCliPath,
+      expectedProductVersion: pkg.version
+    });
     await runHeadlessDaemon({
       port: values.port,
       json,
@@ -83123,6 +83230,37 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       break;
     }
     case "update": {
+      if (values.daemon) {
+        if (values["tui-binary"] || values.manifests || values["dry-run"] || positionals.length > 1)
+          throw new IdeError(
+            "update --daemon cannot be combined with other update modes or arguments",
+            { code: "USAGE", exitCode: 2 }
+          );
+        const { inspectCanonicalDaemonInfo: inspectCanonicalDaemonInfo2, isCanonicalDaemonAlive: isCanonicalDaemonAlive2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
+        const state = inspectCanonicalDaemonInfo2();
+        if (values["if-running"] && (state.status === "missing" || state.status === "valid" && !await isCanonicalDaemonAlive2(state.info))) {
+          console.log(
+            json ? JSON.stringify({ ok: true, status: "not-running" }) : "No running daemon to update."
+          );
+          break;
+        }
+        await ensureCanonicalDaemon({
+          entryPath: nodeCliPath,
+          expectedProductVersion: (await Promise.resolve().then(() => __toESM(require_package(), 1))).version
+        });
+        const current = inspectCanonicalDaemonInfo2();
+        if (current.status !== "valid")
+          throw new IdeError("Daemon upgrade did not publish a current owner");
+        console.log(
+          json ? JSON.stringify({
+            ok: true,
+            status: "ready",
+            productVersion: current.info.productVersion,
+            instanceId: current.info.instanceId
+          }) : `Daemon ready: ${current.info.productVersion}`
+        );
+        break;
+      }
       if (values["manifests"] === true) {
         const { updateManifestPack: updateManifestPack2 } = await Promise.resolve().then(() => (init_manifest_pack(), manifest_pack_exports));
         try {

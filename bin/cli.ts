@@ -70,6 +70,8 @@ const { positionals, values } = parseArgs({
   options: {
     json: { type: "boolean" },
     headless: { type: "boolean" },
+    daemon: { type: "boolean" },
+    "if-running": { type: "boolean" },
     ssh: { type: "string", multiple: true },
     row: { type: "string" },
     pane: { type: "string" },
@@ -259,6 +261,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
   ${cyan("tmux-ide doctor")}             ${dim("Check system requirements")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
+  ${cyan("tmux-ide update --daemon")}     ${dim("Upgrade the local daemon while preserving tmux sessions")}
   ${cyan("tmux-ide update --tui-binary")} ${dim("Download and verify this version's compiled OpenTUI runtime")}
   ${cyan("tmux-ide update --manifests")} ${dim("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan("tmux-ide skill-sync")}         ${dim("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
@@ -611,7 +614,10 @@ async function runApp(appArgs: string[]): Promise<void> {
   // The app is a thin client. Establish the one persistent daemon generation
   // only after its renderer is known-runnable, then mount against that owner.
   try {
-    await ensureCanonicalDaemon({ entryPath: nodeCliPath });
+    await ensureCanonicalDaemon({
+      entryPath: nodeCliPath,
+      expectedProductVersion: (await import("../package.json")).version,
+    });
   } catch (error) {
     if (ssh === undefined) throw error;
     process.stderr.write(
@@ -641,6 +647,13 @@ function launchApp(): Promise<void> {
 try {
   if (values.ssh !== undefined && (command !== "app" || values.headless))
     throw new IdeError("--ssh is supported only by tmux-ide app", { code: "USAGE", exitCode: 2 });
+  if ((values.daemon || values["if-running"]) && command !== "update")
+    throw new IdeError("--daemon and --if-running are supported only by tmux-ide update", {
+      code: "USAGE",
+      exitCode: 2,
+    });
+  if (values["if-running"] && !values.daemon)
+    throw new IdeError("--if-running requires --daemon", { code: "USAGE", exitCode: 2 });
   if (values.headless) {
     if (positionals.length > 0) {
       throw new IdeError("--headless cannot be combined with a command or project path", {
@@ -649,6 +662,12 @@ try {
       });
     }
     const pkg = await import("../package.json");
+    const { retireOutdatedCanonicalDaemon } =
+      await import("../packages/daemon/src/lib/canonical-daemon-bootstrap.ts");
+    await retireOutdatedCanonicalDaemon({
+      entryPath: nodeCliPath,
+      expectedProductVersion: pkg.version,
+    });
     await runHeadlessDaemon({
       port: values.port,
       json,
@@ -1885,6 +1904,47 @@ try {
     }
 
     case "update": {
+      if (values.daemon) {
+        if (values["tui-binary"] || values.manifests || values["dry-run"] || positionals.length > 1)
+          throw new IdeError(
+            "update --daemon cannot be combined with other update modes or arguments",
+            { code: "USAGE", exitCode: 2 },
+          );
+        const { inspectCanonicalDaemonInfo, isCanonicalDaemonAlive } =
+          await import("../packages/daemon/src/lib/canonical-daemon.ts");
+        const state = inspectCanonicalDaemonInfo();
+        if (
+          values["if-running"] &&
+          (state.status === "missing" ||
+            (state.status === "valid" && !(await isCanonicalDaemonAlive(state.info))))
+        ) {
+          console.log(
+            json
+              ? JSON.stringify({ ok: true, status: "not-running" })
+              : "No running daemon to update.",
+          );
+          break;
+        }
+        await ensureCanonicalDaemon({
+          entryPath: nodeCliPath,
+          expectedProductVersion: (await import("../package.json")).version,
+        });
+        const current = inspectCanonicalDaemonInfo();
+        if (current.status !== "valid")
+          throw new IdeError("Daemon upgrade did not publish a current owner");
+        console.log(
+          json
+            ? JSON.stringify({
+                ok: true,
+                status: "ready",
+                productVersion: current.info.productVersion,
+                instanceId: current.info.instanceId,
+              })
+            : `Daemon ready: ${current.info.productVersion}`,
+        );
+        break;
+      }
+
       // `--manifests`: fetch the agent-detection manifest pack (versioned JSON,
       // a GitHub release asset) into ~/.tmux-ide/agent-detection/pack/ — the
       // loader hot-merges it under bundled<pack<user precedence. Schema-invalid
