@@ -128,6 +128,22 @@ test("npm release uses OIDC trusted publishing instead of a repository token", (
   assert.doesNotMatch(workflow, /NPM_TOKEN|NODE_AUTH_TOKEN/u);
 });
 
+test("native qualification can retain failed build evidence without publishing npm", () => {
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/release.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /qualification_only:[\s\S]+type: boolean[\s\S]+default: false/u);
+  assert.match(
+    workflow,
+    /publish_npm:[\s\S]+if: \$\{\{ always\(\) && !inputs\.qualification_only && needs\.build_macos_tmux\.result == 'success'/u,
+  );
+  assert.match(
+    workflow,
+    /uses: actions\/upload-artifact@v4\n        if: always\(\)\n        with:\n          name: tmux-ide-native-tmux/u,
+  );
+});
+
 test("retired desktop surfaces cannot block the terminal product CI", () => {
   const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 

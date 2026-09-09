@@ -16,6 +16,10 @@ on:
       version:
         description: "Release version (e.g. 2.5.0)"
         required: true
+      qualification_only:
+        description: "Qualify bundled tmux without publishing npm"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -107,6 +111,7 @@ jobs:
           TMUX_IDE_REQUIRE_NATIVE_CAPABILITIES=1 PATH="$bundle:$PATH" pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts src/tui/mirror/runtime/terminal-native-content-live.test.ts
           TMUX_IDE_NATIVE_GRID_TMUX="$bundle/tmux" pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts src/terminal/session-runtime/native-backing-owner-live.test.ts
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: tmux-ide-native-tmux
           path: ${{ runner.temp }}/tmux-ide-native-tmux.tar.gz
@@ -116,7 +121,7 @@ jobs:
   publish_npm:
     name: Publish to npm
     needs: [build_macos_notifier, build_macos_tmux]
-    if: ${{ always() && needs.build_macos_tmux.result == 'success' && (needs.build_macos_notifier.result == 'success' || needs.build_macos_notifier.result == 'skipped') }}
+    if: ${{ always() && !inputs.qualification_only && needs.build_macos_tmux.result == 'success' && (needs.build_macos_notifier.result == 'success' || needs.build_macos_notifier.result == 'skipped') }}
     runs-on: ubuntu-24.04
     environment: npm
 
