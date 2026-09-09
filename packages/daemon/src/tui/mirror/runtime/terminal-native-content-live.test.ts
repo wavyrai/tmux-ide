@@ -18,6 +18,7 @@ import {
 } from "../terminal-viewport.ts";
 import { MirrorControlChannel } from "../../../terminal/mirror/control-channel.ts";
 import { MirrorService } from "../../../terminal/mirror/mirror-service.ts";
+import { decodeNativeGridCapture } from "../../../terminal/mirror/native-grid-capture.ts";
 import {
   extractTerminalSelection,
   terminalSelectionCell,
@@ -1454,18 +1455,16 @@ describe.skipIf(!available)("native history reader continuity", () => {
         expect(tmux("capture-pane", "-p", "-t", target)).toContain("DONE-120"),
       );
       // Bounded metadata only: preserve the exact failing capture path in CI
-      // without printing terminal contents or adding another capture/decoder.
+      // without printing terminal contents or issuing another capture.
       const captureAttempts: Array<Readonly<Record<string, unknown>>> = [];
       const mirror = new MirrorService({
-        ...(injectTransientCaptureFailure
-          ? {
-              internalReadHookEmission: (pane: string, marker: string) => ({
-                bufferName: "history-recovery-observer",
-                signalChannel: "history-recovery-observer",
-                record: `${pane}|${marker}|workspace.pane.read|`,
-              }),
-            }
-          : {}),
+        // Production supplies this observer for every channel. Even a fixture
+        // without injected failures can require an atomic native recovery.
+        internalReadHookEmission: (pane: string, marker: string) => ({
+          bufferName: "history-recovery-observer",
+          signalChannel: "history-recovery-observer",
+          record: `${pane}|${marker}|workspace.pane.read|`,
+        }),
         createIo: (name, handlers) => {
           const io = new MirrorControlChannel({
             session: name,
@@ -1502,6 +1501,9 @@ describe.skipIf(!available)("native history reader continuity", () => {
                   native,
                   ok: reply.ok,
                   records: reply.lines.length,
+                  ...(native && reply.ok
+                    ? { decodable: decodeNativeGridCapture(reply.lines.join("\n")) !== null }
+                    : {}),
                   ...(header
                     ? {
                         version: header.version,
@@ -1935,6 +1937,10 @@ describe.skipIf(!available || !nativeCapabilities.frozenCopy)(
           tmux("kill-session", "-t", session);
         }
       },
+      // Eight widths each perform 22 cursor reads and 22 cursor moves, plus
+      // resize/capture commands (over 350 synchronous tmux invocations). Allow
+      // the aggregate fixture time; every physical/cursor assertion stays exact.
+      15000,
     );
   },
 );
