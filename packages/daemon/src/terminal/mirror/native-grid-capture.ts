@@ -133,7 +133,9 @@ export function decodeNativeGridCapture(text: string): NativeGridCapture | null 
       !uint(header.limit) ||
       !Array.isArray(header.cursor) ||
       header.cursor.length !== 2 ||
-      !uint(header.cursor[0], header.cols) ||
+      // screen_resize_cursor preserves x after a non-reflow (alternate)
+      // shrink. Bound the source coordinate independently of current columns.
+      !uint(header.cursor[0], MAX_CELLS) ||
       !uint(header.cursor[1], header.rows - 1)
     )
       return null;

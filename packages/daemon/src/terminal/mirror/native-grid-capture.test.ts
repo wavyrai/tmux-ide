@@ -36,6 +36,17 @@ describe("decodeNativeGridCapture", () => {
     expect(decodeNativeGridCapture(encode(records()).trimEnd())).toEqual(result);
   });
 
+  it("preserves a legal offscreen cursor after an alternate-screen non-reflow shrink", () => {
+    const value = records();
+    value[0] = { ...value[0]!, version: 2, cursor: [34, 0], currentAttributes: [0, 8, 8, 8] };
+    const decoded = decodeNativeGridCapture(encode(value))!;
+    expect(decoded).not.toBeNull();
+    expect(decoded.cols).toBe(2);
+    expect(decoded.cursor).toEqual([34, 0]);
+    expect(isNativeBootstrapCapture(decoded)).toBe(true);
+    expect(decodeNativeGridCapture(encodeNativeGridCapture(decoded)!)).toEqual(decoded);
+  });
+
   it("preserves empty zero-width padding and an end-column cursor", () => {
     const value = records();
     value[0]!.cursor = [2, 0];
@@ -55,7 +66,9 @@ describe("decodeNativeGridCapture", () => {
     { rows: 0 },
     { history: -1 },
     { hscrolled: 2 },
-    { cursor: [3, 0] },
+    { cursor: [1_000_001, 0] },
+    { cursor: [-1, 0] },
+    { cursor: [1.5, 0] },
     { cursor: [0, 1] },
     { history: 262144 },
     { limit: 1.5 },
