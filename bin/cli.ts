@@ -138,6 +138,7 @@ const knownCommands = new Set([
   "restore",
   "ls",
   "doctor",
+  "remote-daemon-info",
   "status",
   "inspect",
   "validate",
@@ -717,6 +718,15 @@ try {
     case "doctor":
       await doctor({ json });
       break;
+
+    case "remote-daemon-info": {
+      if (!json || positionals.length !== 1)
+        throw new IdeError("remote-daemon-info requires --json and no arguments");
+      const { readRemoteDaemonHandshake } =
+        await import("../packages/daemon/src/lib/remote-daemon-info.ts");
+      process.stdout.write(`${JSON.stringify(await readRemoteDaemonHandshake())}\n`);
+      break;
+    }
 
     case "status":
       await status(positionals[1], { json });

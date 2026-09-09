@@ -215,8 +215,8 @@ var init_workspace_state = __esm({
       ])
     );
     WorkspacePaneTreeNodeSchemaZ = z4.unknown().superRefine((value, ctx) => {
-      const failure = paneTreeLimitFailure(value);
-      if (failure) ctx.addIssue({ code: z4.ZodIssueCode.custom, message: failure });
+      const failure2 = paneTreeLimitFailure(value);
+      if (failure2) ctx.addIssue({ code: z4.ZodIssueCode.custom, message: failure2 });
     }).pipe(WorkspacePaneTreeNodeRecursiveSchemaZ);
     WorkspacePaneTopologySchemaZ = z4.object({
       panes: z4.record(WorkspaceIdSchemaZ, WorkspacePaneDefinitionSchemaZ),
@@ -1709,8 +1709,8 @@ var init_app_window_state = __esm({
       ])
     );
     AppWindowDockNodeSchemaZ = z10.unknown().superRefine((value, ctx) => {
-      const failure = dockTreeLimitFailure(value);
-      if (failure) ctx.addIssue({ code: z10.ZodIssueCode.custom, message: failure });
+      const failure2 = dockTreeLimitFailure(value);
+      if (failure2) ctx.addIssue({ code: z10.ZodIssueCode.custom, message: failure2 });
     }).pipe(AppWindowDockNodeRecursiveSchemaZ);
     AppWindowSceneShapeSchemaZ = z10.object({
       windows: z10.record(AppWindowIdSchemaZ, AppWindowInstanceSchemaZ),
@@ -20464,12 +20464,12 @@ async function tryDispatchAction(name, input, options = {}) {
       if (operationSignal.aborted) break;
       continue;
     }
-    const failure = FailureEnvelopeZ.safeParse(body);
-    if (failure.success) {
+    const failure2 = FailureEnvelopeZ.safeParse(body);
+    if (failure2.success) {
       throw new CliActionInvocationError({
-        code: failure.data.error.code,
-        message: failure.data.error.message,
-        details: failure.data.error.details
+        code: failure2.data.error.code,
+        message: failure2.data.error.message,
+        details: failure2.data.error.details
       });
     }
     const success = z68.object({ ok: z68.literal(true), result: contract.result }).safeParse(body);
@@ -29124,16 +29124,16 @@ var init_workspace_pane_creation2 = __esm({
         }
       }
       #rememberFailure(request, requestFingerprint3, error) {
-        const failure = {
+        const failure2 = {
           fingerprint: requestFingerprint3,
           status: "error",
           error
         };
         if (error.code === "pane_cleanup_unproven" || error.code === "pane_resource_changed") {
-          this.#operations.set(request.operationId, failure);
+          this.#operations.set(request.operationId, failure2);
         } else {
           this.#replayableFailures.delete(request.operationId);
-          this.#replayableFailures.set(request.operationId, failure);
+          this.#replayableFailures.set(request.operationId, failure2);
           while (this.#replayableFailures.size > MAX_REPLAYABLE_FAILURES) {
             const oldest = this.#replayableFailures.keys().next().value;
             if (oldest === void 0) break;
@@ -71709,6 +71709,102 @@ var init_client = __esm({
   }
 });
 
+// packages/daemon/src/lib/ssh-daemon-transport.ts
+import { spawn as spawn9 } from "node:child_process";
+import { createServer as createServer3 } from "node:net";
+import { z as z88 } from "zod";
+function failure(message) {
+  return new SshConnectionError(`SSH daemon connection: ${message}`);
+}
+async function boundedJson(response3) {
+  if (!response3.ok || !response3.body) {
+    await response3.body?.cancel();
+    return null;
+  }
+  const reader = response3.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    for (; ; ) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > 32 * 1024) throw failure("identity response exceeded limit");
+      chunks.push(next.value);
+    }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
+  } finally {
+    await reader.cancel().catch(() => {
+    });
+    reader.releaseLock();
+  }
+}
+async function probeSshDaemonIdentity(baseUrl, daemon, signal, request = fetch) {
+  const matches = (actual) => actual.instanceId === daemon.instanceId && actual.startedAt === daemon.startedAt && actual.protocolVersion === daemon.protocolVersion && actual.productVersion === daemon.productVersion && actual.environmentId === daemon.environmentId;
+  const identity = DaemonIdentitySchema.safeParse(
+    await boundedJson(await request(`${baseUrl}/identity`, { signal, redirect: "error" }))
+  );
+  if (!identity.success || identity.data.pid !== daemon.pid || !matches(identity.data))
+    return false;
+  const response3 = await request(`${baseUrl}/api/v2/capabilities`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${daemon.authToken}`, "Content-Type": "application/json" },
+    body: "{}",
+    signal,
+    redirect: "error"
+  });
+  const parsed = DesktopDaemonCapabilitiesResultSchemaZ.safeParse(await boundedJson(response3));
+  return parsed.success && parsed.data.status === "ok" && matches(parsed.data.daemon);
+}
+var RemoteDaemonHandshakeSchema, SshConnectionError;
+var init_ssh_daemon_transport = __esm({
+  "packages/daemon/src/lib/ssh-daemon-transport.ts"() {
+    "use strict";
+    init_src();
+    RemoteDaemonHandshakeSchema = z88.object({
+      version: z88.literal(1),
+      daemon: CanonicalDaemonInfoSchema.strict().extend({
+        bindHostname: z88.enum(["127.0.0.1", "localhost", "::1", "0.0.0.0", "::"]),
+        authToken: z88.string().min(1).max(4096)
+      })
+    }).strict();
+    SshConnectionError = class extends Error {
+    };
+  }
+});
+
+// packages/daemon/src/lib/remote-daemon-info.ts
+var remote_daemon_info_exports = {};
+__export(remote_daemon_info_exports, {
+  readRemoteDaemonHandshake: () => readRemoteDaemonHandshake
+});
+async function readRemoteDaemonHandshake(dependencies = {}) {
+  const info = (dependencies.readInfo ?? readCanonicalDaemonInfo)();
+  if (!info || !await (dependencies.isAlive ?? isCanonicalDaemonAlive)(info))
+    throw new Error("No running tmux-ide daemon. Start tmux-ide on this machine first.");
+  const parsed = RemoteDaemonHandshakeSchema.safeParse({ version: 1, daemon: info });
+  if (!parsed.success) throw new Error("The daemon does not support authenticated SSH discovery.");
+  try {
+    if (!await probeSshDaemonIdentity(
+      canonicalDaemonUrl("http", info.bindHostname, info.port),
+      parsed.data.daemon,
+      AbortSignal.timeout(3e3),
+      dependencies.request ?? fetch
+    ))
+      throw new Error("Identity changed");
+  } catch {
+    throw new Error("Could not verify the running daemon's identity and owner authority.");
+  }
+  return parsed.data;
+}
+var init_remote_daemon_info = __esm({
+  "packages/daemon/src/lib/remote-daemon-info.ts"() {
+    "use strict";
+    init_canonical_daemon();
+    init_ssh_daemon_transport();
+  }
+});
+
 // packages/daemon/src/tui/team/wait-receipts.ts
 var wait_receipts_exports = {};
 __export(wait_receipts_exports, {
@@ -72202,7 +72298,7 @@ var command_center_exports = {};
 __export(command_center_exports, {
   startCommandCenter: () => startCommandCenter
 });
-import { createServer as createServer3 } from "node:http";
+import { createServer as createServer4 } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 async function startCommandCenter(options = {}) {
   const port = options.port ?? 6060;
@@ -72212,7 +72308,7 @@ async function startCommandCenter(options = {}) {
   if (options.authConfig) appOpts.authConfig = options.authConfig;
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
-  const server = createServer3(listener);
+  const server = createServer4(listener);
   return new Promise((resolve38) => {
     server.listen(port, hostname4, () => {
       console.log(`Command Center API on http://${hostname4}:${port}`);
@@ -72235,7 +72331,7 @@ __export(server_exports3, {
   resolvePort: () => resolvePort,
   start: () => start
 });
-import { createServer as createServer4 } from "node:http";
+import { createServer as createServer5 } from "node:http";
 import { parse as parse2 } from "node:url";
 import { Hono as Hono2 } from "hono";
 import { getRequestListener as getRequestListener2 } from "@hono/node-server";
@@ -72256,7 +72352,7 @@ function createApp2() {
 async function start(port) {
   const resolvedPort = resolvePort(port);
   const app = createApp2();
-  const server = createServer4(getRequestListener2(app.fetch));
+  const server = createServer5(getRequestListener2(app.fetch));
   const ptyWss = new WebSocketServer5({ noServer: true });
   server.on("upgrade", (req, socket, head3) => {
     const { pathname } = parse2(req.url ?? "/", true);
@@ -76369,7 +76465,7 @@ var NativeTerminalAttachmentGeometryResolver = class {
   }
 };
 async function enumerateStartupMarkedViews(executor) {
-  let failure;
+  let failure2;
   for (let attempt = 0; attempt < STARTUP_ORPHAN_ENUMERATION_ATTEMPTS; attempt += 1) {
     try {
       return await executor.enumerateMarkedViews(
@@ -76377,10 +76473,10 @@ async function enumerateStartupMarkedViews(executor) {
         GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT
       );
     } catch (error) {
-      failure = error;
+      failure2 = error;
     }
   }
-  throw failure;
+  throw failure2;
 }
 var WorkspaceTerminalInventoryRuntime = class {
   semanticPaneCatalog;
@@ -79648,6 +79744,7 @@ var knownCommands = /* @__PURE__ */ new Set([
   "restore",
   "ls",
   "doctor",
+  "remote-daemon-info",
   "status",
   "inspect",
   "validate",
@@ -80112,6 +80209,14 @@ try {
     case "doctor":
       await doctor({ json });
       break;
+    case "remote-daemon-info": {
+      if (!json || positionals.length !== 1)
+        throw new IdeError("remote-daemon-info requires --json and no arguments");
+      const { readRemoteDaemonHandshake: readRemoteDaemonHandshake2 } = await Promise.resolve().then(() => (init_remote_daemon_info(), remote_daemon_info_exports));
+      process.stdout.write(`${JSON.stringify(await readRemoteDaemonHandshake2())}
+`);
+      break;
+    }
     case "status":
       await status(positionals[1], { json });
       break;
