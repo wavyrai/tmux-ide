@@ -43,6 +43,99 @@ import { currentTuiPerformanceEventSink } from "./performance-events.ts";
 import type { CausalCellClientLedger } from "./runtime/causal-cell-client-ledger.ts";
 
 const OPENTUI_ORIGIN = "tmux-ide://opentui";
+
+/** Scheduling eligibility only: the verified decoder still checks every field
+ * and both representation and canonical hashes remain mandatory. Keep ordinary
+ * keystroke patches atomic without admitting compressed expansion or large
+ * baseline walks onto the synchronous path. */
+export function isBoundedInteractiveCompactPatch(
+  bytes: Uint8Array,
+  baseline: TerminalReplicaSnapshot | null,
+): boolean {
+  if (!baseline || bytes.byteLength > 2048) return false;
+  const { cols, rows, history } = baseline;
+  if (
+    !Number.isSafeInteger(cols) ||
+    cols < 1 ||
+    cols > 256 ||
+    !Number.isSafeInteger(rows) ||
+    rows < 1 ||
+    rows + history.length > 128 ||
+    cols * (rows + history.length) > 16_384
+  )
+    return false;
+  try {
+    const wire: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (
+      !wire ||
+      typeof wire !== "object" ||
+      Array.isArray(wire) ||
+      !("f" in wire) ||
+      wire.f !== "p" ||
+      !("p" in wire)
+    )
+      return false;
+    const patch = wire.p;
+    // Geometry, full history and nonempty placements can amplify a tiny wire payload.
+    if (
+      !Array.isArray(patch) ||
+      patch.length !== 8 ||
+      patch[0] !== null ||
+      patch[2] !== null ||
+      (patch[6] !== null && (!Array.isArray(patch[6]) || patch[6].length !== 0)) ||
+      (patch[7] !== null &&
+        (!Array.isArray(patch[7]) ||
+          patch[7].length !== 2 ||
+          !patch[7].every((value: unknown) => typeof value === "string" && value.length <= 32)))
+    )
+      return false;
+    if (!Array.isArray(patch[1]) || patch[1].length > 4) return false;
+    for (const change of patch[1]) {
+      if (
+        !Array.isArray(change) ||
+        change.length !== 2 ||
+        !Number.isSafeInteger(change[0]) ||
+        change[0] < 0 ||
+        change[0] >= rows
+      )
+        return false;
+      if (!isBoundedCompactRow(change[1], cols)) return false;
+    }
+    const delta = patch[3];
+    if (delta !== null) {
+      if (
+        !Array.isArray(delta) ||
+        delta.length !== 2 ||
+        !Number.isSafeInteger(delta[0]) ||
+        delta[0] < 0 ||
+        delta[0] > history.length ||
+        !Array.isArray(delta[1]) ||
+        delta[1].length > 4
+      )
+        return false;
+      // Bound both the prior-state walk and all appended work, even if trimming.
+      const workRows = rows + history.length + delta[1].length;
+      if (workRows > 128 || cols * workRows > 16_384) return false;
+      for (const row of delta[1]) if (!isBoundedCompactRow(row, cols)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isBoundedCompactRow(row: unknown, cols: number): boolean {
+  if (!Array.isArray(row) || row.length !== 2 || !Array.isArray(row[1])) return false;
+  let cells = 0;
+  for (const run of row[1]) {
+    if (!Array.isArray(run) || !Number.isSafeInteger(run[0]) || run[0] < 1 || run[0] > cols)
+      return false;
+    cells += run[0];
+    if (cells > cols) return false;
+  }
+  return cells === cols;
+}
+
 /** Stable controller principal used by the daemon authority snapshot. */
 export const OPEN_TUI_HOST_CLIENT_ID = `opentui:${process.pid}`;
 
@@ -487,7 +580,11 @@ class WireTerminalEndpoint {
         // Compact seeds are already size-bounded and decoding one atomically
         // gives the endpoint the baseline needed for subsequent cooperative
         // patches and their normal backpressure.
-        if (envelope.frame === "seed" && !this.#hasCanonicalSeed) {
+        if (
+          (envelope.frame === "seed" && !this.#hasCanonicalSeed) ||
+          (envelope.frame === "patch" &&
+            isBoundedInteractiveCompactPatch(bytes, this.#canonicalSnapshot))
+        ) {
           const verified = decodeVerifiedCompactSemanticTerminalUpdate(
             bytes,
             this.#canonicalSnapshot,
@@ -497,7 +594,7 @@ class WireTerminalEndpoint {
               ...(this.#compactDecodeProfile ? { onComplete: this.#compactDecodeProfile } : {}),
             },
           );
-          this.#acceptVerified(envelope, verified, performanceSink, parseStartedAt);
+          this.#acceptVerified(envelope, verified, performanceSink, parseStartedAt, "compact-sync");
           return consumed;
         }
         const token = Object.freeze({});
@@ -516,7 +613,7 @@ class WireTerminalEndpoint {
         this.#canonicalSnapshot,
         envelope.canonicalStateHash,
       );
-      this.#acceptVerified(envelope, verified, performanceSink, parseStartedAt);
+      this.#acceptVerified(envelope, verified, performanceSink, parseStartedAt, "legacy");
       return consumed;
     } catch {
       this.#reject("decode-failed", envelope);
@@ -553,7 +650,13 @@ class WireTerminalEndpoint {
       )
         return;
       this.#decodeToken = null;
-      this.#acceptVerified(envelope, verified, performanceSink, parseStartedAt);
+      this.#acceptVerified(
+        envelope,
+        verified,
+        performanceSink,
+        parseStartedAt,
+        "compact-cooperative",
+      );
     } catch {
       if (!this.#closed && this.#decodeToken === token && this.#envelope === envelope) {
         this.#decodeToken = null;
@@ -567,7 +670,9 @@ class WireTerminalEndpoint {
     verified: VerifiedTerminalDelivery,
     performanceSink: ReturnType<typeof currentTuiPerformanceEventSink>,
     parseStartedAt: number,
+    decodeStrategy: "compact-sync" | "compact-cooperative" | "legacy",
   ): void {
+    const diagnosticBaseline = performanceSink ? this.#canonicalSnapshot : null;
     try {
       const payload = verified.payload;
       if (
@@ -620,6 +725,12 @@ class WireTerminalEndpoint {
       }
       this.#flush();
       performanceSink?.terminalDelivery({
+        decodeStrategy,
+        representationBytes: envelope.representationBytes,
+        baselineCols: diagnosticBaseline?.cols ?? 0,
+        baselineRows: diagnosticBaseline?.rows ?? 0,
+        baselineHistoryRows: diagnosticBaseline?.history.length ?? 0,
+        ...(envelope.performanceTraceId ? { traceId: envelope.performanceTraceId } : {}),
         parseMs: performance.now() - parseStartedAt,
         // WireTerminalEndpoint admits at most one assembled transaction and
         // refuses another envelope until that transaction is delivered.
