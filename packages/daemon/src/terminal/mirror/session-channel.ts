@@ -1,4 +1,8 @@
-import { decodeNativeGridCapture, isNativeBootstrapCapture } from "./native-grid-capture.ts";
+import {
+  decodeNativeGridCapture,
+  isNativeBootstrapCapture,
+  type NativeGridCapture,
+} from "./native-grid-capture.ts";
 /**
  * SessionChannel — one control-mode channel serving every pane subscription
  * of one tmux session (m43 card 1).
@@ -170,6 +174,17 @@ export type MirrorFlowRecoveryFailureReason =
   | "no-progress"
   | "absolute-deadline"
   | "attempts-exhausted";
+
+/** Cache only proven server capability; malformed or failed reads can recover. */
+function nativeBootstrapUnsupported(
+  ok: boolean,
+  lines: readonly string[],
+  native: NativeGridCapture | null,
+): boolean {
+  if (ok)
+    return native !== null && (native.version !== 2 || native.currentAttributes === undefined);
+  return lines.some((line) => /^(?:command capture-pane: )?unknown flag -R$/.test(line.trim()));
+}
 
 export interface MirrorFlowRecoveryObservation {
   readonly semanticPaneId: string;
@@ -1041,6 +1056,16 @@ export class SessionChannel {
         if (settled) return;
         const native =
           sub.nativeBootstrap && reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
+        if (
+          sub.nativeBootstrap &&
+          (!native || !isNativeBootstrapCapture(native)) &&
+          !nativeBootstrapUnsupported(reply.ok, reply.lines, native)
+        ) {
+          sub.feed.abort(epoch);
+          retireMarker();
+          settle(FAILED_RESEED_RESULT);
+          return;
+        }
         if (sub.nativeBootstrap && (!native || !isNativeBootstrapCapture(native))) {
           // Unsupported/backing-only native exports fall back at a new FIFO
           // capture seam. Never replay held bytes across these two captures.
@@ -1550,6 +1575,10 @@ export class SessionChannel {
       1,
       (reply) => {
         if (!reply.ok) {
+          if (nativeCapture && nativeBootstrapUnsupported(false, reply.lines, null)) {
+            this.nativeBootstrapUnavailable = true;
+            for (const { sub } of participants) sub.nativeBootstrap = false;
+          }
           fail();
           return;
         }
@@ -1561,8 +1590,10 @@ export class SessionChannel {
         captureLines = Object.freeze([...reply.lines]);
         const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
         if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
-          this.nativeBootstrapUnavailable = true;
-          for (const { sub } of participants) sub.nativeBootstrap = false;
+          if (nativeBootstrapUnsupported(true, captureLines, native)) {
+            this.nativeBootstrapUnavailable = true;
+            for (const { sub } of participants) sub.nativeBootstrap = false;
+          }
           fail();
           return;
         }
@@ -1809,8 +1840,10 @@ export class SessionChannel {
             const captureLines = Object.freeze([...result.captureLines]);
             const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
             if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
-              this.nativeBootstrapUnavailable = true;
-              for (const { sub } of participants) sub.nativeBootstrap = false;
+              if (nativeBootstrapUnsupported(true, captureLines, native)) {
+                this.nativeBootstrapUnavailable = true;
+                for (const { sub } of participants) sub.nativeBootstrap = false;
+              }
               fail(result.statusObserved);
               return;
             }

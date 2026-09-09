@@ -3060,35 +3060,156 @@ describe("native capture semantic ownership", () => {
 });
 
 describe("native bootstrap capability fallback", () => {
-  it("restarts at a fresh capture seam and caches backing-only capability", async () => {
+  it("bounds persistent malformed captures without publishing portable content", async () => {
     const rig = await startedRig();
     try {
       const first = collect();
       rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
-      expect(rig.sim.written.some((command) => command.includes("capture-pane -p -R"))).toBe(true);
-      rig.sim.reply(["not a bootstrap-capable export"]);
-      rig.sim.reply(["0 0 100 50"]); // retired native cursor reply
-      rig.sim.feedLines("%output %1 discarded-before-fallback");
-      rig.sim.reply(["portable"]);
-      rig.sim.feedLines("%output %1 held-after-fallback");
+      rig.sim.reply(["malformed native capture"]);
       rig.sim.reply(["0 0 100 50"]);
-      expect(bytesOf(first.events)).toEqual(["portable", "held-after-fallback"]);
-      expect(first.events.filter((event) => event.type === "seed")).toHaveLength(1);
-      const count = rig.sim.written.filter((command) =>
-        command.includes("capture-pane -p -R"),
-      ).length;
-      const peer = collect();
-      rig.channel.subscribePane("pane.alpha", peer.onEvent, undefined, true);
-      expect(
-        rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
-      ).toHaveLength(count);
-      rig.sim.reply(["peer"]);
-      rig.sim.reply(["0 0 100 50"]);
-      expect(bytesOf(peer.events)).toEqual(["peer"]);
+      acknowledgeContinue(rig, "%1");
+      for (let attempt = 0; attempt < 3; attempt++) {
+        rig.sim.reply(["still malformed"]);
+        rig.sim.reply(["0 0 100 50"]);
+        if (attempt < 2) runRecoveryTimer(rig);
+      }
+      advanceRecoveryClock(rig, 10000);
+      expect(first.events.filter((event) => event.type === "fault")).toHaveLength(1);
+      expect(first.events.filter((event) => event.type === "seed")).toHaveLength(0);
+      expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
+        false,
+      );
     } finally {
       await rig.channel.dispose();
     }
   });
+
+  it.each([false, true])(
+    "recovers native after malformed shared capture (atomic=%s)",
+    async (atomicHook) => {
+      const rig = await startedRig({ atomicHook });
+      const native = nativeBootstrapLines();
+      try {
+        const first = collect();
+        rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+        rig.sim.reply(native);
+        rig.sim.reply(["0 0 100 50"]);
+        first.events.length = 0;
+        rig.sim.feedLines("%pause %1");
+        if (atomicHook) completeAtomicRecoveryPhase(rig, ["malformed"], "0 0 100 50");
+        else {
+          rig.sim.reply(["malformed"]);
+          rig.sim.reply(["0 0 100 50"]);
+        }
+        for (let phase = 0; phase < 3; phase++) {
+          runRecoveryTimer(rig);
+          if (atomicHook) completeAtomicRecoveryPhase(rig, native, "0 0 100 50");
+          else {
+            rig.sim.reply(native);
+            rig.sim.reply(["0 0 100 50"]);
+          }
+        }
+        expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
+          "native.version",
+          2,
+        );
+        expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
+          false,
+        );
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it.each(["failed", "malformed"])(
+    "recovers native capability after a transient %s capture",
+    async (kind) => {
+      const rig = await startedRig();
+      const native = nativeBootstrapLines();
+      try {
+        const first = collect();
+        rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+        rig.sim.reply(
+          [kind === "failed" ? "temporary capture failure" : "truncated native JSON"],
+          kind !== "failed",
+        );
+        rig.sim.reply(["0 0 100 50"]); // retired native cursor probe
+        acknowledgeContinue(rig, "%1");
+        for (let phase = 0; phase < 3; phase++) {
+          if (phase) runRecoveryTimer(rig);
+          rig.sim.reply(native);
+          rig.sim.reply(["0 0 100 50"]);
+        }
+        expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
+          "native.version",
+          2,
+        );
+        expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
+          false,
+        );
+        const before = rig.sim.written.filter((command) =>
+          command.includes("capture-pane -p -R"),
+        ).length;
+        const peer = collect();
+        rig.channel.subscribePane("pane.alpha", peer.onEvent, undefined, true);
+        expect(
+          rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
+        ).toHaveLength(before + 1);
+        rig.sim.reply(native);
+        rig.sim.reply(["0 0 100 50"]);
+        expect(peer.events.find((event) => event.type === "seed")).toHaveProperty(
+          "native.version",
+          2,
+        );
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it.each(["stock", "v1", "backing-only-v2"])(
+    "restarts at a fresh capture seam and caches explicit %s capability",
+    async (capability) => {
+      const rig = await startedRig();
+      try {
+        const first = collect();
+        rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+        expect(rig.sim.written.some((command) => command.includes("capture-pane -p -R"))).toBe(
+          true,
+        );
+        if (capability === "stock") rig.sim.reply(["command capture-pane: unknown flag -R"], false);
+        else {
+          const lines = nativeBootstrapLines();
+          const header = JSON.parse(lines[0]!);
+          delete header.currentAttributes;
+          if (capability === "v1") header.version = 1;
+          lines[0] = JSON.stringify(header);
+          rig.sim.reply(lines);
+        }
+        rig.sim.reply(["0 0 100 50"]); // retired native cursor reply
+        rig.sim.feedLines("%output %1 discarded-before-fallback");
+        rig.sim.reply(["portable"]);
+        rig.sim.feedLines("%output %1 held-after-fallback");
+        rig.sim.reply(["0 0 100 50"]);
+        expect(bytesOf(first.events)).toEqual(["portable", "held-after-fallback"]);
+        expect(first.events.filter((event) => event.type === "seed")).toHaveLength(1);
+        const count = rig.sim.written.filter((command) =>
+          command.includes("capture-pane -p -R"),
+        ).length;
+        const peer = collect();
+        rig.channel.subscribePane("pane.alpha", peer.onEvent, undefined, true);
+        expect(
+          rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
+        ).toHaveLength(count);
+        rig.sim.reply(["peer"]);
+        rig.sim.reply(["0 0 100 50"]);
+        expect(bytesOf(peer.events)).toEqual(["peer"]);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
 });
 
 describe("native recovery formats", () => {
@@ -3155,3 +3276,21 @@ describe("native recovery formats", () => {
     },
   );
 });
+
+function nativeBootstrapLines(): string[] {
+  return [
+    JSON.stringify({
+      version: 2,
+      currentAttributes: [0, 8, 8, 8],
+      cols: 100,
+      rows: 50,
+      history: 0,
+      hscrolled: 0,
+      limit: 2000,
+      cursor: [0, 0],
+    }),
+    ...Array.from({ length: 50 }, (_, row) =>
+      JSON.stringify({ row, flags: 0, used: 0, cells: [] }),
+    ),
+  ];
+}
