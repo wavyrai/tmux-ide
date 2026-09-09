@@ -37,6 +37,37 @@ describe("terminal wheel cadence", () => {
 });
 
 describe("local terminal scrollback", () => {
+  it("moves exactly one wheel tick when retaining the view changes its geometry", () => {
+    let depth = 100;
+    let trim = 10;
+    let origin = { x: 2, y: 3 };
+    const release = vi.fn();
+    const owner = createTerminalScrollback(
+      {
+        renderSource: {
+          scrollbackDepth: () => depth,
+          paneCanonicalIdentity: () => ({ historyTrim: trim }),
+        },
+        subscribePaneVersion: () => () => {},
+      },
+      () => origin,
+      (_id, value) => value,
+      () => {
+        depth = 200;
+        trim = 20;
+        origin = { x: 1, y: 1 };
+        return release;
+      },
+    );
+    owner.move("a", 5);
+    expect(owner.offset("a")).toBe(5);
+    expect(owner.origin("a")).toEqual({ x: 1, y: -4 });
+    owner.move("a", -5);
+    expect(owner.origin("a")).toBeNull();
+    expect(release).toHaveBeenCalledOnce();
+    owner.dispose();
+  });
+
   it("publishes only the final viewport for one wheel movement or seek", () => {
     createRoot((dispose) => {
       const owner = createTerminalScrollback({

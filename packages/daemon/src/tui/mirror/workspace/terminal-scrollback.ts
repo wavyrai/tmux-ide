@@ -164,10 +164,14 @@ export function createTerminalScrollback(
       },
       move: (delta: number, returnToLive = false) => {
         synchronize();
-        const { trim, live, base } = coordinates();
+        let { trim, live, base } = coordinates();
         if (!reading() && !returnToLive && delta > 0 && base > trim) {
           releaseReadView = retainView?.(id) ?? null;
           identity = adapter.renderSource.paneCanonicalIdentity?.(id);
+          // Retaining can synchronously reflow to the pane's current size.
+          // Apply this wheel tick in the retained view's coordinates, rather
+          // than anchoring it to the old history length and viewport origin.
+          ({ trim, live, base } = coordinates());
         }
         // Wheel-entered copy mode exits at the bottom. Explicit selection
         // owns its retention separately and stays open at that edge.
