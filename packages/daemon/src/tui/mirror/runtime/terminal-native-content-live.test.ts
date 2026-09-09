@@ -1449,14 +1449,51 @@ describe.skipIf(!available)("native history reader continuity", () => {
       await vi.waitFor(() =>
         expect(tmux("capture-pane", "-p", "-t", target)).toContain("DONE-120"),
       );
+      // Bounded metadata only: preserve the exact failing capture path in CI
+      // without printing terminal contents or adding another capture/decoder.
+      const captureAttempts: Array<Readonly<Record<string, unknown>>> = [];
       const mirror = new MirrorService({
-        createIo: (name, handlers) =>
-          new MirrorControlChannel({
+        createIo: (name, handlers) => {
+          const io = new MirrorControlChannel({
             session: name,
             handlers,
             socketName: socket,
             configFile: "/dev/null",
-          }),
+          });
+          const commandList = io.commandListInline.bind(io);
+          io.commandListInline = (command, count, index, onReply) =>
+            commandList(command, count, index, (reply) => {
+              if (command.includes("capture-pane -p ")) {
+                const native = command.includes("capture-pane -p -R");
+                let header: Record<string, unknown> | null = null;
+                if (native && reply.ok) {
+                  try {
+                    header = JSON.parse(reply.lines[0] ?? "null");
+                  } catch {
+                    // A malformed header is itself useful fallback evidence.
+                  }
+                }
+                captureAttempts.push({
+                  native,
+                  ok: reply.ok,
+                  records: reply.lines.length,
+                  ...(header
+                    ? {
+                        version: header.version,
+                        cols: header.cols,
+                        rows: header.rows,
+                        history: header.history,
+                        cursor: header.cursor,
+                        hasCurrentAttributes: Array.isArray(header.currentAttributes),
+                      }
+                    : {}),
+                });
+                if (captureAttempts.length > 16) captureAttempts.shift();
+              }
+              onReply(reply);
+            });
+          return io;
+        },
       });
       let owner: SessionRuntimeTerminalReplicaOwner | undefined;
       let disposeClient = () => {};
@@ -1668,6 +1705,7 @@ describe.skipIf(!available)("native history reader continuity", () => {
                     [...snapshot().history, ...snapshot().grid].map((row) =>
                       row.cells.map(({ grapheme, width }) => ({ grapheme, width })),
                     ),
+                    JSON.stringify({ scenario, width, seedCount, captureAttempts }),
                   ).toEqual(expected);
                 } else {
                   expect(text()).toBe(tmux("capture-pane", "-p", "-S", "-", "-t", target));
