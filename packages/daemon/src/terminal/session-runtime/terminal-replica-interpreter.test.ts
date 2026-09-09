@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as core from "@tmux-ide/core";
 import { widgetMarkerAnnouncement, type CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
 import type { CausalCellProbeV1 } from "@tmux-ide/contracts";
 import {
@@ -30,6 +31,71 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it("hashes each new projection once while reusing committed hashes for seeds and no-ops", async () => {
+    const hash = vi.spyOn(core, "hashTerminalReplicaSnapshot");
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const interpreter = create(updates);
+    const reseed = (text: string) =>
+      interpreter.enqueue({
+        type: "reseed",
+        cols: 12,
+        rows: 3,
+        chunks: [new TextEncoder().encode(text)],
+        cursor: { x: 0, y: 0 },
+        bootstrap: "authoritative-stream",
+      });
+    try {
+      await reseed("one");
+      expect(hash).toHaveBeenCalledTimes(1);
+      const first = interpreter.currentSeed()!;
+      expect(first.stateHash).toBe(hash.mock.results[0]!.value);
+      expect(hash).toHaveBeenCalledTimes(1);
+
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 12,
+        rows: 3,
+        chunks: [new TextEncoder().encode("stale")],
+        cursor: { x: 0, y: 0 },
+        bootstrap: "authoritative-stream",
+        validateBeforeCommit: () => false,
+      });
+      expect(interpreter.currentSeed()).toEqual(first);
+      expect(hash).toHaveBeenCalledTimes(1);
+
+      await interpreter.enqueue({ type: "cursor", x: 0, y: 0 });
+      expect(hash).toHaveBeenCalledTimes(2);
+      expect(updates).toHaveLength(1);
+      expect(interpreter.currentSeed()).toEqual(first);
+      expect(hash).toHaveBeenCalledTimes(2);
+
+      await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("X") });
+      expect(hash).toHaveBeenCalledTimes(3);
+      expect(interpreter.currentSeed()!.stateHash).toBe(hash.mock.results[2]!.value);
+      expect(hash).toHaveBeenCalledTimes(3);
+      await interpreter.enqueue({ type: "resize", cols: 16, rows: 4 });
+      expect(hash).toHaveBeenCalledTimes(4);
+      await reseed("replacement");
+      expect(hash).toHaveBeenCalledTimes(5);
+      expect(interpreter.currentSeed()!.stateHash).toBe(hash.mock.results[4]!.value);
+      expect(hash).toHaveBeenCalledTimes(5);
+
+      // Independent receiver validation still recomputes and verifies every
+      // published hash, including the changed geometry and replacement seed.
+      hash.mockRestore();
+      let receiver: ReturnType<typeof applyTerminalReplicaUpdate>["state"] = null;
+      for (const update of updates) {
+        const result = applyTerminalReplicaUpdate(receiver, update);
+        expect(result.status).toBe("applied");
+        if (result.status === "applied") receiver = result.state;
+      }
+      expect(receiver?.snapshot).toEqual(interpreter.currentSnapshot());
+    } finally {
+      hash.mockRestore();
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
   it("holds a native main-screen clear until its unknown history policy is recaptured", async () => {
     const updates: CanonicalTerminalReplicaUpdate[] = [];
     let reseeds = 0;

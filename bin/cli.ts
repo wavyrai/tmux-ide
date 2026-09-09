@@ -17,11 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // to it — can still find the CLI to run its subprocesses.
 const selfPath = fileURLToPath(import.meta.url);
 const nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve(__dirname, "cli.js");
-import { launch } from "../packages/daemon/src/launch.ts";
 import { resolveEntry } from "../packages/daemon/src/tui/team/entry.ts";
-import { loadAppConfig } from "../packages/daemon/src/lib/app-config.ts";
-import { resolveConfig } from "../packages/daemon/src/lib/resolved-config.ts";
-import { resolveProjectConfigContext } from "../packages/daemon/src/lib/config-context.ts";
 import {
   ensureCompiledTuiRuntimeDir,
   ensureTuiLaunchAvailable,
@@ -31,24 +27,8 @@ import {
   isBunAvailable,
   openTuiLaunchEnvironment,
 } from "../packages/daemon/src/tui/compiled.ts";
-import { init } from "../packages/daemon/src/init.ts";
-import { stop } from "../packages/daemon/src/stop.ts";
-import { attach } from "../packages/daemon/src/attach.ts";
-import { ls } from "../packages/daemon/src/ls.ts";
-import { doctor } from "../packages/daemon/src/doctor.ts";
-import { status } from "../packages/daemon/src/status.ts";
-import { inspect } from "../packages/daemon/src/inspect.ts";
-import { validate } from "../packages/daemon/src/validate.ts";
-import { detect } from "../packages/daemon/src/detect.ts";
-import { config } from "../packages/daemon/src/config.ts";
-import { migrate } from "../packages/daemon/src/migrate.ts";
-import { restart } from "../packages/daemon/src/restart.ts";
-import { restore } from "../packages/daemon/src/restore.ts";
-import { send } from "../packages/daemon/src/send.ts";
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
-import { runHeadlessDaemon } from "../packages/daemon/src/lib/headless-daemon.ts";
-import { ensureCanonicalDaemon } from "../packages/daemon/src/lib/canonical-daemon-bootstrap.ts";
 import { stateHome } from "../packages/daemon/src/lib/state-home.ts";
 import {
   wantsHostedApp,
@@ -64,6 +44,8 @@ import {
   HOSTED_ENV,
 } from "../packages/daemon/src/tui/mirror/hosted.ts";
 
+// Command implementations load only after dispatch; help/version and the daemon
+// must not initialize unrelated workspace commands or their schema graphs.
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -614,7 +596,9 @@ async function runApp(appArgs: string[]): Promise<void> {
   // The app is a thin client. Establish the one persistent daemon generation
   // only after its renderer is known-runnable, then mount against that owner.
   try {
-    await ensureCanonicalDaemon({
+    await (
+      await import("../packages/daemon/src/lib/canonical-daemon-bootstrap.ts")
+    ).ensureCanonicalDaemon({
       entryPath: nodeCliPath,
       expectedProductVersion: (await import("../package.json")).version,
     });
@@ -629,7 +613,8 @@ async function runApp(appArgs: string[]): Promise<void> {
     wantsHostedApp({
       flagDetachable: values.detachable === true,
       flagHosted: values.hosted === true,
-      configDetachable: loadAppConfig().app.detachable,
+      configDetachable: (await import("../packages/daemon/src/lib/app-config.ts")).loadAppConfig()
+        .app.detachable,
       hostedEnv: process.env[HOSTED_ENV] === "1",
     });
   if (hosted) launchHostedApp(appScriptPath, appArgs);
@@ -668,7 +653,9 @@ try {
       entryPath: nodeCliPath,
       expectedProductVersion: pkg.version,
     });
-    await runHeadlessDaemon({
+    await (
+      await import("../packages/daemon/src/lib/headless-daemon.ts")
+    ).runHeadlessDaemon({
       port: values.port,
       json,
       expectedVersion: pkg.version,
@@ -706,7 +693,9 @@ try {
           { code: "CONFIG_NOT_FOUND", exitCode: 1 },
         );
       }
-      const configContext = await resolveProjectConfigContext(targetDir);
+      const configContext = await (
+        await import("../packages/daemon/src/lib/config-context.ts")
+      ).resolveProjectConfigContext(targetDir);
       // M22.6 — the front-door decision. `--team` always means the classic
       // cockpit; a present project config still auto-launches the project; otherwise
       // `app.frontDoor` flips the default no-project entry to the unified app.
@@ -716,7 +705,8 @@ try {
         hasWorkspaceConfig: configContext.hasWorkspaceConfig,
         hasIdeYml: configContext.hasIdeYml,
         teamFlag: values.team === true,
-        frontDoor: loadAppConfig().app.frontDoor,
+        frontDoor: (await import("../packages/daemon/src/lib/app-config.ts")).loadAppConfig().app
+          .frontDoor,
       });
       if (entry !== "project") {
         // No project to launch here. `--json` is a scripting surface — it always
@@ -729,28 +719,32 @@ try {
         else await launchTeamCockpit();
         break;
       }
-      await launch(startTargetDir, { json });
+      await (await import("../packages/daemon/src/launch.ts")).launch(startTargetDir, { json });
       break;
     }
 
     case "init":
-      await init({ template: values.template, json });
+      await (
+        await import("../packages/daemon/src/init.ts")
+      ).init({ template: values.template, json });
       break;
 
     case "stop":
-      await stop(positionals[1], { json });
+      await (await import("../packages/daemon/src/stop.ts")).stop(positionals[1], { json });
       break;
 
     case "attach":
-      await attach(positionals[1], { json });
+      await (await import("../packages/daemon/src/attach.ts")).attach(positionals[1], { json });
       break;
 
     case "restart":
-      await restart(positionals[1], { json });
+      await (await import("../packages/daemon/src/restart.ts")).restart(positionals[1], { json });
       break;
 
     case "restore":
-      await restore({
+      await (
+        await import("../packages/daemon/src/restore.ts")
+      ).restore({
         json,
         dryRun: values["dry-run"] === true,
         runCommands: values["run-commands"] === true,
@@ -759,11 +753,11 @@ try {
       break;
 
     case "ls":
-      await ls({ json });
+      await (await import("../packages/daemon/src/ls.ts")).ls({ json });
       break;
 
     case "doctor":
-      await doctor({ json });
+      await (await import("../packages/daemon/src/doctor.ts")).doctor({ json });
       break;
 
     case "remote-daemon-info": {
@@ -776,23 +770,27 @@ try {
     }
 
     case "status":
-      await status(positionals[1], { json });
+      await (await import("../packages/daemon/src/status.ts")).status(positionals[1], { json });
       break;
 
     case "inspect":
-      await inspect(positionals[1], { json });
+      await (await import("../packages/daemon/src/inspect.ts")).inspect(positionals[1], { json });
       break;
 
     case "validate":
-      await validate(positionals[1], { json });
+      await (await import("../packages/daemon/src/validate.ts")).validate(positionals[1], { json });
       break;
 
     case "detect":
-      await detect(positionals[1], { json, write: values.write });
+      await (
+        await import("../packages/daemon/src/detect.ts")
+      ).detect(positionals[1], { json, write: values.write });
       break;
 
     case "migrate":
-      await migrate(positionals[1], { json, dryRun: values["dry-run"], write: values.write });
+      await (
+        await import("../packages/daemon/src/migrate.ts")
+      ).migrate(positionals[1], { json, dryRun: values["dry-run"], write: values.write });
       break;
 
     case "config": {
@@ -837,7 +835,9 @@ try {
         break;
       }
 
-      await config(null, { json, action, args: configArgs });
+      await (
+        await import("../packages/daemon/src/config.ts")
+      ).config(null, { json, action, args: configArgs });
       break;
     }
 
@@ -858,7 +858,9 @@ try {
         const { readFileSync } = await import("node:fs");
         message = readFileSync(0, "utf-8").trim();
       }
-      await send(null, { json, to: target, message, noEnter: values["no-enter"] });
+      await (
+        await import("../packages/daemon/src/send.ts")
+      ).send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
     }
 
@@ -1671,7 +1673,9 @@ try {
         let width = DEFAULT_SIDEBAR_WIDTH;
         let theme = null;
         try {
-          const resolved = await resolveConfig(dir);
+          const resolved = await (
+            await import("../packages/daemon/src/lib/resolved-config.ts")
+          ).resolveConfig(dir);
           const config = resolved.launchConfig;
           theme = config?.theme ?? null;
           const sb = resolveSidebarConfig(config?.sidebar);
@@ -1729,7 +1733,11 @@ try {
       // (or its dir basename). `git worktree list` returns the main checkout first.
       const worktrees = listWorktrees(repoDir);
       const mainPath = worktrees[0]?.path ?? repoDir;
-      const projectName = (await resolveProjectConfigContext(mainPath)).sessionName;
+      const projectName = (
+        await (
+          await import("../packages/daemon/src/lib/config-context.ts")
+        ).resolveProjectConfigContext(mainPath)
+      ).sessionName;
 
       // Start a session in a worktree checkout: full IDE layout when it has a
       // workspace config (launch under the worktree's own session name so it never
@@ -1737,9 +1745,13 @@ try {
       // Never auto-attaches — the caller may be inside tmux (the menu) — it prints
       // how to switch instead.
       async function openWorktreeSession(wtPath: string, name: string): Promise<void> {
-        const worktreeContext = await resolveProjectConfigContext(wtPath);
+        const worktreeContext = await (
+          await import("../packages/daemon/src/lib/config-context.ts")
+        ).resolveProjectConfigContext(wtPath);
         if (worktreeContext.configKind !== "none") {
-          await launch(wtPath, { attach: false, sessionName: name });
+          await (
+            await import("../packages/daemon/src/launch.ts")
+          ).launch(wtPath, { attach: false, sessionName: name });
         } else {
           if (!hasSession(name)) createDetachedSession(name, wtPath);
           const { adoptSession } = await import("../packages/daemon/src/tui/chrome/statusline.ts");
@@ -1925,7 +1937,9 @@ try {
           );
           break;
         }
-        await ensureCanonicalDaemon({
+        await (
+          await import("../packages/daemon/src/lib/canonical-daemon-bootstrap.ts")
+        ).ensureCanonicalDaemon({
           entryPath: nodeCliPath,
           expectedProductVersion: (await import("../package.json")).version,
         });

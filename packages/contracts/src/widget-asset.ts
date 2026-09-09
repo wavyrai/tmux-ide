@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { DesktopDaemonCapabilityErrorSchemaZ } from "./desktop-host.ts";
+import { DesktopDaemonCapabilityErrorSchemaZ } from "./desktop-daemon-capability-error.ts";
 
 /** Content-addressed id minted by the local widget asset store. */
 export const WidgetAssetIdSchemaZ = z.string().regex(/^[0-9a-f]{64}$/u);

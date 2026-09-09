@@ -7,10 +7,8 @@ import {
   type CommandDescriptor,
   type CommandSource,
 } from "./commands.ts";
-import {
-  DesktopDaemonCapabilityErrorSchemaZ,
-  DesktopWorkspaceNameSchemaZ,
-} from "./desktop-host.ts";
+import { DesktopDaemonCapabilityErrorSchemaZ } from "./desktop-daemon-capability-error.ts";
+import { DesktopWorkspaceNameSchemaZ } from "./desktop-workspace-name.ts";
 import { WorkspaceAgentRoleSchemaZ } from "./workspace-config.ts";
 
 export const WORKSPACE_PANE_CREATE_COMMAND_ID = "workspace.pane.create" as const;

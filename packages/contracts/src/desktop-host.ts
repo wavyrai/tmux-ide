@@ -1,3 +1,13 @@
+import {
+  DesktopDaemonCapabilityErrorSchemaZ,
+  type DesktopDaemonCapabilityError,
+} from "./desktop-daemon-capability-error.ts";
+export {
+  DesktopDaemonCapabilityErrorCodeSchemaZ,
+  DesktopDaemonCapabilityErrorSchemaZ,
+  type DesktopDaemonCapabilityErrorCode,
+  type DesktopDaemonCapabilityError,
+} from "./desktop-daemon-capability-error.ts";
 import { z } from "zod";
 import {
   DaemonChildOutputTailSchemaZ,
@@ -180,30 +190,6 @@ export const DesktopDaemonCapabilityStateSchemaZ = z.discriminatedUnion("status"
     .strict(),
   z.object({ status: z.literal("degraded"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict(),
 ]);
-
-export const DesktopDaemonCapabilityErrorCodeSchemaZ = z.enum([
-  "preview-only",
-  "daemon-unavailable",
-  "daemon-degraded",
-  "invalid-request",
-  "workspace-not-found",
-  "request-timeout",
-  "response-too-large",
-  "invalid-response",
-  "daemon-identity-mismatch",
-  "request-failed",
-  "resource-changed",
-  "event-unavailable",
-  "protocol-error",
-  "disposed",
-]);
-
-export const DesktopDaemonCapabilityErrorSchemaZ = z
-  .object({
-    code: DesktopDaemonCapabilityErrorCodeSchemaZ,
-    reason: z.string().min(1).max(240),
-  })
-  .strict();
 
 export const DesktopDaemonWorkspaceSummarySchemaZ = z
   .object({
@@ -603,10 +589,6 @@ export type DesktopDaemonSupervisorFatalReason = z.infer<
 >;
 export type DesktopDaemonHostState = z.infer<typeof DesktopDaemonHostStateSchemaZ>;
 export type DesktopDaemonCapabilityState = z.infer<typeof DesktopDaemonCapabilityStateSchemaZ>;
-export type DesktopDaemonCapabilityErrorCode = z.infer<
-  typeof DesktopDaemonCapabilityErrorCodeSchemaZ
->;
-export type DesktopDaemonCapabilityError = z.infer<typeof DesktopDaemonCapabilityErrorSchemaZ>;
 export type DesktopDaemonWorkspaceSummary = z.infer<typeof DesktopDaemonWorkspaceSummarySchemaZ>;
 export type DesktopDaemonListWorkspacesResult = z.infer<
   typeof DesktopDaemonListWorkspacesResultSchemaZ
