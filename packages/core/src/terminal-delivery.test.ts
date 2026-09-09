@@ -757,6 +757,77 @@ describe("terminal delivery client", () => {
     });
   }, 30_000);
 
+  it("skips impossible old-width history reuse while preserving seed validation and adoption", async () => {
+    const oldBlank = blankTerminalReplicaSnapshot(80, 2);
+    const oldSnapshot = {
+      ...oldBlank,
+      history: Array.from({ length: 256 }, () => oldBlank.grid[0]!),
+    };
+    const oldBytes = encodeCompactSemanticTerminalUpdate({
+      frame: "seed",
+      revision: 0,
+      snapshot: oldSnapshot,
+    });
+    const baseline = decodeVerifiedCompactSemanticTerminalUpdate(
+      oldBytes,
+      null,
+      hashTerminalReplicaSnapshot(oldSnapshot),
+    ).canonicalSnapshot!;
+    const resizedBlank = blankTerminalReplicaSnapshot(66, 2);
+    const resized = {
+      ...resizedBlank,
+      history: Array.from({ length: 256 }, () => resizedBlank.grid[0]!),
+    };
+    const bytes = encodeCompactSemanticTerminalUpdate({
+      frame: "seed",
+      revision: 1,
+      snapshot: resized,
+    });
+    const hash = hashTerminalReplicaSnapshot(resized);
+    const counts: number[] = [];
+    for (const prior of [baseline, null]) {
+      let yields = 0;
+      const decoded = await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        prior,
+        hash,
+        {
+          yieldControl: async () => {
+            yields++;
+          },
+          grantReducerAdoption: true,
+        },
+      );
+      expect(decoded.canonicalSnapshot).toEqual(resized);
+      counts.push(yields);
+    }
+    // The resized decode does no additional baseline indexing work. It still
+    // yields during parsing, expansion and verification just like a cold seed.
+    expect(counts[0]).toBeGreaterThan(0);
+    expect(counts[0]).toBe(counts[1]);
+    await expect(
+      decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        baseline,
+        "0000000000000000",
+        { yieldControl: async () => {} },
+      ),
+    ).rejects.toThrow(/hash mismatch/);
+    let sameWidthProfile: CompactSemanticCommitProfile | undefined;
+    await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+      oldBytes,
+      baseline,
+      hashTerminalReplicaSnapshot(oldSnapshot),
+      {
+        yieldControl: async () => {},
+        onComplete: (profile) => {
+          sameWidthProfile = profile;
+        },
+      },
+    );
+    expect(sameWidthProfile!.reusedRows).toBeGreaterThan(0);
+  });
+
   it("reuses authenticated baseline rows before allocating repeated compact history", async () => {
     const blank = blankTerminalReplicaSnapshot(132, 41);
     const defaultCell = blank.grid[0]!.cells[0]!;

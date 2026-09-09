@@ -1126,7 +1126,15 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
     rowsPerSlice: Math.min(Math.max(options.rowsPerSlice ?? 64, 1), 64),
     rowsSinceYield: 0,
   };
-  if (baseline) {
+  // Canonical rows have exactly their snapshot's width. A full resized seed
+  // cannot reuse any old-width row, so avoid scanning/indexing old history.
+  // This only removes an optimization candidate: normal seed validation and
+  // canonical hashing still run below, with the original adoption baseline.
+  const seedChangesWidth =
+    qualifiedWire.f === "s" &&
+    Array.isArray(qualifiedWire.s) &&
+    qualifiedWire.s[0] !== baseline?.cols;
+  if (baseline && !seedChangesWidth) {
     budget.rowReuseIndex = await compactBaselineRowReuseIndex(baseline, control);
     budget.rawRowReuseIndexes = [
       await compactRawRowReuseIndex(baseline.grid, control),
