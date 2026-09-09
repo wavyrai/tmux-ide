@@ -249,9 +249,14 @@ describe("production OpenTUI v2 data path", () => {
     // Keep these explicit and retain a fixed bound on the complete runtime graph;
     // the singular replica/transport ownership checks above remain unchanged.
     for (const path of nativeIntegration) expect(authorityDataPathFiles).toContain(path);
-    // Two local renderer-output helpers own ANSI compaction and stdout delivery.
+    // Local rendering helpers own ANSI compaction, stdout delivery, and bounded
+    // clean-row projection reuse.
     // They must not acquire daemon, replica or tmux authority of their own.
-    for (const name of ["renderer-frame-optimizer", "renderer-output-transport"]) {
+    for (const name of [
+      "renderer-frame-optimizer",
+      "renderer-output-transport",
+      "terminal-row-projection-cache",
+    ]) {
       const path = `packages/daemon/src/tui/mirror/runtime/${name}.ts`;
       expect(authorityDataPathFiles).toContain(path);
       expect(productionGraph.sourceByFile.get(path)).not.toMatch(
@@ -259,7 +264,8 @@ describe("production OpenTUI v2 data path", () => {
       );
     }
     // Two pure pointer helpers and one explicit host URL opener add no stream,
-    // replica, polling or daemon owner. Keep their cost visible in this bound.
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(124);
+    // replica, polling or daemon owner. The row cache above adds one pure
+    // rendering module; keep its cost visible in this bound.
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(125);
   });
 });
