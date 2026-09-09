@@ -60,6 +60,11 @@ const sshSources = [
 
 const checks = [
   {
+    boundary: "Contract initializer tree shaking and validation",
+    command: "pnpm",
+    args: ["test:contracts-initializer-purity"],
+  },
+  {
     boundary: "OpenTUI release lint",
     command: "pnpm",
     args: [

@@ -38,6 +38,8 @@ import { fileURLToPath } from "node:url";
 import { releaseSourceState } from "./lib/release-source-state.mjs";
 import { validateNativeScrollReleaseManifest } from "./lib/native-scroll-release-manifest.mjs";
 
+import { contractsInitializerPurityPlugin } from "./lib/contracts-initializer-purity.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 const scrollLibraryArg = process.argv.indexOf("--experimental-scroll-library");
@@ -180,7 +182,7 @@ const result = await Bun.build({
     TMUX_IDE_BUILD_PLATFORM: JSON.stringify(platformTag),
     TMUX_IDE_BUILD_SOURCE_STATE: JSON.stringify(experimentalLibrary ? "dirty" : sourceState),
   },
-  plugins: [workerAssetPlugin, createSolidTransformPlugin()],
+  plugins: [contractsInitializerPurityPlugin(), workerAssetPlugin, createSolidTransformPlugin()],
 });
 
 if (!result.success) {

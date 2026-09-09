@@ -9,7 +9,8 @@
     "./terminal-attachment-stream": "./src/terminal-attachment-stream.ts",
     "./desktop-daemon-capability-error": "./src/desktop-daemon-capability-error.ts",
     "./desktop-daemon-issue": "./src/desktop-daemon-issue.ts",
-    "./desktop-workspace-name": "./src/desktop-workspace-name.ts"
+    "./desktop-workspace-name": "./src/desktop-workspace-name.ts",
+    "./saved-machines": "./src/saved-machines.ts"
   },
   "scripts": {
     "lint": "eslint src",

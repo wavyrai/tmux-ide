@@ -28,6 +28,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync, chmodSync, statSync } from "node:fs";
 
+import { contractsInitializerPurityPlugin } from "./lib/contracts-initializer-purity.mjs";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 const entry = resolve(repoRoot, "bin", "cli.ts");
@@ -50,6 +52,7 @@ await build({
   // only sane way to ship our own TS code. Relative `.ts` imports are
   // bundled too — the published tarball has no transpile step.
   plugins: [
+    contractsInitializerPurityPlugin(),
     {
       name: "external-non-workspace",
       setup(b) {
