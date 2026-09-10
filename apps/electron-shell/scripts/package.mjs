@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { selectRenderer, verifyRendererManifest } from "./renderer-artifact.mjs";
+import { stageNativeTmux, nativeTmuxDirectory } from "./native-tmux-package.mjs";
+import { validateBundledTmux } from "../../../packages/daemon/src/lib/bundled-tmux.ts";
 
 const execFileAsync = promisify(execFile);
 const requireFromHere = createRequire(import.meta.url);
@@ -30,6 +32,9 @@ await Promise.all([
   cp(join(packageRoot, "dist", "renderer"), join(staging, "renderer"), { recursive: true }),
   cp(join(packageRoot, "dist", "templates"), join(staging, "templates"), { recursive: true }),
 ]);
+
+// macOS packages must be self-contained when opened outside a login shell.
+if (process.platform === "darwin") await stageNativeTmux(repoRoot, staging);
 
 const nodePtyRoot = dirname(requireFromHere.resolve("node-pty/package.json"));
 const nodePtyTarget = join(staging, "node_modules", "node-pty");
@@ -119,6 +124,8 @@ await cp(staging, join(resourcesPath, "app"), { recursive: true });
 if (process.platform === "darwin") {
   await execFileAsync("codesign", ["--force", "--deep", "--sign", "-", appPath]);
   await execFileAsync("codesign", ["--verify", "--deep", "--strict", appPath]);
+  // Signing must not invalidate the native distribution integrity contract.
+  validateBundledTmux(nativeTmuxDirectory(join(resourcesPath, "app")));
 }
 
 await writeFile(

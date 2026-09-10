@@ -7,6 +7,8 @@ import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { selectRenderer, verifyRendererManifest } from "./renderer-artifact.mjs";
+import { nativeTmuxDirectory } from "./native-tmux-package.mjs";
+import { validateBundledTmux } from "../../../packages/daemon/src/lib/bundled-tmux.ts";
 
 const execFileAsync = promisify(execFile);
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,6 +35,13 @@ try {
 const baseEnvironment = { ...process.env };
 delete baseEnvironment.TMUX_IDE_RENDERER_URL;
 delete baseEnvironment.NODE_PATH;
+delete baseEnvironment.TMUX_IDE_CLI;
+delete baseEnvironment.TMUX_IDE_TMUX_BIN;
+if (process.platform === "darwin") baseEnvironment.PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+const fixtureTmux =
+  process.platform === "darwin"
+    ? validateBundledTmux(nativeTmuxDirectory(dirname(daemonEntryPath)))
+    : "tmux";
 
 function exists(path) {
   return stat(path).then(
@@ -73,8 +82,8 @@ async function createIsolatedRuntime(label) {
     mkdir(registry, { recursive: true, mode: 0o700 }),
     mkdir(userData, { recursive: true }),
   ]);
-  await execFileAsync("tmux", ["-S", socket, "new-session", "-d", "-s", sessionName]);
-  const { stdout } = await execFileAsync("tmux", [
+  await execFileAsync(fixtureTmux, ["-S", socket, "new-session", "-d", "-s", sessionName]);
+  const { stdout } = await execFileAsync(fixtureTmux, [
     "-S",
     socket,
     "display-message",
@@ -117,7 +126,7 @@ async function cleanupIsolatedRuntime(runtime) {
       () => process.kill(canonical.pid, "SIGKILL"),
     );
   }
-  await execFileAsync("tmux", ["-S", runtime.socket, "kill-server"]).catch(() => undefined);
+  await execFileAsync(fixtureTmux, ["-S", runtime.socket, "kill-server"]).catch(() => undefined);
   await rm(runtime.root, { recursive: true, force: true });
 }
 
