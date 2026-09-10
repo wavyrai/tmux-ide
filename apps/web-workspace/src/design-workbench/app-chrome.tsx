@@ -153,17 +153,25 @@ export function AppChrome({
             <dt>Commands</dt>
             <dd>⌘ K / Ctrl K</dd>
             <dt>Zoom pane</dt>
-            <dd>Double-click its title</dd>
+            <dd>{live ? "Zoom button in the pane header" : "Double-click its title"}</dd>
             <dt>Restore layout</dt>
-            <dd>Esc</dd>
+            <dd>{live ? "Unzoom button in the pane header" : "Esc"}</dd>
             <dt>Resize</dt>
             <dd>Drag a divider or use arrow keys</dd>
-            <dt>Move pane</dt>
-            <dd>Drag title toward a pane edge</dd>
+            {!live && (
+              <>
+                <dt>Move pane</dt>
+                <dd>Drag title toward a pane edge</dd>
+              </>
+            )}
             <dt>Swap panes</dt>
-            <dd>Drop in the center, or use Actions</dd>
-            <dt>Move tab</dt>
-            <dd>Drag or Alt Shift ← / →</dd>
+            <dd>
+              {live
+                ? "Drag a title onto another pane, or Enter on each title"
+                : "Drop in the center, or use Actions"}
+            </dd>
+            <dt>{live ? "Select tab" : "Move tab"}</dt>
+            <dd>{live ? "Arrow keys while a tab is focused" : "Drag or Alt Shift ← / →"}</dd>
           </dl>
           <p className="dw-popover-muted">
             {live

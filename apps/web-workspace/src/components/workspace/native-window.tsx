@@ -83,7 +83,7 @@ export function NativeWindow({
   const [zoomError, setZoomError] = useState("");
   async function zoom(pane: string) {
     if (zoomPending || !inputEnabled || !client.ownsRuntimeAuthority?.("input")) return;
-    const target = runtime.client.getSnapshot().target;
+    const { target, generation } = client.getSnapshot();
     if (!target) return;
     setZoomPending(true);
     setZoomError("");
@@ -99,7 +99,8 @@ export function NativeWindow({
         },
       });
     } catch (e) {
-      setZoomError(e instanceof Error ? e.message : "Could not change pane zoom.");
+      if (client.getSnapshot().generation === generation)
+        setZoomError(e instanceof Error ? e.message : "Could not change pane zoom.");
     } finally {
       setZoomPending(false);
     }
@@ -117,7 +118,7 @@ export function NativeWindow({
   const [splitPending, setSplitPending] = useState(false);
   async function split(pane: string, direction: "right" | "down") {
     if (splitPending || !inputEnabled || !client.ownsRuntimeAuthority?.("input")) return;
-    const target = client.getSnapshot().target;
+    const { target, generation } = client.getSnapshot();
     if (!target) return;
     setSplitPending(true);
     setZoomError("");
@@ -133,7 +134,10 @@ export function NativeWindow({
         },
       });
     } catch {
-      setZoomError("Could not split the pane. Check input control and try again.");
+      // A successful split can replace the runtime before its reply arrives.
+      // The client still fences that reply; do not label the new view a failure.
+      if (client.getSnapshot().generation === generation)
+        setZoomError("Could not split the pane. Check input control and try again.");
     } finally {
       setSplitPending(false);
     }
