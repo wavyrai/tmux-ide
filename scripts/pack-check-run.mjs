@@ -954,15 +954,6 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     () => capture("=journey-beta:0.0").includes(chooserMarker),
     many.diagnostics,
   );
-  // Seed an unmistakable terminal-frame identity in the isolated fixture
-  // sessions. A sidebar label alone cannot prove the selected stream painted.
-  for (const name of ["journey-alpha", "journey-beta"]) {
-    const command = `printf 'PACK_WARM_TARGET_%s\\n' '${name}'`;
-    const typed = tmuxResult(["send-keys", "-l", "-t", `=${name}:0.0`, command]);
-    if (typed.status !== 0)
-      throw new Error(`Could not prepare warm switch fixture: ${typed.stderr}`);
-    tmuxResult(["send-keys", "-t", `=${name}:0.0`, "Enter"]);
-  }
   // Prime both targets before measuring five real, warm F5 activations. Each
   // sample ends only when input sent through the TUI reaches the correct pane.
   const warmTargets = [
@@ -976,6 +967,28 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   ];
   for (const [index, target] of warmTargets.entries()) {
     const label = index < 2 ? `F5 prime ${target}` : `F5 warm switch ${index - 1} ${target}`;
+    // Refresh the sentinel before each sample: passive previews deliberately
+    // show only recent lines, so earlier switch output may scroll it away.
+    // Preparation stays outside measured activation and targets fixture panes.
+    const targetMarker = `PACK_WARM_TARGET_${target}_${index}`;
+    const prepare = tmuxResult([
+      "send-keys",
+      "-l",
+      "-t",
+      `=${target}:0.0`,
+      `printf 'PACK_WARM_TARGET_%s\\n' '${target}_${index}'`,
+    ]);
+    if (prepare.status !== 0)
+      throw new Error(`Could not prepare warm switch fixture: ${prepare.stderr}`);
+    const enter = tmuxResult(["send-keys", "-t", `=${target}:0.0`, "Enter"]);
+    if (enter.status !== 0)
+      throw new Error(`Could not submit warm switch fixture: ${enter.stderr}`);
+    await observe(
+      `${label} fixture ready`,
+      10_000,
+      () => capture(`=${target}:0.0`).includes(targetMarker),
+      many.diagnostics,
+    );
     send(many, "F5");
     await observe(
       `${label} palette opens`,
@@ -993,7 +1006,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
         return (
           frame.includes(`Open session · ${target} · Local`) &&
           frame.includes("Read-only") &&
-          frame.includes(`PACK_WARM_TARGET_${target}`)
+          frame.includes(targetMarker)
         );
       },
       many.diagnostics,
@@ -1014,7 +1027,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
           !inputSent &&
           !frame.includes("Command palette") &&
           frameShowsTerminalFocus(frame) &&
-          frame.includes(`PACK_WARM_TARGET_${target}`)
+          frame.includes(targetMarker)
         ) {
           inputSent = true;
           // Split the marker in the command so captured shell echo alone cannot
