@@ -2,6 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import {
   DesktopIconCatalogSchemaZ,
+  DesktopEnvironmentListSchemaZ,
+  DesktopEnvironmentOpenWireResultSchemaZ,
+  type DesktopEnvironmentSummary,
+  PaneStreamIssueDescriptorSchemaZ,
+  TerminalAttachmentIssueDescriptorSchemaZ,
+  type PaneStreamIssueDescriptor,
+  type TerminalAttachmentIssueDescriptor,
   type DesktopIconCatalog,
   AppWindowMutationHostResultSchemaZ,
   AppWindowMutationRequestSchemaZ,
@@ -73,6 +80,13 @@ import {
 } from "./ipc-channels.ts";
 import { mintDesktopWebHostClientId } from "./web-host-client-id.ts";
 
+export interface HostStreamRelayContext {
+  readonly rendererOrigin: string;
+  readonly hostClientId: DesktopWebHostClientId;
+  readonly rendererGeneration: number;
+  isCurrent(): boolean;
+}
+
 export interface HostIpcDependencies {
   ipcMain: IpcMain;
   /** Main-minted authority-generation UUID; omitted for the local native host. */
@@ -82,6 +96,20 @@ export interface HostIpcDependencies {
   platform: DesktopPlatform;
   daemonResources: DaemonConnectionAuthority;
   rendererDidBootstrap?: () => void;
+  rendererDidRelease?: (hostClientId: DesktopWebHostClientId) => void;
+  relayPaneStream?: (
+    descriptor: PaneStreamIssueDescriptor,
+    context: HostStreamRelayContext,
+  ) => PaneStreamIssueDescriptor;
+  relayTerminalAttachment?: (
+    descriptor: TerminalAttachmentIssueDescriptor,
+    context: HostStreamRelayContext,
+  ) => TerminalAttachmentIssueDescriptor;
+  environments?: {
+    list(): readonly DesktopEnvironmentSummary[] | Promise<readonly DesktopEnvironmentSummary[]>;
+    open(connectionId: string): Promise<{ connectionId: string; scope: string }>;
+    disconnect(connectionId: string): void | Promise<void>;
+  };
   selectProjectDirectory: (window: BrowserWindow) => Promise<string | null>;
   /**
    * The daemon's own startup readiness ladder, or null when none was readable.
@@ -264,7 +292,15 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       daemonSubscriptions.size > 0 ||
       pendingDaemonSubscriptions.size > 0 ||
       pendingDaemonRequests.size > 0;
+    const retiredHostClientId = rendererAuthority?.hostClientId;
     rendererAuthority = null;
+    if (retiredHostClientId) {
+      try {
+        deps.rendererDidRelease?.(retiredHostClientId);
+      } catch {
+        /* Freshness is already revoked. */
+      }
+    }
     for (const pending of pendingDaemonRequests.values()) pending.controller.abort();
     pendingDaemonRequests.clear();
     for (const pending of pendingDaemonSubscriptions.values()) pending.controller.abort();
@@ -337,6 +373,34 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     deps.ipcMain.handle(routed, handler);
     registeredChannels.push(routed);
   };
+
+  handle(HOST_IPC.environmentList, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 0 || !deps.environments)
+      throw new Error("Environment catalog unavailable.");
+    const result = await deps.environments.list();
+    assertRendererAuthority(event, authority.generation);
+    return DesktopEnvironmentListSchemaZ.parse(result);
+  });
+  handle(HOST_IPC.environmentOpen, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1 || !deps.environments) throw new Error("Environment open unavailable.");
+    const connectionId = DesktopDaemonRequestIdSchemaZ.parse(args[0]);
+    const result = await deps.environments.open(connectionId);
+    assertRendererAuthority(event, authority.generation);
+    const parsed = DesktopEnvironmentOpenWireResultSchemaZ.parse(result);
+    if (parsed.connectionId !== connectionId)
+      throw new Error("Environment open identity mismatch.");
+    return parsed;
+  });
+  handle(HOST_IPC.environmentDisconnect, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1 || !deps.environments)
+      throw new Error("Environment disconnect unavailable.");
+    const connectionId = DesktopDaemonRequestIdSchemaZ.parse(args[0]);
+    await deps.environments.disconnect(connectionId);
+    assertRendererAuthority(event, authority.generation);
+  });
 
   handle(HOST_IPC.iconCatalog, (event) => {
     trustedWindow(event, deps.getWindow, deps.trustedRendererLocation);
@@ -832,6 +896,31 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
           error: terminalAttachmentIssueError("daemon-identity-mismatch"),
         });
       }
+      if (result.status === "issued" && deps.relayTerminalAttachment) {
+        const signature = JSON.stringify({ ...result.descriptor, webSocketUrl: undefined });
+        const context: HostStreamRelayContext = {
+          rendererOrigin,
+          hostClientId: authority.hostClientId,
+          rendererGeneration: authority.generation,
+          isCurrent: () => {
+            const state = deps.daemonResources.state();
+            return (
+              currentAuthorityWindow(authority.generation) !== null &&
+              state.status === "connected" &&
+              sameDaemonIdentity(before.identity, state.identity)
+            );
+          },
+        };
+        const descriptor = TerminalAttachmentIssueDescriptorSchemaZ.parse(
+          deps.relayTerminalAttachment(result.descriptor, context),
+        );
+        if (
+          !context.isCurrent() ||
+          JSON.stringify({ ...descriptor, webSocketUrl: undefined }) !== signature
+        )
+          throw new Error("Relay changed stream authority.");
+        return { ...result, descriptor };
+      }
       return result;
     } catch {
       try {
@@ -912,6 +1001,31 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
           status: "error",
           error: paneStreamIssueError("daemon-identity-mismatch"),
         });
+      }
+      if (result.status === "issued" && deps.relayPaneStream) {
+        const signature = JSON.stringify({ ...result.descriptor, webSocketUrl: undefined });
+        const context: HostStreamRelayContext = {
+          rendererOrigin,
+          hostClientId: authority.hostClientId,
+          rendererGeneration: authority.generation,
+          isCurrent: () => {
+            const state = deps.daemonResources.state();
+            return (
+              currentAuthorityWindow(authority.generation) !== null &&
+              state.status === "connected" &&
+              sameDaemonIdentity(before.identity, state.identity)
+            );
+          },
+        };
+        const descriptor = PaneStreamIssueDescriptorSchemaZ.parse(
+          deps.relayPaneStream(result.descriptor, context),
+        );
+        if (
+          !context.isCurrent() ||
+          JSON.stringify({ ...descriptor, webSocketUrl: undefined }) !== signature
+        )
+          throw new Error("Relay changed stream authority.");
+        return { ...result, descriptor };
       }
       return result;
     } catch {

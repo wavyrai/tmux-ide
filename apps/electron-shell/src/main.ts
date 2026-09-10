@@ -22,6 +22,8 @@ import {
 
 import type { DaemonPreflight } from "./daemon-preflight.ts";
 import { createCatalogBackedPreflight, KnownEnvironmentCatalog } from "./environment-catalog.ts";
+import { createDesktopEnvironmentRuntime } from "./environment-runtime.ts";
+import { startEnvironmentStreamRelay } from "./environment-stream-relay.ts";
 import {
   acknowledgeOnboardingIntro,
   readOnboardingIntroAcknowledged,
@@ -40,6 +42,7 @@ import {
   publishWindowState,
   registerHostIpc,
   type RegisteredHostIpc,
+  type HostIpcDependencies,
   type TrustedRendererLocation,
 } from "./host-ipc.ts";
 import { DesktopUpdater } from "./update/desktop-updater.ts";
@@ -168,7 +171,8 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   let currentWindow: BrowserWindow | null = null;
   let hostIpc: RegisteredHostIpc | null = null;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
-  let rendererPolicyReloadTimer: ReturnType<typeof setTimeout> | null = null;
+  let streamRelay: Awaited<ReturnType<typeof startEnvironmentStreamRelay>> | null = null;
+  let environmentRuntime: Awaited<ReturnType<typeof createDesktopEnvironmentRuntime>> | null = null;
   let lastBoundsWrite = Promise.resolve();
   let rendererDidBootstrap: (() => void) | null = null;
   let latestNormalBounds: DesktopWindowBounds | null = null;
@@ -179,9 +183,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   let onThemeUpdated: (() => void) | null = null;
   let desktopUpdater: DesktopUpdater | null = null;
   let releaseUpdateStatus: (() => void) | null = null;
-  // The app's own record of known environments and how to reach them. Today it
-  // holds exactly the local canonical daemon; the coordinator reads through it
-  // rather than hardcoding that one endpoint.
+  // Host-owned route bookkeeping stays separate from daemon-minted identity.
   const environmentCatalog = new KnownEnvironmentCatalog(
     join(app.getPath("userData"), "known-environments.json"),
   );
@@ -222,13 +224,19 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   };
   const teardownDesktopHost = async (): Promise<void> => {
     if (persistTimer) clearTimeout(persistTimer);
-    if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
     if (onThemeUpdated) nativeTheme.removeListener("updated", onThemeUpdated);
     releaseUpdateStatus?.();
     desktopUpdater?.dispose();
     // Renderer terminal capabilities and the main-process broker are retired
     // before the exact Electron-owned daemon child is signalled.
     const results = await Promise.allSettled([
+      Promise.resolve().then(async () => {
+        try {
+          await environmentRuntime?.dispose();
+        } finally {
+          await streamRelay?.dispose();
+        }
+      }),
       Promise.resolve().then(() => disposeDevelopmentRendererCsp()),
       Promise.resolve().then(() => disposePackagedRendererProtocol()),
       shutdownDesktopDaemonRuntime({
@@ -296,14 +304,32 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   const daemon = await quitCoordinator.startUnlessQuitting(() => daemonSupervisor.start());
   if (!daemon) return;
   let daemonHttpOrigin = daemon.status === "connected" ? daemon.descriptor.apiBaseUrl : null;
+  let daemonIdentityKey = JSON.stringify(daemon);
+  try {
+    streamRelay = await startEnvironmentStreamRelay({
+      trustedOrigin: developmentOrigin ?? DESKTOP_PACKAGED_RENDERER_ORIGIN,
+    });
+  } catch (error) {
+    await daemonSupervisor.stopOwned().catch(() => undefined);
+    throw error;
+  }
+  if (quitCoordinator.quitRequested) {
+    await streamRelay.dispose();
+    await daemonSupervisor.stopOwned();
+    return;
+  }
+  // One lifetime-stable stream origin; daemon/SSH port changes never reload
+  // unrelated terminals or broaden the renderer's network authority.
+  const relayHttpOrigin = streamRelay.origin.replace(/^ws:/u, "http:");
   try {
     disposePackagedRendererProtocol = installPackagedRendererProtocol({
       protocol,
       fileFetcher: { fetch: (url) => net.fetch(url) },
       rendererRoot: join(__dirname, "renderer"),
-      contentSecurityPolicy: () => packagedRendererContentSecurityPolicy(daemonHttpOrigin),
+      contentSecurityPolicy: () => packagedRendererContentSecurityPolicy(relayHttpOrigin),
     });
   } catch (error) {
+    await streamRelay.dispose();
     await daemonSupervisor.stopOwned().catch(() => undefined);
     throw error;
   }
@@ -313,11 +339,12 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
           webRequest: desktopSession.webRequest,
           rendererOrigin: developmentOrigin,
           contentSecurityPolicy: () =>
-            developmentRendererContentSecurityPolicy(daemonHttpOrigin, developmentOrigin),
+            developmentRendererContentSecurityPolicy(relayHttpOrigin, developmentOrigin),
         })
       : () => undefined;
   } catch (error) {
     await Promise.allSettled([
+      streamRelay.dispose(),
       Promise.resolve().then(() => disposePackagedRendererProtocol()),
       daemonSupervisor.stopOwned(),
     ]);
@@ -325,6 +352,13 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   }
   const abortDesktopStartup = async (): Promise<void> => {
     const results = await Promise.allSettled([
+      Promise.resolve().then(async () => {
+        try {
+          await environmentRuntime?.dispose();
+        } finally {
+          await streamRelay?.dispose();
+        }
+      }),
       Promise.resolve().then(() => {
         disposeDevelopmentRendererCsp();
         disposePackagedRendererProtocol();
@@ -350,15 +384,12 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       // …and, when the daemon answers anyway, its own readiness ladder.
       readStartupReadiness: () => readDaemonStartupReadinessLadder(),
       onHostStateChanged: (state) => {
-        const nextOrigin = state.status === "connected" ? state.descriptor.apiBaseUrl : null;
-        if (nextOrigin === daemonHttpOrigin) return;
-        daemonHttpOrigin = nextOrigin;
-        if (!currentWindow || currentWindow.isDestroyed()) return;
-        if (rendererPolicyReloadTimer) clearTimeout(rendererPolicyReloadTimer);
-        rendererPolicyReloadTimer = setTimeout(() => {
-          rendererPolicyReloadTimer = null;
-          if (currentWindow && !currentWindow.isDestroyed()) currentWindow.reload();
-        }, 0);
+        const nextKey = JSON.stringify(state);
+        daemonHttpOrigin = state.status === "connected" ? state.descriptor.apiBaseUrl : null;
+        if (nextKey === daemonIdentityKey) return;
+        daemonIdentityKey = nextKey;
+        streamRelay?.retireScope("local");
+        environmentRuntime?.localChanged();
       },
     });
   } catch (error) {
@@ -432,6 +463,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
     currentWindow = window;
     denyRendererEscapes(window.webContents);
     hostIpc?.bindWindow(window);
+    environmentRuntime?.bindWindow(window);
 
     window.on("maximize", () => publishWindowState(window));
     window.on("unmaximize", () => publishWindowState(window));
@@ -446,6 +478,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       if (currentWindow === window) {
         currentWindow = null;
         hostIpc?.releaseRenderer();
+        environmentRuntime?.releaseRenderer();
       }
     });
 
@@ -466,12 +499,11 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
   };
 
   try {
-    hostIpc = registerHostIpc({
+    const host: Omit<HostIpcDependencies, "daemonResources" | "channelScope"> = {
       ipcMain,
       getWindow: () => currentWindow,
       appVersion: app.getVersion(),
       platform: platform(),
-      daemonResources,
       rendererDidBootstrap: () => rendererDidBootstrap?.(),
       readStartupReadiness: () => readDaemonStartupReadinessLadder(),
       selectProjectDirectory: async (window) => {
@@ -492,6 +524,19 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
       readOnboardingIntroAcknowledged,
       acknowledgeOnboardingIntro,
       trustedRendererLocation,
+    };
+    environmentRuntime = await createDesktopEnvironmentRuntime({
+      catalog: environmentCatalog,
+      localAuthority: daemonResources,
+      host,
+      relay: streamRelay,
+      localStreamOrigin: () => daemonHttpOrigin?.replace(/^http:/u, "ws:") ?? null,
+    });
+    hostIpc = registerHostIpc({
+      ...host,
+      daemonResources,
+      ...environmentRuntime.localHooks,
+      environments: environmentRuntime.environments,
     });
   } catch (error) {
     await abortDesktopStartup().catch(() => undefined);

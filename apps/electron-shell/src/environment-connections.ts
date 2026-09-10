@@ -29,6 +29,8 @@ export interface EnvironmentConnectionSnapshot {
 export interface EnvironmentAuthorityCapture {
   readonly connectionId: string;
   readonly authority: DaemonConnectionAuthority;
+  /** Private verified SSH forwarding origin; never serialized to the renderer. */
+  readonly streamOrigin?: string;
   /** Recheck after every asynchronous request and before delivering events. */
   isCurrent(): boolean;
 }
@@ -194,7 +196,10 @@ export class EnvironmentConnections {
     const authority = remote?.authority;
     if (!remote || !authority || remote.controller.signal.aborted) return null;
     const identityIsCurrent = identityGuard(authority);
+    const streamUrl = new URL(remote.transport!.baseUrl);
+    streamUrl.protocol = streamUrl.protocol === "https:" ? "wss:" : "ws:";
     return {
+      streamOrigin: streamUrl.origin,
       connectionId,
       authority,
       isCurrent: () =>

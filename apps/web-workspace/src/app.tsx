@@ -22,7 +22,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { action, bootstrap, type Machine } from "./client";
+import { action, bootstrap, type Machine, type LiveSnapshot } from "./client";
 import { GlassIcon } from "./glass-icon";
 import {
   ArrowRight,
@@ -87,6 +87,8 @@ export default function App() {
     [modal, setModal] = useState<
       "themes" | "background" | "commands" | "shortcuts" | "rename" | null
     >(null);
+  const [machines, setMachines] = useState<LiveSnapshot["machines"]>([]);
+  const rememberedFocus = useRef(new Map<string, string>());
   const [home, setHome] = useState(true);
   const [themeQuery, setThemeQuery] = useState("");
   const [compact, setCompact] = useState(() => matchMedia("(max-width: 600px)").matches);
@@ -117,6 +119,7 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(""), 4500);
   }, []);
   const select = useCallback((id: string) => {
+    setFocusedId(rememberedFocus.current.get(id) ?? "");
     setActiveId(id);
     localStorage.setItem("superlogical.active", id);
   }, []);
@@ -178,6 +181,7 @@ export default function App() {
       subscribeWorkspace((snapshot) => {
         apply(snapshot.state);
         setMachine(snapshot.machine);
+        setMachines(snapshot.machines ?? []);
         setConnection(snapshot.connection);
         setError(snapshot.reason ?? "");
       }),
@@ -187,6 +191,9 @@ export default function App() {
   const visible = workspace?.tabs.filter((t) => !t.hidden) || [],
     background = workspace?.tabs.filter((t) => t.hidden) || [],
     active = visible.find((t) => t.id === activeId) || visible[0];
+  useEffect(() => {
+    if (active?.id && focusedId) rememberedFocus.current.set(active.id, focusedId);
+  }, [active?.id, focusedId]);
   const tabStrip = useRef<HTMLDivElement>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: This effect deliberately reruns when the rendered layout changes, even though those values are not read inside the DOM measurement.
   useEffect(() => {
@@ -499,6 +506,8 @@ export default function App() {
                 >
                   <LiveSidebar
                     connection={connection}
+                    machines={machines}
+                    onRetry={retryConnection}
                     workspace={workspace}
                     active={active?.id ?? ""}
                     selected={selectedSidebarPane(active ? leaves(active.layout) : [], focusedId)}
@@ -525,7 +534,7 @@ export default function App() {
                   {connection === "connecting"
                     ? "Connecting to daemon…"
                     : error || "Daemon disconnected"}
-                  <button onClick={retryConnection}>Reconnect</button>
+                  <button onClick={() => retryConnection()}>Reconnect</button>
                 </div>
               )}
               {home && (
@@ -714,14 +723,24 @@ export default function App() {
                       >
                         {t.fleetSessionId && t.daemonInstanceId ? (
                           !home && t.id === active?.id ? (
-                            <LiveWorkspace
-                              selectedPane={focusedId}
-                              onSelectedPane={setFocusedId}
-                              sessionId={t.fleetSessionId}
-                              daemonInstanceId={t.daemonInstanceId}
-                              theme={theme}
-                              fontSize={settings.fontSize}
-                            />
+                            t.connectionStatus && t.connectionStatus !== "paired" ? (
+                              <div role="status" className="live-connection">
+                                This machine is {t.connectionStatus}.
+                                <button onClick={() => retryConnection(t.connectionId)}>
+                                  Reconnect
+                                </button>
+                              </div>
+                            ) : (
+                              <LiveWorkspace
+                                connectionId={active?.connectionId}
+                                selectedPane={focusedId}
+                                onSelectedPane={setFocusedId}
+                                sessionId={t.fleetSessionId}
+                                daemonInstanceId={t.daemonInstanceId}
+                                theme={theme}
+                                fontSize={settings.fontSize}
+                              />
+                            )
                           ) : null
                         ) : (
                           <SplitTree

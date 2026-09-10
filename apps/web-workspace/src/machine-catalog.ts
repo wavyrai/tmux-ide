@@ -109,14 +109,20 @@ export function mergeMachineCatalogs(state: MachineCatalogs, settings: Settings,
     const projected = projectMachineFleet(entry.catalog, {
       settings,
       revision,
-      machineId: entry.catalog.daemon.environmentId ?? entry.connectionId,
+      machineId: entry.connectionId,
       machineLabel: entry.label,
       identityPrefix: `${encodeURIComponent(entry.connectionId)}:${entry.catalog.daemon.instanceId}`,
       routes: entry.routes,
       shells: entry.shells,
     });
     if (!current) projected.tabs = projected.tabs.map(({ workspaceName: _route, ...tab }) => tab);
-    workspace.tabs.push(...projected.tabs);
+    workspace.tabs.push(
+      ...projected.tabs.map((tab) => ({
+        ...tab,
+        connectionId: entry.connectionId,
+        connectionStatus: entry.status,
+      })),
+    );
     Object.assign(workspace.panes, projected.panes);
     for (const tab of projected.tabs) tabConnections.set(tab.id, entry.connectionId);
   }

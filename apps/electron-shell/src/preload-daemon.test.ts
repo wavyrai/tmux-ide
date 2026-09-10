@@ -175,6 +175,95 @@ describe("isolated preload daemon scopes", () => {
     expect(r.invoke).toHaveBeenCalledTimes(2);
   });
 
+  it("retires pending requests and subscriptions when contextBridge stripped the signal prototype", async () => {
+    const r = rig();
+    const bridge = createPreloadDaemonBridge(r.ipc, scopeA);
+    const settlers: Array<(value: unknown) => void> = [];
+    r.invoke.mockImplementation((channel) =>
+      channel === scopedHostChannel(scopeA, HOST_IPC.daemonRequest) ||
+      channel === scopedHostChannel(scopeA, HOST_IPC.daemonSubscribe)
+        ? new Promise((resolve) => settlers.push(resolve))
+        : Promise.resolve(),
+    );
+    const copiedSignal = {} as AbortSignal;
+    const read = bridge.daemon.fetchWorkspaceFiles({ workspaceName: "a" }, copiedSignal);
+    const subscribed = bridge.daemon.subscribe({ workspaceNames: [] }, () => {}, copiedSignal);
+    expect(() => bridge.dispose()).not.toThrow();
+    for (const settle of settlers)
+      settle({ status: "error", error: { code: "disposed", reason: "cancelled" } });
+    await expect(read).rejects.toMatchObject({ name: "AbortError" });
+    await expect(subscribed).resolves.toMatchObject({ status: "error" });
+    expect(r.invoke.mock.calls.map(([channel]) => channel)).toContain(
+      scopedHostChannel(scopeA, HOST_IPC.daemonCancelRequest),
+    );
+    expect(r.invoke.mock.calls.map(([channel]) => channel)).toContain(
+      scopedHostChannel(scopeA, HOST_IPC.daemonCancelSubscribe),
+    );
+  });
+
+  it("uses a bridged subscribe cleanup and remembers abort when the copied boolean stays false", async () => {
+    const r = rig();
+    const bridge = createPreloadDaemonBridge(r.ipc, scopeA);
+    let settle!: (value: unknown) => void;
+    let abort!: () => void;
+    r.invoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const cleanup = vi.fn();
+    const signal = {
+      aborted: false,
+      subscribeAbort: (callback: () => void) => {
+        abort = callback;
+        return cleanup;
+      },
+    } as unknown as AbortSignal;
+    const read = bridge.daemon.fetchWorkspaceFiles({ workspaceName: "a" }, signal);
+    abort();
+    settle({ status: "error", error: { code: "disposed", reason: "cancelled" } });
+    await expect(read).rejects.toMatchObject({ name: "AbortError" });
+    expect(cleanup).toHaveBeenCalledOnce();
+    bridge.dispose();
+  });
+
+  it("cleans up when abort subscription or its renderer cleanup proxy throws", async () => {
+    const r = rig();
+    const bridge = createPreloadDaemonBridge(r.ipc, scopeA);
+    const broken = {
+      aborted: false,
+      subscribeAbort: () => {
+        throw Error("retired proxy");
+      },
+    } as unknown as AbortSignal;
+    await expect(bridge.daemon.fetchWorkspaceFiles({ workspaceName: "a" }, broken)).rejects.toThrow(
+      "retired proxy",
+    );
+    await expect(bridge.daemon.subscribe({ workspaceNames: [] }, () => {}, broken)).rejects.toThrow(
+      "retired proxy",
+    );
+    expect(r.invoke).not.toHaveBeenCalled();
+    let settle!: (value: unknown) => void;
+    r.invoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const signal = {
+      aborted: false,
+      subscribeAbort: () => () => {
+        throw Error("retired cleanup");
+      },
+    } as unknown as AbortSignal;
+    const read = bridge.daemon.fetchWorkspaceFiles({ workspaceName: "a" }, signal);
+    expect(() => bridge.dispose()).not.toThrow();
+    settle({ status: "error", error: { code: "disposed", reason: "cancelled" } });
+    await expect(read).rejects.toMatchObject({ name: "AbortError" });
+    expect(r.invoke.mock.calls).toHaveLength(2);
+  });
+
   it("does not cancel or misreport a mutation already committed during disposal", async () => {
     const r = rig();
     const bridge = createPreloadDaemonBridge(r.ipc, scopeA);

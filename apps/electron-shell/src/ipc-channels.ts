@@ -29,6 +29,10 @@ export const HOST_IPC = {
   daemonCancelSubscribe: "tmux-ide:host/daemon/cancel-subscribe",
   daemonUnsubscribe: "tmux-ide:host/daemon/unsubscribe",
   daemonEvent: "tmux-ide:host/daemon/event",
+  environmentList: "tmux-ide:host/environments/list",
+  environmentOpen: "tmux-ide:host/environments/open",
+  environmentDisconnect: "tmux-ide:host/environments/disconnect",
+  environmentChanged: "tmux-ide:host/environments/changed",
 } as const;
 
 export const HOST_INVOKE_CHANNELS = [
@@ -48,6 +52,9 @@ export const HOST_INVOKE_CHANNELS = [
   HOST_IPC.daemonSubscribe,
   HOST_IPC.daemonCancelSubscribe,
   HOST_IPC.daemonUnsubscribe,
+  HOST_IPC.environmentList,
+  HOST_IPC.environmentOpen,
+  HOST_IPC.environmentDisconnect,
 ] as const;
 
 /** Only daemon authority is routable; native window/project controls stay local. */

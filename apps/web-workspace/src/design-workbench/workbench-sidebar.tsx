@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AgentIcon } from "../agent-icon";
 import { Home, Terminal, Monitor, Layers, ChevronDown, ChevronRight } from "../icons";
 import { paneIds, type LayoutNode } from "./layout-model";
@@ -29,8 +29,10 @@ export function WorkbenchSidebar({
   onHome,
   onTerminals,
   onSelect,
+  machineStatus,
   footer = ["Design workspace", "Local fixtures · no daemon"],
 }: {
+  machineStatus?: ReactNode;
   footer?: readonly [string, string];
   windows: WorkbenchWindow[];
   panes: Record<string, SidebarPane>;
@@ -141,6 +143,7 @@ export function WorkbenchSidebar({
           </div>
         ))}
       </div>
+      {machineStatus}
       <footer className="dw-footer">
         <span>{footer[0]}</span>
         <span>{footer[1]}</span>

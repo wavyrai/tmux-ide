@@ -665,6 +665,51 @@ export type DesktopDaemonHostSubscriptionResult =
   | { readonly status: "subscribed"; readonly unsubscribe: DesktopHostUnsubscribe }
   | { readonly status: "error"; readonly error: DesktopDaemonCapabilityError };
 
+/** Main-owned connection IDs; no SSH aliases, endpoints, paths or owner tokens. */
+export const DesktopEnvironmentConnectionIdSchemaZ = z.uuid();
+export const DesktopEnvironmentSummarySchemaZ = z
+  .object({
+    connectionId: DesktopEnvironmentConnectionIdSchemaZ,
+    label: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .refine((value) =>
+        [...value].every(
+          (character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127,
+        ),
+      ),
+    kind: z.enum(["local-canonical", "ssh"]),
+    phase: z.enum(["connecting", "ready", "disconnected", "needs-attention"]),
+    daemon: DesktopDaemonCapabilityStateSchemaZ.nullable(),
+    failure: z
+      .enum([
+        "unavailable",
+        "invalid-target",
+        "invalid-descriptor",
+        "incompatible",
+        "daemon-missing",
+        "identity-mismatch",
+      ])
+      .nullable(),
+  })
+  .strict();
+export const DesktopEnvironmentListSchemaZ = z.array(DesktopEnvironmentSummarySchemaZ).max(256);
+/** Private preload handshake. Authority scope is never exposed on the public facade. */
+export const DesktopEnvironmentOpenWireResultSchemaZ = z
+  .object({
+    connectionId: DesktopEnvironmentConnectionIdSchemaZ,
+    scope: z.uuid(),
+  })
+  .strict();
+export type DesktopEnvironmentSummary = z.infer<typeof DesktopEnvironmentSummarySchemaZ>;
+export interface DesktopEnvironmentConnection {
+  bootstrap(): Promise<DesktopHostBootstrap>;
+  readonly daemon: HostCapabilities["daemon"];
+  dispose(): void;
+}
+
 /**
  * The complete renderer-visible desktop surface. It intentionally has no
  * generic send/invoke/eval/command escape hatch: `daemon` is generic in shape
@@ -673,6 +718,12 @@ export type DesktopDaemonHostSubscriptionResult =
  * reviewed in the contract before any client can ask for it.
  */
 export interface HostCapabilities {
+  readonly environments?: {
+    list(): Promise<DesktopEnvironmentSummary[]>;
+    open(connectionId: string): Promise<DesktopEnvironmentConnection>;
+    disconnect(connectionId: string): Promise<void>;
+    onChanged(listener: () => void): DesktopHostUnsubscribe;
+  };
   readonly icons?: { getCatalog(): Promise<DesktopIconCatalog> };
   readonly apiVersion: typeof DESKTOP_HOST_API_VERSION;
   bootstrap(): Promise<DesktopHostBootstrap>;

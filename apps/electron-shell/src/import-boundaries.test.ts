@@ -66,6 +66,9 @@ describe("desktop process boundaries", () => {
       HOST_IPC.daemonSubscribe,
       HOST_IPC.daemonCancelSubscribe,
       HOST_IPC.daemonUnsubscribe,
+      HOST_IPC.environmentList,
+      HOST_IPC.environmentOpen,
+      HOST_IPC.environmentDisconnect,
     ]);
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/send");
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/eval");

@@ -20,6 +20,7 @@ import "@xterm/xterm/css/xterm.css";
 
 /** A single WorkspaceClient owns transport/recovery. React only owns presentation. */
 export function LiveWorkspace({
+  connectionId,
   sessionId,
   daemonInstanceId,
   selectedPane,
@@ -27,6 +28,7 @@ export function LiveWorkspace({
   theme,
   fontSize,
 }: {
+  connectionId?: string;
   sessionId: string;
   daemonInstanceId: string;
   selectedPane: string;
@@ -57,7 +59,7 @@ export function LiveWorkspace({
     setState(null);
     setError("");
     void (async () => {
-      const host = getHost();
+      const host = getHost(connectionId);
       const boot = await host.bootstrap();
       if (disposed) return;
       if (boot.daemon.status !== "connected") throw Error(boot.daemon.reason);
@@ -91,7 +93,13 @@ export function LiveWorkspace({
           );
         if (snapshot.phase === "live") setError("");
         if (!shell) return;
-        observeWorkspaceShell(snapshot.target!.daemon.instanceId, workspaceName, shell, sessionId);
+        observeWorkspaceShell(
+          snapshot.target!.daemon.instanceId,
+          workspaceName,
+          shell,
+          sessionId,
+          connectionId,
+        );
         const panes = (shell.terminalInventory?.resources ?? [])
           .filter((p) => p.attachability.status === "available")
           .map((p) => p.id);
@@ -126,7 +134,7 @@ export function LiveWorkspace({
       compositor?.dispose();
       void client?.dispose();
     };
-  }, [sessionId, daemonInstanceId, attempt]);
+  }, [connectionId, sessionId, daemonInstanceId, attempt]);
   const inputClient = runtime?.client;
   useEffect(() => {
     inputBinding.current = inputClient ?? null;
@@ -214,7 +222,9 @@ export function LiveWorkspace({
     if (!runtime || !selectedPane || appliedSelection.current === selectedPane) return;
     const daemon = runtime.client.getSnapshot().target?.daemon.instanceId;
     const resource = runtime.shell.terminalInventory?.resources.find(
-      (p) => `${daemon}:${p.id}` === selectedPane,
+      (p) =>
+        `${connectionId ? `${encodeURIComponent(connectionId)}:` : ""}${daemon}:${p.id}` ===
+        selectedPane,
     );
     const window = resource && layouts.find((l) => l.panes.some((p) => p.pane === resource.id));
     if (!resource || !window) return;
@@ -293,7 +303,10 @@ export function LiveWorkspace({
           onFocus={(id) => {
             setFocused(id);
             const daemon = runtime.client.getSnapshot().target?.daemon.instanceId;
-            if (daemon) onSelectedPane(`${daemon}:${id}`);
+            if (daemon)
+              onSelectedPane(
+                `${connectionId ? `${encodeURIComponent(connectionId)}:` : ""}${daemon}:${id}`,
+              );
           }}
         />
       )}

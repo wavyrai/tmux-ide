@@ -7,7 +7,7 @@ const { register } = vi.hoisted(() => ({ register: vi.fn() }));
 vi.mock("./host-ipc.ts", () => ({ registerHostIpc: register }));
 import { EnvironmentHostIpc } from "./environment-host-ipc.ts";
 const ID = "00000000-0000-4000-8000-000000000001";
-function fixture() {
+function fixture(streamHooks?: ConstructorParameters<typeof EnvironmentHostIpc>[0]["streamHooks"]) {
   const live = new Map<string, unknown>([["local", {}]]);
   const registrations: Array<{
     dispose: ReturnType<typeof vi.fn>;
@@ -76,7 +76,10 @@ function fixture() {
       identity,
     };
   };
+  const onRetireScope = vi.fn();
   const owner = new EnvironmentHostIpc({
+    streamHooks,
+    onRetireScope,
     connections,
     host: { getWindow: () => null } as Omit<
       HostIpcDependencies,
@@ -90,6 +93,7 @@ function fixture() {
     connect,
     setAuthority,
     unsubscribe,
+    onRetireScope,
     publish: () => listener(),
   };
 }
@@ -180,4 +184,33 @@ it("rejects local alias without creating a second owner or releasing local resou
   expect(t.registrations).toHaveLength(0);
   t.owner.dispose();
   expect(t.live.has("local")).toBe(true);
+});
+
+it("binds relay hooks to exact capture and scope and revokes tickets on retirement", async () => {
+  let relayContext: import("./host-ipc.ts").HostStreamRelayContext | undefined;
+  const hooks = vi.fn((_capture: EnvironmentAuthorityCapture, _scope: string) => ({
+    relayPaneStream: (
+      descriptor: import("@tmux-ide/contracts").PaneStreamIssueDescriptor,
+      context: import("./host-ipc.ts").HostStreamRelayContext,
+    ) => {
+      relayContext = context;
+      return descriptor;
+    },
+  }));
+  const t = fixture(hooks);
+  const authority = t.setAuthority();
+  const opened = await t.owner.open(ID);
+  expect(hooks.mock.calls[0]?.[1]).toBe(opened.scope);
+  const deps = register.mock.calls.at(-1)![0] as HostIpcDependencies;
+  deps.relayPaneStream!({} as import("@tmux-ide/contracts").PaneStreamIssueDescriptor, {
+    rendererOrigin: "http://localhost",
+    hostClientId: "web:00000000-0000-4000-8000-000000000001",
+    rendererGeneration: 1,
+    isCurrent: () => true,
+  });
+  expect(relayContext?.isCurrent()).toBe(true);
+  authority.retire();
+  expect(relayContext?.isCurrent()).toBe(false);
+  expect(t.onRetireScope).toHaveBeenCalledWith(opened.scope);
+  t.owner.dispose();
 });

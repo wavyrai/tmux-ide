@@ -21,6 +21,42 @@ export interface PreloadDaemonIpc {
   removeListener(channel: string, listener: (event: unknown, value: unknown) => void): unknown;
 }
 
+/** contextBridge can copy AbortSignal as a plain object without its prototype.
+ * Such a copy cannot carry subsequent abort events. Scope disposal still owns
+ * cancellation; never invoke missing methods while retiring that scope. */
+function usableSignal(signal?: AbortSignal): AbortSignal | undefined {
+  if (!signal) return undefined;
+  if (typeof (signal as unknown as { subscribeAbort?: unknown }).subscribeAbort === "function")
+    return signal;
+  if (
+    typeof signal.addEventListener === "function" &&
+    typeof signal.removeEventListener === "function"
+  )
+    return signal;
+  return signal.aborted === true ? AbortSignal.abort() : undefined;
+}
+
+function observeAbort(signal: AbortSignal | undefined, callback: () => void): () => void {
+  const subscribe = (
+    signal as unknown as { subscribeAbort?: (callback: () => void) => () => void } | undefined
+  )?.subscribeAbort;
+  if (subscribe) {
+    const cleanup = subscribe(callback);
+    let stopped = false;
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      try {
+        cleanup();
+      } catch {
+        /* A retired renderer proxy cannot block scope cleanup. */
+      }
+    };
+  }
+  signal?.addEventListener("abort", callback, { once: true });
+  return () => signal?.removeEventListener("abort", callback);
+}
+
 /** Isolated maps for one main-minted authority-generation scope; null is local. */
 export function createPreloadDaemonBridge(ipc: PreloadDaemonIpc, scope: string | null = null) {
   const channels = {
@@ -81,30 +117,32 @@ export function createPreloadDaemonBridge(ipc: PreloadDaemonIpc, scope: string |
     request: DaemonResourceRequest,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    signal = usableSignal(signal);
     const parsed = DaemonResourceRequestSchemaZ.parse(request);
     const cancellable = isCancellableDaemonResourceKind(parsed.resource);
     if (disposed || (cancellable && signal?.aborted))
       throw Object.assign(new Error("Daemon resource read was cancelled."), { name: "AbortError" });
     const requestId = DesktopDaemonRequestIdSchemaZ.parse(crypto.randomUUID());
     let cancelled = false;
+    let stopAbort = () => {};
     const cancel = () => {
       if (cancelled) return;
       cancelled = true;
-      signal?.removeEventListener("abort", cancel);
+      stopAbort();
       void ipc.invoke(channels.daemonCancelRequest, requestId).catch(() => undefined);
     };
     if (cancellable) {
       pendingCancels.add(cancel);
-      signal?.addEventListener("abort", cancel, { once: true });
     }
     let result: unknown;
     try {
+      if (cancellable) stopAbort = observeAbort(signal, cancel);
       result = await ipc.invoke(channels.daemonRequest, parsed, requestId);
     } finally {
       pendingCancels.delete(cancel);
-      if (cancellable) signal?.removeEventListener("abort", cancel);
+      if (cancellable) stopAbort();
     }
-    if (cancellable && (disposed || signal?.aborted))
+    if (cancellable && (disposed || cancelled || signal?.aborted))
       throw Object.assign(new Error("Daemon resource read was cancelled."), { name: "AbortError" });
     return DAEMON_RESOURCE_RESULT_SCHEMAS[parsed.resource].parse(result);
   }
@@ -116,6 +154,7 @@ export function createPreloadDaemonBridge(ipc: PreloadDaemonIpc, scope: string |
       listener: (event: DesktopDaemonEvent) => void,
       signal?: AbortSignal,
     ) => {
+      signal = usableSignal(signal);
       const parsed = DesktopDaemonEventSubscriptionRequestSchemaZ.parse(request);
       if (disposed || signal?.aborted) {
         return {
@@ -127,17 +166,18 @@ export function createPreloadDaemonBridge(ipc: PreloadDaemonIpc, scope: string |
       const pending: PendingDaemonSubscription = { events: [], subscriptionId: null };
       pendingDaemonSubscriptions.set(requestId, pending);
       let cancelled = false;
+      let stopAbort = () => {};
       const cancel = () => {
         if (cancelled) return;
         cancelled = true;
-        signal?.removeEventListener("abort", cancel);
+        stopAbort();
         pendingDaemonSubscriptions.delete(requestId);
         void ipc.invoke(channels.daemonCancelSubscribe, requestId).catch(() => undefined);
       };
       pendingCancels.add(cancel);
-      signal?.addEventListener("abort", cancel, { once: true });
       let result: ReturnType<typeof DesktopDaemonSubscribeWireResultSchemaZ.parse>;
       try {
+        stopAbort = observeAbort(signal, cancel);
         result = DesktopDaemonSubscribeWireResultSchemaZ.parse(
           await ipc.invoke(channels.daemonSubscribe, parsed, requestId),
         );
@@ -146,13 +186,13 @@ export function createPreloadDaemonBridge(ipc: PreloadDaemonIpc, scope: string |
         throw error;
       } finally {
         pendingCancels.delete(cancel);
-        signal?.removeEventListener("abort", cancel);
+        stopAbort();
       }
       if (result.status === "error") {
         pendingDaemonSubscriptions.delete(requestId);
         return result;
       }
-      if (disposed || signal?.aborted) {
+      if (disposed || cancelled || signal?.aborted) {
         pendingDaemonSubscriptions.delete(requestId);
         void ipc.invoke(channels.daemonUnsubscribe, result.subscriptionId).catch(() => undefined);
         return {

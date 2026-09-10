@@ -19,6 +19,7 @@ import {
 } from "@tmux-ide/contracts";
 
 import { createPreloadDaemonBridge } from "./preload-daemon.ts";
+import { createPreloadEnvironments } from "./preload-environments.ts";
 
 import { HOST_IPC } from "./ipc-channels.ts";
 
@@ -32,7 +33,20 @@ function onValidatedEvent<T>(
   return () => ipcRenderer.removeListener(channel, receive);
 }
 
+const localDaemon = createPreloadDaemonBridge(ipcRenderer);
+const environmentBridge = createPreloadEnvironments(ipcRenderer);
+if (typeof window !== "undefined")
+  window.addEventListener(
+    "unload",
+    () => {
+      environmentBridge.dispose();
+      localDaemon.dispose();
+    },
+    { once: true },
+  );
+
 const capabilities: HostCapabilities = Object.freeze({
+  environments: environmentBridge.environments,
   icons: Object.freeze({
     getCatalog: async () =>
       DesktopIconCatalogSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.iconCatalog)),
@@ -108,7 +122,7 @@ const capabilities: HostCapabilities = Object.freeze({
         listener,
       ),
   }),
-  daemon: createPreloadDaemonBridge(ipcRenderer).daemon,
+  daemon: localDaemon.daemon,
 });
 
 contextBridge.exposeInMainWorld("tmuxIdeHost", capabilities);

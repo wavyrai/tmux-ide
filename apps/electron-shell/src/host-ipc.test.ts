@@ -1008,6 +1008,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
     >[0]["trustedRendererLocation"];
     readonly issuePaneStream: ReturnType<typeof vi.fn>;
     readonly daemonState?: DesktopDaemonCapabilityState;
+    readonly hostOverrides?: Partial<Parameters<typeof registerHostIpc>[0]>;
   }) {
     const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
     const ipcMain = {
@@ -1051,6 +1052,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       readOnboardingIntroAcknowledged: () => false,
       acknowledgeOnboardingIntro: () => undefined,
       trustedRendererLocation: options.trustedRendererLocation,
+      ...options.hostOverrides,
     });
     const event = {
       sender: webContents,
@@ -1171,6 +1173,66 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
         }),
       ).resolves.toMatchObject({ status: "error", error: { code: "daemon-identity-mismatch" } });
       expect(issuePaneStream).toHaveBeenCalledOnce();
+      h.registration.dispose();
+    },
+  );
+
+  it.each(["valid", "tampered", "retired"])(
+    "relay rewrite preserves pane capability authority: %s",
+    async (mode) => {
+      const release = vi.fn();
+      let captured: import("./host-ipc.ts").HostStreamRelayContext | undefined;
+      let h: ReturnType<typeof paneStreamHarness>;
+      const relay = vi.fn(
+        (
+          descriptor: import("@tmux-ide/contracts").PaneStreamIssueDescriptor,
+          context: import("./host-ipc.ts").HostStreamRelayContext,
+        ) => {
+          captured = context;
+          if (mode === "retired") h.registration.releaseRenderer();
+          return {
+            ...descriptor,
+            webSocketUrl: "ws://127.0.0.1:7444/v1/terminal/pane-streams/redeem",
+            ...(mode === "tampered"
+              ? { daemonInstanceId: "00000000-0000-4000-8000-000000000099" }
+              : {}),
+          };
+        },
+      );
+      const issuePaneStream = vi.fn(
+        async (request: PaneStreamIssueMutationRequest): Promise<PaneStreamIssueResult> => ({
+          status: "issued",
+          descriptor: streamDescriptor(request, request.expectedDaemonInstanceId),
+        }),
+      );
+      h = paneStreamHarness({
+        frameUrl: "http://127.0.0.1:5173/src/main.tsx",
+        trustedRendererLocation: { kind: "development-origin", origin: "http://127.0.0.1:5173" },
+        issuePaneStream,
+        hostOverrides: { relayPaneStream: relay, rendererDidRelease: release },
+      });
+      const result = await h.handlers.get(HOST_IPC.daemonRequest)?.(h.event, {
+        resource: "issuePaneStream",
+        request: {
+          protocolVersion: 1,
+          workspaceName: "product",
+          panes: PANES,
+          viewerMode: "read-only",
+        },
+      });
+      expect(relay).toHaveBeenCalledOnce();
+      expect(result).toMatchObject(
+        mode === "valid"
+          ? {
+              status: "issued",
+              descriptor: { webSocketUrl: "ws://127.0.0.1:7444/v1/terminal/pane-streams/redeem" },
+            }
+          : { status: "error" },
+      );
+      if (mode === "valid") expect(captured?.isCurrent()).toBe(true);
+      h.registration.releaseRenderer();
+      expect(captured?.isCurrent()).toBe(false);
+      expect(release).toHaveBeenCalledWith(captured?.hostClientId);
       h.registration.dispose();
     },
   );
@@ -1396,6 +1458,7 @@ describe("host IPC single daemon request channel (m45.3)", () => {
     options: {
       readonly readStartupReadiness?: () => Promise<StartupReadinessLadder | null>;
       readonly daemonOverrides?: Partial<Record<string, unknown>>;
+      readonly hostOverrides?: Partial<Parameters<typeof registerHostIpc>[0]>;
     } = {},
   ) {
     const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
@@ -1438,6 +1501,7 @@ describe("host IPC single daemon request channel (m45.3)", () => {
       ...(options.readStartupReadiness
         ? { readStartupReadiness: options.readStartupReadiness }
         : {}),
+      ...options.hostOverrides,
       selectProjectDirectory: async () => null,
       getTheme: () => ({ mode: "dark", highContrast: false, reducedMotion: false }),
       getUpdateStatus: () => ({ phase: "idle", currentVersion: "test", availableVersion: null }),
@@ -1453,6 +1517,29 @@ describe("host IPC single daemon request channel (m45.3)", () => {
     const request = (value: unknown) => handlers.get(HOST_IPC.daemonRequest)?.(event, value);
     return { handlers, event, request, registration, listWorkspaces, mainFrame, webContents };
   }
+
+  it("validates environment routes and fences a late open after renderer retirement", async () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    let finish!: (value: { connectionId: string; scope: string }) => void;
+    const open = vi.fn(
+      () =>
+        new Promise<{ connectionId: string; scope: string }>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const h = harness({
+      hostOverrides: { environments: { list: () => [], open, disconnect: vi.fn() } },
+    });
+    await expect(
+      h.handlers.get(HOST_IPC.environmentOpen)?.(h.event, "../../untrusted"),
+    ).rejects.toThrow();
+    expect(open).not.toHaveBeenCalled();
+    const pending = h.handlers.get(HOST_IPC.environmentOpen)?.(h.event, id);
+    h.registration.releaseRenderer();
+    finish({ connectionId: id, scope: id });
+    await expect(pending).rejects.toThrow("untrusted renderer generation");
+    h.registration.dispose();
+  });
 
   it("serves every resource over one channel and registers no per-resource handler", () => {
     const h = harness();

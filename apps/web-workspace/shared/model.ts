@@ -26,6 +26,8 @@ export interface Pane {
   status: "running" | "exited";
 }
 export interface Tab {
+  connectionId?: string;
+  connectionStatus?: "paired" | "connecting" | "offline";
   machineId?: string;
   fleetSessionId?: string;
   daemonInstanceId?: string;
