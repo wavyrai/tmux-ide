@@ -868,33 +868,87 @@ input:focus-visible,
   height: 100%;
   width: 100%;
 }
+.live-workspace-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: var(--height-toolbar);
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-divider);
+}
 .live-window-tabs {
   display: flex;
   align-items: center;
-  gap: var(--space-2, 8px);
-  min-height: 28px;
-  border-bottom: 1px solid var(--border);
-  padding: 0 8px;
-  flex-shrink: 0;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  padding: var(--space-2);
+  scrollbar-width: thin;
 }
 .live-window-tabs button {
-  font: inherit;
-  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: 0 0 auto;
+  height: var(--height-row);
+  max-width: 200px;
+  font: var(--weight-medium) var(--text-body) var(--font-ui);
+  color: var(--muted);
   background: transparent;
   border: 0;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-panel);
   cursor: pointer;
 }
+.live-window-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-window-index {
+  font: var(--text-caption) var(--font-code);
+  opacity: 0.6;
+}
 .live-window-tabs button[aria-current] {
-  background: var(--panel-active-fill);
-  box-shadow: inset 0 -1px currentColor;
+  background: var(--panel-fill);
+  background-image: var(--tab-surface);
+  box-shadow: var(--tab-shadow);
+  color: var(--text);
+}
+.live-window-tabs button:hover {
+  background-color: var(--surface-hover);
+}
+.live-input-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-shrink: 0;
+  font-size: var(--text-small);
+}
+.live-input-controls button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-selected);
+  border: 0;
+  border-radius: var(--radius-control);
+  padding: var(--space-2) var(--space-4);
+  min-height: 24px;
+  cursor: pointer;
 }
 .live-view-mode {
-  margin-left: auto;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-small);
   white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .live-view-mode {
+    display: none;
+  }
+  .live-workspace-toolbar {
+    gap: var(--space-2);
+  }
 }
 .live-window-scroll {
   flex: 1;

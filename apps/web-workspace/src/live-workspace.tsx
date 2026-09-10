@@ -220,28 +220,33 @@ export function LiveWorkspace({
   const fault = error || state?.fault?.reason;
   return (
     <section className="live-workspace" aria-label="Live tmux workspace">
-      <nav className="live-window-tabs" aria-label="Tmux windows">
-        {layouts.map((item, index) => (
-          <button
-            key={item.semanticWindowId ?? index}
-            aria-current={item === layout ? "page" : undefined}
-            onClick={() => setWindowId(item.semanticWindowId)}
-          >
-            {item.windowName || `Window ${index + 1}`}
-            {item.zoomed ? " · Zoomed" : ""}
+      <div className="live-workspace-toolbar">
+        <nav className="live-window-tabs" aria-label="Tmux windows">
+          {layouts.map((item, index) => (
+            <button
+              key={item.semanticWindowId ?? index}
+              aria-current={item === layout ? "page" : undefined}
+              onClick={() => setWindowId(item.semanticWindowId)}
+            >
+              <span className="live-window-index" aria-hidden="true">
+                {index + 1}
+              </span>
+              <span className="live-window-label">{item.windowName || `Window ${index + 1}`}</span>
+              {item.zoomed ? " · Zoomed" : ""}
+            </button>
+          ))}
+        </nav>
+        <div className="live-input-controls">
+          <span className="live-view-mode">{inputEnabled ? "Input enabled" : "Read only"}</span>
+          <button disabled={!runtime || claiming || !layout} onClick={() => void toggleInput()}>
+            {claiming
+              ? "Requesting control…"
+              : inputEnabled
+                ? "Release input control"
+                : "Take input control"}
           </button>
-        ))}
-        <span className="live-view-mode">
-          {inputEnabled ? "Input enabled" : "Input off"} · tmux cell size
-        </span>
-        <button disabled={!runtime || claiming || !layout} onClick={() => void toggleInput()}>
-          {claiming
-            ? "Requesting control…"
-            : inputEnabled
-              ? "Release input control"
-              : "Take input control"}
-        </button>
-      </nav>
+        </div>
+      </div>
       {inputError && (
         <div role="status" className="live-connection-state">
           {inputError}
@@ -365,10 +370,13 @@ function NativeWindow({
     <div className="live-native-window">
       {
         <div className="live-window-controls">
-          <button disabled={fitPending} onClick={() => void fit()}>
+          <button
+            title="Resize all tmux windows in this session to fit the available terminal area"
+            disabled={fitPending}
+            onClick={() => void fit()}
+          >
             {fitPending ? "Fitting…" : "Fit session"}
           </button>
-          <span>Sizes all tmux windows for this viewport</span>
         </div>
       }
       {fitError && (

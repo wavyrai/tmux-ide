@@ -474,7 +474,10 @@ export default function App() {
                 Skip to terminal
               </Button>
             )}
-            <header {...stylex.props(s.toolbar)}>
+            <header
+              {...stylex.props(s.toolbar)}
+              style={active?.fleetSessionId ? { display: "none" } : undefined}
+            >
               <Button
                 {...stylex.props(s.iconButton, s.workspaceMenu)}
                 aria-expanded={modal === "commands"}
