@@ -28,7 +28,7 @@ export function loadFleetClientState(path = fleetClientStatePath()) {
     fd = openSync(path, "r");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyFleetClientState();
-    throw new Error("Fleet view state is unavailable");
+    throw new Error("Fleet view state is unavailable", { cause: error });
   }
   try {
     if (fstatSync(fd).size > MAX_BYTES) throw new Error();
