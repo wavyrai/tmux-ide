@@ -10261,7 +10261,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.15",
+      version: "2.9.0-beta.16",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
