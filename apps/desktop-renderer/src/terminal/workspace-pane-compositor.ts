@@ -1,7 +1,13 @@
-import { PANE_STREAM_MAX_PANES, type DesktopDaemonTransportState } from "@tmux-ide/contracts";
+import {
+  PANE_STREAM_MAX_PANES,
+  type DesktopDaemonTransportState,
+  type CanonicalTerminalReplicaUpdate,
+  type TerminalReplicaSnapshot,
+} from "@tmux-ide/contracts";
 
 import type {
   PaneMirrorEvent,
+  PaneMirrorCanonicalProjection,
   PaneMirrorSeedBatch,
   PaneStreamLayoutEvent,
   PaneStreamLayoutSnapshotEvent,
@@ -10,10 +16,20 @@ import type {
   PaneStreamTransportError,
 } from "./pane-stream-transport.ts";
 
+/** Immutable canonical evidence paired with exactly the frame being painted. */
+export interface MirrorPaneFrameContext {
+  readonly canonical?: PaneMirrorCanonicalProjection;
+  readonly canonicalUpdate?: CanonicalTerminalReplicaUpdate;
+  readonly canonicalSnapshot?: TerminalReplicaSnapshot;
+}
+
 export interface MirrorPaneSink {
-  applySeedBatch(batch: PaneMirrorSeedBatch): void | Promise<void>;
+  applySeedBatch(
+    batch: PaneMirrorSeedBatch,
+    context?: MirrorPaneFrameContext,
+  ): void | Promise<void>;
   applyGeometry(cols: number, rows: number): void;
-  applyOutput(bytes: Uint8Array): void | Promise<void>;
+  applyOutput(bytes: Uint8Array, context?: MirrorPaneFrameContext): void | Promise<void>;
   applyCursor(x: number, y: number): void;
 }
 
@@ -34,6 +50,7 @@ interface SinkChannel {
   sink: MirrorPaneSink | null;
   sinkEpoch: number;
   replay: PaneMirrorSeedBatch | (() => PaneMirrorSeedBatch) | null;
+  replayContext: MirrorPaneFrameContext | undefined;
   geometry: { readonly cols: number; readonly rows: number } | null;
   tail: Promise<void>;
   pendingGeometryBatch: { value: { readonly cols: number; readonly rows: number } } | null;
@@ -176,11 +193,16 @@ export class WorkspacePaneCompositor {
     const epoch = ++channel.sinkEpoch;
     channel.sink = sink;
     const replay = channel.replay;
+    const replayContext = channel.replayContext;
     const geometry = channel.geometry;
     channel.tail = channel.tail
       .then(async () => {
         if (channel.sink !== sink || channel.sinkEpoch !== epoch) return;
-        if (replay) await sink.applySeedBatch(typeof replay === "function" ? replay() : replay);
+        if (replay)
+          await sink.applySeedBatch(
+            typeof replay === "function" ? replay() : replay,
+            replayContext,
+          );
         else if (geometry) sink.applyGeometry(geometry.cols, geometry.rows);
       })
       .catch(() => undefined);
@@ -210,6 +232,7 @@ export class WorkspacePaneCompositor {
         sink: null,
         sinkEpoch: 0,
         replay: null,
+        replayContext: undefined,
         geometry: null,
         tail: Promise.resolve(),
         pendingGeometryBatch: null,
@@ -241,9 +264,21 @@ export class WorkspacePaneCompositor {
     }
     const channel = this.#channel(pane);
     channel.pendingGeometryBatch = null;
-    if (event.type === "seed-batch") channel.replay = event.batch;
-    else if (event.type === "output" && event.replay) channel.replay = event.replay;
-    else if (event.type === "cursor" && channel.replay && typeof channel.replay !== "function")
+    const context: MirrorPaneFrameContext | undefined =
+      event.type === "seed-batch" || event.type === "output"
+        ? {
+            canonical: event.canonical,
+            canonicalUpdate: event.canonicalUpdate,
+            canonicalSnapshot: event.canonicalSnapshot,
+          }
+        : undefined;
+    if (event.type === "seed-batch") {
+      channel.replay = event.batch;
+      channel.replayContext = context;
+    } else if (event.type === "output" && event.replay) {
+      channel.replay = event.replay;
+      channel.replayContext = context;
+    } else if (event.type === "cursor" && channel.replay && typeof channel.replay !== "function")
       channel.replay = { ...channel.replay, cursor: { x: event.x, y: event.y } };
     if (!channel.sink) return;
     const sink = channel.sink;
@@ -251,8 +286,8 @@ export class WorkspacePaneCompositor {
     channel.tail = channel.tail
       .then(async () => {
         if (channel.sink !== sink || channel.sinkEpoch !== epoch) return;
-        if (event.type === "seed-batch") await sink.applySeedBatch(event.batch);
-        else if (event.type === "output") await sink.applyOutput(event.bytes);
+        if (event.type === "seed-batch") await sink.applySeedBatch(event.batch, context);
+        else if (event.type === "output") await sink.applyOutput(event.bytes, context);
         else if (event.type === "cursor") sink.applyCursor(event.x, event.y);
       })
       .catch(() => undefined);

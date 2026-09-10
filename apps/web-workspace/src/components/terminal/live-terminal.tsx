@@ -13,7 +13,15 @@ import { Terminal } from "@xterm/xterm";
 import { createTerminalWheelController } from "../../terminal-wheel";
 import { TERMINAL_SCROLLBACK_LINES } from "../../../../desktop-renderer/src/terminal/terminal-options";
 import type { Theme } from "@superlogical/shared/themes";
-import type { WorkspacePaneCompositor } from "../../../../desktop-renderer/src/terminal/workspace-pane-compositor";
+import {
+  captureTerminalHistoryAnchor,
+  advanceTerminalHistoryAnchor,
+  terminalHistoryViewport,
+} from "../../terminal-history-anchor";
+import type {
+  MirrorPaneFrameContext,
+  WorkspacePaneCompositor,
+} from "../../../../desktop-renderer/src/terminal/workspace-pane-compositor";
 export function LiveTerminal({
   readAsset,
   inputEnabled,
@@ -46,6 +54,11 @@ export function LiveTerminal({
   useEffect(() => {
     if (!mount.current) return;
     let disposed = false;
+    let frame: MirrorPaneFrameContext | undefined;
+    let interaction = 0;
+    const noteInteraction = () => {
+      interaction++;
+    };
     const pending = new Set<() => void>();
     const watcher = createWidgetMarkerByteWatcher();
     let scanTimer: ReturnType<typeof setTimeout> | null = null;
@@ -96,10 +109,13 @@ export function LiveTerminal({
     );
     const wheelMount = mount.current;
     const captureWheel = (event: WheelEvent) => {
+      noteInteraction();
       if (!wheel.handle(event)) event.stopPropagation();
     };
     // Capture precedes xterm's inner viewport, so Shift cannot scroll twice.
     wheelMount.addEventListener("wheel", captureWheel, { capture: true, passive: false });
+    wheelMount.addEventListener("pointerdown", noteInteraction, true);
+    wheelMount.addEventListener("keydown", noteInteraction, true);
     term.attachCustomWheelEventHandler(wheel.handle);
     const data = term.onData((text) => {
       if (currentInput.current.inputEnabled)
@@ -134,9 +150,34 @@ export function LiveTerminal({
           done();
         });
       });
+    const captureAnchor = (next: MirrorPaneFrameContext | undefined) =>
+      advanceTerminalHistoryAnchor(
+        captureTerminalHistoryAnchor(
+          frame?.canonicalSnapshot?.cols === term.cols && frame.canonicalSnapshot.rows === term.rows
+            ? frame
+            : undefined,
+          term.buffer.active.viewportY,
+          term.buffer.active.baseY,
+        ),
+        frame,
+        next,
+      );
+    const restoreAnchor = (
+      anchor: ReturnType<typeof captureAnchor>,
+      next: MirrorPaneFrameContext | undefined,
+      beforeInteraction: number,
+    ) => {
+      frame = next;
+      if (disposed || interaction !== beforeInteraction) return;
+      const viewport = terminalHistoryViewport(anchor, next, term.buffer.active.baseY);
+      if (viewport !== null) term.scrollToLine(viewport);
+      else if (next?.canonical) term.scrollToBottom();
+    };
     const unregister = compositor.registerPaneSink(pane, {
-      async applySeedBatch(batch) {
+      async applySeedBatch(batch, context) {
         if (disposed) return;
+        const anchor = captureAnchor(context);
+        const beforeInteraction = interaction;
         wheel.reset();
         term.reset();
         if (batch.reset) term.resize(batch.reset.cols, batch.reset.rows);
@@ -148,16 +189,26 @@ export function LiveTerminal({
           offset += chunk.length;
         }
         await write(bytes);
+        restoreAnchor(anchor, context, beforeInteraction);
         scheduleWidget();
         measure();
       },
       applyGeometry(c, r) {
         if (!disposed) {
+          if (term.cols !== c || term.rows !== r) {
+            frame = undefined;
+            term.scrollToBottom();
+          }
           term.resize(c, r);
           measure();
         }
       },
-      applyOutput: write,
+      async applyOutput(bytes, context) {
+        const anchor = captureAnchor(context);
+        const beforeInteraction = interaction;
+        await write(bytes);
+        restoreAnchor(anchor, context, beforeInteraction);
+      },
       applyCursor() {
         /* Canonical ANSI updates already carry the authoritative cursor. */
       },
@@ -169,6 +220,8 @@ export function LiveTerminal({
       disposed = true;
       observer.disconnect();
       wheelMount.removeEventListener("wheel", captureWheel, true);
+      wheelMount.removeEventListener("pointerdown", noteInteraction, true);
+      wheelMount.removeEventListener("keydown", noteInteraction, true);
       if (scanTimer) clearTimeout(scanTimer);
       data.dispose();
       binary.dispose();

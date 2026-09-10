@@ -1,4 +1,5 @@
 import { PANE_STREAM_MAX_PANES } from "@tmux-ide/contracts";
+import { blankTerminalReplicaSnapshot } from "@tmux-ide/core";
 import { describe, expect, it, vi } from "vitest";
 
 import { createScriptedPaneStream } from "./mirror-pane-fixture.ts";
@@ -12,6 +13,69 @@ async function settle(): Promise<void> {
 }
 
 describe("Workspace pane compositor", () => {
+  it("keeps canonical evidence paired with queued frames and the latest lazy replay", async () => {
+    const stream = createScriptedPaneStream();
+    const compositor = new WorkspacePaneCompositor({
+      transport: stream.transport,
+      workspaceName: "workspace-a",
+      panes: [PANE_A],
+    });
+    compositor.start();
+    await settle();
+    const first = blankTerminalReplicaSnapshot(80, 24);
+    const second = blankTerminalReplicaSnapshot(80, 24);
+    const batch = {
+      reset: { cols: 80, rows: 24 },
+      seed: new Uint8Array([65]),
+      held: [],
+      cursor: null,
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const seed = vi.fn<import("./workspace-pane-compositor.ts").MirrorPaneSink["applySeedBatch"]>(
+      () => gate,
+    );
+    const output = vi.fn();
+    const unregister = compositor.registerPaneSink(PANE_A, {
+      applySeedBatch: seed,
+      applyOutput: output,
+      applyGeometry: vi.fn(),
+      applyCursor: vi.fn(),
+    });
+    const seedDone = stream
+      .latest()
+      .emit(PANE_A, { type: "seed-batch", batch, canonicalSnapshot: first });
+    await settle();
+    const replay = vi.fn(() => ({ ...batch, seed: new Uint8Array([66]) }));
+    const outputDone = stream.latest().emit(PANE_A, {
+      type: "output",
+      bytes: new Uint8Array([66]),
+      canonicalSnapshot: second,
+      replay,
+    });
+    expect(seed.mock.calls[0]?.[1]?.canonicalSnapshot).toBe(first);
+    expect(output).not.toHaveBeenCalled();
+    release();
+    await seedDone;
+    await outputDone;
+    expect(output.mock.calls[0]?.[1]?.canonicalSnapshot).toBe(second);
+    expect(replay).not.toHaveBeenCalled();
+    unregister();
+    const replacement = vi.fn();
+    compositor.registerPaneSink(PANE_A, {
+      applySeedBatch: replacement,
+      applyOutput: vi.fn(),
+      applyGeometry: vi.fn(),
+      applyCursor: vi.fn(),
+    });
+    await settle();
+    expect(replay).toHaveBeenCalledTimes(1);
+    expect(replacement.mock.calls[0]?.[1]?.canonicalSnapshot).toBe(second);
+    compositor.dispose();
+  });
+
   it("delivers every terminal frame without republishing unchanged workbench state", async () => {
     const stream = createScriptedPaneStream();
     const changed = vi.fn();
