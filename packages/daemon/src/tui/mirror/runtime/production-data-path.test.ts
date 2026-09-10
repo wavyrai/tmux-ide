@@ -269,7 +269,8 @@ describe("production OpenTUI v2 data path", () => {
     // late initial connection preparation; they add no discovery or transport owner.
     // One admission callback cancels initial auto-open after explicit machine navigation.
     // Machine-scoped agent navigation composes cancellation and exact-target input admission.
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(640);
+    // Fleet preview visibility, modal ownership and explicit-route callbacks remain composition only.
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(675);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.
@@ -332,6 +333,7 @@ describe("production OpenTUI v2 data path", () => {
     // Includes the background machine agent roster and its fenced navigation adapter.
     // Four local fleet persistence modules add owner-fenced cache and profile writes.
     // Preview request owner, bounded tab targets and fixed-route connection adapter.
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(142);
+    // Beta 17 adds bounded preview metadata, preview UI, action UI and fleet presentation.
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(146);
   });
 });

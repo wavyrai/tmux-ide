@@ -68,6 +68,11 @@ export async function workspaceSessionCreateHandler(
       message: "Fleet lifecycle is unavailable.",
     });
   const [operation, generation] = authorityContext(context);
+  if (input.expectedDaemonInstanceId && input.expectedDaemonInstanceId !== generation)
+    throw new ActionError({
+      code: "bad_request",
+      message: "The selected daemon has been replaced.",
+    });
   return await mapAuthority(() =>
     context.fleetLifecycleBackend!.createSession(operation, generation, input),
   );

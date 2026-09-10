@@ -85,3 +85,42 @@ describe("command discovery", () => {
       dispose();
     }));
 });
+
+it("keeps route identities distinct and supports explicit normal mode without eating search letters", () =>
+  createRoot((dispose) => {
+    const commands: ApplicationPaletteCommand[] = [
+      "home",
+      ...Array.from({ length: 12 }, (_, i) => ({
+        kind: "open-session" as const,
+        sessionName: "same",
+        label: `session-${i}`,
+        fleet: {
+          machineId: `host-${i}`,
+          hostLabel: `Host ${i}`,
+          liveSessionId: "live-session.12345678901234567890",
+          daemonInstanceId: "instance",
+        },
+      })),
+    ];
+    expect(new Set(commands.map((c) => applicationCommandDescription(c).id)).size).toBe(13);
+    const owner = createApplicationPaletteSearchOwner({
+      commands: () => commands,
+      open: () => true,
+      activate: () => {},
+      close: () => {},
+      onChange: () => {},
+    });
+    owner.reset(0);
+    owner.handleKey({ ...key("space"), ctrl: true });
+    owner.handleKey(key("j"));
+    expect(owner.selection()).toBe(1);
+    expect(owner.query()).toBe("");
+    owner.handleKey({ ...key("d"), ctrl: true });
+    expect(owner.selection()).toBe(6);
+    owner.handleKey({ ...key("g"), shift: true });
+    expect(owner.selection()).toBe(12);
+    owner.handleKey(key("i"));
+    owner.handleKey(key("j"));
+    expect(owner.query()).toBe("j");
+    dispose();
+  }));

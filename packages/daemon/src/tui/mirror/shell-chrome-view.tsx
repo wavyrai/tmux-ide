@@ -33,6 +33,7 @@ export interface ShellTabBarProps {
     label: string;
     hovered?: boolean;
     context?: boolean;
+    textColor?: string;
     attention?: boolean;
   }[];
   navigationFocused?: boolean;
@@ -111,6 +112,7 @@ export function ShellTabBar(props: ShellTabBarProps) {
           <Badge
             theme={props.theme}
             label={chip.label.trim()}
+            textColor={chip.textColor}
             width={Math.max(1, terminalDisplayWidth(chip.label) + (chip.context ? 1 : 0))}
             presentation={`${chip.label}${chip.context ? " " : ""}`}
             surface="header"

@@ -2299,6 +2299,110 @@ describe("PaneStreamAdmissionCoordinator", () => {
     await vi.waitFor(() => expect(closed.sort()).toEqual(["pane.editor", "pane.shell"]));
   });
 
+  it("prioritizes visible sources and initial deliveries ahead of hidden descriptor panes", async () => {
+    const order: string[] = [];
+    const h = harness({
+      panes: ["pane.hidden", "pane.visible"],
+      openTerminalDelivery: async (pane) => {
+        order.push(pane);
+        return {
+          negotiation: {
+            accepted: true,
+            negotiated: {
+              protocolVersion: 1,
+              encoding: "semantic-v1",
+              richPlacements: false,
+              generation: INSTANCE,
+              deliveryNonce: "00000000-0000-4000-8000-000000000098",
+            },
+          },
+          ack: () => undefined,
+          nack: () => undefined,
+          setVisibility: () => undefined,
+          close: async () => undefined,
+        };
+      },
+    });
+    h.mirror.initialLayouts = [
+      authoritativeLayout(["pane.hidden"], { window: "window.hidden", current: false }),
+      authoritativeLayout(["pane.visible"], { window: "window.visible", current: true }),
+    ];
+    const { socket } = await connect(h, {
+      panes: ["pane.hidden", "pane.visible"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    expect(order).toEqual(["pane.visible", "pane.hidden"]);
+    expect(socket.framesOfType("terminal-delivery-ready").map(({ pane }) => pane)).toEqual(order);
+    expect(socket.framesOfType("layout-snapshot")).toHaveLength(1);
+    expect(socket.framesOfType("error")).toHaveLength(0);
+    socket.close();
+  });
+
+  it("announces every verified observer before a hidden seed stalls its drain", async () => {
+    const panes = ["pane.visible", "pane.hidden-one", "pane.hidden-two"];
+    const nonce = "00000000-0000-4000-8000-000000000098";
+    const h = harness({
+      panes,
+      budgets: {
+        "ws-send-buffer": { maxOutstanding: 300, resumeAt: 0 },
+        "renderer-backlog": { maxOutstanding: 512, resumeAt: 128 },
+      },
+      openTerminalDelivery: async (pane, _offer, onMessage) => {
+        if (pane === "pane.hidden-one")
+          void onMessage({
+            type: "terminal.delivery",
+            workspaceName: SESSION,
+            semanticPaneId: pane,
+            generation: INSTANCE,
+            incarnation: `${INSTANCE}:0`,
+            deliveryNonce: nonce,
+            transactionId: "00000000-0000-4000-8000-000000000095",
+            protocolVersion: 1,
+            encoding: "semantic-v1",
+            frame: "seed",
+            baseRevision: null,
+            canonicalRevision: 0,
+            canonicalStateHash: "1111111111111111",
+            representationHash: "2222222222222222",
+            representationBytes: 1,
+            chunkCount: 1,
+            canonicalEquivalent: true,
+            history: "complete",
+            richPlacements: false,
+          });
+        return {
+          negotiation: {
+            accepted: true,
+            negotiated: {
+              protocolVersion: 1,
+              encoding: "semantic-v1",
+              richPlacements: false,
+              generation: INSTANCE,
+              deliveryNonce: nonce,
+            },
+          },
+          ack: () => undefined,
+          nack: () => undefined,
+          setVisibility: () => undefined,
+          close: async () => undefined,
+        };
+      },
+    });
+    h.mirror.initialLayouts = [
+      authoritativeLayout([panes[0]!], { window: "window.visible", current: true }),
+      authoritativeLayout(panes.slice(1), { window: "window.hidden", current: false }),
+    ];
+    const { socket } = await connect(h, { panes, semanticDelivery: true });
+    await vi.waitFor(() =>
+      expect(socket.framesOfType("terminal-delivery-envelope")).toHaveLength(1),
+    );
+    expect(socket.framesOfType("terminal-delivery-ready").map(({ pane }) => pane)).toEqual(panes);
+    expect(socket.bufferedAmount).toBeGreaterThan(300);
+    expect(socket.closed).toBeNull();
+    socket.close();
+  });
+
   it("publishes no staged layout when a blocked delivery observes a newer invalid authority", async () => {
     let releaseEditor!: () => void;
     const editorGate = new Promise<void>((resolve) => {

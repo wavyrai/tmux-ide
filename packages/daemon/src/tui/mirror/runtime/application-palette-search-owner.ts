@@ -20,6 +20,8 @@ export function createApplicationPaletteSearchOwner(options: {
   close: () => void;
   onChange: () => void;
 }) {
+  const [normal, setNormal] = createSignal(false);
+  const [help, setHelp] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const commands = createMemo(() => filterApplicationCommands(options.commands(), query()));
@@ -43,10 +45,18 @@ export function createApplicationPaletteSearchOwner(options: {
   };
   return {
     query,
+    keyboardHint: () =>
+      help()
+        ? "Normal: j/k g/G Ctrl-U/D · i search · Ctrl-←/→ windows · Ctrl-P preview · Ctrl-E expand"
+        : normal()
+          ? "NORMAL · i search · ? help · Ctrl-Space mode"
+          : "SEARCH · Ctrl-Space navigation · Ctrl-←/→ windows",
     commands,
     selection,
     select,
     reset(index: number) {
+      setNormal(false);
+      setHelp(false);
       setQuery("");
       setSelectedId(null);
       select(index);
@@ -54,6 +64,57 @@ export function createApplicationPaletteSearchOwner(options: {
     handleKey(event: Parameters<typeof applicationPaneRenameKeyAction>[0]) {
       if (!options.open()) return false;
       if (event.eventType === "release") return true;
+      const name = event.name.toLowerCase();
+      if (event.ctrl && name === "space") {
+        setNormal(!normal());
+        return true;
+      }
+      if (normal()) {
+        if (name === "i" || (name === "/" && !event.shift)) {
+          setNormal(false);
+          return true;
+        }
+        if (name === "?" || (name === "/" && event.shift)) {
+          setHelp(!help());
+          return true;
+        }
+        if (name === "escape") {
+          options.close();
+          return true;
+        }
+        const last = Math.max(0, commands().length - 1);
+        const delta =
+          name === "j"
+            ? 1
+            : name === "k"
+              ? -1
+              : event.ctrl && name === "d"
+                ? 5
+                : event.ctrl && name === "u"
+                  ? -5
+                  : 0;
+        if (name === "g") {
+          select(event.shift ? last : 0);
+          return true;
+        }
+        if (delta) {
+          select(Math.max(0, Math.min(last, selection() + delta)));
+          return true;
+        }
+        if (!["up", "down", "enter", "return", "home", "end", "pageup", "pagedown"].includes(name))
+          return true;
+      }
+      if (["home", "end", "pageup", "pagedown"].includes(name)) {
+        const last = Math.max(0, commands().length - 1);
+        select(
+          name === "home"
+            ? 0
+            : name === "end"
+              ? last
+              : Math.max(0, Math.min(last, selection() + (name === "pageup" ? -5 : 5))),
+        );
+        return true;
+      }
       const action =
         !event.ctrl && !event.meta
           ? applicationPaletteKeyboardDisposition(event, true, selection(), commands())

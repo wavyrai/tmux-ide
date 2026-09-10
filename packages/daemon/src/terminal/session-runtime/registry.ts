@@ -821,7 +821,12 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     if (this.#disposed) return Promise.reject(new Error("SessionRuntimeRegistry is disposed"));
     runtime.assertController(lease);
     let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
-    const resolvedSession = this.#resolveSession?.(intent.workspaceName) ?? null;
+    const resolvedSession =
+      intent.verb === "workspace.session.kill" && intent.fleetTarget
+        ? intent.fleetTarget.daemonInstanceId === this.generation
+          ? intent.fleetTarget.sessionName
+          : null
+        : (this.#resolveSession?.(intent.workspaceName) ?? null);
     if (resolvedSession !== runtime.session) {
       return Promise.reject(
         new SessionRuntimeControllerLeaseError(

@@ -1,3 +1,4 @@
+import { discoverLiveSessionSummaries } from "../command-center/discovery.ts";
 /**
  * The multiplexer mutation authority: split, kill, rename, zoom, select, swap
  * and resize.
@@ -499,6 +500,42 @@ export class WorkspaceMultiplexerAuthority {
         operationId: request.operationId,
       });
     }
+    if (request.intent.verb === "workspace.session.kill" && request.intent.fleetTarget) {
+      const target = request.intent.fleetTarget;
+      if (target.daemonInstanceId !== this.#daemonInstanceId)
+        throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
+          operationId: request.operationId,
+        });
+      const raw = this.#io.runTmux([
+        "list-panes",
+        "-a",
+        "-F",
+        "#{pid}\t#{session_id}\t#{session_created}\t#{session_name}",
+      ]);
+      const match = raw.split("\n").find((line) => {
+        const session = discoverLiveSessionSummaries(() => line)[0];
+        return (
+          session?.liveSessionId === target.liveSessionId &&
+          session.sessionName === target.sessionName
+        );
+      });
+      if (!match)
+        throw new WorkspaceMultiplexerError("workspace_not_found", {
+          reason: "session_incarnation_changed",
+        });
+      // Runtime session IDs are never reused by a live tmux server. The pinned runner
+      // separately refuses a replaced server; a name can therefore never retarget this kill.
+      const runtimeId = match.split("\t")[1]!;
+      return this.#killSession(
+        target.sessionName,
+        {
+          operationId: request.operationId,
+          daemonInstanceId: this.#daemonInstanceId,
+          workspaceName: request.intent.workspaceName,
+        },
+        runtimeId,
+      );
+    }
     const workspace = this.#registry.get(request.intent.workspaceName);
     if (!workspace) {
       throw new WorkspaceMultiplexerError("workspace_not_found", {
@@ -789,19 +826,20 @@ export class WorkspaceMultiplexerAuthority {
   #killSession(
     sessionName: string,
     envelope: { operationId: string; daemonInstanceId: string; workspaceName: string },
+    exactTarget = `=${sessionName}`,
   ): WorkspaceMultiplexerMutationResult {
     let existed = true;
     try {
-      this.#io.runTmux(["has-session", "-t", `=${sessionName}`]);
+      this.#io.runTmux(["has-session", "-t", exactTarget]);
     } catch (error) {
       if (!this.#io.isMissingTmuxTarget(error)) throw error;
       existed = false;
     }
     if (existed) {
-      this.#io.runTmux(["kill-session", "-t", `=${sessionName}`]);
+      this.#io.runTmux(["kill-session", "-t", exactTarget]);
       let stillPresent = true;
       try {
-        this.#io.runTmux(["has-session", "-t", `=${sessionName}`]);
+        this.#io.runTmux(["has-session", "-t", exactTarget]);
       } catch {
         // A missing session is exactly the proof this verb wanted.
         stillPresent = false;

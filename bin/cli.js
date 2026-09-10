@@ -3730,7 +3730,14 @@ var init_workspace_multiplexer = __esm({
     WorkspacePaneKillArgumentsSchemaZ = /* @__PURE__ */ (() => WorkspaceScopedSchemaZ.extend({
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict())();
-    WorkspaceSessionKillArgumentsSchemaZ = /* @__PURE__ */ (() => WorkspaceScopedSchemaZ.strict())();
+    WorkspaceSessionKillArgumentsSchemaZ = /* @__PURE__ */ (() => WorkspaceScopedSchemaZ.extend({
+      /** Passive fleet actions fence the daemon and exact live session incarnation. */
+      fleetTarget: z31.object({
+        daemonInstanceId: z31.uuid(),
+        liveSessionId: z31.string().regex(/^live-session\.[a-f0-9]{20}$/),
+        sessionName: WorkspaceMultiplexerNameSchemaZ
+      }).strict().optional()
+    }).strict())();
     WorkspaceRenameArgumentsSchemaZ = /* @__PURE__ */ (() => z31.discriminatedUnion("scope", [
       WorkspaceScopedSchemaZ.extend({
         scope: z31.literal("session"),
@@ -3938,7 +3945,11 @@ var init_fleet_lifecycle = __esm({
       "display name contains control bytes"
     ).refine((value) => !value.startsWith("-"), "display name cannot be parsed as an option"))();
     OwnerPathSchemaZ = /* @__PURE__ */ (() => z32.string().min(1).max(4096).refine((value) => !value.includes("\0")))();
-    WorkspaceSessionCreateArgumentsSchemaZ = /* @__PURE__ */ (() => z32.object({ displayName: SafeDisplayNameSchemaZ, cwd: OwnerPathSchemaZ.optional() }).strict())();
+    WorkspaceSessionCreateArgumentsSchemaZ = /* @__PURE__ */ (() => z32.object({
+      displayName: SafeDisplayNameSchemaZ,
+      cwd: OwnerPathSchemaZ.optional(),
+      expectedDaemonInstanceId: z32.uuid().optional()
+    }).strict())();
     WorkspaceSessionCreateResultSchemaZ = /* @__PURE__ */ (() => z32.object({
       operationId: z32.uuid(),
       daemonInstanceId: z32.uuid(),
@@ -10261,7 +10272,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.16",
+      version: "2.9.0-beta.17",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
@@ -10323,7 +10334,7 @@ var require_package = __commonJS({
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "demo:tui": "bun --preload @opentui/solid/preload docs/scripts/render-tui-demo.tsx",
-        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/native-grid-projection-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-root-error-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-flow-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-sidebar-catalog-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/ui-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-switcher-renderer.test.tsx",
+        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/native-grid-projection-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-root-error-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-flow-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-sidebar-catalog-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/ui-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-switcher-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-palette-preview-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-palette-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-session-actions-renderer.test.tsx",
         "test:tui-smoke": "bun scripts/smoke-tui-missions.mjs",
         "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
         "test:tui-testdrive": "node --test scripts/lib/tui-testdrive-clipboard-hook.test.mjs scripts/lib/tui-testdrive-input.test.mjs",
@@ -18414,7 +18425,7 @@ import { z as z71 } from "zod";
 import { bodyLimit } from "hono/body-limit";
 import { stripVTControlCharacters } from "node:util";
 function createFleetPreviewCapture(run) {
-  return async (liveSessionId2, signal) => {
+  const snapshot = async (liveSessionId2, signal, windowId) => {
     const readSessions = async () => {
       const raw = await run(
         ["list-panes", "-a", "-F", "#{pid}	#{session_id}	#{session_created}	#{session_name}"],
@@ -18424,24 +18435,80 @@ function createFleetPreviewCapture(run) {
     };
     const session = (await readSessions()).find((s) => s.liveSessionId === liveSessionId2);
     if (!session) return null;
-    const panes = await run(
+    const readPanes = async () => (await run(
       [
         "list-panes",
         "-s",
         "-t",
         `=${session.sessionName}`,
         "-F",
-        "#{pane_id}	#{window_active}	#{pane_active}"
+        "#{pane_id}	#{window_active}	#{pane_active}	#{window_id}	#{window_index}"
       ],
       signal
+    )).trim().split("\n").map((line) => line.split("	"));
+    const rows = await readPanes();
+    const names = /* @__PURE__ */ new Map();
+    const windowNames = await run(
+      ["list-windows", "-t", `=${session.sessionName}`, "-F", "#{window_id}	#{window_name}"],
+      signal
     );
-    const rows = panes.trim().split("\n").map((line) => line.split("	"));
-    const pane = rows.find((row) => row[1] === "1" && row[2] === "1")?.[0] ?? rows[0]?.[0];
+    for (const line of windowNames.split("\n")) {
+      const tab = line.indexOf("	");
+      if (tab > 0)
+        names.set(
+          line.slice(0, tab),
+          cleanText(line.slice(tab + 1)).replace(/[\n\t]/gu, " ").slice(0, 80)
+        );
+    }
+    const windowRows = rows.filter((row) => /^@\d+$/u.test(row[3] ?? ""));
+    const selectedWindowId = windowId ?? windowRows.find((row) => row[1] === "1")?.[3] ?? windowRows[0]?.[3] ?? null;
+    if (windowId && !windowRows.some((row) => row[3] === windowId)) return null;
+    const toWindow = (row) => ({
+      id: row[3],
+      index: Math.max(0, Number.parseInt(row[4] ?? "0", 10) || 0),
+      name: names.get(row[3]) ?? `Window ${row[4]}`,
+      active: row[1] === "1"
+    });
+    const windows = [];
+    for (const row of windowRows) {
+      if (windows.some((w) => w.id === row[3])) continue;
+      if (windows.length >= 64) break;
+      windows.push(toWindow(row));
+    }
+    if (selectedWindowId && !windows.some((w) => w.id === selectedWindowId)) {
+      const selectedRow = windowRows.find((row) => row[3] === selectedWindowId);
+      if (selectedRow) windows.splice(63, 1, toWindow(selectedRow));
+    }
+    let paneBudget = 256;
+    for (const window2 of [...windows].sort(
+      (a, b) => Number(b.id === selectedWindowId) - Number(a.id === selectedWindowId)
+    )) {
+      const ids = [
+        ...new Set(
+          windowRows.filter((row) => row[3] === window2.id && /^%\d+$/u.test(row[0] ?? "")).map((row) => row[0])
+        )
+      ];
+      if (ids.length <= paneBudget) {
+        window2.paneIds = ids;
+        paneBudget -= ids.length;
+      }
+    }
+    windows.sort((a, b) => a.index - b.index);
+    const candidates = selectedWindowId ? rows.filter((r) => r[3] === selectedWindowId) : rows;
+    const pane = candidates.find((r) => r[2] === "1")?.[0] ?? candidates[0]?.[0];
     if (!pane || !/^%\d+$/u.test(pane)) return null;
     const captured = await run(["capture-pane", "-p", "-t", pane, "-S", "-24"], signal);
     if (!(await readSessions()).some((s) => s.liveSessionId === liveSessionId2)) return null;
-    return stripVTControlCharacters(captured).replace(/[^\P{Cc}\n\t]/gu, "").split("\n").slice(-24).map((line) => line.slice(0, 180)).join("\n").slice(0, 8192);
+    if (selectedWindowId && !(await readPanes()).some((r) => r[3] === selectedWindowId && r[0] === pane))
+      return null;
+    return {
+      windows,
+      selectedWindowId,
+      text: cleanText(captured).split("\n").slice(-24).map((line) => line.slice(0, 180)).join("\n").slice(0, 8192)
+    };
   };
+  const capture = async (liveSessionId2, signal) => (await snapshot(liveSessionId2, signal))?.text ?? null;
+  return Object.assign(capture, { snapshot });
 }
 function mountFleetPreviewRoute(app, options) {
   const authorize = ownerAuthorityGate(options.ownerToken, {
@@ -18476,11 +18543,18 @@ function mountFleetPreviewRoute(app, options) {
     next = now + 250;
     pending = true;
     try {
-      const text = await options.capture(
-        input.data.liveSessionId,
-        AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(1500)])
-      );
-      return text === null ? c.json({ error: "Session changed" }, 409) : c.json({ daemon: options.daemon, liveSessionId: input.data.liveSessionId, text });
+      const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(1500)]);
+      if (input.data.windowId && !options.capture.snapshot)
+        return c.json({ error: "Window preview unavailable" }, 503);
+      const snapshot = options.capture.snapshot ? await options.capture.snapshot(input.data.liveSessionId, signal, input.data.windowId) : null;
+      const legacy = !options.capture.snapshot ? await options.capture(input.data.liveSessionId, signal) : null;
+      const text = snapshot?.text ?? legacy;
+      return text === null ? c.json({ error: "Session changed" }, 409) : c.json({
+        daemon: options.daemon,
+        liveSessionId: input.data.liveSessionId,
+        text,
+        ...snapshot ? { windows: snapshot.windows, selectedWindowId: snapshot.selectedWindowId } : {}
+      });
     } catch {
       return c.json({ error: "Preview unavailable" }, 503);
     } finally {
@@ -18488,14 +18562,16 @@ function mountFleetPreviewRoute(app, options) {
     }
   });
 }
-var requestSchema;
+var cleanText, requestSchema;
 var init_fleet_preview_route = __esm({
   "packages/daemon/src/command-center/resources/fleet-preview-route.ts"() {
     "use strict";
     init_owner_authority();
     init_discovery();
+    cleanText = (value) => stripVTControlCharacters(value).replace(/[^\P{Cc}\n\t]/gu, "");
     requestSchema = z71.strictObject({
       expectedInstanceId: z71.uuid(),
+      windowId: z71.string().regex(/^@\d+$/u).optional(),
       liveSessionId: z71.string().regex(/^live-session\.[a-f0-9]{20}$/u)
     });
   }
@@ -33670,6 +33746,7 @@ var CREATION_OPTION2, SEMANTIC_PANE_OPTION4, SEMANTIC_WINDOW_OPTION3, DISPLAY_TI
 var init_workspace_multiplexer_verbs = __esm({
   "packages/daemon/src/lib/workspace-multiplexer-verbs.ts"() {
     "use strict";
+    init_discovery();
     init_src();
     init_src2();
     init_workspace_pane_creation2();
@@ -33887,6 +33964,37 @@ var init_workspace_multiplexer_verbs = __esm({
           throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
             operationId: request.operationId
           });
+        }
+        if (request.intent.verb === "workspace.session.kill" && request.intent.fleetTarget) {
+          const target = request.intent.fleetTarget;
+          if (target.daemonInstanceId !== this.#daemonInstanceId)
+            throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
+              operationId: request.operationId
+            });
+          const raw2 = this.#io.runTmux([
+            "list-panes",
+            "-a",
+            "-F",
+            "#{pid}	#{session_id}	#{session_created}	#{session_name}"
+          ]);
+          const match = raw2.split("\n").find((line) => {
+            const session = discoverLiveSessionSummaries(() => line)[0];
+            return session?.liveSessionId === target.liveSessionId && session.sessionName === target.sessionName;
+          });
+          if (!match)
+            throw new WorkspaceMultiplexerError("workspace_not_found", {
+              reason: "session_incarnation_changed"
+            });
+          const runtimeId = match.split("	")[1];
+          return this.#killSession(
+            target.sessionName,
+            {
+              operationId: request.operationId,
+              daemonInstanceId: this.#daemonInstanceId,
+              workspaceName: request.intent.workspaceName
+            },
+            runtimeId
+          );
         }
         const workspace = this.#registry.get(request.intent.workspaceName);
         if (!workspace) {
@@ -34128,19 +34236,19 @@ var init_workspace_multiplexer_verbs = __esm({
           remainingWindowCount: windowIdsOf(after).length
         };
       }
-      #killSession(sessionName, envelope) {
+      #killSession(sessionName, envelope, exactTarget = `=${sessionName}`) {
         let existed = true;
         try {
-          this.#io.runTmux(["has-session", "-t", `=${sessionName}`]);
+          this.#io.runTmux(["has-session", "-t", exactTarget]);
         } catch (error) {
           if (!this.#io.isMissingTmuxTarget(error)) throw error;
           existed = false;
         }
         if (existed) {
-          this.#io.runTmux(["kill-session", "-t", `=${sessionName}`]);
+          this.#io.runTmux(["kill-session", "-t", exactTarget]);
           let stillPresent = true;
           try {
-            this.#io.runTmux(["has-session", "-t", `=${sessionName}`]);
+            this.#io.runTmux(["has-session", "-t", exactTarget]);
           } catch {
             stillPresent = false;
           }
@@ -39533,7 +39641,7 @@ var init_semantic_mutation_executor = __esm({
           intent = { ...intent, origin: authority.origin };
         }
         const authenticatedSourceSemanticPaneId = authority.authenticatedSourceSemanticPaneId ?? null;
-        const session = this.#options.resolveSession(intent.workspaceName);
+        const session = intent.verb === "workspace.session.kill" && intent.fleetTarget ? intent.fleetTarget.sessionName : this.#options.resolveSession(intent.workspaceName);
         const ledger2 = this.#ledger(session ?? MISSING_SESSION_LEDGER);
         const origin = authority.origin;
         const fingerprint2 = JSON.stringify([intent, authenticatedSourceSemanticPaneId, origin]);
@@ -56807,7 +56915,7 @@ var init_registry2 = __esm({
         if (this.#disposed) return Promise.reject(new Error("SessionRuntimeRegistry is disposed"));
         runtime.assertController(lease);
         let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
-        const resolvedSession = this.#resolveSession?.(intent.workspaceName) ?? null;
+        const resolvedSession = intent.verb === "workspace.session.kill" && intent.fleetTarget ? intent.fleetTarget.daemonInstanceId === this.generation ? intent.fleetTarget.sessionName : null : this.#resolveSession?.(intent.workspaceName) ?? null;
         if (resolvedSession !== runtime.session) {
           return Promise.reject(
             new SessionRuntimeControllerLeaseError(
@@ -64732,6 +64840,14 @@ var init_pane_stream_websocket = __esm({
           this.close(1011, "stream-unavailable");
           return;
         }
+        const visibleAtOpen = new Set(
+          stagedAuthority.layouts.flatMap(
+            (layout) => layout.currentWindow ? layout.panes.map((pane) => pane.semanticPaneId) : []
+          )
+        );
+        channels.sort(
+          (left, right) => Number(visibleAtOpen.has(right.semanticPaneId)) - Number(visibleAtOpen.has(left.semanticPaneId))
+        );
         const openings = channels.map(async (channel) => {
           const pending = [];
           let ready = false;
@@ -64802,7 +64918,15 @@ var init_pane_stream_websocket = __esm({
         });
         layoutActivated = true;
         this.#recordDiagnosticLifecycle("pane-stream-delivery-open");
-        for (const { channel, delivery, pending, markReady } of opened) {
+        const visibleAtDelivery = new Set(
+          authority.layouts.flatMap(
+            (layout) => layout.currentWindow ? layout.panes.map((pane) => pane.semanticPaneId) : []
+          )
+        );
+        opened.sort(
+          (left, right) => Number(visibleAtDelivery.has(right.channel.semanticPaneId)) - Number(visibleAtDelivery.has(left.channel.semanticPaneId))
+        );
+        for (const { channel, delivery } of opened) {
           if (this.#closed || channel.closed) {
             await delivery.close();
             continue;
@@ -64824,6 +64948,9 @@ var init_pane_stream_websocket = __esm({
             pane: channel.semanticPaneId,
             negotiation: delivery.negotiation
           });
+        }
+        for (const { channel, pending, markReady } of opened) {
+          if (this.#closed || channel.closed) continue;
           markReady();
           for (const message of pending)
             await this.#sendTerminalDelivery(channel.semanticPaneId, message);
@@ -65895,7 +66022,16 @@ function createSessionRuntimeMultiplexerBackend(options) {
   };
   return {
     mutate: async (request, authenticatedHostClientId, sourcePaneCredential, ownerAuthorized = false) => {
-      const session = options.resolveSession(request.intent.workspaceName);
+      const fleetTarget = request.intent.verb === "workspace.session.kill" ? request.intent.fleetTarget : void 0;
+      if (fleetTarget && (!ownerAuthorized || authenticatedHostClientId || sourcePaneCredential))
+        throw new WorkspaceMultiplexerError("operation_conflict", {
+          reason: "fleet_close_requires_explicit_owner"
+        });
+      if (fleetTarget && fleetTarget.daemonInstanceId !== options.registry.generation)
+        throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
+          operationId: request.operationId
+        });
+      const session = fleetTarget && ownerAuthorized && !authenticatedHostClientId && !sourcePaneCredential ? fleetTarget.sessionName : options.resolveSession(request.intent.workspaceName);
       if (!session) {
         throw new Error(`Workspace ${request.intent.workspaceName} has no live tmux session`);
       }
@@ -68774,6 +68910,11 @@ async function workspaceSessionCreateHandler(input, context) {
       message: "Fleet lifecycle is unavailable."
     });
   const [operation, generation] = authorityContext(context);
+  if (input.expectedDaemonInstanceId && input.expectedDaemonInstanceId !== generation)
+    throw new ActionError({
+      code: "bad_request",
+      message: "The selected daemon has been replaced."
+    });
   return await mapAuthority(
     () => context.fleetLifecycleBackend.createSession(operation, generation, input)
   );

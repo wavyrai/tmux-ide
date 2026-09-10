@@ -173,7 +173,10 @@ export class SessionSemanticMutationExecutor {
       intent = { ...intent, origin: authority.origin };
     }
     const authenticatedSourceSemanticPaneId = authority.authenticatedSourceSemanticPaneId ?? null;
-    const session = this.#options.resolveSession(intent.workspaceName);
+    const session =
+      intent.verb === "workspace.session.kill" && intent.fleetTarget
+        ? intent.fleetTarget.sessionName
+        : this.#options.resolveSession(intent.workspaceName);
     // All unresolved workspace names share one bounded refusal bucket. Never
     // retain an attacker-controlled workspace-name alias as a ledger key.
     const ledger = this.#ledger(session ?? MISSING_SESSION_LEDGER);

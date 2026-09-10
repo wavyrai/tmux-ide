@@ -4,6 +4,10 @@ import { spawnSync } from "node:child_process";
 
 // Hermetic SSH proofs: no remote host, real SSH process, or live tmux mutation.
 const sshTests = [
+  "packages/daemon/src/tui/mirror/runtime/fleet-presentation.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/fleet-lifecycle-client.test.ts",
+  "packages/daemon/src/lib/fleet-session-kill.test.ts",
+  "packages/daemon/src/command-center/actions/handlers/fleet-create-generation.test.ts",
   "packages/daemon/src/command-center/resources/fleet-preview-route.test.ts",
   "packages/daemon/src/tui/mirror/runtime/application-fleet-preview.test.ts",
   "packages/daemon/src/tui/mirror/runtime/application-fleet-tabs.test.ts",
@@ -291,6 +295,9 @@ const checks = [
       "./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx",
       "./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx",
       "./packages/daemon/src/tui/mirror/runtime/application-fleet-switcher-renderer.test.tsx",
+      "./packages/daemon/src/tui/mirror/runtime/application-palette-preview-renderer.test.tsx",
+      "./packages/daemon/src/tui/mirror/runtime/application-fleet-palette-renderer.test.tsx",
+      "./packages/daemon/src/tui/mirror/runtime/application-fleet-session-actions-renderer.test.tsx",
 
       "./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx",
       "./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx",

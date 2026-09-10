@@ -479,3 +479,77 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
     expect(h.connect).not.toHaveBeenCalled();
   });
 });
+
+it("fences passive fleet close and refuses claimed transport or pane principals", async () => {
+  const h = rig();
+  const intent = {
+    verb: "workspace.session.kill" as const,
+    workspaceName: "ordinary",
+    fleetTarget: {
+      daemonInstanceId: GENERATION,
+      liveSessionId: `live-session.${"a".repeat(20)}`,
+      sessionName: "ordinary",
+    },
+  };
+  const operation = request(intent, OPERATION_IDS[0]);
+  await expect(h.backend.mutate(operation, "stale-controller", undefined, true)).rejects.toThrow(
+    /controller/i,
+  );
+  await expect(h.backend.mutate(operation, undefined, "valid-pane-token", true)).rejects.toThrow(
+    /controller/i,
+  );
+  await expect(h.backend.mutate(operation, undefined, undefined, false)).rejects.toThrow(
+    /controller/i,
+  );
+  expect(h.connect).not.toHaveBeenCalled();
+  await h.backend.mutate(operation, undefined, undefined, true);
+  expect(h.connect.mock.calls[0]?.[0]).toBe("ordinary");
+  expect(h.close).toHaveBeenCalledTimes(1);
+});
+
+it("routes fenced ordinary close through the real registry and semantic ledger without workspace registration", async () => {
+  let executions = 0;
+  const registry = new SessionRuntimeRegistry({
+    generation: GENERATION,
+    semanticMutations: {
+      resolveSession: () => null,
+      execute: (operationId, intent) => {
+        if (intent.verb !== "workspace.session.kill") throw new Error("unexpected intent");
+        executions++;
+        return {
+          operationId,
+          daemonInstanceId: GENERATION,
+          workspaceName: intent.workspaceName,
+          verb: intent.verb,
+          outcome: "applied",
+        };
+      },
+      publishReceipt: (receipt) => ({ type: "interaction.receipt", sequence: 1, ...receipt }),
+    },
+  });
+  const backend = createSessionRuntimeMultiplexerBackend({ registry, resolveSession: () => null });
+  const intent = {
+    verb: "workspace.session.kill" as const,
+    workspaceName: "ordinary",
+    fleetTarget: {
+      daemonInstanceId: GENERATION,
+      liveSessionId: `live-session.${"a".repeat(20)}`,
+      sessionName: "ordinary",
+    },
+  };
+  try {
+    const wrong = registry.connect("different", "command-center", "wrong-session");
+    const lease = wrong.acquireController();
+    await expect(wrong.submitIntent(lease, OPERATION_IDS[1], intent)).rejects.toMatchObject({
+      code: "intent-session-mismatch",
+    });
+    await wrong.close();
+    expect(executions).toBe(0);
+    await backend.mutate(request(intent, OPERATION_IDS[0]), undefined, undefined, true);
+    await backend.mutate(request(intent, OPERATION_IDS[0]), undefined, undefined, true);
+    expect(executions).toBe(1);
+    expect(registry.activeControllerLeaseCount()).toBe(0);
+  } finally {
+    await registry.dispose();
+  }
+});

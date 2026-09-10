@@ -84,7 +84,17 @@ export const WorkspacePaneKillArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
 }).strict();
 export type WorkspacePaneKillArguments = z.infer<typeof WorkspacePaneKillArgumentsSchemaZ>;
 
-export const WorkspaceSessionKillArgumentsSchemaZ = WorkspaceScopedSchemaZ.strict();
+export const WorkspaceSessionKillArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+  /** Passive fleet actions fence the daemon and exact live session incarnation. */
+  fleetTarget: z
+    .object({
+      daemonInstanceId: z.uuid(),
+      liveSessionId: z.string().regex(/^live-session\.[a-f0-9]{20}$/),
+      sessionName: WorkspaceMultiplexerNameSchemaZ,
+    })
+    .strict()
+    .optional(),
+}).strict();
 export type WorkspaceSessionKillArguments = z.infer<typeof WorkspaceSessionKillArgumentsSchemaZ>;
 
 export const WorkspaceRenameArgumentsSchemaZ = z.discriminatedUnion("scope", [

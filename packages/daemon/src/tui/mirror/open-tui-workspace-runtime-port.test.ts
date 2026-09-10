@@ -392,7 +392,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     await port.close();
   });
 
-  it("does not publish a live port until current layout and every pane seed are coherent", async () => {
+  it("does not publish a live port until current layout and every visible pane seed are coherent", async () => {
     const test = rig(false);
     let settled = false;
     const opening = connectOpenTuiWorkspaceRuntimePort({
@@ -434,6 +434,147 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     expect(port.getLayout()).toMatchObject({ semanticWindowId: "window.main" });
     await port.close();
   });
+
+  it("opens seven healthy visible panes while the eighth hidden pane is receiving", async () => {
+    vi.useFakeTimers();
+    try {
+      const started = Date.now();
+      const test = rig(false);
+      const paneIds = Array.from({ length: 8 }, (_, index) => `pane.${index}`);
+      const updates = new Map<string, CanonicalTerminalReplicaUpdate[]>();
+      const opening = connectOpenTuiWorkspaceRuntimePort({
+        inventory: inventory(paneIds),
+        routing: test.routing,
+        prepareRuntime: async (candidate) => {
+          await Promise.all(
+            paneIds.map(async (semanticPaneId) => {
+              const subscription = await candidate.subscribeTerminal({
+                workspaceName: WORKSPACE,
+                semanticPaneId,
+              });
+              updates.set(semanticPaneId, []);
+              subscription.onUpdate((update) => updates.get(semanticPaneId)!.push(update));
+            }),
+          );
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      const layout = (ids: string[], currentWindow: boolean) => ({
+        type: "layout" as const,
+        semanticWindowId: currentWindow ? "window.visible" : "window.hidden",
+        windowName: currentWindow ? "visible" : "hidden",
+        currentWindow,
+        cols: 120,
+        rows: 40,
+        zoomed: false,
+        paneBorderStatus: "off" as const,
+        panes: ids.map((pane, index) => ({
+          pane,
+          left: index * 10,
+          top: 0,
+          width: 10,
+          height: 40,
+          active: index === 0,
+        })),
+      });
+      test.options().onLayoutSnapshot?.({
+        type: "layout-snapshot",
+        topologyEpoch: 1,
+        layouts: [layout(paneIds.slice(0, 7), true), layout(paneIds.slice(7), false)],
+      });
+      const deliverSeed = (index: number) => {
+        const seed = seedDelivery(
+          paneIds[index]!,
+          blankTerminalReplicaSnapshot(4, 2),
+          String(501 + index),
+        );
+        test.options().onTerminalDelivery(paneIds[index]!, seed.envelope);
+        for (const chunk of seed.chunks) test.options().onTerminalDelivery(paneIds[index]!, chunk);
+      };
+      setTimeout(() => {
+        for (let index = 0; index < 7; index++) deliverSeed(index);
+      }, 100);
+      setTimeout(() => deliverSeed(7), 5_000);
+      await vi.advanceTimersByTimeAsync(100);
+      const port = await opening;
+      expect(Date.now() - started).toBe(100);
+      expect(updates.get(paneIds[7]!)).toEqual([]);
+      expect(test.client.ack).toHaveBeenCalledTimes(7);
+      const input = { kind: "text" as const, data: "hello" };
+      const target = (index: number) => ({
+        workspaceName: WORKSPACE,
+        semanticPaneId: paneIds[index]!,
+      });
+      expect(await port.sendTerminalInput(target(0), input)).toBe("ok");
+      expect(await port.sendTerminalInput(target(7), input)).toBe("authority-lost");
+      const fit = port.fitViewport(120, 40);
+      for (let index = 0; index < 100; index++) expect(port.fitViewport(120 + index, 40)).toBe(fit);
+      await Promise.resolve();
+      expect(test.client.fitViewport).not.toHaveBeenCalled();
+      expect(test.client.sendTerminalInput).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(4_900);
+      expect(Date.now() - started).toBe(5_000);
+      expect(updates.get(paneIds[7]!)).toHaveLength(1);
+      expect(await port.sendTerminalInput(target(7), input)).toBe("ok");
+      expect(await fit).toBe("ok");
+      expect(test.client.fitViewport).toHaveBeenCalledExactlyOnceWith(219, 40);
+      await port.close();
+      expect(await port.sendTerminalInput(target(0), input)).toBe("authority-lost");
+      expect(test.client.sendTerminalInput).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["deadline", "dispose"] as const)(
+    "retires a missing hidden seed on %s and cancels pending geometry",
+    async (retirement) => {
+      vi.useFakeTimers();
+      try {
+        const test = rig(false);
+        const onFault = vi.fn();
+        const opening = connectOpenTuiWorkspaceRuntimePort({
+          inventory: inventory(),
+          routing: test.routing,
+          onFault,
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        test.options().onLayoutSnapshot?.({
+          type: "layout-snapshot",
+          topologyEpoch: 1,
+          layouts: [PANE_A, PANE_B].map((pane, index) => ({
+            type: "layout" as const,
+            semanticWindowId: `window.${index}`,
+            windowName: `${index}`,
+            currentWindow: index === 0,
+            cols: 4,
+            rows: 2,
+            zoomed: false,
+            paneBorderStatus: "off" as const,
+            panes: [{ pane, left: 0, top: 0, width: 4, height: 2, active: true }],
+          })),
+        });
+        const seed = seedDelivery(PANE_A, blankTerminalReplicaSnapshot(4, 2), "599");
+        test.options().onTerminalDelivery(PANE_A, seed.envelope);
+        for (const chunk of seed.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+        const port = await opening;
+        const fit = port.fitViewport(100, 30);
+        if (retirement === "deadline") await vi.advanceTimersByTimeAsync(15_000);
+        else await port.close();
+        expect(onFault).toHaveBeenCalledTimes(retirement === "deadline" ? 1 : 0);
+        expect(vi.getTimerCount()).toBe(0);
+        expect(test.client.close).toHaveBeenCalledOnce();
+        expect(await fit).toBe("geometry-authority-conflict");
+        expect(test.client.fitViewport).not.toHaveBeenCalled();
+        await port.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("commits a large compact bootstrap seed before cooperative patch scheduling", async () => {
     const immediate = vi.spyOn(globalThis, "setImmediate");

@@ -1,3 +1,5 @@
+import { fleetHostColor } from "./fleet-presentation.ts";
+import type { ApplicationPaletteCommand } from "./application-palette-input.ts";
 import { createFleetTabs, type FleetTabTarget } from "./application-fleet-tabs.ts";
 import { readFleetPreview } from "./application-fleet-preview.ts";
 import { saveMachineProfiles } from "../../../lib/local-fleet-request.ts";
@@ -148,6 +150,8 @@ export function createApplicationMachineNavigation(options: {
     groups: () =>
       snapshot().groups.map((group) => ({
         ...group,
+        agentsAvailable:
+          agentGroups().find((value) => value.machineId === group.id)?.available ?? false,
         agents: agentGroups().find((value) => value.machineId === group.id)?.agents ?? [],
       })),
     tabs: () => {
@@ -263,6 +267,87 @@ export function createApplicationMachineNavigation(options: {
       if (target) void tabs.activate(target.key);
     },
     closeSwitcher: () => setSwitching(false),
+    paletteCommands(): readonly ApplicationPaletteCommand[] {
+      return snapshot().groups.flatMap((group) => {
+        const daemon = manager.getMachine(group.id)?.read();
+        const sessions = group.sessions.flatMap((session): ApplicationPaletteCommand[] => {
+          if (!session.liveSessionId) return [];
+          const fleet = {
+            machineId: group.id,
+            liveSessionId: session.liveSessionId,
+            hostLabel: group.label,
+            agentActivities: agentGroups().find((g) => g.machineId === group.id)?.available
+              ? (agentGroups().find((g) => g.machineId === group.id)?.agents ?? [])
+                  .filter((a) => a.liveSessionId === session.liveSessionId && a.paneId)
+                  .map((a) => ({ paneId: a.paneId!, attention: a.attention, activity: a.activity }))
+              : undefined,
+            daemonInstanceId: daemon?.instanceId ?? "",
+            disabled: session.disabled || group.state !== "ready",
+          };
+          return [
+            { kind: "open-session", sessionName: session.name, label: session.name, fleet },
+            ...(agentGroups().find((g) => g.machineId === group.id)?.agents ?? [])
+              .filter((a) => a.liveSessionId === session.liveSessionId && a.paneId)
+              .map((a) => ({
+                kind: "jump-agent" as const,
+                sessionName: session.name,
+                paneId: a.paneId!,
+                label: a.name,
+                fleet: { ...fleet, disabled: fleet.disabled || a.disabled },
+              })),
+          ];
+        });
+        return [
+          {
+            kind: "open-machine" as const,
+            sessionName: "" as const,
+            label: group.label,
+            fleet: {
+              machineId: group.id,
+              hostLabel: group.label,
+              liveSessionId: "",
+              daemonInstanceId: daemon?.instanceId ?? "",
+              disabled: group.state !== "ready",
+            },
+          },
+          ...sessions,
+        ];
+      });
+    },
+    async openPalette(
+      command: Exclude<ApplicationPaletteCommand, string>,
+      source: "keyboard" | "mouse",
+    ) {
+      const target = command.fleet;
+      if (!target) return;
+      const handle = manager.getMachine(target.machineId);
+      if (command.kind === "open-machine") {
+        if (
+          handle?.endpoint().state === "ready" &&
+          handle.read()?.instanceId === target.daemonInstanceId
+        )
+          sidebar.onSelectMachine(target.machineId, source);
+        else options.setNote("That machine is unavailable.");
+        return;
+      }
+      const group = snapshot().groups.find(
+        (g) => g.id === target.machineId || g.routeIds?.includes(target.machineId),
+      );
+      const session = group?.sessions.find(
+        (s) => s.liveSessionId === target.liveSessionId && !s.disabled,
+      );
+      if (
+        !session ||
+        handle?.endpoint().state !== "ready" ||
+        handle.read()?.instanceId !== target.daemonInstanceId
+      ) {
+        options.setNote("That fleet target changed. Select it again.");
+        return;
+      }
+      if (command.kind === "jump-agent")
+        sidebar.onOpenAgent?.(target.machineId, session.name, command.paneId, source);
+      else await open(target.machineId, session.name, source, true, target.liveSessionId);
+    },
     switcherRows: (): readonly FleetSwitcherRow[] => {
       const favorite = new Set(saved().favorites);
       const recent = saved().recent;
@@ -346,6 +431,10 @@ export function createApplicationMachineNavigation(options: {
     setAlias,
     label: () =>
       snapshot().groups.find((g) => g.id === snapshot().selectedMachineId)?.label ?? "This machine",
+    color: () => {
+      const group = snapshot().groups.find((g) => g.id === snapshot().selectedMachineId);
+      return fleetHostColor(group ?? { id: snapshot().selectedMachineId });
+    },
     isLocal: () => snapshot().selectedMachineId === "local",
     focus: () => {
       navigation++;

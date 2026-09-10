@@ -31,6 +31,7 @@ export type ApplicationCatalogSurface = "home" | "terminals";
 export type ApplicationCatalogInputSource = "keyboard" | "mouse";
 export interface ApplicationCatalogShellProps {
   readonly machineSidebar?: ApplicationMachineSidebarModel;
+  readonly machineColor?: string;
   readonly machineLabel?: string | null;
   readonly appearanceOwner?: ApplicationAppearanceOwner;
   readonly homeAgents?: ApplicationHomeAgentPresentation;
@@ -46,6 +47,9 @@ export interface ApplicationCatalogShellProps {
   readonly catalogNote?: Accessor<string | null>;
   readonly paletteOpen: Accessor<boolean>;
   readonly paletteSelection?: Accessor<number>;
+  readonly palettePreviewActive?: Accessor<boolean>;
+  readonly onPaletteModalChange?: (open: boolean) => void;
+  readonly paletteKeyboardHint?: Accessor<string>;
   readonly paletteQuery?: Accessor<string>;
   readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
   readonly onPaletteSelect?: (index: number) => void;
@@ -80,6 +84,7 @@ const CATALOG_VIEWS: readonly ShellChromeView[] = [
 function CatalogTerminalSurface(props: {
   readonly phase: "loading" | "live" | "unavailable";
   readonly sessionCount: number;
+  readonly machineColor?: string;
   readonly machineLabel?: string | null;
   readonly note: string | null;
   readonly connection?: ApplicationConnectionFeedback | null;
@@ -261,6 +266,9 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                 height={props.dimensions().height}
                 selected={props.paletteSelection?.() ?? 0}
                 query={props.paletteQuery?.() ?? ""}
+                keyboardHint={props.paletteKeyboardHint?.()}
+                previewActive={props.palettePreviewActive?.() ?? true}
+                onModalChange={props.onPaletteModalChange}
                 disabledReason={props.paletteDisabledReason}
                 onSelect={props.onPaletteSelect}
                 closeArmed={props.paletteCloseArmed?.() ?? false}
@@ -303,7 +311,14 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
         hoveredIndex={null}
         rightChips={[
           ...(props.machineLabel
-            ? [{ id: "machine", label: `SSH ${props.machineLabel}`, context: true }]
+            ? [
+                {
+                  id: "machine",
+                  label: `SSH ${props.machineLabel}`,
+                  context: true,
+                  textColor: props.machineColor,
+                },
+              ]
             : []),
           {
             id: "catalog-status",
@@ -382,6 +397,7 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                   phase={phase()}
                   sessionCount={sessions().length}
                   machineLabel={props.machineLabel}
+                  machineColor={props.machineColor}
                   note={note()}
                   connection={props.connectionFeedback?.()}
                   onCancelOpen={props.onCancelOpen}

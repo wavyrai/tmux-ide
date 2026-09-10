@@ -27,7 +27,11 @@ const OwnerPathSchemaZ = z
   .max(4_096)
   .refine((value) => !value.includes("\0"));
 export const WorkspaceSessionCreateArgumentsSchemaZ = z
-  .object({ displayName: SafeDisplayNameSchemaZ, cwd: OwnerPathSchemaZ.optional() })
+  .object({
+    displayName: SafeDisplayNameSchemaZ,
+    cwd: OwnerPathSchemaZ.optional(),
+    expectedDaemonInstanceId: z.uuid().optional(),
+  })
   .strict();
 export type WorkspaceSessionCreateArguments = z.infer<
   typeof WorkspaceSessionCreateArgumentsSchemaZ

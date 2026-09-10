@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
       kind: string;
       ready: Promise<boolean>;
       endpoint: () => { state: string };
+      read: () => { instanceId: string };
     }
   >(),
   trace: [] as string[],
@@ -108,6 +109,7 @@ function machine(id: string, ready: Promise<boolean> = Promise.resolve(true), st
     kind: id === "local" ? "local" : "ssh",
     ready,
     endpoint: () => ({ state: status }),
+    read: () => ({ instanceId: `generation-${id}` }),
   });
 }
 beforeEach(() => {
@@ -301,4 +303,34 @@ it("opens a background agent only after switching to its machine, even with a sh
   owner.sidebar.onOpenAgent?.("A", "same", "pane", "mouse");
   expect(callbacks.openAgent).toHaveBeenCalledTimes(1);
   expect(callbacks.setNote).toHaveBeenCalledWith(expect.stringContaining("unavailable"));
+});
+
+it("F5 routes same-name sessions explicitly and rejects an obsolete generation", async () => {
+  const { owner, callbacks } = navigation();
+  state.listener?.({
+    selectedMachineId: "local",
+    groups: ["A", "B"].map((id) => ({
+      id,
+      label: id,
+      state: "ready",
+      sessions: [{ id: `${id}:same`, name: "same", liveSessionId: `live-${id}`, disabled: false }],
+    })),
+  });
+  const commands = owner
+    .paletteCommands()
+    .filter((c) => typeof c === "object" && c.kind !== "open-machine");
+  expect(commands).toHaveLength(2);
+  const b = commands[1];
+  if (typeof b !== "object") throw Error("Missing fleet command");
+  await owner.openPalette(b, "keyboard");
+  expect(state.selected).toBe("B");
+  expect(callbacks.openSession).toHaveBeenCalledWith("same", "keyboard");
+  expect(callbacks.resetWorkspace).toHaveBeenCalledWith("B", "live-B");
+  callbacks.openSession.mockClear();
+  await owner.openPalette(
+    { ...b, fleet: { ...b.fleet!, daemonInstanceId: "obsolete" } },
+    "keyboard",
+  );
+  expect(callbacks.openSession).not.toHaveBeenCalled();
+  expect(callbacks.setNote).toHaveBeenCalledWith("That fleet target changed. Select it again.");
 });

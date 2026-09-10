@@ -6,6 +6,8 @@ import { componentPalette, type ComponentInteractionState, type ComponentTone } 
 export interface BadgeProps extends ComponentInteractionState {
   theme: SemanticThemeSnapshot;
   label: string;
+  /** Optional semantic identity color; interaction/attention styling still wins. */
+  textColor?: string;
   tone?: ComponentTone;
   width?: number;
   marker?: string;
@@ -34,7 +36,14 @@ export function Badge(props: BadgeProps) {
       backgroundColor={background()}
       overflow="hidden"
     >
-      <text fg={palette().accent} bg={background()}>
+      <text
+        fg={
+          !props.hovered && !props.attention
+            ? (props.textColor ?? palette().accent)
+            : palette().accent
+        }
+        bg={background()}
+      >
         {props.attention ? <strong>{content()}</strong> : content()}
       </text>
     </box>

@@ -11,6 +11,8 @@ export interface HomeAgentRow {
   readonly daemonInstanceId: string;
   readonly agentId: string;
   readonly paneId: string | null;
+  /** Durable window grouping from authenticated terminal inventory, when available. */
+  readonly windowId?: string | null;
   readonly name: string;
   readonly harness: string;
   readonly activity: AgentActivity;
@@ -61,6 +63,12 @@ export function projectHomeAgentRows(
     daemonInstanceId: shell.daemon.instanceId,
     agentId: agent.id,
     paneId: agent.paneId,
+    windowId:
+      shell.resource.terminalInventory?.resources.find(
+        (resource) =>
+          resource.attachability.status === "available" &&
+          resource.attachability.semanticPaneId === agent.paneId,
+      )?.windowResourceId ?? null,
     name: agent.name,
     harness: agent.harness,
     activity: agent.activity,

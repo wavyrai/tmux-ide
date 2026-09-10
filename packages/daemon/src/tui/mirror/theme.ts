@@ -39,6 +39,16 @@ import {
 import type { ResolvedThemeMode, ThemeModeSetting } from "../../lib/theme-mode.ts";
 import { XTERM_PALETTE } from "./ansi-palette.ts";
 
+/** Stable categorical host accents; palette authority stays with the theme. */
+export const FLEET_HOST_ACCENT_COLORS = Object.freeze([
+  "#75a7f7",
+  "#c795ed",
+  "#e69b73",
+  "#66bfa9",
+  "#d4b963",
+  "#dd88b4",
+] as const);
+
 export type { ResolvedThemeMode, ThemeModeSetting };
 
 export interface ThemeModeSource {

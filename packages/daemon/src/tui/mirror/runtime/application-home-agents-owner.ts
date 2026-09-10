@@ -1,3 +1,4 @@
+import type { ApplicationPaletteCommand } from "./application-palette-input.ts";
 import { createEffect, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
 
 import {
@@ -196,6 +197,11 @@ export function createApplicationHomeAgentsOwner(options: {
 
 /** Compose Home navigation with competing chrome intents; physical input stays in the root. */
 export function createApplicationHomeNavigationOwner(options: {
+  readonly fleetCommands?: () => readonly ApplicationPaletteCommand[];
+  readonly openFleet?: (
+    command: Exclude<ApplicationPaletteCommand, string>,
+    source: "keyboard" | "mouse",
+  ) => Promise<unknown> | void;
   readonly focusedPane: Accessor<string | null>;
   readonly catalog: {
     readonly snapshot: Accessor<ApplicationHomeCatalogSnapshot>;
@@ -260,12 +266,21 @@ export function createApplicationHomeNavigationOwner(options: {
   });
   const paletteCommands = createApplicationPaletteCommandOwner({
     commands: () =>
-      applicationPaletteCommands(options.shell().semantic, options.catalog.sessionNames()),
+      options.fleetCommands
+        ? [
+            ...applicationPaletteCommands(options.shell().semantic).filter(
+              (c) => typeof c === "string",
+            ),
+            ...options.fleetCommands(),
+          ]
+        : applicationPaletteCommands(options.shell().semantic, options.catalog.sessionNames()),
     isOpen: () =>
       Boolean(options.shell().semantic?.focus.palette.open ?? options.shell().localPaletteOpen),
     targetKey: () =>
       `${applicationGenerationNavigationKey(options.sessionOwner()?.snapshot() ?? null)}:${options.focusedPane()}`,
     disabledReason: (command) => {
+      if (typeof command === "object" && command.fleet?.disabled)
+        return "Machine or session unavailable";
       if (
         typeof command === "object" ||
         command === "home" ||
@@ -287,6 +302,7 @@ export function createApplicationHomeNavigationOwner(options: {
     splitPane: options.interaction.splitPane,
     closePane: options.interaction.closePane,
     openAgent,
+    openFleet: options.openFleet,
     openSession: (name, source) => options.startGeneration(name, false, source),
     onNavigationIntent: homeAgents.cancel,
   });

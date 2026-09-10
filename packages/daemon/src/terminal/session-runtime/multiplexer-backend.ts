@@ -99,7 +99,20 @@ export function createSessionRuntimeMultiplexerBackend(
       sourcePaneCredential?: string,
       ownerAuthorized = false,
     ): Promise<WorkspaceMultiplexerMutationResult> => {
-      const session = options.resolveSession(request.intent.workspaceName);
+      const fleetTarget =
+        request.intent.verb === "workspace.session.kill" ? request.intent.fleetTarget : undefined;
+      if (fleetTarget && (!ownerAuthorized || authenticatedHostClientId || sourcePaneCredential))
+        throw new WorkspaceMultiplexerError("operation_conflict", {
+          reason: "fleet_close_requires_explicit_owner",
+        });
+      if (fleetTarget && fleetTarget.daemonInstanceId !== options.registry.generation)
+        throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
+          operationId: request.operationId,
+        });
+      const session =
+        fleetTarget && ownerAuthorized && !authenticatedHostClientId && !sourcePaneCredential
+          ? fleetTarget.sessionName
+          : options.resolveSession(request.intent.workspaceName);
       if (!session) {
         throw new Error(`Workspace ${request.intent.workspaceName} has no live tmux session`);
       }

@@ -154,6 +154,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         tuiPerfMark("solid-root-evaluate");
         registerPaneSurface();
         const componentKeyboardRoutes = createKeyboardRouteOwner();
+        const [paletteModalOpen, setPaletteModalOpen] = createSignal(false);
         const [surface, setSurface] = createSignal<"home" | "terminals">(
           config.target ? "terminals" : "home",
         );
@@ -377,6 +378,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         });
         const { homeAgents, paneRename, paletteCommands, paletteCommandList, openAgent } =
           createApplicationHomeNavigationOwner({
+            fleetCommands: machines.paletteCommands,
+            openFleet: machines.openPalette,
             focusedPane,
             catalog: homeCatalog,
             activeSurface,
@@ -412,6 +415,10 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         useKeyboard((event) => {
           noteHostInteraction();
           const name = event.name.toLowerCase();
+          if (paletteModalOpen()) {
+            componentKeyboardRoutes.route(event);
+            return;
+          }
           if (machines.switching()) {
             componentKeyboardRoutes.route(event);
             return;
@@ -421,8 +428,20 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             return;
           }
           if (handleFleetShortcut(event, machines)) return;
+          if (name === "f5") {
+            machines.sidebar.onBlur?.();
+            paletteCommands.setOpen(true, "keyboard");
+            return;
+          }
           if (appearance.handlePickerKey(event)) return;
           if (paneRename.handleKey(event)) return;
+          if (
+            (shell().semantic?.focus.palette.open || shell().localPaletteOpen) &&
+            event.ctrl &&
+            ["left", "right", "p", "e"].includes(name) &&
+            componentKeyboardRoutes.route(event)
+          )
+            return;
           if (paletteCommands.handleKey(event)) return;
           if (event.ctrl && name === "g") {
             machines.focus();
@@ -511,6 +530,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           <KeyboardRouteProvider owner={componentKeyboardRoutes}>
             <ApplicationShellView
               machineLabel={machines.isLocal() ? null : machines.label()}
+              machineColor={machines.color()}
               machineSidebar={machines.sidebar}
               appearanceOwner={appearance}
               homeAgents={homeAgents.presentation}
@@ -534,6 +554,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               paneRenameDialog={paneRename.draft}
               paletteSelection={paletteCommands.selection}
               paletteQuery={paletteCommands.query}
+              paletteKeyboardHint={paletteCommands.keyboardHint}
+              palettePreviewActive={() =>
+                rendererFocused() && !machines.switching() && !machines.adding()
+              }
+              onPaletteModalChange={setPaletteModalOpen}
               paletteDisabledReason={paletteCommands.disabledReason}
               onPaletteSelect={paletteCommands.select}
               paletteCloseArmed={paletteCommands.closeArmed}

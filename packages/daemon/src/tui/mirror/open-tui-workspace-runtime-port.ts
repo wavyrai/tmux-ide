@@ -432,6 +432,14 @@ class WireTerminalEndpoint {
       return;
     }
     this.#negotiated = negotiated;
+    // A subscription is an observer, not permission to type. Attach observers
+    // before the first seed so hidden panes cannot block visible preparation.
+    this.#readySettled = true;
+    this.#resolveReady(true);
+  }
+
+  get inputReady(): boolean {
+    return !this.#closed && this.#hasCanonicalSeed && !this.#reseedRequired;
   }
 
   async subscription(): Promise<
@@ -925,6 +933,15 @@ export async function connectOpenTuiWorkspaceRuntimePort(
   let physicalReady = false;
   let coherentSettled = false;
   const canonicalSeedPanes = new Set<string>();
+  let backgroundSeedDeadline: ReturnType<typeof setTimeout> | null = null;
+  let resolveAllSeeds!: (ready: boolean) => void;
+  const allSeeds = new Promise<boolean>((resolve) => {
+    resolveAllSeeds = resolve;
+  });
+  const clearSeedDeadline = () => {
+    if (backgroundSeedDeadline !== null) clearTimeout(backgroundSeedDeadline);
+    backgroundSeedDeadline = null;
+  };
   let resolveCoherent!: () => void;
   let rejectCoherent!: (error: Error) => void;
   const coherent = new Promise<void>((resolve, reject) => {
@@ -952,7 +969,9 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       closed ||
       !physicalReady ||
       !layoutExactlyCoversPanes(latestLayoutSnapshot, panes) ||
-      canonicalSeedPanes.size !== panes.length
+      !latestLayoutSnapshot.current?.panes.every(
+        ({ pane }) => typeof pane === "string" && canonicalSeedPanes.has(pane),
+      )
     ) {
       return;
     }
@@ -968,6 +987,8 @@ export async function connectOpenTuiWorkspaceRuntimePort(
   const close = (reason?: unknown): void => {
     if (closed) return;
     closed = true;
+    clearSeedDeadline();
+    resolveAllSeeds(false);
     stopClientReceipts?.();
     stopClientReceipts = null;
     pendingControls.length = 0;
@@ -1026,6 +1047,10 @@ export async function connectOpenTuiWorkspaceRuntimePort(
         },
         canonicalSeedReady: () => {
           canonicalSeedPanes.add(semanticPaneId);
+          if (canonicalSeedPanes.size === panes.length) {
+            clearSeedDeadline();
+            resolveAllSeeds(true);
+          }
           options.onDiagnostic?.("seed", {
             semanticPaneId,
             seededPanes: canonicalSeedPanes.size,
@@ -1369,6 +1394,38 @@ export async function connectOpenTuiWorkspaceRuntimePort(
         }
       }
     }) ?? null;
+  type FitResult = "ok" | "geometry-authority-conflict";
+  let pendingInitialFit: { cols: number; rows: number; result: Promise<FitResult> } | null = null;
+  const fitViewport = (cols: number, rows: number): Promise<FitResult> => {
+    if (closed) return Promise.resolve("geometry-authority-conflict");
+    // Keep only the latest requested geometry while hidden seeds arrive. All
+    // callers share one wait; resize storms cannot accumulate deferred work.
+    if (canonicalSeedPanes.size !== panes.length) {
+      if (pendingInitialFit) {
+        pendingInitialFit.cols = cols;
+        pendingInitialFit.rows = rows;
+        return pendingInitialFit.result;
+      }
+      const request = {
+        cols,
+        rows,
+        result: Promise.resolve<FitResult>("geometry-authority-conflict"),
+      };
+      pendingInitialFit = request;
+      request.result = allSeeds.then((ready) => {
+        pendingInitialFit = null;
+        return ready ? fitViewport(request.cols, request.rows) : "geometry-authority-conflict";
+      });
+      return request.result;
+    }
+    if ([...endpoints.values()].some((endpoint) => !endpoint.inputReady))
+      return Promise.resolve("geometry-authority-conflict");
+    return opened.fitViewport(cols, rows).catch((error: unknown) => {
+      if (error instanceof PaneStreamOperationError && error.code === "authority-rejected")
+        return "geometry-authority-conflict" as const;
+      throw error;
+    });
+  };
   const runtimePort: OpenTuiWorkspaceRuntimePort = {
     generation: inventory.daemonGeneration,
     getAuthoritySnapshot: () => latestAuthority,
@@ -1404,10 +1461,22 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       if (!endpoint) throw new Error("Terminal subscription is outside runtime inventory");
       return await endpoint.subscription();
     },
-    submitIntent: async (operationId, intent) =>
-      (await opened.submitIntent(operationId, intent)) ?? undefined,
-    sendTerminalInput: (target, input, performanceTraceId, causalProbe) =>
-      opened.sendTerminalInput(target, input, performanceTraceId, causalProbe),
+    submitIntent: async (operationId, intent) => {
+      // Structural commands can affect hidden panes. Do not defer user intent
+      // until a different topology may be current; fail closed during seeding.
+      if (closed || [...endpoints.values()].some((endpoint) => !endpoint.inputReady))
+        throw new Error("Terminal inventory is still receiving canonical state");
+      return (await opened.submitIntent(operationId, intent)) ?? undefined;
+    },
+    sendTerminalInput: (target, input, performanceTraceId, causalProbe) => {
+      if (
+        closed ||
+        target.workspaceName !== inventory.workspaceName ||
+        !endpoints.get(target.semanticPaneId)?.inputReady
+      )
+        return Promise.resolve("authority-lost");
+      return opened.sendTerminalInput(target, input, performanceTraceId, causalProbe);
+    },
     onReceipt(listener) {
       if (closed) return () => undefined;
       receiptListeners.add(listener);
@@ -1427,15 +1496,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       if (latestAuthority) listener(latestAuthority);
       return () => authorityListeners.delete(listener);
     },
-    fitViewport: async (cols, rows) => {
-      try {
-        return await opened.fitViewport(cols, rows);
-      } catch (error) {
-        if (error instanceof PaneStreamOperationError && error.code === "authority-rejected")
-          return "geometry-authority-conflict";
-        throw error;
-      }
-    },
+    fitViewport,
     close: () => close(),
   };
   try {
@@ -1447,5 +1508,14 @@ export async function connectOpenTuiWorkspaceRuntimePort(
   }
   settleCoherent();
   await coherent;
+  if (canonicalSeedPanes.size !== panes.length && !closed) {
+    // Partial readiness must not strand an unavailable hidden pane forever.
+    // Retire through the existing generation repair owner, retaining its frame.
+    backgroundSeedDeadline = setTimeout(() => {
+      backgroundSeedDeadline = null;
+      failConnection(new Error("Hidden terminal pane did not receive canonical state"));
+    }, 15_000);
+    backgroundSeedDeadline.unref?.();
+  }
   return runtimePort;
 }

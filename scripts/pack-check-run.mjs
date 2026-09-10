@@ -954,6 +954,81 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     () => capture("=journey-beta:0.0").includes(chooserMarker),
     many.diagnostics,
   );
+  // Seed an unmistakable terminal-frame identity in the isolated fixture
+  // sessions. A sidebar label alone cannot prove the selected stream painted.
+  for (const name of ["journey-alpha", "journey-beta"]) {
+    const command = `printf 'PACK_WARM_TARGET_%s\\n' '${name}'`;
+    const typed = tmuxResult(["send-keys", "-l", "-t", `=${name}:0.0`, command]);
+    if (typed.status !== 0)
+      throw new Error(`Could not prepare warm switch fixture: ${typed.stderr}`);
+    tmuxResult(["send-keys", "-t", `=${name}:0.0`, "Enter"]);
+  }
+  // Prime both targets before measuring five real, warm F5 activations. Each
+  // sample ends only when input sent through the TUI reaches the correct pane.
+  const warmTargets = [
+    "journey-alpha",
+    "journey-beta",
+    "journey-alpha",
+    "journey-beta",
+    "journey-alpha",
+    "journey-beta",
+    "journey-alpha",
+  ];
+  for (const [index, target] of warmTargets.entries()) {
+    const label = index < 2 ? `F5 prime ${target}` : `F5 warm switch ${index - 1} ${target}`;
+    send(many, "F5");
+    await observe(
+      `${label} palette opens`,
+      10_000,
+      () => capture(many.targetPane).includes("Command palette"),
+      many.diagnostics,
+    );
+    const typed = tmuxResult(["send-keys", "-l", "-t", many.targetPane, target]);
+    if (typed.status !== 0) throw new Error(`Could not search F5 target: ${typed.stderr}`);
+    await observe(
+      `${label} route-qualified preview`,
+      10_000,
+      () => {
+        const frame = capture(many.targetPane);
+        return (
+          frame.includes(`Open session · ${target} · Local`) &&
+          frame.includes("Read-only") &&
+          frame.includes(`PACK_WARM_TARGET_${target}`)
+        );
+      },
+      many.diagnostics,
+    );
+    const marker = `PACK_WARM_INPUT_${process.pid}_${index}`;
+    let activated = false;
+    let inputSent = false;
+    await observe(
+      label,
+      10_000,
+      () => {
+        if (!activated) {
+          activated = true;
+          send(many, "Enter");
+        }
+        const frame = capture(many.targetPane);
+        if (
+          !inputSent &&
+          !frame.includes("Command palette") &&
+          frameShowsTerminalFocus(frame) &&
+          frame.includes(`PACK_WARM_TARGET_${target}`)
+        ) {
+          inputSent = true;
+          // Split the marker in the command so captured shell echo alone cannot
+          // satisfy readiness; the fixture shell must execute this exact input.
+          typeCommand(many, `printf 'PACK_WARM_INPUT_%s\\n' '${process.pid}_${index}'`);
+        }
+        const other = target === "journey-alpha" ? "journey-beta" : "journey-alpha";
+        if (capture(`=${other}:0.0`).includes(marker))
+          throw new Error(`Warm switch input reached the wrong session: ${other}`);
+        return inputSent && capture(`=${target}:0.0`).includes(marker);
+      },
+      many.diagnostics,
+    );
+  }
   await cleanQuit(many);
 
   for (const name of ["journey-alpha", "journey-gamma"])

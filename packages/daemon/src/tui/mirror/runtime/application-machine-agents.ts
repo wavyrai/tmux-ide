@@ -18,6 +18,7 @@ export interface ApplicationMachineAgent extends HomeAgentRow {
   readonly disabled: boolean;
 }
 export interface ApplicationMachineAgentGroup {
+  readonly available?: boolean;
   readonly machineId: string;
   readonly agents: readonly ApplicationMachineAgent[];
 }
@@ -73,6 +74,8 @@ export function createApplicationMachineAgents(options: {
         const current = !!entry && entry.binding === bindingFor(entry.handle);
         return Object.freeze({
           machineId: group.id,
+          available:
+            group.state === "ready" && current && entry?.observer?.getSnapshot().phase === "live",
           agents: Object.freeze(
             (entry?.rows ?? []).map((row) =>
               Object.freeze({

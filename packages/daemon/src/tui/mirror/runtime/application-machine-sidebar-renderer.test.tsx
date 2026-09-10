@@ -416,3 +416,94 @@ it("renders bounded host tabs and scopes mouse open/close to their exact keys", 
   expect(calls).toEqual(["open:gpu-api", "close:gpu-api"]);
   setup.renderer.destroy();
 });
+
+it("keeps collapsed activity visible, handles vim/page navigation and scopes help to sidebar focus", async () => {
+  const owner = createKeyboardRouteOwner();
+  const [offline, setOffline] = createSignal(false);
+  const [focused, setFocused] = createSignal(true);
+  const opened: string[] = [];
+  let searches = 0;
+  const setup = await renderForTest(
+    () => (
+      <KeyboardRouteProvider owner={owner}>
+        <ApplicationMachineSidebar
+          width={42}
+          height={18}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          model={{
+            focused,
+            groups: () => [
+              {
+                id: "mini",
+                label: "Mini",
+                state: offline() ? "disconnected" : "ready",
+                sessions: Array.from({ length: 20 }, (_, i) => ({
+                  id: String(i),
+                  name: `work-${i}`,
+                  paneCount: 1,
+                })),
+                agents: [
+                  {
+                    id: "a",
+                    name: "Agent",
+                    sessionName: "work-0",
+                    paneId: "%1",
+                    activity: "waiting",
+                    attention: true,
+                  },
+                ],
+              },
+            ],
+            activeMachineId: () => null,
+            activeSessionName: () => null,
+            onOpen: (_id, name) => opened.push(name),
+            onSelectMachine: () => {},
+            onBlur: () => setFocused(false),
+            onOpenSwitcher: () => searches++,
+          }}
+        />
+      </KeyboardRouteProvider>
+    ),
+    { width: 42, height: 18 },
+  );
+  const key = (name: string, ctrl = false, shift = false) =>
+    owner.route({
+      name,
+      ctrl,
+      shift,
+      meta: false,
+      eventType: "press",
+      preventDefault() {},
+      stopPropagation() {},
+    });
+  await setup.renderOnce();
+  key("h");
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("! 1");
+  expect(setup.captureCharFrame()).not.toContain("work-0");
+  setOffline(true);
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).not.toContain("! 1");
+  setOffline(false);
+  key("l");
+  key("j");
+  key("enter");
+  expect(opened).toEqual(["work-0"]);
+  key("g");
+  key("d", true);
+  key("enter");
+  expect(opened.length).toBe(2);
+  expect(opened[1]).not.toBe("work-0");
+  key("?");
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("Ctrl-U/D half");
+  key("escape");
+  expect(focused()).toBe(true);
+  key("/");
+  expect(searches).toBe(1);
+  key("escape");
+  expect(focused()).toBe(false);
+  expect(key("j")).toBe(false);
+  setup.renderer.destroy();
+  owner.dispose();
+});

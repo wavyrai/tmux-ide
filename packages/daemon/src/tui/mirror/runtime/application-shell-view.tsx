@@ -64,6 +64,7 @@ export function applicationShellKeyAction(
 
 export interface ApplicationShellViewProps {
   readonly machineSidebar?: ApplicationMachineSidebarModel;
+  readonly machineColor?: string;
   readonly machineLabel?: string | null;
   readonly paneInteractions?: TerminalWorkspaceProps["paneInteractions"];
   readonly recentPaneActivity?: () => readonly InteractionReceipt[];
@@ -84,6 +85,9 @@ export interface ApplicationShellViewProps {
   readonly paletteOpen: Accessor<boolean>;
   readonly paneRenameDialog?: Accessor<ApplicationPaneRenameDraft | null>;
   readonly paletteSelection?: Accessor<number>;
+  readonly paletteKeyboardHint?: Accessor<string>;
+  readonly palettePreviewActive?: Accessor<boolean>;
+  readonly onPaletteModalChange?: (open: boolean) => void;
   readonly paletteQuery?: Accessor<string>;
   readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
   readonly onPaletteSelect?: (index: number) => void;
@@ -229,6 +233,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
         <ApplicationCatalogShell
           machineSidebar={props.machineSidebar}
           machineLabel={props.machineLabel}
+          machineColor={props.machineColor}
           appearanceOwner={props.appearanceOwner}
           homeAgents={props.homeAgents}
           dimensions={props.dimensions}
@@ -244,6 +249,9 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
           paletteOpen={props.paletteOpen}
           paletteSelection={props.paletteSelection}
           paletteQuery={props.paletteQuery}
+          paletteKeyboardHint={props.paletteKeyboardHint}
+          palettePreviewActive={props.palettePreviewActive}
+          onPaletteModalChange={props.onPaletteModalChange}
           paletteDisabledReason={props.paletteDisabledReason}
           onPaletteSelect={props.onPaletteSelect}
           paletteCommands={props.paletteCommands}
@@ -289,6 +297,11 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   height={props.dimensions().height}
                   selected={props.paletteSelection?.() ?? 0}
                   query={props.paletteQuery?.() ?? ""}
+                  keyboardHint={props.paletteKeyboardHint?.()}
+                  previewActive={
+                    props.palettePreviewActive?.() ?? props.rendererFocused?.() !== false
+                  }
+                  onModalChange={props.onPaletteModalChange}
                   disabledReason={props.paletteDisabledReason}
                   onSelect={props.onPaletteSelect}
                   closeArmed={props.paletteCloseArmed?.() ?? false}
@@ -347,7 +360,14 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
             <ApplicationShell
               rightChips={
                 props.machineLabel
-                  ? [{ id: "machine", label: `SSH ${props.machineLabel}`, context: true }]
+                  ? [
+                      {
+                        id: "machine",
+                        label: `SSH ${props.machineLabel}`,
+                        context: true,
+                        textColor: props.machineColor,
+                      },
+                    ]
                   : undefined
               }
               theme={appearance.theme}

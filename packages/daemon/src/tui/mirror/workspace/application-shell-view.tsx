@@ -26,6 +26,7 @@ export interface ApplicationShellProps {
     label: string;
     hovered?: boolean;
     context?: boolean;
+    textColor?: string;
     attention?: boolean;
   }[];
   children: JSX.Element;

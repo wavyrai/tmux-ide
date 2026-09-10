@@ -1,6 +1,8 @@
+import { ApplicationFleetSessionActions } from "./application-fleet-session-actions.tsx";
+import { ApplicationPalettePreview } from "./application-palette-preview.tsx";
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "solid-js";
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createMemo, createSignal, createEffect } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, clipTerminalEnd } from "../terminal-text.ts";
@@ -82,6 +84,9 @@ export function MinimalPalette(props: {
   readonly height: number;
   readonly selected: number;
   readonly query?: string;
+  readonly keyboardHint?: string;
+  readonly previewActive?: boolean;
+  readonly onModalChange?: (open: boolean) => void;
   readonly disabledReason?: (command: ApplicationPaletteCommand) => string | null;
   readonly onSelect?: (index: number) => void;
   readonly closeArmed: boolean;
@@ -92,9 +97,19 @@ export function MinimalPalette(props: {
   readonly active?: boolean;
   readonly zIndex?: number;
 }): JSX.Element {
+  const [expanded, setExpanded] = createSignal(false);
+  const selectedCommand = () => props.commands[props.selected];
+  const hasPreview = () => {
+    const c = selectedCommand();
+    return typeof c === "object" && !!c.fleet && props.height >= 18;
+  };
+  createEffect(() => {
+    if (!hasPreview()) setExpanded(false);
+  });
   const horizontalInset = () => (props.width >= 8 ? 2 : 0);
   const verticalInset = () => (props.height >= 10 ? 1 : 0);
-  const width = () => Math.max(1, Math.min(58, props.width - horizontalInset() * 2));
+  const width = () =>
+    Math.max(1, Math.min(hasPreview() ? 100 : 58, props.width - horizontalInset() * 2));
   const height = () =>
     overlayFrameSize({
       viewportWidth: props.width,
@@ -102,7 +117,11 @@ export function MinimalPalette(props: {
       preferredWidth: width(),
       preferredHeight: Math.max(
         3,
-        Math.min(16, Math.max(9, props.commands.length + 6), props.height - verticalInset() * 2),
+        Math.min(
+          hasPreview() ? 28 : 16,
+          Math.max(hasPreview() ? 22 : 9, props.commands.length + 6),
+          props.height - verticalInset() * 2,
+        ),
       ),
     }).height;
   const innerWidth = () => Math.max(1, width() - 4);
@@ -111,7 +130,12 @@ export function MinimalPalette(props: {
       ? "Confirm close pane"
       : applicationCommandDescription(command).label;
   };
-  const visibleCapacity = () => Math.max(1, height() - (height() >= 9 ? 6 : 4));
+  const previewHeight = () =>
+    hasPreview()
+      ? Math.max(6, expanded() ? height() - 7 : Math.min(10, Math.floor(height() / 2)))
+      : 0;
+  const visibleCapacity = () =>
+    Math.max(1, height() - (height() >= 9 ? 6 : 4) - previewHeight() - (hasPreview() ? 2 : 0));
   const firstVisible = createMemo((previous: number) => {
     const capacity = visibleCapacity();
     const next =
@@ -140,7 +164,9 @@ export function MinimalPalette(props: {
       width={width()}
       height={height()}
       title={innerWidth() >= 15 ? "Command palette" : "Commands"}
-      {...(height() >= 9 ? { footer: "↑↓ choose · Enter run · Esc close" } : {})}
+      {...(height() >= 9
+        ? { footer: props.keyboardHint ?? "↑↓ choose · Enter run · Esc close" }
+        : {})}
       active={props.active}
       zIndex={props.zIndex}
       onDismiss={props.onClose}
@@ -213,6 +239,32 @@ export function MinimalPalette(props: {
           </For>
         </Show>
       </box>
+      <Show
+        when={
+          typeof selectedCommand() === "object" &&
+          !!(selectedCommand() as { fleet?: unknown })?.fleet &&
+          props.height >= 18
+        }
+      >
+        <ApplicationFleetSessionActions
+          command={selectedCommand()}
+          width={props.width}
+          height={props.height}
+          theme={props.theme}
+          active={props.active !== false && props.previewActive !== false}
+          onModalChange={props.onModalChange ?? (() => {})}
+        />
+      </Show>
+      <Show when={hasPreview()}>
+        <ApplicationPalettePreview
+          command={selectedCommand()}
+          width={innerWidth()}
+          height={previewHeight()}
+          theme={props.theme}
+          active={props.active !== false && props.previewActive !== false}
+          onExpandedChange={setExpanded}
+        />
+      </Show>
       <Show when={height() >= 9}>
         <text
           height={1}
