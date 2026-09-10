@@ -60,7 +60,7 @@ it("filters across hosts and keeps selection on its identity when rows reorder",
   await setup.renderOnce();
   key("enter");
   expect(opened).toEqual([]);
-  for (const letter of "mini") key(letter);
+  owner.routePaste(Buffer.from("mini"));
   await setup.renderOnce();
   expect(setup.captureCharFrame()).toContain("Open session · api · mini");
   expect(setup.captureCharFrame()).not.toContain("Open session · api · gpu");

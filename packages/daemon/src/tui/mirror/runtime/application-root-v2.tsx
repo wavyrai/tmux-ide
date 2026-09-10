@@ -503,13 +503,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         });
         usePaste((event) => {
           noteHostInteraction();
-          if (
-            paletteModalOpen() ||
-            appearance.pickerOpen() ||
-            machines.adding() ||
-            machines.switching()
-          )
+          if (paletteModalOpen() || appearance.pickerOpen() || machines.adding()) return;
+          if (machines.switching()) {
+            componentKeyboardRoutes.routePaste(event.bytes);
             return;
+          }
           if (paneRename.handlePaste(event.bytes)) return;
           if (selectionOwner.blocksInput()) return;
           if (paletteCommands.handlePaste(event.bytes)) return;

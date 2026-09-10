@@ -1,11 +1,10 @@
 /* @jsxImportSource @opentui/solid */
-import { usePaste } from "@opentui/solid";
 import { Show, createSignal } from "solid-js";
 import { createApplicationPaletteSearchOwner } from "./application-palette-search-owner.ts";
 import { MinimalPalette } from "./application-shell-overlays.tsx";
 import type { ApplicationPaletteCommand } from "./application-palette-input.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
-import { useKeyboardRoute } from "../ui/keyboard-router.tsx";
+import { useKeyboardRoute, usePasteRoute } from "../ui/keyboard-router.tsx";
 
 export interface FleetSwitcherRow {
   readonly key: string;
@@ -77,9 +76,9 @@ export function ApplicationFleetSwitcher(props: {
     close: props.onClose,
     onChange: () => {},
   });
-  usePaste((event) => {
-    if (props.open && props.active !== false && !modal()) search.handlePaste(event.bytes);
-  });
+  usePasteRoute((bytes) =>
+    props.open && props.active !== false && !modal() ? search.handlePaste(bytes) : false,
+  );
   useKeyboardRoute((event) => {
     if (!props.open || props.active === false || modal()) return false;
     const key = event.name.toLowerCase();
