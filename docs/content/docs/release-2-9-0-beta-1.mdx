@@ -1,9 +1,9 @@
 ---
-title: OpenTUI 2.9 beta.11
-description: The current 2.9.0-beta.11 visual tmux release with agent-aware chrome
+title: OpenTUI 2.9 beta.15
+description: The current 2.9.0-beta.15 visual tmux release with agent-aware chrome
 ---
 
-The current package is `2.9.0-beta.11`. It ships an OpenTUI client around ordinary tmux
+The current package is `2.9.0-beta.15`. It ships an OpenTUI client around ordinary tmux
 sessions. tmux owns PTYs, processes, topology, and persistence. Each machine has
 its own daemon, which publishes workspace state and pane streams. The local TUI
 connects through SSH tunnels and owns presentation and input.
@@ -21,7 +21,18 @@ Pass a session name to bypass Home:
 tmux-ide app work
 ```
 
-## New in beta.11
+## New in beta.15
+
+Native scroll optimization now activates correctly on normal TUI launches. The
+resolved setting is passed directly to the native renderer before startup, so
+Bun's JavaScript environment cannot leave the native default disabled. Explicit
+opt-outs remain available. Ordinary and Shift-scroll preserve independent client
+history positions and canonical pane geometry.
+
+The new web/Electron workbench is still in development. This npm beta distributes
+the terminal CLI and daemon, not a packaged Electron desktop application.
+
+## Introduced in beta.11
 
 - Global installation upgrades an older running daemon without stopping tmux
   sessions. App and headless launch repeat the check when install scripts were
