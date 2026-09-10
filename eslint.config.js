@@ -28,6 +28,7 @@ export default [
       "bin/**/*.{js,mjs}",
       "scripts/**/*.{js,mjs}",
       "apps/**/scripts/**/*.{js,mjs}",
+      "native/ghostty/**/*.{js,mjs,cjs}",
       "src/**/*.{js,mjs}",
       "*.{js,mjs}",
     ],
@@ -57,6 +58,7 @@ export default [
       "packages/daemon/src/**/*.ts",
       "packages/tmux-bridge/src/**/*.ts",
       "apps/**/*.{ts,tsx}",
+      "native/ghostty/**/*.ts",
     ],
     languageOptions: {
       ecmaVersion: "latest",
