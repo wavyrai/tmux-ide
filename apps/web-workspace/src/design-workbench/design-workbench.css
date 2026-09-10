@@ -751,3 +751,7 @@
   min-height: 0;
   overscroll-behavior: contain;
 }
+.dw-command-list [aria-disabled="true"] {
+  color: var(--dw-muted);
+  cursor: default;
+}

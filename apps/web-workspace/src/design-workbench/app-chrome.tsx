@@ -1,14 +1,9 @@
 import { SidebarToggle } from "./sidebar-toggle";
-import { useEffect, useState, type RefObject, type ReactNode } from "react";
+import { useEffect, useRef, useState, type RefObject, type ReactNode } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { CommandList } from "./command-list";
 import { Search, X } from "../icons";
-export interface WorkbenchCommand {
-  id: string;
-  label: string;
-  group: string;
-  run: () => void;
-}
+import type { WorkbenchCommand } from "./command-model";
 function ChromePopover({
   portal,
   label,
@@ -73,16 +68,25 @@ export function AppChrome({
   onToggleSidebar: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const returnFocus = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      if (
+        !event.isComposing &&
+        !event.repeat &&
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "k"
+      ) {
         event.preventDefault();
+        if (!open)
+          returnFocus.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
         setOpen((value) => !value);
       }
     };
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
-  }, []);
+  }, [open]);
   return (
     <header className="dw-app-chrome" aria-label="Application command bar">
       <span className="dw-chrome-brand">
@@ -91,6 +95,9 @@ export function AppChrome({
       </span>
       <Popover.Root open={open} onOpenChange={setOpen}>
         <Popover.Trigger
+          onClick={() => {
+            returnFocus.current = null;
+          }}
           className="dw-command-trigger"
           aria-label="Open commands"
           aria-keyshortcuts="Meta+K Control+K"
@@ -101,7 +108,10 @@ export function AppChrome({
         </Popover.Trigger>
         <Popover.Portal container={portal}>
           <Popover.Positioner className="dw-chrome-positioner" align="center" sideOffset={0}>
-            <Popover.Popup className="dw-chrome-popover dw-command-popover">
+            <Popover.Popup
+              finalFocus={() => (returnFocus.current?.isConnected ? returnFocus.current : true)}
+              className="dw-chrome-popover dw-command-popover"
+            >
               <Popover.Title className="dw-visually-hidden">Workbench commands</Popover.Title>
               <CommandList
                 commands={commands}
