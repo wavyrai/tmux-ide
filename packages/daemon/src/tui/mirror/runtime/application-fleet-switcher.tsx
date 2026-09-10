@@ -1,4 +1,5 @@
 /* @jsxImportSource @opentui/solid */
+import { usePaste } from "@opentui/solid";
 import { Show, createSignal } from "solid-js";
 import { createApplicationPaletteSearchOwner } from "./application-palette-search-owner.ts";
 import { MinimalPalette } from "./application-shell-overlays.tsx";
@@ -75,6 +76,9 @@ export function ApplicationFleetSwitcher(props: {
     activate,
     close: props.onClose,
     onChange: () => {},
+  });
+  usePaste((event) => {
+    if (props.open && props.active !== false && !modal()) search.handlePaste(event.bytes);
   });
   useKeyboardRoute((event) => {
     if (!props.open || props.active === false || modal()) return false;

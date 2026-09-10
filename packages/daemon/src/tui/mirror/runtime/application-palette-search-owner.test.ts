@@ -154,3 +154,25 @@ it("ranks fuzzy matches while keeping equal matches deterministic", () => {
   expect(filterApplicationCommands(commands, "bksvc")).toEqual([commands[0]]);
   expect(filterApplicationCommands(commands, "")).toEqual(commands);
 });
+
+it("keeps fixed commands stable before favorite and recent fleet entries when unfiltered", () => {
+  const favorite: ApplicationPaletteCommand = {
+    kind: "open-session",
+    sessionName: "favorite",
+    label: "favorite",
+    fleet: {
+      machineId: "mini",
+      hostLabel: "Mini",
+      daemonInstanceId: "instance",
+      liveSessionId: "session",
+      favorite: true,
+      recentRank: 0,
+    },
+  };
+  expect(filterApplicationCommands(["home", "terminals", "close-pane", favorite], "")).toEqual([
+    "home",
+    "terminals",
+    "close-pane",
+    favorite,
+  ]);
+});

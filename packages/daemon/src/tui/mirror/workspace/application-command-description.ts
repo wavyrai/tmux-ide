@@ -124,6 +124,9 @@ export function filterApplicationCommands(
     .filter((row) => row.score !== undefined)
     .sort(
       (a, b) =>
+        (!query.trim()
+          ? Number(typeof a.command !== "string") - Number(typeof b.command !== "string")
+          : 0) ||
         b.score! - a.score! ||
         Number(b.favorite) - Number(a.favorite) ||
         a.recent - b.recent ||
