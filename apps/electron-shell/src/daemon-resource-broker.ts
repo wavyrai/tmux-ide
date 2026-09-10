@@ -501,8 +501,15 @@ export function rendererDaemonState(
 function daemonIdentity(
   daemon: Extract<DesktopDaemonHostState, { status: "connected" }>,
 ): DaemonInstanceIdentity {
-  const { protocolVersion, productVersion, instanceId, startedAt } = daemon.descriptor;
-  return { protocolVersion, productVersion, instanceId, startedAt };
+  const { protocolVersion, productVersion, instanceId, startedAt, environmentId } =
+    daemon.descriptor;
+  return {
+    protocolVersion,
+    productVersion,
+    instanceId,
+    startedAt,
+    ...(environmentId !== undefined ? { environmentId } : {}),
+  };
 }
 
 function sameIdentity(left: DaemonInstanceIdentity, right: DaemonInstanceIdentity): boolean {
@@ -510,7 +517,8 @@ function sameIdentity(left: DaemonInstanceIdentity, right: DaemonInstanceIdentit
     left.protocolVersion === right.protocolVersion &&
     left.productVersion === right.productVersion &&
     left.instanceId === right.instanceId &&
-    left.startedAt === right.startedAt
+    left.startedAt === right.startedAt &&
+    left.environmentId === right.environmentId
   );
 }
 

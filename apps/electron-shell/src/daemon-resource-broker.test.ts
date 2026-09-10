@@ -939,6 +939,33 @@ describe("Electron main daemon resource broker", () => {
   });
 
   it.each([
+    [undefined, undefined, true],
+    ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000001", true],
+    [undefined, "00000000-0000-4000-8000-000000000001", false],
+    ["00000000-0000-4000-8000-000000000001", undefined, false],
+    ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002", false],
+  ])("fences catalog environment identity %s → %s", async (expected, received, accepted) => {
+    const broker = new DaemonResourceBroker({
+      daemon: {
+        status: "connected",
+        descriptor: { ...CONNECTED.descriptor, ...(expected ? { environmentId: expected } : {}) },
+      },
+      fetch: async () =>
+        json({
+          ...WORKSPACE_CATALOG,
+          daemon: { ...IDENTITY, ...(received ? { environmentId: received } : {}) },
+        }),
+    });
+    const result = await broker.listWorkspaces();
+    expect(result).toMatchObject(
+      accepted
+        ? { status: "ok" }
+        : { status: "error", error: { code: "daemon-identity-mismatch" } },
+    );
+    broker.dispose();
+  });
+
+  it.each([
     ["protocolVersion", { protocolVersion: 2 }],
     ["productVersion", { productVersion: "2.8.1" }],
     ["instanceId", { instanceId: "66ab67ed-18fe-431b-913b-70972b78c96f" }],

@@ -1132,6 +1132,49 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
     h.registration.dispose();
   });
 
+  it.each([
+    [undefined, "00000000-0000-4000-8000-000000000001"],
+    ["00000000-0000-4000-8000-000000000001", undefined],
+    ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"],
+  ])(
+    "rejects pane lease handoff after environment identity changes %s → %s",
+    async (before, after) => {
+      const issuePaneStream = vi.fn(
+        async (request: PaneStreamIssueMutationRequest): Promise<PaneStreamIssueResult> => ({
+          status: "issued",
+          descriptor: streamDescriptor(request, request.expectedDaemonInstanceId),
+        }),
+      );
+      const h = paneStreamHarness({
+        frameUrl: "http://127.0.0.1:5173/src/main.tsx",
+        trustedRendererLocation: { kind: "development-origin", origin: "http://127.0.0.1:5173" },
+        issuePaneStream,
+      });
+      vi.spyOn(h.daemonResources, "state")
+        .mockReturnValueOnce({
+          status: "connected",
+          identity: { ...h.identity, ...(before ? { environmentId: before } : {}) },
+        })
+        .mockReturnValueOnce({
+          status: "connected",
+          identity: { ...h.identity, ...(after ? { environmentId: after } : {}) },
+        });
+      await expect(
+        h.handlers.get(HOST_IPC.daemonRequest)?.(h.event, {
+          resource: "issuePaneStream",
+          request: {
+            protocolVersion: 1,
+            workspaceName: "product",
+            panes: PANES,
+            viewerMode: "read-only",
+          },
+        }),
+      ).resolves.toMatchObject({ status: "error", error: { code: "daemon-identity-mismatch" } });
+      expect(issuePaneStream).toHaveBeenCalledOnce();
+      h.registration.dispose();
+    },
+  );
+
   it("mints one exact Web principal per renderer generation and fences stale issuance", async () => {
     let finishFirst: ((result: PaneStreamIssueResult) => void) | undefined;
     const issuePaneStream = vi

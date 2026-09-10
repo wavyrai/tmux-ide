@@ -65,11 +65,18 @@ import {
   terminalAttachmentIssueError,
   workspacePromotionFailureFromUnknown,
 } from "./daemon-resource-broker.ts";
-import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
+import {
+  HOST_INVOKE_CHANNELS,
+  HOST_IPC,
+  SCOPED_HOST_CHANNELS,
+  scopedHostChannel,
+} from "./ipc-channels.ts";
 import { mintDesktopWebHostClientId } from "./web-host-client-id.ts";
 
 export interface HostIpcDependencies {
   ipcMain: IpcMain;
+  /** Main-minted authority-generation UUID; omitted for the local native host. */
+  channelScope?: string;
   getWindow: () => BrowserWindow | null;
   appVersion: string;
   platform: DesktopPlatform;
@@ -137,7 +144,8 @@ function sameDaemonIdentity(left: DaemonInstanceIdentity, right: DaemonInstanceI
     left.protocolVersion === right.protocolVersion &&
     left.productVersion === right.productVersion &&
     left.instanceId === right.instanceId &&
-    left.startedAt === right.startedAt
+    left.startedAt === right.startedAt &&
+    left.environmentId === right.environmentId
   );
 }
 
@@ -217,6 +225,10 @@ export interface RegisteredHostIpc {
 }
 
 export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
+  const scope = deps.channelScope ?? null;
+  // Validate before registering/removing anything, including bootstrap.
+  scopedHostChannel(scope, HOST_IPC.bootstrap);
+  const registeredChannels: string[] = [];
   interface RendererAuthority {
     readonly generation: number;
     readonly window: BrowserWindow;
@@ -319,8 +331,11 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     channel: (typeof HOST_INVOKE_CHANNELS)[number],
     handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
   ) => {
-    deps.ipcMain.removeHandler(channel);
-    deps.ipcMain.handle(channel, handler);
+    if (scope !== null && !SCOPED_HOST_CHANNELS.includes(channel)) return;
+    const routed = scopedHostChannel(scope, channel);
+    deps.ipcMain.removeHandler(routed);
+    deps.ipcMain.handle(routed, handler);
+    registeredChannels.push(routed);
   };
 
   handle(HOST_IPC.iconCatalog, (event) => {
@@ -1145,7 +1160,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
           const window = currentAuthorityWindow(authority.generation);
           if (!window) return;
           window.webContents.send(
-            HOST_IPC.daemonEvent,
+            scopedHostChannel(scope, HOST_IPC.daemonEvent),
             DesktopDaemonEventWireEnvelopeSchemaZ.parse({
               subscriptionId,
               subscriptionRequestId: requestId.data,
@@ -1250,7 +1265,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       releaseRenderer();
       unbindWindow?.();
       unbindWindow = null;
-      for (const channel of HOST_INVOKE_CHANNELS) deps.ipcMain.removeHandler(channel);
+      for (const channel of registeredChannels) deps.ipcMain.removeHandler(channel);
     },
   };
 }

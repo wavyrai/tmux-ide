@@ -1,4 +1,5 @@
-import type { Workspace, Settings, Pane, Layout } from "@superlogical/shared/model";
+import { projectMachineFleet } from "./machine-catalog";
+import type { Workspace, Settings } from "@superlogical/shared/model";
 import type { ActionInput } from "@superlogical/shared/protocol";
 import type {
   HostCapabilities,
@@ -61,71 +62,16 @@ function publish(snapshot: LiveSnapshot) {
   current = snapshot;
   for (const listener of listeners) listener(snapshot);
 }
-/** Fleet IDs are display-only. They never become a terminal attachment target. */
+/** Local compatibility adapter; machine projections have no singleton dependencies. */
 export function projectFleet(catalog: FleetCatalogResourceV1): Workspace {
-  const panes: Record<string, Pane> = {};
-  const tabs = catalog.sessions.map((session) => {
-    const shell = shells.get(routes.get(session.sessionId) ?? "");
-    const agents =
-      shell?.workspace.sidebar.agents.map((agent) => ({ ...agent, agentId: agent.paneId })) ??
-      session.agents;
-    const ids = agents.map((agent) => {
-      const id = `${catalog.daemon.instanceId}:${agent.agentId}`;
-      panes[id] = {
-        id,
-        createdAt: 0,
-        cwd: session.projectLabel,
-        command: agent.harness,
-        status: "running",
-        viewOnly: true,
-        agent: { name: agent.name, activity: agent.activity },
-      };
-      return id;
-    });
-    if (!ids.length) {
-      const id = `${catalog.daemon.instanceId}:${session.sessionId}:catalog`;
-      panes[id] = {
-        id,
-        createdAt: 0,
-        cwd: session.projectLabel,
-        command: session.label,
-        status: "running",
-        viewOnly: true,
-      };
-      ids.push(id);
-    }
-    const layout = ids
-      .map((id) => ({ type: "leaf" as const, id }))
-      .reduce<Layout | null>(
-        (tree, leaf) =>
-          tree
-            ? {
-                type: "split",
-                id: `catalog:${leaf.id}`,
-                direction: "horizontal",
-                ratio: 0.5,
-                first: tree,
-                second: leaf,
-              }
-            : leaf,
-        null,
-      )!;
-    return {
-      id: `${catalog.daemon.instanceId}:${session.sessionId}`,
-      createdAt: 0,
-      customName: true,
-      hidden: false,
-      name: session.label,
-      machine: "Local",
-      machineId: catalog.daemon.environmentId ?? catalog.daemon.instanceId,
-      layout,
-      paneCount: session.paneCount,
-      workspaceName: routes.get(session.sessionId),
-      fleetSessionId: session.sessionId,
-      daemonInstanceId: catalog.daemon.instanceId,
-    };
+  return projectMachineFleet(catalog, {
+    settings,
+    revision: ++revision,
+    machineId: catalog.daemon.environmentId ?? catalog.daemon.instanceId,
+    machineLabel: "Local",
+    routes,
+    shells,
   });
-  return { version: 1, revision: ++revision, panes, tabs, settings };
 }
 async function start() {
   const generation = ++epoch;
