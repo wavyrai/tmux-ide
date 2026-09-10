@@ -1,3 +1,4 @@
+import { TERMINAL_SCROLLBACK_LINES } from "./terminal-options.ts";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { Terminal, type IBufferCell, type ITheme } from "@xterm/xterm";
@@ -92,7 +93,7 @@ export const TERMINAL_FONT_FAMILY =
  */
 export const TERMINAL_LINE_HEIGHT = 1;
 export const TERMINAL_FONT_SIZE = 12;
-export const TERMINAL_SCROLLBACK_LINES = 10_000;
+export { TERMINAL_SCROLLBACK_LINES } from "./terminal-options.ts";
 
 const TERMINAL_FONT_FAMILY_TOKEN = "--tmux-ide-terminal-font-family";
 

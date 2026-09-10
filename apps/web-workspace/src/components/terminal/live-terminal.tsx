@@ -10,6 +10,8 @@ import {
 import { WidgetRenderer, type WidgetAssetReader } from "../widgets/widget-renderer";
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
+import { createTerminalWheelController } from "../../terminal-wheel";
+import { TERMINAL_SCROLLBACK_LINES } from "../../../../desktop-renderer/src/terminal/terminal-options";
 import type { Theme } from "@superlogical/shared/themes";
 import type { WorkspacePaneCompositor } from "../../../../desktop-renderer/src/terminal/workspace-pane-compositor";
 export function LiveTerminal({
@@ -73,11 +75,32 @@ export function LiveTerminal({
       fontFamily: '"Geist Mono Variable", monospace',
       fontSize,
       lineHeight: 1.25,
-      scrollback: 0,
+      scrollback: TERMINAL_SCROLLBACK_LINES,
       cursorBlink: false,
     });
     terminal.current = term;
     term.open(mount.current);
+    const wheel = createTerminalWheelController(
+      () => ({
+        inputEnabled: currentInput.current.inputEnabled,
+        mouseTracking: term.modes.mouseTrackingMode !== "none",
+        cellHeight:
+          (mount.current?.querySelector(".xterm-screen")?.getBoundingClientRect().height ?? 0) /
+          term.rows,
+        rows: term.rows,
+      }),
+      (lines) => {
+        term.clearSelection();
+        term.scrollLines(lines);
+      },
+    );
+    const wheelMount = mount.current;
+    const captureWheel = (event: WheelEvent) => {
+      if (!wheel.handle(event)) event.stopPropagation();
+    };
+    // Capture precedes xterm's inner viewport, so Shift cannot scroll twice.
+    wheelMount.addEventListener("wheel", captureWheel, { capture: true, passive: false });
+    term.attachCustomWheelEventHandler(wheel.handle);
     const data = term.onData((text) => {
       if (currentInput.current.inputEnabled)
         currentInput.current.onInput(new TextEncoder().encode(text));
@@ -114,6 +137,7 @@ export function LiveTerminal({
     const unregister = compositor.registerPaneSink(pane, {
       async applySeedBatch(batch) {
         if (disposed) return;
+        wheel.reset();
         term.reset();
         if (batch.reset) term.resize(batch.reset.cols, batch.reset.rows);
         const chunks = [batch.seed, ...batch.held];
@@ -144,6 +168,7 @@ export function LiveTerminal({
     return () => {
       disposed = true;
       observer.disconnect();
+      wheelMount.removeEventListener("wheel", captureWheel, true);
       if (scanTimer) clearTimeout(scanTimer);
       data.dispose();
       binary.dispose();
