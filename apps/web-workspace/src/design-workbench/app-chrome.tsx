@@ -1,7 +1,8 @@
+import { SidebarToggle } from "./sidebar-toggle";
 import { useEffect, useState, type RefObject, type ReactNode } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Command } from "cmdk";
-import { Layers, Search, X } from "../icons";
+import { Search, X } from "../icons";
 export interface WorkbenchCommand {
   id: string;
   label: string;
@@ -63,9 +64,13 @@ function ChromePopover({
 export function AppChrome({
   portal,
   commands,
+  sidebarOpen,
+  onToggleSidebar,
 }: {
   portal: RefObject<HTMLDivElement | null>;
   commands: WorkbenchCommand[];
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -81,7 +86,7 @@ export function AppChrome({
   return (
     <header className="dw-app-chrome" aria-label="Application command bar">
       <span className="dw-chrome-brand">
-        <Layers size={14} />
+        <SidebarToggle open={sidebarOpen} onToggle={onToggleSidebar} />
         <strong>tmux-ide</strong>
       </span>
       <Popover.Root open={open} onOpenChange={setOpen}>

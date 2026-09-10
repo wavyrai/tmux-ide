@@ -12,12 +12,12 @@ const styles = stylex.create({
     transform: "rotate(10deg)",
   },
   blue: {
-    backgroundColor: "#477dc594",
-    color: "#eef8ff",
+    backgroundColor: "var(--icon-tile-fill)",
+    color: "var(--icon-tile-ink)",
   },
   card: {
     backdropFilter: "blur(16px)",
-    backgroundColor: "#ffffff0c",
+    backgroundColor: "var(--icon-stack-fill)",
     backgroundImage: "var(--tab-surface)",
     borderRadius: 8,
     boxShadow: "var(--tab-shadow)",
@@ -28,11 +28,11 @@ const styles = stylex.create({
   face: {
     alignItems: "center",
     backdropFilter: "blur(16px)",
-    backgroundColor: "#12221bb3",
+    backgroundColor: "var(--icon-tile-fill)",
     backgroundImage: "var(--tab-surface)",
     borderRadius: 9,
     boxShadow: "var(--tab-shadow)",
-    color: "#a4d59e",
+    color: "var(--icon-tile-ink)",
     display: "flex",
     height: 20,
     justifyContent: "center",
@@ -48,8 +48,8 @@ const styles = stylex.create({
     transform: "rotate(5deg)",
   },
   peach: {
-    backgroundColor: "#c9896c94",
-    color: "#fff8ee",
+    backgroundColor: "var(--icon-tile-fill)",
+    color: "var(--icon-tile-ink)",
   },
   screen: {
     alignItems: "center",

@@ -33,6 +33,9 @@
 }
 [data-workspace-shell] {
   /* One opaque canvas for terminal cells, pane chrome and unused grid area. */
+  --icon-tile-fill: color-mix(in srgb, var(--accent) 14%, var(--chrome));
+  --icon-tile-ink: var(--text);
+  --icon-stack-fill: color-mix(in srgb, var(--accent) 8%, var(--chrome));
   --surface-workspace: var(--chrome);
   --surface-pane-header: transparent;
   --surface-pane-header-focused: var(--surface-hover);

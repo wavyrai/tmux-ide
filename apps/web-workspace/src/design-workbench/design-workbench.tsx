@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type CSSProperties, type DragEvent } from 
 import { Group, Panel, Separator } from "motion-panels/react";
 import { themes } from "../../shared/themes";
 import { AgentIcon } from "../agent-icon";
-import { Terminal, Layers, Plus } from "../icons";
+import { Terminal, Plus } from "../icons";
 import { MarkdownDocument } from "../components/widgets/markdown-document";
 import {
   initialLayout,
@@ -255,6 +255,8 @@ export default function DesignWorkbench() {
       style={css}
     >
       <AppChrome
+        sidebarOpen={sidebar}
+        onToggleSidebar={() => setSidebar((value) => !value)}
         portal={root}
         commands={[
           { id: "home", label: "Go to Home", group: "Navigation", run: () => setHome(true) },
@@ -317,7 +319,6 @@ export default function DesignWorkbench() {
                 onHome={() => setHome(true)}
                 onTerminals={() => setHome(false)}
                 onSelect={selectWindow}
-                onHide={() => setSidebar(false)}
               />
             </Panel>
             <Separator className="dw-divider" data-axis="horizontal" aria-label="Resize sidebar" />
@@ -325,15 +326,6 @@ export default function DesignWorkbench() {
         )}
         <Panel className="dw-main">
           <header className="dw-toolbar">
-            {!sidebar && (
-              <button
-                className="dw-button"
-                aria-label="Show sidebar"
-                onClick={() => setSidebar(true)}
-              >
-                <Layers size={16} />
-              </button>
-            )}
             <WorkbenchTabs
               items={visibleWindows.map((w) => ({
                 id: w.id,

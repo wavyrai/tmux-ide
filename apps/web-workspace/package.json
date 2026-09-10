@@ -28,6 +28,7 @@
     "@xterm/xterm": "^6.0.0",
     "cmdk": "^1.1.1",
     "comark": "^0.6.2",
+    "morphicons": "1.7.1",
     "motion": "^13.2.0",
     "motion-panels": "0.4.0",
     "react": "^19.2.8",

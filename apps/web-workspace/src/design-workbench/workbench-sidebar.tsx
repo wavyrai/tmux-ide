@@ -19,7 +19,6 @@ export function WorkbenchSidebar({
   onHome,
   onTerminals,
   onSelect,
-  onHide,
 }: {
   windows: WorkbenchWindow[];
   panes: Record<string, FixturePane>;
@@ -29,18 +28,14 @@ export function WorkbenchSidebar({
   onHome: () => void;
   onTerminals: () => void;
   onSelect: (window: string, pane?: string) => void;
-  onHide: () => void;
 }) {
   const [closed, setClosed] = useState<string[]>([]);
   const activeWindow = windows.find((w) => w.id === active);
   return (
-    <aside className="dw-sidebar">
+    <aside className="dw-sidebar" id="design-workspace-sidebar">
       <header className="dw-toolbar">
         <Layers size={16} />
         <strong>Workspace</strong>
-        <button className="dw-button" onClick={onHide} aria-label="Hide sidebar">
-          <ChevronDown size={14} />
-        </button>
       </header>
       <nav className="dw-section">
         <button className="dw-row" data-active={home} onClick={onHome}>
