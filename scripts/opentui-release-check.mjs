@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process";
 // Hermetic SSH proofs: no remote host, real SSH process, or live tmux mutation.
 const sshTests = [
   "packages/daemon/src/tui/team/fuzzy.test.ts",
-  "packages/daemon/src/tui/mirror/runtime/application-palette-search-owner.test.ts",
   "packages/daemon/src/tui/mirror/runtime/fleet-presentation.test.ts",
   "packages/daemon/src/tui/mirror/runtime/fleet-lifecycle-client.test.ts",
   "packages/daemon/src/lib/fleet-session-kill.test.ts",
@@ -216,6 +215,18 @@ const checks = [
     boundary: "OpenTUI current CLI build",
     command: "pnpm",
     args: ["build:cli"],
+  },
+  {
+    boundary: "OpenTUI reactive command search",
+    command: "pnpm",
+    args: [
+      "--filter",
+      "@tmux-ide/daemon",
+      "exec",
+      "vitest",
+      "run",
+      "src/tui/mirror/runtime/application-palette-search-owner.test.ts",
+    ],
   },
   {
     boundary: "OpenTUI SSH routing and machine isolation tests",
