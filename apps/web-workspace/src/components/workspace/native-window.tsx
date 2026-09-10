@@ -82,12 +82,13 @@ export function NativeWindow({
   const [zoomPending, setZoomPending] = useState(false);
   const [zoomError, setZoomError] = useState("");
   async function zoom(pane: string) {
-    if (zoomPending || !inputEnabled) return;
+    if (zoomPending || !inputEnabled || !client.ownsRuntimeAuthority?.("input")) return;
     const target = runtime.client.getSnapshot().target;
     if (!target) return;
     setZoomPending(true);
     setZoomError("");
     try {
+      client.noteActivity("input");
       await runtime.client.dispatch({
         kind: "semantic-intent",
         intent: {
