@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import {
+  SshConnectionError,
   openSshDaemonTransport,
   probeSshDaemonIdentity,
   RemoteDaemonHandshakeSchema,
@@ -253,4 +254,17 @@ describe("SSH forwarded daemon identity", () => {
     ).rejects.toThrow("exceeded limit");
     expect(calls).toBe(1);
   });
+});
+
+it("uses structured preflight failures without opening a tunnel", async () => {
+  for (const code of ["daemon-missing", "incompatible", "unavailable"] as const) {
+    const f = fixture({ version: 1, error: { code } });
+    const error = await openSshDaemonTransport({ alias: "host" }, f.dependencies).catch(
+      (error: unknown) => error,
+    );
+    expect(error).toBeInstanceOf(SshConnectionError);
+    expect((error as SshConnectionError).code).toBe(code);
+    expect((error as SshConnectionError).retryable).toBe(code === "unavailable");
+    expect(f.children).toHaveLength(1);
+  }
 });

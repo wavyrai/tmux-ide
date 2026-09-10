@@ -1,4 +1,8 @@
 /* @jsxImportSource @opentui/solid */
+import {
+  fleetConnectionMessage,
+  type FleetConnectionStatus,
+} from "@tmux-ide/daemon-client/fleet-connection-status";
 import type { AgentActivity } from "@tmux-ide/contracts";
 import { terminalAgentStatusLabel } from "./application-terminal-workspace-policy.ts";
 import type { ScrollBoxRenderable } from "@opentui/core";
@@ -27,6 +31,7 @@ export interface ApplicationMachineAgent {
   readonly disabled?: boolean;
 }
 export interface ApplicationMachineGroup {
+  readonly diagnostic?: FleetConnectionStatus;
   readonly agents?: readonly ApplicationMachineAgent[];
   readonly id: string;
   readonly label: string;
@@ -51,6 +56,8 @@ export interface ApplicationMachineSidebarModel {
     paneId: string,
     source: "keyboard" | "mouse",
   ) => void;
+  readonly onRetryMachine?: (machineId: string) => void;
+  readonly onDisconnectMachine?: (machineId: string) => void;
   readonly onAddMachine?: () => void;
   readonly focused?: Accessor<boolean>;
   readonly onFocus?: () => void;
@@ -82,8 +89,12 @@ export function ApplicationMachineSidebar(props: {
     (props.agentRows ?? 0) > 0
       ? Math.min((props.agentRows ?? 0) + 2, Math.max(0, Math.floor(props.height / 2)))
       : 0;
+  const controlsHeight = () => (props.height >= 8 && controlGroup() ? 4 : 0);
   const machineHeight = () =>
-    Math.max(0, props.height - 1 - (props.model.onAddMachine ? 1 : 0) - agentHeight());
+    Math.max(
+      0,
+      props.height - 1 - (props.model.onAddMachine ? 1 : 0) - agentHeight() - controlsHeight(),
+    );
   const active = (row: Row) =>
     row.group.id === props.model.activeMachineId() &&
     (row.agent
@@ -123,6 +134,24 @@ export function ApplicationMachineSidebar(props: {
       0,
       rows().findIndex((row) => row.key === selectedKey()),
     );
+  const controlGroup = () => {
+    const group = rows()[index()]?.group;
+    return group &&
+      group.id !== "local" &&
+      props.model.onRetryMachine &&
+      props.model.onDisconnectMachine
+      ? group
+      : null;
+  };
+  const connectionDetail = (group: ApplicationMachineGroup) => {
+    const diagnostic = group.diagnostic;
+    if (!diagnostic) return group.state === "disconnected" ? "offline" : group.state;
+    if (diagnostic.phase === "needs-attention")
+      return diagnostic.failure === "incompatible" ? "update needed" : "check connection";
+    if (diagnostic.nextRetryAt !== null)
+      return `retry ${new Date(diagnostic.nextRetryAt).toLocaleTimeString([], { hour12: false })}`;
+    return diagnostic.phase === "disconnected" ? "disconnected" : diagnostic.phase;
+  };
   const toggle = (group: ApplicationMachineGroup, value = !collapsed().has(group.id)) => {
     const next = new Set(collapsed());
     if (value) next.add(group.id);
@@ -187,6 +216,8 @@ export function ApplicationMachineSidebar(props: {
         "space",
         "escape",
         "a",
+        "r",
+        "d",
       ].includes(key)
     )
       return false;
@@ -204,6 +235,13 @@ export function ApplicationMachineSidebar(props: {
     const list = rows();
     const row = list[index()];
     if (!row) return true;
+    if (key === "r" || key === "d") {
+      if (row.group.id !== "local") {
+        if (key === "r") props.model.onRetryMachine?.(row.group.id);
+        else props.model.onDisconnectMachine?.(row.group.id);
+      }
+      return true;
+    }
     if (key === "up" || key === "down" || key === "home" || key === "end") {
       const next =
         key === "home"
@@ -299,11 +337,7 @@ export function ApplicationMachineSidebar(props: {
                       ? row.group.state !== "ready" || row.session.disabled
                         ? "unavailable"
                         : `${row.session.paneCount}p`
-                      : row.group.state === "ready"
-                        ? "ready"
-                        : row.group.state === "connecting"
-                          ? "connecting"
-                          : "offline"
+                      : connectionDetail(row.group)
                 }
                 selected={Boolean((row.session || row.agent) && active(row))}
                 focused={Boolean(focused() && row.key === selectedKey())}
@@ -339,6 +373,33 @@ export function ApplicationMachineSidebar(props: {
           </scrollbox>
         )}
       </For>
+      <Show when={controlsHeight() > 0 && controlGroup()}>
+        {(group) => (
+          <>
+            <text height={2} fg={props.theme.roles.text.secondary}>
+              {group().diagnostic
+                ? fleetConnectionMessage(group().diagnostic!)
+                : connectionDetail(group())}
+            </text>
+            <NavigationRow
+              theme={props.theme}
+              id="machine:retry"
+              label="Retry connection (R)"
+              marker="↻"
+              width={props.width}
+              onActivate={() => props.model.onRetryMachine?.(group().id)}
+            />
+            <NavigationRow
+              theme={props.theme}
+              id="machine:disconnect"
+              label="Disconnect (D)"
+              marker="×"
+              width={props.width}
+              onActivate={() => props.model.onDisconnectMachine?.(group().id)}
+            />
+          </>
+        )}
+      </Show>
       <For each={props.model.onAddMachine ? [props.model.onAddMachine] : []}>
         {(add) => (
           <NavigationRow

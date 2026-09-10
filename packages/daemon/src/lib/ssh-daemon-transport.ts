@@ -1,3 +1,4 @@
+import type { FleetConnectionFailureCode } from "@tmux-ide/daemon-client/fleet-connection-status";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import type { Readable } from "node:stream";
@@ -20,6 +21,10 @@ export const RemoteDaemonHandshakeSchema = z
     }),
   })
   .strict();
+export const RemoteDaemonHandshakeFailureSchema = z.strictObject({
+  version: z.literal(1),
+  error: z.strictObject({ code: z.enum(["daemon-missing", "incompatible", "unavailable"]) }),
+});
 export type RemoteDaemonHandshake = z.infer<typeof RemoteDaemonHandshakeSchema>;
 type RemoteDaemon = RemoteDaemonHandshake["daemon"];
 export type SshTransportChild = Pick<ChildProcess, "once" | "kill" | "exitCode" | "signalCode"> & {
@@ -33,9 +38,19 @@ export interface SshDaemonTransportDependencies {
   probe(baseUrl: string, daemon: RemoteDaemon, signal: AbortSignal): Promise<boolean>;
 }
 
-class SshConnectionError extends Error {}
-function failure(message: string): Error {
-  return new SshConnectionError(`SSH daemon connection: ${message}`);
+export class SshConnectionError extends Error {
+  constructor(
+    message: string,
+    readonly code: FleetConnectionFailureCode = "unavailable",
+  ) {
+    super(`SSH daemon connection: ${message}`);
+  }
+  get retryable(): boolean {
+    return this.code === "unavailable";
+  }
+}
+function failure(message: string, code: FleetConnectionFailureCode = "unavailable"): Error {
+  return new SshConnectionError(message, code);
 }
 const stoppedChildren = new WeakSet<SshTransportChild>();
 function stop(child: SshTransportChild): void {
@@ -173,13 +188,22 @@ function discover(child: SshTransportChild, signal: AbortSignal): Promise<Remote
         return;
       }
       try {
-        const parsed = RemoteDaemonHandshakeSchema.parse(
-          JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))),
+        const payload: unknown = JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
         );
-        if (parsed.daemon.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION) throw new Error();
+        const failed = RemoteDaemonHandshakeFailureSchema.safeParse(payload);
+        if (failed.success) {
+          finish(failure("remote daemon preflight failed", failed.data.error.code));
+          return;
+        }
+        const parsed = RemoteDaemonHandshakeSchema.parse(payload);
+        if (parsed.daemon.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION) {
+          finish(failure("invalid or incompatible remote daemon descriptor", "incompatible"));
+          return;
+        }
         finish(undefined, parsed.daemon);
       } catch {
-        finish(failure("invalid or incompatible remote daemon descriptor"));
+        finish(failure("invalid or incompatible remote daemon descriptor", "invalid-descriptor"));
       }
     });
     signal.addEventListener("abort", abort, { once: true });
@@ -205,7 +229,7 @@ export async function openSshDaemonTransport(
   dependencies: SshDaemonTransportDependencies = defaults,
 ): Promise<{ daemon: RemoteDaemon; baseUrl: string; closed: Promise<void>; dispose(): void }> {
   if (!SavedMachineSchema.shape.sshTarget.safeParse(options.alias).success) {
-    throw failure("invalid SSH destination");
+    throw failure("invalid SSH destination", "invalid-target");
   }
   const timeoutMs = options.timeoutMs ?? 15_000;
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000)

@@ -242,3 +242,41 @@ describe("per-machine metadata catalogs", () => {
     expect(f.catalogs.get(REMOTE)![0]!.dispose).toHaveBeenCalledOnce();
   });
 });
+
+it("joins verified routes and preserves session keys over rename without redirecting selection", () => {
+  const f = fixture();
+  const environmentId = "44444444-4444-4444-8444-444444444444";
+  for (const id of [REMOTE, SECOND]) {
+    const machine = f.machines.get(id)!;
+    machine.daemon = { ...info(id === REMOTE ? 1002 : 1003), environmentId };
+    machine.state = "ready";
+  }
+  f.owner.start();
+  const emit = (id: string, name: string, incarnation: string) => {
+    f.catalogs
+      .get(id)!
+      .at(-1)!
+      .emit({
+        ...live(name),
+        sessions: [{ id: `source:${incarnation}`, liveSessionId: incarnation, name, paneCount: 2 }],
+      });
+  };
+  emit(REMOTE, "before", "live-session.aaaaaaaaaaaaaaaaaaaa");
+  emit(SECOND, "before", "live-session.aaaaaaaaaaaaaaaaaaaa");
+  const groups = f.owner.getSnapshot().groups;
+  expect(groups).toHaveLength(2);
+  expect(groups[1]!.routeIds).toEqual([REMOTE, SECOND]);
+  const stable = groups[1]!.sessions[0]!.id;
+  emit(REMOTE, "renamed", "live-session.aaaaaaaaaaaaaaaaaaaa");
+  expect(f.owner.getSnapshot().groups[1]!.sessions[0]!.id).toBe(stable);
+  emit(REMOTE, "renamed", "live-session.bbbbbbbbbbbbbbbbbbbb");
+  expect(f.owner.getSnapshot().groups[1]!.sessions[0]!.id).not.toBe(stable);
+  f.select(REMOTE);
+  f.machines.get(REMOTE)!.daemon = null;
+  f.machines.get(REMOTE)!.state = "disconnected";
+  f.notify();
+  expect(f.owner.getSnapshot().groups[1]!.id).toBe(SECOND);
+  expect(f.manager.snapshot().selectedMachineId).toBe(REMOTE);
+  expect(f.owner.getSelectedCatalogSnapshot().sessions).toEqual([]);
+  f.owner.dispose();
+});

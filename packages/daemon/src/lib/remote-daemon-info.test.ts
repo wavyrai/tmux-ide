@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { type CanonicalDaemonInfo } from "@tmux-ide/contracts";
-import { readRemoteDaemonHandshake } from "./remote-daemon-info.ts";
+import {
+  readRemoteDaemonHandshake,
+  readRemoteDaemonHandshakeResult,
+} from "./remote-daemon-info.ts";
 
 const info: CanonicalDaemonInfo = {
   pid: 123,
@@ -95,4 +98,17 @@ describe("remote daemon discovery command", () => {
     ).rejects.toThrow("does not support");
     expect(request).not.toHaveBeenCalled();
   });
+});
+
+it("returns structured credential-free missing-daemon and unexpected failures", async () => {
+  expect(await readRemoteDaemonHandshakeResult({ readInfo: () => null })).toEqual({
+    version: 1,
+    error: { code: "daemon-missing" },
+  });
+  const failed = await readRemoteDaemonHandshakeResult({
+    readInfo: () => {
+      throw new Error("secret-token");
+    },
+  });
+  expect(failed).toEqual({ version: 1, error: { code: "unavailable" } });
 });

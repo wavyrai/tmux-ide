@@ -1,3 +1,4 @@
+import { createFleetDialScheduler } from "@tmux-ide/daemon-client/fleet-dial-scheduler";
 import { randomUUID } from "node:crypto";
 import {
   LOCAL_MACHINE_ID,
@@ -49,6 +50,7 @@ interface Machine {
   epoch: number;
   stopObserver: (() => void) | null;
   observingOwner: Owner | null;
+  stopStatus: (() => void) | null;
 }
 
 /** Owns independent transport lifetimes; selecting a machine changes only the active route. */
@@ -61,6 +63,7 @@ export function createApplicationMachineAuthorityManager(
   const subscribers = new Set<() => void>();
   const selectedObservers = new Set<GenerationListener>();
   const lifetime = new AbortController();
+  const scheduler = createFleetDialScheduler();
   let selectedId: string = LOCAL_MACHINE_ID;
   let selectedEpoch = 0;
   let disposed = false;
@@ -104,17 +107,6 @@ export function createApplicationMachineAuthorityManager(
         },
       );
   };
-  const pause = (ms: number) =>
-    new Promise<void>((resolve) => {
-      const done = () => {
-        clearTimeout(timer);
-        lifetime.signal.removeEventListener("abort", done);
-        resolve();
-      };
-      const timer = setTimeout(done, ms);
-      lifetime.signal.addEventListener("abort", done, { once: true });
-      if (lifetime.signal.aborted) done();
-    });
   const makeMachine = (id: string, label: string, profile?: SavedMachine): Machine => {
     let settle!: (ready: boolean) => void;
     const ready = profile
@@ -134,6 +126,7 @@ export function createApplicationMachineAuthorityManager(
       epoch: 0,
       stopObserver: null,
       observingOwner: null,
+      stopStatus: null,
     } as Machine;
     const handle: ApplicationMachineAuthorityHandle = Object.freeze({
       id,
@@ -163,45 +156,18 @@ export function createApplicationMachineAuthorityManager(
     Object.assign(machine, { handle });
     machines.set(id, machine);
     if (!profile) return machine;
-    // initialize synchronously selects SSH before its first await, so no temporary local route leaks.
-    const run = async () => {
-      let first = true;
-      let attempts = 0;
-      while (!disposed) {
-        const current = machine.owner;
-        try {
-          const initializing = current.initialize(profile.sshTarget, lifetime.signal);
-          observe(machine, current);
-          publish();
-          await initializing;
-          if (disposed) {
-            current.dispose();
-            if (first) settle(false);
-            return;
-          }
-          if (first) {
-            settle(true);
-            first = false;
-          }
-          return; // The ready owner's bounded reconnect loop owns all subsequent losses.
-        } catch {
-          if (first) {
-            settle(false);
-            first = false;
-          }
-          if (disposed) return;
-          await pause(
-            dependencies.retryDelayMs ?? Math.min(250 * 2 ** Math.min(attempts++, 3), 2000),
-          );
-          if (disposed) return;
-          machine.stopObserver?.();
-          machine.stopObserver = null;
-          current.dispose();
-          machine.owner = dependencies.createOwner();
-        }
-      }
-    };
-    void run();
+    // The owner selects SSH synchronously and owns ALL retries, including initial failure.
+    machine.stopStatus = owner.observeConnection(publish);
+    const initializing = owner.initialize(profile.sshTarget, lifetime.signal, {
+      scheduler,
+      retryDelayMs: dependencies.retryDelayMs,
+    });
+    observe(machine, owner);
+    publish();
+    void initializing.then(
+      () => settle(!disposed),
+      () => settle(false),
+    );
     return machine;
   };
   makeMachine(LOCAL_MACHINE_ID, "Local");
@@ -233,6 +199,16 @@ export function createApplicationMachineAuthorityManager(
         subscribers.delete(listener);
       };
     },
+    retry(id: string): void {
+      const machine = machines.get(id);
+      if (disposed || !machine?.profile) return;
+      scheduler.prioritize(machine.profile.sshTarget);
+      void machine.owner.retry();
+    },
+    disconnect(id: string): void {
+      if (disposed) return;
+      machines.get(id)?.owner.disconnect();
+    },
     select(id: string): boolean {
       if (disposed || !machines.has(id)) return false;
       if (selectedId === id) return true;
@@ -240,6 +216,8 @@ export function createApplicationMachineAuthorityManager(
       selectedEpoch++;
       selectedGeneration(null);
       selectedId = id;
+      const target = machines.get(id)?.profile?.sshTarget;
+      if (target) scheduler.prioritize(target);
       selectedEpoch++;
       selectedGeneration(machines.get(id)!.handle.read()?.instanceId ?? null);
       publish();
@@ -293,6 +271,7 @@ export function createApplicationMachineAuthorityManager(
       selectedEpoch++;
       selectedGeneration(null);
       for (const machine of machines.values()) {
+        machine.stopStatus?.();
         machine.stopObserver?.();
         machine.stopObserver = null;
         machine.owner.dispose();

@@ -1,3 +1,4 @@
+import { SshConnectionError } from "../../../lib/ssh-daemon-transport.ts";
 import { describe, expect, it, vi } from "vitest";
 import {
   createApplicationDaemonAuthority,
@@ -220,5 +221,57 @@ describe("selected application machine authority", () => {
     expect(f.authority.endpoint().kind).toBe("ssh");
     expect(f.authority.read()).toBeNull();
     expect(f.deps.readLocal).not.toHaveBeenCalled();
+    f.authority.dispose();
+  });
+});
+
+describe("machine connection controls", () => {
+  it("pauses permanent failure and explicitly retries without changing authority owner", async () => {
+    const f = setup();
+    f.deps.connect = vi
+      .fn()
+      .mockRejectedValueOnce(new SshConnectionError("bad protocol", "incompatible"))
+      .mockResolvedValueOnce(f.second);
+    const updates = vi.fn();
+    const stop = f.authority.observeConnection(updates);
+    await expect(f.authority.initialize("build")).rejects.toThrow("bad protocol");
+    await new Promise((done) => setTimeout(done, 5));
+    expect(f.deps.connect).toHaveBeenCalledTimes(1);
+    expect(f.authority.endpoint().diagnostic).toMatchObject({
+      phase: "needs-attention",
+      failure: "incompatible",
+      nextRetryAt: null,
+    });
+    await f.authority.retry();
+    await vi.waitFor(() => expect(f.authority.read()?.port).toBe(43211));
+    expect(updates).toHaveBeenCalled();
+    stop();
+    f.authority.dispose();
+  });
+  it("disconnect retires immediately, cancels retries, and can reconnect on demand", async () => {
+    const f = setup();
+    await f.authority.initialize("build");
+    f.authority.disconnect();
+    expect(f.authority.read()).toBeNull();
+    expect(f.first.dispose).toHaveBeenCalledOnce();
+    expect(f.authority.endpoint().diagnostic?.phase).toBe("disconnected");
+    await new Promise((done) => setTimeout(done, 5));
+    expect(f.deps.connect).toHaveBeenCalledTimes(1);
+    await Promise.all([f.authority.retry(), f.authority.retry()]);
+    await vi.waitFor(() => expect(f.authority.read()?.port).toBe(43211));
+    expect(f.deps.connect).toHaveBeenCalledTimes(2);
+    f.authority.dispose();
+  });
+  it("exposes a retry deadline but never publishes arbitrary transport error text", async () => {
+    const f = setup();
+    f.deps.retryDelayMs = 10000;
+    f.deps.connect = vi.fn().mockRejectedValue(new Error("secret-credential"));
+    await expect(f.authority.initialize("build")).rejects.toThrow();
+    await Promise.resolve();
+    const status = f.authority.endpoint().diagnostic!;
+    expect(status.phase).toBe("reconnecting");
+    expect(status.nextRetryAt).toBeGreaterThan(Date.now());
+    expect(JSON.stringify(status)).not.toContain("secret-credential");
+    f.authority.dispose();
   });
 });

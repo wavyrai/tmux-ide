@@ -23,7 +23,10 @@
     "./workspace-client-conformance": "./src/workspace-client-conformance.ts",
     "./terminal-fast-lane": "./src/terminal-fast-lane.ts",
     "./first-latest-coordinator": "./src/first-latest-coordinator.ts",
-    "./runtime-resource-ledger": "./src/runtime-resource-ledger.ts"
+    "./runtime-resource-ledger": "./src/runtime-resource-ledger.ts",
+    "./fleet-dial-scheduler": "./src/fleet-dial-scheduler.ts",
+    "./fleet-connection-status": "./src/fleet-connection-status.ts",
+    "./fleet-environments": "./src/fleet-environments.ts"
   },
   "main": "src/index.ts",
   "scripts": {

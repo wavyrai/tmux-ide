@@ -298,3 +298,80 @@ it("retains agents across machine selection and routes identical pane IDs only t
   expect(calls).toHaveLength(2);
   setup.renderer.destroy();
 });
+
+it("offers keyboard and mouse connection controls for the focused remote only", async () => {
+  const owner = createKeyboardRouteOwner();
+  const calls: string[] = [];
+  const setup = await renderForTest(
+    () => (
+      <KeyboardRouteProvider owner={owner}>
+        <ApplicationMachineSidebar
+          width={48}
+          height={14}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          model={{
+            groups: () => [
+              { id: "local", label: "Local", state: "ready", sessions: [] },
+              {
+                id: "mini",
+                label: "Mini",
+                state: "disconnected",
+                sessions: [],
+                diagnostic: {
+                  phase: "needs-attention",
+                  failure: "incompatible",
+                  attempt: 0,
+                  nextRetryAt: null,
+                },
+              },
+            ],
+            activeMachineId: () => "local",
+            activeSessionName: () => null,
+            focused: () => true,
+            onOpen: () => {},
+            onSelectMachine: () => {},
+            onRetryMachine: (id) => {
+              calls.push(`retry:${id}`);
+            },
+            onDisconnectMachine: (id) => {
+              calls.push(`disconnect:${id}`);
+            },
+          }}
+        />
+      </KeyboardRouteProvider>
+    ),
+    { width: 48, height: 14 },
+  );
+  const key = (name: string) =>
+    owner.route({
+      name,
+      eventType: "press",
+      ctrl: false,
+      meta: false,
+      shift: false,
+      preventDefault() {},
+      stopPropagation() {},
+    });
+  await setup.renderOnce();
+  key("r");
+  expect(calls).toEqual([]);
+  key("end");
+  await setup.renderOnce();
+  const lines = setup.captureCharFrame().split("\n");
+  expect(lines.join("\n")).toContain("Incompatible daemon protocol");
+  key("r");
+  key("d");
+  await setup.mockMouse.click(
+    6,
+    lines.findIndex((line) => line.includes("Retry connection")),
+    MouseButtons.LEFT,
+  );
+  await setup.mockMouse.click(
+    6,
+    lines.findIndex((line) => line.includes("Disconnect (D)")),
+    MouseButtons.LEFT,
+  );
+  expect(calls).toEqual(["retry:mini", "disconnect:mini", "retry:mini", "disconnect:mini"]);
+  setup.renderer.destroy();
+  owner.dispose();
+});

@@ -763,9 +763,9 @@ try {
     case "remote-daemon-info": {
       if (!json || positionals.length !== 1)
         throw new IdeError("remote-daemon-info requires --json and no arguments");
-      const { readRemoteDaemonHandshake } =
+      const { readRemoteDaemonHandshakeResult } =
         await import("../packages/daemon/src/lib/remote-daemon-info.ts");
-      process.stdout.write(`${JSON.stringify(await readRemoteDaemonHandshake())}\n`);
+      process.stdout.write(`${JSON.stringify(await readRemoteDaemonHandshakeResult())}\n`);
       break;
     }
 

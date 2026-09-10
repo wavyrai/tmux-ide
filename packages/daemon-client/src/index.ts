@@ -23,3 +23,7 @@ export * from "./workspace-client.ts";
 export * from "./workspace-client-conformance.ts";
 export * from "./terminal-fast-lane.ts";
 export * from "./first-latest-coordinator.ts";
+
+export * from "./fleet-dial-scheduler.ts";
+export * from "./fleet-connection-status.ts";
+export * from "./fleet-environments.ts";

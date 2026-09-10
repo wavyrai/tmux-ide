@@ -1,3 +1,12 @@
+import type { FleetConnectionStatus } from "@tmux-ide/daemon-client/fleet-connection-status";
+import {
+  createRuntimeConnectionSupervisor,
+  type RuntimeConnectionSupervisor,
+} from "@tmux-ide/daemon-client/connection-supervisor";
+import {
+  fleetReconnectBackoff,
+  type FleetDialScheduler,
+} from "@tmux-ide/daemon-client/fleet-dial-scheduler";
 import { watch } from "node:fs";
 import { basename, dirname } from "node:path";
 import type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
@@ -7,6 +16,7 @@ import {
   readCanonicalDaemonInfo,
 } from "../../../lib/canonical-daemon.ts";
 import {
+  SshConnectionError,
   openSshDaemonTransport,
   probeSshDaemonIdentity,
 } from "../../../lib/ssh-daemon-transport.ts";
@@ -14,6 +24,7 @@ import {
 type Connection = Awaited<ReturnType<typeof openSshDaemonTransport>>;
 type Listener = (generation: string | null) => void;
 export interface ApplicationDaemonEndpoint {
+  readonly diagnostic?: FleetConnectionStatus;
   readonly kind: "local" | "ssh";
   readonly label: string | null;
   readonly remote: Readonly<CanonicalDaemonInfo> | null;
@@ -101,7 +112,7 @@ function monitorConnection(
   };
 }
 
-/** One selected machine per TUI process. Remote loss can never select the local machine. */
+/** Owns one machine's authority and its single initial/reconnect lifecycle. */
 export function createApplicationDaemonAuthority(
   dependencies: ApplicationDaemonAuthorityDependencies = defaults,
 ) {
@@ -112,9 +123,29 @@ export function createApplicationDaemonAuthority(
   let connection: Connection | null = null;
   let descriptor: CanonicalDaemonInfo | null = null;
   let remote: Readonly<CanonicalDaemonInfo> | null = null;
-  let controller: AbortController | null = null;
-  let stopMonitor: (() => void) | null = null;
+  let supervisor: RuntimeConnectionSupervisor<Connection> | null = null;
+  let stopped = false;
+  let paused = false;
+  let controlRevision = 0;
+  let diagnostic: FleetConnectionStatus = {
+    phase: "ready",
+    attempt: 0,
+    nextRetryAt: null,
+    failure: null,
+  };
+  const statusListeners = new Set<() => void>();
+  const updateStatus = (next: FleetConnectionStatus) => {
+    diagnostic = Object.freeze(next);
+    for (const listener of statusListeners) {
+      try {
+        listener();
+      } catch {
+        /* UI observers do not own transport lifetime. */
+      }
+    }
+  };
   let removeParentAbort: (() => void) | null = null;
+  let rejectInitial: ((error: unknown) => void) | null = null;
   const listeners = new Set<Listener>();
   const notify = (generation: string | null) => {
     for (const listener of listeners) {
@@ -125,77 +156,30 @@ export function createApplicationDaemonAuthority(
       }
     }
   };
+  let releaseConnection: (() => void) | null = null;
   const retire = () => {
-    stopMonitor?.();
-    stopMonitor = null;
-    const previous = connection;
+    const release = releaseConnection;
+    releaseConnection = null;
     connection = null;
     descriptor = null;
     remote = null;
     state = "disconnected";
     epoch++;
     notify(null);
-    previous?.dispose();
+    release?.();
   };
   const dispose = () => {
-    if (kind === "ssh" && controller === null && connection === null && state === "disconnected")
-      return;
-    controller?.abort();
-    controller = null;
+    if (stopped) return;
+    stopped = true;
+    controlRevision++;
     removeParentAbort?.();
     removeParentAbort = null;
+    rejectInitial?.(new Error("SSH connection cancelled"));
+    rejectInitial = null;
     if (kind === "ssh") retire();
-  };
-  const pause = (ms: number, signal: AbortSignal) =>
-    new Promise<void>((resolve) => {
-      const done = () => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", done);
-        resolve();
-      };
-      const timer = setTimeout(done, ms);
-      signal.addEventListener("abort", done, { once: true });
-      if (signal.aborted) done();
-    });
-  const install = (next: Connection, owner: AbortController, alias: string) => {
-    if (owner.signal.aborted || controller !== owner) {
-      next.dispose();
-      return;
-    }
-    const endpoint = new URL(next.baseUrl);
-    remote = Object.freeze({ ...next.daemon });
-    descriptor = Object.freeze({
-      ...next.daemon,
-      bindHostname: "127.0.0.1",
-      port: Number(endpoint.port),
-    });
-    connection = next;
-    state = "ready";
-    epoch++;
-    notify(descriptor.instanceId);
-    const lost = async () => {
-      if (owner.signal.aborted || controller !== owner || connection !== next) return;
-      retire();
-      let attempts = 0;
-      while (!owner.signal.aborted && controller === owner) {
-        await pause(
-          dependencies.retryDelayMs ?? Math.min(250 * 2 ** Math.min(attempts, 3), 2_000),
-          owner.signal,
-        );
-        if (owner.signal.aborted || controller !== owner) return;
-        state = "connecting";
-        try {
-          const reopened = await dependencies.connect({ alias, signal: owner.signal });
-          install(reopened, owner, alias);
-          return;
-        } catch {
-          state = "disconnected";
-          attempts++;
-        }
-      }
-    };
-    void next.closed.then(lost);
-    stopMonitor = monitorConnection(next, dependencies, () => void lost());
+    void supervisor?.stop();
+    updateStatus({ phase: "disconnected", attempt: 0, nextRetryAt: null, failure: null });
+    statusListeners.clear();
   };
   return {
     read(): CanonicalDaemonInfo | null {
@@ -220,6 +204,7 @@ export function createApplicationDaemonAuthority(
         localBaseUrl: connection?.baseUrl ?? null,
         epoch,
         state,
+        diagnostic,
       });
     },
     async observe(listener: Listener): Promise<() => void> {
@@ -229,30 +214,137 @@ export function createApplicationDaemonAuthority(
         listeners.delete(listener);
       };
     },
-    async initialize(alias: string, parentSignal?: AbortSignal): Promise<void> {
-      if (kind !== "local") throw new Error("Application machine authority is already selected");
+    observeConnection(listener: () => void): () => void {
+      statusListeners.add(listener);
+      return () => {
+        statusListeners.delete(listener);
+      };
+    },
+    disconnect(): void {
+      if (kind !== "ssh" || stopped) return;
+      paused = true;
+      controlRevision++;
+      rejectInitial?.(new Error("SSH connection cancelled"));
+      rejectInitial = null;
+      retire();
+      void supervisor?.stop();
+      updateStatus({ phase: "disconnected", attempt: 0, nextRetryAt: null, failure: null });
+    },
+    async retry(): Promise<void> {
+      if (kind !== "ssh" || stopped || !supervisor) return;
+      const revision = ++controlRevision;
+      paused = true;
+      retire();
+      await supervisor.stop();
+      if (stopped || revision !== controlRevision) return;
+      paused = false;
+      supervisor.start();
+    },
+    async initialize(
+      alias: string,
+      parentSignal?: AbortSignal,
+      options: {
+        scheduler?: FleetDialScheduler;
+        retryDelayMs?: number;
+      } = {},
+    ): Promise<void> {
+      if (kind !== "local" || stopped)
+        throw new Error("Application machine authority is already selected");
       kind = "ssh";
       label = alias;
       state = "connecting";
       epoch++;
-      const owner = new AbortController();
-      controller = owner;
+      const initial = new Promise<void>((resolve, reject) => {
+        rejectInitial = reject;
+        supervisor = createRuntimeConnectionSupervisor<Connection>({
+          retryable: (error) => !(error instanceof SshConnectionError) || error.retryable,
+          backoffMs: (attempt) => {
+            const delay =
+              dependencies.retryDelayMs ?? options.retryDelayMs ?? fleetReconnectBackoff(attempt);
+            if (!stopped && !paused)
+              updateStatus({
+                ...diagnostic,
+                phase: "reconnecting",
+                attempt,
+                nextRetryAt: Date.now() + delay,
+              });
+            return delay;
+          },
+          connect: async ({ signal, attempt }) => {
+            if (stopped || paused || signal.aborted) throw new Error("SSH connection cancelled");
+            state = "connecting";
+            updateStatus({ phase: "connecting", attempt, nextRetryAt: null, failure: null });
+            let next: Connection;
+            try {
+              const connect = () => dependencies.connect({ alias, signal });
+              next = options.scheduler
+                ? await options.scheduler.run(alias, signal, connect, (late) => late.dispose())
+                : await connect();
+            } catch (error) {
+              if (!stopped && !paused) {
+                state = "disconnected";
+                updateStatus({
+                  phase:
+                    error instanceof SshConnectionError && !error.retryable
+                      ? "needs-attention"
+                      : "reconnecting",
+                  attempt,
+                  nextRetryAt: null,
+                  failure: error instanceof SshConnectionError ? error.code : "unavailable",
+                });
+              }
+              rejectInitial?.(error);
+              rejectInitial = null;
+              throw error;
+            }
+            if (stopped || paused || signal.aborted) {
+              next.dispose();
+              throw new Error("SSH connection cancelled");
+            }
+            const endpoint = new URL(next.baseUrl);
+            remote = Object.freeze({ ...next.daemon });
+            descriptor = Object.freeze({
+              ...next.daemon,
+              bindHostname: "127.0.0.1",
+              port: Number(endpoint.port),
+            });
+            connection = next;
+            state = "ready";
+            epoch++;
+            let close!: () => void;
+            const closed = new Promise<void>((done) => {
+              close = done;
+            });
+            let released = false;
+            let stopMonitor: (() => void) | null = null;
+            const release = () => {
+              if (released) return;
+              released = true;
+              stopMonitor?.();
+              next.dispose();
+              close();
+            };
+            const lost = () => {
+              if (!released && connection === next) retire();
+            };
+            releaseConnection = release;
+            void next.closed.then(lost, lost);
+            stopMonitor = monitorConnection(next, dependencies, lost);
+            notify(descriptor.instanceId);
+            if (!stopped && !paused)
+              updateStatus({ phase: "ready", attempt: 0, nextRetryAt: null, failure: null });
+            rejectInitial = null;
+            resolve();
+            return { value: next, closed, dispose: release };
+          },
+        });
+      });
       const abort = () => dispose();
       parentSignal?.addEventListener("abort", abort, { once: true });
       removeParentAbort = () => parentSignal?.removeEventListener("abort", abort);
       if (parentSignal?.aborted) abort();
-      try {
-        if (owner.signal.aborted) throw new Error("SSH connection cancelled");
-        const next = await dependencies.connect({ alias, signal: owner.signal });
-        if (owner.signal.aborted || controller !== owner) {
-          next.dispose();
-          throw new Error("SSH connection cancelled");
-        }
-        install(next, owner, alias);
-      } catch (error) {
-        dispose();
-        throw error;
-      }
+      if (!stopped) supervisor!.start();
+      return initial;
     },
     dispose,
   };

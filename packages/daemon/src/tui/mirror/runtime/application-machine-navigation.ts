@@ -97,6 +97,8 @@ export function createApplicationMachineNavigation(options: {
         options.setNote(null);
       }
     },
+    onRetryMachine: (id) => manager.retry(id),
+    onDisconnectMachine: (id) => manager.disconnect(id),
     onAddMachine: () => {
       navigation++;
       options.cancelOpen();

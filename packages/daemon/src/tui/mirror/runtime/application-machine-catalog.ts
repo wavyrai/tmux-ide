@@ -1,3 +1,8 @@
+import { groupFleetEnvironments } from "@tmux-ide/daemon-client/fleet-environments";
+import {
+  fleetConnectionMessage,
+  type FleetConnectionStatus,
+} from "@tmux-ide/daemon-client/fleet-connection-status";
 import { machineResourceKey } from "@tmux-ide/core";
 import {
   applicationMachineAuthorityManager,
@@ -22,6 +27,10 @@ export interface ApplicationMachineCatalogGroup {
   readonly state: "ready" | "connecting" | "disconnected";
   readonly sessions: readonly ApplicationMachineCatalogSession[];
   readonly note: string | null;
+  readonly diagnostic?: FleetConnectionStatus;
+  readonly environmentId?: string | null;
+  readonly routeIds?: readonly string[];
+  readonly identityConflict?: boolean;
 }
 export interface ApplicationMachineCatalogSnapshot {
   readonly selectedMachineId: string;
@@ -36,6 +45,8 @@ interface Entry {
   snapshot: ApplicationHomeCatalogSnapshot;
   lastSessions: readonly ApplicationHomeCatalogSession[];
   binding: string | null;
+  environmentId: string | null;
+  generation: string | null;
 }
 const empty = (): ApplicationHomeCatalogSnapshot => ({
   phase: "loading",
@@ -59,6 +70,7 @@ export function createApplicationMachineCatalog(
         readCanonicalDaemonInfo: handle.read,
       }));
   const entries = new Map<string, Entry>();
+  const preferredRoutes = new Map<string, string>();
   const listeners = new Set<(value: ApplicationMachineCatalogSnapshot) => void>();
   let started = false,
     disposed = false;
@@ -86,17 +98,56 @@ export function createApplicationMachineCatalog(
               : entry?.snapshot.phase === "unavailable"
                 ? "disconnected"
                 : "connecting";
+        const diagnostic = entry?.handle.endpoint().diagnostic;
         return {
           id: machine.id,
           label: machine.label,
           state,
-          note: entry?.snapshot.note ?? null,
+          diagnostic,
+          note:
+            diagnostic && diagnostic.phase !== "ready"
+              ? fleetConnectionMessage(diagnostic)
+              : (entry?.snapshot.note ?? null),
           sessions: (entry?.lastSessions ?? []).map((session) => ({
             ...session,
             sourceId: session.id,
             id: machineResourceKey(machine.id, "session", session.id),
             machineId: machine.id,
             disabled: !ready,
+          })),
+        };
+      }),
+    };
+    const groups = snapshot.groups;
+    snapshot = {
+      ...snapshot,
+      groups: groupFleetEnvironments(
+        groups.map((group) => ({
+          id: group.id,
+          ready: group.state === "ready",
+          environmentId: entries.get(group.id)?.environmentId ?? null,
+          generation: entries.get(group.id)?.generation ?? null,
+        })),
+        current.selectedMachineId,
+        preferredRoutes,
+      ).map((joined) => {
+        const group = groups.find((group) => group.id === joined.primaryRouteId)!;
+        if (joined.environmentId && !joined.conflict)
+          preferredRoutes.set(joined.environmentId, group.id);
+        return {
+          ...group,
+          environmentId: joined.environmentId,
+          routeIds: joined.routeIds,
+          identityConflict: joined.conflict,
+          note: joined.conflict
+            ? "Conflicting environment identities. Verify these routes before combining them."
+            : group.note,
+          sessions: group.sessions.map((session) => ({
+            ...session,
+            id:
+              session.liveSessionId && joined.environmentId && !joined.conflict
+                ? JSON.stringify([joined.environmentId, "session", session.liveSessionId])
+                : session.id,
           })),
         };
       }),
@@ -146,7 +197,11 @@ export function createApplicationMachineCatalog(
       if (value.phase === "live" && (!current || value.daemonInstanceId !== current.instanceId))
         return;
       entry.snapshot = value;
-      if (value.phase === "live") entry.lastSessions = value.sessions;
+      if (value.phase === "live") {
+        entry.lastSessions = value.sessions;
+        entry.environmentId = current?.environmentId ?? null;
+        entry.generation = current ? JSON.stringify([current.instanceId, current.startedAt]) : null;
+      }
       publish();
     });
     catalog.start();
@@ -180,6 +235,8 @@ export function createApplicationMachineCatalog(
           snapshot: empty(),
           lastSessions: [],
           binding: null,
+          environmentId: null,
+          generation: null,
         };
         entries.set(machine.id, entry);
         const owned = entry;
