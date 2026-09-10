@@ -37,7 +37,7 @@ export function WorkbenchSidebar({
     <aside className="dw-sidebar">
       <header className="dw-toolbar">
         <Layers size={16} />
-        <strong>tmux-ide</strong>
+        <strong>Workspace</strong>
         <button className="dw-button" onClick={onHide} aria-label="Hide sidebar">
           <ChevronDown size={14} />
         </button>

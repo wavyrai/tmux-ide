@@ -1,3 +1,4 @@
+import { AppChrome } from "./app-chrome";
 import { PaneActions } from "./pane-actions";
 import { WorkbenchTabs } from "./workbench-tabs";
 import { SplitView } from "./split-view";
@@ -83,7 +84,11 @@ export default function DesignWorkbench() {
   }, []);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        !document.querySelector(".dw-chrome-popover")
+      ) {
         setDrag(null);
         setDrop(null);
         setZoom(null);
@@ -249,6 +254,48 @@ export default function DesignWorkbench() {
       data-design-fixture
       style={css}
     >
+      <AppChrome
+        portal={root}
+        commands={[
+          { id: "home", label: "Go to Home", group: "Navigation", run: () => setHome(true) },
+          {
+            id: "terminals",
+            label: "Go to Terminals",
+            group: "Navigation",
+            run: () => setHome(false),
+          },
+          {
+            id: "sidebar",
+            label: sidebar ? "Hide sidebar" : "Show sidebar",
+            group: "Layout",
+            run: () => setSidebar((value) => !value),
+          },
+          ...(selected && paneIds(current.layout).includes(selected)
+            ? [
+                {
+                  id: "zoom",
+                  label: zoom ? "Restore pane layout" : "Zoom selected pane",
+                  group: "Layout",
+                  run: () => setZoom(zoom ? null : selected),
+                },
+              ]
+            : []),
+          ...windows.flatMap((w) =>
+            paneIds(w.layout).map((id) => ({
+              id: `pane:${w.id}:${id}`,
+              label: `Open ${panes[id]?.title} · ${w.machine} / ${w.name}`,
+              group: "Panes",
+              run: () => selectWindow(w.id, id),
+            })),
+          ),
+          ...themes.map((t) => ({
+            id: `theme:${t.id}`,
+            label: `Theme: ${t.name}`,
+            group: "Appearance",
+            run: () => setThemeId(t.id),
+          })),
+        ]}
+      />
       <Group orientation="horizontal" transition={noAnimation} className="dw-root-group">
         {sidebarSize !== null && (
           <>
