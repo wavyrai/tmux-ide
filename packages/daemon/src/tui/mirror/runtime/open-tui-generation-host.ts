@@ -156,6 +156,7 @@ export interface OpenTuiGenerationHostDependencies {
 }
 
 export interface OpenTuiGenerationHostOptions extends Partial<OpenTuiGenerationHostDependencies> {
+  readonly readDaemon?: typeof readCanonicalDaemonInfo;
   /** Detailed client/decode profiling is independent from connection progress. */
   readonly performanceDiagnostics?: boolean;
   readonly onConnectionProgress?: (
@@ -173,7 +174,9 @@ export interface OpenTuiGenerationHost {
   dispose(): Promise<void>;
 }
 
-function productionOwnerActions(): WorkspaceClientOwnerActionPort {
+function productionOwnerActions(
+  readDaemon = readCanonicalDaemonInfo,
+): WorkspaceClientOwnerActionPort {
   return {
     async dispatch<Name extends ActionName>(request: {
       readonly target: { readonly daemon: { readonly instanceId: string } };
@@ -181,7 +184,7 @@ function productionOwnerActions(): WorkspaceClientOwnerActionPort {
       readonly input: ActionInput<Name>;
       readonly operationId: string;
     }) {
-      const daemon = readCanonicalDaemonInfo();
+      const daemon = readDaemon();
       if (!daemon || daemon.instanceId !== request.target.daemon.instanceId) return null;
       return dispatchOwnerAction({
         baseUrl: canonicalDaemonUrl("http", daemon.bindHostname, daemon.port),
@@ -198,6 +201,7 @@ function productionOwnerActions(): WorkspaceClientOwnerActionPort {
 function buildProductionBundle(
   connection: OpenTuiApplicationShellConnection,
   callbacks: BundleCallbacks,
+  readDaemon = readCanonicalDaemonInfo,
 ): OpenTuiGenerationBundle {
   if (!connection.routing) throw new Error("OpenTUI generation requires verified runtime routing");
   const performanceSink = currentTuiPerformanceEventSink();
@@ -304,7 +308,7 @@ function buildProductionBundle(
       requestTerminalRuntimeInventoryRefresh: () => {
         connection.transport.refreshTerminalRuntimeInventory();
       },
-      actions: productionOwnerActions(),
+      actions: productionOwnerActions(readDaemon),
     },
   });
   fastLane = createOpenTuiWorkspaceTerminalFastLane(
@@ -462,7 +466,14 @@ export function createOpenTuiGenerationHost(
   presentation: OpenTuiRuntimeLayoutPresentation,
   overrides: OpenTuiGenerationHostOptions = {},
 ): OpenTuiGenerationHost {
-  const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
+  const dependencies = {
+    ...DEFAULT_DEPENDENCIES,
+    ...overrides,
+    buildBundle:
+      overrides.buildBundle ??
+      ((connection: OpenTuiApplicationShellConnection, callbacks: BundleCallbacks) =>
+        buildProductionBundle(connection, callbacks, overrides.readDaemon)),
+  };
   const diagnose = overrides.onDiagnostic
     ? (
         phase: Parameters<NonNullable<OpenTuiGenerationHostDependencies["onDiagnostic"]>>[0],

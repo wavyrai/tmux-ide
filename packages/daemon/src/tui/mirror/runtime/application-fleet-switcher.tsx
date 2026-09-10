@@ -1,5 +1,6 @@
 /* @jsxImportSource @opentui/solid */
-import { For, Show, createSignal, createMemo } from "solid-js";
+import { For, Show, createSignal, createMemo, createEffect, onCleanup } from "solid-js";
+import { createFleetPreviewOwner } from "./application-fleet-preview.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { Dialog } from "../ui/dialog.tsx";
 import { NavigationRow } from "../ui/navigation-row.tsx";
@@ -7,17 +8,19 @@ import { useKeyboardRoute } from "../ui/keyboard-router.tsx";
 
 export interface FleetSwitcherRow {
   readonly key: string;
+  readonly previewKey?: string;
   readonly label: string;
   readonly detail: string;
   readonly favorite: boolean;
   readonly attention: boolean;
   readonly disabled: boolean;
   readonly canFavorite: boolean;
+  preview?(signal: AbortSignal): Promise<string>;
   open(): void;
   toggleFavorite(): void;
 }
 
-/** One fleet selector; it consumes metadata only and never opens preview/terminal streams. */
+/** Fleet selector with one optional passive snapshot; no terminal streams. */
 export function ApplicationFleetSwitcher(props: {
   open: boolean;
   attentionOnly: boolean;
@@ -27,6 +30,9 @@ export function ApplicationFleetSwitcher(props: {
   height: number;
   theme: SemanticThemeSnapshot;
 }) {
+  const [preview, setPreview] = createSignal<string | null>(null);
+  const previewOwner = createFleetPreviewOwner(setPreview);
+  onCleanup(previewOwner.dispose);
   const [query, setQuery] = createSignal("");
   const [selected, setSelected] = createSignal<string | null>(null);
   const rows = createMemo(() => {
@@ -37,11 +43,21 @@ export function ApplicationFleetSwitcher(props: {
         (!search || `${row.label} ${row.detail}`.toLocaleLowerCase().includes(search)),
     );
   });
+  createEffect(() => {
+    if (!rows().some((row) => row.key === selected())) setSelected(rows()[0]?.key ?? null);
+  });
   const index = () =>
     Math.max(
       0,
       rows().findIndex((row) => row.key === selected()),
     );
+  createEffect(() => {
+    const row = rows()[index()];
+    previewOwner.select(
+      props.open && props.height >= 18 && !row?.disabled ? row?.preview : undefined,
+      row?.previewKey ?? row?.key,
+    );
+  });
   const activate = () => {
     const row = rows()[index()];
     if (row && !row.disabled) {
@@ -68,7 +84,7 @@ export function ApplicationFleetSwitcher(props: {
   });
   const width = () => Math.max(1, Math.min(90, props.width - 4));
   const height = () => Math.max(1, Math.min(22, props.height - 2));
-  const capacity = () => Math.max(1, height() - 6);
+  const capacity = () => Math.max(1, height() - 6 - (props.height >= 18 ? 6 : 0));
   const visible = () =>
     rows().slice(Math.max(0, index() - capacity() + 1), Math.max(capacity(), index() + 1));
   return (
@@ -119,6 +135,14 @@ export function ApplicationFleetSwitcher(props: {
             />
           )}
         </For>
+        <Show when={props.height >= 18 && preview() !== null}>
+          <text height={1} fg={props.theme.roles.text.muted}>
+            Read-only preview
+          </text>
+          <text height={5} fg={props.theme.roles.text.primary}>
+            {preview()?.split("\n").slice(-5).join("\n")}
+          </text>
+        </Show>
         <Show when={rows().length === 0}>
           <text height={1} fg={props.theme.roles.text.muted}>
             No matching live or cached entries

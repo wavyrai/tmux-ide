@@ -1,3 +1,5 @@
+import { createFleetTabs, type FleetTabTarget } from "./application-fleet-tabs.ts";
+import { readFleetPreview } from "./application-fleet-preview.ts";
 import { saveMachineProfiles } from "../../../lib/local-fleet-request.ts";
 import type { FleetSwitcherRow } from "./application-fleet-switcher.tsx";
 import { createApplicationFleetPreferences } from "./application-fleet-preferences.ts";
@@ -12,7 +14,7 @@ import { ephemeralMachineProfile } from "./application-machine-startup.ts";
 import type { ApplicationMachineSidebarModel } from "./application-machine-sidebar.tsx";
 
 export function createApplicationMachineNavigation(options: {
-  resetWorkspace(machineId: string): void;
+  resetWorkspace(machineId: string, expectedLiveSessionId?: string): void;
   openAgent?(agent: ApplicationMachineAgent, source: "keyboard" | "mouse"): Promise<unknown> | void;
   cancelOpen(): void;
   openSession(name: string, source: "keyboard" | "mouse"): Promise<unknown>;
@@ -53,23 +55,32 @@ export function createApplicationMachineNavigation(options: {
   const [error, setError] = createSignal<string | null>(null);
   const stop = catalog.subscribe(setSnapshot);
   let navigation = 0;
+  const [tabRevision, setTabRevision] = createSignal(0);
   const history: string[] = [...saved().recent].reverse();
   let historyIndex = history.length - 1;
-  const select = (id: string) => {
+  const select = (id: string, expectedLiveSessionId?: string) => {
     if (!manager.getMachine(id)) return false;
     if (manager.snapshot().selectedMachineId !== id) {
       navigation++;
       options.cancelOpen();
       // Synchronously remove the old input/shell owner before changing the route.
-      options.resetWorkspace(id);
+      options.resetWorkspace(id, expectedLiveSessionId);
       manager.select(id);
+    } else if (expectedLiveSessionId) {
+      options.resetWorkspace(id, expectedLiveSessionId);
     }
     return true;
   };
-  const open = async (id: string, name: string, source: "keyboard" | "mouse", remember = true) => {
+  const open = async (
+    id: string,
+    name: string,
+    source: "keyboard" | "mouse",
+    remember = true,
+    expectedLiveSessionId?: string,
+  ) => {
     // A same-machine session click supersedes any pending exact-agent focus too.
     if (manager.snapshot().selectedMachineId === id) options.cancelOpen();
-    if (!select(id)) return;
+    if (!select(id, expectedLiveSessionId)) return;
     const token = ++navigation;
     setFocused(false);
     options.setSurface("terminals");
@@ -88,9 +99,17 @@ export function createApplicationMachineNavigation(options: {
       return false;
     if (token === navigation) {
       const session = snapshot()
-        .groups.find((group) => group.id === id)
+        .groups.find((group) => group.id === id || group.routeIds?.includes(id))
         ?.sessions.find((row) => row.name === name && !row.disabled);
       if (session) {
+        if (session.liveSessionId)
+          tabs.remember({
+            key: JSON.stringify([id, session.liveSessionId]),
+            machineId: id,
+            liveSessionId: session.liveSessionId,
+            label: session.name,
+            hostLabel: manager.getMachine(id)?.label ?? id,
+          });
         preferences.change({ type: "visit", key: session.id });
         if (remember && history[historyIndex] !== session.id) {
           history.splice(historyIndex + 1);
@@ -102,12 +121,48 @@ export function createApplicationMachineNavigation(options: {
       return true;
     }
   };
+  const resolveTab = (target: FleetTabTarget): FleetTabTarget | null => {
+    if (manager.getMachine(target.machineId)?.endpoint().state !== "ready") return null;
+    const group = snapshot().groups.find(
+      (g) => g.id === target.machineId || g.routeIds?.includes(target.machineId),
+    );
+    const row = group?.sessions.find(
+      (s) => s.liveSessionId === target.liveSessionId && !s.disabled,
+    );
+    return row ? { ...target, label: row.name } : null;
+  };
+  const tabs = createFleetTabs({
+    resolve: resolveTab,
+    retireActive: () => {
+      navigation++;
+      options.cancelOpen();
+      options.resetWorkspace(manager.snapshot().selectedMachineId);
+      options.setSurface("home");
+    },
+    open: async (target) =>
+      !!(await open(target.machineId, target.label, "keyboard", true, target.liveSessionId)),
+    publish: () => setTabRevision((value) => value + 1),
+    unavailable: () => options.setNote("That tab's session is unavailable or has been replaced."),
+  });
   const sidebar: ApplicationMachineSidebarModel = {
     groups: () =>
       snapshot().groups.map((group) => ({
         ...group,
         agents: agentGroups().find((value) => value.machineId === group.id)?.agents ?? [],
       })),
+    tabs: () => {
+      tabRevision();
+      const value = tabs.snapshot();
+      return value.tabs.map((tab) => ({
+        ...tab,
+        active: value.active === tab.key,
+        available: !!resolveTab(tab),
+      }));
+    },
+    onOpenTab: (key) => {
+      void tabs.activate(key);
+    },
+    onCloseTab: (key) => tabs.close(key),
     favorites: () => saved().favorites,
     collapsed: () => saved().collapsed,
     onFavorite: (key, enabled) => preferences.change({ type: "favorite", key, enabled }),
@@ -140,6 +195,7 @@ export function createApplicationMachineNavigation(options: {
       void options.openAgent?.(row, source);
     },
     onSelectMachine: (id) => {
+      tabs.suspend();
       navigation++;
       options.cancelOpen();
       if (select(id)) {
@@ -163,6 +219,7 @@ export function createApplicationMachineNavigation(options: {
     navigation++;
     stopPreferences();
     preferences.dispose();
+    tabs.dispose();
     stopAgents();
     agents.dispose();
     stop();
@@ -194,6 +251,17 @@ export function createApplicationMachineNavigation(options: {
       }
       if (await open(group.id, session.name, "keyboard", false)) historyIndex = next;
     },
+    cycleTab(direction: -1 | 1, close = false) {
+      const value = tabs.snapshot();
+      if (close) {
+        if (value.active) tabs.close(value.active);
+        return;
+      }
+      if (!value.tabs.length) return;
+      const current = value.tabs.findIndex((tab) => tab.key === value.active);
+      const target = value.tabs[(current + direction + value.tabs.length) % value.tabs.length];
+      if (target) void tabs.activate(target.key);
+    },
     closeSwitcher: () => setSwitching(false),
     switcherRows: (): readonly FleetSwitcherRow[] => {
       const favorite = new Set(saved().favorites);
@@ -213,6 +281,18 @@ export function createApplicationMachineNavigation(options: {
         ...group.sessions.map(
           (session): FleetSwitcherRow => ({
             key: session.id,
+            previewKey: JSON.stringify([
+              session.id,
+              manager.getMachine(group.id)?.endpoint().epoch,
+            ]),
+            preview: session.liveSessionId
+              ? (signal) => {
+                  const handle = manager.getMachine(group.id);
+                  return handle
+                    ? readFleetPreview(handle, session.liveSessionId!, signal)
+                    : Promise.resolve("Preview unavailable");
+                }
+              : undefined,
             label: session.name,
             detail: group.label,
             favorite: favorite.has(session.id),
@@ -321,17 +401,24 @@ export function createApplicationMachineNavigation(options: {
 }
 
 export function handleFleetShortcut(
-  event: { name: string; shift?: boolean; preventDefault(): void; stopPropagation(): void },
+  event: {
+    name: string;
+    ctrl?: boolean;
+    shift?: boolean;
+    preventDefault(): void;
+    stopPropagation(): void;
+  },
   navigation: Pick<
     ReturnType<typeof createApplicationMachineNavigation>,
-    "goHistory" | "showSwitcher"
+    "goHistory" | "showSwitcher" | "cycleTab"
   >,
 ): boolean {
   const key = event.name.toLowerCase();
-  if (key !== "f6" && key !== "f7" && key !== "f8") return false;
+  if (key !== "f6" && key !== "f7" && key !== "f8" && key !== "f9") return false;
   event.preventDefault();
   event.stopPropagation();
-  if (key === "f8") void navigation.goHistory(event.shift ? 1 : -1);
+  if (key === "f9") navigation.cycleTab(event.shift ? -1 : 1, event.ctrl);
+  else if (key === "f8") void navigation.goHistory(event.shift ? 1 : -1);
   else navigation.showSwitcher(key === "f7");
   return true;
 }

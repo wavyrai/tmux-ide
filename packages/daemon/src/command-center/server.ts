@@ -1,3 +1,4 @@
+import { mountFleetPreviewRoute } from "./resources/fleet-preview-route.ts";
 import { mountSavedMachineRoute } from "./resources/saved-machine-route.ts";
 import { mountFleetClientStateRoute } from "./resources/fleet-client-state-route.ts";
 import { execFile } from "node:child_process";
@@ -209,6 +210,10 @@ export interface CreateAppOptions {
   }[];
   /** Injectable daemon-generation-pinned adopted fleet projection. */
   catalogFleet?: () => FleetSessionFacts[] | null;
+  fleetPreviewCapture?: (
+    liveSessionId: string,
+    signal?: AbortSignal,
+  ) => string | null | Promise<string | null>;
   applicationShellAppWindowBackend?: {
     load(
       projectDir: string,
@@ -557,6 +562,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   mountSavedMachineRoute(app, {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
+  });
+  mountFleetPreviewRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    capture: options.fleetPreviewCapture,
   });
   mountFleetClientStateRoute(app, {
     daemon: daemonInstanceIdentity,

@@ -68,6 +68,8 @@ sequenceDiagram
 | Ctrl+G                            | Focus the machine sidebar                               |
 | F6                                | Search machines, sessions and agents across the fleet   |
 | F7                                | Open the live attention inbox                           |
+| F9 / Shift+F9                     | Next / previous retained session tab                    |
+| Ctrl+F9                           | Close tab (leaves the tmux session running)             |
 | F8 / Shift+F8                     | Previous / next available session in navigation history |
 | F in sidebar / Ctrl+F in switcher | Toggle session favorite                                 |
 | R / D in sidebar                  | Retry / disconnect the focused remote route             |
@@ -92,7 +94,20 @@ stateDiagram-v2
 
 Four concurrent handshake slots bound large fleets; selecting a queued machine raises its priority. Retry delay uses jitter and a thirty-second cap. Multiple verified routes to one environment share a display group. Selecting a route remains explicit: display deduplication never silently changes mutation authority.
 
-Nearby discovery and independently owned simultaneous multi-host terminal tabs remain follow-up cards. A TUI currently has one selected terminal authority, with fleet-wide metadata navigation.
+Up to eight session tabs retain their explicit SSH route and live session identity. F9 switches between hosts without searching again. Only the active tab owns terminal streams; suspended tabs retain targets only. Closing a tab leaves its tmux session running. Reopening an unavailable or replaced session never silently selects a different route or a new session with the same name.
+
+The switcher requests one passive snapshot after selection settles for 180 ms. Metadata refreshes do not repeat that capture. The daemon permits one capture at a time, spaces requests by at least 250 ms and cancels captures after 1.5 seconds. Snapshots contain at most 24 lines and 8,192 characters of text, are never persisted, and never attach, resize or send terminal input. Small terminals omit the preview. Older daemons display an unavailable preview while navigation remains usable.
+
+```mermaid
+flowchart LR
+    Catalog["Fleet metadata"] --> Switcher["Stable selection and search"]
+    Switcher -->|"180 ms debounce"| Preview["One bounded passive capture"]
+    Tabs["Up to 8 route-bound targets"] -->|"Activate exact live session"| Owner["Active terminal owner"]
+    Owner -->|"Switch tab: retire streams"| Tabs
+    Owner --> Streams["Visible terminal streams"]
+```
+
+Nearby discovery remains deferred. Enrollment uses explicit SSH aliases and the verified handshake above.
 
 ## Qualification
 
@@ -103,3 +118,5 @@ TMUX_IDE_FLEET_TEST_SSH=mini pnpm --filter @tmux-ide/daemon exec vitest run src/
 ```
 
 The test opens three transports in two independent clients, verifies route deduplication, disposes one client and checks the other remains live. It does not send terminal input or manage remote processes. Real WAN impairment, visual two-computer interaction and browser/TUI resize ownership still require the broader product qualification recorded in F09.
+
+For a reproducible local preview responsiveness check, build the CLI and run `node scripts/fleet-preview-performance.mjs`. It creates and removes a private tmux server and daemon, checks synthetic output, and reports preview and concurrent identity request p95 latency. It never reads ordinary session output. One local 12-sample run measured 31.3 ms preview p95 and 2.5 ms concurrent identity p95; these are observations, not WAN guarantees.

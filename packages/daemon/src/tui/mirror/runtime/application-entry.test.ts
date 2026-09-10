@@ -47,9 +47,9 @@ describe("production OpenTUI entry boundary", () => {
     expect(entry).toMatch(
       /diagnosticLog\s*\?\s*prepareOpenTuiApplicationShellConnection[\s\S]*onDiagnostic:[\s\S]*:\s*prepareOpenTuiApplicationShellConnection/u,
     );
-    expect(root).toMatch(
-      /tuiLifecycleStream\s*\?\s*prepareOpenTuiApplicationShellConnection[\s\S]*onDiagnostic:\s*tuiPerfMark[\s\S]*:\s*prepareOpenTuiApplicationShellConnection/u,
-    );
+    expect(root).toContain("tuiLifecycleStream ? tuiPerfMark : undefined");
+    const route = read("packages/daemon/src/tui/mirror/runtime/application-route-connection.ts");
+    expect(route).toContain("...(onDiagnostic ? { onDiagnostic } : {})");
   });
 
   it("hands early diagnostics to one ordered bounded root sink", () => {

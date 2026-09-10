@@ -1,3 +1,4 @@
+import { createFleetPreviewCapture } from "../command-center/resources/fleet-preview-route.ts";
 import { mountTerminalNativeBackingRoute } from "../command-center/resources/terminal-native-backing-route.ts";
 import { startOwnedEmbeddedDaemon } from "./embedded-daemon-lifecycle.ts";
 /**
@@ -743,6 +744,7 @@ async function startHttpServer({
   paneStreamRuntime,
   catalogLiveSessions,
   catalogFleet,
+  fleetPreviewCapture,
   sessionRuntimeRegistry,
 }: {
   sessionName: string;
@@ -778,6 +780,10 @@ async function startHttpServer({
     readonly paneCount: number;
   }[];
   catalogFleet: () => ReturnType<typeof readAdoptedFleet>;
+  fleetPreviewCapture: (
+    liveSessionId: string,
+    signal?: AbortSignal,
+  ) => string | null | Promise<string | null>;
 }): Promise<{
   server: Server;
   sockets: Set<Socket>;
@@ -834,6 +840,7 @@ async function startHttpServer({
     startupReadinessAttachmentBackend: terminalInventoryRuntime,
     catalogLiveSessions,
     catalogFleet,
+    fleetPreviewCapture,
   });
   mountTerminalNativeBackingRoute(app, {
     ownerToken: localBypassToken ?? null,
@@ -1410,6 +1417,9 @@ async function startEmbeddedDaemonGeneration(
         paneStreamRuntime,
         catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
         catalogFleet: () => readAdoptedFleet(workspaceRegistry, catalogTmuxRunner),
+        fleetPreviewCapture: createFleetPreviewCapture(
+          createPinnedWorkspaceTmuxAsyncRunner(tmuxAuthority),
+        ),
         sessionRuntimeRegistry,
       });
     } catch (error) {

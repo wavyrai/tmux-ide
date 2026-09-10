@@ -1,3 +1,4 @@
+import { applicationRouteConnection } from "./application-route-connection.ts";
 import { ApplicationMachineOverlays } from "./application-machine-overlays.tsx";
 import { handleFleetShortcut } from "./application-machine-navigation.ts";
 import { applicationMachineAuthorityManager } from "./application-machine-authority.ts";
@@ -11,7 +12,6 @@ import { createApplicationConnectionFeedback } from "../workspace/connection-fee
 import { batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { useKeyboard, usePaste } from "@opentui/solid";
 import { publishTuiInputReady } from "../../readiness.ts";
-import { prepareOpenTuiApplicationShellConnection } from "../application-shell-daemon-connection.ts";
 import {
   createPaneSurfaceHostFocusTransitionOwner,
   registerPaneSurface,
@@ -169,16 +169,18 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const [generationMachineId, setGenerationMachineId] = createSignal<string | null>(null);
         const makeSessionOwner = (
           machineId = applicationMachineAuthorityManager.snapshot().selectedMachineId,
+          expectedLiveSessionId?: string,
         ) => {
           const ownedEpoch = ++sessionOwnerEpoch;
+          const route = applicationRouteConnection(
+            applicationMachineAuthorityManager.getMachine(machineId)!,
+            expectedLiveSessionId,
+            tuiLifecycleStream ? tuiPerfMark : undefined,
+          );
           return createOpenTuiSessionOwner({
             prepareConnection: (sessionName) => {
               if (initialPreparation?.sessionName !== sessionName)
-                return tuiLifecycleStream
-                  ? prepareOpenTuiApplicationShellConnection(sessionName, {
-                      onDiagnostic: tuiPerfMark,
-                    })
-                  : prepareOpenTuiApplicationShellConnection(sessionName);
+                return route.resolveConnection(sessionName);
               const prepared = initialPreparation.preparedConnection;
               initialPreparation = null;
               return prepared;
@@ -186,6 +188,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             createHost: (sessionName, initialConnection) =>
               createOpenTuiGenerationHost(sessionName, presentation, {
                 initialConnection,
+                ...route,
                 ...connectionProgress.hostOptions(sessionName, tuiLifecycleStream, tuiPerfMark),
                 performanceDiagnostics: Boolean(tuiPerfStream),
               }),
@@ -306,7 +309,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           | ReturnType<typeof createApplicationMachineAgentNavigator>
           | undefined;
         const machines = createApplicationMachineNavigation({
-          resetWorkspace(machineId) {
+          resetWorkspace(machineId, expectedLiveSessionId) {
             if (initialPreparation) {
               void initialPreparation.preparedConnection
                 .then(
@@ -316,8 +319,12 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
                 .catch(() => undefined);
               initialPreparation = null;
             }
+            interaction?.adoptGeneration(null);
+            setGeneration(null);
+            shellBinding.adoptGeneration(null);
+            terminalHostFocus.adopt(null);
             void sessionOwner?.dispose().catch(() => undefined);
-            sessionOwner = makeSessionOwner(machineId);
+            sessionOwner = makeSessionOwner(machineId, expectedLiveSessionId);
           },
           cancelOpen: () => {
             machineAgentNavigator?.cancel();

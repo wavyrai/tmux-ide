@@ -1,3 +1,4 @@
+import { TuiButton } from "../ui/button.tsx";
 /* @jsxImportSource @opentui/solid */
 import {
   fleetConnectionMessage,
@@ -62,6 +63,17 @@ export interface ApplicationMachineSidebarModel {
     paneId: string,
     source: "keyboard" | "mouse",
   ) => void;
+  readonly tabs?: Accessor<
+    readonly {
+      key: string;
+      label: string;
+      hostLabel: string;
+      active: boolean;
+      available: boolean;
+    }[]
+  >;
+  readonly onOpenTab?: (key: string) => void;
+  readonly onCloseTab?: (key: string) => void;
   readonly onOpenSwitcher?: () => void;
   readonly onOpenAttention?: () => void;
   readonly onRetryMachine?: (machineId: string) => void;
@@ -102,6 +114,14 @@ export function ApplicationMachineSidebar(props: {
   const controlsHeight = () => (props.height >= 8 && controlGroup() ? 4 : 0);
   const searchHeight = () =>
     (props.model.onOpenSwitcher ? 1 : 0) + (props.model.onOpenAttention ? 1 : 0);
+  const tabHeight = () =>
+    Math.min(props.model.tabs?.().length ?? 0, Math.max(0, Math.floor(props.height / 3)));
+  const visibleTabs = () => {
+    const tabs = props.model.tabs?.() ?? [];
+    const active = tabs.findIndex((tab) => tab.active);
+    const start = Math.max(0, active - tabHeight() + 1);
+    return tabs.slice(start, start + tabHeight());
+  };
   const machineHeight = () =>
     Math.max(
       0,
@@ -110,7 +130,8 @@ export function ApplicationMachineSidebar(props: {
         (props.model.onAddMachine ? 1 : 0) -
         agentHeight() -
         controlsHeight() -
-        searchHeight(),
+        searchHeight() -
+        tabHeight(),
     );
   const active = (row: Row) =>
     row.group.id === props.model.activeMachineId() &&
@@ -310,8 +331,31 @@ export function ApplicationMachineSidebar(props: {
     >
       <text height={1} fg={props.theme.roles.text.secondary}>
         {" "}
-        Machines
+        {props.model.tabs?.().length ? "Machines · F9 tabs" : "Machines"}
       </text>
+      <For each={visibleTabs()}>
+        {(tab) => (
+          <box height={1} flexDirection="row">
+            <NavigationRow
+              theme={props.theme}
+              width={Math.max(1, props.width - 4)}
+              id={`fleet-tab:${tab.key}`}
+              label={`${tab.hostLabel} / ${tab.label}`}
+              marker={tab.active ? "●" : "○"}
+              detail={tab.available ? "" : "offline"}
+              focused={false}
+              onActivate={() => props.model.onOpenTab?.(tab.key)}
+            />
+            <TuiButton
+              theme={props.theme}
+              label="×"
+              size="compact"
+              width={3}
+              onPress={() => props.model.onCloseTab?.(tab.key)}
+            />
+          </box>
+        )}
+      </For>
       <scrollbox
         ref={(value) => {
           scroll = value;

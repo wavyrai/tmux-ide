@@ -375,3 +375,44 @@ it("offers keyboard and mouse connection controls for the focused remote only", 
   setup.renderer.destroy();
   owner.dispose();
 });
+
+it("renders bounded host tabs and scopes mouse open/close to their exact keys", async () => {
+  const calls: string[] = [];
+  const setup = await renderForTest(
+    () => (
+      <ApplicationMachineSidebar
+        width={38}
+        height={12}
+        theme={createSemanticThemeSnapshot({ mode: "dark" })}
+        model={{
+          groups: () => [],
+          activeMachineId: () => "mini",
+          activeSessionName: () => "api",
+          onOpen: () => {},
+          onSelectMachine: () => {},
+          tabs: () => [
+            { key: "mini-api", hostLabel: "Mini", label: "api", active: true, available: true },
+            { key: "gpu-api", hostLabel: "GPU", label: "api", active: false, available: false },
+          ],
+          onOpenTab: (key) => {
+            calls.push(`open:${key}`);
+          },
+          onCloseTab: (key) => {
+            calls.push(`close:${key}`);
+          },
+        }}
+      />
+    ),
+    { width: 38, height: 12 },
+  );
+  await setup.renderOnce();
+  const lines = setup.captureCharFrame().split("\n");
+  expect(lines[0]).toContain("F9 tabs");
+  const gpu = lines.findIndex((line) => line.includes("GPU / api"));
+  expect(gpu).toBeGreaterThan(0);
+  expect(lines[gpu]).toContain("offline");
+  await setup.mockMouse.click(6, gpu, MouseButtons.LEFT);
+  await setup.mockMouse.click(lines[gpu].indexOf("×"), gpu, MouseButtons.LEFT);
+  expect(calls).toEqual(["open:gpu-api", "close:gpu-api"]);
+  setup.renderer.destroy();
+});
