@@ -645,6 +645,9 @@
 .dw-command-trigger:hover {
   background: var(--dw-selected);
 }
+.dw-chrome-positioner {
+  z-index: var(--dw-layer-overlay);
+}
 .dw-chrome-popover {
   width: var(--dw-popover-width);
   max-width: 100%;
@@ -702,18 +705,18 @@
   overflow: auto;
   max-height: var(--dw-popover-max-height);
 }
-.dw-command-list [cmdk-group-heading] {
+.dw-command-list [data-slot="command-group-heading"] {
   padding: var(--dw-space-md) var(--dw-space-sm) var(--dw-space-xs);
   color: var(--dw-muted);
   font-size: var(--dw-text-caption);
 }
-.dw-command-list [cmdk-item] {
+.dw-command-list [data-slot="command-item"] {
   padding: var(--dw-space-xs) var(--dw-space-sm);
   min-height: var(--dw-row-height);
   border-radius: var(--dw-radius-control);
   cursor: pointer;
 }
-.dw-command-list [cmdk-item][data-selected="true"] {
+.dw-command-list [data-slot="command-item"][aria-selected="true"] {
   background: var(--dw-selected);
 }
 .dw-command-empty {
@@ -727,4 +730,24 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+.dw-command-popover {
+  overflow: hidden;
+  max-height: min(var(--dw-popover-max-height), var(--available-height));
+  display: flex;
+}
+.dw-command-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+.dw-command-input {
+  flex-shrink: 0;
+}
+.dw-command-list {
+  min-height: 0;
+  overscroll-behavior: contain;
 }

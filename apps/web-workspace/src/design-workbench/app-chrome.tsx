@@ -1,7 +1,7 @@
 import { SidebarToggle } from "./sidebar-toggle";
 import { useEffect, useState, type RefObject, type ReactNode } from "react";
 import { Popover } from "@base-ui/react/popover";
-import { Command } from "cmdk";
+import { CommandList } from "./command-list";
 import { Search, X } from "../icons";
 export interface WorkbenchCommand {
   id: string;
@@ -46,7 +46,7 @@ function ChromePopover({
         {label}
       </Popover.Trigger>
       <Popover.Portal container={portal}>
-        <Popover.Positioner align="end" sideOffset={0}>
+        <Popover.Positioner className="dw-chrome-positioner" align="end" sideOffset={0}>
           <Popover.Popup className="dw-chrome-popover">
             <header className="dw-popover-heading">
               <Popover.Title>{title}</Popover.Title>
@@ -100,37 +100,16 @@ export function AppChrome({
           <kbd>⌘ K</kbd>
         </Popover.Trigger>
         <Popover.Portal container={portal}>
-          <Popover.Positioner align="center" sideOffset={0}>
+          <Popover.Positioner className="dw-chrome-positioner" align="center" sideOffset={0}>
             <Popover.Popup className="dw-chrome-popover dw-command-popover">
               <Popover.Title className="dw-visually-hidden">Workbench commands</Popover.Title>
-              <Command label="Workbench commands">
-                <Command.Input
-                  autoFocus
-                  placeholder="What would you like to do?"
-                  className="dw-command-input"
-                />
-                <Command.List className="dw-command-list">
-                  <Command.Empty className="dw-command-empty">No matching commands.</Command.Empty>
-                  {[...new Set(commands.map((c) => c.group))].map((group) => (
-                    <Command.Group heading={group} key={group}>
-                      {commands
-                        .filter((c) => c.group === group)
-                        .map((command) => (
-                          <Command.Item
-                            key={command.id}
-                            value={command.label}
-                            onSelect={() => {
-                              setOpen(false);
-                              command.run();
-                            }}
-                          >
-                            {command.label}
-                          </Command.Item>
-                        ))}
-                    </Command.Group>
-                  ))}
-                </Command.List>
-              </Command>
+              <CommandList
+                commands={commands}
+                onSelect={(command) => {
+                  setOpen(false);
+                  command.run();
+                }}
+              />
             </Popover.Popup>
           </Popover.Positioner>
         </Popover.Portal>
