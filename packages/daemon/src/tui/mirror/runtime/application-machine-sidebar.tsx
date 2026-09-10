@@ -31,6 +31,8 @@ export interface ApplicationMachineAgent {
   readonly disabled?: boolean;
 }
 export interface ApplicationMachineGroup {
+  readonly environmentId?: string | null;
+  readonly lastSeenAt?: number | null;
   readonly diagnostic?: FleetConnectionStatus;
   readonly agents?: readonly ApplicationMachineAgent[];
   readonly id: string;
@@ -45,6 +47,10 @@ export interface ApplicationMachineGroup {
 }
 export interface ApplicationMachineSidebarModel {
   readonly groups: Accessor<readonly ApplicationMachineGroup[]>;
+  readonly favorites?: Accessor<readonly string[]>;
+  readonly collapsed?: Accessor<readonly string[]>;
+  readonly onFavorite?: (key: string, enabled: boolean) => void;
+  readonly onCollapse?: (key: string, enabled: boolean) => void;
   readonly activeMachineId: Accessor<string | null>;
   readonly activeSessionName: Accessor<string | null>;
   readonly activePaneId?: Accessor<string | null>;
@@ -56,6 +62,8 @@ export interface ApplicationMachineSidebarModel {
     paneId: string,
     source: "keyboard" | "mouse",
   ) => void;
+  readonly onOpenSwitcher?: () => void;
+  readonly onOpenAttention?: () => void;
   readonly onRetryMachine?: (machineId: string) => void;
   readonly onDisconnectMachine?: (machineId: string) => void;
   readonly onAddMachine?: () => void;
@@ -82,7 +90,9 @@ export function ApplicationMachineSidebar(props: {
 }) {
   const [localFocused, setLocalFocused] = createSignal(false);
   const focused = () => props.model.focused?.() ?? localFocused();
-  const [collapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
+  const [localCollapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
+  const collapsed = () =>
+    props.model.collapsed ? new Set(props.model.collapsed()) : localCollapsed();
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
   let scroll: ScrollBoxRenderable | undefined;
   const agentHeight = () =>
@@ -90,10 +100,17 @@ export function ApplicationMachineSidebar(props: {
       ? Math.min((props.agentRows ?? 0) + 2, Math.max(0, Math.floor(props.height / 2)))
       : 0;
   const controlsHeight = () => (props.height >= 8 && controlGroup() ? 4 : 0);
+  const searchHeight = () =>
+    (props.model.onOpenSwitcher ? 1 : 0) + (props.model.onOpenAttention ? 1 : 0);
   const machineHeight = () =>
     Math.max(
       0,
-      props.height - 1 - (props.model.onAddMachine ? 1 : 0) - agentHeight() - controlsHeight(),
+      props.height -
+        1 -
+        (props.model.onAddMachine ? 1 : 0) -
+        agentHeight() -
+        controlsHeight() -
+        searchHeight(),
     );
   const active = (row: Row) =>
     row.group.id === props.model.activeMachineId() &&
@@ -104,13 +121,15 @@ export function ApplicationMachineSidebar(props: {
         row.agent.paneId !== null &&
         row.agent.paneId === props.model.activePaneId?.()
       : row.session?.name === props.model.activeSessionName());
+  const preferenceKey = (group: ApplicationMachineGroup) => group.environmentId ?? group.id;
   const rows = createMemo<readonly Row[]>(() =>
     props.model.groups().flatMap((group) => [
       { key: JSON.stringify([group.id]), group },
       ...group.sessions
         .filter(
           (session) =>
-            !collapsed().has(group.id) ||
+            !collapsed().has(preferenceKey(group)) ||
+            props.model.favorites?.().includes(session.id) ||
             (group.id === props.model.activeMachineId() &&
               session.name === props.model.activeSessionName()),
         )
@@ -119,7 +138,7 @@ export function ApplicationMachineSidebar(props: {
           group,
           session,
         })),
-      ...(!collapsed().has(group.id)
+      ...(!collapsed().has(preferenceKey(group))
         ? (group.agents ?? []).map((agent, index) => ({
             key: JSON.stringify([group.id, "agent", agent.id]),
             group,
@@ -145,18 +164,31 @@ export function ApplicationMachineSidebar(props: {
   };
   const connectionDetail = (group: ApplicationMachineGroup) => {
     const diagnostic = group.diagnostic;
-    if (!diagnostic) return group.state === "disconnected" ? "offline" : group.state;
+    if (!diagnostic)
+      return group.state === "disconnected"
+        ? group.lastSeenAt
+          ? `offline · seen ${new Date(group.lastSeenAt).toLocaleTimeString()}`
+          : "offline"
+        : group.state;
     if (diagnostic.phase === "needs-attention")
       return diagnostic.failure === "incompatible" ? "update needed" : "check connection";
     if (diagnostic.nextRetryAt !== null)
       return `retry ${new Date(diagnostic.nextRetryAt).toLocaleTimeString([], { hour12: false })}`;
-    return diagnostic.phase === "disconnected" ? "disconnected" : diagnostic.phase;
+    return diagnostic.phase === "disconnected"
+      ? group.lastSeenAt
+        ? `offline · seen ${new Date(group.lastSeenAt).toLocaleTimeString()}`
+        : "disconnected"
+      : diagnostic.phase;
   };
-  const toggle = (group: ApplicationMachineGroup, value = !collapsed().has(group.id)) => {
+  const toggle = (
+    group: ApplicationMachineGroup,
+    value = !collapsed().has(preferenceKey(group)),
+  ) => {
     const next = new Set(collapsed());
-    if (value) next.add(group.id);
-    else next.delete(group.id);
+    if (value) next.add(preferenceKey(group));
+    else next.delete(preferenceKey(group));
     setCollapsed(next);
+    props.model.onCollapse?.(preferenceKey(group), value);
   };
   const activate = (row: Row, source: "keyboard" | "mouse") => {
     setSelectedKey(row.key);
@@ -218,6 +250,7 @@ export function ApplicationMachineSidebar(props: {
         "a",
         "r",
         "d",
+        "f",
       ].includes(key)
     )
       return false;
@@ -235,6 +268,14 @@ export function ApplicationMachineSidebar(props: {
     const list = rows();
     const row = list[index()];
     if (!row) return true;
+    if (key === "f") {
+      if (row.session)
+        props.model.onFavorite?.(
+          row.session.id,
+          !props.model.favorites?.().includes(row.session.id),
+        );
+      return true;
+    }
     if (key === "r" || key === "d") {
       if (row.group.id !== "local") {
         if (key === "r") props.model.onRetryMachine?.(row.group.id);
@@ -321,10 +362,12 @@ export function ApplicationMachineSidebar(props: {
                         ? "!"
                         : "•"
                     : row.session
-                      ? active(row)
-                        ? " ›"
-                        : "  "
-                      : collapsed().has(row.group.id)
+                      ? props.model.favorites?.().includes(row.session.id)
+                        ? " ★"
+                        : active(row)
+                          ? " ›"
+                          : "  "
+                      : collapsed().has(preferenceKey(row.group))
                         ? "▸"
                         : "▾"
                 }
@@ -373,6 +416,26 @@ export function ApplicationMachineSidebar(props: {
           </scrollbox>
         )}
       </For>
+      <Show when={props.model.onOpenSwitcher}>
+        <NavigationRow
+          theme={props.theme}
+          id="machine:switcher"
+          label="Search fleet (F6)"
+          marker="/"
+          width={props.width}
+          onActivate={() => props.model.onOpenSwitcher?.()}
+        />
+      </Show>
+      <Show when={props.model.onOpenAttention}>
+        <NavigationRow
+          theme={props.theme}
+          id="machine:attention"
+          label={`Attention (${props.model.groups().reduce((sum, group) => sum + (group.state === "ready" ? (group.agents ?? []).filter((agent) => agent.attention && !agent.disabled).length : 0), 0)}) · F7`}
+          marker="!"
+          width={props.width}
+          onActivate={() => props.model.onOpenAttention?.()}
+        />
+      </Show>
       <Show when={controlsHeight() > 0 && controlGroup()}>
         {(group) => (
           <>

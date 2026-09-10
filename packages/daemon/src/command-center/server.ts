@@ -1,3 +1,5 @@
+import { mountSavedMachineRoute } from "./resources/saved-machine-route.ts";
+import { mountFleetClientStateRoute } from "./resources/fleet-client-state-route.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, readdirSync } from "node:fs";
@@ -550,6 +552,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   app.onError((err, c) => {
     console.error("[command-center]", err.message);
     return c.json({ error: err.message }, 500);
+  });
+
+  mountSavedMachineRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+  });
+  mountFleetClientStateRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
   });
 
   // --- Auth routes (always available, bypassed by middleware) ---

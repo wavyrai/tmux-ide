@@ -63,6 +63,17 @@ vi.mock("./application-machine-agents.ts", () => ({
     isCurrentTarget: () => state.agentCurrent,
   }),
 }));
+vi.mock("../../../lib/local-fleet-request.ts", () => ({
+  saveMachineProfiles: vi.fn(async () => ({ version: 1, machines: [] })),
+}));
+vi.mock("./application-fleet-preferences.ts", () => ({
+  createApplicationFleetPreferences: () => ({
+    getSnapshot: () => ({ version: 1, favorites: [], collapsed: [], recent: [], catalog: [] }),
+    subscribe: () => () => {},
+    change: vi.fn(),
+    dispose: vi.fn(),
+  }),
+}));
 import { createApplicationMachineNavigation } from "./application-machine-navigation.ts";
 let dispose: () => void;
 const options = () => ({

@@ -330,6 +330,7 @@ describe("production OpenTUI v2 data path", () => {
     }
     expect(authorityDataPathFiles).toContain("packages/daemon/src/lib/saved-machines.ts");
     // Includes the background machine agent roster and its fenced navigation adapter.
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(135);
+    // Four local fleet persistence modules add owner-fenced cache and profile writes.
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(139);
   });
 });

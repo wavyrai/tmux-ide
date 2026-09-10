@@ -15,3 +15,5 @@ export * from "./optimistic-projection-conformance.ts";
 export * from "./app-window-identity.ts";
 
 export * from "./saved-machines.ts";
+
+export * from "./fleet-client-state.ts";

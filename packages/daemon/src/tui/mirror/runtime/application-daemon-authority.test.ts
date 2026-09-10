@@ -275,3 +275,48 @@ describe("machine connection controls", () => {
     f.authority.dispose();
   });
 });
+
+it("retires an authenticated connection with a mismatched imported environment without exposing its catalog", async () => {
+  const f = setup();
+  try {
+    await expect(
+      f.authority.initialize("build", undefined, {
+        expectedEnvironmentId: "11111111-1111-4111-8111-111111111111",
+      }),
+    ).rejects.toThrow();
+    expect(f.authority.read()).toBeNull();
+    expect(f.first.dispose).toHaveBeenCalledOnce();
+    expect(f.authority.endpoint().diagnostic).toMatchObject({
+      phase: "needs-attention",
+      failure: "identity-mismatch",
+    });
+    expect(f.deps.connect).toHaveBeenCalledOnce();
+  } finally {
+    f.authority.dispose();
+  }
+});
+
+it("retires every transport exactly once through 100 disconnect and reconnect cycles", async () => {
+  const f = setup();
+  const connections: ReturnType<typeof connection>[] = [];
+  f.deps.connect = vi.fn(async () => {
+    const value = connection(43210 + connections.length);
+    connections.push(value);
+    return value;
+  });
+  try {
+    await f.authority.initialize("build");
+    for (let cycle = 0; cycle < 100; cycle++) {
+      const previous = f.authority.read()!;
+      f.authority.disconnect();
+      expect(f.authority.read()).toBeNull();
+      expect(await f.authority.isAlive(previous)).toBe(false);
+      await f.authority.retry();
+      expect(f.authority.read()).not.toBeNull();
+    }
+  } finally {
+    f.authority.dispose();
+  }
+  expect(connections).toHaveLength(101);
+  for (const value of connections) expect(value.dispose).toHaveBeenCalledOnce();
+});

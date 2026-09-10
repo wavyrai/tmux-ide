@@ -115,6 +115,7 @@ const { positionals, values } = parseArgs({
 });
 
 const knownCommands = new Set([
+  "machines",
   "start",
   "init",
   "stop",
@@ -242,6 +243,8 @@ ${bold("Usage:")}
   ${cyan("tmux-ide status")} [--json]    ${dim("Show session status")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
   ${cyan("tmux-ide doctor")}             ${dim("Check system requirements")}
+  ${cyan("tmux-ide machines")} ls|export|import <file>|add <alias> [--write] [--json]
+  ${cyan("tmux-ide machines start <alias> --write")} ${dim("Start the installed remote daemon explicitly")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
   ${cyan("tmux-ide update --daemon")}     ${dim("Upgrade the local daemon while preserving tmux sessions")}
   ${cyan("tmux-ide update --tui-binary")} ${dim("Download and verify this version's compiled OpenTUI runtime")}
@@ -766,6 +769,16 @@ try {
       const { readRemoteDaemonHandshakeResult } =
         await import("../packages/daemon/src/lib/remote-daemon-info.ts");
       process.stdout.write(`${JSON.stringify(await readRemoteDaemonHandshakeResult())}\n`);
+      break;
+    }
+
+    case "machines": {
+      const { machines } = await import("../packages/daemon/src/machines.ts");
+      const result = await machines(positionals[1], positionals[2], {
+        write: values.write === true,
+        label: typeof values.name === "string" ? values.name : undefined,
+      });
+      process.stdout.write(`${JSON.stringify(result, null, json ? undefined : 2)}\n`);
       break;
     }
 

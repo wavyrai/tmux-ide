@@ -160,6 +160,7 @@ export function createApplicationMachineAuthorityManager(
     machine.stopStatus = owner.observeConnection(publish);
     const initializing = owner.initialize(profile.sshTarget, lifetime.signal, {
       scheduler,
+      expectedEnvironmentId: profile.expectedEnvironmentId,
       retryDelayMs: dependencies.retryDelayMs,
     });
     observe(machine, owner);
@@ -228,7 +229,11 @@ export function createApplicationMachineAuthorityManager(
       const profile = SavedMachineSchema.parse(input);
       const existing = machines.get(profile.id);
       if (existing) {
-        if (existing.profile?.sshTarget !== profile.sshTarget || existing.label !== profile.label)
+        if (
+          existing.profile?.sshTarget !== profile.sshTarget ||
+          existing.label !== profile.label ||
+          existing.profile?.expectedEnvironmentId !== profile.expectedEnvironmentId
+        )
           throw new Error("Machine identity is already registered");
         return existing.handle;
       }

@@ -1,7 +1,8 @@
+import { ApplicationMachineOverlays } from "./application-machine-overlays.tsx";
+import { handleFleetShortcut } from "./application-machine-navigation.ts";
 import { applicationMachineAuthorityManager } from "./application-machine-authority.ts";
 import { createApplicationMachineAgentNavigator } from "./application-machine-agent-navigation.ts";
 import { createApplicationMachineNavigation } from "./application-machine-navigation.ts";
-import { ApplicationAddMachineDialog } from "./application-add-machine-dialog.tsx";
 import { disposeApplicationDaemonAuthority } from "./application-daemon-authority.ts";
 import { createTerminalLinkOpener } from "./terminal-link-opener.ts";
 import { createApplicationPaneActivityOwner } from "./application-pane-activity-owner.ts";
@@ -404,10 +405,15 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         useKeyboard((event) => {
           noteHostInteraction();
           const name = event.name.toLowerCase();
+          if (machines.switching()) {
+            componentKeyboardRoutes.route(event);
+            return;
+          }
           if (machines.adding()) {
             if (name === "escape") machines.cancelAdd();
             return;
           }
+          if (handleFleetShortcut(event, machines)) return;
           if (appearance.handlePickerKey(event)) return;
           if (paneRename.handleKey(event)) return;
           if (paletteCommands.handleKey(event)) return;
@@ -470,7 +476,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         });
         usePaste((event) => {
           noteHostInteraction();
-          if (appearance.pickerOpen() || machines.adding()) return;
+          if (appearance.pickerOpen() || machines.adding() || machines.switching()) return;
           if (paneRename.handlePaste(event.bytes)) return;
           if (selectionOwner.blocksInput()) return;
           if (paletteCommands.handlePaste(event.bytes)) return;
@@ -588,15 +594,9 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onWindowPresented={tuiPerfStream ? interaction.observeWindowPresentation : undefined}
               onInteraction={() => noteHostInteraction()}
             />
-            <ApplicationAddMachineDialog
-              open={machines.adding()}
-              alias={machines.alias()}
-              onAliasChange={machines.setAlias}
-              onSubmit={machines.add}
-              onCancel={machines.cancelAdd}
-              error={machines.error()}
-              width={dimensions().width}
-              height={dimensions().height}
+            <ApplicationMachineOverlays
+              machines={machines}
+              viewport={dimensions()}
               theme={appearance.theme()}
             />
           </KeyboardRouteProvider>

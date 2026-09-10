@@ -48,3 +48,35 @@ describe("saved machine persistence", () => {
     expect(readdirSync(dir)).toEqual(["machines.json"]);
   });
 });
+
+it("imports the same identity through different per-computer aliases and never partially overwrites", async () => {
+  const { mergeSavedMachines } = await import("./saved-machines.ts");
+  const a = fixture(),
+    b = fixture();
+  const expectedEnvironmentId = "11111111-1111-4111-8111-111111111111";
+  const profile = { ...machine, expectedEnvironmentId };
+  mergeSavedMachines({ version: 1, machines: [profile] }, a.path);
+  mergeSavedMachines(
+    { version: 1, machines: [{ ...profile, sshTarget: "build-from-mini" }] },
+    b.path,
+  );
+  expect(loadSavedMachines(a.path).machines[0].expectedEnvironmentId).toBe(
+    loadSavedMachines(b.path).machines[0].expectedEnvironmentId,
+  );
+  const before = readFileSync(a.path, "utf8");
+  expect(() =>
+    mergeSavedMachines(
+      {
+        version: 1,
+        machines: [
+          { ...machine, id: "22222222-2222-4222-8222-222222222222", label: "New" },
+          { ...profile, sshTarget: "wrong-host" },
+        ],
+      },
+      a.path,
+    ),
+  ).toThrow(/conflicts/);
+  expect(readFileSync(a.path, "utf8")).toBe(before);
+  mergeSavedMachines({ version: 1, machines: [profile] }, a.path);
+  expect(readFileSync(a.path, "utf8")).toBe(before);
+});

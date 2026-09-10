@@ -25,6 +25,8 @@ type DeclaredPolicy =
 
 const DECLARED: Readonly<Record<string, DeclaredPolicy>> = {
   "/api/resources/fleet-catalog": "owner-only",
+  "/api/resources/fleet-client-state": "owner-only",
+  "/api/resources/saved-machines": "owner-only",
   "/api/resources/startup-readiness": "owner-only-when-held",
   "/api/resources/workspace-catalog": "open",
 };

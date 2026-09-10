@@ -22,6 +22,11 @@ export const SavedMachineSchema = z.strictObject({
     .max(80)
     .regex(/^[^\p{Cc}\p{Cf}]+$/u),
   sshTarget: SshTargetSchema,
+  /** Optional imported identity hint; verified after SSH authentication, never a credential. */
+  expectedEnvironmentId: z
+    .uuid()
+    .transform((id) => id.toLowerCase())
+    .optional(),
   enabled: z.boolean().default(true),
 });
 export type SavedMachine = z.infer<typeof SavedMachineSchema>;

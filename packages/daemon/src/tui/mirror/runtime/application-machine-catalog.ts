@@ -1,3 +1,4 @@
+import type { FleetCachedRoute } from "@tmux-ide/contracts/fleet-client-state";
 import { groupFleetEnvironments } from "@tmux-ide/daemon-client/fleet-environments";
 import {
   fleetConnectionMessage,
@@ -31,6 +32,7 @@ export interface ApplicationMachineCatalogGroup {
   readonly environmentId?: string | null;
   readonly routeIds?: readonly string[];
   readonly identityConflict?: boolean;
+  readonly lastSeenAt?: number | null;
 }
 export interface ApplicationMachineCatalogSnapshot {
   readonly selectedMachineId: string;
@@ -47,6 +49,7 @@ interface Entry {
   binding: string | null;
   environmentId: string | null;
   generation: string | null;
+  seenAt: number | null;
 }
 const empty = (): ApplicationHomeCatalogSnapshot => ({
   phase: "loading",
@@ -60,6 +63,8 @@ export function createApplicationMachineCatalog(
   options: {
     manager?: Pick<ApplicationMachineAuthorityManager, "snapshot" | "getMachine" | "subscribe">;
     createCatalog?: (handle: ApplicationMachineAuthorityHandle) => ApplicationHomeCatalog;
+    cachedRoutes?: readonly FleetCachedRoute[];
+    onCache?: (route: FleetCachedRoute) => void;
   } = {},
 ) {
   const manager = options.manager ?? applicationMachineAuthorityManager;
@@ -104,6 +109,7 @@ export function createApplicationMachineCatalog(
           label: machine.label,
           state,
           diagnostic,
+          lastSeenAt: entry?.seenAt ?? null,
           note:
             diagnostic && diagnostic.phase !== "ready"
               ? fleetConnectionMessage(diagnostic)
@@ -199,8 +205,25 @@ export function createApplicationMachineCatalog(
       entry.snapshot = value;
       if (value.phase === "live") {
         entry.lastSessions = value.sessions;
+        entry.seenAt = Date.now();
         entry.environmentId = current?.environmentId ?? null;
         entry.generation = current ? JSON.stringify([current.instanceId, current.startedAt]) : null;
+        try {
+          options.onCache?.({
+            routeId: entry.handle.id,
+            environmentId: entry.environmentId,
+            generation: entry.generation,
+            seenAt: entry.seenAt,
+            sessions: value.sessions.slice(0, 64).map(({ id, liveSessionId, name, paneCount }) => ({
+              id,
+              ...(liveSessionId ? { liveSessionId } : {}),
+              name,
+              paneCount,
+            })),
+          });
+        } catch {
+          /* Cache failure must never prevent live catalog publication. */
+        }
       }
       publish();
     });
@@ -233,10 +256,14 @@ export function createApplicationMachineCatalog(
           stopObserve: null,
           revision: 0,
           snapshot: empty(),
-          lastSessions: [],
+          lastSessions:
+            options.cachedRoutes?.find((route) => route.routeId === machine.id)?.sessions ?? [],
           binding: null,
+          // Cached identity is display metadata; it cannot authenticate or join routes.
           environmentId: null,
           generation: null,
+          seenAt:
+            options.cachedRoutes?.find((route) => route.routeId === machine.id)?.seenAt ?? null,
         };
         entries.set(machine.id, entry);
         const owned = entry;

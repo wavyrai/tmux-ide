@@ -43,6 +43,10 @@ export function updateSavedMachines(
   path = savedMachinesPath(),
 ): SavedMachineRegistry {
   const registry = changeSavedMachines(loadSavedMachines(path), change);
+  return persistSavedMachines(registry, path);
+}
+
+function persistSavedMachines(registry: SavedMachineRegistry, path: string) {
   const contents = JSON.stringify(registry, null, 2) + "\n";
   if (Buffer.byteLength(contents) > MAX_REGISTRY_BYTES)
     throw new Error("Saved machine registry exceeds size limit");
@@ -60,4 +64,24 @@ export function updateSavedMachines(
     throw error;
   }
   return registry;
+}
+
+/** Add-only merge: imports never silently overwrite trusted routes. */
+export function planSavedMachineMerge(
+  current: SavedMachineRegistry,
+  incoming: SavedMachineRegistry,
+): SavedMachineRegistry {
+  const verified = SavedMachineRegistrySchema.parse(incoming);
+  let next = SavedMachineRegistrySchema.parse(current);
+  for (const machine of verified.machines) {
+    const existing = next.machines.find((entry) => entry.id === machine.id);
+    if (existing) {
+      if (JSON.stringify(existing) !== JSON.stringify(machine))
+        throw new Error("Imported machine conflicts with an existing route");
+    } else next = changeSavedMachines(next, { type: "add", machine });
+  }
+  return next;
+}
+export function mergeSavedMachines(incoming: SavedMachineRegistry, path = savedMachinesPath()) {
+  return persistSavedMachines(planSavedMachineMerge(loadSavedMachines(path), incoming), path);
 }

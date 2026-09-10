@@ -57,7 +57,12 @@ class Catalog implements ApplicationHomeCatalog {
     for (const listener of this.allListeners) listener(value);
   }
 }
-function fixture() {
+function fixture(
+  options: Pick<
+    Parameters<typeof createApplicationMachineCatalog>[0] & {},
+    "cachedRoutes" | "onCache"
+  > = {},
+) {
   const notifications = new Set<() => void>();
   let selected = "local";
   const machines = new Map<
@@ -128,7 +133,7 @@ function fixture() {
     catalogs.set(handle.id, [...(catalogs.get(handle.id) ?? []), catalog]);
     return catalog;
   });
-  const owner = createApplicationMachineCatalog({ manager, createCatalog });
+  const owner = createApplicationMachineCatalog({ manager, createCatalog, ...options });
   const notify = () => {
     for (const listener of notifications) listener();
   };
@@ -278,5 +283,29 @@ it("joins verified routes and preserves session keys over rename without redirec
   expect(f.owner.getSnapshot().groups[1]!.id).toBe(SECOND);
   expect(f.manager.snapshot().selectedMachineId).toBe(REMOTE);
   expect(f.owner.getSelectedCatalogSnapshot().sessions).toEqual([]);
+  f.owner.dispose();
+});
+
+it("shows cold-start cache as unavailable and isolates cache writer failure from live state", () => {
+  const f = fixture({
+    cachedRoutes: [
+      {
+        routeId: SECOND,
+        environmentId: null,
+        generation: null,
+        seenAt: 1234,
+        sessions: [{ id: "cached", name: "offline-session", paneCount: 1 }],
+      },
+    ],
+    onCache: () => {
+      throw new Error("disk unavailable");
+    },
+  });
+  f.owner.start();
+  const cached = f.owner.getSnapshot().groups.find((group) => group.id === SECOND)!;
+  expect(cached.lastSeenAt).toBe(1234);
+  expect(cached.sessions[0]!.disabled).toBe(true);
+  f.catalogs.get(REMOTE)![0]!.emit(live());
+  expect(f.owner.getSnapshot().groups.find((group) => group.id === REMOTE)!.state).toBe("ready");
   f.owner.dispose();
 });

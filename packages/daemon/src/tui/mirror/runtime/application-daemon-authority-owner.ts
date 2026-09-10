@@ -245,6 +245,7 @@ export function createApplicationDaemonAuthority(
       parentSignal?: AbortSignal,
       options: {
         scheduler?: FleetDialScheduler;
+        expectedEnvironmentId?: string;
         retryDelayMs?: number;
       } = {},
     ): Promise<void> {
@@ -280,6 +281,16 @@ export function createApplicationDaemonAuthority(
               next = options.scheduler
                 ? await options.scheduler.run(alias, signal, connect, (late) => late.dispose())
                 : await connect();
+              if (
+                options.expectedEnvironmentId &&
+                next.daemon.environmentId !== options.expectedEnvironmentId
+              ) {
+                next.dispose();
+                throw new SshConnectionError(
+                  "Imported environment identity does not match the authenticated daemon",
+                  "identity-mismatch",
+                );
+              }
             } catch (error) {
               if (!stopped && !paused) {
                 state = "disconnected";
