@@ -1,0 +1,50 @@
+{
+  "name": "@tmux-ide/web-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src shared vite.config.ts vitest.config.ts"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.8.0",
+    "@comark/ansi": "^0.6.2",
+    "@comark/react": "^0.6.2",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@hugeicons/core-free-icons": "^4.3.2",
+    "@hugeicons/react": "^1.1.10",
+    "@stylexjs/stylex": "^0.19.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/xterm": "^6.0.0",
+    "cmdk": "^1.1.1",
+    "comark": "^0.6.2",
+    "motion": "^13.2.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "@tmux-ide/contracts": "workspace:*",
+    "@tmux-ide/daemon-client": "workspace:*",
+    "@tmux-ide/core": "workspace:*",
+    "solid-js": "1.9.12",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@stylexjs/unplugin": "^0.19.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "vite": "^8.2.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6",
+    "@types/node": "^25.5.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

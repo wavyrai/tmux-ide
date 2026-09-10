@@ -428,6 +428,7 @@ export class SessionChannel {
   private readonly ageByRuntime = new Map<string, number>();
   private maxAgeMs = 0;
   private geometryParticipating = false;
+  private readonly fittedWindows = new Map<string, { cols: number; rows: number }>();
   private cancelSync: (() => void) | null = null;
   private lastDisplayNameSyncAtMs = 0;
   private disposed = false;
@@ -892,11 +893,53 @@ export class SessionChannel {
       throw new RangeError("viewport must contain positive bounded terminal cells");
     }
     this.input.flush();
+    this.clearWindowViewports();
     this.io.send(`refresh-client -C ${cols}x${rows}`);
+  }
+
+  /**
+   * Experimental: window-specific overrides stay private to this control client.
+   * Native tmux still falls back to the client size for unscoped neighbours;
+   * do not advertise isolated fitting until that behavior is accounted for.
+   */
+  fitWindowViewport(semanticWindowId: string, cols: number, rows: number): void {
+    if (
+      !Number.isSafeInteger(cols) ||
+      !Number.isSafeInteger(rows) ||
+      cols < 2 ||
+      rows < 2 ||
+      cols > 4096 ||
+      rows > 4096
+    ) {
+      throw new RangeError("viewport must contain positive bounded terminal cells");
+    }
+    const window = [...this.windowsByRuntime.values()].find(
+      (entry) => entry.semanticId === semanticWindowId,
+    );
+    if (!window || !/^@[0-9]+$/u.test(window.runtimeId)) {
+      throw new Error("unknown semantic window in this session");
+    }
+    const previous = this.fittedWindows.get(window.runtimeId);
+    if (previous?.cols === cols && previous.rows === rows) return;
+    this.input.flush();
+    this.io.send(`refresh-client -C ${window.runtimeId}:${cols}x${rows}`);
+    this.fittedWindows.set(window.runtimeId, { cols, rows });
+  }
+
+  /** Must also run on geometry-owner handoff, before the next owner fits. */
+  clearWindowViewports(): void {
+    if (!this.fittedWindows.size) return;
+    this.input.flush();
+    for (const runtimeId of this.fittedWindows.keys()) {
+      // A removed window no longer has a live override to clear.
+      if (this.windowsByRuntime.has(runtimeId)) this.io.send(`refresh-client -C ${runtimeId}:`);
+    }
+    this.fittedWindows.clear();
   }
 
   /** Toggle whether the retained control client participates in tmux sizing. */
   setGeometryParticipation(active: boolean): void {
+    if (!active) this.clearWindowViewports();
     if (this.geometryParticipating === active) return;
     this.geometryParticipating = active;
     this.input.flush();
@@ -2941,6 +2984,8 @@ export class SessionChannel {
       if (stage.windows.has(stage.currentWindow)) changedWindows.add(stage.currentWindow);
     }
     this.currentWindow = stage.currentWindow;
+    for (const runtimeId of this.fittedWindows.keys())
+      if (!stage.windows.has(runtimeId)) this.fittedWindows.delete(runtimeId);
     this.windowsByRuntime.clear();
     for (const [key, value] of stage.windows) this.windowsByRuntime.set(key, value);
     this.layoutByWindow.clear();

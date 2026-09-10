@@ -815,7 +815,7 @@ export class DaemonResourceBroker {
     }
     try {
       const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
-        await this.#mutationJson("/api/v2/capabilities", {}, {}),
+        await this.#mutationJson("/api/v2/capabilities?windowViewport=1", {}, {}),
       );
       if (result.status === "ok" && !sameIdentity(result.daemon, daemonIdentity(this.#daemon))) {
         return { status: "error", error: daemonCapabilityError("daemon-identity-mismatch") };

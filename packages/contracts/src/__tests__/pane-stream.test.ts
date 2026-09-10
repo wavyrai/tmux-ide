@@ -486,3 +486,39 @@ describe("pane-stream server frames", () => {
     }
   });
 });
+
+describe("window-scoped viewport frames", () => {
+  const frame = {
+    type: "viewport",
+    seq: 1,
+    cols: 120,
+    rows: 40,
+    authorityLease: {
+      generation: INSTANCE_ID,
+      session: "alpha",
+      clientId: "web:test",
+      authority: "geometry",
+      token: REQUEST_ID,
+      revision: 1,
+    },
+  };
+  it("accepts an optional semantic window while preserving legacy session fit", () => {
+    expect(PaneStreamClientFrameSchemaZ.safeParse(frame).success).toBe(true);
+    expect(
+      PaneStreamClientFrameSchemaZ.safeParse({ ...frame, semanticWindowId: "window.main" }).success,
+    ).toBe(true);
+  });
+  it("rejects raw tmux addresses and non-geometry authority", () => {
+    for (const semanticWindowId of ["@1", "window; kill-server", "", "terminal.discovered.one"])
+      expect(PaneStreamClientFrameSchemaZ.safeParse({ ...frame, semanticWindowId }).success).toBe(
+        false,
+      );
+    expect(
+      PaneStreamClientFrameSchemaZ.safeParse({
+        ...frame,
+        semanticWindowId: "window.main",
+        authorityLease: { ...frame.authorityLease, authority: "input" },
+      }).success,
+    ).toBe(false);
+  });
+});

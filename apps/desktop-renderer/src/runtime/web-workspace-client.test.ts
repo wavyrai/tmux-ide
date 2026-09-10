@@ -312,9 +312,10 @@ describe("Web WorkspaceClient owner action binding", () => {
     expect(runtimes.at(-1)?.close).toHaveBeenCalledTimes(1);
   });
 
-  it("publishes no binding for incomplete, duplicate, wrong-generation, or overflow candidates", async () => {
+  it("rejects invalid candidates but accepts a newer canonical seed while waiting", async () => {
     for (const invalid of [
       "missing",
+      "advancing-seed",
       "duplicate-seed",
       "duplicate-layout",
       "duplicate-session",
@@ -360,14 +361,19 @@ describe("Web WorkspaceClient owner action binding", () => {
         controller.signal,
         async () => undefined,
       );
-      const seedCount = invalid === "missing" ? 0 : invalid === "duplicate-seed" ? 2 : 1;
+      const seedCount =
+        invalid === "missing"
+          ? 0
+          : invalid === "duplicate-seed" || invalid === "advancing-seed"
+            ? 2
+            : 1;
       for (let index = 0; index < seedCount; index += 1) {
         capture.onPaneEvent?.("pane.primary", {
           type: "seed-batch",
           batch: { reset: null, seed: new Uint8Array([index]), held: [], cursor: null },
           canonical: canonical(
             invalid === "wrong-generation" ? "generation-foreign" : GENERATION,
-            index + 1,
+            invalid === "duplicate-seed" ? 1 : index + 1,
           ),
         });
       }
@@ -381,6 +387,15 @@ describe("Web WorkspaceClient owner action binding", () => {
       }
       ports.didActivateRuntime?.(runtime, inventory);
       expect(bindSession).toHaveBeenCalledWith(null, "workspace-a");
+      if (invalid === "advancing-seed") {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(activateRuntime).toHaveBeenCalledTimes(1);
+        expect(close).not.toHaveBeenCalled();
+        expect(activateRuntime.mock.calls[0]?.[0].paneEvents.get("pane.primary")).toMatchObject({
+          canonical: { revision: 2 },
+        });
+        continue;
+      }
       expect(activateRuntime).not.toHaveBeenCalled();
       if (invalid === "missing") {
         expect(close).not.toHaveBeenCalled();

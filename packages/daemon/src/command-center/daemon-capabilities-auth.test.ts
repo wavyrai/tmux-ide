@@ -39,4 +39,39 @@ describe("daemon capability negotiation", () => {
       });
     }
   });
+  it("only includes window viewport capability when explicitly requested", async () => {
+    const app = createApp({ remoteAccess: { ownerToken: OWNER } });
+    const read = async (query: string) =>
+      (
+        await app.request(`http://localhost/api/v2/capabilities${query}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${OWNER}`, "Content-Type": "application/json" },
+          body: "{}",
+        })
+      ).json();
+    expect((await read("")).capabilities).not.toHaveProperty("semanticWindowViewport");
+    expect((await read("?windowViewport=1")).capabilities.semanticWindowViewport).toEqual({
+      available: false,
+      reason: "This daemon has no pane-stream backend.",
+    });
+  });
+  it("withholds scoped fitting until cross-window sizing is qualified", async () => {
+    const app = createApp({
+      remoteAccess: { ownerToken: OWNER },
+      paneStreamIssueBackend: {
+        issue: async () => {
+          throw new Error("not called");
+        },
+      },
+    });
+    const response = await app.request("http://localhost/api/v2/capabilities?windowViewport=1", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${OWNER}`, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect((await response.json()).capabilities.semanticWindowViewport).toEqual({
+      available: false,
+      reason: "Window fitting is awaiting isolated sizing qualification.",
+    });
+  });
 });

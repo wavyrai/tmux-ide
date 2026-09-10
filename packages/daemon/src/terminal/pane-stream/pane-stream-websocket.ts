@@ -293,7 +293,12 @@ export interface SessionRuntimePaneStreamTransportBinding {
     causalProbe?: CausalCellProbeV1,
     onCausalResult?: (result: CausalCellLedgerResult) => void,
   ): void;
-  fitViewport(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void;
+  fitViewport(
+    lease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void;
   close(): Promise<void>;
 }
 
@@ -2209,7 +2214,15 @@ export class PaneStreamLiveConnection {
       if (!this.#prepareInputAuthority(true)) return;
       this.#nextViewportSeq += 1;
       try {
-        this.#sessionRuntimeBinding!.fitViewport(frame.authorityLease, frame.cols, frame.rows);
+        if (frame.semanticWindowId === undefined)
+          this.#sessionRuntimeBinding!.fitViewport(frame.authorityLease, frame.cols, frame.rows);
+        else
+          this.#sessionRuntimeBinding!.fitViewport(
+            frame.authorityLease,
+            frame.cols,
+            frame.rows,
+            frame.semanticWindowId,
+          );
         this.#sendFrame(null, {
           type: "viewport-ack",
           seq: frame.seq,

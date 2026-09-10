@@ -136,7 +136,11 @@ export interface WorkspaceClientRuntimePort<
   ): void;
   close(): void | Promise<void>;
   /** Fits the one shared physical terminal stream, never a renderer-local replica. */
-  fitViewport(cols: number, rows: number): Promise<"ok" | "geometry-authority-conflict">;
+  fitViewport(
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): Promise<"ok" | "geometry-authority-conflict">;
   setPresence?(state: SessionRuntimePresenceState): void;
   noteActivity?(activity: SessionRuntimeActivityKind): void;
   ownsConnectionAuthority?(authority: SessionRuntimeAuthorityKind): boolean;
@@ -274,6 +278,7 @@ export interface WorkspaceClient<
   fitViewport(
     cols: number,
     rows: number,
+    semanticWindowId?: string,
   ): Promise<"ok" | "authority-lost" | "geometry-authority-conflict">;
   setPresence(state: SessionRuntimePresenceState): void;
   noteActivity(activity: SessionRuntimeActivityKind): void;

@@ -222,6 +222,7 @@ export const DesktopDaemonCapabilitiesResultSchemaZ = z.discriminatedUnion("stat
       capabilities: z
         .object({
           appWindowMutation: CommandAvailabilitySchemaZ,
+          semanticWindowViewport: CommandAvailabilitySchemaZ.optional(),
         })
         .strict(),
     })

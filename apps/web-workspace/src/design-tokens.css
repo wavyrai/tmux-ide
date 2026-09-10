@@ -1,0 +1,37 @@
+/* Theme-independent web geometry. Color roles resolve from shared TUI themes. */
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-code: "Geist Mono Variable", monospace;
+  --text-caption: 10px;
+  --text-small: 11px;
+  --text-body: 12px;
+  --text-emphasis: 13px;
+  --text-section: 15px;
+  --text-title: 24px;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-heading: 550;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-6: 12px;
+  --space-8: 16px;
+  --space-12: 24px;
+  --space-16: 32px;
+  --radius-control: 4px;
+  --radius-row: 6px;
+  --radius-panel: 10px;
+  --radius-dialog: 16px;
+  --height-badge: 18px;
+  --height-pane-header: 26px;
+  --height-row: 28px;
+  --height-toolbar: 38px;
+  --focus-width: 2px;
+}
+[data-workspace-shell] {
+  --surface-hover: color-mix(in srgb, var(--text) 4%, transparent);
+  --surface-selected: color-mix(in srgb, var(--text) 6%, transparent);
+  --border-divider: color-mix(in srgb, var(--border) 55%, transparent);
+  --focus-ring: var(--accent);
+}

@@ -200,8 +200,18 @@ export interface SessionRuntimeConsumer {
     traceId: string,
     reason: CausalCellFailureReasonV1,
   ): void;
-  fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void;
-  fitViewportWithAuthority(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void;
+  fitViewport(
+    lease: SessionRuntimeControllerLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void;
+  fitViewportWithAuthority(
+    lease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void;
   describe(): Promise<MirrorSessionDescription>;
   subscribe(
     semanticPaneId: string,
@@ -1058,8 +1068,10 @@ class SessionRuntime {
       session,
       scheduler,
       nativeGeometryHysteresisMs,
-      onGeometryAuthorityChanged: (clientId) =>
-        this.#mirror.setGeometryParticipation(this.session, clientId !== null),
+      onGeometryAuthorityChanged: (clientId) => {
+        this.#mirror.clearWindowViewports(this.session);
+        this.#mirror.setGeometryParticipation(this.session, clientId !== null);
+      },
       onNativeGeometryYieldExpired: () => this.#publishAuthority(),
     });
     this.#terminalDeliveryHub = new SessionRuntimeTerminalDeliveryHub(
@@ -1443,6 +1455,7 @@ class SessionRuntime {
     lease: SessionRuntimeControllerLease,
     cols: number,
     rows: number,
+    semanticWindowId?: string,
   ): void {
     this.assertController(lease, clientId);
     const geometryLease =
@@ -1454,7 +1467,8 @@ class SessionRuntime {
       );
     }
     this.#mirror.setGeometryParticipation(this.session, true);
-    this.#mirror.fitViewport(this.session, cols, rows);
+    if (semanticWindowId === undefined) this.#mirror.fitViewport(this.session, cols, rows);
+    else this.#mirror.fitWindowViewport(this.session, semanticWindowId, cols, rows);
   }
 
   fitViewportWithAuthority(
@@ -1462,6 +1476,7 @@ class SessionRuntime {
     lease: SessionRuntimeAuthorityLease,
     cols: number,
     rows: number,
+    semanticWindowId?: string,
   ): void {
     const parsed = SessionRuntimeAuthorityLeaseSchemaZ.parse(lease);
     let exact: SessionRuntimeAuthorityLease;
@@ -1480,7 +1495,8 @@ class SessionRuntime {
       );
     }
     this.#mirror.setGeometryParticipation(this.session, true);
-    this.#mirror.fitViewport(this.session, cols, rows);
+    if (semanticWindowId === undefined) this.#mirror.fitViewport(this.session, cols, rows);
+    else this.#mirror.fitWindowViewport(this.session, semanticWindowId, cols, rows);
   }
 
   async whenReady(): Promise<void> {
@@ -1958,14 +1974,24 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     this.#runtime.failCausalCellProbe(semanticPaneId, traceId, reason);
   }
 
-  fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void {
+  fitViewport(
+    lease: SessionRuntimeControllerLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void {
     this.#assertOpen();
-    this.#runtime.fitViewport(this.clientId, lease, cols, rows);
+    this.#runtime.fitViewport(this.clientId, lease, cols, rows, semanticWindowId);
   }
 
-  fitViewportWithAuthority(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void {
+  fitViewportWithAuthority(
+    lease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void {
     this.#assertOpen();
-    this.#runtime.fitViewportWithAuthority(this.clientId, lease, cols, rows);
+    this.#runtime.fitViewportWithAuthority(this.clientId, lease, cols, rows, semanticWindowId);
   }
 
   async describe(): Promise<MirrorSessionDescription> {

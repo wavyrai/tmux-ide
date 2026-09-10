@@ -278,7 +278,7 @@ describe("Electron main daemon resource broker", () => {
         },
       },
     });
-    expect(requests[0]?.url).toBe("http://127.0.0.1:6060/api/v2/capabilities");
+    expect(requests[0]?.url).toBe("http://127.0.0.1:6060/api/v2/capabilities?windowViewport=1");
     expect(new Headers(requests[0]?.init?.headers).get("Authorization")).toBe(
       "Bearer owner-only-token",
     );

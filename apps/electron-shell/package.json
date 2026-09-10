@@ -12,7 +12,9 @@
     "package:smoke": "pnpm package && node scripts/smoke.mjs",
     "smoke": "pnpm build && electron . --smoke-test",
     "test": "vitest run && vitest run --config vitest.live.config.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "dev:workspace": "node scripts/dev.mjs --workspace",
+    "build:workspace": "pnpm --filter @tmux-ide/web-workspace build && node scripts/build.mjs --renderer=workspace"
   },
   "dependencies": {
     "@tmux-ide/contracts": "workspace:*",

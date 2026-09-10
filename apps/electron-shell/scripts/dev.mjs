@@ -5,7 +5,12 @@ import { fileURLToPath } from "node:url";
 import electronPath from "electron";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const rendererUrl = "http://127.0.0.1:5173/";
+const workspaceRenderer = process.argv.includes("--workspace");
+const rendererPackage = workspaceRenderer
+  ? "@tmux-ide/web-workspace"
+  : "@tmux-ide/desktop-renderer";
+const rendererPort = workspaceRenderer ? 4322 : 5173;
+const rendererUrl = `http://127.0.0.1:${rendererPort}/`;
 const children = new Set();
 
 function run(command, args, options = {}) {
@@ -50,12 +55,22 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-const build = run("pnpm", ["run", "build"], { cwd: packageRoot });
+const rendererBuild = run("pnpm", ["--filter", rendererPackage, "build"], { cwd: packageRoot });
+if ((await waitForExit(rendererBuild)) !== 0) process.exit(1);
+const build = run(
+  "node",
+  ["scripts/build.mjs", ...(workspaceRenderer ? ["--renderer=workspace"] : [])],
+  { cwd: packageRoot },
+);
 if ((await waitForExit(build)) !== 0) process.exit(1);
 
-const vite = run("pnpm", ["--filter", "@tmux-ide/desktop-renderer", "dev"], {
-  cwd: packageRoot,
-});
+const vite = run(
+  "pnpm",
+  ["--filter", rendererPackage, "dev", "--port", String(rendererPort), "--strictPort"],
+  {
+    cwd: packageRoot,
+  },
+);
 try {
   await waitForRenderer();
   const electron = run(electronPath, ["."], {

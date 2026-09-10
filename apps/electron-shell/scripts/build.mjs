@@ -7,7 +7,10 @@ import { build } from "esbuild";
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = join(packageRoot, "..", "..");
 const dist = join(packageRoot, "dist");
-const rendererDist = join(packageRoot, "..", "desktop-renderer", "dist");
+const rendererName = process.argv.includes("--renderer=workspace")
+  ? "web-workspace"
+  : "desktop-renderer";
+const rendererDist = join(packageRoot, "..", rendererName, "dist");
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });

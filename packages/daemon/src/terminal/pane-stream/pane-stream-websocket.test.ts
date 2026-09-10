@@ -994,12 +994,13 @@ describe("PaneStreamAdmissionCoordinator", () => {
       issued,
     );
     const client = await opening;
-    await expect(client.fitViewport(132, 44)).resolves.toBe("ok");
+    await expect(client.fitViewport(132, 44, "window.one")).resolves.toBe("ok");
     const viewportFrame = clientFrames.find(
       (frame): frame is Extract<PaneStreamClientFrame, { type: "viewport" }> =>
         frame.type === "viewport",
     );
     expect(viewportFrame).toMatchObject({
+      semanticWindowId: "window.one",
       cols: 132,
       rows: 44,
       authorityLease: {
@@ -1889,12 +1890,29 @@ describe("PaneStreamAdmissionCoordinator", () => {
       authorityLease: geometryLease,
     });
     expect(h.fitViewport).toHaveBeenCalledWith(geometryLease, 132, 44);
+    socket.message({
+      type: "viewport",
+      seq: 2,
+      cols: 120,
+      rows: 40,
+      semanticWindowId: "window.one",
+      authorityLease: geometryLease,
+    });
+    expect(h.fitViewport).toHaveBeenLastCalledWith(geometryLease, 120, 40, "window.one");
     expect(socket.framesOfType("viewport-ack")).toEqual([
       {
         type: "viewport-ack",
         seq: 1,
         cols: 132,
         rows: 44,
+        outcome: "ok",
+        authorityLease: geometryLease,
+      },
+      {
+        type: "viewport-ack",
+        seq: 2,
+        cols: 120,
+        rows: 40,
         outcome: "ok",
         authorityLease: geometryLease,
       },

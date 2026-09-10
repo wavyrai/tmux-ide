@@ -4976,6 +4976,7 @@ var init_pane_stream = __esm({
     }).strict())();
     PaneStreamViewportFrameSchemaZ = /* @__PURE__ */ (() => z39.object({
       type: z39.literal("viewport"),
+      semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ.optional(),
       seq: z39.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
       cols: z39.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
       rows: z39.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
@@ -7413,7 +7414,8 @@ var init_desktop_host = __esm({
         status: z54.literal("ok"),
         daemon: DaemonInstanceIdentitySchemaZ,
         capabilities: z54.object({
-          appWindowMutation: CommandAvailabilitySchemaZ
+          appWindowMutation: CommandAvailabilitySchemaZ,
+          semanticWindowViewport: CommandAvailabilitySchemaZ.optional()
         }).strict()
       }).strict(),
       z54.object({ status: z54.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
@@ -36312,6 +36314,7 @@ var init_session_channel = __esm({
       ageByRuntime = /* @__PURE__ */ new Map();
       maxAgeMs = 0;
       geometryParticipating = false;
+      fittedWindows = /* @__PURE__ */ new Map();
       cancelSync = null;
       lastDisplayNameSyncAtMs = 0;
       disposed = false;
@@ -36669,10 +36672,38 @@ var init_session_channel = __esm({
           throw new RangeError("viewport must contain positive bounded terminal cells");
         }
         this.input.flush();
+        this.clearWindowViewports();
         this.io.send(`refresh-client -C ${cols}x${rows}`);
+      }
+      /** Window-specific size overrides stay private to this retained tmux client. */
+      fitWindowViewport(semanticWindowId, cols, rows) {
+        if (!Number.isSafeInteger(cols) || !Number.isSafeInteger(rows) || cols < 2 || rows < 2 || cols > 4096 || rows > 4096) {
+          throw new RangeError("viewport must contain positive bounded terminal cells");
+        }
+        const window2 = [...this.windowsByRuntime.values()].find(
+          (entry) => entry.semanticId === semanticWindowId
+        );
+        if (!window2 || !/^@[0-9]+$/u.test(window2.runtimeId)) {
+          throw new Error("unknown semantic window in this session");
+        }
+        const previous = this.fittedWindows.get(window2.runtimeId);
+        if (previous?.cols === cols && previous.rows === rows) return;
+        this.input.flush();
+        this.io.send(`refresh-client -C ${window2.runtimeId}:${cols}x${rows}`);
+        this.fittedWindows.set(window2.runtimeId, { cols, rows });
+      }
+      /** Must also run on geometry-owner handoff, before the next owner fits. */
+      clearWindowViewports() {
+        if (!this.fittedWindows.size) return;
+        this.input.flush();
+        for (const runtimeId of this.fittedWindows.keys()) {
+          if (this.windowsByRuntime.has(runtimeId)) this.io.send(`refresh-client -C ${runtimeId}:`);
+        }
+        this.fittedWindows.clear();
       }
       /** Toggle whether the retained control client participates in tmux sizing. */
       setGeometryParticipation(active2) {
+        if (!active2) this.clearWindowViewports();
         if (this.geometryParticipating === active2) return;
         this.geometryParticipating = active2;
         this.input.flush();
@@ -38316,6 +38347,8 @@ var init_session_channel = __esm({
           if (stage.windows.has(stage.currentWindow)) changedWindows.add(stage.currentWindow);
         }
         this.currentWindow = stage.currentWindow;
+        for (const runtimeId of this.fittedWindows.keys())
+          if (!stage.windows.has(runtimeId)) this.fittedWindows.delete(runtimeId);
         this.windowsByRuntime.clear();
         for (const [key, value] of stage.windows) this.windowsByRuntime.set(key, value);
         this.layoutByWindow.clear();
@@ -38845,6 +38878,15 @@ var init_mirror_service = __esm({
         const entry = this.channels.get(session);
         if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
         entry.channel.fitViewport(cols, rows);
+      }
+      fitWindowViewport(session, semanticWindowId, cols, rows) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+        entry.channel.fitWindowViewport(semanticWindowId, cols, rows);
+      }
+      clearWindowViewports(session) {
+        const entry = this.channels.get(session);
+        if (entry && !entry.retired) entry.channel.clearWindowViewports();
       }
       /** Keep the retained control client passive unless the arbiter elects it. */
       setGeometryParticipation(session, active2) {
@@ -56719,7 +56761,10 @@ var init_registry2 = __esm({
           session,
           scheduler,
           nativeGeometryHysteresisMs,
-          onGeometryAuthorityChanged: (clientId) => this.#mirror.setGeometryParticipation(this.session, clientId !== null),
+          onGeometryAuthorityChanged: (clientId) => {
+            this.#mirror.clearWindowViewports(this.session);
+            this.#mirror.setGeometryParticipation(this.session, clientId !== null);
+          },
           onNativeGeometryYieldExpired: () => this.#publishAuthority()
         });
         this.#terminalDeliveryHub = new SessionRuntimeTerminalDeliveryHub(
@@ -57046,7 +57091,7 @@ var init_registry2 = __esm({
           Object.freeze({ ageMs, ...timing ? { timing } : {} })
         );
       }
-      fitViewport(clientId, lease, cols, rows) {
+      fitViewport(clientId, lease, cols, rows, semanticWindowId) {
         this.assertController(lease, clientId);
         const geometryLease = this.#authority.leaseFor(clientId, "geometry") ?? this.#authority.claim(clientId, "geometry");
         if (!geometryLease) {
@@ -57056,9 +57101,10 @@ var init_registry2 = __esm({
           );
         }
         this.#mirror.setGeometryParticipation(this.session, true);
-        this.#mirror.fitViewport(this.session, cols, rows);
+        if (semanticWindowId === void 0) this.#mirror.fitViewport(this.session, cols, rows);
+        else this.#mirror.fitWindowViewport(this.session, semanticWindowId, cols, rows);
       }
-      fitViewportWithAuthority(clientId, lease, cols, rows) {
+      fitViewportWithAuthority(clientId, lease, cols, rows, semanticWindowId) {
         const parsed = SessionRuntimeAuthorityLeaseSchemaZ.parse(lease);
         let exact;
         try {
@@ -57076,7 +57122,8 @@ var init_registry2 = __esm({
           );
         }
         this.#mirror.setGeometryParticipation(this.session, true);
-        this.#mirror.fitViewport(this.session, cols, rows);
+        if (semanticWindowId === void 0) this.#mirror.fitViewport(this.session, cols, rows);
+        else this.#mirror.fitWindowViewport(this.session, semanticWindowId, cols, rows);
       }
       async whenReady() {
         if (this.#disposed) throw new Error(`SessionRuntime ${this.session} is disposed`);
@@ -57454,13 +57501,13 @@ var init_registry2 = __esm({
       failCausalCellProbe(semanticPaneId3, traceId, reason) {
         this.#runtime.failCausalCellProbe(semanticPaneId3, traceId, reason);
       }
-      fitViewport(lease, cols, rows) {
+      fitViewport(lease, cols, rows, semanticWindowId) {
         this.#assertOpen();
-        this.#runtime.fitViewport(this.clientId, lease, cols, rows);
+        this.#runtime.fitViewport(this.clientId, lease, cols, rows, semanticWindowId);
       }
-      fitViewportWithAuthority(lease, cols, rows) {
+      fitViewportWithAuthority(lease, cols, rows, semanticWindowId) {
         this.#assertOpen();
-        this.#runtime.fitViewportWithAuthority(this.clientId, lease, cols, rows);
+        this.#runtime.fitViewportWithAuthority(this.clientId, lease, cols, rows, semanticWindowId);
       }
       async describe() {
         this.#assertOpen();
@@ -57828,7 +57875,7 @@ var init_transport_binding = __esm({
           throw error;
         }
       }
-      fitViewport(expectedLease, cols, rows) {
+      fitViewport(expectedLease, cols, rows, semanticWindowId) {
         this.#assertOpen();
         if (this.#shared.geometryTransportLeaseIds.at(-1) !== this.#transportLeaseId) {
           throw new SessionRuntimeControllerLeaseError(
@@ -57843,7 +57890,8 @@ var init_transport_binding = __esm({
               "stale-controller-lease",
               "Geometry authority retired."
             );
-          this.#shared.consumer.fitViewport(controller, cols, rows);
+          if (semanticWindowId === void 0) this.#shared.consumer.fitViewport(controller, cols, rows);
+          else this.#shared.consumer.fitViewport(controller, cols, rows, semanticWindowId);
           return;
         }
         const lease = this.#geometryAuthorityLease;
@@ -57852,7 +57900,9 @@ var init_transport_binding = __esm({
             "stale-controller-lease",
             "Geometry authority retired."
           );
-        this.#shared.consumer.fitViewportWithAuthority(lease, cols, rows);
+        if (semanticWindowId === void 0)
+          this.#shared.consumer.fitViewportWithAuthority(lease, cols, rows);
+        else this.#shared.consumer.fitViewportWithAuthority(lease, cols, rows, semanticWindowId);
       }
       executionHandleForSource(semanticPaneId3) {
         this.assertController(semanticPaneId3);
@@ -65121,7 +65171,15 @@ var init_pane_stream_websocket = __esm({
           if (!this.#prepareInputAuthority(true)) return;
           this.#nextViewportSeq += 1;
           try {
-            this.#sessionRuntimeBinding.fitViewport(frame.authorityLease, frame.cols, frame.rows);
+            if (frame.semanticWindowId === void 0)
+              this.#sessionRuntimeBinding.fitViewport(frame.authorityLease, frame.cols, frame.rows);
+            else
+              this.#sessionRuntimeBinding.fitViewport(
+                frame.authorityLease,
+                frame.cols,
+                frame.rows,
+                frame.semanticWindowId
+              );
             this.#sendFrame(null, {
               type: "viewport-ack",
               seq: frame.seq,
@@ -73104,6 +73162,16 @@ function createApp(options = {}) {
         status: "ok",
         daemon: daemonInstanceIdentity,
         capabilities: {
+          // Opt-in keeps the response compatible with older strict host schemas.
+          ...c.req.query("windowViewport") === "1" ? {
+            semanticWindowViewport: options.paneStreamIssueBackend ? {
+              available: false,
+              reason: "Window fitting is awaiting isolated sizing qualification."
+            } : {
+              available: false,
+              reason: "This daemon has no pane-stream backend."
+            }
+          } : {},
           appWindowMutation: appWindowCommandRegistered && options.appWindowMutationBackend !== void 0 ? { available: true } : {
             available: false,
             reason: "This daemon generation has no AppWindow mutation backend."

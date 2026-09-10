@@ -298,7 +298,7 @@ export interface PaneStreamSessionHandle {
   /** Exact authenticated client identity for authority held by this connection. */
   connectionAuthorityClientId?(authority: SessionRuntimeAuthorityKind): string | null;
   write?(pane: string, input: string | SessionRuntimeTerminalInput): Promise<boolean>;
-  resize?(cols: number, rows: number): Promise<PaneStreamResizeResult>;
+  resize?(cols: number, rows: number, semanticWindowId?: string): Promise<PaneStreamResizeResult>;
   requestAuthority?(
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;
@@ -841,7 +841,11 @@ class PaneStreamSession {
     return didAccept;
   }
 
-  readonly resize = async (cols: number, rows: number): Promise<PaneStreamResizeResult> => {
+  readonly resize = async (
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): Promise<PaneStreamResizeResult> => {
     if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) {
       return "lifecycle-retired";
     }
@@ -872,7 +876,14 @@ class PaneStreamSession {
         },
       });
     });
-    this.#sendControl({ type: "viewport", seq, cols, rows, authorityLease });
+    this.#sendControl({
+      type: "viewport",
+      seq,
+      cols,
+      rows,
+      authorityLease,
+      ...(semanticWindowId === undefined ? {} : { semanticWindowId }),
+    });
     this.noteActivity("geometry");
     const didAccept = await accepted;
     const authorityClientId = this.#authorityClientIds.get("geometry");

@@ -1372,11 +1372,14 @@ export function createWorkspaceClient<
     async fitViewport(
       cols: number,
       rows: number,
+      semanticWindowId?: string,
     ): Promise<"ok" | "authority-lost" | "geometry-authority-conflict"> {
       const expectedGeneration = generation;
       const expectedRuntime = runtime;
       if (disposed || expectedRuntime === null) return "authority-lost";
-      const result = await expectedRuntime.fitViewport(cols, rows);
+      const result = await (semanticWindowId === undefined
+        ? expectedRuntime.fitViewport(cols, rows)
+        : expectedRuntime.fitViewport(cols, rows, semanticWindowId));
       if (disposed || generation !== expectedGeneration || runtime !== expectedRuntime) {
         return "authority-lost";
       }

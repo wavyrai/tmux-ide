@@ -2865,6 +2865,45 @@ describe("closure (truth-driven, never probe-failure)", () => {
   });
 });
 
+describe("window viewport scope", () => {
+  it("resolves only session-local semantic windows and clears overrides before global fitting", async () => {
+    const rig = await startedRig();
+    const before = rig.sim.written.length;
+    rig.channel.fitWindowViewport("window.test.one", 120, 40);
+    rig.channel.fitWindowViewport("window.test.one", 120, 40);
+    expect(() => rig.channel.fitWindowViewport("@1", 100, 30)).toThrow("unknown semantic window");
+    expect(() => rig.channel.fitWindowViewport("window.other-session", 100, 30)).toThrow(
+      "unknown semantic window",
+    );
+    expect(() => rig.channel.fitWindowViewport("window.test.one", 4097, 30)).toThrow(RangeError);
+    expect(() => rig.channel.fitWindowViewport("window.test.one", 100, 2.5)).toThrow(RangeError);
+    rig.channel.fitViewport(90, 28);
+    expect(rig.sim.written.slice(before)).toEqual([
+      "refresh-client -C @1:120x40",
+      "refresh-client -C @1:",
+      "refresh-client -C 90x28",
+    ]);
+    await rig.channel.dispose();
+  });
+
+  it("clears window overrides when participation ends and permits a new fit", async () => {
+    const rig = await startedRig();
+    rig.channel.setGeometryParticipation(true);
+    const before = rig.sim.written.length;
+    rig.channel.fitWindowViewport("window.test.one", 120, 40);
+    rig.channel.setGeometryParticipation(false);
+    rig.channel.setGeometryParticipation(false);
+    rig.channel.fitWindowViewport("window.test.one", 120, 40);
+    expect(rig.sim.written.slice(before)).toEqual([
+      "refresh-client -C @1:120x40",
+      "refresh-client -C @1:",
+      "refresh-client -f ignore-size",
+      "refresh-client -C @1:120x40",
+    ]);
+    await rig.channel.dispose();
+  });
+});
+
 describe("input path", () => {
   it("coalesces literals per pane and sends named keys after pending literals", async () => {
     const rig = await startedRig();

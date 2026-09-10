@@ -607,6 +607,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         status: "ok" as const,
         daemon: daemonInstanceIdentity,
         capabilities: {
+          // Opt-in keeps the response compatible with older strict host schemas.
+          ...(c.req.query("windowViewport") === "1"
+            ? {
+                semanticWindowViewport: options.paneStreamIssueBackend
+                  ? {
+                      available: false as const,
+                      reason: "Window fitting is awaiting isolated sizing qualification.",
+                    }
+                  : {
+                      available: false as const,
+                      reason: "This daemon has no pane-stream backend.",
+                    },
+              }
+            : {}),
           appWindowMutation:
             appWindowCommandRegistered && options.appWindowMutationBackend !== undefined
               ? { available: true as const }
