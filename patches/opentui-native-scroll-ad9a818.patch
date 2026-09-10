@@ -19,13 +19,18 @@ index 6c94af7..598f972 100644
          .root_module = test_mod,
          .filters = if (b.option([]const u8, "test-filter", "Skip tests that do not match filter")) |f| &.{f} else &.{},
 diff --git a/packages/core/src/zig/lib.zig b/packages/core/src/zig/lib.zig
-index f98069c..32060ce 100644
+index f98069c..791d90c 100644
 --- a/packages/core/src/zig/lib.zig
 +++ b/packages/core/src/zig/lib.zig
-@@ -834,6 +834,22 @@ fn packFailedRenderResult() u64 {
+@@ -834,6 +834,27 @@ fn packFailedRenderResult() u64 {
      return packRenderResult(.{ .renderOffset = 0, .status = .failed });
  }
  
++// Called once during host initialization, before any renderer exists.
++export fn configureScrollPrototype(enabled: bool) void {
++    renderer.scrollPrototypeDefault = enabled;
++}
++
 +export fn rendererBeginScrollPrototypeFrame(renderer_handle: NativeHandle, frame_id: u32) void {
 +    const object_ptr = acquireRenderer(renderer_handle) orelse return;
 +    object_ptr.beginScrollPrototypeFrame(frame_id);
@@ -46,13 +51,17 @@ index f98069c..32060ce 100644
      const object_ptr = acquireRenderer(renderer_handle) orelse return @intFromEnum(renderer.RenderStatus.failed);
      return @intFromEnum(object_ptr.render(force));
 diff --git a/packages/core/src/zig/renderer.zig b/packages/core/src/zig/renderer.zig
-index d3fa5b4..152c65a 100644
+index d3fa5b4..d970406 100644
 --- a/packages/core/src/zig/renderer.zig
 +++ b/packages/core/src/zig/renderer.zig
-@@ -183,7 +183,17 @@ const SIXEL_CACHE_MAX_ENTRIES = 256;
+@@ -183,7 +183,21 @@ const SIXEL_CACHE_MAX_ENTRIES = 256;
  // cell backgrounds, so those payloads carry a background fingerprint. Byte and entry limits bound
  // payload and metadata retention. An empty payload is cached for fully transparent placements.
  
++// Configured by the host before creating renderers. Do not depend on a runtime
++// synchronizing its JavaScript environment object with the native environment.
++pub var scrollPrototypeDefault: ?bool = null;
++
 +pub const ScrollRect = struct { left: u32, top: u32, right: u32, bottom: u32 };
 +
  pub const CliRenderer = struct {
@@ -67,7 +76,7 @@ index d3fa5b4..152c65a 100644
      width: u32,
      height: u32,
      currentRenderBuffer: *OptimizedBuffer,
-@@ -379,7 +389,13 @@ pub const CliRenderer = struct {
+@@ -379,7 +393,13 @@ pub const CliRenderer = struct {
          errdefer backend.deinit();
  
          const image_id_salt = 1 + @as(u32, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp())) ^ @as(u128, @intFromPtr(self)))) % (std.math.maxInt(u32) - gp.IMAGE_ID_MASK - 1);
@@ -77,11 +86,11 @@ index d3fa5b4..152c65a 100644
 +        };
 +        defer if (scroll_auto_env) |value| allocator.free(value);
          self.* = .{
-+            .scrollPrototypeAuto = if (scroll_auto_env) |value| std.mem.eql(u8, value, "1") else false,
++            .scrollPrototypeAuto = scrollPrototypeDefault orelse (if (scroll_auto_env) |value| std.mem.eql(u8, value, "1") else false),
              .width = width,
              .height = height,
              .currentRenderBuffer = currentBuffer,
-@@ -501,8 +517,15 @@ pub const CliRenderer = struct {
+@@ -501,8 +521,15 @@ pub const CliRenderer = struct {
  
          writer.writeAll(ansi.ANSI.saveCursorState) catch {};
  
@@ -97,7 +106,7 @@ index d3fa5b4..152c65a 100644
          } else if (reserve_non_alt_surface) {
              ansi.ANSI.makeRoomForRendererOutput(writer, @max(self.height, 1)) catch {};
          }
-@@ -516,6 +539,7 @@ pub const CliRenderer = struct {
+@@ -516,6 +543,7 @@ pub const CliRenderer = struct {
  
      pub fn suspendRenderer(self: *CliRenderer) void {
          if (!self.terminalSetup) return;
@@ -105,7 +114,7 @@ index d3fa5b4..152c65a 100644
          self.performShutdownSequence();
      }
  
-@@ -676,6 +700,9 @@ pub const CliRenderer = struct {
+@@ -676,6 +704,9 @@ pub const CliRenderer = struct {
      }
  
      pub fn resize(self: *CliRenderer, width: u32, height: u32) !void {
@@ -115,7 +124,7 @@ index d3fa5b4..152c65a 100644
          if (self.width == width and self.height == height) return;
  
          self.width = width;
-@@ -842,6 +869,9 @@ pub const CliRenderer = struct {
+@@ -842,6 +873,9 @@ pub const CliRenderer = struct {
      }
  
      fn clearSkippedFrameState(self: *CliRenderer) void {
@@ -125,7 +134,7 @@ index d3fa5b4..152c65a 100644
          self.nextRenderBuffer.clear(self.backgroundColor, null);
          @memset(self.nextHitGrid, 0);
      }
-@@ -853,6 +883,8 @@ pub const CliRenderer = struct {
+@@ -853,6 +887,8 @@ pub const CliRenderer = struct {
      }
  
      fn finishFailedFrame(self: *CliRenderer) RenderStatus {
@@ -134,7 +143,7 @@ index d3fa5b4..152c65a 100644
          self.pendingImages.clearRetainingCapacity();
          @memset(self.nextHitGrid, 0);
          self.force_full_repaint = true;
-@@ -2281,6 +2313,164 @@ pub const CliRenderer = struct {
+@@ -2281,6 +2317,164 @@ pub const CliRenderer = struct {
          }
      }
  
@@ -299,7 +308,7 @@ index d3fa5b4..152c65a 100644
      /// Generic over the writer type so each backend can provide its own writer
      /// (buffered frame append or feed streaming) without dispatch in the render path.
      /// `sync_started` is true only when the caller already opened the
-@@ -2330,6 +2520,28 @@ pub const CliRenderer = struct {
+@@ -2330,6 +2524,28 @@ pub const CliRenderer = struct {
              };
          }
  
@@ -328,7 +337,7 @@ index d3fa5b4..152c65a 100644
          var currentFg: ?RGBA = null;
          var currentBg: ?RGBA = null;
          var currentAttributes: ?u32 = null;
-@@ -2354,7 +2566,11 @@ pub const CliRenderer = struct {
+@@ -2354,7 +2570,11 @@ pub const CliRenderer = struct {
          for (0..self.height) |uy| {
              const y = @as(u32, @intCast(uy));
  
@@ -341,7 +350,7 @@ index d3fa5b4..152c65a 100644
                  const row_start = @as(usize, y) * self.width;
                  const row_end = row_start + self.width;
                  if (std.mem.eql(u32, self.currentRenderBuffer.buffer.char[row_start..row_end], self.nextRenderBuffer.buffer.char[row_start..row_end]) and
-@@ -2363,12 +2579,18 @@ pub const CliRenderer = struct {
+@@ -2363,12 +2583,18 @@ pub const CliRenderer = struct {
                      std.mem.eql(u32, self.currentRenderBuffer.buffer.attributes[row_start..row_end], self.nextRenderBuffer.buffer.attributes[row_start..row_end])) continue;
              }
  
@@ -360,7 +369,7 @@ index d3fa5b4..152c65a 100644
                  const currentCell = self.currentRenderBuffer.get(x, y);
                  const nextCell = self.nextRenderBuffer.get(x, y);
  
-@@ -2382,7 +2604,8 @@ pub const CliRenderer = struct {
+@@ -2382,7 +2608,8 @@ pub const CliRenderer = struct {
                          buf.rgbaEqual(currentCell.?.fg, cell.fg) and buf.rgbaEqual(currentCell.?.bg, cell.bg);
                      // Identical reserved cells still repaint when their
                      // placement's pixels are dirty (e.g. Sixel content change).
@@ -370,7 +379,7 @@ index d3fa5b4..152c65a 100644
                          if (runLength > 0) {
                              writer.writeAll(ansi.ANSI.reset) catch {};
                              runStart = -1;
-@@ -2398,11 +2621,13 @@ pub const CliRenderer = struct {
+@@ -2398,11 +2625,13 @@ pub const CliRenderer = struct {
                  // Fallback placements materialize as ordinary cells and fall
                  // through to normal diffing.
                  if (cell_type == gp.CHAR_FLAG_IMAGE) blk: {
@@ -384,7 +393,7 @@ index d3fa5b4..152c65a 100644
                          if (runLength > 0) {
                              writer.writeAll(ansi.ANSI.reset) catch {};
                              runStart = -1;
-@@ -2444,6 +2669,7 @@ pub const CliRenderer = struct {
+@@ -2444,6 +2673,7 @@ pub const CliRenderer = struct {
                  const linkId = if (hyperlinksEnabled) ansi.TextAttributes.getLinkId(cell.attributes) else 0;
  
                  if (hyperlinksEnabled and linkId != currentLinkId) {
@@ -392,7 +401,7 @@ index d3fa5b4..152c65a 100644
                      if (currentLinkId != 0) {
                          writer.writeAll("\x1b]8;;\x1b\\") catch {};
                      }
-@@ -2459,8 +2685,15 @@ pub const CliRenderer = struct {
+@@ -2459,8 +2689,15 @@ pub const CliRenderer = struct {
                      }
                  }
  
@@ -410,7 +419,7 @@ index d3fa5b4..152c65a 100644
                          writer.writeAll(ansi.ANSI.reset) catch {};
                      }
  
-@@ -2471,7 +2704,10 @@ pub const CliRenderer = struct {
+@@ -2471,7 +2708,10 @@ pub const CliRenderer = struct {
                      currentBg = cell.bg;
                      currentAttributes = cell.attributes;
  
@@ -422,7 +431,7 @@ index d3fa5b4..152c65a 100644
  
                      self.emitColor(writer, cell.fg, false);
                      self.emitColor(writer, cell.bg, true);
-@@ -2518,6 +2754,11 @@ pub const CliRenderer = struct {
+@@ -2518,6 +2758,11 @@ pub const CliRenderer = struct {
                          }
                      },
                  }
@@ -481,10 +490,10 @@ index 92dce32..11bf858 100644
      if (std.mem.indexOf(u8, response, "1016;2$y")) |_| {
          self.caps.sgr_pixels = true;
 diff --git a/packages/core/src/zig/tests/renderer_test.zig b/packages/core/src/zig/tests/renderer_test.zig
-index 33e2159..81b13b2 100644
+index 33e2159..30d615f 100644
 --- a/packages/core/src/zig/tests/renderer_test.zig
 +++ b/packages/core/src/zig/tests/renderer_test.zig
-@@ -4430,3 +4430,730 @@ test "renderer clears an upper sixel hole when its lower image moves away" {
+@@ -4430,3 +4430,748 @@ test "renderer clears an upper sixel hole when its lower image moves away" {
      try std.testing.expectEqual(renderer.RenderStatus.rendered, test_renderer.renderer.render(false));
      try std.testing.expect(std.mem.indexOf(u8, test_renderer.memory.lastWrite(), "\x1b[1;1H") != null);
  }
@@ -1214,6 +1223,24 @@ index 33e2159..81b13b2 100644
 +            try std.testing.expect(std.mem.endsWith(u8, transition, stream.getWritten()));
 +        }
 +    }
++}
++
++
++test "host scroll default reaches new renderers and preserves existing instances" {
++    const previous = renderer.scrollPrototypeDefault;
++    defer renderer.scrollPrototypeDefault = previous;
++    const pool = gp.initGlobalPool(std.testing.allocator);
++    defer gp.deinitGlobalPool();
++    defer link.deinitGlobalLinkPool();
++    renderer.scrollPrototypeDefault = true;
++    var enabled = try TestRenderer.create(std.testing.allocator, 8, 6, pool);
++    defer enabled.deinit();
++    try std.testing.expect(enabled.renderer.scrollPrototypeAuto);
++    renderer.scrollPrototypeDefault = false;
++    var disabled = try TestRenderer.create(std.testing.allocator, 8, 6, pool);
++    defer disabled.deinit();
++    try std.testing.expect(!disabled.renderer.scrollPrototypeAuto);
++    try std.testing.expect(enabled.renderer.scrollPrototypeAuto);
 +}
 diff --git a/packages/core/src/zig/tests/terminal_test.zig b/packages/core/src/zig/tests/terminal_test.zig
 index 36a9aca..df8b22b 100644

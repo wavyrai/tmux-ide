@@ -32,6 +32,7 @@ if (nativePolicy.useNative) {
   process.once("exit", () => rmSync(directory, { recursive: true, force: true }));
   setRenderLibPath(nativePath);
   const native = dlopen(nativePath, {
+    configureScrollPrototype: { args: ["bool"], returns: "void" },
     rendererBeginScrollPrototypeFrame: { args: ["u32", "u32"], returns: "void" },
     rendererScrollPrototypeMarginsSupported: { args: ["u32"], returns: "bool" },
     rendererQueueScrollPrototypeRect: {
@@ -39,6 +40,9 @@ if (nativePolicy.useNative) {
       returns: "bool",
     },
   });
+  // Bun's process.env defaults are not visible to Zig's native getenv. Pass
+  // the resolved policy explicitly before importing any renderer surface.
+  native.symbols.configureScrollPrototype(process.env.TMUX_IDE_NATIVE_SCROLL_PROTOTYPE === "1");
   const { registerNativeScrollHint } =
     await import("../../packages/daemon/src/tui/mirror/pane-surface.tsx");
   const observedSupport = new WeakMap<object, boolean>();
