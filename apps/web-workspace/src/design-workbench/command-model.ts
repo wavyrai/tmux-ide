@@ -2,6 +2,11 @@ export interface WorkbenchCommand {
   id: string;
   label: string;
   group: string;
+  description?: string;
+  disabledReason?: string;
+  agent?: string;
+  icon?: "terminal" | "home" | "layout" | "columns" | "rows" | "theme";
+  shortcut?: string;
   keywords?: readonly string[];
   disabled?: boolean;
   run: () => void;
@@ -32,7 +37,9 @@ export function rankCommands(
   const ranked = commands
     .map((command, index) => {
       const label = normalize(command.label);
-      const aliases = [...(command.keywords ?? []), command.group].map(normalize);
+      const aliases = [...(command.keywords ?? []), command.description ?? "", command.group].map(
+        normalize,
+      );
       const scores = terms.map((term) =>
         Math.max(score(label, term), ...aliases.map((alias) => score(alias, term) * 0.8)),
       );

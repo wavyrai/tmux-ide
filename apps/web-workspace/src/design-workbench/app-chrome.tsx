@@ -69,6 +69,7 @@ export function AppChrome({
 }) {
   const [open, setOpen] = useState(false);
   const returnFocus = useRef<HTMLElement | null>(null);
+  const [recentIds, setRecentIds] = useState<string[]>([]);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if (
@@ -115,7 +116,11 @@ export function AppChrome({
               <Popover.Title className="dw-visually-hidden">Workbench commands</Popover.Title>
               <CommandList
                 commands={commands}
+                recentIds={recentIds}
                 onSelect={(command) => {
+                  setRecentIds((ids) =>
+                    [command.id, ...ids.filter((id) => id !== command.id)].slice(0, 5),
+                  );
                   setOpen(false);
                   command.run();
                 }}

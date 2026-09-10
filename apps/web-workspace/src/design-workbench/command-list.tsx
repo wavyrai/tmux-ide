@@ -1,3 +1,4 @@
+import { CommandResult } from "./command-result";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { activeCommand, rankCommands, type WorkbenchCommand } from "./command-model";
 
@@ -5,15 +6,34 @@ import { activeCommand, rankCommands, type WorkbenchCommand } from "./command-mo
 export function CommandList({
   commands,
   onSelect,
+  recentIds = [],
 }: {
   commands: WorkbenchCommand[];
+  recentIds?: readonly string[];
   onSelect: (command: WorkbenchCommand) => void;
 }) {
   const id = useId();
   const root = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
-  const matches = useMemo(() => rankCommands(commands, query), [commands, query]);
+  const matches = useMemo(() => {
+    const ranked = rankCommands(commands, query);
+    if (query.trim()) return ranked;
+    const recent = recentIds.flatMap((id) => {
+      const item = ranked.find(
+        (command) => command.id === id && command.group !== "Selected pane" && !command.disabled,
+      );
+      return item ? [{ ...item, group: "Recent" }] : [];
+    });
+    return [
+      ...ranked.filter((command) => command.group === "Selected pane"),
+      ...recent,
+      ...ranked.filter(
+        (command) =>
+          command.group !== "Selected pane" && !recent.some((item) => item.id === command.id),
+      ),
+    ];
+  }, [commands, query, recentIds]);
   const enabled = matches.filter((command) => !command.disabled);
   const active = activeCommand(matches, activeId);
   const optionId = (commandId: string) => `${id}-${encodeURIComponent(commandId)}`;
@@ -89,6 +109,9 @@ export function CommandList({
                   role="option"
                   aria-selected={active?.id === command.id}
                   aria-disabled={command.disabled || undefined}
+                  aria-describedby={
+                    command.disabledReason ? `${optionId(command.id)}-reason` : undefined
+                  }
                   data-slot="command-item"
                   onPointerMove={(event) => {
                     if (
@@ -103,7 +126,11 @@ export function CommandList({
                     if (!command.disabled) onSelect(command);
                   }}
                 >
-                  {command.label}
+                  <CommandResult
+                    command={command}
+                    query={query}
+                    reasonId={`${optionId(command.id)}-reason`}
+                  />
                 </div>
               ))}
           </div>

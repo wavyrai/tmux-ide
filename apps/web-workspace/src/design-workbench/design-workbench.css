@@ -755,3 +755,39 @@
   color: var(--dw-muted);
   cursor: default;
 }
+.dw-command-list [data-slot="command-item"] {
+  display: flex;
+  align-items: center;
+  gap: var(--dw-space-sm);
+}
+.dw-command-icon {
+  display: flex;
+  flex-shrink: 0;
+  width: var(--dw-icon-size);
+}
+.dw-command-icon svg {
+  width: var(--dw-icon-size);
+  height: var(--dw-icon-size);
+}
+.dw-command-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.dw-command-description {
+  color: var(--dw-muted);
+  font-size: var(--dw-text-caption);
+}
+.dw-command-copy mark {
+  color: var(--dw-text);
+  background: var(--dw-selected);
+  border-radius: var(--dw-radius-control);
+}
+.dw-command-shortcut {
+  flex-shrink: 0;
+  color: var(--dw-muted);
+  font-family: var(--dw-font-terminal);
+  font-size: var(--dw-text-caption);
+}

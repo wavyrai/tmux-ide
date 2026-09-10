@@ -235,6 +235,12 @@ export default function DesignWorkbench() {
       </section>
     );
   }
+  const selectedPane =
+    !home && paneIds(current.layout).includes(selected) ? panes[selected] : undefined;
+  const paneContext = selectedPane
+    ? `${selectedPane.title} · ${current.machine} / ${current.name}`
+    : undefined;
+  const unavailable = selectedPane ? undefined : "Select a pane in Terminals first";
   const css = {
     "--chrome": theme.chrome,
     "--text": theme.text,
@@ -259,7 +265,40 @@ export default function DesignWorkbench() {
         onToggleSidebar={() => setSidebar((value) => !value)}
         portal={root}
         commands={[
-          { id: "home", label: "Go to Home", group: "Navigation", run: () => setHome(true) },
+          ...(["zoom", "right", "bottom"] as const).map((action) => ({
+            id: action === "zoom" ? "zoom" : `split:${action}`,
+            label:
+              action === "zoom"
+                ? zoom
+                  ? "Restore pane layout"
+                  : "Zoom selected pane"
+                : action === "right"
+                  ? "Split pane right"
+                  : "Split pane below",
+            group: "Selected pane",
+            description: paneContext,
+            shortcut: action === "zoom" && zoom ? "Esc" : undefined,
+            disabled: !selectedPane,
+            disabledReason: unavailable,
+            icon:
+              action === "right"
+                ? ("columns" as const)
+                : action === "bottom"
+                  ? ("rows" as const)
+                  : ("layout" as const),
+            run: () => {
+              if (!selectedPane) return;
+              if (action === "zoom") setZoom(zoom ? null : selected);
+              else split(selected, action);
+            },
+          })),
+          {
+            id: "home",
+            label: "Go to Home",
+            icon: "home",
+            group: "Navigation",
+            run: () => setHome(true),
+          },
           {
             id: "terminals",
             label: "Go to Terminals",
@@ -272,20 +311,15 @@ export default function DesignWorkbench() {
             group: "Layout",
             run: () => setSidebar((value) => !value),
           },
-          ...(selected && paneIds(current.layout).includes(selected)
-            ? [
-                {
-                  id: "zoom",
-                  label: zoom ? "Restore pane layout" : "Zoom selected pane",
-                  group: "Layout",
-                  run: () => setZoom(zoom ? null : selected),
-                },
-              ]
-            : []),
           ...windows.flatMap((w) =>
             paneIds(w.layout).map((id) => ({
               id: `pane:${w.id}:${id}`,
-              label: `Open ${panes[id]?.title} · ${w.machine} / ${w.name}`,
+              label: `Open ${panes[id]?.title}`,
+              description: `${w.machine} / ${w.session} / ${w.name}`,
+              agent: /claude|codex|opencode/i.test(panes[id]?.command ?? "")
+                ? panes[id]?.command
+                : undefined,
+              icon: "terminal" as const,
               group: "Panes",
               run: () => selectWindow(w.id, id),
             })),
@@ -294,6 +328,7 @@ export default function DesignWorkbench() {
             id: `theme:${t.id}`,
             label: `Theme: ${t.name}`,
             group: "Appearance",
+            icon: "theme" as const,
             run: () => setThemeId(t.id),
           })),
         ]}
