@@ -26,6 +26,7 @@ export interface Pane {
   status: "running" | "exited";
 }
 export interface Tab {
+  machineId?: string;
   fleetSessionId?: string;
   daemonInstanceId?: string;
   workspaceName?: string;

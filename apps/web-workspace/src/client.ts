@@ -117,6 +117,7 @@ export function projectFleet(catalog: FleetCatalogResourceV1): Workspace {
       hidden: false,
       name: session.label,
       machine: "Local",
+      machineId: catalog.daemon.environmentId ?? catalog.daemon.instanceId,
       layout,
       paneCount: session.paneCount,
       workspaceName: routes.get(session.sessionId),

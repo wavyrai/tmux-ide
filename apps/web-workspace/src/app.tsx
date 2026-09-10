@@ -3,6 +3,7 @@ import { LiveWorkspace } from "./live-workspace";
 import { subscribeWorkspace, retryConnection } from "./client";
 import { HomeOverview } from "./home-overview";
 import { LiveSidebar } from "./components/workspace/live-sidebar";
+import { selectedSidebarPane } from "./design-workbench/sidebar-model";
 import { AppChrome } from "./design-workbench/app-chrome";
 import "./design-workbench/design-workbench.css";
 import { WidgetPane } from "./widget-pane";
@@ -500,7 +501,7 @@ export default function App() {
                     connection={connection}
                     workspace={workspace}
                     active={active?.id ?? ""}
-                    selected={focused ?? ""}
+                    selected={selectedSidebarPane(active ? leaves(active.layout) : [], focusedId)}
                     home={home}
                     onHome={() => setHome(true)}
                     onTerminals={() => setHome(false)}

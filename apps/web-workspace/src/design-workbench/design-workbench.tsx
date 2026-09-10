@@ -24,12 +24,22 @@ import { fixturePanes, type FixturePane } from "./fixture-content";
 import "./design-workbench.css";
 
 const initialWindows: WorkbenchWindow[] = [
-  { id: "agents", name: "agents", machine: "Local", session: "tmux-ide", layout: initialLayout },
+  {
+    id: "agents",
+    name: "agents",
+    machine: "Local",
+    machineId: "fixture.local",
+    session: "tmux-ide",
+    sessionId: "fixture.tmux-ide",
+    layout: initialLayout,
+  },
   {
     id: "widgets",
     name: "widgets",
     machine: "Local",
+    machineId: "fixture.local",
     session: "tmux-ide",
+    sessionId: "fixture.tmux-ide",
     layout: {
       type: "split",
       id: "widgets-split",
@@ -43,7 +53,9 @@ const initialWindows: WorkbenchWindow[] = [
     id: "api",
     name: "api",
     machine: "mini",
+    machineId: "fixture.mini",
     session: "api-service",
+    sessionId: "fixture.api-service",
     layout: { type: "pane", id: "remote" },
   },
 ];
@@ -72,7 +84,7 @@ export default function DesignWorkbench() {
   const theme = themes.find((t) => t.id === themeId) ?? themes[0]!;
   const current = windows.find((w) => w.id === active) ?? windows[0]!;
   const visibleWindows = windows.filter(
-    (w) => w.machine === current.machine && w.session === current.session,
+    (w) => w.machineId === current.machineId && w.sessionId === current.sessionId,
   );
   useEffect(() => {
     if (!root.current) return;
@@ -403,7 +415,9 @@ export default function DesignWorkbench() {
                     id,
                     name: "terminal",
                     machine: current.machine,
+                    machineId: current.machineId,
                     session: current.session,
+                    sessionId: current.sessionId,
                     layout: { type: "pane", id: paneId },
                   },
                 ]);
