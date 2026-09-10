@@ -565,7 +565,7 @@ async function launchTeamCockpit(): Promise<void> {
 async function runApp(appArgs: string[]): Promise<void> {
   const ssh = values.ssh;
   if (ssh !== undefined) {
-    const { SavedMachineSchema } = await import("@tmux-ide/contracts/saved-machines");
+    const { SavedMachineSchema } = await import("../packages/contracts/src/saved-machines.ts");
     if (ssh.some((alias) => !SavedMachineSchema.shape.sshTarget.safeParse(alias).success))
       throw new IdeError("--ssh requires an SSH alias or user@host", {
         code: "USAGE",
