@@ -156,6 +156,7 @@ it("creates on an empty host without attaching and disables session close", asyn
           height={24}
           theme={createSemanticThemeSnapshot({ mode: "dark" })}
           active={true}
+          initialName="scratch"
           onModalChange={() => {}}
           ports={ports}
         />
@@ -164,12 +165,18 @@ it("creates on an empty host without attaching and disables session close", asyn
     { width: 80, height: 24 },
   );
   await setup.renderOnce();
-  const rows = setup.captureCharFrame().split("\n");
-  const y = rows.findIndex((row) => row.includes("New on host"));
-  await setup.mockMouse.click(rows[y]!.indexOf("New on host") + 2, y, MouseButtons.LEFT);
+  owner.route({
+    name: "n",
+    eventType: "press",
+    ctrl: true,
+    meta: false,
+    shift: false,
+    preventDefault() {},
+    stopPropagation() {},
+  });
   await setup.renderOnce();
   expect(setup.captureCharFrame()).toContain("New session on Mini");
-  await setup.mockInput.typeText("scratch");
+  expect(setup.captureCharFrame()).toContain("scratch");
   owner.route({
     name: "enter",
     eventType: "press",

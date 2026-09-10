@@ -186,3 +186,23 @@ it("bounds pane membership to256 IDs and keeps selected window membership first"
     256,
   );
 });
+
+it("bounds parallel metadata work to two commands while keeping capture fenced", async () => {
+  let active = 0;
+  let peak = 0;
+  const session = "1\t$1\t123\tsession";
+  const id = discoverLiveSessionSummaries(() => session)[0].liveSessionId;
+  const run = async (args: string[]) => {
+    active++;
+    peak = Math.max(peak, active);
+    await Promise.resolve();
+    active--;
+    if (args.includes("-a")) return session;
+    if (args[0] === "list-windows") return "@1\tmain";
+    if (args[0] === "capture-pane") return "frame";
+    return "%1\t1\t1\t@1\t0";
+  };
+  expect((await createFleetPreviewCapture(run).snapshot(id))?.text).toBe("frame");
+  expect(peak).toBe(2);
+  expect(active).toBe(0);
+});

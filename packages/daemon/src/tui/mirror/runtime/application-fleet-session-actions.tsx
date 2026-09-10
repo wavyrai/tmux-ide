@@ -30,6 +30,7 @@ export function ApplicationFleetSessionActions(props: {
   height: number;
   theme: SemanticThemeSnapshot;
   active: boolean;
+  initialName?: string;
   onModalChange(open: boolean): void;
   onCreated?(result: WorkspaceSessionCreateResult, machineId: string): void;
   ports?: FleetSessionActionPorts;
@@ -86,6 +87,7 @@ export function ApplicationFleetSessionActions(props: {
     cancel();
     setMessage("");
     setMode(next);
+    if (next === "create") setValue(props.initialName ?? "");
     props.onModalChange(true);
   };
   const submit = async () => {
@@ -154,7 +156,14 @@ export function ApplicationFleetSessionActions(props: {
     }
   };
   useKeyboardRoute((event) => {
-    if (!mode() || !props.active || event.eventType !== "press") return false;
+    if (!props.active || event.eventType !== "press") return false;
+    if (!mode() && event.ctrl && !event.meta && ["n", "x"].includes(event.name.toLowerCase())) {
+      event.preventDefault();
+      event.stopPropagation();
+      begin(event.name.toLowerCase() === "n" ? "create" : "close");
+      return true;
+    }
+    if (!mode()) return false;
     const key = event.name.toLowerCase();
     if (!["escape", "enter", "return", "up", "down", "pageup", "pagedown", "tab"].includes(key))
       return false;
@@ -171,14 +180,14 @@ export function ApplicationFleetSessionActions(props: {
           <TuiButton
             theme={props.theme}
             size="compact"
-            label="New on host"
+            label="New on host ^N"
             disabled={!props.active || selected()?.fleet?.disabled || busy()}
             onPress={() => begin("create")}
           />
           <TuiButton
             theme={props.theme}
             size="compact"
-            label="Close session"
+            label="Close session ^X"
             variant="danger"
             disabled={
               !props.active ||

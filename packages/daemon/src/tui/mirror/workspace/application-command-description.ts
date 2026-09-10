@@ -1,3 +1,5 @@
+import { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
+export { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
 import { PANE_ACTION_MENU_ITEMS } from "./pane-action-menu-model.ts";
 export interface FleetPaletteTarget {
   readonly machineId: string;
@@ -5,6 +7,8 @@ export interface FleetPaletteTarget {
   readonly hostLabel: string;
   readonly daemonInstanceId: string;
   readonly disabled?: boolean;
+  readonly favorite?: boolean;
+  readonly recentRank?: number;
   readonly agentActivities?: readonly { paneId: string; attention: boolean; activity: string }[];
 }
 
@@ -104,10 +108,26 @@ export function filterApplicationCommands(
   commands: readonly ApplicationPaletteCommand[],
   query: string,
 ) {
-  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  return commands.filter((command) => {
-    const { label, detail } = applicationCommandDescription(command);
-    const text = `${label} ${detail}`.toLocaleLowerCase();
-    return terms.every((term) => text.includes(term));
-  });
+  return commands
+    .map((command, index) => {
+      const { label, detail } = applicationCommandDescription(command);
+      const score = commandSearchMatch(`${label} ${detail}`, query)?.score;
+      const fleet = typeof command === "object" ? command.fleet : undefined;
+      return {
+        command,
+        index,
+        score,
+        favorite: Boolean(fleet?.favorite),
+        recent: fleet?.recentRank ?? 1000,
+      };
+    })
+    .filter((row) => row.score !== undefined)
+    .sort(
+      (a, b) =>
+        b.score! - a.score! ||
+        Number(b.favorite) - Number(a.favorite) ||
+        a.recent - b.recent ||
+        a.index - b.index,
+    )
+    .map((row) => row.command);
 }

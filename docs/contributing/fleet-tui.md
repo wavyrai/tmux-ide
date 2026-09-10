@@ -1,6 +1,6 @@
 # Distributed daemons and one TUI
 
-Implementation cards and the architecture plan live on [Sfora](https://www.sfora.ai/org/wavyr/notes/mx72n2ekkdz9xaz218v94k9xe58e5fpe). Fleet enrollment and tabs arrived in beta 16. The F5 previews, actions and navigation improvements below target beta 17.
+Implementation cards and the architecture plan live on [Sfora](https://www.sfora.ai/org/wavyr/notes/mx72n2ekkdz9xaz218v94k9xe58e5fpe). Fleet enrollment and tabs arrived in beta 16. Beta 18 unifies F5/F6 navigation and previews with responsive layouts and bounded preview memory.
 
 Each computer owns its daemon and ordinary tmux sessions. Any enrolled computer can run a TUI and connect directly to every reachable host. The computer that first configured the directory can be offline. SSH configuration, host trust, and authentication remain local to each computer.
 
@@ -66,9 +66,9 @@ sequenceDiagram
 | Control                           | Action                                                  |
 | --------------------------------- | ------------------------------------------------------- |
 | F5                                | Search commands and all machines, with window previews  |
-| Ctrl+Space in F5                  | Toggle search / normal navigation mode                  |
-| Ctrl+Left / Ctrl+Right in F5      | Preview previous / next window without activating it    |
-| Ctrl+P / Ctrl+E in F5             | Hide/show / expand/restore preview                      |
+| Ctrl+Space in F5/F6               | Toggle search / normal navigation mode                  |
+| Ctrl+Left / Ctrl+Right in F5/F6   | Preview previous / next window without activating it    |
+| Ctrl+P / Ctrl+E in F5/F6          | Hide/show / expand/restore preview                      |
 | j/k, g/G, Ctrl+U/D in normal mode | Move, first/last, half-page                             |
 | ? in normal mode or sidebar       | Show keyboard help                                      |
 | PageUp / PageDown                 | Move through command results or sidebar                 |
@@ -103,7 +103,7 @@ Four concurrent handshake slots bound large fleets; selecting a queued machine r
 
 Up to eight session tabs retain their explicit SSH route and live session identity. F9 switches between hosts without searching again. Only the active tab owns terminal streams; suspended tabs retain targets only. Closing a tab leaves its tmux session running. Reopening an unavailable or replaced session never silently selects a different route or a new session with the same name.
 
-F6 requests one passive snapshot after selection settles for 180 ms. F5 previews refresh one second after each completed capture while visible; errors back off to two, four and eight seconds. Hiding or closing the preview, opening F6 over it, or losing renderer focus cancels requests. Ctrl+Left/Right browses window snapshots without selecting the remote tmux window. Window, session and collapsed-host activity uses existing agent metadata; unknown/offline state is explicit. Metadata refreshes do not repeat that capture. The daemon permits one capture at a time, spaces requests by at least 250 ms and cancels captures after 1.5 seconds. Snapshots contain at most 24 lines and 8,192 characters of text, are never persisted, and never attach, resize or send terminal input. Small terminals omit the preview. Older daemons display an unavailable preview while navigation remains usable.
+F5 and F6 share the same preview component and request owner. After selection settles for 180 ms, previews refresh one second after each completed capture while visible; errors back off to two, four and eight seconds. Hiding or closing the preview, opening F6 over it, or losing renderer focus cancels requests. Ctrl+Left/Right browses window snapshots without selecting the remote tmux window. Window, session and collapsed-host activity uses existing agent metadata; unknown/offline state is explicit. Metadata refreshes do not repeat that capture. The daemon permits one capture at a time, spaces requests by at least 250 ms and cancels captures after 1.5 seconds. Snapshots contain at most 24 lines and 8,192 characters of text, are never persisted, and never attach, resize or send terminal input. Small terminals omit the preview. Older daemons display an unavailable preview while navigation remains usable.
 
 ```mermaid
 flowchart LR
@@ -135,3 +135,17 @@ F5 includes machine rows even for empty hosts. Select one and choose **New on ho
 Initial terminal negotiation and seed delivery prioritize visible panes. Ready visible windows can activate while hidden panes finish; unseeded/reseeding panes reject input. Deferred geometry coalesces to the latest dimensions, and missing hidden seeds trigger repair. A missing visible pane still blocks that window intentionally. These changes address the hidden-pane readiness barrier; they are not a guarantee of instantaneous activation over every network.
 
 Run `node scripts/fleet-session-actions-smoke.mjs` after `pnpm build:cli` for an isolated real HTTP create/close/replacement test. It owns a private tmux server and state directory and cleans both up. The installed-package journey includes warm F5 switching measurements alongside startup and recovery evidence.
+
+## Beta 18 command center
+
+F5, F6 and the F7 attention filter use the same responsive command surface. Wide terminals show results beside the preview; narrower terminals stack them. Expand hides the list entirely. The component library owns dialogs, rows, buttons, badges, key hints, themes and pointer behavior. Very small terminals prioritize results over extra chrome.
+
+Search uses the existing shared fuzzy matcher, now optimized with a suffix scan while preserving scores and tie-breaking. Matching letters are highlighted as runs. Favorites and recently visited sessions break equal-score ties, and the selected identity survives catalog reorder. Ctrl+H toggles local-only/all-host results. Page keys use the actual visible list height; Ctrl+U/D in normal mode moves half that height.
+
+Ctrl+N creates on the highlighted host, Ctrl+X opens exact-session close confirmation, and Ctrl+F toggles session favorites. If a search has no results after a host was selected, Ctrl+N prefills that search as a name; the dialog explicitly identifies the host before submission. Ctrl+R retries the selected host.
+
+Preview revisits immediately show a recent memory snapshot marked refreshing. At most 24 snapshots are retained, expire after 30 seconds, and are keyed by route, daemon incarnation, connection epoch and selected window. Nothing is written to disk, and stale content never grants input authority. The selected preview window is remembered in a bounded memory map. Dialogs pause preview work.
+
+The daemon runs independent metadata reads in at most two concurrent lanes, under the existing capture deadline and incarnation checks. F6 no longer builds a duplicate fleet catalog. The UI computes search highlights once per visible row instead of once per character.
+
+Connection feedback names the host and session and offers Choose another session directly. Existing sidebar navigation remains available. Retaining terminal renderers across session tabs is not enabled: the switcher cache is passive text, not an input-ready terminal. Background terminal streams and custom host color overrides remain separate work.

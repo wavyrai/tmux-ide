@@ -10272,7 +10272,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.17",
+      version: "2.9.0-beta.18",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
@@ -18446,12 +18446,14 @@ function createFleetPreviewCapture(run) {
       ],
       signal
     )).trim().split("\n").map((line) => line.split("	"));
-    const rows = await readPanes();
     const names = /* @__PURE__ */ new Map();
-    const windowNames = await run(
-      ["list-windows", "-t", `=${session.sessionName}`, "-F", "#{window_id}	#{window_name}"],
-      signal
-    );
+    const [rows, windowNames] = await Promise.all([
+      readPanes(),
+      run(
+        ["list-windows", "-t", `=${session.sessionName}`, "-F", "#{window_id}	#{window_name}"],
+        signal
+      )
+    ]);
     for (const line of windowNames.split("\n")) {
       const tab = line.indexOf("	");
       if (tab > 0)
@@ -18498,8 +18500,9 @@ function createFleetPreviewCapture(run) {
     const pane = candidates.find((r) => r[2] === "1")?.[0] ?? candidates[0]?.[0];
     if (!pane || !/^%\d+$/u.test(pane)) return null;
     const captured = await run(["capture-pane", "-p", "-t", pane, "-S", "-24"], signal);
-    if (!(await readSessions()).some((s) => s.liveSessionId === liveSessionId2)) return null;
-    if (selectedWindowId && !(await readPanes()).some((r) => r[3] === selectedWindowId && r[0] === pane))
+    const [currentSessions, currentPanes] = await Promise.all([readSessions(), readPanes()]);
+    if (!currentSessions.some((s) => s.liveSessionId === liveSessionId2)) return null;
+    if (selectedWindowId && !currentPanes.some((r) => r[3] === selectedWindowId && r[0] === pane))
       return null;
     return {
       windows,

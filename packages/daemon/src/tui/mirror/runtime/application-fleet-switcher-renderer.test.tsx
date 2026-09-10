@@ -60,9 +60,10 @@ it("filters across hosts and keeps selection on its identity when rows reorder",
   await setup.renderOnce();
   key("enter");
   expect(opened).toEqual([]);
-  await setup.mockInput.typeText("mini");
+  for (const letter of "mini") key(letter);
   await setup.renderOnce();
-  expect(setup.captureCharFrame()).toContain("1 matches");
+  expect(setup.captureCharFrame()).toContain("Open session · api · mini");
+  expect(setup.captureCharFrame()).not.toContain("Open session · api · gpu");
   key("f", true);
   key("enter");
   expect(favorite).toEqual(["mini"]);
@@ -87,6 +88,6 @@ it("renders a narrow attention inbox without opening cached inactive agents", as
     { width: 30, height: 10 },
   );
   await setup.renderOnce();
-  expect(setup.captureCharFrame()).toContain("0 matches");
+  expect(setup.captureCharFrame()).toContain("No matches");
   setup.renderer.destroy();
 });

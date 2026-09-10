@@ -334,6 +334,7 @@ describe("production OpenTUI v2 data path", () => {
     // Four local fleet persistence modules add owner-fenced cache and profile writes.
     // Preview request owner, bounded tab targets and fixed-route connection adapter.
     // Beta 17 adds bounded preview metadata, preview UI, action UI and fleet presentation.
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(146);
+    // Beta 18 reuses the existing shared fuzzy matcher for both switcher entry points.
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(147);
   });
 });

@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 
 // Hermetic SSH proofs: no remote host, real SSH process, or live tmux mutation.
 const sshTests = [
+  "packages/daemon/src/tui/team/fuzzy.test.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-palette-search-owner.test.ts",
   "packages/daemon/src/tui/mirror/runtime/fleet-presentation.test.ts",
   "packages/daemon/src/tui/mirror/runtime/fleet-lifecycle-client.test.ts",
   "packages/daemon/src/lib/fleet-session-kill.test.ts",

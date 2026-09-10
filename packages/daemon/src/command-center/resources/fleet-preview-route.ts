@@ -53,14 +53,18 @@ export function createFleetPreviewCapture(
         .trim()
         .split("\n")
         .map((line) => line.split("\t"));
-    const rows = await readPanes();
     // Names are untrusted display text. Keep them out of the pane membership
     // format so embedded newlines cannot manufacture a capture target.
     const names = new Map<string, string>();
-    const windowNames = await run(
-      ["list-windows", "-t", `=${session.sessionName}`, "-F", "#{window_id}\t#{window_name}"],
-      signal,
-    );
+    // Independent metadata reads share one capture's deadline and run in two
+    // bounded lanes. Incarnation checks still surround the actual capture.
+    const [rows, windowNames] = await Promise.all([
+      readPanes(),
+      run(
+        ["list-windows", "-t", `=${session.sessionName}`, "-F", "#{window_id}\t#{window_name}"],
+        signal,
+      ),
+    ]);
     for (const line of windowNames.split("\n")) {
       const tab = line.indexOf("\t");
       if (tab > 0)
@@ -116,11 +120,9 @@ export function createFleetPreviewCapture(
     if (!pane || !/^%\d+$/u.test(pane)) return null;
     // Passive capture never changes active windows, size, input or terminal ownership.
     const captured = await run(["capture-pane", "-p", "-t", pane, "-S", "-24"], signal);
-    if (!(await readSessions()).some((s) => s.liveSessionId === liveSessionId)) return null;
-    if (
-      selectedWindowId &&
-      !(await readPanes()).some((r) => r[3] === selectedWindowId && r[0] === pane)
-    )
+    const [currentSessions, currentPanes] = await Promise.all([readSessions(), readPanes()]);
+    if (!currentSessions.some((s) => s.liveSessionId === liveSessionId)) return null;
+    if (selectedWindowId && !currentPanes.some((r) => r[3] === selectedWindowId && r[0] === pane))
       return null;
     return {
       windows,

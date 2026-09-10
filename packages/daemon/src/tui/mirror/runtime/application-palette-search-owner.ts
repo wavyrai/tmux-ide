@@ -18,13 +18,26 @@ export function createApplicationPaletteSearchOwner(options: {
   open: () => boolean;
   activate: (command: ApplicationPaletteCommand, source: "keyboard" | "mouse") => void;
   close: () => void;
+  pageSize?: () => number;
   onChange: () => void;
 }) {
+  const [localOnly, setLocalOnly] = createSignal(false);
+  const [viewport, setViewport] = createSignal(10);
+  const pageSize = () => options.pageSize?.() ?? viewport();
   const [normal, setNormal] = createSignal(false);
   const [help, setHelp] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
-  const commands = createMemo(() => filterApplicationCommands(options.commands(), query()));
+  const commands = createMemo(() =>
+    filterApplicationCommands(
+      options
+        .commands()
+        .filter(
+          (c) => !localOnly() || typeof c === "string" || !c.fleet || c.fleet.machineId === "local",
+        ),
+      query(),
+    ),
+  );
   const selection = () =>
     Math.max(
       0,
@@ -45,12 +58,15 @@ export function createApplicationPaletteSearchOwner(options: {
   };
   return {
     query,
+    setViewport,
+    setQuery: updateQuery,
     keyboardHint: () =>
-      help()
-        ? "Normal: j/k g/G Ctrl-U/D · i search · Ctrl-←/→ windows · Ctrl-P preview · Ctrl-E expand"
+      (localOnly() ? "LOCAL ONLY · ^H all hosts · " : "") +
+      (help()
+        ? "j/k g/G ^U/D · i search · ^N new · ^X close · ^F favorite · ^←/→ windows · ^P hide · ^E expand"
         : normal()
           ? "NORMAL · i search · ? help · Ctrl-Space mode"
-          : "SEARCH · Ctrl-Space navigation · Ctrl-←/→ windows",
+          : "SEARCH · ^Space navigation · ^H local/all hosts"),
     commands,
     selection,
     select,
@@ -65,6 +81,10 @@ export function createApplicationPaletteSearchOwner(options: {
       if (!options.open()) return false;
       if (event.eventType === "release") return true;
       const name = event.name.toLowerCase();
+      if (event.ctrl && name === "h") {
+        setLocalOnly(!localOnly());
+        return true;
+      }
       if (event.ctrl && name === "space") {
         setNormal(!normal());
         return true;
@@ -83,15 +103,16 @@ export function createApplicationPaletteSearchOwner(options: {
           return true;
         }
         const last = Math.max(0, commands().length - 1);
+        const halfPage = Math.max(1, Math.floor(pageSize() / 2));
         const delta =
           name === "j"
             ? 1
             : name === "k"
               ? -1
               : event.ctrl && name === "d"
-                ? 5
+                ? halfPage
                 : event.ctrl && name === "u"
-                  ? -5
+                  ? -halfPage
                   : 0;
         if (name === "g") {
           select(event.shift ? last : 0);
@@ -111,7 +132,13 @@ export function createApplicationPaletteSearchOwner(options: {
             ? 0
             : name === "end"
               ? last
-              : Math.max(0, Math.min(last, selection() + (name === "pageup" ? -5 : 5))),
+              : Math.max(
+                  0,
+                  Math.min(
+                    last,
+                    selection() + (name === "pageup" ? -1 : 1) * Math.max(1, pageSize()),
+                  ),
+                ),
         );
         return true;
       }

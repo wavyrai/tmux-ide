@@ -9,11 +9,20 @@ import { applicationMachineAuthorityManager } from "./application-machine-author
 import {
   createAdaptiveFleetPreviewOwner,
   fleetPreviewActivity,
+  fleetPreviewMemory,
   readFleetWindowPreview,
   type AdaptiveFleetPreviewState,
 } from "./application-fleet-preview.ts";
 
 import { fleetHostColor } from "./fleet-presentation.ts";
+
+const rememberedWindows = new Map<string, string>();
+const rememberWindow = (key: string, window: string) => {
+  rememberedWindows.delete(key);
+  rememberedWindows.set(key, window);
+  while (rememberedWindows.size > 24)
+    rememberedWindows.delete(rememberedWindows.keys().next().value!);
+};
 
 /** F5 browsing is passive and pinned to the highlighted command's exact authority. */
 export function ApplicationPalettePreview(props: {
@@ -33,7 +42,7 @@ export function ApplicationPalettePreview(props: {
     snapshot: null,
     stale: false,
   });
-  const owner = createAdaptiveFleetPreviewOwner(setState);
+  const owner = createAdaptiveFleetPreviewOwner(setState, { cache: fleetPreviewMemory });
   const stop = applicationMachineAuthorityManager.subscribe(() => setRevision((v) => v + 1));
   const command = () => (typeof props.command === "object" ? props.command : undefined);
   const target = () => command()?.fleet;
@@ -44,7 +53,7 @@ export function ApplicationPalettePreview(props: {
     const next = identity();
     if (next !== previousIdentity) {
       previousIdentity = next;
-      setWindowId(undefined);
+      setWindowId(rememberedWindows.get(next));
     }
   });
   createEffect(() => {
@@ -63,7 +72,21 @@ export function ApplicationPalettePreview(props: {
       handle.read()?.instanceId === fleet.daemonInstanceId;
     owner.select(
       usable
-        ? (signal) => readFleetWindowPreview(handle, fleet.liveSessionId, signal, selected)
+        ? async (signal) => {
+            const result = await readFleetWindowPreview(
+              handle,
+              fleet.liveSessionId,
+              signal,
+              selected,
+            );
+            // A remembered window may have been closed since the last visit.
+            // Fall back to the session's current window instead of retrying it forever.
+            if (selected && result.status === "unavailable" && !signal.aborted) {
+              rememberedWindows.delete(identity());
+              setWindowId(undefined);
+            }
+            return result;
+          }
         : undefined,
       JSON.stringify([identity(), handle?.endpoint().epoch, selected]),
     );
@@ -80,7 +103,9 @@ export function ApplicationPalettePreview(props: {
       0,
       windows.findIndex((w) => w.id === snapshot?.selectedWindowId),
     );
-    setWindowId(windows[(index + direction + windows.length) % windows.length]?.id);
+    const next = windows[(index + direction + windows.length) % windows.length]?.id;
+    if (next) rememberWindow(identity(), next);
+    setWindowId(next);
   };
   const toggleExpanded = () => {
     const next = !expanded();
@@ -182,7 +207,9 @@ export function ApplicationPalettePreview(props: {
           fg={props.theme.roles.text.muted}
           content={clipTerminal(
             state().stale
-              ? "Read-only · stale · retrying"
+              ? state().status === "loading"
+                ? "Read-only · refreshing cached preview"
+                : "Read-only · stale · retrying"
               : state().status === "ready"
                 ? `Read-only · ${activity()}`
                 : state().status === "loading"

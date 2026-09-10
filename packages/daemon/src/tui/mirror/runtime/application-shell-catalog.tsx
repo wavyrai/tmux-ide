@@ -52,6 +52,8 @@ export interface ApplicationCatalogShellProps {
   readonly paletteKeyboardHint?: Accessor<string>;
   readonly paletteQuery?: Accessor<string>;
   readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
+  readonly onPaletteViewport?: (rows: number) => void;
+  readonly onPaletteFavorite?: (command: ApplicationPaletteCommand) => void;
   readonly onPaletteSelect?: (index: number) => void;
   readonly paletteCommands?: Accessor<readonly ApplicationPaletteCommand[]>;
   readonly paletteCloseArmed?: Accessor<boolean>;
@@ -89,6 +91,7 @@ function CatalogTerminalSurface(props: {
   readonly note: string | null;
   readonly connection?: ApplicationConnectionFeedback | null;
   readonly onCancelOpen?: () => void;
+  readonly onChooseSession?: () => void;
   readonly onRetryOpen?: () => void;
   readonly onCopyConnectionDetails?: () => void;
   readonly width: number;
@@ -122,7 +125,11 @@ function CatalogTerminalSurface(props: {
       overflow="hidden"
     >
       <text fg={props.theme.roles.text.primary}>
-        <strong>Terminals</strong>
+        <strong>
+          {props.connection
+            ? `${props.machineLabel ?? "Machine"} · ${props.connection.session ?? "Connecting"}`
+            : "Terminals"}
+        </strong>
       </text>
       <text fg={props.theme.roles.text.secondary}>{clipTerminal(title(), props.width - 4)}</text>
       <For each={detail() ? [detail()!] : []}>
@@ -135,6 +142,11 @@ function CatalogTerminalSurface(props: {
           <Show when={props.connection?.failed}>
             <Button theme={props.theme} label="Retry" onPress={() => props.onRetryOpen?.()} />
           </Show>
+          <Button
+            theme={props.theme}
+            label="Choose another session · F5"
+            onPress={() => props.onChooseSession?.()}
+          />
           <Button theme={props.theme} label="Back to Home" onPress={() => props.onCancelOpen?.()} />
           <Button
             theme={props.theme}
@@ -271,6 +283,8 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                 onModalChange={props.onPaletteModalChange}
                 disabledReason={props.paletteDisabledReason}
                 onSelect={props.onPaletteSelect}
+                onViewport={props.onPaletteViewport}
+                onFavorite={props.onPaletteFavorite}
                 closeArmed={props.paletteCloseArmed?.() ?? false}
                 commands={props.paletteCommands?.() ?? applicationPaletteCommands(null)}
                 theme={props.theme}
@@ -401,6 +415,7 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                   note={note()}
                   connection={props.connectionFeedback?.()}
                   onCancelOpen={props.onCancelOpen}
+                  onChooseSession={() => props.onSetPaletteOpen(true, "mouse")}
                   onRetryOpen={() => {
                     const session = props.connectionFeedback?.()?.session;
                     if (session) props.onOpenSession(session, "mouse");

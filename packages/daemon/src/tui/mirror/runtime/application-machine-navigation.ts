@@ -1,9 +1,7 @@
 import { fleetHostColor } from "./fleet-presentation.ts";
 import type { ApplicationPaletteCommand } from "./application-palette-input.ts";
 import { createFleetTabs, type FleetTabTarget } from "./application-fleet-tabs.ts";
-import { readFleetPreview } from "./application-fleet-preview.ts";
 import { saveMachineProfiles } from "../../../lib/local-fleet-request.ts";
-import type { FleetSwitcherRow } from "./application-fleet-switcher.tsx";
 import { createApplicationFleetPreferences } from "./application-fleet-preferences.ts";
 import {
   createApplicationMachineAgents,
@@ -268,33 +266,46 @@ export function createApplicationMachineNavigation(options: {
     },
     closeSwitcher: () => setSwitching(false),
     paletteCommands(): readonly ApplicationPaletteCommand[] {
+      const groupsById = new Map(agentGroups().map((group) => [group.machineId, group]));
       return snapshot().groups.flatMap((group) => {
+        const agentGroup = groupsById.get(group.id);
+        const agentsBySession = new Map<string, ApplicationMachineAgent[]>();
+        for (const agent of agentGroup?.agents ?? []) {
+          if (!agent.liveSessionId || !agent.paneId) continue;
+          const list = agentsBySession.get(agent.liveSessionId) ?? [];
+          list.push(agent);
+          agentsBySession.set(agent.liveSessionId, list);
+        }
         const daemon = manager.getMachine(group.id)?.read();
         const sessions = group.sessions.flatMap((session): ApplicationPaletteCommand[] => {
           if (!session.liveSessionId) return [];
           const fleet = {
             machineId: group.id,
+            favorite: saved().favorites.includes(session.id),
+            recentRank: saved().recent.includes(session.id)
+              ? saved().recent.indexOf(session.id)
+              : 1000,
             liveSessionId: session.liveSessionId,
             hostLabel: group.label,
-            agentActivities: agentGroups().find((g) => g.machineId === group.id)?.available
-              ? (agentGroups().find((g) => g.machineId === group.id)?.agents ?? [])
-                  .filter((a) => a.liveSessionId === session.liveSessionId && a.paneId)
-                  .map((a) => ({ paneId: a.paneId!, attention: a.attention, activity: a.activity }))
+            agentActivities: agentGroup?.available
+              ? (agentsBySession.get(session.liveSessionId) ?? []).map((a) => ({
+                  paneId: a.paneId!,
+                  attention: a.attention,
+                  activity: a.activity,
+                }))
               : undefined,
             daemonInstanceId: daemon?.instanceId ?? "",
             disabled: session.disabled || group.state !== "ready",
           };
           return [
             { kind: "open-session", sessionName: session.name, label: session.name, fleet },
-            ...(agentGroups().find((g) => g.machineId === group.id)?.agents ?? [])
-              .filter((a) => a.liveSessionId === session.liveSessionId && a.paneId)
-              .map((a) => ({
-                kind: "jump-agent" as const,
-                sessionName: session.name,
-                paneId: a.paneId!,
-                label: a.name,
-                fleet: { ...fleet, disabled: fleet.disabled || a.disabled },
-              })),
+            ...(agentsBySession.get(session.liveSessionId) ?? []).map((a) => ({
+              kind: "jump-agent" as const,
+              sessionName: session.name,
+              paneId: a.paneId!,
+              label: a.name,
+              fleet: { ...fleet, disabled: fleet.disabled || a.disabled },
+            })),
           ];
         });
         return [
@@ -313,6 +324,19 @@ export function createApplicationMachineNavigation(options: {
           ...sessions,
         ];
       });
+    },
+    togglePaletteFavorite(command: ApplicationPaletteCommand) {
+      if (typeof command !== "object" || command.kind !== "open-session" || !command.fleet) return;
+      const target = command.fleet;
+      const session = snapshot()
+        .groups.find((g) => g.id === target.machineId)
+        ?.sessions.find((s) => s.liveSessionId === target.liveSessionId);
+      if (session)
+        preferences.change({
+          type: "favorite",
+          key: session.id,
+          enabled: !saved().favorites.includes(session.id),
+        });
     },
     async openPalette(
       command: Exclude<ApplicationPaletteCommand, string>,
@@ -347,83 +371,6 @@ export function createApplicationMachineNavigation(options: {
       if (command.kind === "jump-agent")
         sidebar.onOpenAgent?.(target.machineId, session.name, command.paneId, source);
       else await open(target.machineId, session.name, source, true, target.liveSessionId);
-    },
-    switcherRows: (): readonly FleetSwitcherRow[] => {
-      const favorite = new Set(saved().favorites);
-      const recent = saved().recent;
-      const rows: FleetSwitcherRow[] = snapshot().groups.flatMap((group) => [
-        {
-          key: `machine:${group.id}`,
-          label: group.label,
-          detail: `Machine · ${group.state}`,
-          favorite: false,
-          attention: false,
-          disabled: false,
-          canFavorite: false,
-          open: () => sidebar.onSelectMachine(group.id, "keyboard"),
-          toggleFavorite: () => {},
-        },
-        ...group.sessions.map(
-          (session): FleetSwitcherRow => ({
-            key: session.id,
-            previewKey: JSON.stringify([
-              session.id,
-              manager.getMachine(group.id)?.endpoint().epoch,
-            ]),
-            preview: session.liveSessionId
-              ? (signal) => {
-                  const handle = manager.getMachine(group.id);
-                  return handle
-                    ? readFleetPreview(handle, session.liveSessionId!, signal)
-                    : Promise.resolve("Preview unavailable");
-                }
-              : undefined,
-            label: session.name,
-            detail: group.label,
-            favorite: favorite.has(session.id),
-            attention: false,
-            disabled: session.disabled,
-            canFavorite: true,
-            open: () => {
-              const current = catalog
-                .getSnapshot()
-                .groups.find((g) => g.id === group.id)
-                ?.sessions.find((s) => s.id === session.id && !s.disabled);
-              if (current) void open(group.id, current.name, "keyboard");
-            },
-            toggleFavorite: () =>
-              preferences.change({
-                type: "favorite",
-                key: session.id,
-                enabled: !favorite.has(session.id),
-              }),
-          }),
-        ),
-        ...(agentGroups().find((g) => g.machineId === group.id)?.agents ?? []).map(
-          (agent): FleetSwitcherRow => ({
-            key: agent.id,
-            label: agent.name,
-            detail: `${group.label} / ${agent.sessionName}`,
-            favorite: false,
-            attention: agent.attention && !agent.disabled,
-            disabled: agent.disabled || group.state !== "ready",
-            canFavorite: false,
-            open: () => {
-              if (agent.paneId)
-                sidebar.onOpenAgent?.(group.id, agent.sessionName, agent.paneId, "keyboard");
-            },
-            toggleFavorite: () => {},
-          }),
-        ),
-      ]);
-      return rows.sort(
-        (a, b) =>
-          Number(b.favorite) - Number(a.favorite) ||
-          Number(b.attention) - Number(a.attention) ||
-          (recent.includes(a.key) ? recent.indexOf(a.key) : 1000) -
-            (recent.includes(b.key) ? recent.indexOf(b.key) : 1000) ||
-          a.label.localeCompare(b.label),
-      );
     },
     adding,
     alias,

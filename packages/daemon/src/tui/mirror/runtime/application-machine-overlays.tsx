@@ -8,6 +8,7 @@ export function ApplicationMachineOverlays(props: {
   machines: ReturnType<typeof createApplicationMachineNavigation>;
   viewport: { width: number; height: number };
   theme: SemanticThemeSnapshot;
+  active?: boolean;
 }) {
   return (
     <>
@@ -15,7 +16,13 @@ export function ApplicationMachineOverlays(props: {
         <ApplicationFleetSwitcher
           open={true}
           attentionOnly={props.machines.attentionOnly()}
-          rows={props.machines.switcherRows()}
+          rows={[]}
+          commands={props.machines.paletteCommands()}
+          onActivate={(c) => {
+            if (typeof c === "object") void props.machines.openPalette(c, "keyboard");
+          }}
+          onFavorite={props.machines.togglePaletteFavorite}
+          active={props.active}
           onClose={props.machines.closeSwitcher}
           width={props.viewport.width}
           height={props.viewport.height}

@@ -90,6 +90,8 @@ export interface ApplicationShellViewProps {
   readonly onPaletteModalChange?: (open: boolean) => void;
   readonly paletteQuery?: Accessor<string>;
   readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
+  readonly onPaletteViewport?: (rows: number) => void;
+  readonly onPaletteFavorite?: (command: ApplicationPaletteCommand) => void;
   readonly onPaletteSelect?: (index: number) => void;
   readonly paletteCommands?: Accessor<readonly ApplicationPaletteCommand[]>;
   readonly terminalRendererSource: Accessor<{
@@ -254,6 +256,8 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
           onPaletteModalChange={props.onPaletteModalChange}
           paletteDisabledReason={props.paletteDisabledReason}
           onPaletteSelect={props.onPaletteSelect}
+          onPaletteViewport={props.onPaletteViewport}
+          onPaletteFavorite={props.onPaletteFavorite}
           paletteCommands={props.paletteCommands}
           paletteCloseArmed={props.paletteCloseArmed}
           theme={props.theme}
@@ -304,6 +308,8 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   onModalChange={props.onPaletteModalChange}
                   disabledReason={props.paletteDisabledReason}
                   onSelect={props.onPaletteSelect}
+                  onViewport={props.onPaletteViewport}
+                  onFavorite={props.onPaletteFavorite}
                   closeArmed={props.paletteCloseArmed?.() ?? false}
                   commands={
                     props.paletteCommands?.() ?? applicationPaletteCommands(props.semantic())

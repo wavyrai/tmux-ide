@@ -124,3 +124,33 @@ it("keeps route identities distinct and supports explicit normal mode without ea
     expect(owner.query()).toBe("j");
     dispose();
   }));
+
+it("uses the rendered viewport for page and half-page movement", () =>
+  createRoot((dispose) => {
+    const owner = createApplicationPaletteSearchOwner({
+      commands: () =>
+        applicationPaletteCommands(
+          null,
+          Array.from({ length: 40 }, (_, i) => `session-${i}`),
+        ),
+      open: () => true,
+      activate: vi.fn(),
+      close: vi.fn(),
+      onChange: vi.fn(),
+    });
+    owner.setViewport(16);
+    owner.handleKey(key("pagedown"));
+    expect(owner.selection()).toBe(16);
+    owner.handleKey({ ...key("space"), ctrl: true });
+    owner.handleKey({ ...key("u"), ctrl: true });
+    expect(owner.selection()).toBe(8);
+    dispose();
+  }));
+it("ranks fuzzy matches while keeping equal matches deterministic", () => {
+  const commands: ApplicationPaletteCommand[] = [
+    { kind: "open-session", sessionName: "backend-service", label: "backend-service" },
+    { kind: "open-session", sessionName: "build", label: "build" },
+  ];
+  expect(filterApplicationCommands(commands, "bksvc")).toEqual([commands[0]]);
+  expect(filterApplicationCommands(commands, "")).toEqual(commands);
+});

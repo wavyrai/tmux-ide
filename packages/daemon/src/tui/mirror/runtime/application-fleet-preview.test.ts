@@ -184,3 +184,28 @@ it("summarizes only cached agents in the selected window and preserves unknown m
   expect(fleetPreviewActivity(undefined, agents)).toBe("? activity");
   expect(fleetPreviewActivity(["%1"], undefined)).toBe("? activity");
 });
+
+import { createFleetPreviewCache } from "./application-fleet-preview.ts";
+it("revisits exact previews immediately, bounds retained entries, and expires old content", async () => {
+  vi.useFakeTimers();
+  const cache = createFleetPreviewCache();
+  const snapshot = { windows: [], selectedWindowId: null, text: "recent" };
+  const read = vi.fn(async (): Promise<FleetPreviewResult> => ({ status: "ready", snapshot }));
+  const publish = vi.fn();
+  const owner = createAdaptiveFleetPreviewOwner(publish, { cache });
+  owner.select(read, "mini/generation-1/session-1/epoch-1");
+  await vi.advanceTimersByTimeAsync(180);
+  owner.select();
+  owner.select(read, "mini/generation-1/session-1/epoch-1");
+  expect(publish).toHaveBeenLastCalledWith({ status: "loading", snapshot, stale: true });
+  expect(read).toHaveBeenCalledOnce();
+  owner.select(read, "mini/generation-2/session-1/epoch-2");
+  expect(publish).toHaveBeenLastCalledWith({ status: "idle", snapshot: null, stale: false });
+  owner.dispose();
+  await vi.advanceTimersByTimeAsync(30_001);
+  expect(cache.get("mini/generation-1/session-1/epoch-1")).toBeNull();
+  for (let i = 0; i < 25; i++) cache.set(String(i), snapshot);
+  expect(cache.get("0")).toBeNull();
+  expect(cache.get("24")).toEqual(snapshot);
+  expect(vi.getTimerCount()).toBe(0);
+});

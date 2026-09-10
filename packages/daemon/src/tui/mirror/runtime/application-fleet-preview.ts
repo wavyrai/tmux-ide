@@ -170,10 +170,41 @@ export interface AdaptiveFleetPreviewState {
   snapshot: FleetPreviewSnapshot | null;
   stale: boolean;
 }
+/** Short-lived, bounded memory only. Keys must include route, incarnation and transport epoch. */
+export function createFleetPreviewCache(now = Date.now) {
+  const entries = new Map<string, { snapshot: FleetPreviewSnapshot; at: number }>();
+  return {
+    get(key: string) {
+      const value = entries.get(key);
+      if (!value || now() - value.at > 30_000) {
+        entries.delete(key);
+        return null;
+      }
+      entries.delete(key);
+      entries.set(key, value);
+      return value.snapshot;
+    },
+    set(key: string, snapshot: FleetPreviewSnapshot) {
+      entries.delete(key);
+      entries.set(key, { snapshot, at: now() });
+      while (entries.size > 24) entries.delete(entries.keys().next().value!);
+    },
+    clear() {
+      entries.clear();
+    },
+  };
+}
+export const fleetPreviewMemory = createFleetPreviewCache();
+
 /** One selected request, scheduled after settlement; no hidden polling or terminal streams. */
 export function createAdaptiveFleetPreviewOwner(
   publish: (state: AdaptiveFleetPreviewState) => void,
-  options: { debounceMs?: number; refreshMs?: number; maxBackoffMs?: number } = {},
+  options: {
+    debounceMs?: number;
+    refreshMs?: number;
+    maxBackoffMs?: number;
+    cache?: ReturnType<typeof createFleetPreviewCache>;
+  } = {},
 ) {
   let key: string | undefined;
   let read: ((signal: AbortSignal) => Promise<FleetPreviewResult>) | undefined;
@@ -217,6 +248,7 @@ export function createAdaptiveFleetPreviewOwner(
     if (owned.signal.aborted || controller !== owned) return;
     if (result.status === "ready") {
       snapshot = result.snapshot;
+      if (key) options.cache?.set(key, snapshot);
       failures = 0;
       emit({ status: "ready", snapshot, stale: false });
     } else {
@@ -236,7 +268,8 @@ export function createAdaptiveFleetPreviewOwner(
       key = nextRead ? nextKey : undefined;
       snapshot = null;
       failures = 0;
-      emit({ status: "idle", snapshot: null, stale: false });
+      snapshot = read && key ? (options.cache?.get(key) ?? null) : null;
+      emit({ status: snapshot ? "loading" : "idle", snapshot, stale: snapshot !== null });
       if (!read) return;
       controller = new AbortController();
       schedule(Math.max(0, options.debounceMs ?? 180), controller);

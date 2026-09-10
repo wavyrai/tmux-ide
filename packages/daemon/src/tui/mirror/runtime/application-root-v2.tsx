@@ -427,6 +427,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             if (name === "escape") machines.cancelAdd();
             return;
           }
+          if (name === "f6" || name === "f7") paletteCommands.setOpen(false, "keyboard");
           if (handleFleetShortcut(event, machines)) return;
           if (name === "f5") {
             machines.sidebar.onBlur?.();
@@ -438,7 +439,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           if (
             (shell().semantic?.focus.palette.open || shell().localPaletteOpen) &&
             event.ctrl &&
-            ["left", "right", "p", "e"].includes(name) &&
+            ["left", "right", "p", "e", "n", "x", "f", "r"].includes(name) &&
             componentKeyboardRoutes.route(event)
           )
             return;
@@ -561,6 +562,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onPaletteModalChange={setPaletteModalOpen}
               paletteDisabledReason={paletteCommands.disabledReason}
               onPaletteSelect={paletteCommands.select}
+              onPaletteViewport={paletteCommands.setViewport}
+              onPaletteFavorite={machines.togglePaletteFavorite}
               paletteCloseArmed={paletteCommands.closeArmed}
               paletteCommands={paletteCommandList}
               paneInteractions={paneInteractions}
@@ -628,6 +631,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             />
             <ApplicationMachineOverlays
               machines={machines}
+              active={rendererFocused()}
               viewport={dimensions()}
               theme={appearance.theme()}
             />
