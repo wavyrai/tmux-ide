@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import App from "./app";
+
 import "./global.css";
 
 if (import.meta.env.DEV) {
@@ -11,4 +11,7 @@ const root = document.getElementById("root");
 if (!root) {
   throw new Error("Workspace mount element is missing.");
 }
+const { default: App } = new URLSearchParams(location.search).has("design")
+  ? await import("./design-workbench/design-workbench")
+  : await import("./app");
 createRoot(root).render(<App />);

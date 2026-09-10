@@ -254,6 +254,9 @@ importers:
       motion:
         specifier: ^13.2.0
         version: 13.2.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      motion-panels:
+        specifier: 0.4.0
+        version: 0.4.0(motion@13.2.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0)
       react:
         specifier: ^19.2.8
         version: 19.3.0
@@ -4273,6 +4276,16 @@ packages:
 
   motion-dom@13.2.0:
     resolution: {integrity: sha512-N6gdSoWRDk0Rh/fVtlqUtLs+fEN3ELFZI3cn3IQE9Mnf3E+Mh8wjO6MstzCOPFh4Yf0L1as5m2eUyYWj8ylVSQ==}
+
+  motion-panels@0.4.0:
+    resolution: {integrity: sha512-yNubrMR5vGCLX/8dxyn+u6uzlYN0QaVlIDfb3g1ahvol0TXD5FjVyZPbxLhbZ1CHU5qBPEkaEx+BHwN010FgUg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      motion: '>=12'
+      react: '>=18'
+    peerDependenciesMeta:
+      react:
+        optional: true
 
   motion-utils@13.0.0:
     resolution: {integrity: sha512-7DnN7TmbLcYXcG4RVadXIihWlyuM9afoUww8Y5Agg431kGKiuL2/OMyP4mJ5wLz+pvN3t5ySClLOaVXJ+wekRQ==}
@@ -9112,6 +9125,12 @@ snapshots:
   motion-dom@13.2.0:
     dependencies:
       motion-utils: 13.0.0
+
+  motion-panels@0.4.0(motion@13.2.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react@19.3.0):
+    dependencies:
+      motion: 13.2.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+    optionalDependencies:
+      react: 19.3.0
 
   motion-utils@13.0.0: {}
 

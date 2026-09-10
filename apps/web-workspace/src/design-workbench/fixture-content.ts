@@ -1,0 +1,106 @@
+export interface FixturePane {
+  id: string;
+  title: string;
+  command: string;
+  state: string;
+  lines: string[];
+  kind?: "markdown" | "activity";
+}
+export const fixturePanes: Record<string, FixturePane> = {
+  claude: {
+    id: "claude",
+    title: "Claude Code",
+    command: "claude",
+    state: "working",
+    lines: [
+      "╭─ Claude Code ─────────────────────────────╮",
+      "│  Workspace / tmux-ide                     │",
+      "╰──────────────────────────────────────────╯",
+      "",
+      "❯ Refine the workbench interaction system",
+      "",
+      "● Reading components/workspace…",
+      "  12 files reviewed",
+      "",
+      "  ✓ One surface across terminal panes",
+      "  ✓ Consistent typography and spacing",
+      "  ✓ Keyboard-accessible layout controls",
+      "",
+      "  Building a workbench that stays out of your way.",
+      "",
+      "──────────────────────────────────────────",
+      "❯ ",
+    ],
+  },
+  codex: {
+    id: "codex",
+    title: "Codex",
+    command: "codex",
+    state: "needs input",
+    lines: [
+      "╭─ OpenAI Codex ────────────────────────────╮",
+      "│  ~/Developer/tmux-ide                     │",
+      "╰──────────────────────────────────────────╯",
+      "",
+      "› Review the new layout model",
+      "",
+      "  Read layout-model.ts",
+      "  Checked pane identity and split bounds",
+      "",
+      "  Changes are ready to review.",
+      "  Which interaction should we test next?",
+      "",
+      "› ",
+    ],
+  },
+  shell: {
+    id: "shell",
+    title: "Dev server",
+    command: "zsh",
+    state: "running",
+    lines: [
+      "~/Developer/tmux-ide  main",
+      "❯ pnpm dev",
+      "",
+      "  VITE ready in 284 ms",
+      "",
+      "  ➜ Local:   http://localhost:4321/",
+      "",
+      "  ✓ Workspace components compiled",
+      "  ✓ Theme tokens loaded",
+      "  ✓ Layout state restored",
+      "",
+      "  Watching for changes…",
+    ],
+  },
+  notes: {
+    id: "notes",
+    title: "Workspace notes",
+    command: "markdown",
+    state: "widget",
+    kind: "markdown",
+    lines: [],
+  },
+  activity: {
+    id: "activity",
+    title: "Agent activity",
+    command: "activity",
+    state: "widget",
+    kind: "activity",
+    lines: [],
+  },
+  remote: {
+    id: "remote",
+    title: "Codex · API",
+    command: "codex",
+    state: "idle",
+    lines: [
+      "mini / api-service",
+      "",
+      "✓ API contract checks passed",
+      "✓ 48 tests passed",
+      "",
+      "› Waiting for the next task",
+    ],
+  },
+};
