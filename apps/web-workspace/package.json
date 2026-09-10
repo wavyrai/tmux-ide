@@ -9,7 +9,8 @@
     "build": "vite build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src shared vite.config.ts vitest.config.ts"
+    "lint": "eslint src shared scripts vite.config.ts vitest.config.ts",
+    "smoke:live": "node --experimental-strip-types scripts/live-workbench-smoke.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
