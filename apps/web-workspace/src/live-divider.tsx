@@ -1,6 +1,6 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import type { WebWorkspaceClient } from "../../desktop-renderer/src/runtime/web-workspace-client";
-import { createViewportQueue } from "./viewport-queue";
+import { createPaneResizeRequests } from "./pane-resize-requests";
 
 /** Adjust native tmux cells; the canonical layout remains the only rendered geometry. */
 export function LiveDivider({
@@ -26,13 +26,23 @@ export function LiveDivider({
 }) {
   const current = useRef({ cells, maximum, cellPixels, enabled, onError });
   current.current = { cells, maximum, cellPixels, enabled, onError };
-  const queue = useRef<ReturnType<typeof createViewportQueue> | null>(null);
+  const queue = useRef<ReturnType<typeof createPaneResizeRequests> | null>(null);
   const drag = useRef<{ start: number; cells: number; pixels: number } | null>(null);
+  const generation = client.getSnapshot().generation;
   useEffect(() => {
-    const resize = createViewportQueue(
-      async ({ cols }) => {
+    const binding = client.getSnapshot();
+    const resize = createPaneResizeRequests(
+      () => current.current,
+      async (cols) => {
+        const snapshot = client.getSnapshot();
+        if (
+          snapshot.generation !== binding.generation ||
+          snapshot.target?.workspaceName !== binding.target?.workspaceName ||
+          snapshot.target?.daemon.instanceId !== binding.target?.daemon.instanceId
+        )
+          return false;
         if (!current.current.enabled || !client.ownsRuntimeAuthority?.("input")) return false;
-        const target = client.getSnapshot().target;
+        const target = snapshot.target;
         if (!target) return false;
         client.noteActivity("input");
         await client.dispatch({
@@ -58,11 +68,14 @@ export function LiveDivider({
       queue.current = null;
       drag.current = null;
     };
-  }, [client, pane, axis, enabled]);
+  }, [client, pane, axis, enabled, generation]);
+  useEffect(() => {
+    queue.current?.observe(cells);
+  }, [cells]);
   const request = (value: number) => {
     if (!current.current.enabled) return;
     current.current.onError("");
-    queue.current?.request({ cols: Math.max(2, Math.min(maximum, Math.round(value))), rows: 1 });
+    queue.current?.request(value);
   };
   const move = (position: number) => {
     const start = drag.current;
@@ -86,6 +99,10 @@ export function LiveDivider({
       title={
         enabled ? "Drag to resize · arrow keys for one cell" : "Take input control to resize panes"
       }
+      onBlur={() => {
+        drag.current = null;
+        queue.current?.reset();
+      }}
       onPointerDown={(e) => {
         if (!enabled || e.button !== 0) return;
         e.preventDefault();
@@ -130,7 +147,8 @@ export function LiveDivider({
               : 0;
         if (delta) {
           e.preventDefault();
-          request(cells + delta * (e.shiftKey ? 5 : 1));
+          current.current.onError("");
+          queue.current?.step(delta * (e.shiftKey ? 5 : 1));
         }
       }}
     />

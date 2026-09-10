@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { selectRenderer, verifyRendererManifest } from "./renderer-artifact.mjs";
 
 const execFileAsync = promisify(execFile);
 const requireFromHere = createRequire(import.meta.url);
@@ -15,6 +16,8 @@ const release = join(packageRoot, "release");
 const rootPackage = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
 const electronRoot = join(packageRoot, "node_modules", "electron");
 const electronDist = join(electronRoot, "dist");
+const renderer = selectRenderer(process.argv.slice(2));
+await verifyRendererManifest(join(packageRoot, "dist"), renderer);
 
 await rm(staging, { recursive: true, force: true });
 await rm(release, { recursive: true, force: true });
@@ -22,6 +25,7 @@ await mkdir(staging, { recursive: true });
 await Promise.all([
   cp(join(packageRoot, "dist", "main.cjs"), join(staging, "main.cjs")),
   cp(join(packageRoot, "dist", "preload.cjs"), join(staging, "preload.cjs")),
+  cp(join(packageRoot, "dist", "renderer-manifest.json"), join(staging, "renderer-manifest.json")),
   cp(join(packageRoot, "dist", "daemon-child.cjs"), join(staging, "daemon-child.cjs")),
   cp(join(packageRoot, "dist", "renderer"), join(staging, "renderer"), { recursive: true }),
   cp(join(packageRoot, "dist", "templates"), join(staging, "templates"), { recursive: true }),
@@ -31,12 +35,17 @@ const nodePtyRoot = dirname(requireFromHere.resolve("node-pty/package.json"));
 const nodePtyTarget = join(staging, "node_modules", "node-pty");
 const honoNodeServerRoot = dirname(dirname(requireFromHere.resolve("@hono/node-server")));
 const honoNodeServerTarget = join(staging, "node_modules", "@hono", "node-server");
+// @hono/node-server loads hono/ws at runtime; copying only the adapter works
+// inside a checkout but fails once the app is detached from node_modules.
+const honoRoot = dirname(dirname(dirname(requireFromHere.resolve("hono"))));
+const honoTarget = join(staging, "node_modules", "hono");
 const nativePlatform = `${process.platform}-${process.arch}`;
 const nativeSource = join(nodePtyRoot, "prebuilds", nativePlatform);
 await access(join(nativeSource, "pty.node"));
 await Promise.all([
   mkdir(nodePtyTarget, { recursive: true }),
   mkdir(honoNodeServerTarget, { recursive: true }),
+  mkdir(honoTarget, { recursive: true }),
 ]);
 await Promise.all([
   cp(join(nodePtyRoot, "LICENSE"), join(nodePtyTarget, "LICENSE")),
@@ -48,6 +57,9 @@ await Promise.all([
   cp(join(honoNodeServerRoot, "dist"), join(honoNodeServerTarget, "dist"), {
     recursive: true,
   }),
+  cp(join(honoRoot, "package.json"), join(honoTarget, "package.json")),
+  cp(join(honoRoot, "LICENSE"), join(honoTarget, "LICENSE")),
+  cp(join(honoRoot, "dist"), join(honoTarget, "dist"), { recursive: true }),
 ]);
 if (process.platform !== "win32") {
   await chmod(join(nodePtyTarget, "prebuilds", nativePlatform, "spawn-helper"), 0o755);
@@ -111,6 +123,6 @@ if (process.platform === "darwin") {
 
 await writeFile(
   join(release, "package-path.json"),
-  `${JSON.stringify({ appPath, executablePath }, null, 2)}\n`,
+  `${JSON.stringify({ appPath, executablePath, renderer }, null, 2)}\n`,
 );
 console.log(`Packaged desktop app: ${appPath}`);

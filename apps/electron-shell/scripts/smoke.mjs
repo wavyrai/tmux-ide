@@ -6,12 +6,15 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { selectRenderer, verifyRendererManifest } from "./renderer-artifact.mjs";
 
 const execFileAsync = promisify(execFile);
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const packaged = JSON.parse(
   await readFile(join(packageRoot, "release", "package-path.json"), "utf8"),
 );
+const renderer = selectRenderer(process.argv.slice(2));
+if (packaged.renderer !== renderer) throw new Error("Packaged app uses a different renderer");
 const detachedRoot = await mkdtemp(join(tmpdir(), "tmux-ide-packaged-smoke-"));
 const appPath = join(detachedRoot, basename(packaged.appPath));
 await cp(packaged.appPath, appPath, { recursive: true, verbatimSymlinks: true });
@@ -20,6 +23,12 @@ const daemonEntryPath =
   process.platform === "darwin"
     ? join(appPath, "Contents", "Resources", "app", "daemon-child.cjs")
     : join(appPath, "resources", "app", "daemon-child.cjs");
+try {
+  await verifyRendererManifest(dirname(daemonEntryPath), renderer);
+} catch (error) {
+  await rm(detachedRoot, { recursive: true, force: true });
+  throw error;
+}
 
 const baseEnvironment = { ...process.env };
 delete baseEnvironment.TMUX_IDE_RENDERER_URL;
