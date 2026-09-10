@@ -1,6 +1,6 @@
 import { getHost } from "../../client";
 import { Pane, PaneHeader, PaneTitle, PaneAction } from "../ui/pane";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Theme } from "@superlogical/shared/themes";
 import type { PaneStreamLayoutEvent } from "../../../../desktop-renderer/src/terminal/pane-stream-transport";
@@ -39,8 +39,16 @@ export function NativeWindow({
 }) {
   const [cell, setCell] = useState({ width: fontSize * 0.61, height: fontSize * 1.25 });
   const [cellsMeasured, setCellsMeasured] = useState(false);
-  const projection = projectWindowGeometry(layout, cell, 26);
+  const [headerHeight, setHeaderHeight] = useState(28);
+  const projection = projectWindowGeometry(layout, cell, headerHeight);
   const body = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!body.current) return;
+    const value = parseFloat(
+      getComputedStyle(body.current).getPropertyValue("--dw-pane-header-height"),
+    );
+    if (Number.isFinite(value) && value > 0) setHeaderHeight(value);
+  }, []);
   const client = runtime.client;
   const readAsset = useCallback(
     async (assetId: string) => {

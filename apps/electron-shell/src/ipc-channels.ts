@@ -9,6 +9,7 @@
  * fifteen ideas.
  */
 export const HOST_IPC = {
+  iconCatalog: "tmux-ide:host/icons/catalog",
   bootstrap: "tmux-ide:host/bootstrap",
   windowMinimize: "tmux-ide:host/window/minimize",
   windowToggleMaximized: "tmux-ide:host/window/toggle-maximized",
@@ -31,6 +32,7 @@ export const HOST_IPC = {
 } as const;
 
 export const HOST_INVOKE_CHANNELS = [
+  HOST_IPC.iconCatalog,
   HOST_IPC.bootstrap,
   HOST_IPC.windowMinimize,
   HOST_IPC.windowToggleMaximized,

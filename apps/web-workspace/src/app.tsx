@@ -1,7 +1,10 @@
+import { Group as PanelGroup, Panel, Separator } from "motion-panels/react";
 import { LiveWorkspace } from "./live-workspace";
 import { subscribeWorkspace, retryConnection } from "./client";
 import { HomeOverview } from "./home-overview";
-import { WorkspaceSidebar } from "./workspace-sidebar";
+import { LiveSidebar } from "./components/workspace/live-sidebar";
+import { AppChrome } from "./design-workbench/app-chrome";
+import "./design-workbench/design-workbench.css";
 import { WidgetPane } from "./widget-pane";
 import { Input } from "@base-ui/react/input";
 import { Tabs } from "@base-ui/react/tabs";
@@ -383,6 +386,18 @@ export default function App() {
     window.addEventListener("keydown", listener, true);
     return () => window.removeEventListener("keydown", listener, true);
   }, []);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarSize, setSidebarSize] = useState<number | null>(null);
+  const [sidebarBounds, setSidebarBounds] = useState({ min: 0, max: Infinity });
+  useEffect(() => {
+    if (!overlayContainer.current) return;
+    const tokens = getComputedStyle(overlayContainer.current);
+    setSidebarSize(parseFloat(tokens.getPropertyValue("--dw-sidebar-width")));
+    setSidebarBounds({
+      min: parseFloat(tokens.getPropertyValue("--dw-sidebar-min")),
+      max: parseFloat(tokens.getPropertyValue("--dw-sidebar-max")),
+    });
+  }, []);
   const css = {
     "--accent": theme.accent,
     "--border": theme.border,
@@ -417,386 +432,459 @@ export default function App() {
         <div
           ref={overlayContainer}
           {...stylex.props(s.app)}
-          style={{ ...css, flexDirection: "row" }}
+          className={`${stylex.props(s.app).className} workbench-shell`}
+          style={{ ...css, flexDirection: "column" }}
           data-workspace-shell
         >
-          <WorkspaceSidebar
-            connection={connection}
-            workspace={workspace}
-            activeId={active?.id}
-            focusedId={focused}
-            home={home}
-            onHome={() => setHome(true)}
-            onTerminals={() => setHome(false)}
-            onSelect={(tab, pane) => {
-              setHome(false);
-              select(tab);
-              if (pane) setFocusedId(pane);
-            }}
+          <AppChrome
+            live
+            portal={overlayContainer}
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={() => setSidebarOpen((value) => !value)}
+            commands={[
+              {
+                id: "home",
+                label: "Go to Home",
+                group: "Navigation",
+                icon: "home",
+                run: () => setHome(true),
+              },
+              {
+                id: "terminals",
+                label: "Go to Terminals",
+                group: "Navigation",
+                icon: "terminal",
+                run: () => setHome(false),
+              },
+              ...visible.map((tab) => ({
+                id: `session:${tab.id}`,
+                label: tab.name,
+                description: tab.machine || "Local",
+                group: "Sessions",
+                icon: "terminal" as const,
+                run: () => {
+                  setHome(false);
+                  select(tab.id);
+                },
+              })),
+              ...themes.map((t) => ({
+                id: `theme:${t.id}`,
+                label: `Theme: ${t.name}`,
+                group: "Appearance",
+                icon: "theme" as const,
+                run: () =>
+                  updateSettings({
+                    mode: t.mode,
+                    ...(t.mode === "dark" ? { darkTheme: t.id } : { lightTheme: t.id }),
+                  }),
+              })),
+            ]}
           />
-          {connection !== "paired" && (
-            <div className="live-connection" role="status">
-              {connection === "connecting"
-                ? "Connecting to daemon…"
-                : error || "Daemon disconnected"}
-              <button onClick={retryConnection}>Reconnect</button>
-            </div>
-          )}
-          {home && (
-            <HomeOverview
-              workspace={workspace}
-              onOpen={(tab, pane) => {
-                setHome(false);
-                select(tab);
-                if (pane) setFocusedId(pane);
-              }}
-            />
-          )}
-          <Tabs.Root
-            onValueChange={(id) => {
-              if (typeof id === "string") {
-                select(id);
-              }
-            }}
-            render={<main />}
-            value={active?.id ?? null}
-            {...stylex.props(s.workspace)}
-            id="workspace"
-            style={{ display: home ? "none" : undefined }}
+          <PanelGroup
+            orientation="horizontal"
+            transition={{ duration: 0 }}
+            className="dw-live-body"
           >
-            {Boolean(active) && <h1 {...stylex.props(s.srOnly)}>Terminal workspace</h1>}
-            {Boolean(focused) && (
-              <Button
-                static
-                {...stylex.props(s.skip)}
-                onClick={() => terminalHandles.get(focused)?.focus()}
-              >
-                Skip to terminal
-              </Button>
-            )}
-            <header
-              {...stylex.props(s.toolbar)}
-              style={active?.fleetSessionId ? { display: "none" } : undefined}
-            >
-              <Button
-                {...stylex.props(s.iconButton, s.workspaceMenu)}
-                aria-expanded={modal === "commands"}
-                aria-haspopup="dialog"
-                aria-label="Workspace menu"
-                onClick={() => setModal("commands")}
-                title={`${machine?.name || "This Mac"} · ${connection === "paired" ? "Connected locally" : "Reconnecting"} · Workspace menu (⌘⇧P)`}
-              >
-                <Layers size={18} />
-                {connection !== "paired" && connection !== "connecting" && (
-                  <span
-                    {...stylex.props(s.connectionDot)}
-                    aria-label={
-                      connection === "unpaired" ? "Pairing required" : "Connecting to companion"
-                    }
-                    role="img"
-                  />
-                )}
-              </Button>
-              <div ref={tabStrip} {...stylex.props(s.tabStrip)}>
-                <Tabs.List
-                  {...stylex.props(s.tabs)}
-                  activateOnFocus
-                  aria-label="Terminal tabs"
-                  render={
-                    <Reorder.Group
-                      as="div"
-                      axis="x"
-                      onReorder={(ids) => {
-                        setOrder(ids);
-                        reorderRef.current = ids;
-                      }}
-                      values={ordered.map((t) => t.id)}
-                    />
-                  }
+            {sidebarSize !== null && (
+              <>
+                <Panel
+                  collapsed={!sidebarOpen}
+                  keepMounted
+                  size={sidebarSize}
+                  onSizeChange={setSidebarSize}
+                  minSize={sidebarBounds.min}
+                  maxSize={sidebarBounds.max}
+                  transition={{ duration: 0 }}
                 >
-                  {ordered.map((t) => (
-                    <Reorder.Item
-                      as="div"
-                      key={t.id}
-                      value={t.id}
-                      {...stylex.props(s.tab, t.id === active?.id && s.tabActive)}
-                      onDragEnd={() => {
-                        if (reorderRef.current) {
-                          void run({
-                            ids: reorderRef.current,
-                            type: "reorder",
-                          }).then(() => setOrder(null));
-                          reorderRef.current = null;
-                        }
-                      }}
-                      transition={reduced ? { duration: 0 } : spring}
-                      whileDrag={reduced ? { zIndex: 2 } : { scale: 1.03, zIndex: 2 }}
-                    >
-                      <Tabs.Tab
-                        data-workspace-tab
-                        value={t.id}
-                        {...stylex.props(s.tabTrigger)}
-                        onDoubleClick={() => openRename(t)}
-                        onKeyDown={(e) => {
-                          if (e.altKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
-                            e.preventDefault();
-                            e.preventBaseUIHandler();
-                            const ids = ordered.map((tab) => tab.id),
-                              at = ids.indexOf(t.id);
-                            const next = Math.max(
-                              0,
-                              Math.min(ids.length - 1, at + (e.key === "ArrowRight" ? 1 : -1)),
-                            );
-                            [ids[at], ids[next]] = [ids[next], ids[at]];
-                            void run({ ids, type: "reorder" }).then((result) => {
-                              if (result) {
-                                notify(`Tab moved to position ${next + 1}.`);
-                              }
-                            });
-                            return;
-                          }
-                          if (e.key === "F2") {
-                            openRename(t);
-                          }
-                        }}
-                      >
-                        <GlassIcon
-                          command={workspace?.panes[leaves(t.layout)[0]]?.command}
-                          count={leaves(t.layout).length}
-                        />
-                        <span
-                          {...stylex.props(s.tabText)}
-                          title={
-                            t.customName
-                              ? t.name
-                              : `${t.name} — ${workspace?.panes[leaves(t.layout)[0]]?.command || "zsh"}`
-                          }
-                        >
-                          {t.customName
-                            ? t.name
-                            : `${t.name} — ${workspace?.panes[leaves(t.layout)[0]]?.command || "zsh"}`}
-                        </span>
-                      </Tabs.Tab>
-                      <Button
-                        {...stylex.props(s.iconButton, s.tinyButton)}
-                        aria-label={`Close tab ${t.name}`}
-                        data-tab-close
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          closeTab(t.id);
-                        }}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        tabIndex={t.id === active?.id ? 0 : -1}
-                        title="Close tab · ⌘⇧W"
-                      >
-                        <X size={15} />
-                      </Button>
-                    </Reorder.Item>
-                  ))}
-                </Tabs.List>
-                {background.length > 0 && (
-                  <Button
-                    {...stylex.props(s.backgroundTabs)}
-                    aria-expanded={modal === "background"}
-                    aria-haspopup="dialog"
-                    data-background-tabs
-                    onClick={() => setModal("background")}
-                  >
-                    {background.length} background {background.length === 1 ? "tab" : "tabs"}
-                  </Button>
-                )}
-              </div>
-              <Button
-                {...stylex.props(s.iconButton)}
-                aria-label="New terminal"
-                disabled={busy || connection !== "paired"}
-                onClick={newTerminal}
-                title="New terminal · ⌘⇧T"
-              >
-                <Plus size={20} strokeWidth={1.6} />
-              </Button>
-            </header>
-            <div {...stylex.props(s.canvas)}>
-              {workspace !== null &&
-                machine !== null &&
-                visible.map((t) => (
-                  <Tabs.Panel
-                    keepMounted
-                    key={t.id}
-                    value={t.id}
-                    {...stylex.props(s.tabCanvas, t.id !== active?.id && s.hidden)}
-                  >
-                    {t.fleetSessionId && t.daemonInstanceId ? (
-                      !home && t.id === active?.id ? (
-                        <LiveWorkspace
-                          selectedPane={focusedId}
-                          onSelectedPane={setFocusedId}
-                          sessionId={t.fleetSessionId}
-                          daemonInstanceId={t.daemonInstanceId}
-                          theme={theme}
-                          fontSize={settings.fontSize}
-                        />
-                      ) : null
-                    ) : (
-                      <SplitTree
-                        compact={compact}
-                        node={t.layout}
-                        onResize={(splitId, ratio) =>
-                          void run({
-                            ratio,
-                            splitId,
-                            tabId: t.id,
-                            type: "resize",
-                          })
-                        }
-                        renderPane={(id) =>
-                          workspace.panes[id].viewOnly ? (
-                            <section className="widget-pane">
-                              <header className="widget-header">
-                                {workspace.panes[id].agent?.name || workspace.panes[id].command}
-                              </header>
-                              <div className="markdown-body">
-                                <h2>Session discovered</h2>
-                                <p>
-                                  This is live daemon catalog data. Terminal attachment is the next
-                                  integration step.
-                                </p>
-                                <p>No input or resize ownership has been requested.</p>
-                              </div>
-                            </section>
-                          ) : workspace.panes[id].widget ? (
-                            <WidgetPane
-                              key={id}
-                              pane={workspace.panes[id]}
-                              focused={focused === id}
-                              onFocus={() => setFocusedId(id)}
-                              onClose={() =>
-                                void run({ type: "closePane", paneId: id, tabId: t.id })
-                              }
-                            />
-                          ) : (
-                            <TerminalPane
-                              active={!home && t.id === active?.id}
-                              focused={id === focused}
-                              fontSize={settings.fontSize}
-                              home={machine.home}
-                              key={id}
-                              onClose={() => {
-                                void run({
-                                  paneId: id,
-                                  tabId: t.id,
-                                  type: "closePane",
-                                }).then((result) => {
-                                  if (result?.close) {
-                                    notifyClose("Pane", result.close);
-                                  }
-                                });
-                              }}
-                              onFocus={() => setFocusedId(id)}
-                              onReady={markReady}
-                              onRestart={() => void run({ paneId: id, type: "restart" })}
-                              onSplit={(direction) => split(direction, id, t.id)}
-                              pane={workspace.panes[id]}
-                              theme={theme}
-                            />
-                          )
-                        }
-                      />
-                    )}
-                  </Tabs.Panel>
-                ))}
-              {!active && connection !== "connecting" && (
-                <div {...stylex.props(s.welcomeScroll)}>
-                  <div {...stylex.props(s.welcome)}>
-                    <motion.div {...stylex.props(s.welcomeIcon)} initial={false}>
-                      <Terminal size={29} strokeWidth={1.5} />
-                    </motion.div>
-                    <h1 {...stylex.props(s.heading)}>
-                      {connection === "unpaired"
-                        ? "Meet your Mac."
-                        : connection === "offline"
-                          ? "Your work is still there."
-                          : background.length
-                            ? "Out of sight. Still at work."
-                            : "Make yourself at home."}
-                    </h1>
-                    <p {...stylex.props(s.paragraph)}>
-                      {connection === "unpaired"
-                        ? "Pair this browser with the local companion to use your real terminals."
-                        : connection === "offline"
-                          ? "Waiting for the local companion to reconnect. Your terminal sessions live on your Mac."
-                          : background.length
-                            ? "Your sessions are running in the background. Bring one back, or start something new."
-                            : "Your terminals, side by side. Start something here. Come back to it whenever."}
-                    </p>
-                    {connection === "unpaired" ? (
-                      <form
-                        onSubmit={async (e) => {
-                          e.preventDefault();
-                          setPairingError("");
-                          setBusy(true);
-                          try {
-                            throw new Error("Pairing is managed by the daemon gateway.");
-                          } catch {
-                            setPairingError(
-                              "Unable to pair. Check the key, or run npm run open on this Mac for a fresh pairing link.",
-                            );
-                            setBusy(false);
-                          }
-                        }}
-                        style={{ maxWidth: "100%", width: 300 }}
-                      >
-                        <TextField
-                          autoComplete="off"
-                          error={pairingError}
-                          id="pairing-key"
-                          label="Pairing key"
-                          name="pairing-key"
-                          onValueChange={setPairingKey}
-                          placeholder="Paste pairing key"
-                          type="password"
-                          value={pairingKey}
-                        />
-                        <Button
-                          disabled={busy}
-                          type="submit"
-                          {...stylex.props(s.primary)}
-                          style={{ marginTop: 12, width: "100%" }}
-                        >
-                          {busy ? "Connecting…" : "Connect to this Mac"} <ArrowRight size={14} />
-                        </Button>
-                        <p {...stylex.props(s.subtle)} style={{ marginTop: 14 }}>
-                          Or run <code>npm run open</code> in the project.
-                        </p>
-                      </form>
-                    ) : (
-                      <>
-                        <Button
-                          {...stylex.props(s.primary)}
-                          disabled={connection !== "paired" || busy}
-                          onClick={newTerminal}
-                        >
-                          <Plus size={15} />
-                          {busy ? "Opening terminal…" : "Open a terminal"}
-                          <kbd {...stylex.props(s.key)}>⇧⌘T</kbd>
-                        </Button>
-                        {background.length > 0 && (
-                          <Button
-                            {...stylex.props(s.textButton)}
-                            onClick={() => setModal("background")}
-                          >
-                            Browse {background.length} background{" "}
-                            {background.length === 1 ? "session" : "sessions"}{" "}
-                            <ArrowRight size={13} />
-                          </Button>
-                        )}
-                      </>
-                    )}
-                  </div>
+                  <LiveSidebar
+                    connection={connection}
+                    workspace={workspace}
+                    active={active?.id ?? ""}
+                    selected={focused ?? ""}
+                    home={home}
+                    onHome={() => setHome(true)}
+                    onTerminals={() => setHome(false)}
+                    onSelect={(tab, pane) => {
+                      setHome(false);
+                      select(tab);
+                      if (pane) setFocusedId(pane);
+                    }}
+                  />
+                </Panel>
+                <Separator
+                  className="dw-divider"
+                  data-axis="horizontal"
+                  aria-label="Resize sidebar"
+                />
+              </>
+            )}
+            <Panel className="dw-live-main">
+              {connection !== "paired" && (
+                <div className="live-connection" role="status">
+                  {connection === "connecting"
+                    ? "Connecting to daemon…"
+                    : error || "Daemon disconnected"}
+                  <button onClick={retryConnection}>Reconnect</button>
                 </div>
               )}
-            </div>
-          </Tabs.Root>
+              {home && (
+                <HomeOverview
+                  workspace={workspace}
+                  onOpen={(tab, pane) => {
+                    setHome(false);
+                    select(tab);
+                    if (pane) setFocusedId(pane);
+                  }}
+                />
+              )}
+              <Tabs.Root
+                onValueChange={(id) => {
+                  if (typeof id === "string") {
+                    select(id);
+                  }
+                }}
+                render={<main />}
+                value={active?.id ?? null}
+                {...stylex.props(s.workspace)}
+                id="workspace"
+                style={{ display: home ? "none" : undefined }}
+              >
+                {Boolean(active) && <h1 {...stylex.props(s.srOnly)}>Terminal workspace</h1>}
+                {Boolean(focused) && (
+                  <Button
+                    static
+                    {...stylex.props(s.skip)}
+                    onClick={() => terminalHandles.get(focused)?.focus()}
+                  >
+                    Skip to terminal
+                  </Button>
+                )}
+                <header
+                  {...stylex.props(s.toolbar)}
+                  style={active?.fleetSessionId ? { display: "none" } : undefined}
+                >
+                  <Button
+                    {...stylex.props(s.iconButton, s.workspaceMenu)}
+                    aria-expanded={modal === "commands"}
+                    aria-haspopup="dialog"
+                    aria-label="Workspace menu"
+                    onClick={() => setModal("commands")}
+                    title={`${machine?.name || "This Mac"} · ${connection === "paired" ? "Connected locally" : "Reconnecting"} · Workspace menu (⌘⇧P)`}
+                  >
+                    <Layers size={18} />
+                    {connection !== "paired" && connection !== "connecting" && (
+                      <span
+                        {...stylex.props(s.connectionDot)}
+                        aria-label={
+                          connection === "unpaired" ? "Pairing required" : "Connecting to companion"
+                        }
+                        role="img"
+                      />
+                    )}
+                  </Button>
+                  <div ref={tabStrip} {...stylex.props(s.tabStrip)}>
+                    <Tabs.List
+                      {...stylex.props(s.tabs)}
+                      activateOnFocus
+                      aria-label="Terminal tabs"
+                      render={
+                        <Reorder.Group
+                          as="div"
+                          axis="x"
+                          onReorder={(ids) => {
+                            setOrder(ids);
+                            reorderRef.current = ids;
+                          }}
+                          values={ordered.map((t) => t.id)}
+                        />
+                      }
+                    >
+                      {ordered.map((t) => (
+                        <Reorder.Item
+                          as="div"
+                          key={t.id}
+                          value={t.id}
+                          {...stylex.props(s.tab, t.id === active?.id && s.tabActive)}
+                          onDragEnd={() => {
+                            if (reorderRef.current) {
+                              void run({
+                                ids: reorderRef.current,
+                                type: "reorder",
+                              }).then(() => setOrder(null));
+                              reorderRef.current = null;
+                            }
+                          }}
+                          transition={reduced ? { duration: 0 } : spring}
+                          whileDrag={reduced ? { zIndex: 2 } : { scale: 1.03, zIndex: 2 }}
+                        >
+                          <Tabs.Tab
+                            data-workspace-tab
+                            value={t.id}
+                            {...stylex.props(s.tabTrigger)}
+                            onDoubleClick={() => openRename(t)}
+                            onKeyDown={(e) => {
+                              if (e.altKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
+                                e.preventDefault();
+                                e.preventBaseUIHandler();
+                                const ids = ordered.map((tab) => tab.id),
+                                  at = ids.indexOf(t.id);
+                                const next = Math.max(
+                                  0,
+                                  Math.min(ids.length - 1, at + (e.key === "ArrowRight" ? 1 : -1)),
+                                );
+                                [ids[at], ids[next]] = [ids[next], ids[at]];
+                                void run({ ids, type: "reorder" }).then((result) => {
+                                  if (result) {
+                                    notify(`Tab moved to position ${next + 1}.`);
+                                  }
+                                });
+                                return;
+                              }
+                              if (e.key === "F2") {
+                                openRename(t);
+                              }
+                            }}
+                          >
+                            <GlassIcon
+                              command={workspace?.panes[leaves(t.layout)[0]]?.command}
+                              count={leaves(t.layout).length}
+                            />
+                            <span
+                              {...stylex.props(s.tabText)}
+                              title={
+                                t.customName
+                                  ? t.name
+                                  : `${t.name} — ${workspace?.panes[leaves(t.layout)[0]]?.command || "zsh"}`
+                              }
+                            >
+                              {t.customName
+                                ? t.name
+                                : `${t.name} — ${workspace?.panes[leaves(t.layout)[0]]?.command || "zsh"}`}
+                            </span>
+                          </Tabs.Tab>
+                          <Button
+                            {...stylex.props(s.iconButton, s.tinyButton)}
+                            aria-label={`Close tab ${t.name}`}
+                            data-tab-close
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              closeTab(t.id);
+                            }}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            tabIndex={t.id === active?.id ? 0 : -1}
+                            title="Close tab · ⌘⇧W"
+                          >
+                            <X size={15} />
+                          </Button>
+                        </Reorder.Item>
+                      ))}
+                    </Tabs.List>
+                    {background.length > 0 && (
+                      <Button
+                        {...stylex.props(s.backgroundTabs)}
+                        aria-expanded={modal === "background"}
+                        aria-haspopup="dialog"
+                        data-background-tabs
+                        onClick={() => setModal("background")}
+                      >
+                        {background.length} background {background.length === 1 ? "tab" : "tabs"}
+                      </Button>
+                    )}
+                  </div>
+                  <Button
+                    {...stylex.props(s.iconButton)}
+                    aria-label="New terminal"
+                    disabled={busy || connection !== "paired"}
+                    onClick={newTerminal}
+                    title="New terminal · ⌘⇧T"
+                  >
+                    <Plus size={20} strokeWidth={1.6} />
+                  </Button>
+                </header>
+                <div {...stylex.props(s.canvas)}>
+                  {workspace !== null &&
+                    machine !== null &&
+                    visible.map((t) => (
+                      <Tabs.Panel
+                        keepMounted
+                        key={t.id}
+                        value={t.id}
+                        {...stylex.props(s.tabCanvas, t.id !== active?.id && s.hidden)}
+                      >
+                        {t.fleetSessionId && t.daemonInstanceId ? (
+                          !home && t.id === active?.id ? (
+                            <LiveWorkspace
+                              selectedPane={focusedId}
+                              onSelectedPane={setFocusedId}
+                              sessionId={t.fleetSessionId}
+                              daemonInstanceId={t.daemonInstanceId}
+                              theme={theme}
+                              fontSize={settings.fontSize}
+                            />
+                          ) : null
+                        ) : (
+                          <SplitTree
+                            compact={compact}
+                            node={t.layout}
+                            onResize={(splitId, ratio) =>
+                              void run({
+                                ratio,
+                                splitId,
+                                tabId: t.id,
+                                type: "resize",
+                              })
+                            }
+                            renderPane={(id) =>
+                              workspace.panes[id].viewOnly ? (
+                                <section className="widget-pane">
+                                  <header className="widget-header">
+                                    {workspace.panes[id].agent?.name || workspace.panes[id].command}
+                                  </header>
+                                  <div className="markdown-body">
+                                    <h2>Session discovered</h2>
+                                    <p>
+                                      This is live daemon catalog data. Terminal attachment is the
+                                      next integration step.
+                                    </p>
+                                    <p>No input or resize ownership has been requested.</p>
+                                  </div>
+                                </section>
+                              ) : workspace.panes[id].widget ? (
+                                <WidgetPane
+                                  key={id}
+                                  pane={workspace.panes[id]}
+                                  focused={focused === id}
+                                  onFocus={() => setFocusedId(id)}
+                                  onClose={() =>
+                                    void run({ type: "closePane", paneId: id, tabId: t.id })
+                                  }
+                                />
+                              ) : (
+                                <TerminalPane
+                                  active={!home && t.id === active?.id}
+                                  focused={id === focused}
+                                  fontSize={settings.fontSize}
+                                  home={machine.home}
+                                  key={id}
+                                  onClose={() => {
+                                    void run({
+                                      paneId: id,
+                                      tabId: t.id,
+                                      type: "closePane",
+                                    }).then((result) => {
+                                      if (result?.close) {
+                                        notifyClose("Pane", result.close);
+                                      }
+                                    });
+                                  }}
+                                  onFocus={() => setFocusedId(id)}
+                                  onReady={markReady}
+                                  onRestart={() => void run({ paneId: id, type: "restart" })}
+                                  onSplit={(direction) => split(direction, id, t.id)}
+                                  pane={workspace.panes[id]}
+                                  theme={theme}
+                                />
+                              )
+                            }
+                          />
+                        )}
+                      </Tabs.Panel>
+                    ))}
+                  {!active && connection !== "connecting" && (
+                    <div {...stylex.props(s.welcomeScroll)}>
+                      <div {...stylex.props(s.welcome)}>
+                        <motion.div {...stylex.props(s.welcomeIcon)} initial={false}>
+                          <Terminal size={29} strokeWidth={1.5} />
+                        </motion.div>
+                        <h1 {...stylex.props(s.heading)}>
+                          {connection === "unpaired"
+                            ? "Meet your Mac."
+                            : connection === "offline"
+                              ? "Your work is still there."
+                              : background.length
+                                ? "Out of sight. Still at work."
+                                : "Make yourself at home."}
+                        </h1>
+                        <p {...stylex.props(s.paragraph)}>
+                          {connection === "unpaired"
+                            ? "Pair this browser with the local companion to use your real terminals."
+                            : connection === "offline"
+                              ? "Waiting for the local companion to reconnect. Your terminal sessions live on your Mac."
+                              : background.length
+                                ? "Your sessions are running in the background. Bring one back, or start something new."
+                                : "Your terminals, side by side. Start something here. Come back to it whenever."}
+                        </p>
+                        {connection === "unpaired" ? (
+                          <form
+                            onSubmit={async (e) => {
+                              e.preventDefault();
+                              setPairingError("");
+                              setBusy(true);
+                              try {
+                                throw new Error("Pairing is managed by the daemon gateway.");
+                              } catch {
+                                setPairingError(
+                                  "Unable to pair. Check the key, or run npm run open on this Mac for a fresh pairing link.",
+                                );
+                                setBusy(false);
+                              }
+                            }}
+                            style={{ maxWidth: "100%", width: 300 }}
+                          >
+                            <TextField
+                              autoComplete="off"
+                              error={pairingError}
+                              id="pairing-key"
+                              label="Pairing key"
+                              name="pairing-key"
+                              onValueChange={setPairingKey}
+                              placeholder="Paste pairing key"
+                              type="password"
+                              value={pairingKey}
+                            />
+                            <Button
+                              disabled={busy}
+                              type="submit"
+                              {...stylex.props(s.primary)}
+                              style={{ marginTop: 12, width: "100%" }}
+                            >
+                              {busy ? "Connecting…" : "Connect to this Mac"}{" "}
+                              <ArrowRight size={14} />
+                            </Button>
+                            <p {...stylex.props(s.subtle)} style={{ marginTop: 14 }}>
+                              Or run <code>npm run open</code> in the project.
+                            </p>
+                          </form>
+                        ) : (
+                          <>
+                            <Button
+                              {...stylex.props(s.primary)}
+                              disabled={connection !== "paired" || busy}
+                              onClick={newTerminal}
+                            >
+                              <Plus size={15} />
+                              {busy ? "Opening terminal…" : "Open a terminal"}
+                              <kbd {...stylex.props(s.key)}>⇧⌘T</kbd>
+                            </Button>
+                            {background.length > 0 && (
+                              <Button
+                                {...stylex.props(s.textButton)}
+                                onClick={() => setModal("background")}
+                              >
+                                Browse {background.length} background{" "}
+                                {background.length === 1 ? "session" : "sessions"}{" "}
+                                <ArrowRight size={13} />
+                              </Button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </Tabs.Root>
+            </Panel>
+          </PanelGroup>
           <AnimatePresence initial={false} mode="wait">
             {modal === "themes" && (
               <Modal

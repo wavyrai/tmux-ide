@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import {
+  DesktopIconCatalogSchemaZ,
+  type DesktopIconCatalog,
   AppWindowMutationHostResultSchemaZ,
   AppWindowMutationRequestSchemaZ,
   WorkspaceMultiplexerHostResultSchemaZ,
@@ -80,6 +82,7 @@ export interface HostIpcDependencies {
    * test hosts without a canonical daemon record stay valid.
    */
   readStartupReadiness?: () => Promise<StartupReadinessLadder | null>;
+  getIconCatalog?: () => DesktopIconCatalog;
   getTheme: () => DesktopThemeState;
   getUpdateStatus: () => DesktopUpdateStatus;
   readOnboardingIntroAcknowledged: () => boolean;
@@ -319,6 +322,15 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     deps.ipcMain.removeHandler(channel);
     deps.ipcMain.handle(channel, handler);
   };
+
+  handle(HOST_IPC.iconCatalog, (event) => {
+    trustedWindow(event, deps.getWindow, deps.trustedRendererLocation);
+    return DesktopIconCatalogSchemaZ.parse(
+      deps.platform === "darwin"
+        ? (deps.getIconCatalog?.() ?? { provider: "open" })
+        : { provider: "open" },
+    );
+  });
 
   handle(HOST_IPC.bootstrap, (event): DesktopHostBootstrap => {
     const { window } = beginRendererGeneration(event);

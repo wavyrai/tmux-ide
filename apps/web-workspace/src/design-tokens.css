@@ -46,7 +46,7 @@
 }
 
 /* Design workbench contract: all dimensions, type, and surfaces resolve here. */
-.design-workbench[data-workspace-shell] {
+[data-workspace-shell] {
   --dw-font-ui: var(--font-ui);
   --dw-font-terminal: var(--font-code);
   --dw-text-ui: var(--text-body);
@@ -82,6 +82,7 @@
   --dw-footer-height: 24px;
   --dw-control-height: 24px;
   --dw-icon-size: 16px;
+  --dw-tab-label-width: 180px;
   --dw-tab-icon-size: 24px;
   --dw-status-size: 6px;
   --dw-divider-hit-size: 6px;

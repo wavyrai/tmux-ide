@@ -61,9 +61,11 @@ export function AppChrome({
   commands,
   sidebarOpen,
   onToggleSidebar,
+  live = false,
 }: {
   portal: RefObject<HTMLDivElement | null>;
   commands: WorkbenchCommand[];
+  live?: boolean;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }) {
@@ -131,7 +133,9 @@ export function AppChrome({
       </Popover.Root>
       <div className="dw-chrome-utilities">
         <ChromePopover portal={portal} label="What’s new" title="What’s new">
-          <p className="dw-popover-muted">Design workbench · preview changes</p>
+          <p className="dw-popover-muted">
+            {live ? "Workbench · recent interface changes" : "Design workbench · preview changes"}
+          </p>
           <ul className="dw-popover-notes">
             <li>Resizable panels with pointer and keyboard controls.</li>
             <li>Drag pane titles to move or swap; zoom to focus.</li>
@@ -139,7 +143,9 @@ export function AppChrome({
             <li>Searchable commands, contextual Help and this changelog.</li>
           </ul>
           <p className="dw-popover-muted">
-            These are design-preview changes, not a new published beta.
+            {live
+              ? "Interface updates do not indicate a new published beta."
+              : "These are design-preview changes, not a new published beta."}
           </p>
         </ChromePopover>
         <ChromePopover portal={portal} label="Help ?" title="Workbench help" shortcut="?">
@@ -160,7 +166,9 @@ export function AppChrome({
             <dd>Drag or Alt Shift ← / →</dd>
           </dl>
           <p className="dw-popover-muted">
-            This workspace uses local fixtures. Terminal input does not execute commands.
+            {live
+              ? "Terminal input and layout changes use the connected daemon. Input control must be acquired before typing."
+              : "This workspace uses local fixtures. Terminal input does not execute commands."}
           </p>
         </ChromePopover>
       </div>

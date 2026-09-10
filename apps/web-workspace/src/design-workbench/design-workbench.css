@@ -1,5 +1,5 @@
 /* All visual values come from design-tokens.css. Terminal cells never animate. */
-.design-workbench[data-workspace-shell] {
+:is(.design-workbench, .workbench-shell)[data-workspace-shell] {
   display: flex;
   width: 100%;
   height: 100%;
@@ -13,25 +13,25 @@
   font-weight: var(--dw-weight-regular);
   line-height: var(--dw-line-ui);
 }
-.design-workbench *,
-.design-workbench *::before,
-.design-workbench *::after {
+:is(.design-workbench, .workbench-shell) *,
+:is(.design-workbench, .workbench-shell) *::before,
+:is(.design-workbench, .workbench-shell) *::after {
   box-sizing: border-box;
 }
-.design-workbench button,
-.design-workbench input,
-.design-workbench select {
+:is(.design-workbench, .workbench-shell) button,
+:is(.design-workbench, .workbench-shell) input,
+:is(.design-workbench, .workbench-shell) select {
   font: inherit;
   color: inherit;
 }
-.design-workbench button {
+:is(.design-workbench, .workbench-shell) button {
   cursor: pointer;
 }
-.design-workbench button:disabled {
+:is(.design-workbench, .workbench-shell) button:disabled {
   cursor: default;
   opacity: var(--dw-disabled-opacity);
 }
-.design-workbench :focus-visible {
+:is(.design-workbench, .workbench-shell) :focus-visible {
   outline: var(--dw-focus-width) solid var(--dw-accent);
   outline-offset: calc(-1 * var(--dw-focus-width));
 }
@@ -549,7 +549,7 @@
   text-overflow: ellipsis;
   flex-shrink: 1;
 }
-.design-workbench .markdown-body {
+:is(.design-workbench, .workbench-shell) .markdown-body {
   margin: 0;
   padding: var(--dw-space-lg);
   max-width: 100%;
@@ -558,28 +558,28 @@
   font-size: var(--dw-text-ui);
   line-height: var(--dw-line-terminal);
 }
-.design-workbench .markdown-body :is(h1, h2, h3) {
+:is(.design-workbench, .workbench-shell) .markdown-body :is(h1, h2, h3) {
   margin: 0 0 var(--dw-space-md);
   font-size: var(--dw-text-ui);
   font-weight: var(--dw-weight-heading);
   line-height: var(--dw-line-terminal);
 }
-.design-workbench .markdown-body h1 {
+:is(.design-workbench, .workbench-shell) .markdown-body h1 {
   font-size: var(--dw-text-title);
   line-height: var(--dw-line-title);
 }
-.design-workbench .markdown-body :is(p, ul, ol, pre, blockquote, table) {
+:is(.design-workbench, .workbench-shell) .markdown-body :is(p, ul, ol, pre, blockquote, table) {
   margin: 0 0 var(--dw-space-lg);
 }
-.design-workbench .markdown-body :is(pre, code) {
+:is(.design-workbench, .workbench-shell) .markdown-body :is(pre, code) {
   font-family: var(--dw-font-terminal);
   font-size: var(--dw-text-ui);
 }
-.design-workbench .markdown-body :is(td, th) {
+:is(.design-workbench, .workbench-shell) .markdown-body :is(td, th) {
   padding: var(--dw-space-sm);
   border-color: var(--dw-border);
 }
-.design-workbench[data-workspace-shell] {
+:is(.design-workbench, .workbench-shell)[data-workspace-shell] {
   flex-direction: column;
 }
 .dw-root-group {
@@ -790,4 +790,35 @@
   color: var(--dw-muted);
   font-family: var(--dw-font-terminal);
   font-size: var(--dw-text-caption);
+}
+.dw-live-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.dw-live-body > .dw-sidebar {
+  width: var(--dw-sidebar-width);
+  flex: 0 0 var(--dw-sidebar-width);
+}
+.dw-tab-label {
+  max-width: var(--dw-tab-label-width);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-workspace-shell] .live-workspace-toolbar {
+  height: var(--dw-toolbar-height);
+  min-height: var(--dw-toolbar-height);
+  padding: 0 var(--dw-space-md);
+  gap: var(--dw-space-sm);
+}
+[data-workspace-shell] .live-pane-header {
+  height: var(--dw-pane-header-height);
+  font-family: var(--dw-font-ui);
+  font-size: var(--dw-text-ui);
+}
+.dw-live-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
 }

@@ -195,6 +195,13 @@ describe("host IPC trust boundary", () => {
       sender: webContents,
       senderFrame: mainFrame,
     } as unknown as IpcMainInvokeEvent;
+    expect(handlers.get(HOST_IPC.iconCatalog)?.(trustedEvent)).toEqual({ provider: "open" });
+    expect(() =>
+      handlers.get(HOST_IPC.iconCatalog)?.({
+        sender: webContents,
+        senderFrame: {},
+      } as unknown as IpcMainInvokeEvent),
+    ).toThrow("untrusted renderer");
     expect(bootstrap?.(trustedEvent)).toMatchObject({
       runtime: "electron",
       appVersion: "test",

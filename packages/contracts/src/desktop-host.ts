@@ -1,3 +1,4 @@
+import type { DesktopIconCatalog } from "./semantic-icons.ts";
 import {
   DesktopDaemonCapabilityErrorSchemaZ,
   type DesktopDaemonCapabilityError,
@@ -672,6 +673,7 @@ export type DesktopDaemonHostSubscriptionResult =
  * reviewed in the contract before any client can ask for it.
  */
 export interface HostCapabilities {
+  readonly icons?: { getCatalog(): Promise<DesktopIconCatalog> };
   readonly apiVersion: typeof DESKTOP_HOST_API_VERSION;
   bootstrap(): Promise<DesktopHostBootstrap>;
   readonly window: {

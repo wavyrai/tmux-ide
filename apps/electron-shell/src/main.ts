@@ -1,3 +1,4 @@
+import { createNativeIconCatalog } from "./native-icons.ts";
 import { join } from "node:path";
 
 import {
@@ -5,6 +6,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  nativeImage,
   nativeTheme,
   net,
   protocol,
@@ -479,6 +481,7 @@ export async function runDesktopApp(deps: DesktopAppDependencies = {}): Promise<
         });
         return result.canceled ? null : (result.filePaths[0] ?? null);
       },
+      getIconCatalog: createNativeIconCatalog(process.platform, nativeImage),
       getTheme: themeState,
       getUpdateStatus: () =>
         desktopUpdater?.status() ?? {

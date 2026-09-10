@@ -93,3 +93,5 @@ export * from "./shared-monotonic-clock.ts";
 export * from "./visual-theme-presets.ts";
 
 export * from "./saved-machines.ts";
+
+export * from "./semantic-icons.ts";

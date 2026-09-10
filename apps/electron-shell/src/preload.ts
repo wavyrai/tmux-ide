@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
+  DesktopIconCatalogSchemaZ,
   DAEMON_RESOURCE_RESULT_SCHEMAS,
   DESKTOP_HOST_API_VERSION,
   DaemonResourceRequestSchemaZ,
@@ -107,6 +108,10 @@ async function requestDaemonResource(
 }
 
 const capabilities: HostCapabilities = Object.freeze({
+  icons: Object.freeze({
+    getCatalog: async () =>
+      DesktopIconCatalogSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.iconCatalog)),
+  }),
   apiVersion: DESKTOP_HOST_API_VERSION,
   bootstrap: async () =>
     DesktopHostBootstrapSchemaZ.parse(await ipcRenderer.invoke(HOST_IPC.bootstrap)),

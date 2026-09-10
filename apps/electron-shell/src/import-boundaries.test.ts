@@ -50,6 +50,7 @@ describe("desktop process boundaries", () => {
 
   it("exposes only the reviewed invoke vocabulary", () => {
     expect(HOST_INVOKE_CHANNELS).toEqual([
+      HOST_IPC.iconCatalog,
       HOST_IPC.bootstrap,
       HOST_IPC.windowMinimize,
       HOST_IPC.windowToggleMaximized,

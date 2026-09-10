@@ -1,3 +1,6 @@
+import { useId } from "react";
+import type { SemanticIconName } from "@tmux-ide/contracts";
+import { useNativeIcon } from "./icon-provider";
 import {
   Activity01Icon,
   Home01Icon,
@@ -30,8 +33,22 @@ import {
 import { HugeiconsIcon, type HugeiconsIconProps, type IconSvgElement } from "@hugeicons/react";
 
 type Props = Omit<HugeiconsIconProps, "icon">;
-function icon(shape: IconSvgElement) {
+function icon(name: SemanticIconName, shape: IconSvgElement) {
   return function Icon({ size = 16, strokeWidth = 1.5, ...props }: Props) {
+    const native = useNativeIcon(name);
+    const maskId = useId();
+    if (native) {
+      return (
+        <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" {...props}>
+          <defs>
+            <mask id={maskId} style={{ maskType: "alpha" }}>
+              <image href={native} width="24" height="24" preserveAspectRatio="xMidYMid meet" />
+            </mask>
+          </defs>
+          <rect width="24" height="24" fill="currentColor" mask={`url(#${maskId})`} />
+        </svg>
+      );
+    }
     return (
       <HugeiconsIcon
         aria-hidden="true"
@@ -43,30 +60,30 @@ function icon(shape: IconSvgElement) {
     );
   };
 }
-export const Home = icon(Home01Icon);
-export const Terminal = icon(CommandLineIcon);
-export const Prompt = icon(PromptIcon);
-export const Plus = icon(Add01Icon);
-export const Monitor = icon(ComputerIcon);
-export const Layers = icon(SquareStackIcon);
-export const Palette = icon(PaletteIcon);
-export const Command = icon(CommandIcon);
-export const ArrowUpRight = icon(ArrowUpRight01Icon);
-export const Columns2 = icon(LayoutTwoColumnIcon);
-export const Rows2 = icon(LayoutTwoRowIcon);
-export const Search = icon(Search01Icon);
-export const X = icon(Cancel01Icon);
-export const Check = icon(Tick02Icon);
-export const Sun = icon(Sun03Icon);
-export const Moon = icon(Moon02Icon);
-export const Laptop = icon(LaptopIcon);
-export const ArrowRight = icon(ArrowRight01Icon);
-export const RotateCcw = icon(RefreshIcon);
-export const Trash2 = icon(Delete02Icon);
-export const Keyboard = icon(KeyboardIcon);
-export const SlidersHorizontal = icon(Settings04Icon);
-export const ChevronRight = icon(ChevronRightIcon);
-export const ChevronUp = icon(ArrowUp01Icon);
-export const ChevronDown = icon(ArrowDown01Icon);
-export const Activity = icon(Activity01Icon);
-export const Sparkles = icon(AiMagicIcon);
+export const Home = icon("Home", Home01Icon);
+export const Terminal = icon("Terminal", CommandLineIcon);
+export const Prompt = icon("Prompt", PromptIcon);
+export const Plus = icon("Plus", Add01Icon);
+export const Monitor = icon("Monitor", ComputerIcon);
+export const Layers = icon("Layers", SquareStackIcon);
+export const Palette = icon("Palette", PaletteIcon);
+export const Command = icon("Command", CommandIcon);
+export const ArrowUpRight = icon("ArrowUpRight", ArrowUpRight01Icon);
+export const Columns2 = icon("Columns2", LayoutTwoColumnIcon);
+export const Rows2 = icon("Rows2", LayoutTwoRowIcon);
+export const Search = icon("Search", Search01Icon);
+export const X = icon("X", Cancel01Icon);
+export const Check = icon("Check", Tick02Icon);
+export const Sun = icon("Sun", Sun03Icon);
+export const Moon = icon("Moon", Moon02Icon);
+export const Laptop = icon("Laptop", LaptopIcon);
+export const ArrowRight = icon("ArrowRight", ArrowRight01Icon);
+export const RotateCcw = icon("RotateCcw", RefreshIcon);
+export const Trash2 = icon("Trash2", Delete02Icon);
+export const Keyboard = icon("Keyboard", KeyboardIcon);
+export const SlidersHorizontal = icon("SlidersHorizontal", Settings04Icon);
+export const ChevronRight = icon("ChevronRight", ChevronRightIcon);
+export const ChevronUp = icon("ChevronUp", ArrowUp01Icon);
+export const ChevronDown = icon("ChevronDown", ArrowDown01Icon);
+export const Activity = icon("Activity", Activity01Icon);
+export const Sparkles = icon("Sparkles", AiMagicIcon);

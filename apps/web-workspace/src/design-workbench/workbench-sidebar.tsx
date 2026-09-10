@@ -2,13 +2,20 @@ import { useState } from "react";
 import { AgentIcon } from "../agent-icon";
 import { Home, Terminal, Monitor, Layers, ChevronDown, ChevronRight } from "../icons";
 import { paneIds, type LayoutNode } from "./layout-model";
-import type { FixturePane } from "./fixture-content";
+export interface SidebarPane {
+  id: string;
+  title: string;
+  command: string;
+  state: string;
+}
 export interface WorkbenchWindow {
   id: string;
   name: string;
   machine: string;
   session: string;
   layout: LayoutNode | null;
+  paneCount?: number;
+  panes?: readonly string[];
 }
 export function WorkbenchSidebar({
   windows,
@@ -19,9 +26,11 @@ export function WorkbenchSidebar({
   onHome,
   onTerminals,
   onSelect,
+  footer = ["Design workspace", "Local fixtures · no daemon"],
 }: {
+  footer?: readonly [string, string];
   windows: WorkbenchWindow[];
-  panes: Record<string, FixturePane>;
+  panes: Record<string, SidebarPane>;
   active: string;
   selected: string;
   home: boolean;
@@ -86,12 +95,18 @@ export function WorkbenchSidebar({
                         <Terminal size={14} />
                         <span>{session}</span>
                         <span className="dw-status">
-                          {entries.reduce((n, w) => n + paneIds(w.layout).length, 0)}
+                          {entries.reduce(
+                            (n, w) => n + (w.paneCount ?? (w.panes ?? paneIds(w.layout)).length),
+                            0,
+                          )}
                         </span>
                       </button>
                       {entries
                         .flatMap((w) =>
-                          paneIds(w.layout).map((id) => ({ window: w.id, pane: panes[id] })),
+                          (w.panes ?? paneIds(w.layout)).map((id) => ({
+                            window: w.id,
+                            pane: panes[id],
+                          })),
                         )
                         .filter(
                           (entry) =>
@@ -112,7 +127,7 @@ export function WorkbenchSidebar({
                           >
                             <AgentIcon name={pane.command} />
                             <span>{pane.title}</span>
-                            <span className="dw-status">
+                            <span className="dw-status" title={pane.state} aria-label={pane.state}>
                               {pane.state === "working"
                                 ? "●"
                                 : pane.state === "needs input"
@@ -129,8 +144,8 @@ export function WorkbenchSidebar({
         ))}
       </div>
       <footer className="dw-footer">
-        <span>Design workspace</span>
-        <span>Local fixtures · no daemon</span>
+        <span>{footer[0]}</span>
+        <span>{footer[1]}</span>
       </footer>
     </aside>
   );

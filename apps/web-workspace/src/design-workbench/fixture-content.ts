@@ -64,7 +64,7 @@ export const fixturePanes: Record<string, FixturePane> = {
       "",
       "  VITE ready in 284 ms",
       "",
-      "  ➜ Local:   http://localhost:4321/",
+      "  ➜ Local:   preview server ready",
       "",
       "  ✓ Workspace components compiled",
       "  ✓ Theme tokens loaded",

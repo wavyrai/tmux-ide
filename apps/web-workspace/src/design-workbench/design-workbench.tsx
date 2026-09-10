@@ -1,3 +1,4 @@
+import { PaneHeader } from "../components/ui/pane";
 import { AppChrome } from "./app-chrome";
 import { PaneActions } from "./pane-actions";
 import { WorkbenchTabs } from "./workbench-tabs";
@@ -161,7 +162,7 @@ export default function DesignWorkbench() {
         onDrop={(event) => commitDrop(event, id)}
         aria-label={pane.title}
       >
-        <header className="dw-pane-header">
+        <PaneHeader className="dw-pane-header">
           {/(claude|codex|opencode)/.test(pane.command) ? (
             <AgentIcon name={pane.command} />
           ) : (
@@ -208,7 +209,7 @@ export default function DesignWorkbench() {
               setNotice("Panes swapped");
             }}
           />
-        </header>
+        </PaneHeader>
         <div className="dw-pane-content">
           {pane.kind === "markdown" ? (
             <MarkdownDocument text={notes} />
