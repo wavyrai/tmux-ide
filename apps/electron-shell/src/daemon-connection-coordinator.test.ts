@@ -290,6 +290,55 @@ describe("main-process daemon connection coordinator", () => {
     expect(hostStates).toEqual([A, movedA]);
   });
 
+  it.each([
+    ["changed", "7bcf33b0-c837-4a94-b5e8-c0977f54464f", "8bcf33b0-c837-4a94-b5e8-c0977f54464f"],
+    ["introduced", undefined, "8bcf33b0-c837-4a94-b5e8-c0977f54464f"],
+    ["removed", "7bcf33b0-c837-4a94-b5e8-c0977f54464f", undefined],
+  ])(
+    "retires authority when environment identity is %s with all other identity fields unchanged",
+    async (_label, before, after) => {
+      const initial = {
+        ...A,
+        descriptor: { ...A.descriptor, ...(before ? { environmentId: before } : {}) },
+      };
+      const replacement = {
+        ...A,
+        descriptor: { ...A.descriptor, ...(after ? { environmentId: after } : {}) },
+      };
+      const first = brokerHarness(initial, { pendingList: true });
+      const second = brokerHarness(replacement);
+      const createBroker = vi
+        .fn<(daemon: typeof A) => DaemonResourceAuthority>()
+        .mockReturnValueOnce(first.authority)
+        .mockReturnValueOnce(second.authority);
+      const coordinator = new DaemonConnectionCoordinator({
+        initialDaemon: initial,
+        preflight: preflight(async () => replacement),
+        createBroker,
+      });
+      const events: DesktopDaemonEvent[] = [];
+      await coordinator.subscribe(["product"], (event) => events.push(event));
+      const oldList = coordinator.listWorkspaces();
+      const result = DesktopDaemonRefreshConnectionResultSchemaZ.parse(
+        await coordinator.refreshConnection(),
+      );
+      first.publish({ type: "workspaces.changed" });
+      first.resolveList?.();
+      expect(result.outcome).toBe("generation-replaced");
+      expect(events.map((event) => event.type)).toEqual(["daemon-generation.changed"]);
+      expect(first.unsubscribe).toHaveBeenCalledOnce();
+      expect(first.dispose).toHaveBeenCalledOnce();
+      expect(createBroker).toHaveBeenCalledTimes(2);
+      await expect(oldList).resolves.toMatchObject({
+        status: "error",
+        error: { code: "daemon-identity-mismatch" },
+      });
+      expect((await coordinator.listWorkspaces()).status).toBe("ok");
+      expect(second.dispose).not.toHaveBeenCalled();
+      coordinator.dispose();
+    },
+  );
+
   it("atomically replaces A with B, emits one generation event, and rejects late A activity", async () => {
     const first = brokerHarness(A);
     const second = brokerHarness(B);
