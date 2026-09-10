@@ -2791,3 +2791,119 @@ describe("WorkspaceClient", () => {
     expect(late.closeCount).toBe(1);
   });
 });
+
+describe("semantic mutation acknowledgement across topology replacement", () => {
+  const operationId = "45000000-0000-4000-8000-000000000045";
+  const command = {
+    kind: "semantic-intent" as const,
+    operationId,
+    intent: {
+      verb: "workspace.window.split" as const,
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+      direction: "right" as const,
+    },
+  };
+  const acknowledgement = {
+    operationId,
+    daemonInstanceId: ALPHA_DAEMON.instanceId,
+    outcome: "applied" as const,
+    workspaceName: "alpha",
+    verb: "workspace.window.split" as const,
+    direction: "right" as const,
+    semanticPaneId: "pane.new",
+    displayTitle: "Shell",
+  };
+  async function fixture(
+    beforeReplacement?: (client: WorkspaceClient<string, string>, active: FakeRuntime) => void,
+  ) {
+    const shell = shellBroker({ alpha: shellResource("alpha"), beta: shellResource("beta") });
+    const response = deferred<typeof acknowledgement | void>();
+    const active = Object.assign(new FakeRuntime(ALPHA_DAEMON.instanceId), {
+      submitIntent: () => response.promise,
+    });
+    const replacement = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_target, inventory) =>
+          inventory.semanticPaneIds.includes("pane.new") ? replacement : active,
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    beforeReplacement?.(client, active);
+    const completion = client.dispatch(command);
+    // Attach rejection observation before advancing asynchronous topology work.
+    void completion.catch(() => undefined);
+    shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.alpha", "pane.new"]));
+    shell.connections[0]!.handlers.onInvalidate();
+    await settle();
+    expect(active.closeCount).toBe(1);
+    return { client, response, completion };
+  }
+  it("accepts the exact durable acknowledgement without retaining a stream receipt dependency", async () => {
+    const { client, response, completion } = await fixture();
+    response.resolve(acknowledgement);
+    await expect(completion).resolves.toMatchObject({
+      kind: "semantic-intent",
+      operationId,
+      result: acknowledgement,
+    });
+    await expect(client.dispatch(command)).rejects.toThrow("already pending or terminal");
+    await client.dispose();
+  });
+  it.each([
+    ["operation", { operationId: "55000000-0000-4000-8000-000000000055" }],
+    ["daemon", { daemonInstanceId: BETA_DAEMON.instanceId }],
+    ["workspace", { workspaceName: "beta" }],
+    ["verb", { verb: "workspace.session.kill" }],
+    ["malformed", { outcome: "unknown" }],
+  ])("rejects a mismatched %s acknowledgement", async (_label, patch) => {
+    const { client, response, completion } = await fixture();
+    response.resolve({ ...acknowledgement, ...patch } as typeof acknowledgement);
+    await expect(completion).rejects.toThrow("matching mutation acknowledgement");
+    await client.dispose();
+  });
+  it("keeps input, viewport, and authority completions fenced to the exact old runtime", async () => {
+    const gate = deferred<void>();
+    let input!: Promise<unknown>;
+    let fit!: Promise<unknown>;
+    let grant!: Promise<unknown>;
+    const { client, response, completion } = await fixture((client, active) => {
+      active.inputGate = gate.promise;
+      active.viewportGate = gate.promise;
+      active.authorityGate = gate.promise;
+      input = client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+        { type: "text", text: "hello" },
+      );
+      fit = client.fitViewport(100, 30);
+      grant = client.requestAuthority("input");
+    });
+    gate.resolve();
+    response.resolve(acknowledgement);
+    await expect(completion).resolves.toMatchObject({ operationId });
+    await expect(input).resolves.toBe("authority-lost");
+    await expect(fit).resolves.toBe("authority-lost");
+    await expect(grant).resolves.toBeNull();
+    await client.dispose();
+  });
+  it("rejects an unacknowledged retired runtime completion", async () => {
+    const { client, response, completion } = await fixture();
+    response.resolve();
+    await expect(completion).rejects.toThrow("matching mutation acknowledgement");
+    await client.dispose();
+  });
+  it.each(["target", "daemon", "dispose"])("still fences %s retirement", async (kind) => {
+    const { client, response, completion } = await fixture();
+    if (kind === "dispose") await client.dispose();
+    else if (kind === "daemon") client.setTarget(target("alpha", BETA_DAEMON));
+    else client.setTarget(target("beta"));
+    response.resolve(acknowledgement);
+    await expect(completion).rejects.toThrow("client generation was retired");
+    await client.dispose();
+  });
+});

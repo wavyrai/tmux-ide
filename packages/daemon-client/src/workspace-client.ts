@@ -1,3 +1,4 @@
+import { WorkspaceMultiplexerMutationResultSchemaZ } from "@tmux-ide/contracts";
 import {
   applicationShellSessionTargetKey,
   createApplicationShellSession,
@@ -1280,6 +1281,7 @@ export function createWorkspaceClient<
       }
       if (command.kind === "owner-action") return dispatchOwnerAction(command);
       const expectedGeneration = generation;
+      const expectedTarget = target;
       const expectedRuntime = runtime;
       if (expectedRuntime === null) throw new Error("session runtime is not connected");
       const id = command.operationId ?? operationId();
@@ -1292,8 +1294,29 @@ export function createWorkspaceClient<
       if (!began) throw new Error(`operation ${id} is already pending or terminal`);
       try {
         const result = await expectedRuntime.submitIntent(id, command.intent);
-        if (disposed || generation !== expectedGeneration || runtime !== expectedRuntime) {
+        if (disposed || generation !== expectedGeneration || target !== expectedTarget) {
           throw new Error("semantic intent completed after its client generation was retired");
+        }
+        if (runtime !== expectedRuntime) {
+          // A topology mutation may replace its terminal stream before the
+          // daemon's response arrives. Accept only the exact durable mutation
+          // acknowledgement; it does not transfer input or geometry authority.
+          const acknowledgement = WorkspaceMultiplexerMutationResultSchemaZ.safeParse(result);
+          if (
+            !acknowledgement.success ||
+            acknowledgement.data.operationId !== id ||
+            acknowledgement.data.daemonInstanceId !== expectedTarget.daemon.instanceId ||
+            acknowledgement.data.workspaceName !== expectedTarget.workspaceName ||
+            acknowledgement.data.verb !== command.intent.verb ||
+            command.intent.workspaceName !== expectedTarget.workspaceName
+          ) {
+            throw new Error(
+              "semantic intent completed without a matching mutation acknowledgement after runtime replacement",
+            );
+          }
+          // The retired stream can no longer deliver its receipt. Settle the
+          // local pending operation without fabricating an observed receipt.
+          ledger.terminal(id, expectedGeneration);
         }
         return { kind: "semantic-intent", operationId: id, result };
       } catch (error) {
