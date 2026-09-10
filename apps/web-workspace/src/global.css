@@ -1042,3 +1042,43 @@ input:focus-visible,
   opacity: 0.5;
   cursor: default;
 }
+
+.live-auto-fit {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-small);
+  cursor: pointer;
+}
+.live-auto-fit input {
+  accent-color: var(--accent);
+  margin: 0;
+  width: 12px;
+  height: 12px;
+}
+.live-window-tabs [data-glass-icon] {
+  transform: scale(0.85);
+  transform-origin: center;
+  margin-inline: -2px;
+}
+
+.live-divider {
+  position: absolute;
+  z-index: 2;
+  touch-action: none;
+  user-select: none;
+  border-radius: var(--radius-control);
+}
+.live-divider[data-axis="cols"] {
+  cursor: col-resize;
+}
+.live-divider[data-axis="rows"] {
+  cursor: row-resize;
+}
+.live-divider[aria-disabled="true"] {
+  cursor: default;
+}
+.live-divider[aria-disabled="false"]:hover,
+.live-divider:focus-visible {
+  background: var(--surface-selected);
+}

@@ -1,3 +1,6 @@
+import { LiveDivider } from "./live-divider";
+import { GlassIcon } from "./glass-icon";
+import { createViewportQueue } from "./viewport-queue";
 import { openSelectedWorkspace } from "./open-workspace";
 import { fitSessionCells, projectWindowGeometry } from "./window-geometry";
 import { createTerminalInputQueue } from "./terminal-input";
@@ -228,9 +231,18 @@ export function LiveWorkspace({
               aria-current={item === layout ? "page" : undefined}
               onClick={() => setWindowId(item.semanticWindowId)}
             >
-              <span className="live-window-index" aria-hidden="true">
-                {index + 1}
-              </span>
+              <GlassIcon
+                count={item.panes.length}
+                command={
+                  runtime?.shell.workspace.sidebar.agents.find((agent) =>
+                    item.panes.some((pane) => pane.pane === agent.paneId && pane.active),
+                  )?.harness ??
+                  runtime?.shell.workspace.sidebar.agents.find((agent) =>
+                    item.panes.some((pane) => pane.pane === agent.paneId),
+                  )?.harness ??
+                  "zsh"
+                }
+              />
               <span className="live-window-label">{item.windowName || `Window ${index + 1}`}</span>
               {item.zoomed ? " · Zoomed" : ""}
             </button>
@@ -307,40 +319,121 @@ function NativeWindow({
   onFocus: (id: string) => void;
 }) {
   const [cell, setCell] = useState({ width: fontSize * 0.61, height: fontSize * 1.25 });
+  const [cellsMeasured, setCellsMeasured] = useState(false);
   const projection = projectWindowGeometry(layout, cell, 26);
   const body = useRef<HTMLDivElement>(null);
   const [fitPending, setFitPending] = useState(false);
   const [fitError, setFitError] = useState("");
+  const [autoFit, setAutoFit] = useState(true);
   const client = runtime.client;
-  async function fit() {
-    if (fitPending || !body.current) return;
-    const cells = fitSessionCells(
-      layouts,
-      { width: body.current.clientWidth, height: body.current.clientHeight },
-      cell,
-      26,
+  const measurement = useRef({ layouts, cell, autoFit, cellsMeasured });
+  measurement.current = { layouts, cell, autoFit, cellsMeasured };
+  const requestFit = useRef<() => void>(() => {});
+  useEffect(() => {
+    let disposed = false;
+    let frame = 0;
+    const queue = createViewportQueue(
+      async (cells) => {
+        if (
+          !measurement.current.autoFit ||
+          document.visibilityState !== "visible" ||
+          !document.hasFocus()
+        )
+          return true;
+        setFitPending(true);
+        try {
+          client.setPresence("foreground");
+          client.noteActivity("geometry");
+          const result = await client.fitViewport(cells.cols, cells.rows);
+          if (!disposed && result !== "ok") {
+            setFitError(
+              result === "geometry-authority-conflict"
+                ? "Another client controls sizing. Select Fit session to try again."
+                : "The connection changed. Select Fit session to try again.",
+            );
+          }
+          return result === "ok";
+        } catch {
+          if (!disposed) setFitError("Automatic sizing paused. Select Fit session to try again.");
+          return false;
+        } finally {
+          if (!disposed) setFitPending(false);
+        }
+      },
+      () => {
+        if (!disposed) {
+          measurement.current.autoFit = false;
+          setAutoFit(false);
+        }
+      },
     );
-    if (!cells) {
-      setFitError("This window is too small to fit terminal cells.");
-      return;
-    }
-    setFitPending(true);
-    setFitError("");
-    try {
-      client.setPresence("foreground");
-      client.noteActivity("geometry");
-      const result = await client.fitViewport(cells.cols, cells.rows);
-      if (result !== "ok")
-        setFitError(
-          result === "geometry-authority-conflict"
-            ? "Another client controls window sizing."
-            : "The connection changed. Try fitting again.",
-        );
-    } catch {
-      setFitError("Session fitting is unavailable on this connection.");
-    } finally {
-      setFitPending(false);
-    }
+    const measure = () => {
+      if (
+        !body.current ||
+        !measurement.current.cellsMeasured ||
+        document.visibilityState !== "visible" ||
+        !document.hasFocus()
+      )
+        return;
+      const { layouts, cell } = measurement.current;
+      const header =
+        body.current.querySelector(".live-pane-header")?.getBoundingClientRect().height ?? 26;
+      const cells = fitSessionCells(
+        layouts,
+        { width: body.current.clientWidth, height: body.current.clientHeight },
+        cell,
+        header,
+      );
+      if (cells) queue.request(cells);
+    };
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (measurement.current.autoFit) measure();
+      });
+    };
+    requestFit.current = () => {
+      queue.reset();
+      setFitError("");
+      measure();
+    };
+    const presence = () => {
+      queue.reset();
+      schedule();
+    };
+    const observer = new ResizeObserver(schedule);
+    if (body.current) observer.observe(body.current);
+    window.addEventListener("focus", presence);
+    window.addEventListener("blur", presence);
+    document.addEventListener("visibilitychange", presence);
+    schedule();
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      queue.dispose();
+      observer.disconnect();
+      window.removeEventListener("focus", presence);
+      window.removeEventListener("blur", presence);
+      document.removeEventListener("visibilitychange", presence);
+      requestFit.current = () => {};
+    };
+  }, [client]);
+  const fitKey = layouts
+    .map((l) =>
+      [
+        l.semanticWindowId,
+        l.zoomed,
+        new Set(l.panes.filter((p) => !l.zoomed || p.active).map((p) => p.top)).size,
+      ].join(":"),
+    )
+    .join("|");
+  useEffect(() => {
+    if (autoFit) requestFit.current();
+  }, [cell.width, cell.height, fitKey, autoFit, cellsMeasured]);
+  function fit() {
+    measurement.current.autoFit = true;
+    setAutoFit(true);
+    requestFit.current();
   }
   const [zoomPending, setZoomPending] = useState(false);
   const [zoomError, setZoomError] = useState("");
@@ -377,6 +470,17 @@ function NativeWindow({
           >
             {fitPending ? "Fitting…" : "Fit session"}
           </button>
+          <label className="live-auto-fit">
+            <input
+              type="checkbox"
+              checked={autoFit}
+              onChange={(event) => {
+                measurement.current.autoFit = event.target.checked;
+                setAutoFit(event.target.checked);
+              }}
+            />
+            Follow window size
+          </label>
         </div>
       }
       {fitError && (
@@ -439,15 +543,68 @@ function NativeWindow({
                   onInput={(bytes) => onInput(p.pane!, bytes)}
                   pane={p.pane}
                   cols={p.width}
-                  rows={p.height}
+                  rows={p.contentRows}
                   compositor={runtime.compositor}
                   theme={theme}
                   fontSize={fontSize}
-                  onCell={setCell}
+                  onCell={(next) => {
+                    setCellsMeasured(true);
+                    setCell((previous) =>
+                      previous.width === next.width && previous.height === next.height
+                        ? previous
+                        : next,
+                    );
+                  }}
                 />
               </div>
             );
           })}
+          {!layout.zoomed &&
+            projection.panes.flatMap((p) => {
+              if (!p.pane) return [];
+              const handles = [];
+              if (p.left + p.width < layout.cols)
+                handles.push(
+                  <LiveDivider
+                    key={`${p.pane}:cols`}
+                    client={client}
+                    pane={p.pane}
+                    axis="cols"
+                    cells={p.width}
+                    maximum={layout.cols - 2}
+                    cellPixels={cell.width}
+                    enabled={inputEnabled}
+                    onError={setZoomError}
+                    style={{
+                      left: p.x + p.pixelWidth,
+                      top: p.y,
+                      width: cell.width,
+                      height: p.pixelHeight,
+                    }}
+                  />,
+                );
+              if (p.top + p.height < layout.rows)
+                handles.push(
+                  <LiveDivider
+                    key={`${p.pane}:rows`}
+                    client={client}
+                    pane={p.pane}
+                    axis="rows"
+                    cells={p.contentRows}
+                    maximum={layout.rows - 2}
+                    cellPixels={cell.height}
+                    enabled={inputEnabled}
+                    onError={setZoomError}
+                    style={{
+                      left: p.x,
+                      top: p.y + p.pixelHeight,
+                      width: p.pixelWidth,
+                      height: cell.height,
+                    }}
+                  />,
+                );
+              return handles;
+            })}
         </div>
       </div>
     </div>

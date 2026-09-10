@@ -86,3 +86,19 @@ describe("session fitting", () => {
     ).toBeNull();
   });
 });
+
+it.each(["top", "bottom"] as const)(
+  "replaces the native %s status row with web headers",
+  (paneBorderStatus) => {
+    const bordered = { ...layout, paneBorderStatus };
+    const projected = projectWindowGeometry(bordered, { width: 8, height: 16 }, 26);
+    expect(projected.height).toBe(40 * 16 + 52);
+    for (const pane of projected.panes)
+      expect(pane.y + pane.pixelHeight).toBeLessThanOrEqual(projected.height);
+    expect(projected.panes[0]!.contentRows).toBe(40);
+    expect(projected.panes[paneBorderStatus === "top" ? 1 : 2]!.contentRows).toBe(19);
+    expect(
+      fitWindowCells(bordered, { width: 648, height: 692 }, { width: 8, height: 16 }, 26),
+    ).toEqual({ cols: 81, rows: 41 });
+  },
+);
