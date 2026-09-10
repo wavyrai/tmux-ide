@@ -222,12 +222,23 @@ export class WorkspacePaneCompositor {
   #onPaneEvent(generation: number, pane: string, event: PaneMirrorEvent): void | Promise<void> {
     if (this.#disposed || generation !== this.#generation || !this.#paneStates.has(pane)) return;
     const state = this.#paneStates.get(pane);
-    if (event.type === "closed") this.#paneStates.set(pane, { kind: "ended" });
-    else if (event.type === "flow")
-      this.#paneStates.set(pane, { kind: "live", flowPaused: event.state === "paused" });
-    else if (state?.kind !== "live")
+    // Terminal bytes go directly to the sink. Publishing an unchanged shell state
+    // for each output frame would rerender every tab/header and copy the pane map.
+    if (event.type === "closed") {
+      if (state?.kind !== "ended") {
+        this.#paneStates.set(pane, { kind: "ended" });
+        this.#emit();
+      }
+    } else if (event.type === "flow") {
+      const flowPaused = event.state === "paused";
+      if (state?.kind !== "live" || state.flowPaused !== flowPaused) {
+        this.#paneStates.set(pane, { kind: "live", flowPaused });
+        this.#emit();
+      }
+    } else if (state?.kind !== "live") {
       this.#paneStates.set(pane, { kind: "live", flowPaused: false });
-    this.#emit();
+      this.#emit();
+    }
     const channel = this.#channel(pane);
     channel.pendingGeometryBatch = null;
     if (event.type === "seed-batch") channel.replay = event.batch;

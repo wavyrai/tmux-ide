@@ -5,7 +5,7 @@ import { useState, useSyncExternalStore } from "react";
 import { Terminal, X } from "./icons";
 import { spring, useReducedMotion } from "./motion";
 import { s } from "./styles";
-import { Button } from "./ui/button";
+import { Button } from "./components/ui/button";
 
 const touchQuery = matchMedia("(hover: none)");
 const subscribe = (listener: () => void) => {

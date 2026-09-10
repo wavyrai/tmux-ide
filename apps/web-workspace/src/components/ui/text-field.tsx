@@ -1,7 +1,7 @@
 import { Field } from "@base-ui/react/field";
 import { Input } from "@base-ui/react/input";
 import * as stylex from "@stylexjs/stylex";
-import { s } from "../styles";
+import { s } from "../../styles";
 
 export function TextField({
   label,

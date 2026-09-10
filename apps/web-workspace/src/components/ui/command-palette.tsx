@@ -2,9 +2,9 @@ import * as stylex from "@stylexjs/stylex";
 import { Command } from "cmdk";
 import { motion } from "motion/react";
 import { type ReactNode, useCallback, useLayoutEffect, useRef, useState } from "react";
-import { Search } from "../icons";
-import { pressSpring, spring, useReducedMotion } from "../motion";
-import { s } from "../styles";
+import { Search } from "../../icons";
+import { pressSpring, spring, useReducedMotion } from "../../motion";
+import { s } from "../../styles";
 import { Button } from "./button";
 import { Dialog } from "./dialog";
 

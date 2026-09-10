@@ -1,5 +1,6 @@
 import {
   Activity01Icon,
+  Home01Icon,
   Add01Icon,
   AiMagicIcon,
   ArrowDown01Icon,
@@ -42,6 +43,7 @@ function icon(shape: IconSvgElement) {
     );
   };
 }
+export const Home = icon(Home01Icon);
 export const Terminal = icon(CommandLineIcon);
 export const Prompt = icon(PromptIcon);
 export const Plus = icon(Add01Icon);

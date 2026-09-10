@@ -5,7 +5,8 @@ import { createPortal } from "react-dom";
 import type { Theme } from "@superlogical/shared/themes";
 import type { PaneStreamLayoutEvent } from "../../../../desktop-renderer/src/terminal/pane-stream-transport";
 import type { WorkspaceRuntime } from "../../runtime/workspace-runtime";
-import { Columns2, Rows2 } from "../../icons";
+import { WorkspaceNotice } from "../ui/workspace-notice";
+import { Columns2, Rows2, Prompt } from "../../icons";
 import { usePaneSwap } from "../../use-pane-swap";
 import { LiveDivider } from "../../live-divider";
 import { projectWindowGeometry } from "../../window-geometry";
@@ -63,7 +64,7 @@ export function NativeWindow({
     },
     [client],
   );
-  const { fitPending, fitError, autoFit, setAutoFit, fit } = useSessionViewport(
+  const { fitPending, fitError, fitState, autoFit, setAutoFit, fit } = useSessionViewport(
     client,
     body,
     layouts,
@@ -132,29 +133,58 @@ export function NativeWindow({
     <div className="live-native-window">
       {controlsMount &&
         createPortal(
-          <details className="live-layout-options">
-            <summary title="Terminal sizing options">Layout</summary>
-            <div className="live-layout-popover">
-              <button
-                title="Resize all tmux windows in this session to fit the available terminal area"
-                disabled={fitPending}
-                onClick={() => void fit()}
+          <>
+            {(fitState === "shared" || fitState === "paused" || fitState === "manual") && (
+              <span
+                className="live-viewport-status"
+                role="status"
+                title={fitError || "The session keeps its current cell dimensions."}
               >
-                {fitPending ? "Fitting…" : "Fit session"}
-              </button>
-              <label className="live-auto-fit">
-                <input
-                  type="checkbox"
-                  checked={autoFit}
-                  onChange={(event) => {
-                    setAutoFit(event.target.checked);
-                  }}
-                />
-                Follow window size
-              </label>
-              <p>Fit all windows in this session to the available terminal area.</p>
-            </div>
-          </details>,
+                <span>
+                  {fitState === "shared"
+                    ? "Sized by another client"
+                    : fitState === "manual"
+                      ? "Fixed size"
+                      : "Sizing paused"}
+                </span>
+                <button className="live-viewport-retry" disabled={fitPending} onClick={fit}>
+                  {fitPending ? "Fitting…" : "Fit session"}
+                </button>
+              </span>
+            )}
+            <details className="live-layout-options">
+              <summary title="Terminal sizing options">Layout</summary>
+              <div className="live-layout-popover">
+                <button
+                  title="Resize all tmux windows in this session to fit the available terminal area"
+                  disabled={fitPending}
+                  onClick={() => void fit()}
+                >
+                  {fitPending ? "Fitting…" : "Fit session"}
+                </button>
+                <label className="live-auto-fit">
+                  <input
+                    type="checkbox"
+                    checked={autoFit}
+                    onChange={(event) => {
+                      setAutoFit(event.target.checked);
+                    }}
+                  />
+                  Follow window size
+                </label>
+                <p className="live-viewport-description">
+                  {fitError ||
+                    (autoFit
+                      ? "All windows follow this view while it is active."
+                      : "The session keeps its current size until you fit it again.")}
+                </p>
+                <p>
+                  Fit session resizes every window in this session, including views in other
+                  clients.
+                </p>
+              </div>
+            </details>
+          </>,
           controlsMount,
         )}
       {swap.source && (
@@ -162,15 +192,10 @@ export function NativeWindow({
           Drop on another pane to swap · keyboard: Tab to its title, then Enter · Esc cancels
         </div>
       )}
-      {fitError && (
-        <div role="status" className="live-connection-state">
-          {fitError}
-        </div>
-      )}
       {zoomError && (
-        <div role="status" className="live-connection-state">
+        <WorkspaceNotice actions={<button onClick={() => setZoomError("")}>Dismiss</button>}>
           {zoomError}
-        </div>
+        </WorkspaceNotice>
       )}
       <div className="live-window-scroll" ref={body}>
         <div
@@ -202,7 +227,7 @@ export function NativeWindow({
                 onPointerDownCapture={() => onFocus(p.pane!)}
               >
                 <PaneHeader>
-                  <AgentIcon name={agent?.harness ?? resource?.title ?? "terminal"} />
+                  {agent ? <AgentIcon name={agent.harness} /> : <Prompt size={14} />}
                   <PaneTitle
                     disabled={!inputEnabled || layout.zoomed || swap.pending}
                     aria-label={`Move ${resource?.title ?? "Terminal"}`}

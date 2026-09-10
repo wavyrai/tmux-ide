@@ -12,6 +12,42 @@ async function settle(): Promise<void> {
 }
 
 describe("Workspace pane compositor", () => {
+  it("delivers every terminal frame without republishing unchanged workbench state", async () => {
+    const stream = createScriptedPaneStream();
+    const changed = vi.fn();
+    const compositor = new WorkspacePaneCompositor({
+      transport: stream.transport,
+      workspaceName: "workspace-a",
+      panes: [PANE_A],
+      onStateChanged: changed,
+    });
+    compositor.start();
+    await settle();
+    const output = vi.fn();
+    const cursor = vi.fn();
+    compositor.registerPaneSink(PANE_A, {
+      applySeedBatch: vi.fn(),
+      applyGeometry: vi.fn(),
+      applyOutput: output,
+      applyCursor: cursor,
+    });
+    changed.mockClear();
+    for (let index = 0; index < 100; index++) {
+      await stream.latest().emit(PANE_A, { type: "output", bytes: new Uint8Array([index]) });
+      await stream.latest().emit(PANE_A, { type: "cursor", x: index % 80, y: 1 });
+    }
+    expect(output).toHaveBeenCalledTimes(100);
+    expect(cursor).toHaveBeenCalledTimes(100);
+    expect(changed).not.toHaveBeenCalled();
+    await stream.latest().emit(PANE_A, { type: "flow", state: "paused", reason: "backpressure" });
+    await stream.latest().emit(PANE_A, { type: "flow", state: "paused", reason: "backpressure" });
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(compositor.state().panes.get(PANE_A)).toEqual({ kind: "live", flowPaused: true });
+    await stream.latest().emit(PANE_A, { type: "flow", state: "resumed", reason: "backpressure" });
+    expect(changed).toHaveBeenCalledTimes(2);
+    compositor.dispose();
+  });
+
   it("atomically replaces the full layout batch and prunes an absent window", async () => {
     const stream = createScriptedPaneStream();
     const compositor = new WorkspacePaneCompositor({

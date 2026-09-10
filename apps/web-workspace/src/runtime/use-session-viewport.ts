@@ -14,12 +14,17 @@ export function useSessionViewport(
   const [fitPending, setFitPending] = useState(false);
   const [fitError, setFitError] = useState("");
   const [autoFit, setAutoFit] = useState(true);
+  const [fitState, setFitState] = useState<"following" | "manual" | "shared" | "paused">(
+    "following",
+  );
   const measurement = useRef({ layouts, cell, autoFit, cellsMeasured });
   measurement.current = { layouts, cell, autoFit, cellsMeasured };
   const requestFit = useRef<() => void>(() => {});
+  const cancelFit = useRef<() => void>(() => {});
   useEffect(() => {
     let disposed = false;
     let frame = 0;
+    let revision = 0;
     const queue = createViewportQueue(
       async (cells) => {
         if (
@@ -28,21 +33,34 @@ export function useSessionViewport(
           !document.hasFocus()
         )
           return true;
+        const attempt = revision;
         setFitPending(true);
         try {
           client.setPresence("foreground");
           client.noteActivity("geometry");
           const result = await client.fitViewport(cells.cols, cells.rows);
-          if (!disposed && result !== "ok") {
+          if (!disposed && attempt === revision) {
+            setFitState(
+              result === "ok"
+                ? "following"
+                : result === "geometry-authority-conflict"
+                  ? "shared"
+                  : "paused",
+            );
             setFitError(
-              result === "geometry-authority-conflict"
-                ? "Another client controls sizing. Select Fit session to try again."
-                : "The connection changed. Select Fit session to try again.",
+              result === "ok"
+                ? ""
+                : result === "geometry-authority-conflict"
+                  ? "Another client is setting the session size. You can keep viewing at that size or try Fit session."
+                  : "The connection changed. Try Fit session to resume automatic sizing.",
             );
           }
           return result === "ok";
         } catch {
-          if (!disposed) setFitError("Automatic sizing paused. Select Fit session to try again.");
+          if (!disposed && attempt === revision) {
+            setFitState("paused");
+            setFitError("Automatic sizing paused. Try Fit session to resume.");
+          }
           return false;
         } finally {
           if (!disposed) setFitPending(false);
@@ -80,12 +98,17 @@ export function useSessionViewport(
         if (measurement.current.autoFit) measure();
       });
     };
-    requestFit.current = () => {
+    cancelFit.current = () => {
+      revision++;
       queue.reset();
+    };
+    requestFit.current = () => {
+      cancelFit.current();
       setFitError("");
       measure();
     };
     const presence = () => {
+      revision++;
       queue.reset();
       schedule();
     };
@@ -104,6 +127,7 @@ export function useSessionViewport(
       window.removeEventListener("blur", presence);
       document.removeEventListener("visibilitychange", presence);
       requestFit.current = () => {};
+      cancelFit.current = () => {};
     };
   }, [client]);
   const fitKey = layouts
@@ -116,22 +140,31 @@ export function useSessionViewport(
     )
     .join("|");
   useEffect(() => {
-    if (autoFit) requestFit.current();
-  }, [cell.width, cell.height, fitKey, autoFit, cellsMeasured]);
+    if (measurement.current.autoFit) requestFit.current();
+  }, [cell.width, cell.height, fitKey, cellsMeasured]);
   function fit() {
     measurement.current.autoFit = true;
     setAutoFit(true);
+    setFitState("following");
     requestFit.current();
   }
 
   return {
     fitPending,
     fitError,
+    fitState,
     autoFit,
     fit,
     setAutoFit(enabled: boolean) {
-      measurement.current.autoFit = enabled;
-      setAutoFit(enabled);
+      if (enabled) {
+        fit();
+      } else {
+        measurement.current.autoFit = false;
+        cancelFit.current();
+        setAutoFit(false);
+        setFitState("manual");
+        setFitError("");
+      }
     },
   };
 }

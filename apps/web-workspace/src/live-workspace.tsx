@@ -1,3 +1,4 @@
+import { WorkspaceNotice } from "./components/ui/workspace-notice";
 import type { WorkspaceRuntime } from "./runtime/workspace-runtime";
 import { NativeWindow } from "./components/workspace/native-window";
 import { WindowTabs } from "./components/workspace/window-tabs";
@@ -36,6 +37,8 @@ export function LiveWorkspace({
   const inputQueue = useRef<ReturnType<typeof createTerminalInputQueue> | null>(null);
   const [inputEnabled, setInputEnabled] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const inputRequest = useRef(0);
+  const inputBinding = useRef<WebWorkspaceClient | null>(null);
   const [inputError, setInputError] = useState("");
   const [runtime, setRuntime] = useState<WorkspaceRuntime | null>(null);
   const [state, setState] = useState<WorkspacePaneCompositorState | null>(null);
@@ -86,6 +89,7 @@ export function LiveWorkspace({
               ? String(snapshot.shell.reason)
               : `Session ${snapshot.phase}`,
           );
+        if (snapshot.phase === "live") setError("");
         if (!shell) return;
         observeWorkspaceShell(snapshot.target!.daemon.instanceId, workspaceName, shell, sessionId);
         const panes = (shell.terminalInventory?.resources ?? [])
@@ -125,6 +129,9 @@ export function LiveWorkspace({
   }, [sessionId, daemonInstanceId, attempt]);
   const inputClient = runtime?.client;
   useEffect(() => {
+    inputBinding.current = inputClient ?? null;
+    inputRequest.current++;
+    setClaiming(false);
     setInputEnabled(false);
     setInputError("");
     if (!inputClient) return;
@@ -159,6 +166,8 @@ export function LiveWorkspace({
     document.addEventListener("visibilitychange", presence);
     presence();
     return () => {
+      inputBinding.current = null;
+      inputRequest.current++;
       queue.dispose();
       inputQueue.current = null;
       unsubscribe();
@@ -169,26 +178,34 @@ export function LiveWorkspace({
   }, [inputClient]);
   async function toggleInput() {
     if (!inputClient || claiming) return;
+    const request = ++inputRequest.current;
+    const generation = inputClient.getSnapshot().generation;
+    const current = () =>
+      inputRequest.current === request &&
+      inputBinding.current === inputClient &&
+      inputClient.getSnapshot().generation === generation;
     setClaiming(true);
     setInputError("");
     try {
       if (inputEnabled) {
         inputQueue.current?.clear();
         await inputClient.releaseAuthority("input");
+        if (!current()) return;
         setInputEnabled(false);
       } else {
         inputClient.setPresence("foreground");
         inputClient.noteActivity("focus");
         const lease = await inputClient.requestAuthority("input");
+        if (!current()) return;
         const owns = Boolean(lease && inputClient.ownsRuntimeAuthority?.("input"));
         setInputEnabled(owns);
         if (!owns)
           setInputError("Input control is held by another client or the stream is reconnecting.");
       }
     } catch {
-      setInputError("Could not change input control.");
+      if (current()) setInputError("Could not change input control.");
     } finally {
-      setClaiming(false);
+      if (inputRequest.current === request) setClaiming(false);
     }
   }
   const layouts = state?.layouts ?? [];
@@ -246,18 +263,18 @@ export function LiveWorkspace({
         </div>
       </div>
       {inputError && (
-        <div role="status" className="live-connection-state">
+        <WorkspaceNotice actions={<button onClick={() => setInputError("")}>Dismiss</button>}>
           {inputError}
-        </div>
+        </WorkspaceNotice>
       )}
       {fault ? (
-        <div role="status" className="live-connection-state">
-          {fault} <button onClick={() => setAttempt((a) => a + 1)}>Reconnect</button>
-        </div>
+        <WorkspaceNotice
+          actions={<button onClick={() => setAttempt((a) => a + 1)}>Reconnect</button>}
+        >
+          {fault}
+        </WorkspaceNotice>
       ) : !layout ? (
-        <div role="status" className="live-connection-state">
-          Opening terminal stream…
-        </div>
+        <WorkspaceNotice>Opening terminal stream…</WorkspaceNotice>
       ) : null}
       {runtime && layout && (
         <NativeWindow

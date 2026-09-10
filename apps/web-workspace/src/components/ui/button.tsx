@@ -1,6 +1,6 @@
 import { Button as Primitive } from "@base-ui/react/button";
 import { type HTMLMotionProps, motion } from "motion/react";
-import { pressSpring, useReducedMotion } from "../motion";
+import { pressSpring, useReducedMotion } from "../../motion";
 
 const MotionButton = motion.create(Primitive);
 export type ButtonProps = HTMLMotionProps<"button"> &

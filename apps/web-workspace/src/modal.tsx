@@ -4,8 +4,8 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { X } from "./icons";
 import { spring, useReducedMotion } from "./motion";
 import { s } from "./styles";
-import { Button } from "./ui/button";
-import { Dialog } from "./ui/dialog";
+import { Button } from "./components/ui/button";
+import { Dialog } from "./components/ui/dialog";
 export function Modal({
   title,
   subtitle,

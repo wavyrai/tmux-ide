@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import {
   PaneWidgetDescriptorSchemaZ,
-  WidgetAssetSchemaZ,
-  type WidgetAsset,
   type WidgetMarker,
   type RichCardWidgetArgs,
 } from "@tmux-ide/contracts";
 import { MarkdownDocument } from "./markdown-document";
 
-export type WidgetAssetReader = (assetId: string) => Promise<WidgetAsset>;
+import { createWidgetAssetResource, type WidgetAssetReader } from "./widget-asset-resource";
+export type { WidgetAssetReader } from "./widget-asset-resource";
 
 export function WidgetRenderer({
   marker,
@@ -61,47 +60,43 @@ function AssetDocument({
   alt?: string;
   readAsset: WidgetAssetReader;
 }) {
-  const [asset, setAsset] = useState<WidgetAsset | null>(null);
-  const [error, setError] = useState("");
+  const resource = useMemo(
+    () => createWidgetAssetResource(id, kind, readAsset),
+    [id, kind, readAsset],
+  );
+  const state = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot,
+  );
   useEffect(() => {
-    let disposed = false;
-    void readAsset(id)
-      .then((value) => {
-        const valid = WidgetAssetSchemaZ.parse(value);
-        if (
-          valid.assetId !== id ||
-          (kind === "markdown"
-            ? valid.media !== "text/markdown"
-            : !valid.media.startsWith("image/"))
-        )
-          throw Error("Widget asset does not match this pane.");
-        if (!disposed) setAsset(valid);
-      })
-      .catch(() => {
-        if (!disposed) setError("Widget content could not be loaded from this machine.");
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [id, kind, readAsset]);
-  if (error) return <p role="status">{error}</p>;
-  if (!asset) return <p role="status">Loading widget…</p>;
-  if (kind === "image")
+    void resource.load();
+    return () => resource.cancel();
+  }, [resource]);
+  if (state.status === "error")
+    return (
+      <div data-slot="widget-status" role="status">
+        <p>Widget content could not be loaded from this machine.</p>
+        <button type="button" onClick={() => void resource.load()}>
+          Retry
+        </button>
+      </div>
+    );
+  if (state.status === "loading")
+    return (
+      <p data-slot="widget-status" role="status">
+        Loading widget…
+      </p>
+    );
+  if (state.document.kind === "image")
     return (
       <img
         className="live-widget-image"
-        src={`data:${asset.media};base64,${asset.data}`}
-        alt={alt ?? asset.name}
+        src={state.document.src}
+        alt={alt ?? state.document.name}
       />
     );
-  try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(
-      Uint8Array.from(atob(asset.data), (c) => c.charCodeAt(0)),
-    );
-    return <MarkdownDocument text={text} />;
-  } catch {
-    return <p role="status">The Markdown asset is not valid UTF-8.</p>;
-  }
+  return <MarkdownDocument text={state.document.text} />;
 }
 function CardDocument({
   card,
@@ -141,6 +136,7 @@ function CardDocument({
             return (
               <button
                 key={key}
+                type="button"
                 disabled={!onAction}
                 onClick={() => onAction?.(item.input + (item.submit ? "\r" : ""))}
               >

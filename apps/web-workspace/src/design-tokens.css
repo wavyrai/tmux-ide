@@ -24,12 +24,18 @@
   --radius-panel: 10px;
   --radius-dialog: 16px;
   --height-badge: 18px;
+  --height-notice: 28px;
+  --line-height-ui: 1.4;
   --height-pane-header: 26px;
   --height-row: 28px;
   --height-toolbar: 38px;
   --focus-width: 2px;
 }
 [data-workspace-shell] {
+  /* One opaque canvas for terminal cells, pane chrome and unused grid area. */
+  --surface-workspace: var(--chrome);
+  --surface-pane-header: transparent;
+  --surface-pane-header-focused: var(--surface-hover);
   --surface-hover: color-mix(in srgb, var(--text) 4%, transparent);
   --surface-selected: color-mix(in srgb, var(--text) 6%, transparent);
   --border-divider: color-mix(in srgb, var(--border) 55%, transparent);

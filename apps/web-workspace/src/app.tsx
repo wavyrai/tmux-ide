@@ -45,11 +45,11 @@ import { SplitTree } from "./split-tree";
 import { s } from "./styles";
 import { terminalHandles } from "./terminal-handles";
 import { TerminalPane } from "./terminal-pane";
-import { Button } from "./ui/button";
-import { CommandPalette } from "./ui/command-palette";
-import { OverlayContainer } from "./ui/dialog";
-import { RadioGroup } from "./ui/radio-group";
-import { TextField } from "./ui/text-field";
+import { Button } from "./components/ui/button";
+import { CommandPalette } from "./components/ui/command-palette";
+import { OverlayContainer } from "./components/ui/dialog";
+import { RadioGroup } from "./components/ui/radio-group";
+import { TextField } from "./components/ui/text-field";
 
 const defaultSettings: Settings = {
   darkTheme: "midnight",

@@ -14,11 +14,15 @@ body,
 }
 body {
   font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: var(--line-height-ui);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 button:disabled {
@@ -147,7 +151,7 @@ input:focus-visible,
   line-height: var(--height-badge);
   border-radius: var(--radius-control);
   padding-inline: var(--space-3);
-  background: var(--tint);
+  background: transparent;
 }
 .pane-agent-status[data-tone="done"] {
   color: var(--status-success);
@@ -192,7 +196,7 @@ input:focus-visible,
   padding: 0 var(--space-4);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-divider);
   font-size: var(--text-body);
   overflow-y: auto;
 }
@@ -867,6 +871,7 @@ input:focus-visible,
   min-height: 0;
   height: 100%;
   width: 100%;
+  background: var(--surface-workspace);
 }
 .live-workspace-toolbar {
   display: flex;
@@ -925,6 +930,7 @@ input:focus-visible,
   font-size: var(--text-small);
 }
 .live-input-controls button {
+  white-space: nowrap;
   font: inherit;
   color: var(--text);
   background: var(--surface-selected);
@@ -939,7 +945,7 @@ input:focus-visible,
   font-size: var(--text-small);
   white-space: nowrap;
 }
-@media (max-width: 760px) {
+@media (max-width: 1000px) {
   .live-view-mode {
     display: none;
   }
@@ -954,15 +960,19 @@ input:focus-visible,
   min-width: 0;
 }
 .live-window-grid {
+  background: var(--surface-workspace);
   position: relative;
 }
 .live-pane {
   position: absolute;
   overflow: hidden;
-  background: var(--panel-fill);
-  border-radius: var(--radius-row);
+  background: var(--surface-workspace);
+  border-radius: 0;
 }
 .live-pane-header {
+  background: var(--surface-pane-header);
+  box-shadow: inset 0 -1px var(--border-divider);
+  color: var(--muted);
   height: var(--height-pane-header);
   display: flex;
   gap: var(--space-4);
@@ -979,7 +989,8 @@ input:focus-visible,
   margin-left: auto;
 }
 .live-pane[data-focused="true"] .live-pane-header {
-  background: var(--panel-active-fill);
+  background: var(--surface-pane-header-focused);
+  color: var(--text);
 }
 .live-terminal {
   overflow: hidden;
@@ -988,8 +999,18 @@ input:focus-visible,
   background: transparent !important;
 }
 .live-connection-state {
-  padding: 16px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-height: var(--height-notice);
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-6);
   color: var(--muted);
+  font-size: var(--text-small);
+  line-height: var(--line-height-ui);
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-workspace);
+  overflow-wrap: anywhere;
 }
 .live-pane-action {
   border: 0;
@@ -1195,7 +1216,7 @@ input:focus-visible,
   inset: 0;
   display: flex;
   flex-direction: column;
-  background: var(--panel-fill);
+  background: var(--surface-workspace);
   color: var(--text);
 }
 .live-widget-toolbar {
@@ -1268,4 +1289,69 @@ input:focus-visible,
 .widget-table-scroll {
   max-width: 100%;
   overflow: auto;
+}
+
+/* Authority feedback shares the toolbar; it must not change the terminal cell budget. */
+.live-layout-mount {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.live-viewport-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-small);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.live-viewport-retry {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-selected);
+  border: 0;
+  border-radius: var(--radius-control);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+}
+.live-viewport-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.workspace-notice {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--height-notice);
+  padding: var(--space-2) var(--space-6);
+  font-size: var(--text-small);
+  color: var(--muted);
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-workspace);
+}
+.workspace-notice-message {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workspace-notice-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.workspace-notice-actions button {
+  font: inherit;
+  color: var(--text);
+  border: 0;
+  border-radius: var(--radius-control);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-selected);
+  cursor: pointer;
+}
+@media (max-width: 900px) {
+  .live-viewport-status > span {
+    display: none;
+  }
 }

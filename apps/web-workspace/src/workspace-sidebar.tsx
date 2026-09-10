@@ -2,7 +2,7 @@ import { AgentStatus } from "./pane-agent-indicators";
 import { AgentIcon } from "./agent-icon";
 import { useState } from "react";
 import { leaves, type Workspace } from "@superlogical/shared/model";
-import { Layers, Monitor, Terminal, ChevronDown, ChevronRight } from "./icons";
+import { Home, Layers, Monitor, Terminal, ChevronDown, ChevronRight } from "./icons";
 import { agentRows } from "./home-overview";
 export function WorkspaceSidebar({
   workspace,
@@ -43,7 +43,7 @@ export function WorkspaceSidebar({
       </div>
       <nav className="sidebar-navigation">
         <button aria-label="Home" aria-current={home ? "page" : undefined} onClick={onHome}>
-          <span aria-hidden="true">⌂</span>
+          <Home size={14} />
           {!collapsed && "Home"}
         </button>
         <button
@@ -81,6 +81,8 @@ export function WorkspaceSidebar({
                       <button
                         key={tab.id}
                         className="sidebar-session"
+                        title={tab.name}
+                        aria-current={!home && activeId === tab.id ? "true" : undefined}
                         data-selected={!home && activeId === tab.id}
                         onClick={() => onSelect(tab.id)}
                       >
@@ -96,6 +98,7 @@ export function WorkspaceSidebar({
                       <button
                         key={pane.id}
                         className="sidebar-pane"
+                        title={`${pane.agent!.name} · ${tab.name}`}
                         data-selected={!home && activeId === tab.id && focusedId === pane.id}
                         aria-current={
                           !home && activeId === tab.id && focusedId === pane.id ? "true" : undefined
