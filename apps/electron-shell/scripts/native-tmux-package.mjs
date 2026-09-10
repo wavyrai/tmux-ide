@@ -16,6 +16,21 @@ export async function stageNativeTmux(
 ) {
   const source = nativeTmuxDirectory(repoRoot, platform, arch);
   validateBundledTmux(source, platform, arch);
+  const expected = JSON.parse(
+    await readFile(join(repoRoot, "native/tmux/provenance.json"), "utf8"),
+  );
+  const actual = JSON.parse(await readFile(join(source, "manifest.json"), "utf8"));
+  for (const field of ["repository", "commit", "version", "extension", "patch", "patchSha256"]) {
+    if (
+      typeof expected[field] !== "string" ||
+      !expected[field] ||
+      actual[field] !== expected[field]
+    ) {
+      throw new Error(
+        `Bundled tmux provenance mismatch: ${field}. Rebuild or download the current native distribution.`,
+      );
+    }
+  }
   // COPYING is deliberately included even for historical manifests which only
   // list dependency licenses. Copy the complete distribution unchanged.
   await readFile(join(source, "COPYING"));
