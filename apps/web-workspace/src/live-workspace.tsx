@@ -1,3 +1,6 @@
+import { createPortal } from "react-dom";
+import { Columns2, Rows2 } from "./icons";
+import { usePaneSwap } from "./use-pane-swap";
 import { LiveDivider } from "./live-divider";
 import { GlassIcon } from "./glass-icon";
 import { createViewportQueue } from "./viewport-queue";
@@ -54,6 +57,7 @@ export function LiveWorkspace({
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [windowId, setWindowId] = useState<string | null>(null);
+  const [controlsMount, setControlsMount] = useState<HTMLDivElement | null>(null);
   const [focused, setFocused] = useState<string | null>(null);
   useEffect(() => {
     let disposed = false;
@@ -248,6 +252,7 @@ export function LiveWorkspace({
             </button>
           ))}
         </nav>
+        <div className="live-layout-mount" ref={setControlsMount} />
         <div className="live-input-controls">
           <span className="live-view-mode">{inputEnabled ? "Input enabled" : "Read only"}</span>
           <button disabled={!runtime || claiming || !layout} onClick={() => void toggleInput()}>
@@ -277,6 +282,7 @@ export function LiveWorkspace({
         <NativeWindow
           layout={layout}
           layouts={layouts}
+          controlsMount={controlsMount}
           runtime={runtime}
           inputEnabled={inputEnabled}
           onInput={(pane, bytes) => {
@@ -298,6 +304,7 @@ export function LiveWorkspace({
 }
 
 function NativeWindow({
+  controlsMount,
   inputEnabled,
   onInput,
   layout,
@@ -309,6 +316,7 @@ function NativeWindow({
   onFocus,
 }: {
   layout: PaneStreamLayoutEvent;
+  controlsMount: HTMLDivElement | null;
   layouts: readonly PaneStreamLayoutEvent[];
   inputEnabled: boolean;
   onInput: (pane: string, bytes: Uint8Array) => void;
@@ -459,30 +467,75 @@ function NativeWindow({
       setZoomPending(false);
     }
   }
+  const swap = usePaneSwap(
+    client,
+    [
+      layout.semanticWindowId,
+      layout.zoomed,
+      ...layout.panes.map((p) => [p.pane, p.left, p.top, p.width, p.height].join(":")),
+    ].join("|"),
+    inputEnabled && !layout.zoomed,
+    setZoomError,
+  );
+  const [splitPending, setSplitPending] = useState(false);
+  async function split(pane: string, direction: "right" | "down") {
+    if (splitPending || !inputEnabled || !client.ownsRuntimeAuthority?.("input")) return;
+    const target = client.getSnapshot().target;
+    if (!target) return;
+    setSplitPending(true);
+    setZoomError("");
+    try {
+      client.noteActivity("input");
+      await client.dispatch({
+        kind: "semantic-intent",
+        intent: {
+          verb: "workspace.window.split",
+          workspaceName: target.workspaceName,
+          semanticPaneId: pane,
+          direction,
+        },
+      });
+    } catch {
+      setZoomError("Could not split the pane. Check input control and try again.");
+    } finally {
+      setSplitPending(false);
+    }
+  }
   return (
     <div className="live-native-window">
-      {
-        <div className="live-window-controls">
-          <button
-            title="Resize all tmux windows in this session to fit the available terminal area"
-            disabled={fitPending}
-            onClick={() => void fit()}
-          >
-            {fitPending ? "Fitting…" : "Fit session"}
-          </button>
-          <label className="live-auto-fit">
-            <input
-              type="checkbox"
-              checked={autoFit}
-              onChange={(event) => {
-                measurement.current.autoFit = event.target.checked;
-                setAutoFit(event.target.checked);
-              }}
-            />
-            Follow window size
-          </label>
+      {controlsMount &&
+        createPortal(
+          <details className="live-layout-options">
+            <summary title="Terminal sizing options">Layout</summary>
+            <div className="live-layout-popover">
+              <button
+                title="Resize all tmux windows in this session to fit the available terminal area"
+                disabled={fitPending}
+                onClick={() => void fit()}
+              >
+                {fitPending ? "Fitting…" : "Fit session"}
+              </button>
+              <label className="live-auto-fit">
+                <input
+                  type="checkbox"
+                  checked={autoFit}
+                  onChange={(event) => {
+                    measurement.current.autoFit = event.target.checked;
+                    setAutoFit(event.target.checked);
+                  }}
+                />
+                Follow window size
+              </label>
+              <p>Fit all windows in this session to the available terminal area.</p>
+            </div>
+          </details>,
+          controlsMount,
+        )}
+      {swap.source && (
+        <div className="live-swap-hint" role="status">
+          Drop on another pane to swap · keyboard: Tab to its title, then Enter · Esc cancels
         </div>
-      }
+      )}
       {fitError && (
         <div role="status" className="live-connection-state">
           {fitError}
@@ -511,6 +564,9 @@ function NativeWindow({
               <div
                 className="live-pane"
                 data-focused={focused === p.pane}
+                data-semantic-pane={p.pane}
+                data-drag-source={swap.source === p.pane}
+                data-drop-target={swap.target === p.pane}
                 key={p.pane}
                 style={{
                   left: p.x,
@@ -522,8 +578,34 @@ function NativeWindow({
               >
                 <header className="live-pane-header">
                   <AgentIcon name={agent?.harness ?? resource?.title ?? "terminal"} />
-                  <span>{resource?.title ?? "Terminal"}</span>
+                  <button
+                    className="live-pane-title"
+                    disabled={!inputEnabled || layout.zoomed || swap.pending}
+                    aria-label={`Move ${resource?.title ?? "Terminal"}`}
+                    title="Drag to swap panes · Enter to pick up, then Enter on another title to swap"
+                    {...swap.handle(p.pane)}
+                  >
+                    {resource?.title ?? "Terminal"}
+                  </button>
                   {agent && <AgentStatus agent={agent} />}
+                  <button
+                    className="live-pane-action"
+                    disabled={!inputEnabled || splitPending}
+                    aria-label={`Split ${resource?.title ?? "Terminal"} right`}
+                    title="Split right"
+                    onClick={() => void split(p.pane!, "right")}
+                  >
+                    <Columns2 size={14} />
+                  </button>
+                  <button
+                    className="live-pane-action"
+                    disabled={!inputEnabled || splitPending}
+                    aria-label={`Split ${resource?.title ?? "Terminal"} down`}
+                    title="Split down"
+                    onClick={() => void split(p.pane!, "down")}
+                  >
+                    <Rows2 size={14} />
+                  </button>
                   <button
                     className="live-pane-action"
                     disabled={zoomPending || !inputEnabled}

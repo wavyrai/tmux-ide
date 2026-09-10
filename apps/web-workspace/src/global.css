@@ -907,10 +907,7 @@ input:focus-visible,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.live-window-index {
-  font: var(--text-caption) var(--font-code);
-  opacity: 0.6;
-}
+
 .live-window-tabs button[aria-current] {
   background: var(--panel-fill);
   background-image: var(--tab-surface);
@@ -963,15 +960,15 @@ input:focus-visible,
   position: absolute;
   overflow: hidden;
   background: var(--panel-fill);
-  border-radius: 6px;
+  border-radius: var(--radius-row);
 }
 .live-pane-header {
-  height: 26px;
+  height: var(--height-pane-header);
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: center;
-  padding: 0 8px;
-  font-size: 12px;
+  padding: 0 var(--space-4);
+  font-size: var(--text-body);
 }
 .live-pane-header > span:nth-child(2) {
   overflow: hidden;
@@ -1020,29 +1017,6 @@ input:focus-visible,
   min-height: 0;
   min-width: 0;
 }
-.live-window-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 28px;
-  padding: 0 8px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.live-window-controls button {
-  font: inherit;
-  color: inherit;
-  border: 0;
-  border-radius: 4px;
-  background: var(--panel-active-fill);
-  padding: 3px 8px;
-  cursor: pointer;
-}
-.live-window-controls button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 .live-auto-fit {
   display: inline-flex;
   align-items: center;
@@ -1081,4 +1055,131 @@ input:focus-visible,
 .live-divider[aria-disabled="false"]:hover,
 .live-divider:focus-visible {
   background: var(--surface-selected);
+}
+
+.live-pane-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.live-pane-title:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.live-pane-title:active {
+  cursor: grabbing;
+}
+.live-pane[data-drop-target="true"] {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.live-pane[data-drag-source="true"] .live-pane-header {
+  background: var(--surface-selected);
+}
+.live-swap-hint {
+  position: absolute;
+  z-index: 5;
+  top: 42px;
+  left: 8px;
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--text-small);
+  border-radius: var(--radius-row);
+  color: var(--text);
+  background: var(--panel-fill);
+  box-shadow: var(--tab-shadow);
+  pointer-events: none;
+}
+.live-pane-header .live-pane-action + .live-pane-action {
+  margin-left: 0;
+}
+
+.live-layout-mount {
+  flex-shrink: 0;
+}
+.live-layout-options {
+  position: relative;
+  font-size: var(--text-small);
+}
+.live-layout-options summary {
+  list-style: none;
+  cursor: pointer;
+  color: var(--muted);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-control);
+}
+.live-layout-options summary::-webkit-details-marker {
+  display: none;
+}
+.live-layout-options summary:hover,
+.live-layout-options[open] summary {
+  background: var(--surface-selected);
+  color: var(--text);
+}
+.live-layout-options summary:focus-visible {
+  outline: var(--focus-width) solid var(--focus-ring);
+}
+.live-layout-popover {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  top: calc(100% + var(--space-2));
+  width: 230px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-6);
+  padding: var(--space-6);
+  background: var(--panel-fill);
+  color: var(--text);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--tab-shadow);
+}
+.live-layout-popover p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.live-layout-popover button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface-selected);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+}
+.live-pane-header .live-pane-action {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1);
+  opacity: 0;
+}
+.live-pane-header:hover .live-pane-action,
+.live-pane-header:focus-within .live-pane-action {
+  opacity: 0.7;
+}
+.live-pane-header .live-pane-action:hover,
+.live-pane-header .live-pane-action:focus-visible {
+  opacity: 1;
+}
+.live-pane-header .live-pane-action:disabled {
+  cursor: default;
+}
+.live-pane-header:hover .live-pane-action:disabled {
+  opacity: 0.3;
+}
+@media (hover: none) {
+  .live-pane-header .live-pane-action {
+    opacity: 0.7;
+  }
 }
