@@ -1,19 +1,18 @@
+import {
+  readEditorFile,
+  saveEditorFile,
+  boundEditorText,
+  MAX_EDITOR_LINES,
+} from "./editor-file-io.ts";
 import { EditBuffer } from "@opentui/core";
 import type { WorkspaceFilesCatalogEnvelopeV1 } from "@tmux-ide/contracts";
 import ignore, { type Ignore } from "ignore";
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { createMemo, createRoot, createSignal, type Accessor, type Setter } from "solid-js";
 
 import type { StatusEntry } from "../../diff-model.ts";
-import {
-  classifyFile,
-  isBinary,
-  readOnlyBanner,
-  sanitizeForDisplay,
-  type ReadOnlyReason,
-} from "../../editor-buffer.ts";
+import { MAX_EDITABLE_BYTES, readOnlyBanner, type ReadOnlyReason } from "../../editor-buffer.ts";
 import {
   shouldActivateFilesAfterEditorOpen,
   type EditorOpenOrigin,
@@ -73,6 +72,8 @@ export interface FilesKeyEvent {
 }
 
 export interface FilesFeatureIO {
+  readonly readEditorFile?: typeof readEditorFile;
+  readonly saveEditorFile?: typeof saveEditorFile;
   readonly readFile: typeof readFile;
   readonly readdir: typeof readdir;
   readonly writeFile: typeof writeFile;
@@ -98,6 +99,22 @@ export class FilesFeatureSession {
   readonly #host: FilesFeatureHost;
   readonly #io: FilesFeatureIO;
   #buffer: EditBuffer | null = null;
+  #loadController: AbortController | null = null;
+  #loadRequest = 0;
+  #contentVersion = 0;
+  #editorByteLength = 0;
+  #loadedPath: string | null = null;
+  #saveController: AbortController | null = null;
+  #saveFlight: Promise<void> | null = null;
+  #pendingSave: {
+    buffer: EditBuffer;
+    path: string;
+    text: string;
+    version: number;
+    epoch: number;
+    root: string;
+    identity: string;
+  } | null = null;
   #epoch = 0;
   #workspaceIdentity = "";
   #disposed = false;
@@ -163,9 +180,17 @@ export class FilesFeatureSession {
       const [editorMessage, setEditorMessage] = createSignal("");
       const editorRows = () => Math.max(1, host.height() - 3);
       const visibleFiles = createMemo(() => filterView(fileNodes(), query()));
+      let projectedContentVersion = -1;
+      let projectedLines = [""];
       const editorLines = createMemo(() => {
         editorRevision();
-        return this.#buffer?.getText().split("\n") ?? [""];
+        if (projectedContentVersion !== this.#contentVersion) {
+          const text = this.#buffer?.getText() ?? "";
+          this.#editorByteLength = Buffer.byteLength(text);
+          projectedLines = text.split("\n");
+          projectedContentVersion = this.#contentVersion;
+        }
+        return projectedLines;
       });
       const editorCursor = createMemo(() => {
         editorRevision();
@@ -314,6 +339,18 @@ export class FilesFeatureSession {
     if (identity !== this.#workspaceIdentity) {
       this.#workspaceIdentity = identity;
       this.#epoch += 1;
+      this.#loadController?.abort();
+      this.#saveController?.abort();
+      this.#pendingSave = null;
+      this.#buffer?.destroy();
+      this.#buffer = null;
+      this.#loadedPath = null;
+      this.#contentVersion++;
+      this.setEditorPath(null);
+      this.setEditorModified(false);
+      this.setEditorReadOnly(null);
+      this.setEditorMessage("");
+      this.setEditorRevision((value) => value + 1);
       this.resetCatalog();
     }
     return { epoch: this.#epoch, root: this.#host.workspaceDir(), identity };
@@ -328,42 +365,71 @@ export class FilesFeatureSession {
     );
   }
 
-  openEditor(rawPath: string, line?: number, origin: EditorOpenOrigin = "user"): void {
+  async openEditor(
+    rawPath: string,
+    line?: number,
+    origin: EditorOpenOrigin = "user",
+  ): Promise<void> {
     if (this.#disposed) return;
+    const { epoch, root, identity } = this.#captureEpoch();
+    this.#loadController?.abort();
+    const controller = new AbortController();
+    this.#loadController = controller;
+    const request = ++this.#loadRequest;
+    const contentVersion = this.#contentVersion;
     const path = rawPath.startsWith("~/")
       ? `${process.env.HOME ?? ""}${rawPath.slice(1)}`
       : rawPath;
-    let bytes: Uint8Array;
+    const current = () =>
+      request === this.#loadRequest &&
+      !controller.signal.aborted &&
+      this.#isCurrent(epoch, root, identity);
+    this.setEditorMessage("loading…");
     try {
-      bytes = readFileSync(path);
+      const loaded = await (this.#io.readEditorFile ?? readEditorFile)(path, controller.signal);
+      if (!current()) return;
+      // Navigation/reload intentionally replaces earlier edits, but never edits
+      // entered while this asynchronous load was pending.
+      if (contentVersion !== this.#contentVersion) {
+        this.setEditorMessage("open cancelled: current buffer changed while loading");
+        return;
+      }
+      const next = EditBuffer.create("wcwidth");
+      try {
+        next.setText(loaded.text);
+        next.setCursor(0, 0);
+      } catch (error) {
+        next.destroy();
+        throw error;
+      }
+      this.#saveController?.abort();
+      this.#pendingSave = null;
+      this.#buffer?.destroy();
+      this.#buffer = next;
+      this.#loadedPath = loaded.path;
+      this.#contentVersion++;
+      let top = 0;
+      if (line !== undefined) {
+        const target = Math.max(0, Math.min(line, loaded.lineCount - 1));
+        next.setCursor(target, 0);
+        top = scrollToCursor(target, 0, this.editorRows(), loaded.lineCount);
+      }
+      if (this.#host.mode() !== "editor")
+        this.#previousMode = this.#host.mode() === "mirror" ? "mirror" : "home";
+      this.setEditorPath(path);
+      this.setEditorReadOnly(loaded.reason);
+      this.setEditorModified(false);
+      this.setEditorTop(top);
+      this.setEditorMessage(loaded.truncated ? "truncated preview · read-only" : "");
+      this.setEditorRevision((value) => value + 1);
+      this.setFocus("editor");
+      if (shouldActivateFilesAfterEditorOpen(this.#host.activePanel(), origin))
+        this.#host.activateFiles();
     } catch (error) {
-      this.setEditorMessage(`cannot open: ${(error as Error).message}`);
-      return;
+      if (current()) this.setEditorMessage(`cannot open: ${(error as Error).message}`);
+    } finally {
+      if (this.#loadController === controller) this.#loadController = null;
     }
-    const reason = classifyFile(bytes.length, isBinary(bytes));
-    const text =
-      reason === "binary" ? sanitizeForDisplay(bytes) : Buffer.from(bytes).toString("utf8");
-    this.#buffer?.destroy();
-    this.#buffer = EditBuffer.create("wcwidth");
-    this.#buffer.setText(text);
-    this.#buffer.setCursor(0, 0);
-    let top = 0;
-    if (line !== undefined) {
-      const target = Math.max(0, Math.min(line, text.split("\n").length - 1));
-      this.#buffer.setCursor(target, 0);
-      top = scrollToCursor(target, 0, this.editorRows(), text.split("\n").length);
-    }
-    if (this.#host.mode() !== "editor")
-      this.#previousMode = this.#host.mode() === "mirror" ? "mirror" : "home";
-    this.setEditorPath(path);
-    this.setEditorReadOnly(reason);
-    this.setEditorModified(false);
-    this.setEditorTop(top);
-    this.setEditorMessage("");
-    this.setEditorRevision((value) => value + 1);
-    this.setFocus("editor");
-    if (shouldActivateFilesAfterEditorOpen(this.#host.activePanel(), origin))
-      this.#host.activateFiles();
   }
 
   toggleEditor(): void {
@@ -375,17 +441,57 @@ export class FilesFeatureSession {
     }
   }
 
-  save(): void {
-    const path = this.editorPath();
-    if (!this.#buffer || !path || this.editorReadOnly()) return;
-    try {
-      const temporary = `${path}.zz-tmp-${process.pid}`;
-      writeFileSync(temporary, this.#buffer.getText());
-      renameSync(temporary, path);
-      this.setEditorModified(false);
-      this.setEditorMessage("saved");
-    } catch (error) {
-      this.setEditorMessage(`save failed: ${(error as Error).message}`);
+  save(): Promise<void> {
+    const scope = this.#captureEpoch();
+    if (this.#disposed || !this.#buffer || !this.#loadedPath || this.editorReadOnly())
+      return Promise.resolve();
+    // At most one in-flight snapshot and one latest explicitly requested snapshot.
+    this.#pendingSave = {
+      ...scope,
+      buffer: this.#buffer,
+      path: this.#loadedPath,
+      text: this.#buffer.getText(),
+      version: this.#contentVersion,
+    };
+    if (this.#saveFlight) return this.#saveFlight;
+    // Admission is installed before draining starts. Recheck after each awaited
+    // drain; clear admission in the same turn as the final empty check.
+    this.#saveFlight = Promise.resolve().then(async () => {
+      try {
+        do {
+          await this.#saveSerial();
+        } while (this.#pendingSave && !this.#disposed);
+      } finally {
+        this.#saveFlight = null;
+      }
+    });
+    return this.#saveFlight;
+  }
+
+  async #saveSerial(): Promise<void> {
+    while (this.#pendingSave && !this.#disposed) {
+      const { buffer, path, text, version, epoch, root, identity } = this.#pendingSave;
+      this.#pendingSave = null;
+      const current = () => this.#buffer === buffer && this.#isCurrent(epoch, root, identity);
+      if (!current()) continue;
+      const controller = new AbortController();
+      this.#saveController = controller;
+      try {
+        await (this.#io.saveEditorFile ?? saveEditorFile)(path, text, controller.signal, current);
+        if (current() && !controller.signal.aborted) {
+          this.setEditorModified(this.#contentVersion !== version);
+          this.setEditorMessage(
+            this.#contentVersion === version
+              ? "saved"
+              : "saved snapshot; newer edits remain unsaved",
+          );
+        }
+      } catch (error) {
+        if (current() && !controller.signal.aborted)
+          this.setEditorMessage(`save failed: ${(error as Error).message}`);
+      } finally {
+        if (this.#saveController === controller) this.#saveController = null;
+      }
     }
   }
 
@@ -412,42 +518,74 @@ export class FilesFeatureSession {
     else if (name === "pagedown")
       for (let i = 0; i < this.editorRows(); i++) buffer.moveCursorDown();
     else if (!readOnly && name === "return") {
+      if (!this.#canInsert("\n")) return;
       buffer.newLine();
+      this.#contentVersion++;
       this.setEditorModified(true);
     } else if (!readOnly && name === "backspace") {
       buffer.deleteCharBackward();
+      this.#contentVersion++;
       this.setEditorModified(true);
     } else if (!readOnly && name === "delete") {
       buffer.deleteChar();
+      this.#contentVersion++;
       this.setEditorModified(true);
     } else if (!readOnly && name === "space" && !event.ctrl && !event.meta) {
+      if (!this.#canInsert(" ")) return;
       buffer.insertText(" ");
+      this.#contentVersion++;
       this.setEditorModified(true);
     } else if (!readOnly && name.length === 1 && !event.ctrl && !event.meta) {
-      buffer.insertText(event.shift ? name.toUpperCase() : name);
+      const text = event.shift ? name.toUpperCase() : name;
+      if (!this.#canInsert(text)) return;
+      buffer.insertText(text);
+      this.#contentVersion++;
       this.setEditorModified(true);
     } else return;
-    this.syncScroll();
     this.setEditorRevision((value) => value + 1);
+    this.syncScroll();
+  }
+
+  #canInsert(text: string): boolean {
+    if (!this.#buffer) return false;
+    const lines = this.editorLines();
+    const added = boundEditorText(text);
+    const lineCount = lines.length + added.lineCount - 1;
+    if (
+      this.#editorByteLength + Buffer.byteLength(text) >= MAX_EDITABLE_BYTES ||
+      lineCount > MAX_EDITOR_LINES ||
+      added.truncated
+    ) {
+      this.setEditorMessage("edit exceeds editor size limit");
+      return false;
+    }
+    return true;
   }
 
   insertText(text: string): boolean {
-    if (!this.#buffer) return false;
+    if (!this.editorWritable() || !this.#buffer || !this.#canInsert(text)) return false;
     this.#buffer.insertText(text);
+    this.#contentVersion++;
     this.setEditorModified(true);
-    this.syncScroll();
     this.setEditorRevision((value) => value + 1);
+    this.syncScroll();
     return true;
   }
   undo(): void {
-    this.#buffer?.undo();
-    this.syncScroll();
+    if (!this.editorWritable() || !this.#buffer?.canUndo()) return;
+    this.#contentVersion++;
+    this.setEditorModified(true);
+    this.#buffer.undo();
     this.setEditorRevision((v) => v + 1);
+    this.syncScroll();
   }
   redo(): void {
-    this.#buffer?.redo();
-    this.syncScroll();
+    if (!this.editorWritable() || !this.#buffer?.canRedo()) return;
+    this.#contentVersion++;
+    this.setEditorModified(true);
+    this.#buffer.redo();
     this.setEditorRevision((v) => v + 1);
+    this.syncScroll();
   }
   setCursor(line: number, column: number): void {
     this.#buffer?.setCursor(line, column);
@@ -510,7 +648,10 @@ export class FilesFeatureSession {
     const row = this.visibleFiles()[index];
     if (!row) return;
     this.setFileSelection(index);
-    if (!row.node.isDir) return this.openEditor(row.node.path);
+    if (!row.node.isDir) {
+      void this.openEditor(row.node.path);
+      return;
+    }
     if (row.node.expanded) {
       this.setFileNodes((nodes) => removeSubtreeAt(nodes, indexOfPath(nodes, row.node.path)));
       return;
@@ -646,10 +787,10 @@ export class FilesFeatureSession {
   }
 
   action(id: FilesActionId): void {
-    if (id === "save") this.save();
+    if (id === "save") void this.save();
     else if (id === "reload") {
       const path = this.editorPath();
-      if (path) this.openEditor(path);
+      if (path) void this.openEditor(path);
     } else if (id === "filter") this.beginFilter();
     else if (id === "toggle-hidden") this.toggleHidden();
     else if (id === "toggle-ignored") this.toggleIgnored();
@@ -681,6 +822,10 @@ export class FilesFeatureSession {
   }
   dispose(): void {
     this.#disposed = true;
+    this.#loadController?.abort();
+    this.#saveController?.abort();
+    this.#loadRequest++;
+    this.#pendingSave = null;
     this.#epoch += 1;
     this.#buffer?.destroy();
     this.#buffer = null;
