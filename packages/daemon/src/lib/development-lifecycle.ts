@@ -1,3 +1,7 @@
+import {
+  claimDevelopmentRuntimeOwner,
+  verifyDevelopmentRuntimeOwner,
+} from "./development-runtime-owner.ts";
 import { WorkspaceAdmissionResourceSchemaZ } from "@tmux-ide/contracts";
 /** Explicit manager API. No development lifecycle is reachable from production namespace getters. */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -30,6 +34,7 @@ import {
 } from "./unix-socket-authority.ts";
 import { boundedTmuxRead } from "./bounded-tmux-read.ts";
 import {
+  DevelopmentOperationError,
   cleanManagerEnvironment,
   developmentProcessIdentity,
   developmentWorktreeIdentity,
@@ -52,7 +57,7 @@ function pathPresent(path: string): boolean {
   }
 }
 
-interface TmuxRecord {
+export interface TmuxRecord {
   version: 1;
   pid: number;
   incarnation: string;
@@ -63,7 +68,7 @@ interface TmuxRecord {
   generation: string;
   manifestHash: string;
 }
-const socketIdentity = (record: TmuxRecord): UnixSocketIdentity => ({
+export const socketIdentity = (record: TmuxRecord): UnixSocketIdentity => ({
   ...record.socket,
   mtimeNs: BigInt(record.socket.mtimeNs),
   birthtimeNs: BigInt(record.socket.birthtimeNs),
@@ -82,7 +87,7 @@ function childEnvironment(
     TMUX_IDE_CWD: instance.worktree,
   };
 }
-function readTmux(instance: DevelopmentInstance): TmuxRecord | null {
+export function readTmux(instance: DevelopmentInstance): TmuxRecord | null {
   const record = readPrivateDevelopmentRecord<TmuxRecord>(join(instance.root, "tmux.json"));
   if (
     record &&
@@ -97,7 +102,7 @@ function readTmux(instance: DevelopmentInstance): TmuxRecord | null {
     throw new Error("Invalid development tmux owner");
   return record;
 }
-async function verifyTmux(
+export async function verifyTmux(
   instance: DevelopmentInstance,
   identity: DevelopmentIdentityRecord,
   record: TmuxRecord,
@@ -146,6 +151,7 @@ export interface DevelopmentStatus {
 }
 export async function statusDevelopmentInstance(
   instance: DevelopmentInstance,
+  options: { allowOrphan?: boolean } = {},
 ): Promise<DevelopmentStatus> {
   const status: DevelopmentStatus = {
     version: 1,
@@ -174,10 +180,17 @@ export async function statusDevelopmentInstance(
     } catch {
       status.reason = "selected-build-unavailable";
     }
-    const identity = await readDevelopmentIdentity(instance);
+    const identity = await readDevelopmentIdentity(instance, options);
     if (!identity) return status;
+    phase = "runtime-owner-invalid";
+    verifyDevelopmentRuntimeOwner(instance, identity);
     phase = "process-owner-invalid";
-    const owner = readDevelopmentOwner(instance);
+    const publishedOwner = readDevelopmentOwner(instance);
+    const startupOwner = readDevelopmentOwner(instance, "startup-process.json");
+    const owner =
+      startupOwner && (await developmentProcessIdentity(startupOwner.pid)) !== null
+        ? startupOwner
+        : publishedOwner;
     phase = "tmux-owner-invalid";
     const tmux = readTmux(instance);
     if (!tmux && pathPresent(join(instance.runtimeDir, "tmux.sock")))
@@ -429,6 +442,8 @@ export async function upDevelopmentInstance(
         };
         writeDevelopmentRecord(join(instance.root, "instance.json"), identity);
       }
+      phase = "runtime-ownership";
+      claimDevelopmentRuntimeOwner(instance, identity);
       let current = await statusDevelopmentInstance(instance);
       const transitionDeadline = Date.now() + 3000;
       while (current.state === "starting" && Date.now() < transitionDeadline) {
@@ -487,6 +502,15 @@ export async function upDevelopmentInstance(
         });
         child.unref();
         startedIdentity = await developmentProcessIdentity(child.pid!);
+        if (!startedIdentity) throw new Error("Managed owner exited before its process receipt");
+        writeDevelopmentRecord(join(instance.root, "startup-process.json"), {
+          version: 1,
+          attempt,
+          pid: child.pid,
+          incarnation: startedIdentity,
+          generation: build.generation,
+          manifestHash: launch.environment.TMUX_IDE_DEVELOPMENT_BUILD_HASH,
+        });
         const deadline = Date.now() + Math.min(options.timeoutMs ?? 15000, 30000);
         while (Date.now() < deadline) {
           options.signal?.throwIfAborted();
@@ -561,6 +585,7 @@ export async function upDevelopmentInstance(
     },
     options.signal,
   ).catch((error) => {
+    let receipt: string | undefined;
     if (phase !== "lifecycle-admission") {
       validateDevelopmentDirectory(instance.root, instance.store);
       writeDevelopmentRecord(join(instance.root, "startup-receipt.json"), {
@@ -570,9 +595,12 @@ export async function upDevelopmentInstance(
         at: new Date().toISOString(),
       });
     }
-    throw new Error(
-      `Development ${phase} failed; inspect ${join(instance.root, "startup-receipt.json")} and logs/owner.log`,
-      { cause: error },
+    if (phase === "lifecycle-admission" && error instanceof DevelopmentOperationError) throw error;
+    if (phase !== "lifecycle-admission") receipt = join(instance.root, "startup-receipt.json");
+    throw new DevelopmentOperationError(
+      "startup-failed",
+      `Development ${phase} failed; inspect private instance records and logs/owner.log`,
+      receipt,
     );
   });
 }
@@ -584,7 +612,7 @@ export async function developmentAppLaunch(instance: DevelopmentInstance) {
     throw new Error("Development owner changed before app launch");
   const build = readDevelopmentBuild(instance, ownerBuildEnvironment(owner));
   const cwd = join(instance.runtimeDir, "compiled-tui");
-  mkdirSync(cwd, { recursive: true, mode: 0o700 });
+  verifyDevelopmentRuntimeOwner(instance, identity);
   return {
     status,
     bin: build.tui,

@@ -1,7 +1,6 @@
 # Development-instance architecture contract
 
-Status: **namespace, isolated builds, and `up` / `app` / `status` implemented**
-(D02–D04). This document also records the remaining design contract for
+Status: **namespace, isolated builds, and native lifecycle implemented** (D02–D05). This document also records the remaining design contract for
 [Isolated Worktree Development and Remote Fixtures](https://www.sfora.ai/org/wavyr/notes/mx7agc0d3fqgmy35jfds23vexx8egvm3).
 The command table includes planned D05+ operations; only the commands explicitly
 listed in the implementation sections below exist today. Existing `test`,
@@ -344,9 +343,109 @@ log with a 64 KiB / 128-entry pending limit and bounded drop notices. Private
 prevent replay from overwriting an existing owner. Consumed receipts and old
 artifacts are retained until the planned lifecycle/garbage-collection stage.
 
-`logs`, `rebuild`, `restart`, `down`, `reset`, `--id` orphan selection and automatic
-stale-lock recovery remain planned. Do not use broad process-name or socket-directory
+The D05 operations below extend this lifecycle. `logs`, the public `rebuild`
+shortcut, and `restart --apply-build` remain planned. Do not use broad process-name or socket-directory
 cleanup to emulate them. The opt-in two-worktree qualification harness performs
 only authenticated, process-incarnation/socket-fenced cleanup of its explicitly
 supplied scratch instances. Linux qualification remains separate from the macOS
 acceptance evidence; this stage does not claim equivalent testing on both hosts.
+
+## D05 owned lifecycle and orphan management (implemented)
+
+```sh
+pnpm dev:instance restart                  # Same loaded runtime; preserves pane work
+pnpm dev:instance down --daemon-only       # Preserve tmux and pane processes
+pnpm dev:instance down                     # Stop daemon and the verified private tmux server
+pnpm dev:instance reset --yes              # Only after daemon, tmux and managed apps stop
+pnpm dev:instance list --json              # Explicit store inventory; no process discovery
+pnpm dev:instance status --id dev-<id> --json
+pnpm dev:instance down --id dev-<id>
+pnpm dev:instance reset --id dev-<id> --yes
+```
+
+Use the complete ID returned by `list` or `status`, not the literal placeholder.
+`--id` is supported by status/restart/down/reset and cannot combine with
+`--name`/`--worktree`. It reconstructs paths only from a private validated stored
+identity, so a removed/moved worktree remains inspectable and cleanable. Listing
+is bounded to 256 directory entries and marks unverifiable records blocked;
+it does not adopt directory names as authority. `worktreeState` distinguishes
+present, missing and changed source identity. Cleanup never removes the source
+tree, including a different checkout now occupying its old pathname.
+
+Restart uses the current owner credential and runtime UUID fence, then verifies
+a new UUID in the same process/incarnation and active build. It does not load
+newly built code; `--apply-build` fails explicitly until D07. Stops are idempotent.
+Full stop uses the exact recorded tmux socket, executable, process incarnation
+and server capability; the destructive tmux command also checks server PID and
+capability on its own connection. Daemon-only stop preserves those pane/server
+identities. Both stop modes may leave an app displaying a disconnected state;
+neither mode implicitly kills app processes.
+
+Supported `dev:instance app` launches now publish a private admission receipt
+under the lifecycle lock before spawning, then record the child's process
+incarnation. Reset refuses live, reused-PID or unknown app ownership. Closing the
+app releases its receipt only after verified exit; a later reset can prune
+proven-dead receipts if its launcher died. An interrupted pre-spawn/null-PID
+receipt deliberately blocks reset because a child may have escaped publication.
+There is no process-name search or guess-based recovery for that case. Apps
+launched before D05 or directly outside this manager have no receipt: close those
+legacy clients before reset. They are outside the supported admission guarantee.
+
+Reset holds the existing **build → lifecycle** locks through all removal. It
+removes only this instance's stopped state, artifacts, logs and verified runtime
+paths. Unknown runtime entries block removal. The instance root, `locks/`
+scaffold and a private `reset.json` identity receipt remain, so queued D04/D05
+commands share mutual exclusion and repeated `--id` reset remains verifiable.
+The reset receipt is not active launch admission: a later `up` creates a fresh
+identity/capability after a new build. Reset never implicitly stops active work.
+
+Complete locks are published from private candidate directories. A complete
+lock or recovery-marker owner is retired only after its PID is proven dead,
+with captured inode/token checks; a reused/live/unknown PID is protected even
+when its recorded incarnation differs. Lock waits remain bounded at 30 seconds.
+Incomplete legacy lock directories, unrecorded sockets, and incomplete app
+admission remain blocked rather than being declared stale from their age.
+Candidate/retired evidence from an interrupted recovery may remain on disk;
+no broad directory cleanup is performed. Startup now records the spawned daemon's
+exact process incarnation before readiness, allowing explicit down to recover
+an interrupted but verified launch. Consumed launch receipts are pruned only
+after stopping the owner and revoking the current startup admission.
+
+Qualification uses the same session name in three private namespaces (own,
+sibling, and production-shaped test sentinel). It compares actual daemon/tmux/
+pane PIDs and socket inodes through restart, both stop modes and orphan reset,
+and exercises reset with a real open app. These are macOS arm64 results; Linux
+execution remains a separate qualification gate.
+
+Lifecycle JSON failures contain a manager-authored `operation` and allowlisted
+`reason` (for example `confirmation-required`, `app-live`, `owner-unverified`,
+`lock-unavailable`, or `unsupported-apply-build`). Stored-ID selection failures
+also remain JSON with `identity-unavailable`. They never forward arbitrary raw
+exceptions or credentials. A startup receipt path is included only when that
+`up` operation wrote it; reset/down/restart refusals do not point at stale startup
+receipts. Invalid CLI syntax/option combinations may still fail at argument parsing.
+
+The short runtime path keeps the worktree/name identity, but now has a private
+atomic ownership receipt binding that full tuple, canonical store/root and
+runtime capability. Up, app admission, stop and reset verify it before touching
+runtime contents. Different stores for the same tuple cannot share that path,
+even after a daemon/tmux stop: only the owning store's explicit reset releases
+it. Unmarked nonempty legacy directories stay blocked; no automatic adoption is
+inferred from a launcher PID or missing socket. Test fixture legacy cleanup used
+prior verified process-exit receipts and removed only an observed empty compiled
+cwd, never arbitrary user runtime contents.
+
+The ownership receipt is published through a complete temporary inode and an
+exclusive hard link. A concurrent read during the short two-link publication
+window may fail closed until the temporary link is removed; same-store mutations
+are serialized by the lifecycle lock. If another store claims immediately after
+reset releases ownership, the final empty-directory removal can fail with
+`ENOTEMPTY`; the new owner's receipt/content is preserved and the old reset must
+not force removal. These are conservative retries, not ownership adoption.
+
+Lock candidate publication protects observed incomplete legacy directories.
+POSIX rename is not a general no-replace primitive for empty directories: in a
+mixed D04/D05 pre-admission race, one writer may fail before entering its action.
+D04's exclusive `owner.json` creation and D05's complete nonempty candidate keep
+the protected actions mutually exclusive. No stronger guarantee about replacing
+an unobserved empty legacy directory is claimed.

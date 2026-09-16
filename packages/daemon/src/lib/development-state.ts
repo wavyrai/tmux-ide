@@ -117,12 +117,15 @@ export async function developmentWorktreeIdentity(instance: DevelopmentInstance)
 }
 export async function readDevelopmentIdentity(
   instance: DevelopmentInstance,
+  options: { allowOrphan?: boolean; allowReset?: boolean } = {},
 ): Promise<DevelopmentIdentityRecord | null> {
-  const record = readPrivateDevelopmentRecord<DevelopmentIdentityRecord>(
-    join(instance.root, "instance.json"),
-  );
+  const record =
+    readPrivateDevelopmentRecord<DevelopmentIdentityRecord>(join(instance.root, "instance.json")) ??
+    (options.allowReset
+      ? readPrivateDevelopmentRecord<DevelopmentIdentityRecord>(join(instance.root, "reset.json"))
+      : null);
   if (!record) return null;
-  const identity = await developmentWorktreeIdentity(instance);
+  const identity = options.allowOrphan ? null : await developmentWorktreeIdentity(instance);
   if (
     record.version !== 1 ||
     record.id !== instance.id ||
@@ -131,8 +134,14 @@ export async function readDevelopmentIdentity(
     record.name !== instance.name ||
     typeof record.capability !== "string" ||
     !/^[a-f0-9-]{36}$/u.test(record.capability) ||
-    JSON.stringify(record.tree) !== JSON.stringify(identity.tree) ||
-    JSON.stringify(record.git) !== JSON.stringify(identity.git)
+    !Number.isSafeInteger(record.tree?.dev) ||
+    !Number.isSafeInteger(record.tree?.ino) ||
+    !Number.isSafeInteger(record.git?.dev) ||
+    !Number.isSafeInteger(record.git?.ino) ||
+    typeof record.git?.path !== "string" ||
+    (identity !== null &&
+      (JSON.stringify(record.tree) !== JSON.stringify(identity.tree) ||
+        JSON.stringify(record.git) !== JSON.stringify(identity.git)))
   )
     throw new Error("Development worktree/ownership identity changed");
   return record;
@@ -145,10 +154,11 @@ export interface DevelopmentOwnerRecord {
   generation: string;
   manifestHash: string;
 }
-export function readDevelopmentOwner(instance: DevelopmentInstance): DevelopmentOwnerRecord | null {
-  const owner = readPrivateDevelopmentRecord<DevelopmentOwnerRecord>(
-    join(instance.root, "owner.json"),
-  );
+export function readDevelopmentOwner(
+  instance: DevelopmentInstance,
+  filename: "owner.json" | "startup-process.json" = "owner.json",
+): DevelopmentOwnerRecord | null {
+  const owner = readPrivateDevelopmentRecord<DevelopmentOwnerRecord>(join(instance.root, filename));
   if (
     owner &&
     (owner.version !== 1 ||
@@ -167,5 +177,48 @@ export function ownerBuildEnvironment(owner: DevelopmentOwnerRecord): NodeJS.Pro
   return {
     TMUX_IDE_DEVELOPMENT_BUILD: owner.generation,
     TMUX_IDE_DEVELOPMENT_BUILD_HASH: owner.manifestHash,
+  };
+}
+
+export type DevelopmentFailureReason =
+  | "confirmation-required"
+  | "app-live"
+  | "app-unknown"
+  | "app-pid-reused"
+  | "owner-live"
+  | "owner-unverified"
+  | "lock-unavailable"
+  | "unsupported-apply-build"
+  | "identity-unavailable"
+  | "startup-failed"
+  | "operation-failed";
+/** Only manager-authored error data may cross the public CLI boundary. */
+export class DevelopmentOperationError extends Error {
+  constructor(
+    readonly reason: DevelopmentFailureReason,
+    message: string,
+    readonly receipt?: string,
+  ) {
+    super(message);
+  }
+}
+export function developmentFailureResult(
+  operation: string,
+  error: unknown,
+  instance?: DevelopmentInstance,
+  fallback: DevelopmentFailureReason = "operation-failed",
+) {
+  const typed = error instanceof DevelopmentOperationError ? error : null;
+  const receipt =
+    operation === "up" && instance && typed?.receipt === join(instance.root, "startup-receipt.json")
+      ? typed.receipt
+      : undefined;
+  return {
+    ok: false as const,
+    code: "DEVELOPMENT_INSTANCE_FAILED",
+    operation,
+    reason: typed?.reason ?? fallback,
+    ...(instance ? { instanceId: instance.id } : {}),
+    ...(receipt ? { receipt } : {}),
   };
 }

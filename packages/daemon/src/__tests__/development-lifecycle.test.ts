@@ -35,6 +35,7 @@ function fixture() {
   mkdirSync(worktree);
   execFileSync("git", ["init", "--quiet", worktree]);
   const instance = resolveDevelopmentInstance({ worktree, store: join(root, "store") });
+  roots.push(instance.runtimeDir);
   return { root, instance };
 }
 it("status is read-only when missing and doesn't disclose credentials", async () => {

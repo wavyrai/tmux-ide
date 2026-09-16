@@ -66,13 +66,25 @@ export function resolveDevelopmentInstance(input: {
   store?: string;
   userHome?: string;
 }): DevelopmentInstance {
+  const worktree = realpathSync(input.worktree);
+  if (!isAbsolute(input.worktree) || !lstatSync(worktree).isDirectory())
+    throw new Error("Development worktree must be an absolute directory");
+  return resolveDevelopmentInstancePaths({ ...input, worktree });
+}
+
+/** Manager-only reconstruction from a validated stored tuple; does not inspect the source tree. */
+export function resolveDevelopmentInstancePaths(input: {
+  worktree: string;
+  name?: string;
+  store?: string;
+  userHome?: string;
+}): DevelopmentInstance {
   const name = input.name ?? "";
   if (name && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,47}$/u.test(name))
     throw new Error("Invalid development instance name");
-  if (!isAbsolute(input.worktree)) throw new Error("Development worktree must be absolute");
-  const worktree = realpathSync(input.worktree);
-  if (!lstatSync(worktree).isDirectory())
-    throw new Error("Development worktree must be a directory");
+  const worktree = input.worktree;
+  if (!isAbsolute(worktree) || resolve(worktree) !== worktree)
+    throw new Error("Recorded worktree must be canonical and absolute");
   const userHome = input.userHome ?? homedir();
   const suppliedStore = resolve(input.store ?? join(userHome, ".local", "state", "tmux-ide-dev"));
   // Canonicalize existing parent aliases such as macOS /var -> /private/var,
