@@ -196,6 +196,39 @@ freshness on demand; launch and status do not hash source automatically. Rebuild
 publishes a new selection, and explicit activation replaces an owner. Already
 running owners are reported, not silently replaced.
 
+## Worktree-local manager launcher
+
+`pnpm dev:instance` uses a small stock-Node bootstrap. On a cache miss it compiles
+only the manager in a short-lived child using the shared CLI bundle/purity policy;
+warm commands retain neither TSX nor the compiler. This cache never rebuilds or
+activates daemon/TUI artifacts: `rebuild` and `restart --apply-build` remain explicit.
+
+Each invocation hashes the bounded worktree source/config inventory, lockfiles,
+Node/platform identity, compiler bytes and package resolution links. The compiler
+checks its discovered input closure before and after the publication build. A
+changed source, configuration, compiler or workspace link cannot silently select
+old manager code. Source inputs must remain inside the worktree; tsconfig
+inheritance outside the tracked scripts/package-source/root-config inventory
+fails with an actionable error. No installed manager or stale bundle is a fallback.
+This manager freshness check is separate from on-demand daemon/TUI build freshness.
+
+Cache data lives in the private owned `node_modules/.cache/tmux-ide-manager` folder.
+Publication uses complete staging directories and atomic rename; the launcher
+verifies and hardlinks selected bytes before importing them in its own process.
+Pruning retains two cached generations, with at most32 live/unverified execution
+pins and four admitted compiler stages. Each file is capped at32MiB and hashed
+input bytes at256MiB. Pins preserve code through concurrent cache pruning. Normal
+exit releases the current pin; only proven-dead PID leftovers are reclaimed.
+Live/unknown entries protect their files and can cause a bounded capacity refusal.
+An interrupted compiler forwards SIGINT/SIGTERM and preserves exit130/143.
+
+Use `pnpm --silent dev:instance ... --json` for machine-readable stdout. Compilation
+errors remain on stderr; bootstrap failures emit a distinct safe structured error.
+Manager argument and lifecycle errors retain their existing behavior. The first
+command after an input change costs a compilation; warm launches still perform
+bounded synchronous validation. This change targets development-wrapper memory,
+not production TUI frame throughput.
+
 ## Proposed command semantics
 
 All commands accept `--name`; lifecycle/status may accept a verified `--id` for an
