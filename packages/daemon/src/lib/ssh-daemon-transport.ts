@@ -257,6 +257,8 @@ export async function openSshDaemonTransport(
       "-T",
       "-o",
       "BatchMode=yes",
+      "-o",
+      "ForkAfterAuthentication=no",
       "--",
       options.alias,
       "tmux-ide",
@@ -273,11 +275,21 @@ export async function openSshDaemonTransport(
         : daemon.bindHostname === "localhost"
           ? "localhost"
           : "127.0.0.1";
+    // This child owns the forward for its entire lifetime. ControlMaster=no
+    // alone still permits joining an existing master; ControlPath=none prevents
+    // that handoff. Also override backgrounding so exit reliably means loss of
+    // our forward, without changing the user's host trust or jump-host options.
     child = dependencies.spawn([
       "-N",
       "-T",
       "-o",
       "BatchMode=yes",
+      "-o",
+      "ControlMaster=no",
+      "-o",
+      "ControlPath=none",
+      "-o",
+      "ForkAfterAuthentication=no",
       "-o",
       "ExitOnForwardFailure=yes",
       "-o",

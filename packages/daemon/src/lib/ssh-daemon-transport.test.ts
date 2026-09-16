@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import {
   SshConnectionError,
@@ -62,6 +66,8 @@ describe("owned SSH daemon transport", () => {
       "-T",
       "-o",
       "BatchMode=yes",
+      "-o",
+      "ForkAfterAuthentication=no",
       "--",
       "work-machine",
       "tmux-ide",
@@ -69,6 +75,13 @@ describe("owned SSH daemon transport", () => {
       "--json",
     ]);
     expect(f.argv[1]).toContain("127.0.0.1:43210:127.0.0.1:7331");
+    expect(f.argv[1]).toEqual(
+      expect.arrayContaining([
+        "ControlMaster=no",
+        "ControlPath=none",
+        "ForkAfterAuthentication=no",
+      ]),
+    );
     expect(f.argv.flat().join(" ")).not.toContain(daemon.authToken);
     expect(f.argv.flat().join(" ")).not.toContain("StrictHostKeyChecking");
     expect(result.daemon.pid).toBe(99999999); // Remote PID is data, never a local liveness check.
@@ -79,6 +92,74 @@ describe("owned SSH daemon transport", () => {
     expect(f.children[0].kills).toEqual([]);
     expect(f.children[1].kills).toEqual(["SIGTERM"]);
   });
+  it.skipIf(spawnSync("ssh", ["-V"], { timeout: 2_000 }).status !== 0)(
+    "keeps tunnel ownership under real OpenSSH Host defaults while preserving discovery reuse and trust",
+    async () => {
+      const directory = mkdtempSync(join(tmpdir(), "tmux-ide-ssh-config-"));
+      const config = join(directory, "config");
+      const f = fixture();
+      let connection: Awaited<ReturnType<typeof openSshDaemonTransport>> | undefined;
+      try {
+        writeFileSync(
+          config,
+          [
+            "Host work-machine",
+            "  HostName target.invalid",
+            "  User configured-user",
+            "  Port 2201",
+            "  ProxyJump jump-user@jump.invalid:2202",
+            "  StrictHostKeyChecking yes",
+            `  UserKnownHostsFile ${directory}/known_hosts`,
+            "Host *",
+            "  ControlMaster auto",
+            `  ControlPath ${directory}/master-%C`,
+            "  ControlPersist 10m",
+            "  ForkAfterAuthentication yes",
+            "",
+          ].join("\n"),
+        );
+        connection = await openSshDaemonTransport({ alias: "work-machine" }, f.dependencies);
+        // -G evaluates ONLY this fixture config; it neither connects nor reads
+        // the user's config. Evaluate the exact argv produced by the transport.
+        const resolved = f.argv.map(
+          (argv) =>
+            new Map(
+              execFileSync("ssh", ["-G", "-F", config, ...argv], {
+                encoding: "utf8",
+                timeout: 2_000,
+                stdio: ["ignore", "pipe", "pipe"],
+              })
+                .trim()
+                .split("\n")
+                .map((line) => {
+                  const separator = line.indexOf(" ");
+                  return [line.slice(0, separator), line.slice(separator + 1)];
+                }),
+            ),
+        );
+        const [discovery, tunnel] = resolved;
+        expect(discovery.get("controlmaster")).toBe("auto");
+        expect(discovery.get("controlpath")).toContain(`${directory}/master-`);
+        expect(discovery.get("controlpersist")).toBe("600");
+        expect(tunnel.get("controlmaster")).toBe("false");
+        // OpenSSH omits disabled ControlPath from -G output.
+        expect(tunnel.has("controlpath")).toBe(false);
+        for (const settings of resolved) {
+          expect(settings.get("forkafterauthentication")).toBe("no");
+          expect(settings.get("hostname")).toBe("target.invalid");
+          expect(settings.get("user")).toBe("configured-user");
+          expect(settings.get("port")).toBe("2201");
+          expect(settings.get("proxyjump")).toBe("jump-user@jump.invalid:2202");
+          expect(settings.get("stricthostkeychecking")).toBe("true");
+          expect(settings.get("userknownhostsfile")).toBe(`${directory}/known_hosts`);
+        }
+      } finally {
+        connection?.dispose();
+        await connection?.closed;
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
   it("preserves remote localhost resolution for IPv6-only listeners", async () => {
     const f = fixture({ version: 1, daemon: { ...daemon, bindHostname: "localhost" } });
     const result = await openSshDaemonTransport({ alias: "host" }, f.dependencies);
