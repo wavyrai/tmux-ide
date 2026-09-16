@@ -561,3 +561,46 @@ queue limits). It is private, may contain compiler source/error text, and is
 excluded from support `logs`/`diagnostics` exports. Diagnostic sink failure never
 changes a failed build into success. A subsequent failed build replaces the
 receipt; immutable successful manifests remain the generation receipts.
+
+## Native isolation release gate (D08)
+
+The opt-in gate uses two **disposable detached worktrees** with existing qualified,
+intentionally different CLI builds and a private development store. Its second
+canonical worktree path must be at least 100 characters. It creates its own
+production-shaped sentinel (private HOME/state, explicit test namespace and tmux
+socket); it never uses the user's installed daemon as a test target.
+
+```sh
+pnpm test:development-isolation-unit
+pnpm --silent test:development-isolation /absolute/disposable/a /absolute/long/disposable/b /absolute/private-store --yes-owned-fixtures
+```
+
+Run from the repository with the same qualified manager Node PATH used for the
+artifacts. This gate deliberately crashes its owned daemon, creates/removes a
+fixture branch, moves/restores worktree A, and resets A's development instance,
+including its artifacts. It refuses a branch-attached A worktree. Retain or rebuild
+fixtures intentionally; do not pass a development instance you need to keep.
+
+Three namespaces use identical `shared` session names. Actual native TUIs render
+their own DEV identity and echo input; protected daemon/tmux/pane processes,
+socket inodes and machine files must survive every other-instance lifecycle step.
+Competing inherited environment points at the private sentinel. Concurrent up,
+branch/alias/long paths, crash recovery, runtime restart, daemon-only/full down,
+live-app reset refusal, reused-PID protection, dead-lock recovery and orphan reset
+are recorded in `<store>/d08-qualification.json`, including cleanup outcomes.
+
+Every checkpoint bounds the observed owned process tree to 40 processes,
+512 numeric file descriptors per process and 2048 total descriptors. Explicit
+root incarnations must remain stable across sampling. macOS uses bounded `lsof`;
+Linux uses `/proc`. Short-lived children that exit between snapshots are reported
+as omitted, never silently counted as a missing root. Counts are observations,
+not peaks or memory/performance guarantees. Three rounds of four real log SSE
+subscriptions must cancel and return the daemon FD count to within 8 of baseline.
+This is a gate-owned transport subscription count, **not** an internal daemon
+listener census. Existing bounded-queue unit tests cover internal cleanup.
+
+The macOS native checkpoint is qualified independently. D08 remains pending
+Linux until D09 supplies a pinned Linux native tmux build, source worktrees run
+this gate, and a separate clean packed-install fixture passes its qualification.
+The Linux sampler branch alone is not Linux product qualification. No substitute system-tmux manifest or installed TUI fallback is
+accepted.
