@@ -1336,8 +1336,8 @@ try {
         console.log(`settings:    ${settingsPath} (backup written once as .tmux-ide.bak)`);
         console.log(`skill:       ${skill.action} → ${skill.path} (v${skill.to})`);
         console.log(
-          "installed — NEW Claude Code sessions now report working/blocked/done " +
-            "authoritatively into the tmux-ide chrome.",
+          "configured — verify registration in Claude /hooks; older Claude versions may require a new session. " +
+            "Runtime delivery has not been verified.",
         );
         // M25.1: this is the moment the user is wiring notifications, so offer
         // the macOS banner channel here — one plain y/N key, same shape as the
@@ -1439,8 +1439,9 @@ try {
         // and (for agents we integrate) whether the integration is installed.
         const { discoverAgents } = await import("../packages/daemon/src/lib/agent-discovery.ts");
         const agents = discoverAgents();
+        const claude = mod.claudeIntegrationStatus();
         if (json) {
-          console.log(JSON.stringify({ agents }, null, 2));
+          console.log(JSON.stringify({ agents, claude }, null, 2));
           break;
         }
         for (const a of agents) {
@@ -1461,6 +1462,14 @@ try {
             else capture = " · session-id capture: none";
           }
           console.log(`  ${a.id.padEnd(10)} ${state}${capture}`);
+          if (a.id === "claude") {
+            console.log(
+              `    user-settings readiness: ${claude.issues.join(", ") || "ready"}; runtime delivery unverified`,
+            );
+            if (claude.issues.length && claude.repairCommand)
+              console.log(`    repair: ${claude.repairCommand}`);
+            console.log(`    ${claude.guidance}`);
+          }
         }
       }
       break;

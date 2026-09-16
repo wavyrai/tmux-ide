@@ -12,7 +12,7 @@
  * The detector treats a fresh `@agent_state` as GROUND TRUTH and only falls
  * back to screen-manifest scraping when no authority is present — the same
  * two-layer model the best agent terminals use. Any other agent can join the
- * authority layer by writing the same option (`tmux set-option -p
+ * authority layer by writing the same option (`tmux -S "$socket" set-option -p
  * @agent_state working:$(date +%s)`) — no integration required.
  *
  * The settings merge is surgical and reversible: entries are tagged by the
@@ -20,6 +20,9 @@
  * uninstall removes exactly our entries.
  */
 import {
+  accessSync,
+  constants,
+  statSync,
   chmodSync,
   copyFileSync,
   existsSync,
@@ -28,7 +31,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
+import { shellEscape } from "../../lib/shell.ts";
 
 /** Marker every installed hook command contains — the removal key. */
 export const HOOK_SCRIPT_RELPATH = ".tmux-ide/hooks/claude-state.sh";
@@ -58,12 +62,28 @@ export const HOOK_SCRIPT = `#!/bin/sh
 # tmux-ide agent-state hook (installed by: tmux-ide integration install claude)
 # $1 = state to report: working | blocked | done | idle
 state="\${1:-idle}"
-payload="$(cat 2>/dev/null || true)"
+case "$state" in working|blocked|done|idle) ;; *) exit 0 ;; esac
+# Hooks run without a controlling terminal. Never guess the default server.
 [ -n "$TMUX_PANE" ] || exit 0
-tmux set-option -p -t "$TMUX_PANE" @agent_state "\${state}:$(date +%s)" 2>/dev/null || exit 0
-tmux set-option -p -t "$TMUX_PANE" @agent_hint "claude" 2>/dev/null || true
+case "$TMUX_PANE" in %*) pane_number="\${TMUX_PANE#%}" ;; *) exit 0 ;; esac
+case "$pane_number" in ''|*[!0-9]*) exit 0 ;; esac
+index="\${TMUX##*,}"
+rest="\${TMUX%,*}"
+server_pid="\${rest##*,}"
+socket="\${rest%,*}"
+case "$index" in ''|*[!0-9]*) exit 0 ;; esac
+case "$server_pid" in ''|*[!0-9]*) exit 0 ;; esac
+case "$socket" in /*) ;; *) exit 0 ;; esac
+[ "$rest" != "$TMUX" ] && [ "$socket" != "$rest" ] || exit 0
+# A reused socket and pane number must not accept a hook from the old server.
+observed_pid="$(tmux -S "$socket" display-message -p -t "$TMUX_PANE" '#{pid}' 2>/dev/null)" || exit 0
+[ "$observed_pid" = "$server_pid" ] || exit 0
+payload="$(cat 2>/dev/null || true)"
+tmux -S "$socket" set-option -p -t "$TMUX_PANE" @agent_state "\${state}:$(date +%s)" 2>/dev/null || exit 0
+tmux -S "$socket" set-option -p -t "$TMUX_PANE" @agent_hint "claude" 2>/dev/null || true
 sid="$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -1)"
-[ -n "$sid" ] && tmux set-option -p -t "$TMUX_PANE" @agent_session_id "$sid" 2>/dev/null
+case "$sid" in ''|*[!A-Za-z0-9_-]*) exit 0 ;; esac
+tmux -S "$socket" set-option -p -t "$TMUX_PANE" @agent_session_id "$sid" 2>/dev/null
 exit 0
 `;
 
@@ -71,87 +91,136 @@ exit 0
 export const EVENT_STATES: Array<{ event: string; state: string; matcher?: string }> = [
   { event: "UserPromptSubmit", state: "working" },
   { event: "PreToolUse", state: "working", matcher: "*" },
-  { event: "Notification", state: "blocked" },
+  // Notification also includes idle/auth/completion messages, which are not blocked.
+  {
+    event: "Notification",
+    state: "blocked",
+    matcher: "^(permission_prompt|elicitation_dialog|elicitation_url_dialog)$",
+  },
   { event: "Stop", state: "done" },
   { event: "SessionEnd", state: "idle" },
 ];
 
 interface HookCommand {
-  type: "command";
-  command: string;
+  type: string;
+  command?: string;
+  [key: string]: unknown;
 }
 interface HookGroup {
+  [key: string]: unknown;
   matcher?: string;
   hooks: HookCommand[];
 }
 type HooksConfig = Record<string, HookGroup[]>;
 export type ClaudeSettings = Record<string, unknown> & { hooks?: HooksConfig };
 
-/** Does a hook group belong to us? (its command references our script) */
-function isOurs(group: HookGroup): boolean {
-  return group.hooks?.some((h) => h.command?.includes(HOOK_SCRIPT_RELPATH)) ?? false;
+/** Match only generated direct commands, never a substring in someone else's hook. */
+function ownedCommand(hook: HookCommand, scriptPath?: string): boolean {
+  if (hook.type !== "command" || typeof hook.command !== "string") return false;
+  const match = /^(.*) (working|blocked|done|idle)$/u.exec(hook.command);
+  if (!match) return false;
+  const word = match[1]!;
+  // Repair the exact old unquoted command, including broken space-containing paths.
+  if (scriptPath && (word === scriptPath || word === shellEscape(scriptPath))) return true;
+  const decoded =
+    word.startsWith("'") && word.endsWith("'") ? word.slice(1, -1).replaceAll("'\\''", "'") : word;
+  if (!isAbsolute(decoded) || !decoded.endsWith(`/${HOOK_SCRIPT_RELPATH}`)) return false;
+  return word === shellEscape(decoded) || (!/[\s'";$`\\|&<>]/u.test(word) && word === decoded);
 }
 
-/**
- * PURE — return a copy of `settings` with our hook entries merged in.
- * Idempotent: existing tmux-ide entries are replaced, everything else is
- * preserved untouched.
- */
+function strippedGroup(group: HookGroup, scriptPath?: string): HookGroup | null {
+  const hooks = group.hooks.filter((hook) => !ownedCommand(hook, scriptPath));
+  return hooks.length ? { ...group, hooks } : null;
+}
+
+/** PURE — repair only our commands, retaining mixed groups and their metadata. */
 export function mergeHooks(settings: ClaudeSettings, scriptPath: string): ClaudeSettings {
-  const next: ClaudeSettings = { ...settings, hooks: { ...(settings.hooks ?? {}) } };
-  const hooks = next.hooks as HooksConfig;
+  const clean = removeHooks(settings, scriptPath);
+  const next: ClaudeSettings = { ...clean, hooks: { ...(clean.hooks ?? {}) } };
   for (const { event, state, matcher } of EVENT_STATES) {
-    const existing = (hooks[event] ?? []).filter((g) => !isOurs(g));
-    const group: HookGroup = {
-      ...(matcher !== undefined ? { matcher } : {}),
-      hooks: [{ type: "command", command: `${scriptPath} ${state}` }],
-    };
-    hooks[event] = [...existing, group];
+    next.hooks![event] = [
+      ...(next.hooks![event] ?? []),
+      {
+        ...(matcher !== undefined ? { matcher } : {}),
+        hooks: [{ type: "command", command: `${shellEscape(scriptPath)} ${state}`, timeout: 5 }],
+      },
+    ];
   }
   return next;
 }
 
-/** PURE — return a copy of `settings` with exactly our entries removed. */
-export function removeHooks(settings: ClaudeSettings): ClaudeSettings {
+/** PURE — remove our commands, preserving unrelated commands in the same group. */
+export function removeHooks(settings: ClaudeSettings, scriptPath?: string): ClaudeSettings {
   if (!settings.hooks) return { ...settings };
   const hooks: HooksConfig = {};
   for (const [event, groups] of Object.entries(settings.hooks)) {
-    const kept = groups.filter((g) => !isOurs(g));
-    if (kept.length > 0) hooks[event] = kept;
+    const kept = groups
+      .map((group) => strippedGroup(group, scriptPath))
+      .filter((group): group is HookGroup => group !== null);
+    if (kept.length) hooks[event] = kept;
   }
   const next: ClaudeSettings = { ...settings, hooks };
-  if (Object.keys(hooks).length === 0) delete next.hooks;
+  if (!Object.keys(hooks).length) delete next.hooks;
   return next;
 }
 
-/** PURE — is our integration present in these settings? */
-export function isInstalled(settings: ClaudeSettings): boolean {
-  return Object.values(settings.hooks ?? {}).some((groups) => groups.some(isOurs));
+/** Registration presence only; use claudeIntegrationStatus for readiness. */
+export function isInstalled(settings: ClaudeSettings, scriptPath?: string): boolean {
+  return Object.values(settings.hooks ?? {}).some((groups) =>
+    groups.some((group) => group.hooks.some((hook) => ownedCommand(hook, scriptPath))),
+  );
+}
+
+export interface ClaudeIntegrationPaths {
+  scriptPath: string;
+  settingsPath: string;
+}
+function integrationPaths(): ClaudeIntegrationPaths {
+  return { scriptPath: hookScriptPath(), settingsPath: claudeSettingsPath() };
 }
 
 function readSettings(path: string): ClaudeSettings {
   if (!existsSync(path)) return {};
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as ClaudeSettings;
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as ClaudeSettings;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw new Error("settings must be an object");
+    if (parsed.hooks !== undefined) {
+      if (!parsed.hooks || typeof parsed.hooks !== "object" || Array.isArray(parsed.hooks))
+        throw new Error("invalid hooks");
+      for (const groups of Object.values(parsed.hooks)) {
+        if (
+          !Array.isArray(groups) ||
+          groups.some(
+            (group) =>
+              !group ||
+              typeof group !== "object" ||
+              !Array.isArray(group.hooks) ||
+              group.hooks.some((hook) => !hook || typeof hook !== "object"),
+          )
+        )
+          throw new Error("invalid hooks");
+      }
+    }
+    return parsed;
   } catch {
-    throw new Error(`${path} is not valid JSON — fix or move it, then retry`);
+    throw new Error(`${path} is not valid settings JSON — fix or move it, then retry`);
   }
 }
 
 /**
  * Install: write the hook script, back up settings.json once, merge our
- * entries. Takes effect for NEW Claude Code sessions (hooks are read at
- * session start).
+ * entries. Verify registration in Claude /hooks; supported versions watch settings
+ * edits, while older versions may require a new session.
  */
-export function installClaudeIntegration(): { scriptPath: string; settingsPath: string } {
-  const script = hookScriptPath();
+export function installClaudeIntegration(paths = integrationPaths()): ClaudeIntegrationPaths {
+  const { scriptPath: script, settingsPath } = paths;
+  const settings = readSettings(settingsPath);
   mkdirSync(dirname(script), { recursive: true });
   writeFileSync(script, HOOK_SCRIPT, "utf8");
   chmodSync(script, 0o755);
 
-  const settingsPath = claudeSettingsPath();
   mkdirSync(dirname(settingsPath), { recursive: true });
-  const settings = readSettings(settingsPath);
   const backup = `${settingsPath}.tmux-ide.bak`;
   if (existsSync(settingsPath) && !existsSync(backup)) copyFileSync(settingsPath, backup);
   writeFileSync(settingsPath, `${JSON.stringify(mergeHooks(settings, script), null, 2)}\n`, "utf8");
@@ -159,19 +228,87 @@ export function installClaudeIntegration(): { scriptPath: string; settingsPath: 
 }
 
 /** Uninstall: remove exactly our entries (script file is left, it's inert). */
-export function uninstallClaudeIntegration(): { settingsPath: string; wasInstalled: boolean } {
-  const settingsPath = claudeSettingsPath();
+export function uninstallClaudeIntegration(paths = integrationPaths()): {
+  settingsPath: string;
+  wasInstalled: boolean;
+} {
+  const { settingsPath } = paths;
   const settings = readSettings(settingsPath);
-  const wasInstalled = isInstalled(settings);
+  const wasInstalled = isInstalled(settings, paths.scriptPath);
   if (wasInstalled) {
-    writeFileSync(settingsPath, `${JSON.stringify(removeHooks(settings), null, 2)}\n`, "utf8");
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify(removeHooks(settings, paths.scriptPath), null, 2)}\n`,
+      "utf8",
+    );
   }
   return { settingsPath, wasInstalled };
 }
 
-export function claudeIntegrationStatus(): { installed: boolean; scriptExists: boolean } {
+export function claudeIntegrationStatus(paths = integrationPaths()) {
+  let settings: ClaudeSettings = {};
+  const issues: string[] = [];
+  try {
+    settings = readSettings(paths.settingsPath);
+  } catch {
+    issues.push("settings_invalid");
+  }
+  const registered = isInstalled(settings, paths.scriptPath);
+  const missingEvents = EVENT_STATES.filter(
+    ({ event, state, matcher }) =>
+      !(settings.hooks?.[event] ?? []).some(
+        (group) =>
+          (matcher === undefined || matcher === "*"
+            ? group.matcher === undefined || group.matcher === "" || group.matcher === "*"
+            : group.matcher === matcher) &&
+          group.hooks.some(
+            (hook) =>
+              hook.type === "command" &&
+              (hook.command === `${shellEscape(paths.scriptPath)} ${state}` ||
+                (!/[\s'";$`\\|&<>]/u.test(paths.scriptPath) &&
+                  hook.command === `${paths.scriptPath} ${state}`)),
+          ),
+      ),
+  ).map(({ event }) => event);
+  if (missingEvents.length) issues.push("registration_incomplete");
+  if (settings.disableAllHooks === true) issues.push("hooks_disabled");
+  let scriptExists = false;
+  let scriptCurrent = false;
+  let scriptExecutable = false;
+  try {
+    scriptExists = statSync(paths.scriptPath).isFile();
+    if (scriptExists) {
+      scriptCurrent = readFileSync(paths.scriptPath, "utf8") === HOOK_SCRIPT;
+      accessSync(paths.scriptPath, constants.X_OK);
+      scriptExecutable = true;
+    }
+  } catch {
+    /* Report safe categories, never raw settings or script content. */
+  }
+  if (!scriptExists) issues.push("script_missing");
+  else {
+    if (!scriptCurrent) issues.push("script_outdated");
+    if (!scriptExecutable) issues.push("script_not_executable");
+  }
   return {
-    installed: isInstalled(readSettings(claudeSettingsPath())),
-    scriptExists: existsSync(hookScriptPath()),
+    installed: issues.length === 0,
+    registered,
+    scriptExists,
+    scriptCurrent,
+    scriptExecutable,
+    registrationComplete: missingEvents.length === 0,
+    missingEvents,
+    issues,
+    scope: "user-settings" as const,
+    deliveryVerified: false,
+    repairCommand:
+      issues.includes("settings_invalid") || issues.includes("hooks_disabled")
+        ? null
+        : "tmux-ide integration install claude",
+    guidance: issues.includes("settings_invalid")
+      ? "Fix invalid user settings JSON before installing hooks."
+      : issues.includes("hooks_disabled")
+        ? "Hooks are disabled in user settings. Enable them there if intended, then repair registration."
+        : "Verify active-session registration in Claude /hooks; runtime delivery is not verified.",
   };
 }
