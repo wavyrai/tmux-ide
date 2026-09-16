@@ -425,14 +425,21 @@ const DEFAULT_IO: Omit<WorkspacePromotionIo, "runTmux"> = {
  * registry workspace. Idempotent and serialized exactly like
  * {@link ../lib/workspace-open.ts}'s authority — a repeated operation id replays,
  * and an already-registered session resolves to a `replayed` outcome.
+ *
+ * Completed receipts are a FIFO replay window, independent of queued/in-flight
+ * admission: the latest 128 successes and 64 failures are retained by default.
+ * Exact-ID retries and fingerprint conflicts are guaranteed within that window;
+ * replay does not extend retention. After eviction an ID is evaluated as a new
+ * request against current session/registry truth, including pane-stamp repair.
+ * Callers must use a fresh ID for new intent, even outside the replay window.
  */
 export class WorkspacePromotionAuthority {
   readonly #daemonInstanceId: string;
   readonly #registry: WorkspacePromotionRegistry;
   readonly #io: WorkspacePromotionIo;
-  readonly #operations = new Map<string, SuccessfulOperation>();
+  readonly #completedOperations = new Map<string, SuccessfulOperation>();
   readonly #failures = new Map<string, FailedOperation>();
-  readonly #maxOperations: number;
+  readonly #maxReplayOperations: number;
   readonly #maxPendingOperations: number;
   #tail: Promise<void> = Promise.resolve();
   #pendingOperations = 0;
@@ -443,6 +450,7 @@ export class WorkspacePromotionAuthority {
     daemonInstanceId: string;
     registry?: WorkspacePromotionRegistry;
     io?: Partial<WorkspacePromotionIo>;
+    /** Retained successful receipts, not lifetime or in-flight admission capacity. */
     maxOperations?: number;
     maxPendingOperations?: number;
     tmuxAuthority?: WorkspacePaneTmuxAuthority;
@@ -458,7 +466,7 @@ export class WorkspacePromotionAuthority {
           options.tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority(),
         ),
     };
-    this.#maxOperations = boundedAuthorityLimit(options.maxOperations, MAX_OPERATIONS);
+    this.#maxReplayOperations = boundedAuthorityLimit(options.maxOperations, MAX_OPERATIONS);
     this.#maxPendingOperations = boundedAuthorityLimit(
       options.maxPendingOperations,
       MAX_OPERATIONS,
@@ -490,7 +498,7 @@ export class WorkspacePromotionAuthority {
   dispose(): Promise<void> {
     this.#disposed = true;
     this.#disposePromise ??= this.#tail.then(() => {
-      this.#operations.clear();
+      this.#completedOperations.clear();
       this.#failures.clear();
     });
     return this.#disposePromise;
@@ -506,12 +514,8 @@ export class WorkspacePromotionAuthority {
     }
     const fingerprint = requestFingerprint(request);
     const existing =
-      this.#operations.get(request.operationId) ?? this.#failures.get(request.operationId);
+      this.#completedOperations.get(request.operationId) ?? this.#failures.get(request.operationId);
     if (existing) return this.#replay(existing, request, fingerprint);
-    this.#retireClosedOperations();
-    if (this.#operations.size >= this.#maxOperations) {
-      throw new WorkspacePromotionError("operation_capacity", { operationId: request.operationId });
-    }
 
     try {
       const session = this.#resolveSession(request.intent.sessionId);
@@ -943,7 +947,13 @@ export class WorkspacePromotionAuthority {
       outcome: options.replayed ? "replayed" : "promoted",
       resource: resource(workspaceName),
     });
-    this.#operations.set(request.operationId, {
+    // These are completed receipts, not live workspace ownership. Retiring one
+    // must never remove a workspace or prevent a fresh reconciliation request.
+    if (this.#completedOperations.size >= this.#maxReplayOperations) {
+      const oldest = this.#completedOperations.keys().next().value;
+      if (oldest !== undefined) this.#completedOperations.delete(oldest);
+    }
+    this.#completedOperations.set(request.operationId, {
       status: "success",
       fingerprint,
       result,
@@ -979,19 +989,6 @@ export class WorkspacePromotionAuthority {
       ...existing.result,
       outcome: "replayed",
     });
-  }
-
-  #retireClosedOperations(): void {
-    if (this.#operations.size < this.#maxOperations) return;
-    let live: Set<string>;
-    try {
-      live = new Set(this.#registry.list().map((workspace) => workspace.name));
-    } catch {
-      return;
-    }
-    for (const [operationId, operation] of this.#operations) {
-      if (!live.has(operation.workspaceName)) this.#operations.delete(operationId);
-    }
   }
 
   #rememberFailure(
