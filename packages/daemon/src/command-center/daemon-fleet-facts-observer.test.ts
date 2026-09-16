@@ -163,6 +163,10 @@ describe("DaemonFleetFactsObserver", () => {
         phase: "end",
         activeOperations: 1,
         succeeded: true,
+        freshness: expect.objectContaining({
+          sessions: { status: "fresh", lastSuccessAt: expect.any(Number) },
+          pendingReads: 0,
+        }),
       }),
     ]);
     handle.release();
@@ -342,4 +346,98 @@ describe("DaemonFleetFactsObserver", () => {
       retained.release();
     },
   );
+});
+
+it("deadlines quarantine noncooperative reads, preserve baseline, and ignore late facts", async () => {
+  vi.useFakeTimers();
+  const changed = callbacks();
+  const hanging = deferred<SessionCompositionFacts | null>();
+  const reader = vi
+    .fn<(signal?: AbortSignal) => Promise<SessionCompositionFacts | null>>()
+    .mockResolvedValueOnce({ sessions: ["a"], adopted: [] })
+    .mockImplementationOnce(() => hanging.promise)
+    .mockResolvedValue({ sessions: ["b"], adopted: [] });
+  const observer = new DaemonFleetFactsObserver({
+    ...changed,
+    readSessions: reader,
+    readAgents: async () => new Map(),
+    readTimeoutMs: 10,
+    intervalMs: 1000,
+  });
+  try {
+    const lease = observer.acquire(["sessions"]);
+    await observer.runOnce();
+    await lease.ready;
+    const cycle = observer.runOnce();
+    await vi.advanceTimersByTimeAsync(11);
+    await cycle;
+    expect(observer.freshnessSnapshot()).toMatchObject({
+      sessions: { status: "deadline", lastSuccessAt: expect.any(Number) },
+      pendingReads: 1,
+    });
+    for (let index = 0; index < 10; index++) await observer.runOnce();
+    expect(reader).toHaveBeenCalledTimes(2);
+    expect(reader.mock.calls[1]![0]!.aborted).toBe(true);
+    hanging.resolve({ sessions: ["late"], adopted: [] });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(changed.onSessionsChanged).not.toHaveBeenCalled();
+    await observer.runOnce();
+    expect(changed.onSessionsChanged).toHaveBeenCalledOnce();
+    expect(observer.freshnessSnapshot().sessions.status).toBe("fresh");
+    lease.release();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    observer.stop();
+    vi.useRealTimers();
+  }
+});
+it("stop aborts the active cycle and a late generation never publishes", async () => {
+  const hanging = deferred<SessionCompositionFacts | null>();
+  const reader = vi.fn(() => hanging.promise);
+  const changed = callbacks();
+  const observer = new DaemonFleetFactsObserver({
+    ...changed,
+    readSessions: reader,
+    readAgents: async () => new Map(),
+  });
+  const lease = observer.acquire(["sessions"]);
+  const cycle = observer.runOnce();
+  observer.stop();
+  await cycle;
+  await lease.ready;
+  expect(observer.freshnessSnapshot().sessions.status).toBe("stopped");
+  hanging.resolve({ sessions: ["late"], adopted: [] });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(changed.onSessionsChanged).not.toHaveBeenCalled();
+});
+it("does not publish fresh status for a released/reacquired demand's rejected late read", async () => {
+  const hanging = deferred<SessionCompositionFacts | null>();
+  const current = deferred<SessionCompositionFacts | null>();
+  const reader = vi.fn().mockReturnValueOnce(hanging.promise).mockReturnValue(current.promise);
+  const observer = new DaemonFleetFactsObserver({
+    ...callbacks(),
+    readSessions: reader,
+    readAgents: async () => new Map(),
+  });
+  const adopted = observer.acquire(["adopted"]);
+  const old = observer.acquire(["sessions"]);
+  const cycle = observer.runOnce();
+  old.release();
+  const replacement = observer.acquire(["sessions"]);
+  hanging.resolve({ sessions: ["old"], adopted: [] });
+  await cycle;
+  expect(observer.freshnessSnapshot().sessions).toMatchObject({
+    status: "inactive",
+    lastSuccessAt: null,
+  });
+  expect(observer.freshnessSnapshot().adopted.status).toBe("fresh");
+  current.resolve({ sessions: ["new"], adopted: [] });
+  await observer.runOnce();
+  await replacement.ready;
+  await adopted.ready;
+  expect(observer.freshnessSnapshot().sessions.status).toBe("fresh");
+  replacement.release();
+  adopted.release();
 });

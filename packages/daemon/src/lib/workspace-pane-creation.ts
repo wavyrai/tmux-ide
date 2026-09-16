@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { boundedTmuxRead } from "./bounded-tmux-read.ts";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, relative, sep } from "node:path";
 
@@ -391,24 +391,11 @@ export function createPinnedWorkspaceTmuxAsyncRunner(
       ? ["-S", revalidateUnixSocketIdentity(socketIdentity)]
       : socketArgv;
     const execute = (selector: string[]) =>
-      new Promise<string>((resolve, reject) => {
-        execFile(
-          executablePath,
-          [...selector, "-u", ...args],
-          {
-            encoding: "utf8",
-            env: environment,
-            maxBuffer: TMUX_OUTPUT_BYTES,
-            timeout: 5_000,
-            ...(signal ? { signal } : {}),
-            windowsHide: true,
-          },
-          (error, stdout) => {
-            if (error) reject(error);
-            else resolve(stdout.replace(/(?:\r?\n)+$/u, ""));
-          },
-        );
-      });
+      boundedTmuxRead(executablePath, [...selector, "-u", ...args], {
+        env: environment,
+        maxBuffer: TMUX_OUTPUT_BYTES,
+        signal,
+      }).then((stdout) => stdout.replace(/(?:\r?\n)+$/u, ""));
     if (!namedFence) return execute(selector);
     return namedFence
       .resolveAsync(signal)
