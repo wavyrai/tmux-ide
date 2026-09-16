@@ -599,8 +599,18 @@ subscriptions must cancel and return the daemon FD count to within 8 of baseline
 This is a gate-owned transport subscription count, **not** an internal daemon
 listener census. Existing bounded-queue unit tests cover internal cleanup.
 
-The macOS native checkpoint is qualified independently. D08 remains pending
-Linux until D09 supplies a pinned Linux native tmux build, source worktrees run
-this gate, and a separate clean packed-install fixture passes its qualification.
-The Linux sampler branch alone is not Linux product qualification. No substitute system-tmux manifest or installed TUI fallback is
-accepted.
+The macOS native checkpoint is qualified independently. Linux arm64 source and
+packed image lanes now exist; see [owned Linux fixtures](../docker/development/README.md).
+The source lane completed native builds and real TUI input in two worktrees. The
+separate packed lane passed configless doctor and installed native TUI input with
+verified process cleanup, without Bun or source dependencies. Its standalone TUI
+is explicitly staged; package postinstall, release download and upgrade flows
+remain separate D12 qualification.
+
+D08 remains pending Linux: the idle-engine gate timed out waiting for fresh
+terminal output in an existing TUI after daemon crash recovery. An earlier run
+completed all functional phases but returned a final stop error despite tracked
+processes exiting; that intermittent refusal is also unresolved. Neither result
+is reported as a passing release gate. No substitute system-tmux manifest,
+installed TUI fallback, or relaxed ownership check is accepted. Linux x64 and
+emulated performance remain unqualified.
