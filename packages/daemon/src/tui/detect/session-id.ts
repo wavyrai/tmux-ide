@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "../../lib/runtime-namespace.ts";
 /**
  * Agent session-id capture — stamping `@agent_session_id` for agents whose
  * CLIs don't announce their session id the way Claude Code's hooks do.
@@ -484,6 +485,17 @@ export function processStartMs(pid: number, nowMs: number = Date.now()): number 
 
 /** The live {@link ProbeIo}. State roots honor test overrides. */
 export function liveProbeIo(): ProbeIo {
+  const namespace = resolveRuntimeNamespace();
+  if (namespace.development)
+    return {
+      processTable: () => [],
+      openFiles: () => [],
+      processStartMs: () => null,
+      stateDir: liveStateDirIo,
+      codexSessionsRoot: () => join(namespace.stateHome, "integrations", "codex", "sessions"),
+      cursorChatsRoot: () => join(namespace.stateHome, "integrations", "cursor", "chats"),
+      now: () => Date.now(),
+    };
   return {
     processTable: readProcessTable,
     openFiles: readOpenFiles,
@@ -498,6 +510,7 @@ export function liveProbeIo(): ProbeIo {
 
 /** The default live probe: kind-dispatched over {@link liveProbeIo}. */
 export function defaultProbe(pane: CapturePane): string | null {
+  if (resolveRuntimeNamespace().development) return null;
   const kindProbe = pane.agent ? CAPTURE_PROBES[pane.agent] : undefined;
   return kindProbe ? kindProbe(pane, liveProbeIo()) : null;
 }

@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "./runtime-namespace.ts";
 import { createFleetPreviewCapture } from "../command-center/resources/fleet-preview-route.ts";
 import { mountTerminalNativeBackingRoute } from "../command-center/resources/terminal-native-backing-route.ts";
 import { startOwnedEmbeddedDaemon } from "./embedded-daemon-lifecycle.ts";
@@ -193,7 +194,7 @@ export interface EmbeddedDaemonHandle {
 }
 
 function tmux(...args: string[]): string {
-  return execFileSync("tmux", args, {
+  return execFileSync("tmux", runtimeTmuxArgs(args), {
     encoding: "utf-8",
     // Pipe stdio explicitly. Inheriting (the default) inherits the parent's
     // file descriptors; when the daemon is launched detached (nohup, disown,

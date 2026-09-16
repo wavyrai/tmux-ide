@@ -1,3 +1,4 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -16,7 +17,7 @@ import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 
 const MAX_REGISTRY_BYTES = 64 * 1024;
 export function savedMachinesPath(): string {
-  return join(resolveRuntimeNamespace().registryDir, "machines.json");
+  return runtimeOwnedPath(join(resolveRuntimeNamespace().registryDir, "machines.json"));
 }
 
 /** Missing means empty; corruption/unsupported versions fail closed, never reset profiles. */

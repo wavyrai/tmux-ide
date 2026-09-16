@@ -1,6 +1,9 @@
+import { resolveRuntimeNamespace } from "../../../lib/runtime-namespace.ts";
 import { createWriteStream } from "node:fs";
 import { BoundedPerformanceRecordWriter } from "./bounded-performance-record-writer.ts";
 
+// Validate configured destinations before opening a development log stream.
+if (process.env.TMUX_IDE_RUNTIME_MODE === "development") resolveRuntimeNamespace();
 const TUI_PERF_LOG = process.env.TMUX_IDE_TUI_PERF_LOG;
 const TUI_LOG = TUI_PERF_LOG || process.env.TMUX_IDE_TUI_LOG;
 const stream = TUI_LOG

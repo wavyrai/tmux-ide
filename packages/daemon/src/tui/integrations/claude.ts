@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace, runtimeOwnedPath } from "../../lib/runtime-namespace.ts";
 /**
  * Claude Code integration — the authoritative detection layer.
  *
@@ -30,15 +31,14 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import { shellEscape } from "../../lib/shell.ts";
 
 /** Marker every installed hook command contains — the removal key. */
 export const HOOK_SCRIPT_RELPATH = ".tmux-ide/hooks/claude-state.sh";
 
 export function hookScriptPath(): string {
-  return join(homedir(), HOOK_SCRIPT_RELPATH);
+  return resolveRuntimeNamespace().claudeHookPath;
 }
 
 /**
@@ -48,7 +48,7 @@ export function hookScriptPath(): string {
  * reads or rewrites the user's real settings.
  */
 export function claudeSettingsPath(): string {
-  return process.env.TMUX_IDE_CLAUDE_SETTINGS ?? join(homedir(), ".claude", "settings.json");
+  return resolveRuntimeNamespace().claudeSettingsPath;
 }
 
 /**
@@ -213,7 +213,12 @@ function readSettings(path: string): ClaudeSettings {
  * entries. Verify registration in Claude /hooks; supported versions watch settings
  * edits, while older versions may require a new session.
  */
-export function installClaudeIntegration(paths = integrationPaths()): ClaudeIntegrationPaths {
+export function installClaudeIntegration(paths?: ClaudeIntegrationPaths): ClaudeIntegrationPaths {
+  if (!paths && resolveRuntimeNamespace().development)
+    throw new Error("Development integration installation requires explicit fixture paths");
+  paths ??= integrationPaths();
+  runtimeOwnedPath(paths.scriptPath);
+  runtimeOwnedPath(paths.settingsPath);
   const { scriptPath: script, settingsPath } = paths;
   const settings = readSettings(settingsPath);
   mkdirSync(dirname(script), { recursive: true });
@@ -233,6 +238,7 @@ export function uninstallClaudeIntegration(paths = integrationPaths()): {
   wasInstalled: boolean;
 } {
   const { settingsPath } = paths;
+  runtimeOwnedPath(settingsPath);
   const settings = readSettings(settingsPath);
   const wasInstalled = isInstalled(settings, paths.scriptPath);
   if (wasInstalled) {

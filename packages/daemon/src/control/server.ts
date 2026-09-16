@@ -47,7 +47,7 @@ import { createServer, connect, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { CONTROL_PROTOCOL_VERSION, type AgentStatusEvent } from "@tmux-ide/contracts";
 import { IdeError } from "../lib/errors.ts";
-import { resolveRuntimeNamespace } from "../lib/runtime-namespace.ts";
+import { resolveRuntimeNamespace, runtimeOwnedPath } from "../lib/runtime-namespace.ts";
 import { createStatusTracker, type AgentStatus } from "../tui/detect/classify.ts";
 import { diffFleet } from "../tui/chrome/events.ts";
 import { fleetStatuses, TICK_MS } from "../tui/chrome/updater.ts";
@@ -60,7 +60,7 @@ import { createVerbHandlers } from "./verbs.ts";
 /** The default socket path — under the state home so `TMUX_IDE_HOME` scopes
  *  tests away from the real user socket. */
 export function defaultControlSocketPath(): string {
-  return resolveRuntimeNamespace().controlSocketPath;
+  return runtimeOwnedPath(resolveRuntimeNamespace().controlSocketPath);
 }
 
 export interface ControlServerOptions {

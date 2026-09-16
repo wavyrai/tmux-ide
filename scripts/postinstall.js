@@ -10,6 +10,9 @@ import {
 import { resolve, dirname, relative } from "node:path";
 import { homedir } from "node:os";
 
+// Development owners build explicitly; never upgrade a user daemon or install host integrations.
+if (process.env.TMUX_IDE_RUNTIME_MODE === "development") process.exit(0);
+
 // npm strips executable bits from non-bin payloads. Restore the private tmux
 // before a privileged global install becomes read-only to its eventual user.
 // Runtime selection independently verifies the complete checksummed bundle.

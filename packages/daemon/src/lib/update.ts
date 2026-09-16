@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 import { parseStrictSemver } from "./semver.ts";
 /** Origin-aware update planning; unsupported origins never fall back to npm. */
 import { realpathSync } from "node:fs";
@@ -108,6 +109,8 @@ export function runUpdate(
     output?: (line: string) => void;
   } = {},
 ): UpdatePlan {
+  if (resolveRuntimeNamespace().development)
+    throw new Error("Development instances rebuild exact artifacts; package updates are disabled");
   const current = (dependencies.currentVersion ?? getCurrentVersion)();
   const { latest } = (dependencies.status ?? getUpdateStatus)({ currentVersion: current });
   const source = installOrigin(cliDir);

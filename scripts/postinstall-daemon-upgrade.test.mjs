@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-function installFixture(t, { global, cli = "success", claude = false } = {}) {
+function installFixture(t, { global, cli = "success", claude = false, development = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "tmux-ide-postinstall-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const home = join(root, "home");
@@ -39,6 +39,7 @@ function installFixture(t, { global, cli = "success", claude = false } = {}) {
   }
   const env = { ...process.env, HOME: home, USERPROFILE: home };
   delete env.npm_config_global;
+  if (development) env.TMUX_IDE_RUNTIME_MODE = "development";
   if (global !== undefined) env.npm_config_global = global;
   const result = spawnSync(process.execPath, [join(root, "scripts", "postinstall.js")], {
     cwd: root,
@@ -92,4 +93,16 @@ test("daemon upgrade failure does not fail installation or skip later integratio
   assert.doesNotMatch(result.stdout + result.stderr, /fixture upgrade failed/);
   const settings = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
   assert.equal(settings.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, "1");
+});
+
+test("development install cannot upgrade a host daemon or install host integrations", (t) => {
+  const { result, marker, home } = installFixture(t, {
+    global: "true",
+    claude: true,
+    development: true,
+  });
+  assertInstallSucceeded(result);
+  assert.equal(existsSync(marker), false);
+  assert.equal(existsSync(join(home, ".claude", "settings.json")), false);
+  assert.equal(existsSync(join(home, ".claude", "skills")), false);
 });

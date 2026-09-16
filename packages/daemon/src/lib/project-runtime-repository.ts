@@ -1,3 +1,4 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -692,7 +693,7 @@ export class ProjectRuntimeRepository {
     if (!allowEventNamespace && parts[0] === "events") {
       throw new InvalidRuntimePathError(path, "the events namespace is reserved for event streams");
     }
-    const target = resolve(this.runtimeRoot, ...parts);
+    const target = runtimeOwnedPath(resolve(this.runtimeRoot, ...parts));
     if (!isWithinDirectory(target, this.runtimeRoot)) {
       throw new InvalidRuntimePathError(path, "path escapes the runtime root");
     }

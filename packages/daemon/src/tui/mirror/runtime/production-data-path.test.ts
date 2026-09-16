@@ -342,6 +342,16 @@ describe("production OpenTUI v2 data path", () => {
     expect(productionGraph.sourceByFile.get(startupFailurePath)).not.toMatch(
       /node:|\b(?:process|fetch|setInterval|setTimeout|createWorkspaceClient|createTerminalFastLane)\b/u,
     );
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(148);
+    // Durable development namespace validation adds one path/identity helper.
+    // Git discovery is an explicit manager call; namespace getters never invoke it.
+    const developmentPath = "packages/daemon/src/lib/development-instance.ts";
+    expect(authorityDataPathFiles).toContain(developmentPath);
+    expect(productionGraph.sourceByFile.get(developmentPath)).not.toMatch(
+      /\b(?:spawn|spawnSync|mkdirSync|writeFileSync|setInterval|setTimeout)\s*\(/u,
+    );
+    expect(
+      productionGraph.sourceByFile.get("packages/daemon/src/lib/runtime-namespace.ts"),
+    ).not.toMatch(/\b(?:execFileSync|discoverDevelopmentWorktree)\s*\(/u);
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(149);
   });
 });

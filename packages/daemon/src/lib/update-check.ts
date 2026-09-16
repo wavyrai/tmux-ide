@@ -1,3 +1,5 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 import { compareProductVersions, parseStrictSemver } from "./semver.ts";
 /**
  * The built-in update check — "you're on an old tmux-ide" surfaced where
@@ -18,7 +20,6 @@ import { compareProductVersions, parseStrictSemver } from "./semver.ts";
  * cache, or a garbage registry body all degrade to "no update known".
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -120,8 +121,8 @@ export function deriveStatus(latest: string | null, currentVersion: string): Upd
  * same home resolution the welcome marker uses.
  */
 export function updateCachePath(scope: UpdateScope = {}): string {
-  const home = process.env.TMUX_IDE_HOME ?? join(homedir(), ".tmux-ide");
-  return join(home, `update-check-${scopeKey(scope)}.json`);
+  const home = resolveRuntimeNamespace().stateHome;
+  return runtimeOwnedPath(join(home, `update-check-${scopeKey(scope)}.json`));
 }
 
 /** io — read + parse the cache, or null when absent/unreadable/malformed. */
@@ -248,6 +249,7 @@ export async function runUpdateCheck({
   now = Date.now(),
   ...scope
 }: UpdateScope & { now?: number } = {}): Promise<void> {
+  if (resolveRuntimeNamespace().development) return;
   const cache = readUpdateCache(scope);
   if (!shouldCheck(cache?.lastCheckedAt ?? null, now)) return;
   // The agent-detection manifest-pack refresh RIDES this same daily throttle
@@ -286,7 +288,8 @@ export function maybeCheckForUpdate({
   now?: number;
   currentVersion?: string;
 }): UpdateStatus {
-  if (!enabled) return { latest: null, updateAvailable: false };
+  if (resolveRuntimeNamespace().development || !enabled)
+    return { latest: null, updateAvailable: false };
   const status = getUpdateStatus({ now, currentVersion });
   void runUpdateCheck({ now, currentVersion }).catch(() => {});
   return status;

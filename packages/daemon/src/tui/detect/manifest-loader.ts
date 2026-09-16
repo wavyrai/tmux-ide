@@ -1,3 +1,5 @@
+import { runtimeOwnedPath } from "../../lib/runtime-namespace.ts";
+import { resolveRuntimeNamespace } from "../../lib/runtime-namespace.ts";
 /**
  * Manifest loading with user overrides.
  *
@@ -25,7 +27,6 @@
  * the escape hatch for sandboxes/wrappers where the process tree is opaque.
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentManifest, Rule, StateRules } from "./manifest.ts";
 import { BUNDLED_MANIFESTS } from "./manifests.ts";
@@ -34,8 +35,8 @@ import { BUNDLED_MANIFESTS } from "./manifests.ts";
  *  state-home override every other `~/.tmux-ide` consumer respects) so tests
  *  never read a real user's overrides. */
 export function overrideDir(): string {
-  const home = process.env.TMUX_IDE_HOME ?? join(homedir(), ".tmux-ide");
-  return join(home, "agent-detection");
+  const home = resolveRuntimeNamespace().stateHome;
+  return runtimeOwnedPath(join(home, "agent-detection"));
 }
 
 /** The fetched manifest-pack file (`tmux-ide update --manifests` installs it;

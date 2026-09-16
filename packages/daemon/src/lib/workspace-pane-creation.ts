@@ -278,7 +278,10 @@ function tmuxSocketFromEnvironment(): string | null {
 }
 
 export function resolveWorkspacePaneTmuxAuthority(): WorkspacePaneTmuxAuthority {
+  const namespace = resolveRuntimeNamespace();
   const executablePath = resolveTmuxExecutable();
+  if (namespace.development)
+    return Object.freeze({ executablePath, socketSelector: namespace.tmuxSocket });
   const environmentSocket = tmuxSocketFromEnvironment();
   if (environmentSocket) {
     let socket;

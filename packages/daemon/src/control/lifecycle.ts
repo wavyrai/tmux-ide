@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "../lib/runtime-namespace.ts";
 /**
  * Agent lifecycle io for the control socket — spawn / restart / stop.
  *
@@ -30,8 +31,11 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** One tmux call; resolves stdout, rejects on a tmux error. */
 function tmuxRun(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("tmux", args, { env: sanitizeTmuxClientEnvironment() }, (err, stdout) =>
-      err ? reject(err) : resolve(stdout.trimEnd()),
+    execFile(
+      "tmux",
+      runtimeTmuxArgs(args),
+      { env: sanitizeTmuxClientEnvironment() },
+      (err, stdout) => (err ? reject(err) : resolve(stdout.trimEnd())),
     );
   });
 }

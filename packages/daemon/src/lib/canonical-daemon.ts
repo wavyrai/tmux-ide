@@ -24,7 +24,7 @@ import {
   DaemonIdentitySchema,
   type DaemonIdentity,
 } from "@tmux-ide/contracts";
-import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
+import { resolveRuntimeNamespace, runtimeOwnedPath } from "./runtime-namespace.ts";
 
 export type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
 
@@ -98,7 +98,7 @@ export type CanonicalDaemonInfoState =
     };
 
 export function getCanonicalDaemonInfoPath(): string {
-  return join(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE);
+  return runtimeOwnedPath(join(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE));
 }
 
 export function getCanonicalDaemonClaimPath(): string {

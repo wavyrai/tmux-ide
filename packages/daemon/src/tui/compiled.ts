@@ -1,3 +1,8 @@
+import {
+  resolveRuntimeNamespace,
+  developmentChildEnvironment,
+  runtimeOwnedPath,
+} from "../lib/runtime-namespace.ts";
 /**
  * Resolution for the TUI surfaces across BOTH distribution modes.
  *
@@ -98,6 +103,21 @@ export function openTuiLaunchEnvironment(
   inherited: NodeJS.ProcessEnv,
   overlay: NodeJS.ProcessEnv = {},
 ): NodeJS.ProcessEnv {
+  const namespace = resolveRuntimeNamespace({ env: inherited });
+  if (namespace.development) {
+    const environment = developmentChildEnvironment(namespace, inherited);
+    Object.assign(environment, overlay);
+    const resolved = resolveRuntimeNamespace({ env: environment });
+    if (
+      !resolved.development ||
+      resolved.namespaceId !== namespace.namespaceId ||
+      resolved.stateHome !== namespace.stateHome ||
+      resolved.runtimeDir !== namespace.runtimeDir
+    )
+      throw new Error("Development TUI overlay changed namespace authority");
+    delete environment.NO_COLOR;
+    return { ...environment, COLORTERM: "truecolor" };
+  }
   const environment: NodeJS.ProcessEnv = {
     ...inherited,
     ...overlay,
@@ -120,6 +140,8 @@ export async function ensureTuiLaunchAvailable(
   input: TuiResolveInput,
   options: TuiLaunchAcquisitionOptions = {},
 ): Promise<TuiLaunch> {
+  if (resolveRuntimeNamespace().development)
+    throw new Error("Development TUI launch requires an exact build manifest (D03)");
   const current = resolveTuiLaunch(input);
   if (current.mode !== "unavailable") return current;
 
@@ -193,6 +215,8 @@ const BINARY_RELS = [
  * module-relative candidates. Returns null when none exists.
  */
 export function findCompiledTui(): string | null {
+  if (resolveRuntimeNamespace().development)
+    throw new Error("Development TUI selection requires an exact build manifest (D03)");
   const override = process.env.TMUX_IDE_TUI_BIN;
   if (override) return existsSync(override) ? override : null;
 
@@ -236,7 +260,10 @@ export function isBunAvailable(): boolean {
  * deliberately config-free directory instead.
  */
 export function compiledTuiRuntimeDir(home = homedir()): string {
-  return join(home, ".tmux-ide", "runtime", "compiled-tui");
+  const namespace = resolveRuntimeNamespace();
+  return namespace.development
+    ? runtimeOwnedPath(join(namespace.runtimeDir, "compiled-tui"))
+    : join(home, ".tmux-ide", "runtime", "compiled-tui");
 }
 
 /** io — create and return the private cwd used by compiled TUI surfaces. */

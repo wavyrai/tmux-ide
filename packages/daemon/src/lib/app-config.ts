@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 /**
  * The one global config — `~/.tmux-ide/config.json` (overridable via
  * `TMUX_IDE_CONFIG`).
@@ -22,8 +23,7 @@
  */
 import { findVisualThemePreset } from "@tmux-ide/contracts";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import type { AgentStatus } from "../tui/detect/classify.ts";
 import type { ThemeModeSetting } from "./theme-mode.ts";
 import {
@@ -451,7 +451,7 @@ export function parseAppConfig(input: unknown): AppConfig {
  * overrides), else `~/.tmux-ide/config.json`.
  */
 export function appConfigPath(): string {
-  return process.env.TMUX_IDE_CONFIG ?? join(homedir(), ".tmux-ide", "config.json");
+  return resolveRuntimeNamespace().configPath;
 }
 
 /**
@@ -471,6 +471,7 @@ export function loadAppConfig(): AppConfig {
 }
 
 let cached: AppConfig | null = null;
+let cachedPath: string | null = null;
 
 /**
  * The process-cached config. Resolved once on first use — config changes take
@@ -478,7 +479,14 @@ let cached: AppConfig | null = null;
  * caching is safe and keeps the hot updater tick from re-reading the file.
  */
 export function getAppConfig(): AppConfig {
-  if (!cached) cached = loadAppConfig();
+  const namespace = resolveRuntimeNamespace();
+  const key = namespace.isolated
+    ? `${namespace.namespaceId}:${namespace.configPath}`
+    : "production";
+  if (!cached || cachedPath !== key) {
+    cached = loadAppConfig();
+    cachedPath = key;
+  }
   return cached;
 }
 

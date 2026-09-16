@@ -1,3 +1,5 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 /**
  * Managed sync of the bundled Claude Code skill → `~/.claude/skills/tmux-ide`.
  *
@@ -22,7 +24,6 @@
  * path of `tmux-ide update`, and `tmux-ide integration install claude`.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getCurrentVersion } from "./update-check.ts";
@@ -37,12 +38,12 @@ import { getCurrentVersion } from "./update-check.ts";
  * settings override so both halves of the agent setup honor the same scratch dir.
  */
 export function claudeDir(): string {
-  return process.env.TMUX_IDE_CLAUDE_DIR ?? join(homedir(), ".claude");
+  return resolveRuntimeNamespace().claudeDir;
 }
 
 /** The fully-managed tmux-ide skill dir: `<claudeDir>/skills/tmux-ide`. */
 export function skillTargetDir(): string {
-  return join(claudeDir(), "skills", "tmux-ide");
+  return runtimeOwnedPath(join(claudeDir(), "skills", "tmux-ide"));
 }
 
 /** The installed SKILL.md path (inside {@link skillTargetDir}). */
@@ -138,6 +139,8 @@ export function syncSkill({
   source = defaultSkillSource(),
   version = getCurrentVersion(),
 }: { source?: string; version?: string } = {}): SyncResult {
+  if (resolveRuntimeNamespace().development)
+    throw new Error("Automatic skill sync is disabled in development instances");
   const rendered = rewriteVersionMarker(readFileSync(source, "utf-8"), version);
   const dir = skillTargetDir();
   const target = join(dir, "SKILL.md");

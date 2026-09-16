@@ -1,3 +1,5 @@
+import { runtimeOwnedPath } from "../../lib/runtime-namespace.ts";
+import { resolveRuntimeNamespace } from "../../lib/runtime-namespace.ts";
 /**
  * The one-time INTEGRATION OFFER — shown the first time tmux-ide adopts a
  * session on a machine that has Claude Code but hasn't installed the lifecycle
@@ -19,7 +21,6 @@
  */
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getAppConfig } from "../../lib/app-config.ts";
 import { claudeIntegrationStatus } from "./claude.ts";
@@ -31,8 +32,8 @@ import { claudeIntegrationStatus } from "./claude.ts";
  * dir so it never touches — or is confused by — the real user's marker.
  */
 export function integrationOfferMarkerPath(): string {
-  const home = process.env.TMUX_IDE_HOME ?? join(homedir(), ".tmux-ide");
-  return join(home, "integration-offered");
+  const home = resolveRuntimeNamespace().stateHome;
+  return runtimeOwnedPath(join(home, "integration-offered"));
 }
 
 /**
@@ -103,6 +104,7 @@ export function buildOfferText(): string {
  * welcome card's one-shot discipline.
  */
 export function maybeOfferIntegrationPopup(): void {
+  if (resolveRuntimeNamespace().development) return;
   let offer: boolean;
   try {
     const status = claudeIntegrationStatus();

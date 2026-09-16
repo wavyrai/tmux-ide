@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 /**
  * Per-platform TUI binary: the runtime-download fallback that lets a clean
  * `npm i -g tmux-ide` run the full OpenTUI/Solid cockpit WITHOUT `bun`.
@@ -27,7 +28,6 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { getCurrentVersion } from "./update-check.ts";
@@ -123,7 +123,7 @@ export function downloadedTuiPath(home: string, tag: TuiPlatformTag, version: st
  * the same resolution the update-check cache and welcome marker use.
  */
 export function tuiStateHome(): string {
-  return process.env.TMUX_IDE_HOME ?? join(homedir(), ".tmux-ide");
+  return resolveRuntimeNamespace().stateHome;
 }
 
 /**
@@ -139,6 +139,7 @@ export function findDownloadedTui(
     readonly limits?: Pick<DownloadLimits, "minBinaryBytes" | "maxBinaryBytes">;
   } = {},
 ): string | null {
+  if (resolveRuntimeNamespace().development) return null;
   const tag = options.tag === undefined ? tuiPlatformTag() : options.tag;
   if (!tag) return null;
   const path = downloadedTuiPath(options.home ?? tuiStateHome(), tag, version);
@@ -386,6 +387,8 @@ export async function downloadTuiBinary(
     limits?: Partial<Omit<DownloadLimits, "timeoutMs">>;
   } = {},
 ): Promise<{ path: string; bytes: number }> {
+  if (resolveRuntimeNamespace().development)
+    throw new Error("Development binary download is disabled; build exact artifacts");
   const log = opts.log ?? (() => {});
   const version = normalizeVersion(opts.version ?? getCurrentVersion());
   const tag = opts.tag === undefined ? tuiPlatformTag() : opts.tag;
