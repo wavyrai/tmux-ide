@@ -240,13 +240,18 @@ function validateDevelopmentDirectory(path2, privateRoot) {
   }
 }
 function resolveDevelopmentInstance(input) {
+  const worktree = realpathSync2(input.worktree);
+  if (!isAbsolute(input.worktree) || !lstatSync2(worktree).isDirectory())
+    throw new Error("Development worktree must be an absolute directory");
+  return resolveDevelopmentInstancePaths({ ...input, worktree });
+}
+function resolveDevelopmentInstancePaths(input) {
   const name = input.name ?? "";
   if (name && !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,47}$/u.test(name))
     throw new Error("Invalid development instance name");
-  if (!isAbsolute(input.worktree)) throw new Error("Development worktree must be absolute");
-  const worktree = realpathSync2(input.worktree);
-  if (!lstatSync2(worktree).isDirectory())
-    throw new Error("Development worktree must be a directory");
+  const worktree = input.worktree;
+  if (!isAbsolute(worktree) || resolve2(worktree) !== worktree)
+    throw new Error("Recorded worktree must be canonical and absolute");
   const userHome = input.userHome ?? homedir();
   const suppliedStore = resolve2(input.store ?? join2(userHome, ".local", "state", "tmux-ide-dev"));
   let parent = suppliedStore;
@@ -19076,20 +19081,16 @@ async function developmentWorktreeIdentity(instance) {
   const git = lstatSync6(path2);
   return { tree: { dev: tree.dev, ino: tree.ino }, git: { path: path2, dev: git.dev, ino: git.ino } };
 }
-async function readDevelopmentIdentity(instance) {
-  const record = readPrivateDevelopmentRecord(
-    join24(instance.root, "instance.json")
-  );
+async function readDevelopmentIdentity(instance, options = {}) {
+  const record = readPrivateDevelopmentRecord(join24(instance.root, "instance.json")) ?? (options.allowReset ? readPrivateDevelopmentRecord(join24(instance.root, "reset.json")) : null);
   if (!record) return null;
-  const identity = await developmentWorktreeIdentity(instance);
-  if (record.version !== 1 || record.id !== instance.id || record.digest !== instance.digest || record.worktree !== instance.worktree || record.name !== instance.name || typeof record.capability !== "string" || !/^[a-f0-9-]{36}$/u.test(record.capability) || JSON.stringify(record.tree) !== JSON.stringify(identity.tree) || JSON.stringify(record.git) !== JSON.stringify(identity.git))
+  const identity = options.allowOrphan ? null : await developmentWorktreeIdentity(instance);
+  if (record.version !== 1 || record.id !== instance.id || record.digest !== instance.digest || record.worktree !== instance.worktree || record.name !== instance.name || typeof record.capability !== "string" || !/^[a-f0-9-]{36}$/u.test(record.capability) || !Number.isSafeInteger(record.tree?.dev) || !Number.isSafeInteger(record.tree?.ino) || !Number.isSafeInteger(record.git?.dev) || !Number.isSafeInteger(record.git?.ino) || typeof record.git?.path !== "string" || identity !== null && (JSON.stringify(record.tree) !== JSON.stringify(identity.tree) || JSON.stringify(record.git) !== JSON.stringify(identity.git)))
     throw new Error("Development worktree/ownership identity changed");
   return record;
 }
-function readDevelopmentOwner(instance) {
-  const owner = readPrivateDevelopmentRecord(
-    join24(instance.root, "owner.json")
-  );
+function readDevelopmentOwner(instance, filename = "owner.json") {
+  const owner = readPrivateDevelopmentRecord(join24(instance.root, filename));
   if (owner && (owner.version !== 1 || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || typeof owner.incarnation !== "string" || !owner.incarnation || !/^[a-f0-9-]{36}$/u.test(owner.attempt) || !/^build-[a-f0-9-]{36}$/u.test(owner.generation) || !/^[a-f0-9]{64}$/u.test(owner.manifestHash)))
     throw new Error("Invalid development process owner");
   return owner;
