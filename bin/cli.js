@@ -19037,13 +19037,36 @@ function writeDevelopmentRecord(path2, value) {
     rmSync2(temp, { force: true });
   }
 }
+function linuxDevelopmentProcessIdentity(pid, readStat = () => readFileSync19(`/proc/${pid}/stat`, "utf8"), readExecutable = () => realpathSync8(`/proc/${pid}/exe`)) {
+  const parseStat = (stat2) => {
+    const end = stat2.lastIndexOf(") ");
+    const fields = stat2.slice(end + 2).split(" ");
+    if (!stat2.startsWith(`${pid} (`) || end < String(pid).length + 2 || !/^[RSDZTtXxKWPI]$/.test(fields[0] ?? "") || !/^\d+$/.test(fields[19] ?? ""))
+      throw new Error("Invalid Linux process stat");
+    return { state: fields[0], started: fields[19] };
+  };
+  const dead = (state) => ["Z", "X", "x"].includes(state);
+  const initial = parseStat(readStat());
+  if (dead(initial.state)) return null;
+  let executable;
+  try {
+    executable = readExecutable();
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      if (dead(parseStat(readStat()).state)) return null;
+    }
+    throw error;
+  }
+  const current = parseStat(readStat());
+  if (dead(current.state)) return null;
+  if (current.started !== initial.started) throw new Error("Linux process incarnation changed");
+  return `linux:${initial.started}:${executable}`;
+}
 async function developmentProcessIdentity(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid process identity");
   try {
     if (process.platform === "linux") {
-      const stat2 = readFileSync19(`/proc/${pid}/stat`, "utf8");
-      const fields = stat2.slice(stat2.lastIndexOf(")") + 2).split(" ");
-      return `linux:${fields[19]}:${realpathSync8(`/proc/${pid}/exe`)}`;
+      return linuxDevelopmentProcessIdentity(pid);
     }
     const { stdout } = await execute(
       "/bin/ps",
