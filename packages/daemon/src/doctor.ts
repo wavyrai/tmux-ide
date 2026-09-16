@@ -121,6 +121,41 @@ function check(
   }
 }
 
+export function nodeVersionRow(version: string): CheckResult {
+  const major = Number(version.split(".")[0]);
+  const pass = Number.isInteger(major) && major >= 20;
+  return {
+    label: "Node.js ≥ 20",
+    pass,
+    detail: pass ? `v${version}` : `Node ${version} (need ≥ 20)`,
+    optional: false,
+  };
+}
+
+export async function workspaceConfigRow(projectDir: string): Promise<CheckResult> {
+  try {
+    const config = await resolveConfig(projectDir);
+    return {
+      label: "workspace config",
+      pass: true,
+      detail:
+        config.kind === "none"
+          ? "absent (optional; configless mode)"
+          : config.kind === "legacy"
+            ? "legacy ide.yml compatibility"
+            : "found",
+      optional: false,
+    };
+  } catch (error) {
+    return {
+      label: "workspace config",
+      pass: false,
+      detail: (error as Error).message,
+      optional: false,
+    };
+  }
+}
+
 export async function doctor({
   json,
 }: {
@@ -150,13 +185,7 @@ export async function doctor({
     }),
   );
 
-  checks.push(
-    check("Node.js ≥ 18", () => {
-      const major = parseInt(process.versions.node.split(".")[0]!);
-      if (major < 18) throw new Error(`Node ${process.versions.node} (need ≥ 18)`);
-      return `v${process.versions.node}`;
-    }),
-  );
+  checks.push(nodeVersionRow(process.versions.node));
 
   checks.push(
     check(
@@ -177,27 +206,7 @@ export async function doctor({
     ),
   );
 
-  checks.push(
-    await (async (): Promise<CheckResult> => {
-      try {
-        const resolved = await resolveConfig(resolve("."));
-        if (resolved.kind === "none") throw new Error("not found in current directory");
-        return {
-          label: "workspace config exists",
-          pass: true,
-          detail: resolved.kind === "legacy" ? "legacy ide.yml compatibility" : "found",
-          optional: false,
-        };
-      } catch (e) {
-        return {
-          label: "workspace config exists",
-          pass: false,
-          detail: (e as Error).message,
-          optional: false,
-        };
-      }
-    })(),
-  );
+  checks.push(await workspaceConfigRow(resolve(".")));
 
   checks.push(
     check(

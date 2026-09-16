@@ -63,7 +63,8 @@ class TmuxIde < Formula
     assert_predicate \
       libexec/"lib/node_modules/tmux-ide/packages/daemon/dist/native/TmuxIdeNotifier.app/Contents/MacOS/tmux-ide-notifier",
       :executable?
-    # doctor exits 1 in an empty dir (no ide.yml) — the checks still render.
+    # Pinned 2.7.0 still requires ide.yml. When updating the formula to a
+    # configless-doctor release, expect exit 0 in this empty directory.
     assert_match "tmux installed", shell_output("#{bin}/tmux-ide doctor 2>&1", 1)
   end
 end

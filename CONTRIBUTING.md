@@ -4,7 +4,7 @@
 
 Requirements:
 
-- Node.js 18 or newer
+- Node.js 20 or newer
 - pnpm 10 or newer
 - tmux 3.0 or newer for manual CLI smoke tests
 

@@ -165,3 +165,16 @@ Promotion replay retention does not block admission. For workspace-open,
 admission may still retire closed-workspace receipts and proceed. The snapshot
 performs no inventory discovery, mutation, or reservation. It describes only
 these admission owners, not whole-daemon readiness; `/health` remains liveness.
+
+`tmux-ide update --dry-run --json` reports the planned update without installing
+packages or refreshing skills. Stable installations use the npm `latest` tag;
+prerelease installations use `beta`. Update checks and notification receipts are
+cached separately per channel. The updater resolves its own installation path
+and verifies that the active npm, pnpm, or Bun global destination matches it
+before executing an argument-based manager command. Homebrew, Yarn, npx, source
+checkouts, unknown layouts, and mismatched manager prefixes receive manual
+instructions. Package postinstall owns skill refresh; `tmux-ide skill-sync` is
+available explicitly for installations that skip lifecycle scripts.
+
+Node.js 20 or newer is required. `doctor` accepts a project without a workspace
+preset; a present but malformed `.tmux-ide/workspace.yml` still fails validation.

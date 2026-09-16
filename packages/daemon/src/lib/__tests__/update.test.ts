@@ -3,7 +3,7 @@
  * detection + plan rendering, and the git-checkout probe against a scratch dir.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -30,7 +30,7 @@ describe("detectPackageManager", () => {
     expect(detectPackageManager("/Users/x/.bun/install/global/node_modules/tmux-ide/bin")).toBe(
       "bun",
     );
-    expect(detectPackageManager("/opt/bun/bin/tmux-ide")).toBe("bun");
+    expect(detectPackageManager("/opt/bun/bin/tmux-ide")).toBe("unknown");
   });
 });
 
@@ -45,6 +45,7 @@ describe("planUpdate", () => {
     const plan = planUpdate({
       cliPath: "/usr/local/lib/node_modules/tmux-ide/bin",
       gitRoot: null,
+      currentVersion: "2.6.0",
     });
     expect(plan.method).toBe("npm");
     expect(plan.command).toBe(UPDATE_COMMANDS.npm);
@@ -60,8 +61,7 @@ describe("renderPlan", () => {
     expect(out).toContain("v2.6.0 → v9.9.9 available");
     expect(out).toContain("git pull");
     // Always ends with the re-adopt instruction so a fresh dock runs new code.
-    expect(out).toContain("_tmux-ide-chrome");
-    expect(out).toContain("tmux-ide adopt");
+    expect(out).toContain("update --daemon");
   });
 
   it("shows the exact package-manager command and 'Would run' under --dry-run", () => {
@@ -93,6 +93,7 @@ describe("findGitCheckoutRoot", () => {
 
   it("finds a .git at an ancestor of the start dir", () => {
     mkdirSync(join(root, ".git"));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "tmux-ide" }));
     const deep = join(root, "packages", "daemon", "bin");
     mkdirSync(deep, { recursive: true });
     expect(findGitCheckoutRoot(deep)).toBe(root);
@@ -125,4 +126,103 @@ describe("renderPlan version gating", () => {
     });
     expect(out).toContain("v2.6.0 → v9.9.9 available");
   });
+});
+
+it("keeps unsupported and ambiguous layouts manual", () => {
+  for (const [path, origin] of [
+    ["/opt/homebrew/Cellar/tmux-ide/3.0.0/libexec/lib/node_modules/tmux-ide/bin", "homebrew"],
+    ["/home/user/.npm/_npx/123/node_modules/tmux-ide/bin", "npx"],
+    ["/home/user/.config/yarn/global/node_modules/tmux-ide/bin", "yarn"],
+    ["/work/node_modules/tmux-ide/bin", "unknown"],
+    ["/some/pnpm-project/bin", "unknown"],
+  ]) {
+    const plan = planUpdate({ cliPath: path!, gitRoot: null, currentVersion: "3.0.0" });
+    expect(plan.method).toBe(origin);
+    expect(plan.command).toBeNull();
+    expect(plan.executable).toBeUndefined();
+    expect(plan.guidance).toBeTruthy();
+  }
+  expect(
+    detectPackageManager(
+      "/home/user/.local/share/pnpm/global/5/.pnpm/tmux-ide@3.0.0/node_modules/tmux-ide/bin",
+    ),
+  ).toBe("pnpm");
+  expect(
+    planUpdate({
+      cliPath: "/usr/lib/node_modules/tmux-ide/bin",
+      gitRoot: null,
+      currentVersion: "3.0.0-beta.9",
+    }).args,
+  ).toEqual(["install", "-g", "tmux-ide@beta"]);
+});
+
+it("resolves actual symlinked installation and emits one truthful JSON dry run without execution", async () => {
+  const { runUpdate } = await import("../update.ts");
+  const { symlinkSync } = await import("node:fs");
+  const { vi } = await import("vitest");
+  const root = mkdtempSync(join(tmpdir(), "update-plan-"));
+  try {
+    const bin = join(root, "lib/node_modules/tmux-ide/bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "../package.json"), JSON.stringify({ name: "tmux-ide" }));
+    const alias = join(root, "alias");
+    symlinkSync(bin, alias);
+    const output = vi.fn();
+    const execute = vi.fn();
+    runUpdate(
+      { cliDir: alias, dryRun: true, json: true },
+      {
+        output,
+        execute,
+        query: () => join(root, "lib/node_modules"),
+        currentVersion: () => "3.0.0-beta.9",
+        status: () => ({ latest: "3.0.0-beta.18", updateAvailable: true }),
+      },
+    );
+    expect(execute).not.toHaveBeenCalled();
+    expect(output).toHaveBeenCalledOnce();
+    expect(JSON.parse(output.mock.calls[0]![0])).toMatchObject({
+      method: "npm",
+      dryRun: true,
+      executed: false,
+      channel: "beta",
+      args: ["install", "-g", "tmux-ide@beta"],
+    });
+    runUpdate(
+      { cliDir: bin, dryRun: false, json: true },
+      {
+        output,
+        execute,
+        query: () => join(root, "lib/node_modules"),
+        currentVersion: () => "3.0.0",
+        status: () => ({ latest: null, updateAvailable: false }),
+      },
+    );
+    expect(execute).toHaveBeenCalledWith("npm", ["install", "-g", "tmux-ide@latest"], {
+      stdio: ["ignore", 2, 2],
+    });
+    execute.mockClear();
+    const blocked = runUpdate(
+      { cliDir: bin, dryRun: false, json: true },
+      { output, execute, query: () => "/missing-other-prefix" },
+    );
+    expect(blocked.command).toBeNull();
+    expect(blocked.guidance).toContain("original manager/prefix");
+    expect(execute).not.toHaveBeenCalled();
+    runUpdate({ cliDir: root, dryRun: false, json: true }, { execute, output });
+    expect(execute).not.toHaveBeenCalled();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("does not infer an automatic stable update from an unknown running version", () => {
+  const plan = planUpdate({
+    cliPath: "/usr/lib/node_modules/tmux-ide/bin",
+    gitRoot: null,
+    currentVersion: "unknown",
+  });
+  expect(plan.command).toBeNull();
+  expect(plan.executable).toBeUndefined();
+  expect(plan.guidance).toContain("Cannot infer a safe update channel");
 });

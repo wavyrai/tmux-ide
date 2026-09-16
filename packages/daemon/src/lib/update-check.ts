@@ -1,9 +1,10 @@
+import { compareProductVersions, parseStrictSemver } from "./semver.ts";
 /**
  * The built-in update check — "you're on an old tmux-ide" surfaced where
  * everyone already looks: the dock.
  *
  * Once a day the chrome updater asks npm for the latest published version, caches
- * the answer in `~/.tmux-ide/update-check.json` (overridable via `TMUX_IDE_HOME`,
+ * the answer in `~/.tmux-ide/update-check-{latest,beta}.json` (overridable via `TMUX_IDE_HOME`,
  * consistent with {@link ../tui/chrome/welcome.ts}), and — when the cached latest
  * is newer than what's running — every surface reads that ONE cache to decide
  * whether to nudge: the dock's `⬆ v<latest>` segment, a one-time toast per
@@ -35,7 +36,7 @@ export interface UpdateStatus {
   updateAvailable: boolean;
 }
 
-/** The on-disk cache shape (`~/.tmux-ide/update-check.json`). */
+/** The on-disk cache shape (`~/.tmux-ide/update-check-{latest,beta}.json`). */
 export interface UpdateCache {
   /** Epoch ms of the last network check (throttles {@link shouldCheck}). */
   lastCheckedAt: number | null;
@@ -49,50 +50,17 @@ export interface UpdateCache {
 // Pure
 // ---------------------------------------------------------------------------
 
-interface ParsedSemver {
-  nums: [number, number, number];
-  /** The prerelease tag (`1.0.0-rc.1` → `rc.1`), or "" for a release. */
-  pre: string;
+/** Strict SemVer precedence; malformed versions are unordered. */
+export const compareSemver = compareProductVersions;
+export type UpdateChannel = "latest" | "beta";
+export function updateChannel(version: string): UpdateChannel {
+  return parseStrictSemver(version)?.pre.length ? "beta" : "latest";
 }
-
-/**
- * PURE — split `[v]MAJOR.MINOR.PATCH[-prerelease][+build]` into its numeric core
- * and prerelease tag. Lenient: a leading `v`, build metadata (`+…`), and missing
- * or non-numeric core parts are all tolerated (coerced to 0), so a malformed
- * version compares as `0.0.0` instead of throwing.
- */
-function parseSemver(version: string): ParsedSemver {
-  const core = version.trim().replace(/^v/i, "").split("+")[0] ?? "";
-  const dash = core.indexOf("-");
-  const main = dash === -1 ? core : core.slice(0, dash);
-  const pre = dash === -1 ? "" : core.slice(dash + 1);
-  const parts = main.split(".");
-  const num = (i: number): number => {
-    const n = Number.parseInt(parts[i] ?? "", 10);
-    return Number.isFinite(n) && n >= 0 ? n : 0;
-  };
-  return { nums: [num(0), num(1), num(2)], pre };
+export interface UpdateScope {
+  currentVersion?: string;
 }
-
-/**
- * PURE — order two semver strings: `-1` if `a < b`, `1` if `a > b`, else `0`.
- *
- * Numeric core (major, minor, patch) compares field-by-field, so `2.10.0` sorts
- * ABOVE `2.6.0` (numeric, not lexical). Prerelease follows semver's rule: a
- * release outranks a prerelease of the same core (`1.0.0` > `1.0.0-rc`); two
- * prereleases fall back to a plain lexical compare of their tags (a simple, good-
- * enough ordering — we never need to rank `rc.2` vs `rc.10` precisely).
- */
-export function compareSemver(a: string, b: string): -1 | 0 | 1 {
-  const pa = parseSemver(a);
-  const pb = parseSemver(b);
-  for (let i = 0; i < 3; i++) {
-    if (pa.nums[i]! !== pb.nums[i]!) return pa.nums[i]! < pb.nums[i]! ? -1 : 1;
-  }
-  if (pa.pre === pb.pre) return 0;
-  if (pa.pre === "") return 1; // release > prerelease of same core
-  if (pb.pre === "") return -1;
-  return pa.pre < pb.pre ? -1 : 1;
+function scopeKey(scope: UpdateScope = {}): string {
+  return updateChannel(scope.currentVersion ?? getCurrentVersion());
 }
 
 /** PURE — is `latest` strictly newer than `current`? */
@@ -121,7 +89,7 @@ export function parseRegistryResponse(json: string): string | null {
     const parsed = JSON.parse(json) as unknown;
     if (!parsed || typeof parsed !== "object") return null;
     const version = (parsed as { version?: unknown }).version;
-    return typeof version === "string" && version.length > 0 ? version : null;
+    return typeof version === "string" && parseStrictSemver(version) ? version : null;
   } catch {
     return null;
   }
@@ -135,7 +103,10 @@ export function parseRegistryResponse(json: string): string | null {
 export function deriveStatus(latest: string | null, currentVersion: string): UpdateStatus {
   return {
     latest,
-    updateAvailable: latest !== null && isNewer(latest, currentVersion),
+    updateAvailable:
+      latest !== null &&
+      (updateChannel(currentVersion) === "beta" || !parseStrictSemver(latest)?.pre.length) &&
+      isNewer(latest, currentVersion),
   };
 }
 
@@ -148,21 +119,27 @@ export function deriveStatus(latest: string | null, currentVersion: string): Upd
  * `TMUX_IDE_HOME` when set (tests / per-run overrides), else `~/.tmux-ide` — the
  * same home resolution the welcome marker uses.
  */
-export function updateCachePath(): string {
+export function updateCachePath(scope: UpdateScope = {}): string {
   const home = process.env.TMUX_IDE_HOME ?? join(homedir(), ".tmux-ide");
-  return join(home, "update-check.json");
+  return join(home, `update-check-${scopeKey(scope)}.json`);
 }
 
 /** io — read + parse the cache, or null when absent/unreadable/malformed. */
-export function readUpdateCache(): UpdateCache | null {
-  const path = updateCachePath();
+export function readUpdateCache(scope: UpdateScope = {}): UpdateCache | null {
+  const path = updateCachePath(scope);
   if (!existsSync(path)) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
     if (!parsed || typeof parsed !== "object") return null;
     const obj = parsed as Record<string, unknown>;
-    const lastCheckedAt = typeof obj.lastCheckedAt === "number" ? obj.lastCheckedAt : null;
-    const latest = typeof obj.latest === "string" && obj.latest.length > 0 ? obj.latest : null;
+    const lastCheckedAt =
+      typeof obj.lastCheckedAt === "number" &&
+      Number.isFinite(obj.lastCheckedAt) &&
+      obj.lastCheckedAt >= 0
+        ? obj.lastCheckedAt
+        : null;
+    const latest =
+      typeof obj.latest === "string" && parseStrictSemver(obj.latest) ? obj.latest : null;
     const notified = Array.isArray(obj.notified)
       ? obj.notified.filter((v): v is string => typeof v === "string")
       : undefined;
@@ -173,8 +150,8 @@ export function readUpdateCache(): UpdateCache | null {
 }
 
 /** io — write the cache (creating `<home>` if needed). Best-effort, never throws. */
-export function writeUpdateCache(cache: UpdateCache): void {
-  const path = updateCachePath();
+export function writeUpdateCache(cache: UpdateCache, scope: UpdateScope = {}): void {
+  const path = updateCachePath(scope);
   try {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify(cache));
@@ -188,11 +165,16 @@ export function writeUpdateCache(cache: UpdateCache): void {
  * timeout, non-200, garbage body). Aborts after `timeoutMs` so a slow registry
  * can never stall the updater tick. This is the ONLY network call in the module.
  */
-export async function fetchLatestVersion(timeoutMs = 3000): Promise<string | null> {
+export async function fetchLatestVersion(
+  timeoutMs = 3000,
+  channel: UpdateChannel = "latest",
+): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(REGISTRY_URL, { signal: controller.signal });
+    const res = await fetch(`https://registry.npmjs.org/tmux-ide/${channel}`, {
+      signal: controller.signal,
+    });
     if (!res.ok) return null;
     return parseRegistryResponse(await res.text());
   } catch {
@@ -208,10 +190,15 @@ export async function fetchLatestVersion(timeoutMs = 3000): Promise<string | nul
  * up) AND the dev source tree (this file at `packages/daemon/src/lib/`, so the
  * root is four levels up). The workspace `packages/daemon/package.json` is
  * deliberately NOT a candidate — it carries a placeholder version. Falls back to
- * `"0.0.0"` when nothing is readable (so an unknown version simply never shows an
+ * `"unknown"` when nothing is readable (so an unknown version simply never shows an
  * update rather than crashing).
  */
+declare const TMUX_IDE_BUILD_VERSION: string;
+
 export function getCurrentVersion(): string {
+  // Bun-compiled TUI has a virtual import.meta.url; the build injects this same package version.
+  if (typeof TMUX_IDE_BUILD_VERSION !== "undefined" && parseStrictSemver(TMUX_IDE_BUILD_VERSION))
+    return TMUX_IDE_BUILD_VERSION;
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     join(here, "../package.json"), // bundled bin/cli.js → repo root
@@ -219,13 +206,21 @@ export function getCurrentVersion(): string {
   ];
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(readFileSync(candidate, "utf-8")) as { version?: unknown };
-      if (typeof parsed.version === "string" && parsed.version.length > 0) return parsed.version;
+      const parsed = JSON.parse(readFileSync(candidate, "utf-8")) as {
+        name?: unknown;
+        version?: unknown;
+      };
+      if (
+        parsed.name === "tmux-ide" &&
+        typeof parsed.version === "string" &&
+        parseStrictSemver(parsed.version)
+      )
+        return parsed.version;
     } catch {
       // try the next candidate
     }
   }
-  return "0.0.0";
+  return "unknown";
 }
 
 /**
@@ -236,8 +231,8 @@ export function getCurrentVersion(): string {
  */
 export function getUpdateStatus({
   currentVersion = getCurrentVersion(),
-}: { now?: number; currentVersion?: string } = {}): UpdateStatus {
-  const cache = readUpdateCache();
+}: UpdateScope & { now?: number } = {}): UpdateStatus {
+  const cache = readUpdateCache({ currentVersion });
   return deriveStatus(cache?.latest ?? null, currentVersion);
 }
 
@@ -249,20 +244,30 @@ export function getUpdateStatus({
  * hammer a flaky/offline registry every tick) while KEEPING the previously known
  * `latest`. Never throws.
  */
-export async function runUpdateCheck({ now = Date.now() }: { now?: number } = {}): Promise<void> {
-  const cache = readUpdateCache();
+export async function runUpdateCheck({
+  now = Date.now(),
+  ...scope
+}: UpdateScope & { now?: number } = {}): Promise<void> {
+  const cache = readUpdateCache(scope);
   if (!shouldCheck(cache?.lastCheckedAt ?? null, now)) return;
   // The agent-detection manifest-pack refresh RIDES this same daily throttle
   // (M25.4) — no timer of its own, gated again inside on `updates.manifests`
   // (default false) and never throwing. Dynamic import: manifest-pack imports
   // this module for getCurrentVersion, so a static import would be a cycle.
   void import("./manifest-pack.ts").then((m) => m.maybeRefreshManifestPack()).catch(() => {});
-  const fetched = await fetchLatestVersion();
-  writeUpdateCache({
-    lastCheckedAt: now,
-    latest: fetched ?? cache?.latest ?? null,
-    ...(cache?.notified ? { notified: cache.notified } : {}),
-  });
+  const fetched = await fetchLatestVersion(
+    3000,
+    updateChannel(scope.currentVersion ?? getCurrentVersion()),
+  );
+  const refreshed = readUpdateCache(scope);
+  writeUpdateCache(
+    {
+      lastCheckedAt: now,
+      latest: fetched ?? cache?.latest ?? null,
+      ...(refreshed?.notified ? { notified: refreshed.notified } : {}),
+    },
+    scope,
+  );
 }
 
 /**
@@ -283,7 +288,7 @@ export function maybeCheckForUpdate({
 }): UpdateStatus {
   if (!enabled) return { latest: null, updateAvailable: false };
   const status = getUpdateStatus({ now, currentVersion });
-  void runUpdateCheck({ now }).catch(() => {});
+  void runUpdateCheck({ now, currentVersion }).catch(() => {});
   return status;
 }
 
@@ -294,10 +299,10 @@ export function maybeCheckForUpdate({
  * in-memory notify debounce would re-fire on every respawn. Best-effort: if the
  * cache can't be written we still return the in-memory verdict.
  */
-export function markUpdateNotified(version: string): boolean {
-  const cache = readUpdateCache() ?? { lastCheckedAt: null, latest: null };
+export function markUpdateNotified(version: string, scope: UpdateScope = {}): boolean {
+  const cache = readUpdateCache(scope) ?? { lastCheckedAt: null, latest: null };
   const notified = cache.notified ?? [];
   if (notified.includes(version)) return false;
-  writeUpdateCache({ ...cache, notified: [...notified, version] });
+  writeUpdateCache({ ...cache, notified: [...notified, version].slice(-128) }, scope);
   return true;
 }

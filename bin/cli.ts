@@ -2036,22 +2036,7 @@ try {
       // package-manager path heuristic (see lib/update.ts).
       const { runUpdate } = await import("../packages/daemon/src/lib/update.ts");
       const dryRun = values["dry-run"] === true;
-      const plan = runUpdate({ cliDir: __dirname, dryRun });
-      if (!dryRun) {
-        // The managed skill copy has to track the CLI. A global install refreshes
-        // it via the package's own postinstall (which just ran); a dev checkout
-        // has no postinstall, so `tmux-ide update` IS the checkout's refresh path
-        // — sync the skill directly here.
-        const { syncSkill } = await import("../packages/daemon/src/lib/skill-sync.ts");
-        if (plan.method === "dev") {
-          const result = syncSkill();
-          console.log("");
-          console.log(`skill: ${result.action} → ${result.path} (v${result.to})`);
-        } else {
-          console.log("");
-          console.log("skill: refreshed by the package postinstall (~/.claude/skills/tmux-ide)");
-        }
-      }
+      runUpdate({ cliDir: __dirname, dryRun, json });
       break;
     }
 
