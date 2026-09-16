@@ -38,8 +38,10 @@ const instances = [first, second].map((worktree) =>
   resolveDevelopmentInstance({ worktree, store }),
 );
 assert.notEqual(instances[0]!.id, instances[1]!.id, "Two distinct canonical worktrees required");
-const manager = resolve("scripts/development-instance.ts");
-const tsx = resolve("node_modules/tsx/dist/loader.mjs");
+// A is deliberately renamed by the orphan test; the manager must remain runnable.
+const managerWorktree = instances[1]!.worktree;
+const manager = resolve(managerWorktree, "scripts/development-instance.ts");
+const tsx = resolve(managerWorktree, "node_modules/tsx/dist/loader.mjs");
 const env = {
   ...cleanManagerEnvironment(),
   TMUX: "/wrong-socket,1,0",
@@ -63,7 +65,7 @@ async function cli(index: number, command: string, flags: string[] = []) {
       ...selected,
       ...flags,
     ],
-    { env, timeout: 45000, maxBuffer: 128 * 1024 },
+    { env, cwd: managerWorktree, timeout: 45000, maxBuffer: 128 * 1024 },
   );
   return JSON.parse(result.stdout);
 }
