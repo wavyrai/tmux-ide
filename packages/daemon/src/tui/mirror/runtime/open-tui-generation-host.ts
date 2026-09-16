@@ -511,6 +511,12 @@ export function createOpenTuiGenerationHost(
   let stopCanonicalObserver: (() => void | Promise<void>) | null = null;
   let requestedCanonicalGeneration: string | null = null;
   let authorityOffline = false;
+  let rebindRetry: ReturnType<typeof setTimeout> | null = null;
+  let rebindAttempts = 0;
+  const cancelRebindRetry = (): void => {
+    if (rebindRetry !== null) clearTimeout(rebindRetry);
+    rebindRetry = null;
+  };
   const retirementPromises = new Set<Promise<void>>();
 
   const publish = (next: OpenTuiGenerationHostSnapshot): void => {
@@ -620,6 +626,7 @@ export function createOpenTuiGenerationHost(
   const connectFresh = (): Promise<boolean> => {
     if (disposed || authorityOffline) return Promise.resolve(false);
     if (connectFlight) return connectFlight;
+    cancelRebindRetry();
     const expectedEpoch = ++epoch;
     const preparedConnection = initialConnection;
     initialConnection = null;
@@ -650,6 +657,7 @@ export function createOpenTuiGenerationHost(
         return current;
       };
     let connectingDaemonGeneration: string | undefined;
+    let retryUnavailable = false;
     connectFlight = resolveCurrentConnection()
       .then((connection) => {
         if (disposed || expectedEpoch !== epoch) {
@@ -657,6 +665,7 @@ export function createOpenTuiGenerationHost(
           return false;
         }
         if (!connection) {
+          retryUnavailable = true;
           if (!active) publish({ ...EMPTY_SNAPSHOT, status: "unavailable" });
           return false;
         }
@@ -907,6 +916,12 @@ export function createOpenTuiGenerationHost(
             : {}),
           ...(connectingDaemonGeneration ? { daemonGeneration: connectingDaemonGeneration } : {}),
         }).failure;
+        retryUnavailable =
+          !failure.code &&
+          !failure.operationId &&
+          ["daemon-unavailable", "routing-unavailable", "daemon-generation-changed"].includes(
+            failure.reason,
+          );
         diagnose?.("startup-failed", { ...failure });
         try {
           overrides.onConnectionProgress?.("startup-failed", { ...failure });
@@ -918,6 +933,26 @@ export function createOpenTuiGenerationHost(
       })
       .finally(() => {
         connectFlight = null;
+        // Descriptor publication can precede readiness. Retry only discovery
+        // absence or explicit pre-promotion unavailability during an observed
+        // replacement, never a rejected promotion.
+        if (
+          retryUnavailable &&
+          !disposed &&
+          !authorityOffline &&
+          expectedEpoch === epoch &&
+          requestedCanonicalGeneration !== null &&
+          rebindAttempts < 8
+        ) {
+          const generation = requestedCanonicalGeneration;
+          const delay = Math.min(250 * 2 ** rebindAttempts++, 2000);
+          cancelRebindRetry();
+          rebindRetry = setTimeout(() => {
+            rebindRetry = null;
+            if (!disposed && !authorityOffline && requestedCanonicalGeneration === generation)
+              void connectFresh();
+          }, delay);
+        }
       });
     return connectFlight;
   };
@@ -927,6 +962,7 @@ export function createOpenTuiGenerationHost(
     if (daemonGeneration === null) {
       if (authorityOffline) return;
       authorityOffline = true;
+      cancelRebindRetry();
       requestedCanonicalGeneration = null;
       initialConnection = null;
       epoch += 1;
@@ -940,6 +976,8 @@ export function createOpenTuiGenerationHost(
     }
     authorityOffline = false;
     if (requestedCanonicalGeneration === daemonGeneration) return;
+    cancelRebindRetry();
+    rebindAttempts = 0;
     const currentGeneration = active?.bundle.connection.target.daemon.instanceId ?? null;
     const candidateGeneration = candidate?.bundle.connection.target.daemon.instanceId ?? null;
     if (
@@ -1010,6 +1048,7 @@ export function createOpenTuiGenerationHost(
         return;
       }
       disposed = true;
+      cancelRebindRetry();
       epoch += 1;
       canonicalObserverEpoch += 1;
       const stopObserver = stopCanonicalObserver;

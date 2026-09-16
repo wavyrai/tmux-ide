@@ -1,3 +1,4 @@
+import { OpenTuiStartupError } from "../startup-failure.ts";
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationShellSessionState } from "@tmux-ide/daemon-client/application-shell-session";
 
@@ -1499,5 +1500,119 @@ it("adds the launch-time TUI build to copied promotion failure correlation at th
   } finally {
     await host.dispose();
     vi.unstubAllEnvs();
+  }
+});
+
+it.each(["null", "daemon-unavailable", "routing-unavailable"])(
+  "retries early replacement discovery: %s",
+  async (failureKind) => {
+    const observer = canonicalObserver();
+    const view = presentation();
+    const bundles: FakeBundle[] = [];
+    let replacementReady = false;
+    let initial = true;
+    const resolveConnection = vi.fn(async () => {
+      if (initial) {
+        initial = false;
+        return connection("daemon-a");
+      }
+      if (replacementReady) return connection("daemon-b");
+      if (failureKind !== "null") throw new OpenTuiStartupError({ reason: failureKind });
+      return null;
+    });
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: observer.observe,
+      resolveConnection,
+      buildBundle: (resolved, callbacks) => {
+        const created = bundle(resolved, callbacks);
+        bundles.push(created);
+        return created;
+      },
+    });
+    try {
+      const started = host.start();
+      await flushHostStart();
+      bundles[0]!.activate();
+      await started;
+      observer.emit("daemon-b");
+      await flushHostStart();
+      // The timer is already scheduled; a repeated same descriptor must not
+      // create a second flight. Production observers may emit no second event.
+      observer.emit("daemon-b");
+      replacementReady = true;
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(bundles).toHaveLength(2);
+    } finally {
+      await host.dispose();
+    }
+  },
+);
+
+it.each([
+  "offline",
+  "dispose",
+  "replacement",
+  "exhausted",
+  "manual-ready",
+  "promotion-refused",
+  "routing-network-error",
+] as const)("bounds unavailable rebind retries and fences %s", async (transition) => {
+  vi.useFakeTimers();
+  const observer = canonicalObserver();
+  const bundles: FakeBundle[] = [];
+  let ready = false;
+  const resolveConnection = vi.fn(async () => {
+    if (bundles.length === 0) return connection("daemon-a");
+    if (transition === "promotion-refused")
+      throw new OpenTuiStartupError({
+        reason: "promotion-rejected",
+        code: "operation_capacity",
+        operationId: "op-1",
+      });
+    if (transition === "routing-network-error")
+      throw new OpenTuiStartupError({ reason: "routing-unavailable", code: "network-error" });
+    return ready ? connection("daemon-b") : null;
+  });
+  const host = createOpenTuiGenerationHost("alpha", presentation().value, {
+    observeCanonicalGeneration: observer.observe,
+    resolveConnection,
+    buildBundle: (resolved, callbacks) => {
+      const created = bundle(resolved, callbacks);
+      bundles.push(created);
+      return created;
+    },
+  });
+  try {
+    const started = host.start();
+    await vi.advanceTimersByTimeAsync(0);
+    bundles[0]!.activate();
+    await started;
+    observer.emit("daemon-b");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resolveConnection).toHaveBeenCalledTimes(2);
+    if (transition === "offline") observer.emit(null);
+    if (transition === "dispose") await host.dispose();
+    if (transition === "replacement") observer.emit("daemon-c");
+    if (transition === "manual-ready") {
+      ready = true;
+      const restarted = host.start();
+      await vi.advanceTimersByTimeAsync(0);
+      bundles[1]!.activate();
+      await restarted;
+    }
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(resolveConnection).toHaveBeenCalledTimes(
+      transition === "exhausted"
+        ? 10
+        : transition === "replacement"
+          ? 11
+          : transition === "manual-ready"
+            ? 3
+            : 2,
+    );
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    await host.dispose();
+    vi.useRealTimers();
   }
 });
