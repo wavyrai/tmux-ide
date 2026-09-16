@@ -577,8 +577,45 @@ try {
       });
     }
   });
+  const cleanupStarted = Date.now();
   const cleanup = await Promise.allSettled([cli(0, "down"), cli(1, "down")]);
   receipt.cleanup = cleanup.map((result) => result.status);
+  receipt.cleanupDurationMs = Date.now() - cleanupStarted;
+  receipt.cleanupDetails = cleanup.map((result) => {
+    if (result.status === "fulfilled") return { status: result.status };
+    const error = result.reason as {
+      code?: unknown;
+      killed?: unknown;
+      signal?: unknown;
+      stdout?: unknown;
+      stderr?: unknown;
+    };
+    let reason = "unclassified";
+    try {
+      const parsed = JSON.parse(typeof error.stdout === "string" ? error.stdout : "{}");
+      if (
+        parsed.code === "DEVELOPMENT_INSTANCE_FAILED" &&
+        [
+          "owner-live",
+          "owner-unverified",
+          "lock-unavailable",
+          "identity-unavailable",
+          "operation-failed",
+        ].includes(parsed.reason)
+      )
+        reason = parsed.reason;
+    } catch {
+      /* No arbitrary subprocess output enters the public receipt. */
+    }
+    return {
+      status: result.status,
+      reason,
+      exitCode: typeof error.code === "number" ? error.code : null,
+      killed: error.killed === true,
+      signal: ["SIGTERM", "SIGKILL"].includes(String(error.signal)) ? error.signal : null,
+      stderrBytes: typeof error.stderr === "string" ? Buffer.byteLength(error.stderr) : null,
+    };
+  });
   await attemptCleanup("sentinel-daemon", async () => {
     if (
       sentinelChild?.pid &&
