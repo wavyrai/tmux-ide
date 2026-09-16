@@ -335,6 +335,13 @@ describe("production OpenTUI v2 data path", () => {
     // Preview request owner, bounded tab targets and fixed-route connection adapter.
     // Beta 17 adds bounded preview metadata, preview UI, action UI and fleet presentation.
     // Beta 18 reuses the existing shared fuzzy matcher for both switcher entry points.
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(147);
+    // Startup diagnostics add one bounded error-sanitization helper. It must
+    // not acquire IO, timers or another transport/runtime owner.
+    const startupFailurePath = "packages/daemon/src/tui/mirror/startup-failure.ts";
+    expect(authorityDataPathFiles).toContain(startupFailurePath);
+    expect(productionGraph.sourceByFile.get(startupFailurePath)).not.toMatch(
+      /node:|\b(?:process|fetch|setInterval|setTimeout|createWorkspaceClient|createTerminalFastLane)\b/u,
+    );
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(148);
   });
 });
