@@ -1,6 +1,7 @@
 import {
   canonicalDaemonUrl,
-  inspectCanonicalDaemonInfo,
+  getCanonicalDaemonInfoPath,
+  prepareCanonicalDaemonInfoForBootstrap,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
@@ -50,7 +51,7 @@ export interface HeadlessDaemonDependencies {
 }
 
 const defaultDependencies: HeadlessDaemonDependencies = {
-  inspectCanonicalDaemonInfo,
+  inspectCanonicalDaemonInfo: prepareCanonicalDaemonInfoForBootstrap,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
@@ -174,7 +175,10 @@ async function findLiveCanonicalDaemon(
       return null;
     }
     throw new IdeError(
-      `Canonical daemon metadata is ${existing.reason}: ${existing.detail}. ` +
+      `Canonical daemon metadata at ${getCanonicalDaemonInfoPath()} is ${existing.reason}. ` +
+        (existing.recoveryDetail
+          ? `Permission recovery refused: ${existing.recoveryDetail}. `
+          : "") +
         "Its owner is not proven dead, so another daemon will not be started.",
       { code: "DAEMON_INFO_INVALID", exitCode: 1 },
     );

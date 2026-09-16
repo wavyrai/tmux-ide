@@ -12,7 +12,8 @@ import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 
 import {
   canonicalDaemonUrl,
-  inspectCanonicalDaemonInfo,
+  getCanonicalDaemonInfoPath,
+  prepareCanonicalDaemonInfoForBootstrap,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
@@ -123,7 +124,9 @@ function sameCanonicalInstance(left: CanonicalDaemonInfo, right: CanonicalDaemon
 }
 
 const defaultDependencies: CanonicalDaemonBootstrapDependencies = {
-  inspect: inspectCanonicalDaemonInfo,
+  // This adapter owns startup, so legacy permission preparation is explicit
+  // here. Injected inspectors remain isolated from real filesystem mutation.
+  inspect: prepareCanonicalDaemonInfoForBootstrap,
   ownerProvenDead: isCanonicalDaemonRecordOwnerProvenDead,
   alive: isCanonicalDaemonAlive,
   identity: probeCanonicalDaemonIdentity,
@@ -249,9 +252,16 @@ async function probeCanonical(
   const state = deps.inspect();
   if (state.status === "missing") return { status: "absent-or-stale" };
   if (state.status === "invalid") {
-    return (await deps.ownerProvenDead(state))
-      ? { status: "absent-or-stale" }
-      : { status: "incompatible", reason: "canonical-record-invalid" };
+    if (await deps.ownerProvenDead(state)) return { status: "absent-or-stale" };
+    throw new DaemonBootstrapError(
+      "incompatible",
+      `Canonical daemon record ${getCanonicalDaemonInfoPath()} is invalid (${state.reason}). ` +
+        (state.recoveryDetail ? `Permission recovery refused: ${state.recoveryDetail}. ` : "") +
+        "Automatic recovery could not establish trusted metadata with a proven-dead owner. " +
+        "Verify record and parent ownership, permissions and provenance before retrying; " +
+        "another daemon will not be started.",
+      { reason: "canonical-record-invalid" },
+    );
   }
   if (!(await deps.alive(state.info))) return { status: "absent-or-stale" };
 

@@ -90,6 +90,8 @@ export type CanonicalDaemonInfoState =
       status: "invalid";
       reason: CanonicalDaemonInfoInvalidReason;
       detail: string;
+      /** Fixed permission-recovery guidance; never includes parsed record contents. */
+      recoveryDetail?: string;
       /** Present only when it came from a securely opened JSON object. */
       ownerPid: number | null;
       observation: CanonicalDaemonInfoObservation | null;
@@ -132,18 +134,23 @@ function canonicalDaemonRootError(detail: string): Error {
  * untrusted endpoint. The directory descriptor pins the object being changed;
  * the final lstat proves the configured path still names that same object.
  */
-function prepareCanonicalDaemonRoot(root: string): void {
+function prepareCanonicalDaemonRoot(root: string, expected?: Stats): void {
   let descriptor: number | undefined;
   try {
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-    } catch (error) {
-      // Recursive mkdir reports EEXIST for a non-directory endpoint. Let the
-      // lstat below classify it deterministically instead of trusting it.
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (!expected) {
+      try {
+        mkdirSync(root, { recursive: true, mode: 0o700 });
+      } catch (error) {
+        // Recursive mkdir reports EEXIST for a non-directory endpoint. Let the
+        // lstat below classify it deterministically instead of trusting it.
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
     }
 
     const pathStat = lstatSync(root);
+    if (expected && (!sameFileIdentity(expected, pathStat) || (pathStat.mode & 0o022) !== 0)) {
+      throw canonicalDaemonRootError("changed before permission recovery");
+    }
     if (pathStat.isSymbolicLink()) {
       throw canonicalDaemonRootError("must not be a symbolic link");
     }
@@ -162,6 +169,7 @@ function prepareCanonicalDaemonRoot(root: string): void {
     if (
       !openedStat.isDirectory() ||
       !sameFileIdentity(pathStat, openedStat) ||
+      (expected !== undefined && (openedStat.mode & 0o022) !== 0) ||
       (typeof process.getuid === "function" && openedStat.uid !== process.getuid())
     ) {
       throw canonicalDaemonRootError("changed or became unsafe while it was opened");
@@ -193,7 +201,7 @@ function invalidState(
   detail: string,
   ownerPid: number | null = null,
   observed: CanonicalDaemonInfoObservation | null = null,
-): CanonicalDaemonInfoState {
+): Extract<CanonicalDaemonInfoState, { status: "invalid" }> {
   return { status: "invalid", reason, detail, ownerPid, observation: observed };
 }
 
@@ -545,8 +553,108 @@ export function inspectCanonicalDaemonInfo(): CanonicalDaemonInfoState {
 }
 
 /**
+ * Bootstrap-only migration of legacy 0755/0644-style state. This does not read
+ * metadata until its permissions are private, inspect PIDs, or retire an owner.
+ * Writable-by-others state cannot be made trustworthy by chmod and is refused.
+ * Read-only consumers must continue using inspectCanonicalDaemonInfo().
+ */
+export function prepareCanonicalDaemonInfoForBootstrap(): CanonicalDaemonInfoState {
+  const initial = inspectCanonicalDaemonInfo();
+  if (
+    initial.status !== "invalid" ||
+    (initial.reason !== "parent-unsafe-permissions" && initial.reason !== "unsafe-permissions")
+  )
+    return initial;
+
+  const path = getCanonicalDaemonInfoPath();
+  const root = dirname(path);
+  let descriptor: number | undefined;
+  const blocked = (reason: CanonicalDaemonInfoInvalidReason, detail: string) => ({
+    ...invalidState(reason, `${path}: permission recovery refused: ${detail}`),
+    recoveryDetail: detail,
+  });
+  try {
+    const parent = lstatSync(root);
+    const file = lstatSync(path);
+    if (parent.isSymbolicLink()) return blocked("parent-symlink", "parent is a symbolic link");
+    if (!parent.isDirectory()) return blocked("parent-not-directory", "parent is not a directory");
+    if (typeof process.getuid !== "function" || parent.uid !== process.getuid())
+      return blocked(
+        "parent-wrong-owner",
+        "parent ownership cannot be verified as the current user",
+      );
+    if ((parent.mode & 0o022) !== 0)
+      return blocked(
+        "parent-unsafe-permissions",
+        "parent is writable by other users; verify its provenance before repairing permissions",
+      );
+    if (file.isSymbolicLink()) return blocked("symlink", "record is a symbolic link");
+    if (!file.isFile()) return blocked("not-regular-file", "record is not a regular file");
+    if (file.uid !== process.getuid())
+      return blocked("wrong-owner", "record belongs to another user");
+    if (file.size > MAX_DAEMON_INFO_BYTES)
+      return blocked("oversized", "record exceeds the size limit");
+    if ((file.mode & 0o022) !== 0 || file.nlink !== 1)
+      return blocked(
+        "unsafe-permissions",
+        "record is writable by other users or has multiple hard links; verify its provenance before repairing permissions",
+      );
+    if (!initial.observation || !sameObservation(initial.observation, observation(file)))
+      return blocked("changed-while-opening", "record changed before recovery; retry bootstrap");
+
+    // The existing root hardener pins the directory and rejects a path swap.
+    prepareCanonicalDaemonRoot(root, parent);
+    descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(descriptor);
+    const unchanged = (): boolean => {
+      const current = lstatSync(path);
+      const currentParent = lstatSync(root);
+      const pinned = fstatSync(descriptor!);
+      return (
+        current.isFile() &&
+        pinned.isFile() &&
+        currentParent.isDirectory() &&
+        sameObservation(observation(file), observation(current)) &&
+        sameObservation(observation(file), observation(pinned)) &&
+        sameFileIdentity(parent, currentParent) &&
+        current.uid === process.getuid!() &&
+        pinned.uid === process.getuid!() &&
+        currentParent.uid === process.getuid!() &&
+        current.nlink === 1 &&
+        pinned.nlink === 1 &&
+        (current.mode & 0o022) === 0 &&
+        (pinned.mode & 0o022) === 0 &&
+        (currentParent.mode & 0o077) === 0
+      );
+    };
+    if (!sameFileIdentity(file, opened) || !unchanged())
+      return blocked(
+        "changed-while-opening",
+        "record or parent changed while opening; retry bootstrap",
+      );
+    fchmodSync(descriptor, 0o600);
+    if (!unchanged() || (fstatSync(descriptor).mode & 0o077) !== 0)
+      return blocked(
+        "changed-while-opening",
+        "record or parent changed while hardening; retry bootstrap",
+      );
+    // Re-enter the normal secure parser. Invalid legacy schemas may now expose
+    // a trusted PID, but only the existing owner/claim logic can prove it dead.
+    return inspectCanonicalDaemonInfo();
+  } catch {
+    return blocked(
+      "changed-while-opening",
+      "record or parent changed or could not be securely opened/hardened; verify filesystem permissions and retry bootstrap",
+    );
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+/**
  * Convenience for non-ownership consumers. Startup and takeover code must use
- * inspectCanonicalDaemonInfo() so an invalid record is never treated as absent.
+ * inspectCanonicalDaemonInfo() (or explicit bootstrap permission preparation)
+ * so an invalid record is never treated as absent.
  */
 export function readCanonicalDaemonInfo(): CanonicalDaemonInfo | null {
   const state = inspectCanonicalDaemonInfo();
