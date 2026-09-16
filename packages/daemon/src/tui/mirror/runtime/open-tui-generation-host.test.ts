@@ -1429,3 +1429,43 @@ describe("OpenTUI generation host", () => {
     expect(resolveConnection).not.toHaveBeenCalled();
   });
 });
+
+it("publishes redacted startup failure even when diagnostics throw", async () => {
+  const { OpenTuiStartupError } = await import("../startup-failure.ts");
+  const progress = vi.fn();
+  const host = createOpenTuiGenerationHost("alpha", presentation().value, {
+    observeCanonicalGeneration: inertCanonicalObserver,
+    resolveConnection: async () => {
+      throw new OpenTuiStartupError({
+        code: "operation_capacity",
+        reason: "admission_queue_full",
+        operationId: "op-1",
+      });
+    },
+    onDiagnostic: () => {
+      throw new Error("observer");
+    },
+    onConnectionProgress: progress,
+  });
+  expect(await host.start()).toBe(false);
+  expect(host.getSnapshot()).toMatchObject({
+    status: "unavailable",
+    startupFailure: {
+      code: "operation_capacity",
+      reason: "admission_queue_full",
+      operationId: "op-1",
+    },
+  });
+  expect(progress).toHaveBeenCalledWith("startup-failed", {
+    code: "operation_capacity",
+    reason: "admission_queue_full",
+    operationId: "op-1",
+  });
+  expect(
+    openTuiGenerationRenderEqual(host.getSnapshot(), {
+      ...host.getSnapshot(),
+      startupFailure: undefined,
+    }),
+  ).toBe(false);
+  await host.dispose();
+});

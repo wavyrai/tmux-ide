@@ -154,3 +154,14 @@ Regenerate the production-renderer demo with `pnpm demo:tui`.
 ## License
 
 [MIT](LICENSE)
+
+Owner-authorized `GET /api/resources/workspace-admission` returns a versioned,
+passive snapshot of workspace promotion and workspace-open admission. Each
+backend reports `pending`, its `limit`, `disposed`, and retained receipt counts
+(`retained` / `retentionLimit`). A `null` backend means unavailable or unknown.
+`pending >= limit` indicates queue pressure; `disposed` refuses new work.
+Promotion replay retention does not block admission. For workspace-open,
+`retentionMayBlock` indicates the current legacy receipt ledger is full; normal
+admission may still retire closed-workspace receipts and proceed. The snapshot
+performs no inventory discovery, mutation, or reservation. It describes only
+these admission owners, not whole-daemon readiness; `/health` remains liveness.

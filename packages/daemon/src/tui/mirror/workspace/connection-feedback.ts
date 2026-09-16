@@ -1,3 +1,4 @@
+import { safeStartupFailure, type StartupFailure } from "../startup-failure.ts";
 import { createSignal } from "solid-js";
 
 export interface ApplicationConnectionFeedback {
@@ -5,6 +6,7 @@ export interface ApplicationConnectionFeedback {
   readonly stage: string;
   readonly seconds: number;
   readonly failed: boolean;
+  readonly failure?: StartupFailure;
 }
 
 /** User-visible progress accepts known fields only, never raw transport errors or credentials. */
@@ -74,8 +76,9 @@ export function createApplicationConnectionFeedback(
         }, 1000);
       } else {
         stop();
-        if (note && current) update("Could not open session — select Retry or return Home", true);
-        else {
+        if (note && current && !current.failure)
+          update("Could not open session — select Retry or return Home", true);
+        else if (!note) {
           current = null;
           publish(null);
         }
@@ -83,7 +86,15 @@ export function createApplicationConnectionFeedback(
     },
     progress(session: string, phase: string, details: Readonly<Record<string, unknown>>) {
       if (!current || current.session !== session || current.failed) return;
-      if (phase === "connection-start") update("Connecting to daemon");
+      if (phase === "startup-failed") {
+        const failure = safeStartupFailure(details);
+        current = { ...current, failure };
+        stop();
+        update(
+          `Could not open session: ${failure.code ?? failure.reason} — select Retry or return Home`,
+          true,
+        );
+      } else if (phase === "connection-start") update("Connecting to daemon");
       else if (phase === "connection-resolved") update("Reading terminal layout");
       else if (phase === "runtime-fault") update("Connection interrupted — retrying");
       else if (phase === "runtime-progress") {

@@ -1,7 +1,7 @@
 import { fetchCanonicalLiveWorkspaceRouting } from "../canonical-workspace-routing.ts";
 import type { ApplicationMachineAuthorityHandle } from "./application-machine-authority.ts";
 import { prepareOpenTuiApplicationShellConnection } from "../application-shell-daemon-connection.ts";
-import { ensureOpenTuiSessionWorkspace } from "../configless-session-bootstrap.ts";
+import { ensureOpenTuiSessionWorkspaceResult } from "../configless-session-bootstrap.ts";
 
 /** Every retained tab gets this fixed route, including promotion and reconnect paths. */
 export function applicationRouteConnection(
@@ -18,7 +18,7 @@ export function applicationRouteConnection(
         readCanonicalDaemonInfo: handle.read,
         isCanonicalDaemonAlive: handle.isAlive,
         ensureSessionWorkspace: (name) =>
-          ensureOpenTuiSessionWorkspace(name, {
+          ensureOpenTuiSessionWorkspaceResult(name, {
             readDaemon: handle.read,
             isAlive: handle.isAlive,
             ...(expectedLiveSessionId

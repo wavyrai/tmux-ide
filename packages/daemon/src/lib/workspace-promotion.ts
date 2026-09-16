@@ -23,6 +23,8 @@
  * runs ONLY after stamping and verification succeed, so a retry (which never
  * overwrites a valid identity stamp) can safely complete an interrupted pass.
  */
+import type { WorkspaceAdmissionSnapshot } from "@tmux-ide/contracts";
+
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 
@@ -493,6 +495,18 @@ export class WorkspacePromotionAuthority {
       () => undefined,
     );
     return admitted;
+  }
+
+  /** In-memory only: never retires receipts or probes tmux/registry state. */
+  admissionSnapshot(): WorkspaceAdmissionSnapshot {
+    return Object.freeze({
+      pending: this.#pendingOperations,
+      limit: this.#maxPendingOperations,
+      disposed: this.#disposed,
+      retained: this.#completedOperations.size,
+      retentionLimit: this.#maxReplayOperations,
+      retentionMayBlock: false,
+    });
   }
 
   dispose(): Promise<void> {

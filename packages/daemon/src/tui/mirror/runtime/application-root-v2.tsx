@@ -179,6 +179,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             tuiLifecycleStream ? tuiPerfMark : undefined,
           );
           return createOpenTuiSessionOwner({
+            onStartupFailure: (sessionName, failure) =>
+              connectionProgress.progress(sessionName, "startup-failed", { ...failure }),
             prepareConnection: (sessionName) => {
               if (initialPreparation?.sessionName !== sessionName)
                 return route.resolveConnection(sessionName);

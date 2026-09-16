@@ -1,3 +1,4 @@
+import type { WorkspaceAdmissionSnapshot } from "@tmux-ide/contracts";
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute } from "node:path";
@@ -430,6 +431,18 @@ export class WorkspaceOpenAuthority {
       () => undefined,
     );
     return admitted;
+  }
+
+  /** In-memory only: never retires receipts or probes tmux/registry state. */
+  admissionSnapshot(): WorkspaceAdmissionSnapshot {
+    return Object.freeze({
+      pending: this.#pendingOperations,
+      limit: this.#maxPendingOperations,
+      disposed: this.#disposed,
+      retained: this.#operations.size,
+      retentionLimit: this.#maxOperations,
+      retentionMayBlock: this.#operations.size >= this.#maxOperations,
+    });
   }
 
   dispose(): Promise<void> {

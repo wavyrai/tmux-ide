@@ -41,3 +41,33 @@ it("does not install performance diagnostics for ordinary connection feedback", 
   expect(diagnostic).toHaveBeenCalledWith("generation-runtime-fault", {});
   owner.dispose();
 });
+
+it("retains safe startup detail through generic failure notes and copy, clearing it on retry", async () => {
+  vi.useFakeTimers();
+  const owner = createApplicationConnectionFeedback();
+  owner.note("opening main");
+  owner.progress("main", "startup-failed", {
+    code: "operation_capacity",
+    reason: "admission_queue_full",
+    operationId: "operation-123",
+    message: "Bearer secret",
+    authToken: "secret",
+  });
+  owner.note("main could not attach");
+  expect(owner.snapshot()).toMatchObject({
+    failed: true,
+    failure: {
+      code: "operation_capacity",
+      reason: "admission_queue_full",
+      operationId: "operation-123",
+    },
+  });
+  const copy = vi.fn((_text: string) => true);
+  owner.copy(copy);
+  expect(copy.mock.calls[0]?.[0]).not.toContain("secret");
+  expect(owner.text()).toContain("operation_capacity");
+  expect(vi.getTimerCount()).toBe(0);
+  owner.note("opening main");
+  expect(owner.snapshot()?.failure).toBeUndefined();
+  owner.dispose();
+});

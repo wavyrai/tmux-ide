@@ -1,3 +1,8 @@
+import {
+  OpenTuiStartupError,
+  startupFailureFromError,
+  type StartupFailure,
+} from "../startup-failure.ts";
 import { observeApplicationDaemonGeneration } from "./application-daemon-authority.ts";
 import { readApplicationDaemonInfo as readCanonicalDaemonInfo } from "./application-daemon-authority.ts";
 import type {
@@ -21,7 +26,7 @@ import type {
 } from "@tmux-ide/daemon-client/workspace-client-types";
 
 import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
-import { ensureOpenTuiSessionWorkspace } from "../configless-session-bootstrap.ts";
+import { ensureOpenTuiSessionWorkspaceResult } from "../configless-session-bootstrap.ts";
 import {
   OPEN_TUI_HOST_CLIENT_ID,
   connectOpenTuiWorkspaceRuntimePort,
@@ -84,6 +89,7 @@ export type OpenTuiGenerationHostStatus =
 
 export interface OpenTuiGenerationHostSnapshot {
   readonly status: OpenTuiGenerationHostStatus;
+  readonly startupFailure?: StartupFailure;
   /** Monotonic paint identity; forces resident pane surfaces across a bundle swap. */
   readonly rendererEpoch: number;
   readonly daemonGeneration: string | null;
@@ -105,6 +111,7 @@ export function openTuiGenerationRenderEqual(
     (left !== null &&
       right !== null &&
       left.status === right.status &&
+      left.startupFailure === right.startupFailure &&
       left.rendererEpoch === right.rendererEpoch &&
       left.daemonGeneration === right.daemonGeneration &&
       left.connection === right.connection &&
@@ -144,6 +151,7 @@ export interface OpenTuiGenerationHostDependencies {
   ) => Promise<() => void | Promise<void>>;
   readonly onDiagnostic?: (
     phase:
+      | "startup-failed"
       | "connection-start"
       | "connection-resolved"
       | "shell-lifecycle"
@@ -380,7 +388,9 @@ const DEFAULT_DEPENDENCIES: OpenTuiGenerationHostDependencies = {
     // A fresh daemon generation does not retain the previous ephemeral
     // promotion. Re-establish the ordinary-session workspace through the
     // typed owner action before minting a new generation-bound connection.
-    if (!(await ensureOpenTuiSessionWorkspace(sessionName))) return null;
+    const result = await ensureOpenTuiSessionWorkspaceResult(sessionName);
+    if (result.status === "unavailable")
+      throw new OpenTuiStartupError({ ...result, reason: result.detailReason ?? result.reason });
     return resolveOpenTuiApplicationShellConnection(sessionName);
   },
   buildBundle: buildProductionBundle,
@@ -884,7 +894,18 @@ export function createOpenTuiGenerationHost(
         } else if (pendingEmpty) activate(owned, null);
         return owned.ready;
       })
-      .catch(() => false)
+      .catch((error: unknown) => {
+        if (disposed || expectedEpoch !== epoch) return false;
+        const failure = startupFailureFromError(error);
+        diagnose?.("startup-failed", { ...failure });
+        try {
+          overrides.onConnectionProgress?.("startup-failed", { ...failure });
+        } catch {
+          /* observer */
+        }
+        if (!active) publish({ ...EMPTY_SNAPSHOT, status: "unavailable", startupFailure: failure });
+        return false;
+      })
       .finally(() => {
         connectFlight = null;
       });

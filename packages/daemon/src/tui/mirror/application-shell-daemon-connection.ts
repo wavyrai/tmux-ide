@@ -1,3 +1,5 @@
+import { OpenTuiStartupError, startupFailureFromError } from "./startup-failure.ts";
+import type { OpenTuiSessionWorkspaceEnsureResult } from "./configless-session-bootstrap.ts";
 import {
   readApplicationDaemonInfo as readCanonicalDaemonInfo,
   isApplicationDaemonAlive as isCanonicalDaemonAlive,
@@ -24,7 +26,7 @@ import {
   fetchCanonicalLiveWorkspaceRouting,
   workspaceNameForLiveSession,
 } from "./canonical-workspace-routing.ts";
-import { ensureOpenTuiSessionWorkspace } from "./configless-session-bootstrap.ts";
+import { ensureOpenTuiSessionWorkspaceResult } from "./configless-session-bootstrap.ts";
 import {
   createOpenTuiVerifiedRoutingContext,
   type OpenTuiVerifiedRoutingContext,
@@ -66,7 +68,9 @@ export interface OpenTuiApplicationShellConnectionDependencies {
     readonly applicationShellResourceVersion: typeof APPLICATION_SHELL_RESOURCE_V2_VERSION;
     readonly terminalRuntimeDiagnostic?: DaemonTransportDependencies["terminalRuntimeDiagnostic"];
   }) => TerminalFirstDaemonTransport;
-  readonly ensureSessionWorkspace: (sessionName: string) => Promise<boolean>;
+  readonly ensureSessionWorkspace: (
+    sessionName: string,
+  ) => Promise<boolean | OpenTuiSessionWorkspaceEnsureResult>;
   /** Opt-in lifecycle evidence. Ordinary product connections leave this absent. */
   readonly onDiagnostic?: (phase: string, details: Readonly<Record<string, unknown>>) => void;
 }
@@ -100,7 +104,7 @@ const DEFAULT_DEPENDENCIES: OpenTuiApplicationShellConnectionDependencies = {
       },
       ...(terminalRuntimeDiagnostic ? { terminalRuntimeDiagnostic } : {}),
     }) as TerminalFirstDaemonTransport,
-  ensureSessionWorkspace: ensureOpenTuiSessionWorkspace,
+  ensureSessionWorkspace: ensureOpenTuiSessionWorkspaceResult,
 };
 
 export function openTuiDaemonDescriptor(daemon: CanonicalDaemonInfo): DesktopDaemonHostDescriptor {
@@ -363,8 +367,22 @@ export async function prepareOpenTuiApplicationShellConnection(
   overrides: Partial<OpenTuiApplicationShellConnectionDependencies> = {},
 ): Promise<OpenTuiApplicationShellConnection | null> {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
-  if (!(await dependencies.ensureSessionWorkspace(sessionName))) return null;
-  const reconciled = await resolveOpenTuiApplicationShellConnection(sessionName, dependencies);
-  if (reconciled) void reconciled.prepareTerminalRuntimeInventory();
-  return reconciled;
+  try {
+    const result = await dependencies.ensureSessionWorkspace(sessionName);
+    if (result === false) return null;
+    if (typeof result !== "boolean" && result.status === "unavailable") {
+      throw new OpenTuiStartupError({ ...result, reason: result.detailReason ?? result.reason });
+    }
+    const reconciled = await resolveOpenTuiApplicationShellConnection(sessionName, dependencies);
+    if (reconciled) void reconciled.prepareTerminalRuntimeInventory();
+    return reconciled;
+  } catch (cause) {
+    const error = new OpenTuiStartupError({ ...startupFailureFromError(cause) });
+    try {
+      dependencies.onDiagnostic?.("startup-failed", { ...error.failure });
+    } catch {
+      // Diagnostics never replace a startup failure.
+    }
+    throw error;
+  }
 }

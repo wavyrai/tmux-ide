@@ -789,3 +789,30 @@ describe("OpenTUI canonical daemon connection", () => {
     prepared!.dispose();
   });
 });
+
+it("propagates typed promotion refusal before routing and ignores diagnostic sink failure", async () => {
+  const { OpenTuiStartupError } = await import("./startup-failure.ts");
+  const diagnostic = vi.fn(() => {
+    throw new Error("sink");
+  });
+  const read = vi.fn();
+  await expect(
+    prepareOpenTuiApplicationShellConnection("alpha", {
+      ensureSessionWorkspace: async () => ({
+        status: "unavailable",
+        operationId: "op-1",
+        reason: "promotion-rejected",
+        code: "operation_capacity",
+        detailReason: "admission_queue_full",
+      }),
+      onDiagnostic: diagnostic,
+      readCanonicalDaemonInfo: read,
+    }),
+  ).rejects.toBeInstanceOf(OpenTuiStartupError);
+  expect(diagnostic).toHaveBeenCalledWith("startup-failed", {
+    code: "operation_capacity",
+    reason: "admission_queue_full",
+    operationId: "op-1",
+  });
+  expect(read).not.toHaveBeenCalled();
+});

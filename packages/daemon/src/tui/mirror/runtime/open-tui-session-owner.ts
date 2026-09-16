@@ -1,3 +1,4 @@
+import { startupFailureFromError, type StartupFailure } from "../startup-failure.ts";
 import type {
   OpenTuiGenerationHost,
   OpenTuiGenerationHostSnapshot,
@@ -6,6 +7,7 @@ import type { OpenTuiApplicationShellConnection } from "../application-shell-dae
 
 export interface OpenTuiSessionOwnerDependencies {
   readonly openTimeoutMs?: number;
+  readonly onStartupFailure?: (sessionName: string, failure: StartupFailure) => void;
   readonly prepareConnection: (
     sessionName: string,
   ) => Promise<OpenTuiApplicationShellConnection | null>;
@@ -204,6 +206,15 @@ export function createOpenTuiSessionOwner(
           dependencies.onSnapshot(candidate.latest);
           if (previous) await retire(previous);
           return true;
+        } catch (error) {
+          if (!disposed && !controller.signal.aborted) {
+            try {
+              dependencies.onStartupFailure?.(sessionName, startupFailureFromError(error));
+            } catch {
+              /* observer */
+            }
+          }
+          throw error;
         } finally {
           clearTimeout(timer);
           if (openingController === controller) openingController = null;

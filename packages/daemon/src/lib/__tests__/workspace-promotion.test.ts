@@ -406,6 +406,12 @@ describe("WorkspacePromotionAuthority", () => {
         expect(result.resource).toEqual(first.resource);
         expect(result.outcome).toBe("replayed");
       }
+      expect(authority.admissionSnapshot()).toMatchObject({
+        pending: 0,
+        retained: 128,
+        retentionLimit: 128,
+        retentionMayBlock: false,
+      });
       expect(registry.list()).toHaveLength(1);
       expect(mock.paneOption("%1")!.options.get("@tmux_ide_pane_id")).toBe(originalStamp);
       for (const id of ["%128", "%5000"]) {

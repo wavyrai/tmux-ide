@@ -1,3 +1,4 @@
+import { safeStartupFailure, startupFailureFromError } from "./startup-failure.ts";
 import {
   readApplicationDaemonInfo as readCanonicalDaemonInfo,
   isApplicationDaemonAlive as isCanonicalDaemonAlive,
@@ -48,6 +49,7 @@ export type OpenTuiSessionWorkspaceEnsureResult =
         | "promotion-rejected"
         | "promotion-unconfirmed";
       readonly code?: string;
+      readonly detailReason?: string;
     };
 
 const PROMOTION_MAXIMUM_ATTEMPTS = 4;
@@ -116,8 +118,14 @@ export async function ensureOpenTuiSessionWorkspaceResult(
   let routing: Awaited<ReturnType<typeof fetchCanonicalWorkspaceRouting>>;
   try {
     routing = await dependencies.fetchRouting(daemon, dependencies.request);
-  } catch {
-    return { status: "unavailable", operationId: null, reason: "routing-unavailable" };
+  } catch (error) {
+    const failure = startupFailureFromError(error);
+    return {
+      status: "unavailable",
+      operationId: null,
+      reason: "routing-unavailable",
+      ...(failure.code ? { code: failure.code } : {}),
+    };
   }
   if (routing.daemon.instanceId !== daemon.instanceId)
     return {
@@ -151,13 +159,20 @@ export async function ensureOpenTuiSessionWorkspaceResult(
     });
     if (promoted !== null) return { status: "ready", operationId, resolution: "promoted" };
   } catch (error) {
-    if (error instanceof DaemonActionInvocationError)
+    if (error instanceof DaemonActionInvocationError) {
+      const detail =
+        error.details && typeof error.details === "object"
+          ? (error.details as Record<string, unknown>)
+          : {};
+      const safe = safeStartupFailure({ code: error.code, reason: detail.reason });
       return {
         status: "unavailable",
         operationId,
         reason: "promotion-rejected",
-        code: error.code,
+        ...(safe.code ? { code: safe.code } : {}),
+        ...(safe.reason !== "connection-unavailable" ? { detailReason: safe.reason } : {}),
       };
+    }
     return { status: "unavailable", operationId, reason: "promotion-unconfirmed" };
   }
 

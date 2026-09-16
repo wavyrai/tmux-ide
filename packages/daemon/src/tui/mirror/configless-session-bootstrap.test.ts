@@ -308,3 +308,42 @@ describe("configless OpenTUI session bootstrap", () => {
     );
   });
 });
+
+it("retains only allowlisted promotion failure detail", async () => {
+  const { DaemonActionInvocationError } =
+    await import("@tmux-ide/daemon-client/owner-action-client");
+  const test = dependencies({
+    routing: routing({ liveSessions: [liveSession("alpha", ALPHA_ID)] }),
+  });
+  test.promote.mockRejectedValueOnce(
+    new DaemonActionInvocationError({
+      code: "operation_capacity",
+      message: "Bearer secret",
+      details: { reason: "admission_queue_full", authToken: "secret" },
+    }),
+  );
+  const result = await ensureOpenTuiSessionWorkspaceResult("alpha", {
+    ...test.overrides,
+    createOperationId: () => OPERATION_ID,
+  });
+  expect(result).toMatchObject({
+    status: "unavailable",
+    code: "operation_capacity",
+    detailReason: "admission_queue_full",
+    operationId: OPERATION_ID,
+  });
+  expect(JSON.stringify(result)).not.toContain("secret");
+  test.promote.mockRejectedValueOnce(
+    new DaemonActionInvocationError({
+      code: "Bearer secret",
+      message: "secret",
+      details: { reason: "secret" },
+    }),
+  );
+  expect(
+    await ensureOpenTuiSessionWorkspaceResult("alpha", {
+      ...test.overrides,
+      createOperationId: () => OPERATION_ID,
+    }),
+  ).toEqual({ status: "unavailable", reason: "promotion-rejected", operationId: OPERATION_ID });
+});

@@ -1,3 +1,4 @@
+import { mountWorkspaceAdmissionRoute } from "./resources/workspace-admission-route.ts";
 import { mountFleetPreviewRoute } from "./resources/fleet-preview-route.ts";
 import { mountSavedMachineRoute } from "./resources/saved-machine-route.ts";
 import { mountFleetClientStateRoute } from "./resources/fleet-client-state-route.ts";
@@ -1108,6 +1109,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // daemon still missing?", computed from real state on every request.
   // OWNER POLICY: owner-only when a credential exists; ownerless SERVES the
   // ladder, whose `credential-held` rung is that answer. See the route header.
+  mountWorkspaceAdmissionRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    promotion: options.workspacePromotionBackend,
+    open: options.workspaceOpenBackend,
+  });
+
   mountStartupReadinessRoute(app, {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
