@@ -16,6 +16,10 @@ pnpm install --frozen-lockfile
 
 ## Development Workflow
 
+The [development-instance architecture contract](docs/development-instances.md)
+defines planned per-worktree isolation and lifecycle commands. Those commands are
+not implemented yet; existing test fixtures remain separate.
+
 Main commands:
 
 ```bash
