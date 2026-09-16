@@ -50,6 +50,8 @@ it("retains safe startup detail through generic failure notes and copy, clearing
     code: "operation_capacity",
     reason: "admission_queue_full",
     operationId: "operation-123",
+    daemonGeneration: "daemon-a",
+    tuiGeneration: "build-11111111-1111-4111-8111-111111111111",
     message: "Bearer secret",
     authToken: "secret",
   });
@@ -60,6 +62,8 @@ it("retains safe startup detail through generic failure notes and copy, clearing
       code: "operation_capacity",
       reason: "admission_queue_full",
       operationId: "operation-123",
+      daemonGeneration: "daemon-a",
+      tuiGeneration: "build-11111111-1111-4111-8111-111111111111",
     },
   });
   const copy = vi.fn((_text: string) => true);

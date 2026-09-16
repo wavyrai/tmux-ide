@@ -1,4 +1,8 @@
 import {
+  developmentDiagnostics,
+  developmentLogs,
+} from "../packages/daemon/src/lib/development-diagnostics.ts";
+import {
   DevelopmentOperationError,
   developmentFailureResult,
 } from "../packages/daemon/src/lib/development-state.ts";
@@ -40,10 +44,12 @@ const { positionals, values } = parseArgs({
 const command = positionals[0];
 if (
   positionals.length !== 1 ||
-  !["up", "app", "status", "list", "restart", "down", "reset"].includes(command ?? "")
+  !["up", "app", "status", "list", "restart", "down", "reset", "diagnostics", "logs"].includes(
+    command ?? "",
+  )
 )
   throw new Error(
-    "Usage: pnpm dev:instance up|app|status|list|restart|down|reset [--json] [--id id | --name name --worktree path] [--store absolute-path]",
+    "Usage: pnpm dev:instance up|app|status|list|restart|down|reset|diagnostics|logs [--json] [--id id | --name name --worktree path] [--store absolute-path]",
   );
 if (
   values.id &&
@@ -52,7 +58,7 @@ if (
     ["up", "app", "list"].includes(command!))
 )
   throw new Error(
-    "--id selects a stored instance only for status/restart/down/reset; it cannot combine with --name/--worktree",
+    "--id selects a stored instance only for status/restart/down/reset/diagnostics/logs; it cannot combine with --name/--worktree",
   );
 if (
   (values["daemon-only"] && command !== "down") ||
@@ -78,7 +84,13 @@ try {
       });
   selectedInstance = instance;
   selectionComplete = true;
-  if (command === "app") {
+  if (command === "diagnostics" || command === "logs") {
+    const result =
+      command === "diagnostics"
+        ? await developmentDiagnostics(instance)
+        : await developmentLogs(instance);
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else if (command === "app") {
     if (values.json)
       throw new Error("app is interactive; use status --json for an inspection receipt");
     const admitted = await launchDevelopmentApp(instance);

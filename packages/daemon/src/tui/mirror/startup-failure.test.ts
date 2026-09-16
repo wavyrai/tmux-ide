@@ -32,3 +32,15 @@ it("preserves typed transport kind without its message or arbitrary details", ()
     }).message,
   ).toBe("Session startup failed: operation_capacity");
 });
+it("retains only bounded daemon/build correlation and preserves it through typed errors", () => {
+  const correlation = {
+    reason: "admission_queue_full",
+    operationId: "op-1",
+    daemonGeneration: "daemon-a",
+    tuiGeneration: "build-11111111-1111-4111-8111-111111111111",
+  };
+  expect(startupFailureFromError(new OpenTuiStartupError(correlation))).toEqual(correlation);
+  expect(
+    safeStartupFailure({ daemonGeneration: "Bearer secret", tuiGeneration: "token=secret" }),
+  ).toEqual({ reason: "connection-unavailable" });
+});

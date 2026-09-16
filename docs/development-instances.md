@@ -1,8 +1,8 @@
 # Development-instance architecture contract
 
-Status: **namespace, isolated builds, and native lifecycle implemented** (D02–D05). This document also records the remaining design contract for
+Status: **namespace, isolated builds, native lifecycle, and diagnostics implemented** (D02–D06). This document also records the remaining design contract for
 [Isolated Worktree Development and Remote Fixtures](https://www.sfora.ai/org/wavyr/notes/mx7agc0d3fqgmy35jfds23vexx8egvm3).
-The command table includes planned D05+ operations; only the commands explicitly
+The command table includes planned later operations; only the commands explicitly
 listed in the implementation sections below exist today. Existing `test`,
 `smoke`, `testdrive` and `performance` fixtures remain ephemeral.
 
@@ -208,7 +208,7 @@ startup timeout and unsupported platform. No command exists merely by this table
 | `pnpm dev:instance up`                    | Require verified current build; create/reuse owned server and daemon. Concurrent calls converge through claims. Repeat returns current owner; build mismatch is explicit, never automatic replacement. Bounded readiness and failed-start receipt.                                                                                                                        |
 | `pnpm dev:instance app`                   | Ensure `up`, then launch manifest-selected TUI against that owner. Multiple clients allowed. Closing TUI leaves durable instance running; no installed/source/download fallback.                                                                                                                                                                                          |
 | `pnpm dev:instance status --json`         | Read-only inspection and bounded authenticated readiness. No build, session creation, repair or startup. Report missing/stopped/orphan/stale/blocked distinctly; health is liveness and admission readiness is scoped separately.                                                                                                                                         |
-| `pnpm dev:instance logs`                  | Read/follow only the instance's bounded logs, with cancellation. No token/environment dump.                                                                                                                                                                                                                                                                               |
+| `pnpm dev:instance logs`                  | Bounded support-safe structured snapshot (D06). Follow/cancellation remains planned. No token/environment dump.                                                                                                                                                                                                                                                           |
 | `pnpm dev:instance rebuild`               | Stage and publish verified artifacts only. Does not restart daemon, pane commands or TUI. Running/selected builds may differ and status says so.                                                                                                                                                                                                                          |
 | `pnpm dev:instance restart`               | Existing owner-authorized, instance-fenced same-version generation reset. Preserve tmux panes, remote configuration and supervising PID; verify replacement. Does not load newly built code. Missing owner is an error; use `up`.                                                                                                                                         |
 | `pnpm dev:instance restart --apply-build` | D07: replace the managed daemon process with the exact selected published build, retaining the verified tmux server and pane work. Authenticate/fence the old owner, wait boundedly for exit, launch the manifest entry through existing election, verify new build and generation, then reconnect clients explicitly. Never reuse H04 runtime reset as code replacement. |
@@ -340,11 +340,11 @@ filesystem work precede that readiness deadline. Startup failure writes a
 redacted `startup-receipt.json`; `logs/owner.log` is a best-effort rotating 1 MiB
 log with a 64 KiB / 128-entry pending limit and bounded drop notices. Private
 `tmux-startup.json` preserves partial-start evidence. Single-use launch receipts
-prevent replay from overwriting an existing owner. Consumed receipts and old
-artifacts are retained until the planned lifecycle/garbage-collection stage.
+prevent replay from overwriting an existing owner. D05 prunes consumed receipts only after stopped admission is revoked; old
+artifacts remain until explicit reset or a future garbage-collection stage.
 
-The D05 operations below extend this lifecycle. `logs`, the public `rebuild`
-shortcut, and `restart --apply-build` remain planned. Do not use broad process-name or socket-directory
+The D05 operations below extend this lifecycle. D06 implements a bounded `logs`
+snapshot. The public `rebuild` shortcut and `restart --apply-build` remain planned. Do not use broad process-name or socket-directory
 cleanup to emulate them. The opt-in two-worktree qualification harness performs
 only authenticated, process-incarnation/socket-fenced cleanup of its explicitly
 supplied scratch instances. Linux qualification remains separate from the macOS
@@ -449,3 +449,56 @@ mixed D04/D05 pre-admission race, one writer may fail before entering its action
 D04's exclusive `owner.json` creation and D05's complete nonempty candidate keep
 the protected actions mutually exclusive. No stronger guarantee about replacing
 an unobserved empty legacy directory is claimed.
+
+## Development identity and support diagnostics (D06)
+
+The shared application header shows `DEV [name:]short-id`; `*` means the running
+artifact was built with a dirty worktree. The marker is captured from the
+manager's validated launch environment once when chrome mounts. Rendering does
+not run Git, hash files, poll source freshness, or install diagnostic sinks.
+Names are reduced to bounded printable ASCII for terminal presentation; the
+full identity remains in the explicit command output.
+
+```sh
+pnpm dev:instance diagnostics --json
+pnpm dev:instance logs --json
+# Both also accept --name/--worktree/--store, or verified stored --id.
+```
+
+`diagnostics` takes an on-demand source snapshot and reports the branch (null
+for detached HEAD or unavailable branch), current dirty state, selected build,
+running daemon's active build and runtime UUID. `dirtyAtBuild` is historical;
+`sourceStale` compares relevant source content now with each build digest. Null
+freshness means source could not be read, never “up to date.” Publishing a build
+does not change an existing daemon or TUI. TUI launch receipts report their own
+artifact generations separately and deliberately make no liveness claim.
+Versions describe the verified artifact manifest (CLI/TUI/daemon, Node ABI,
+embedded Bun and native asset hashes). The separate `manager` fields identify
+the inspecting process's Node version/ABI, Bun (if any), platform and architecture.
+Build and lifecycle commands must select a compatible manager Node ABI through
+a consistent PATH. For example, prefix PATH with the recorded Node executable's
+bin directory for both `pnpm exec tsx scripts/development-build.ts ...` and
+`pnpm dev:instance app`. A login shell and an inherited PTY environment can select
+different Node installations. ABI checks remain strict; a mismatch while
+verifying the pinned tmux build can currently surface as `tmux-owner-invalid`,
+which does not by itself prove the tmux server was replaced.
+
+Connection failure copy diagnostics retain allowlisted code/reason, operation
+ID, the actual attempted daemon runtime generation when known, and the
+launch-time TUI build generation in development. An unavailable generation is
+omitted rather than inferred from whichever build is currently selected.
+
+`logs` is a support-safe structured projection, **not a raw owner.log tail**.
+It reads at most 64 KiB, discards incomplete boundary fragments, keeps at most
+128 complete JSON records, and reports skipped records and truncation. Only
+validated timestamp/severity, fixed component/error vocabulary and UUID-shaped
+operation/runtime identifiers are eligible. Free-form messages, arbitrary data,
+unknown components, credentials and unstructured lines are omitted. The private
+`logs/owner.log` remains available for deliberate local inspection and is not
+included in support output. Empty projections do not imply no activity.
+
+These commands do not enumerate environment/configuration, mutate readiness,
+create workspaces, or enable performance tracing. Existing owner logging keeps
+its asynchronous bounded queue and 1 MiB disk rotation; a failed or slow disk
+sink cannot stall terminal input. Source hashing runs in the explicit manager
+command, with its existing source size budget and a cancellation deadline.

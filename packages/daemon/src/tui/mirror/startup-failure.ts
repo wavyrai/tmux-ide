@@ -41,10 +41,21 @@ export interface StartupFailure {
   readonly reason: string;
   readonly code?: string;
   readonly operationId?: string;
+  readonly daemonGeneration?: string;
+  readonly tuiGeneration?: string;
 }
 /** Only fixed vocabulary and bounded opaque IDs cross the UI/log boundary. */
 export function safeStartupFailure(value: Readonly<Record<string, unknown>>): StartupFailure {
+  const correlation: { daemonGeneration?: string; tuiGeneration?: string } = {};
+  if (
+    typeof value.daemonGeneration === "string" &&
+    /^[A-Za-z0-9_-]{1,128}$/.test(value.daemonGeneration)
+  )
+    correlation.daemonGeneration = value.daemonGeneration;
+  if (typeof value.tuiGeneration === "string" && /^build-[a-f0-9-]{36}$/.test(value.tuiGeneration))
+    correlation.tuiGeneration = value.tuiGeneration;
   return Object.freeze({
+    ...correlation,
     reason:
       typeof value.reason === "string" && reasons.has(value.reason)
         ? value.reason

@@ -268,3 +268,16 @@ describe("shell chrome responsive projection", () => {
     expect(wide).toContain("focus changes");
   });
 });
+
+it("uses bounded launch metadata for DEV chrome without interpreting terminal controls", async () => {
+  const { developmentChromeLabel } = await import("./shell-chrome.ts");
+  const env = {
+    TMUX_IDE_RUNTIME_MODE: "development",
+    TMUX_IDE_DEVELOPMENT_ID: "dev-123456789012345678901234",
+    TMUX_IDE_DEVELOPMENT_NAME: "test\x1b]bad/name",
+    TMUX_IDE_DEVELOPMENT_BUILD_DIRTY: "1",
+  };
+  expect(developmentChromeLabel(env)).toBe("DEV test__bad_na:123456*");
+  expect(developmentChromeLabel({ ...env, TMUX_IDE_RUNTIME_MODE: "production" })).toBeNull();
+  expect(developmentChromeLabel({ ...env, TMUX_IDE_DEVELOPMENT_ID: "bad" })).toBeNull();
+});

@@ -649,6 +649,7 @@ export function createOpenTuiGenerationHost(
         }
         return current;
       };
+    let connectingDaemonGeneration: string | undefined;
     connectFlight = resolveCurrentConnection()
       .then((connection) => {
         if (disposed || expectedEpoch !== epoch) {
@@ -659,7 +660,10 @@ export function createOpenTuiGenerationHost(
           if (!active) publish({ ...EMPTY_SNAPSHOT, status: "unavailable" });
           return false;
         }
-        overrides.onConnectionProgress?.("connection-resolved", {});
+        connectingDaemonGeneration = connection.target.daemon.instanceId;
+        overrides.onConnectionProgress?.("connection-resolved", {
+          daemonGeneration: connectingDaemonGeneration,
+        });
         diagnose?.("connection-resolved", {
           daemonGeneration: connection.target.daemon.instanceId,
           workspaceName: connection.workspaceName,
@@ -896,7 +900,13 @@ export function createOpenTuiGenerationHost(
       })
       .catch((error: unknown) => {
         if (disposed || expectedEpoch !== epoch) return false;
-        const failure = startupFailureFromError(error);
+        const failure = new OpenTuiStartupError({
+          ...startupFailureFromError(error),
+          ...(process.env.TMUX_IDE_RUNTIME_MODE === "development"
+            ? { tuiGeneration: process.env.TMUX_IDE_DEVELOPMENT_BUILD }
+            : {}),
+          ...(connectingDaemonGeneration ? { daemonGeneration: connectingDaemonGeneration } : {}),
+        }).failure;
         diagnose?.("startup-failed", { ...failure });
         try {
           overrides.onConnectionProgress?.("startup-failed", { ...failure });

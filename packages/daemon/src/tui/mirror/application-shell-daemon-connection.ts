@@ -377,7 +377,12 @@ export async function prepareOpenTuiApplicationShellConnection(
     if (reconciled) void reconciled.prepareTerminalRuntimeInventory();
     return reconciled;
   } catch (cause) {
-    const error = new OpenTuiStartupError({ ...startupFailureFromError(cause) });
+    const error = new OpenTuiStartupError({
+      ...startupFailureFromError(cause),
+      ...(process.env.TMUX_IDE_RUNTIME_MODE === "development"
+        ? { tuiGeneration: process.env.TMUX_IDE_DEVELOPMENT_BUILD }
+        : {}),
+    });
     try {
       dependencies.onDiagnostic?.("startup-failed", { ...error.failure });
     } catch {

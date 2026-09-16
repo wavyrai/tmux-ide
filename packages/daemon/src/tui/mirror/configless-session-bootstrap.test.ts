@@ -208,6 +208,7 @@ describe("configless OpenTUI session bootstrap", () => {
       status: "unavailable",
       operationId: OPERATION_ID,
       reason: "promotion-unconfirmed",
+      daemonGeneration: DAEMON.instanceId,
     });
     expect(test.fetchRouting).toHaveBeenCalledOnce();
   });
@@ -330,6 +331,7 @@ it("retains only allowlisted promotion failure detail", async () => {
     status: "unavailable",
     code: "operation_capacity",
     detailReason: "admission_queue_full",
+    daemonGeneration: DAEMON.instanceId,
     operationId: OPERATION_ID,
   });
   expect(JSON.stringify(result)).not.toContain("secret");
@@ -345,5 +347,10 @@ it("retains only allowlisted promotion failure detail", async () => {
       ...test.overrides,
       createOperationId: () => OPERATION_ID,
     }),
-  ).toEqual({ status: "unavailable", reason: "promotion-rejected", operationId: OPERATION_ID });
+  ).toEqual({
+    status: "unavailable",
+    reason: "promotion-rejected",
+    operationId: OPERATION_ID,
+    daemonGeneration: DAEMON.instanceId,
+  });
 });

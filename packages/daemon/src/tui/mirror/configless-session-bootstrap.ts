@@ -50,6 +50,7 @@ export type OpenTuiSessionWorkspaceEnsureResult =
         | "promotion-unconfirmed";
       readonly code?: string;
       readonly detailReason?: string;
+      readonly daemonGeneration?: string;
     };
 
 const PROMOTION_MAXIMUM_ATTEMPTS = 4;
@@ -169,11 +170,17 @@ export async function ensureOpenTuiSessionWorkspaceResult(
         status: "unavailable",
         operationId,
         reason: "promotion-rejected",
+        daemonGeneration: daemon.instanceId,
         ...(safe.code ? { code: safe.code } : {}),
         ...(safe.reason !== "connection-unavailable" ? { detailReason: safe.reason } : {}),
       };
     }
-    return { status: "unavailable", operationId, reason: "promotion-unconfirmed" };
+    return {
+      status: "unavailable",
+      operationId,
+      reason: "promotion-unconfirmed",
+      daemonGeneration: daemon.instanceId,
+    };
   }
 
   // If promotion created the route, current catalog truth is a durable receipt
@@ -203,5 +210,10 @@ export async function ensureOpenTuiSessionWorkspaceResult(
       // from a daemon refusal without leaking a fire-and-forget rejection.
     }
   }
-  return { status: "unavailable", operationId, reason: "promotion-unconfirmed" };
+  return {
+    status: "unavailable",
+    operationId,
+    reason: "promotion-unconfirmed",
+    daemonGeneration: daemon.instanceId,
+  };
 }

@@ -1469,3 +1469,35 @@ it("publishes redacted startup failure even when diagnostics throw", async () =>
   ).toBe(false);
   await host.dispose();
 });
+
+it("adds the launch-time TUI build to copied promotion failure correlation at the host boundary", async () => {
+  const { OpenTuiStartupError } = await import("../startup-failure.ts");
+  vi.stubEnv("TMUX_IDE_RUNTIME_MODE", "development");
+  vi.stubEnv("TMUX_IDE_DEVELOPMENT_BUILD", "build-11111111-1111-4111-8111-111111111111");
+  const progress = vi.fn();
+  const host = createOpenTuiGenerationHost("alpha", presentation().value, {
+    observeCanonicalGeneration: inertCanonicalObserver,
+    resolveConnection: async () => {
+      throw new OpenTuiStartupError({
+        reason: "admission_queue_full",
+        code: "operation_capacity",
+        operationId: "op-1",
+        daemonGeneration: "daemon-attempted",
+      });
+    },
+    onConnectionProgress: progress,
+  });
+  try {
+    expect(await host.start()).toBe(false);
+    expect(progress).toHaveBeenCalledWith("startup-failed", {
+      reason: "admission_queue_full",
+      code: "operation_capacity",
+      operationId: "op-1",
+      daemonGeneration: "daemon-attempted",
+      tuiGeneration: "build-11111111-1111-4111-8111-111111111111",
+    });
+  } finally {
+    await host.dispose();
+    vi.unstubAllEnvs();
+  }
+});

@@ -85,6 +85,7 @@ function childEnvironment(
     ...developmentChildEnvironment(namespace, cleanManagerEnvironment()),
     ...developmentBuildLaunch(build).environment,
     TMUX_IDE_CWD: instance.worktree,
+    TMUX_IDE_DEVELOPMENT_BUILD_DIRTY: build.source.dirty ? "1" : "0",
   };
 }
 export function readTmux(instance: DevelopmentInstance): TmuxRecord | null {
