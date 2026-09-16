@@ -26,6 +26,8 @@ import { generateAuthToken } from "./auth-token.ts";
 import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
 
 export interface HeadlessDaemonOptions {
+  /** Managed launch receipt, only after this process wins election and is attachable. */
+  readonly onOwnedReady?: (info: CanonicalDaemonInfo) => void;
   readonly port?: string | number;
   readonly json?: boolean;
   /** @internal Compatibility only for the retired per-session daemon entrypoint. */
@@ -421,6 +423,7 @@ async function runHeadlessDaemonGeneration(
         DAEMON_ATTACHABILITY_TIMEOUT_MS,
         () => signalRequested,
       );
+      options.onOwnedReady?.(info);
     } catch (error) {
       await handle.stop().catch(() => undefined);
       if (signalRequested) {

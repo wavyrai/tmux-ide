@@ -9,6 +9,7 @@ import {
 } from "../lib/development-instance.ts";
 import {
   buildDevelopmentInstance,
+  parseDevelopmentCapabilities,
   developmentSourceSnapshot,
 } from "../lib/development-build-manager.ts";
 const roots: string[] = [];
@@ -95,4 +96,16 @@ it("ignores inherited Git authority from a sibling checkout", async () => {
   vi.stubEnv("GIT_INDEX_FILE", join(second.tree, ".git/index"));
   expect(discoverDevelopmentWorktree(first.tree)).toBe(first.instance.worktree);
   expect(await developmentSourceSnapshot(first.tree)).toEqual(before);
+});
+
+it("derives managed-owner capability from the compiled artifact probe, never old help text", () => {
+  expect(parseDevelopmentCapabilities("tmux-ide usage and help")).toEqual([]);
+  expect(parseDevelopmentCapabilities(JSON.stringify({ version: 1, capabilities: [] }))).toEqual(
+    [],
+  );
+  expect(
+    parseDevelopmentCapabilities(
+      JSON.stringify({ version: 1, capabilities: ["managed-development-owner-v1"] }),
+    ),
+  ).toEqual(["managed-development-owner-v1"]);
 });

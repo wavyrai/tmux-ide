@@ -1,3 +1,4 @@
+import { withDevelopmentLock } from "./development-lock.ts";
 import { validateBundledTmux } from "./bundled-tmux.ts";
 /** Explicit build boundary. Runtime selection imports development-build.ts instead. */
 import { execFile } from "node:child_process";
@@ -234,44 +235,19 @@ function developmentPackageDigest(source: string): string {
   return hash.digest("hex");
 }
 
-async function withLock<T>(
-  instance: DevelopmentInstance,
-  kind: string,
-  action: () => Promise<T>,
-  signal?: AbortSignal,
-): Promise<T> {
-  const parent = join(instance.root, "locks");
-  validateDevelopmentDirectory(parent, instance.store);
-  mkdirSync(parent, { recursive: true, mode: 0o700 });
-  const path = join(parent, kind);
-  const token = randomUUID();
-  const deadline = Date.now() + 30_000;
-  while (true) {
-    signal?.throwIfAborted();
-    try {
-      mkdirSync(path, { mode: 0o700 });
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (Date.now() >= deadline)
-        throw new Error(
-          `Development ${kind} lock busy; inspect ${path}. Unknown owners are never retired automatically.`,
-          { cause: error },
-        );
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-  }
-  const owner = join(path, "owner.json");
-  writeFileSync(owner, JSON.stringify({ pid: process.pid, token }), { flag: "wx", mode: 0o600 });
+/** Older CLIs receive --help as well, so capability probing can never launch their app. */
+export function parseDevelopmentCapabilities(
+  output: string,
+): readonly "managed-development-owner-v1"[] {
   try {
-    return await action();
-  } finally {
-    try {
-      if (JSON.parse(readFileSync(owner, "utf8")).token === token)
-        rmSync(path, { recursive: true });
-    } catch {
-      /* Never remove an unverified replacement lock. */
-    }
+    const value = JSON.parse(output);
+    return value?.version === 1 &&
+      Array.isArray(value.capabilities) &&
+      value.capabilities.includes("managed-development-owner-v1")
+      ? ["managed-development-owner-v1"]
+      : [];
+  } catch {
+    return [];
   }
 }
 
@@ -287,7 +263,7 @@ export async function buildDevelopmentInstance(
 ): Promise<DevelopmentBuildManifest> {
   if (discoverDevelopmentWorktree(instance.worktree) !== instance.worktree)
     throw new Error("Build root is not the exact Git worktree");
-  return withLock(
+  return withDevelopmentLock(
     instance,
     "build",
     async () => {
@@ -406,6 +382,14 @@ export async function buildDevelopmentInstance(
         )
           throw new Error("Compiled development provenance mismatch");
         await command(node, [cli, "--version"], stage, options.signal);
+        const capabilities = parseDevelopmentCapabilities(
+          await command(
+            node,
+            [cli, "--development-capabilities", "--help", "--json"],
+            stage,
+            options.signal,
+          ),
+        );
         await command(
           node,
           [
@@ -447,6 +431,7 @@ export async function buildDevelopmentInstance(
           source,
           packageVersion,
           execution: "packaged-development",
+          capabilities,
           host: {
             platform: process.platform,
             arch: process.arch,
@@ -487,7 +472,7 @@ export async function buildDevelopmentInstance(
           throw new Error("Toolchain changed during build");
         options.signal?.throwIfAborted();
         await options.beforePublish?.();
-        return await withLock(
+        return await withDevelopmentLock(
           instance,
           "lifecycle",
           async () => {

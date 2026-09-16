@@ -52,6 +52,8 @@ const { positionals, values } = parseArgs({
   options: {
     json: { type: "boolean" },
     headless: { type: "boolean" },
+    "development-owner": { type: "boolean" },
+    "development-capabilities": { type: "boolean" },
     daemon: { type: "boolean" },
     "if-running": { type: "boolean" },
     ssh: { type: "string", multiple: true },
@@ -164,6 +166,11 @@ const knownCommands = new Set([
 ]);
 
 // --version / -v
+if (values["development-capabilities"]) {
+  console.log(JSON.stringify({ version: 1, capabilities: ["managed-development-owner-v1"] }));
+  process.exit(0);
+}
+
 if (values.version) {
   const pkg = await import("../package.json");
   console.log(`tmux-ide v${pkg.version}`);
@@ -644,6 +651,14 @@ try {
     });
   if (values["if-running"] && !values.daemon)
     throw new IdeError("--if-running requires --daemon", { code: "USAGE", exitCode: 2 });
+  if (values["development-owner"]) {
+    if (positionals.length || values.headless)
+      throw new IdeError("Invalid managed development entry", { code: "USAGE", exitCode: 2 });
+    await (
+      await import("../packages/daemon/src/lib/development-owner.ts")
+    ).runManagedDevelopmentOwner();
+    process.exit(0);
+  }
   if (values.headless) {
     if (positionals.length > 0) {
       throw new IdeError("--headless cannot be combined with a command or project path", {

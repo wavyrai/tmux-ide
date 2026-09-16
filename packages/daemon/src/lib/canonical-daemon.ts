@@ -211,7 +211,7 @@ function ownerPidFromRaw(raw: unknown): number | null {
   return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState {
+export function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState {
   let descriptor: number | undefined;
   try {
     const pathStat = lstatSync(path);
@@ -339,7 +339,7 @@ function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState 
   }
 }
 
-function inspectCanonicalDaemonClaimPath(path: string): CanonicalDaemonClaimState {
+export function inspectCanonicalDaemonClaimPath(path: string): CanonicalDaemonClaimState {
   let descriptor: number | undefined;
   try {
     const claimStat = lstatSync(path);

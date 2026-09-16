@@ -314,10 +314,24 @@ describe("runHeadlessDaemon", () => {
     expect(resolveDaemonProductVersion(undefined, () => ({ version: 42 }))).toBe("0.0.0");
   });
 
+  it("publishes managed ownership only after this process becomes ready", async () => {
+    const harness = createHarness();
+    const onOwnedReady = vi.fn();
+    const running = runHeadlessDaemon({ json: true, onOwnedReady }, harness.deps);
+    await vi.waitFor(() => expect(onOwnedReady).toHaveBeenCalledOnce());
+    expect(onOwnedReady.mock.calls[0]![0]).toMatchObject({ pid: daemonInfo().pid });
+    await harness.stop();
+    await running;
+  });
+
   it("reuses a compatible live canonical daemon without takeover", async () => {
     const harness = createHarness({ state: validState(daemonInfo()), alive: true });
 
-    await expect(runHeadlessDaemon({ json: true }, harness.deps)).resolves.toBe("already-running");
+    const onOwnedReady = vi.fn();
+    await expect(runHeadlessDaemon({ json: true, onOwnedReady }, harness.deps)).resolves.toBe(
+      "already-running",
+    );
+    expect(onOwnedReady).not.toHaveBeenCalled();
 
     expect(harness.startOptions).toEqual([]);
     expect(JSON.parse(harness.lines[0]!)).toEqual({

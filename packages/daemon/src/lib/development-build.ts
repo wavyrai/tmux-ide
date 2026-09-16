@@ -22,6 +22,7 @@ export interface DevelopmentBuildManifest {
   source: { commit: string; digest: string; dirty: boolean; files: number; lockfileHash: string };
   packageVersion: string;
   execution: "packaged-development";
+  capabilities?: readonly "managed-development-owner-v1"[];
   host: {
     platform: string;
     arch: string;

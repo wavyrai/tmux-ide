@@ -1,11 +1,11 @@
 # Development-instance architecture contract
 
-Status: **design contract, not implemented commands**. This document defines D01 of
+Status: **namespace, isolated builds, and `up` / `app` / `status` implemented**
+(D02–D04). This document also records the remaining design contract for
 [Isolated Worktree Development and Remote Fixtures](https://www.sfora.ai/org/wavyr/notes/mx7agc0d3fqgmy35jfds23vexx8egvm3).
-D02–D05 implement the namespace, build selection and native lifecycle. Existing
-`test`, `smoke`, `testdrive` and `performance` fixtures remain ephemeral. Do not
-run the proposed commands below expecting isolation until their implementation
-and multi-instance qualification land.
+The command table includes planned D05+ operations; only the commands explicitly
+listed in the implementation sections below exist today. Existing `test`,
+`smoke`, `testdrive` and `performance` fixtures remain ephemeral.
 
 ## Identity and lifetime
 
@@ -251,7 +251,7 @@ unsupported platforms stay explicit. Docker/SSH/service fixtures extend this
 contract later; neither a container nor this native namespace is evidence of
 hostile-code containment or measured performance improvement.
 
-## D03 build API (implemented; lifecycle commands remain planned)
+## D03 build API (implemented)
 
 `pnpm exec tsx scripts/development-build.ts --bun /absolute/path/to/bun
 [--worktree /absolute/tree] [--store /absolute/private/store] [--name name]`
@@ -299,3 +299,54 @@ These are local verification costs, not a startup or rendering speedup claim.
 Selection performs full verification; callers should reuse the verified launch
 or daemon authority at their existing construction boundary, not reverify on a
 rendering tick.
+
+## D04 managed lifecycle (implemented)
+
+From the selected worktree, first build its exact artifacts with the D03 command
+above. Then:
+
+```sh
+pnpm dev:instance up
+pnpm dev:instance app
+pnpm --silent dev:instance status --json
+```
+
+All three accept `--name <label>`, `--store <absolute-private-directory>` and
+`--worktree <path>`. `app` is interactive and rejects `--json`; `up` and `status`
+produce credential-free JSON. Use `pnpm --silent` when piping that JSON.
+A build made before the managed-owner capability was added must be rebuilt;
+there is no fallback to an installed CLI or source runtime.
+
+`up` serializes lifecycle admission and starts one detached, exact-build Node
+owner plus an explicitly socket-selected tmux server using `-f /dev/null`. The
+private `tmux-ide-dev-keeper` session keeps the server alive. Repeated/concurrent
+`up` reuses a ready owner. A new selected build does not replace a running owner:
+`status` reports both generations, and `app` pins the active owner's TUI. Closing
+an app leaves the owner and tmux work running. Runtime UUID and canonical claim
+may change during an authenticated runtime restart; process incarnation and the
+launch receipt continue to identify the same supervised process.
+
+Admission checks worktree filesystem identity, private records, exact artifacts,
+process incarnation and tmux socket identity. Readiness checks canonical record
+and claim, matching identity/health versions and owner-authenticated passive
+admission data. Health alone is not whole-daemon readiness. Status performs no
+repair or startup; missing builds, stopped owners, transitions and blocked
+ownership are distinct. Existing live or unknown owners are protected. `up` may
+reclaim a dead server's leftover socket only when its recorded identity still
+matches exactly. An unrecorded or replaced socket stays blocked.
+
+The lifecycle lock waits at most 30 seconds; startup readiness defaults to 15
+seconds after spawn, with bounded individual probes. Build verification and
+filesystem work precede that readiness deadline. Startup failure writes a
+redacted `startup-receipt.json`; `logs/owner.log` is a best-effort rotating 1 MiB
+log with a 64 KiB / 128-entry pending limit and bounded drop notices. Private
+`tmux-startup.json` preserves partial-start evidence. Single-use launch receipts
+prevent replay from overwriting an existing owner. Consumed receipts and old
+artifacts are retained until the planned lifecycle/garbage-collection stage.
+
+`logs`, `rebuild`, `restart`, `down`, `reset`, `--id` orphan selection and automatic
+stale-lock recovery remain planned. Do not use broad process-name or socket-directory
+cleanup to emulate them. The opt-in two-worktree qualification harness performs
+only authenticated, process-incarnation/socket-fenced cleanup of its explicitly
+supplied scratch instances. Linux qualification remains separate from the macOS
+acceptance evidence; this stage does not claim equivalent testing on both hosts.
