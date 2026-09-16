@@ -1056,14 +1056,18 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     () => `tmux sessions: ${sessionNames().join(", ")}`,
   );
   // Prove process discovery rather than synthetic @agent_hint metadata. The
-  // already-required Node runtime is copied under a representative manifest
-  // basename and acts as a deterministic stdin/stdout agent fixture.
+  // already-required Bun compiler produces a standalone stdin/stdout fixture
+  // under a representative manifest basename. Copying the current Node binary
+  // is not portable: shared-library distributions lose their relative libnode
+  // dependency when relocated to this temporary directory.
   const agentFixtureBinary = join(tmpRoot, "codex");
-  copyFileSync(process.execPath, agentFixtureBinary);
-  chmodSync(agentFixtureBinary, 0o700);
+  const agentFixtureSource = join(tmpRoot, "agent-fixture.js");
   const agentFixtureProgram =
     "process.stdin.on('data',chunk=>process.stdout.write(chunk));process.stdin.resume();setInterval(()=>{},2147483647)";
-  const agentFixtureCommand = `${shQuote(agentFixtureBinary)} -e ${shQuote(agentFixtureProgram)}`;
+  writeFileSync(agentFixtureSource, agentFixtureProgram, { mode: 0o600 });
+  run("bun", ["build", "--compile", agentFixtureSource, "--outfile", agentFixtureBinary]);
+  chmodSync(agentFixtureBinary, 0o700);
+  const agentFixtureCommand = shQuote(agentFixtureBinary);
   const createPackedAgentWindow = (deferAgentExec = false) => {
     const created = tmuxResult([
       "new-window",
