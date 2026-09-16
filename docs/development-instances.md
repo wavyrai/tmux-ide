@@ -207,7 +207,7 @@ Each invocation hashes the bounded worktree source/config inventory, lockfiles,
 Node/platform identity, compiler bytes and package resolution links. The compiler
 checks its discovered input closure before and after the publication build. A
 changed source, configuration, compiler or workspace link cannot silently select
-old manager code. Source inputs must remain inside the worktree; tsconfig
+old manager code. Bundled source inputs must belong to the tracked scripts/package-source/config inventory; tsconfig
 inheritance outside the tracked scripts/package-source/root-config inventory
 fails with an actionable error. No installed manager or stale bundle is a fallback.
 This manager freshness check is separate from on-demand daemon/TUI build freshness.
@@ -215,12 +215,12 @@ This manager freshness check is separate from on-demand daemon/TUI build freshne
 Cache data lives in the private owned `node_modules/.cache/tmux-ide-manager` folder.
 Publication uses complete staging directories and atomic rename; the launcher
 verifies and hardlinks selected bytes before importing them in its own process.
-Pruning retains two cached generations, with at most32 live/unverified execution
-pins and four admitted compiler stages. Each file is capped at32MiB and hashed
-input bytes at256MiB. Pins preserve code through concurrent cache pruning. Normal
+Pruning retains two cached generations, with at most 32 live/unverified execution
+pins and four admitted compiler stages. Each file is capped at 32 MiB and hashed
+input bytes at 256 MiB. Pins preserve code through concurrent cache pruning. Normal
 exit releases the current pin; only proven-dead PID leftovers are reclaimed.
 Live/unknown entries protect their files and can cause a bounded capacity refusal.
-An interrupted compiler forwards SIGINT/SIGTERM and preserves exit130/143.
+An interrupted compiler forwards SIGINT/SIGTERM and preserves exit 130/143.
 
 Use `pnpm --silent dev:instance ... --json` for machine-readable stdout. Compilation
 errors remain on stderr; bootstrap failures emit a distinct safe structured error.
@@ -640,10 +640,17 @@ verified process cleanup, without Bun or source dependencies. Its standalone TUI
 is explicitly staged; package postinstall, release download and upgrade flows
 remain separate D12 qualification.
 
-D08 remains pending Linux: the idle-engine gate timed out waiting for fresh
-terminal output in an existing TUI after daemon crash recovery. An earlier run
-completed all functional phases but returned a final stop error despite tracked
-processes exiting; that intermittent refusal is also unresolved. Neither result
-is reported as a passing release gate. No substitute system-tmux manifest,
-installed TUI fallback, or relaxed ownership check is accepted. Linux x64 and
-emulated performance remain unqualified.
+The uninstrumented Linux arm64 D08 gate now passes all 15 phases with the smaller
+worktree-local manager: concurrent owners, real TUI crash-recovery output/input,
+runtime restart, daemon-only stop, dead-lock recovery, full stop, and moved-tree
+reset while preserving the sibling and private production-shaped sentinel. The
+run sampled at most 26 owned processes and 308 file descriptors, ended with zero
+gate subscriptions and all tracked processes/apps gone, and recorded no new OOM
+kills. This is a bounded qualification run, not a long-soak or throughput claim.
+
+Earlier crash-recovery and final-down failures remain retained evidence. The
+intermittent final-down rejection was not reproduced in 27 bounded diagnostic
+shutdowns; its cause is not claimed fixed. No substitute system-tmux manifest,
+installed TUI fallback, relaxed ownership check, increased production deadline or
+global Docker memory change was used. Linux x64 and emulated performance remain
+unqualified.

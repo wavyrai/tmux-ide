@@ -240,3 +240,21 @@ test("concurrent pruning tolerates only already-removed generation entries", asy
   );
   assert(readdirSync(join(cache, "generations")).length <= 2);
 });
+
+test("untracked source roots fail closed instead of caching incomplete resolution freshness", async (t) => {
+  const root = fixture(t);
+  mkdirSync(join(root, "custom"));
+  writeFileSync(join(root, "custom/value.js"), "export default 'uncaptured';");
+  writeFileSync(
+    join(root, "scripts/development-instance.ts"),
+    "import value from '../custom/value'; console.log(JSON.stringify({value}));",
+  );
+  await assert.rejects(
+    run(root, ["--json"]),
+    (error) =>
+      error.code === 1 &&
+      error.stderr.includes("Unsupported manager source root") &&
+      JSON.parse(error.stdout).code === "DEVELOPMENT_MANAGER_UNAVAILABLE",
+  );
+  assert.equal(generations(root).length, 0);
+});

@@ -116,3 +116,21 @@ is healthy, or retain the old volume for diagnosis and use a new explicitly owne
 state volume for a new fixture incarnation. Do not remove ownership records just
 to bypass a refusal. Persistent remote-container restart recovery is a separate
 D10 qualification requirement.
+
+## Qualification status
+
+Native Linux arm64 source and separate clean packed-runtime lanes are qualified.
+After reducing retained development-manager overhead, the idle, uninstrumented
+D08 source isolation gate passed all 15 phases, including existing-TUI output/input
+after daemon crash, runtime restart, daemon-only/full stop, stale-lock recovery,
+and moved-tree reset. The sibling and private production-shaped sentinel remained
+intact. The run sampled 26 owned processes and 308 file descriptors at most; final
+owned processes/apps exited, gate subscriptions returned to zero, and OOM counters
+did not increase. This is a bounded run, not a long soak or Linux x64/emulation
+qualification.
+
+Prior failures are retained: an intermittent final-down rejection despite process
+cleanup remains unexplained (27 smaller diagnostic shutdowns did not reproduce it).
+The manager change is measured wrapper-memory reduction, not a claimed fix for
+that error or production TUI throughput. Packed postinstall/download/upgrade and
+persistent container restart remain the separate D12/D10 requirements above.

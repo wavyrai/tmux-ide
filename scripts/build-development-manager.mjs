@@ -34,6 +34,12 @@ const options = {
 const discovered = await build(options);
 const snapshot = sourceSnapshot(root);
 const tracked = new Set(snapshot.files);
+for (const input of Object.keys(discovered.metafile.inputs)) {
+  if (!tracked.has(relative(root, resolve(root, input))))
+    throw new Error(
+      "Unsupported manager source root: bundled inputs must belong to the tracked scripts/package-source/config inventory",
+    );
+}
 const visited = new Set();
 function verifyConfig(path) {
   if (visited.has(path)) return;
