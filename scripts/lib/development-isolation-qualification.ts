@@ -541,65 +541,97 @@ try {
   receipt.failure = error instanceof Error ? error.message : String(error);
   throw error;
 } finally {
-  for (const controller of streams) controller.abort();
-  for (const client of clients) {
-    if (!client.exited) {
-      client.write("\x11");
-      await wait(async () => client.exited).catch(() => client.kill("SIGTERM"));
-      await wait(async () => client.exited);
+  const cleanupErrors: string[] = [];
+  const attemptCleanup = async (step: string, action: () => Promise<void>) => {
+    try {
+      await action();
+    } catch {
+      cleanupErrors.push(step);
     }
-    client.dispose();
-  }
-  if (moved) renameSync(`${first}-d08-moved`, first);
-  if (branchChanged) {
-    await execute("git", ["-C", first, "switch", "--detach", originalHead], {
-      env: cleanManagerEnvironment(),
-      timeout: 2000,
-    });
-    await execute("git", ["-C", first, "branch", "-D", branchName], {
-      env: cleanManagerEnvironment(),
-      timeout: 2000,
-    });
-  }
+  };
+  for (const controller of streams) controller.abort();
+  await Promise.allSettled(
+    clients.map((client, index) =>
+      attemptCleanup(`app-${index}`, async () => {
+        if (!client.exited) {
+          client.write("\x11");
+          await wait(async () => client.exited).catch(() => client.kill("SIGTERM"));
+          await wait(async () => client.exited);
+        }
+        client.dispose();
+      }),
+    ),
+  );
+  await attemptCleanup("restore-worktree", async () => {
+    if (moved) renameSync(`${first}-d08-moved`, first);
+    if (branchChanged) {
+      await execute("git", ["-C", first, "switch", "--detach", originalHead], {
+        env: cleanManagerEnvironment(),
+        timeout: 2000,
+      });
+      await execute("git", ["-C", first, "branch", "-D", branchName], {
+        env: cleanManagerEnvironment(),
+        timeout: 2000,
+      });
+    }
+  });
   const cleanup = await Promise.allSettled([cli(0, "down"), cli(1, "down")]);
   receipt.cleanup = cleanup.map((result) => result.status);
-  if (
-    sentinelChild?.pid &&
-    sentinelIncarnation &&
-    (await developmentProcessIdentity(sentinelChild.pid)) === sentinelIncarnation
-  ) {
-    const record = info(join(sentinelState, "daemon.json"));
-    const response = await fetch(`http://127.0.0.1:${record.port}/api/v2/action/daemon.shutdown`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${record.authToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ expectedInstanceId: record.instanceId }),
-      redirect: "error",
-      signal: AbortSignal.timeout(2000),
-    });
-    assert(response.ok);
-    await wait(async () => (await developmentProcessIdentity(sentinelChild!.pid!)) === null);
-  }
-  if (sentinelIdentity && (await developmentProcessIdentity(sentinelPid)) !== null) {
-    revalidateUnixSocketIdentity(sentinelIdentity);
-    await tmuxRead(sentinelSocket, [
-      "if-shell",
-      "-F",
-      `#{==:#{pid},${sentinelPid}}`,
-      "kill-server",
-    ]);
-    await wait(async () => (await developmentProcessIdentity(sentinelPid)) === null);
-  }
-  if (sentinelIdentity && existsSync(sentinelSocket))
-    rmSync(revalidateUnixSocketIdentity(sentinelIdentity));
-  rmSync(sentinelRoot, { recursive: true });
-  receipt.processesGone = (await Promise.all([...knownPids].map(developmentProcessIdentity))).every(
-    (value) => value === null,
-  );
+  await attemptCleanup("sentinel-daemon", async () => {
+    if (
+      sentinelChild?.pid &&
+      sentinelIncarnation &&
+      (await developmentProcessIdentity(sentinelChild.pid)) === sentinelIncarnation
+    ) {
+      const record = info(join(sentinelState, "daemon.json"));
+      const response = await fetch(
+        `http://127.0.0.1:${record.port}/api/v2/action/daemon.shutdown`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${record.authToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ expectedInstanceId: record.instanceId }),
+          redirect: "error",
+          signal: AbortSignal.timeout(2000),
+        },
+      );
+      assert(response.ok);
+      await wait(async () => (await developmentProcessIdentity(sentinelChild!.pid!)) === null);
+    }
+  });
+  await attemptCleanup("sentinel-tmux", async () => {
+    if (sentinelIdentity && (await developmentProcessIdentity(sentinelPid)) !== null) {
+      revalidateUnixSocketIdentity(sentinelIdentity);
+      await tmuxRead(sentinelSocket, [
+        "if-shell",
+        "-F",
+        `#{==:#{pid},${sentinelPid}}`,
+        "kill-server",
+      ]);
+      await wait(async () => (await developmentProcessIdentity(sentinelPid)) === null);
+    }
+  });
+  await attemptCleanup("sentinel-state", async () => {
+    if (sentinelChild?.pid && (await developmentProcessIdentity(sentinelChild.pid)) !== null)
+      throw new Error("Sentinel daemon remains alive or replaced");
+    if (sentinelPid && (await developmentProcessIdentity(sentinelPid)) !== null)
+      throw new Error("Sentinel remains alive");
+    if (sentinelIdentity && existsSync(sentinelSocket))
+      rmSync(revalidateUnixSocketIdentity(sentinelIdentity));
+    rmSync(sentinelRoot, { recursive: true });
+  });
+  receipt.cleanupErrors = cleanupErrors;
+  receipt.processesGone = (
+    await Promise.allSettled([...knownPids].map(developmentProcessIdentity))
+  ).every((result) => result.status === "fulfilled" && result.value === null);
   receipt.appsExited = clients.every((client) => client.exited);
   receipt.remainingSubscriptions = streams.size;
   receipt.resources = resourceSamples;
   receipt.ok =
     receipt.completed === true &&
+    cleanupErrors.length === 0 &&
     receipt.processesGone &&
     clients.every((client) => client.exited) &&
     streams.size === 0 &&

@@ -59,13 +59,48 @@ export function writeDevelopmentRecord(path: string, value: unknown): void {
     rmSync(temp, { force: true });
   }
 }
+export function linuxDevelopmentProcessIdentity(
+  pid: number,
+  readStat = () => readFileSync(`/proc/${pid}/stat`, "utf8"),
+  readExecutable = () => realpathSync(`/proc/${pid}/exe`),
+): string | null {
+  const parseStat = (stat: string) => {
+    const end = stat.lastIndexOf(") ");
+    const fields = stat.slice(end + 2).split(" ");
+    if (
+      !stat.startsWith(`${pid} (`) ||
+      end < String(pid).length + 2 ||
+      !/^[RSDZTtXxKWPI]$/.test(fields[0] ?? "") ||
+      !/^\d+$/.test(fields[19] ?? "")
+    )
+      throw new Error("Invalid Linux process stat");
+    return { state: fields[0]!, started: fields[19]! };
+  };
+  const dead = (state: string) => ["Z", "X", "x"].includes(state);
+  const initial = parseStat(readStat());
+  // A zombie has exited and cannot own resources, even before its parent reaps it.
+  if (dead(initial.state)) return null;
+  let executable: string;
+  try {
+    executable = readExecutable();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      // Exit can occur between stat and exe. Only a confirmed dead state is safe;
+      // unreadable, live or reused PIDs remain protected by the outer failure path.
+      if (dead(parseStat(readStat()).state)) return null;
+    }
+    throw error;
+  }
+  const current = parseStat(readStat());
+  if (dead(current.state)) return null;
+  if (current.started !== initial.started) throw new Error("Linux process incarnation changed");
+  return `linux:${initial.started}:${executable}`;
+}
 export async function developmentProcessIdentity(pid: number): Promise<string | null> {
   if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid process identity");
   try {
     if (process.platform === "linux") {
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      return `linux:${fields[19]}:${realpathSync(`/proc/${pid}/exe`)}`;
+      return linuxDevelopmentProcessIdentity(pid);
     }
     const { stdout } = await execute(
       "/bin/ps",
