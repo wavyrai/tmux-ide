@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import {
   mkdirSync,
+  chmodSync,
   mkdtempSync,
   renameSync,
   rmSync,
@@ -540,6 +541,11 @@ try {
   receipt.own = own;
   receipt.completed = true;
 } catch (error) {
+  // These are fixture-owned VT screens, bounded before clients are disposed.
+  receipt.failureFrames = clients.slice(0, 2).map((client, index) => ({
+    instance: instances[index]!.id,
+    frame: client.frame().slice(0, 32768),
+  }));
   receipt.failure = error instanceof Error ? error.message : String(error);
   throw error;
 } finally {
@@ -677,7 +683,10 @@ try {
     cleanup.every((result) => result.status === "fulfilled");
   receipt.linuxQualified = receipt.ok === true && process.platform === "linux";
   receipt.macosQualified = receipt.ok === true && process.platform === "darwin";
-  writeFileSync(join(store, "d08-qualification.json"), JSON.stringify(receipt, null, 2));
+  writeFileSync(join(store, "d08-qualification.json"), JSON.stringify(receipt, null, 2), {
+    mode: 0o600,
+  });
+  chmodSync(join(store, "d08-qualification.json"), 0o600);
   if (receipt.completed) assert.equal(receipt.ok, true);
 }
 
