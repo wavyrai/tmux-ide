@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync, chmodSync, statSync } from "node:fs";
 
-import { contractsInitializerPurityPlugin } from "./lib/contracts-initializer-purity.mjs";
+import { cliBundlePlugins } from "./lib/cli-bundle-policy.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -59,32 +59,7 @@ const result = await build({
   // pointers won't resolve under `npm install`, so the bundle is the
   // only sane way to ship our own TS code. Relative `.ts` imports are
   // bundled too — the published tarball has no transpile step.
-  plugins: [
-    contractsInitializerPurityPlugin(),
-    {
-      name: "external-non-workspace",
-      setup(b) {
-        b.onResolve({ filter: /.*/ }, (args) => {
-          if (args.kind === "entry-point") return undefined;
-          const id = args.path;
-          // Relative paths → bundle (let esbuild walk them).
-          if (id.startsWith(".") || id.startsWith("/")) return undefined;
-          // node: builtins → external.
-          if (id.startsWith("node:")) return { external: true };
-          // The pinned headless xterm fork is a release asset, not a workspace
-          // package. Bundle it with the Unicode addon: both are pure JS and
-          // their named imports are not portable when left bare under stock
-          // Node. The stock alias is test-only and must never reach this graph.
-          if (id === "@tmux-ide/xterm-headless" || id === "@xterm/addon-unicode11")
-            return undefined;
-          // Workspace packages → bundle.
-          if (id.startsWith("@tmux-ide/")) return undefined;
-          // Everything else → external.
-          return { external: true };
-        });
-      },
-    },
-  ],
+  plugins: cliBundlePlugins(),
   // Standard Hono / better-sqlite3 / node-pty dynamic-require patterns
   // produce noisy esbuild warnings; silence them — they're benign for a
   // CLI that delegates real work to the daemon.
