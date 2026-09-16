@@ -9,6 +9,45 @@ export interface DaemonShutdownDeps {
 let shutdownBackend: ((reason: string | null) => Promise<void> | void) | null = null;
 let daemonInstanceId: string | null = null;
 let shutdownInProgress = false;
+let restartBackend: { run: () => Promise<void> | void; instanceId: string | null } | null = null;
+
+export function setDaemonRestartBackend(
+  backend: (() => Promise<void> | void) | null,
+  instanceId: string | null = null,
+): void {
+  restartBackend = backend ? { run: backend, instanceId } : null;
+}
+
+/** Shares shutdown admission: one accepted lifecycle intent per generation. */
+export function daemonRestartHandler(
+  input: ActionInput<"daemon.restart">,
+): ActionResult<"daemon.restart"> {
+  const backend = restartBackend;
+  if (!backend)
+    throw new ActionError({
+      code: "daemon_restart_unavailable",
+      message: "This daemon owner does not support runtime restart",
+    });
+  if (input.expectedInstanceId !== backend.instanceId)
+    throw new ActionError({
+      code: "daemon_instance_mismatch",
+      message: "Daemon instance changed before restart",
+    });
+  if (shutdownInProgress)
+    throw new ActionError({
+      code: "shutdown_already_in_progress",
+      message: "Daemon shutdown or restart is already in progress",
+    });
+  shutdownInProgress = true;
+  process.nextTick(() => {
+    void Promise.resolve()
+      .then(() => backend.run())
+      .catch((error) => {
+        console.error("[daemon] runtime restart action failed:", error);
+      });
+  });
+  return { restarting: true, instanceId: input.expectedInstanceId };
+}
 
 export function setDaemonShutdownBackend(
   backend: ((reason: string | null) => Promise<void> | void) | null,

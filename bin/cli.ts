@@ -115,6 +115,7 @@ const { positionals, values } = parseArgs({
 });
 
 const knownCommands = new Set([
+  "daemon",
   "machines",
   "start",
   "init",
@@ -203,6 +204,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide settings")}           ${dim("Interactive TUI config manager")}
   ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold .tmux-ide/workspace.yml (auto-detects stack)")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
+  ${cyan("tmux-ide daemon restart")}     ${dim("Reset the daemon runtime; preserve its process and tmux sessions")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
   ${cyan("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
                               ${dim("Rebuild the fleet from the last snapshot after a tmux crash")}
@@ -740,6 +742,22 @@ try {
       await (await import("../packages/daemon/src/attach.ts")).attach(positionals[1], { json });
       break;
 
+    case "daemon": {
+      if (positionals[1] !== "restart" || positionals.length !== 2)
+        throw new IdeError("Usage: tmux-ide daemon restart [--json]", {
+          code: "USAGE",
+          exitCode: 2,
+        });
+      const result = await (
+        await import("../packages/daemon/src/lib/restart-canonical-daemon.ts")
+      ).restartCanonicalDaemon();
+      console.log(
+        json
+          ? JSON.stringify(result)
+          : `Daemon runtime restarted (${result.instanceId}, pid ${result.pid}). Installed code was not reloaded.`,
+      );
+      break;
+    }
     case "restart":
       await (await import("../packages/daemon/src/restart.ts")).restart(positionals[1], { json });
       break;

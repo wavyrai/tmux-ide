@@ -23,7 +23,7 @@ import {
 } from "./daemon-embed.ts";
 import { DaemonStartupError, IdeError } from "./errors.ts";
 import { generateAuthToken } from "./auth-token.ts";
-import type { RemoteAccessRestartRequest } from "../command-center/actions/handlers/app-set-remote-access.ts";
+import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
 
 export interface HeadlessDaemonOptions {
   readonly port?: string | number;
@@ -265,7 +265,7 @@ export async function runHeadlessDaemon(
   deps: HeadlessDaemonDependencies = defaultDependencies,
 ): Promise<"stopped" | "already-running"> {
   let restoreTmuxWorkspaces = false;
-  const lifecycle: { remoteAccess?: RemoteAccessRestartRequest } = {};
+  const lifecycle: { restart?: DaemonRestartRequest } = {};
   while (true) {
     const result = await runHeadlessDaemonGeneration(
       options,
@@ -282,9 +282,9 @@ async function runHeadlessDaemonGeneration(
   options: HeadlessDaemonOptions,
   deps: HeadlessDaemonDependencies,
   restoreTmuxWorkspaces: boolean,
-  lifecycle: { remoteAccess?: RemoteAccessRestartRequest },
+  lifecycle: { restart?: DaemonRestartRequest },
 ): Promise<"stopped" | "already-running" | "restart"> {
-  const port = parsePort(lifecycle.remoteAccess?.port ?? options.port);
+  const port = parsePort(lifecycle.restart?.port ?? options.port);
   let restartRequested = false;
   let stopStarted = false;
   let handle: EmbeddedDaemonHandle | null = null;
@@ -325,13 +325,13 @@ async function runHeadlessDaemonGeneration(
         handle = await deps.startEmbeddedDaemon({
           ...(restoreTmuxWorkspaces ? { restoreTmuxWorkspaces: true } : {}),
           port,
-          bindHostname: lifecycle.remoteAccess?.bindHostname ?? "127.0.0.1",
+          bindHostname: lifecycle.restart?.bindHostname ?? "127.0.0.1",
           // Persisted only in the owner-only daemon record. This capability is
           // independent from the remotely shared access token.
-          authToken: lifecycle.remoteAccess?.token ?? null,
+          authToken: lifecycle.restart?.token ?? null,
           requestRestart: async (request) => {
             if (!handle || stopStarted || signalRequested) return;
-            lifecycle.remoteAccess = request;
+            lifecycle.restart = request;
             restartRequested = true;
             await handle.stop();
           },

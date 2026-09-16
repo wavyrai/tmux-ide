@@ -245,6 +245,11 @@ export const DaemonShutdownResultZ = z.object({
   stopping: z.literal(true),
 });
 
+export const DaemonRestartInputZ = z.object({ expectedInstanceId: z.uuid() }).strict();
+export const DaemonRestartResultZ = z
+  .object({ restarting: z.literal(true), instanceId: z.uuid() })
+  .strict();
+
 // ---------------------------------------------------------------------------
 // workspace.pane.create
 // ---------------------------------------------------------------------------
@@ -381,6 +386,7 @@ export const ActionContractsZ = {
     input: DaemonShutdownInputZ,
     result: DaemonShutdownResultZ,
   },
+  "daemon.restart": { input: DaemonRestartInputZ, result: DaemonRestartResultZ },
   "workspace.pane.create": {
     input: WorkspacePaneCreateInputZ,
     result: WorkspacePaneCreateResultZ,

@@ -39,6 +39,19 @@ The first app launch downloads the exact-version OpenTUI runtime for macOS or
 Linux, verifies its release metadata and SHA-256 digests, and caches it under
 `~/.tmux-ide/bin`. Installed users do not need Bun.
 
+To reset a running daemon's runtime while keeping its supervising process and
+tmux sessions:
+
+```bash
+tmux-ide daemon restart --json
+```
+
+The command verifies a new daemon generation under the same process, preserving
+the active listener and remote-access settings. It does not start a missing
+daemon or load newly installed code; use `tmux-ide update --daemon` for the
+separate version-upgrade flow. The existing `tmux-ide restart` command still
+restarts an IDE session.
+
 ## What ships in 2.9
 
 - **Home and Terminals** over live tmux sessions, with no project config

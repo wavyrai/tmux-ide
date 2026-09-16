@@ -48,11 +48,12 @@ import {
   setFleetFactsTmuxRunner,
   shutdownWsEventObservation,
 } from "../command-center/ws-events.ts";
+import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
+import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
 import {
-  setRemoteAccessRestartBackend,
-  type RemoteAccessRestartRequest,
-} from "../command-center/actions/handlers/app-set-remote-access.ts";
-import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
+  setDaemonShutdownBackend,
+  setDaemonRestartBackend,
+} from "../command-center/actions/handlers/daemon-shutdown.ts";
 import type { WorkspaceMultiplexerBackend } from "../command-center/actions/handlers/workspace-multiplexer.ts";
 import { readAppSettings } from "./app-settings.ts";
 import {
@@ -157,7 +158,7 @@ export function resolveDaemonProductVersion(
 
 export interface EmbeddedDaemonOptions {
   /** @internal Let the foreground lifecycle owner serialize settings restarts. */
-  requestRestart?: (request: RemoteAccessRestartRequest) => Promise<void>;
+  requestRestart?: (request: DaemonRestartRequest) => Promise<void>;
   /** @internal Reconcile existing intent after a retired tmux server generation. */
   restoreTmuxWorkspaces?: boolean;
   sessionName?: string;
@@ -1732,6 +1733,7 @@ async function startEmbeddedDaemonGeneration(
             await capture(() => closeRuntimeTraceStream());
             await capture(() => setRemoteAccessRestartBackend(null));
             await capture(() => setDaemonShutdownBackend(null));
+            await capture(() => setDaemonRestartBackend(null));
 
             if (failures.length > 0) {
               const cause =
@@ -1755,6 +1757,16 @@ async function startEmbeddedDaemonGeneration(
     setDaemonShutdownBackend(async () => {
       await handle.stop({ gracefulMs: 500 });
     }, instanceId);
+    setDaemonRestartBackend(
+      opts.requestRestart
+        ? async () => {
+            // Let the accepted action response leave the listener before retiring it.
+            await delay(50);
+            await opts.requestRestart!({ kind: "runtime", bindHostname, token: authToken, port });
+          }
+        : null,
+      instanceId,
+    );
     setRemoteAccessRestartBackend((request) => {
       setTimeout(() => {
         void (async () => {

@@ -342,6 +342,7 @@ const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">
   "project.activate": "owner",
   "project.openTerminal": "owner",
   "daemon.shutdown": "owner",
+  "daemon.restart": "owner",
 };
 
 function requireHostCapability(ownerToken: string | null): MiddlewareHandler {

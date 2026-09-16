@@ -36,6 +36,7 @@ const ACTION_COMMAND_METADATA: Record<ActionName, ActionCommandMetadata> = {
     category: "compatibility",
   },
   "app.setRemoteAccess": { label: "Set remote access", category: "application" },
+  "daemon.restart": { label: "Restart daemon runtime", category: "daemon", dangerous: true },
   "daemon.shutdown": { label: "Shut down daemon", category: "daemon", dangerous: true },
   "workspace.pane.create": { label: "Create workspace pane", category: "workspace" },
   "workspace.open": { label: "Open config-free workspace", category: "workspace" },

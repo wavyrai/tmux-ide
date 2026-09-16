@@ -186,61 +186,80 @@ describe("runHeadlessDaemon", () => {
     expect(harness.signals.size).toBe(0);
   });
 
-  it("keeps settings restarts and later tmux recovery under the same lifecycle owner", async () => {
-    const harness = createHarness();
-    const start = harness.deps.startEmbeddedDaemon;
-    const retired = deferred();
-    const events: string[] = [];
-    let starts = 0;
-    const running = runHeadlessDaemon(
-      {},
-      {
-        ...harness.deps,
-        startEmbeddedDaemon: async (options) => {
-          const generation = ++starts;
-          events.push(`start-${generation}`);
-          const handle = await start(options);
-          return {
-            ...handle,
-            tmuxAuthorityReplaced: async () => generation === 2,
-            stop: async () => {
-              events.push(`stop-${generation}`);
-              if (generation === 1) await retired.promise;
-            },
-          };
+  it.each(["settings", "runtime"] as const)(
+    "keeps %s restarts and later tmux recovery under the same lifecycle owner",
+    async (kind) => {
+      const harness = createHarness();
+      const start = harness.deps.startEmbeddedDaemon;
+      const retired = deferred();
+      const events: string[] = [];
+      let starts = 0;
+      const running = runHeadlessDaemon(
+        {},
+        {
+          ...harness.deps,
+          startEmbeddedDaemon: async (options) => {
+            const generation = ++starts;
+            events.push(`start-${generation}`);
+            const handle = await start(options);
+            return {
+              ...handle,
+              tmuxAuthorityReplaced: async () => generation === 2,
+              stop: async () => {
+                events.push(`stop-${generation}`);
+                if (generation === 1) await retired.promise;
+              },
+            };
+          },
         },
-      },
-    );
-    try {
-      await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
-      expect(harness.startOptions[0]?.requestRestart).toBeTypeOf("function");
-      const restarting = harness.startOptions[0]!.requestRestart!({
-        enabled: true,
-        bindHostname: "0.0.0.0",
-        token: "test-remote-token",
-        port: 4321,
-      });
-      await vi.waitFor(() => expect(events).toContain("stop-1"));
-      expect(starts).toBe(1);
-      retired.resolve();
-      await restarting;
-      await vi.waitFor(() => expect(starts).toBe(3), { timeout: 2500 });
-      expect(events.slice(0, 5)).toEqual(["start-1", "stop-1", "start-2", "stop-2", "start-3"]);
-      for (const options of harness.startOptions.slice(1)) {
-        expect(options).toMatchObject({
-          port: 4321,
+      );
+      try {
+        await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
+        expect(harness.startOptions[0]?.requestRestart).toBeTypeOf("function");
+        const restarting = harness.startOptions[0]!.requestRestart!({
+          ...(kind === "runtime" ? { kind: "runtime" as const } : { enabled: true }),
           bindHostname: "0.0.0.0",
-          authToken: "test-remote-token",
-          restoreTmuxWorkspaces: true,
+          token: "test-remote-token",
+          port: 4321,
         });
+        await vi.waitFor(() => expect(events).toContain("stop-1"));
+        expect(starts).toBe(1);
+        retired.resolve();
+        await restarting;
+        await vi.waitFor(() => expect(starts).toBe(3), { timeout: 2500 });
+        expect(events.slice(0, 5)).toEqual(["start-1", "stop-1", "start-2", "stop-2", "start-3"]);
+        for (const options of harness.startOptions.slice(1)) {
+          expect(options).toMatchObject({
+            port: 4321,
+            bindHostname: "0.0.0.0",
+            authToken: "test-remote-token",
+            restoreTmuxWorkspaces: true,
+          });
+        }
+      } finally {
+        retired.resolve();
+        harness.signals.get("SIGTERM")?.();
+        await running;
       }
-    } finally {
-      retired.resolve();
-      harness.signals.get("SIGTERM")?.();
-      await running;
-    }
-    expect(events.at(-1)).toBe("stop-3");
-    expect(harness.signals.size).toBe(0);
+      expect(events.at(-1)).toBe("stop-3");
+      expect(harness.signals.size).toBe(0);
+    },
+  );
+
+  it("ignores a deferred runtime restart after the foreground owner was stopped", async () => {
+    const harness = createHarness();
+    const running = runHeadlessDaemon({}, harness.deps);
+    await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
+    const deferredRestart = harness.startOptions[0]!.requestRestart!;
+    harness.signals.get("SIGTERM")?.();
+    await expect(running).resolves.toBe("stopped");
+    await deferredRestart({
+      kind: "runtime",
+      bindHostname: "0.0.0.0",
+      token: "retained-token",
+      port: 4321,
+    });
+    expect(harness.startOptions).toHaveLength(1);
   });
 
   it.each(["signal", "failure"] as const)(
