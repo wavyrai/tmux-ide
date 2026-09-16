@@ -12,18 +12,21 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { discoverDevelopmentWorktree, resolveDevelopmentInstance } from "./development-instance.ts";
+import {
+  discoverDevelopmentWorktree,
+  resolveDevelopmentInstance,
+} from "../lib/development-instance.ts";
 import {
   developmentNamespaceEnvironment,
   developmentChildEnvironment,
   resolveRuntimeNamespace,
   runtimeTmuxArgs,
-} from "./runtime-namespace.ts";
-import { appConfigPath, getAppConfig } from "./app-config.ts";
-import { appSettingsPath } from "./app-settings.ts";
-import { savedMachinesPath } from "./saved-machines.ts";
-import { updateCachePath, maybeCheckForUpdate, runUpdateCheck } from "./update-check.ts";
-import { claudeDir, syncSkill } from "./skill-sync.ts";
+} from "../lib/runtime-namespace.ts";
+import { appConfigPath, getAppConfig } from "../lib/app-config.ts";
+import { appSettingsPath } from "../lib/app-settings.ts";
+import { savedMachinesPath } from "../lib/saved-machines.ts";
+import { updateCachePath, maybeCheckForUpdate, runUpdateCheck } from "../lib/update-check.ts";
+import { claudeDir, syncSkill } from "../lib/skill-sync.ts";
 import {
   hookScriptPath,
   claudeSettingsPath,
@@ -35,8 +38,8 @@ import {
   findCompiledTui,
   openTuiLaunchEnvironment,
 } from "../tui/compiled.ts";
-import { resolveWorkspacePaneTmuxAuthority } from "./workspace-pane-creation.ts";
-import { loadTerminals, upsertTerminal } from "./terminals-store.ts";
+import { resolveWorkspacePaneTmuxAuthority } from "../lib/workspace-pane-creation.ts";
+import { loadTerminals, upsertTerminal } from "../lib/terminals-store.ts";
 
 const roots: string[] = [];
 function fixture() {
