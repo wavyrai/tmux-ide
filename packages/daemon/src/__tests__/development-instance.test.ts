@@ -228,7 +228,7 @@ it("suppresses global side effects and rejects unqualified artifact fallback", a
     "-S",
     "-1",
   ]);
-  expect(resolveWorkspacePaneTmuxAuthority().socketSelector).toEqual(namespace.tmuxSocket);
+  expect(() => resolveWorkspacePaneTmuxAuthority()).toThrow("build manifest");
 });
 
 it("rejects existing config/catalog/integration symlinks and namespace-changing child overlays", () => {

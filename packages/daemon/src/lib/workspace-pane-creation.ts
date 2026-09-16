@@ -220,6 +220,7 @@ function assertEffectiveConfigProvenance(
 }
 
 function resolveTmuxExecutable(): string {
+  if (resolveRuntimeNamespace().development) return resolveBundledTmux()!;
   const configured = process.env.TMUX_IDE_TMUX_BIN;
   if (!configured) {
     const bundled = resolveBundledTmux();

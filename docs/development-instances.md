@@ -250,3 +250,52 @@ invalid bundles, PID reuse and interrupted operations. Test macOS/Linux separate
 unsupported platforms stay explicit. Docker/SSH/service fixtures extend this
 contract later; neither a container nor this native namespace is evidence of
 hostile-code containment or measured performance improvement.
+
+## D03 build API (implemented; lifecycle commands remain planned)
+
+`pnpm exec tsx scripts/development-build.ts --bun /absolute/path/to/bun
+[--worktree /absolute/tree] [--store /absolute/private/store] [--name name]`
+produces a JSON manifest. Bun must match `.bun-version`; CI and release builds
+use that same file. Prepare frozen dependencies and a qualified host native tmux
+bundle in that worktree first. This command neither installs dependencies nor
+fetches a native bundle. It does not start an instance or implement `dev:instance`.
+
+The manager hashes Git-visible relevant inputs, including untracked source,
+records HEAD, dirty status, lockfile, package versions, selected Node ABI and Bun
+identity, and checks source consistency again before publication. It builds CLI
+and TUI into a private staging directory. The CLI's resolved external package
+closure is copied with generation-local links, retaining native dependencies;
+templates, skill and qualified native tmux assets are copied alongside it. It
+verifies a native PTY, CLI startup, compiled TUI provenance and macOS code signing.
+The entire generation payload, including root dependency links, is hashed before
+an atomic `build.json` replacement. No worktree `bin/cli.js` or TUI output is
+replaced. Compiler/store caches are inputs; runtime dependencies are private
+snapshots. Existing prepared native bundles are hash-validated inputs; this stage
+does not rebuild tmux from C sources.
+
+Build and publication locks use private directories and random owner tokens.
+Admission waits at most 30 seconds; unknown locks are never deleted by PID guess.
+Individual compiler/qualification subprocesses have a five-minute deadline and
+are killed on cancellation (the direct owned process, not arbitrary detached
+descendants). Source/dependency copy budgets cap files and bytes.
+Failed builds remove only their own staging generation and leave the last good
+pointer and artifacts intact. Interrupted-process stale-lock recovery and old
+artifact collection belong to the managed lifecycle stages.
+
+Runtime selection verifies the instance tuple, host, payload and selected Node
+executable. The compiler Bun path/hash is provenance, not a runtime dependency;
+the compiled TUI embeds Bun. Child launch pins carry both generation and manifest
+hash, so rebuilding does not redirect an already selected generation. Source
+edits alone do not revoke the last good build. A changed/missing Node executable
+requires rebuilding; external system libraries remain host prerequisites.
+Missing manifests, sibling paths, changed artifacts or incompatible hosts fail
+without installed/source/download fallback. Legacy UI commands that invoke an
+unqualified global CLI and automatic detached daemon bootstrap remain explicitly
+disabled in development until the managed lifecycle supplies exact launches.
+
+A local macOS arm64 qualification measured a full cold selection at about 217 ms
+and process RSS rising from 88 to 96 MiB, with one reusable 64 KiB hash buffer.
+These are local verification costs, not a startup or rendering speedup claim.
+Selection performs full verification; callers should reuse the verified launch
+or daemon authority at their existing construction boundary, not reverify on a
+rendering tick.

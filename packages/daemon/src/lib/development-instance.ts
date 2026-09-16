@@ -21,6 +21,9 @@ export function discoverDevelopmentWorktree(cwd: string): string {
   return realpathSync(
     execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
       encoding: "utf8",
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+      ),
       timeout: 2000,
       maxBuffer: 64 * 1024,
     }).trim(),

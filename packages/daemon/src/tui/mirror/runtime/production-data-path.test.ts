@@ -352,6 +352,11 @@ describe("production OpenTUI v2 data path", () => {
     expect(
       productionGraph.sourceByFile.get("packages/daemon/src/lib/runtime-namespace.ts"),
     ).not.toMatch(/\b(?:execFileSync|discoverDevelopmentWorktree)\s*\(/u);
+    // Build tooling and exact artifact selection remain outside the renderer's authority graph.
+    expect(authorityDataPathFiles).not.toContain(
+      "packages/daemon/src/lib/development-build-manager.ts",
+    );
+    expect(authorityDataPathFiles).not.toContain("packages/daemon/src/lib/development-build.ts");
     expect(authorityDataPathFiles.length).toBeLessThanOrEqual(149);
   });
 });

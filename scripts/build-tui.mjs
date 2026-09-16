@@ -42,6 +42,9 @@ import { contractsInitializerPurityPlugin } from "./lib/contracts-initializer-pu
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
+const pinnedBun = readFileSync(resolve(repoRoot, ".bun-version"), "utf8").trim();
+if (Bun.version !== pinnedBun)
+  throw new Error(`[build-tui] requires Bun ${pinnedBun}; received ${Bun.version}`);
 const scrollLibraryArg = process.argv.indexOf("--experimental-scroll-library");
 let scrollLibrary = scrollLibraryArg === -1 ? null : process.argv[scrollLibraryArg + 1];
 const releaseManifestArg = process.argv.indexOf("--release-scroll-manifest");

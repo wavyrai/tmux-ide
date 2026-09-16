@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 import { compareProductVersions } from "./semver.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { resolve } from "node:path";
@@ -55,6 +56,12 @@ export interface CanonicalDaemonBootstrapDependencies {
 }
 
 function spawnOwner(entryPath: string, cwd: string): Promise<void> {
+  if (resolveRuntimeNamespace().development)
+    return Promise.reject(
+      new Error(
+        "Development owner startup requires the managed instance lifecycle; automatic detached bootstrap is disabled",
+      ),
+    );
   return new Promise((resolveSpawn, reject) => {
     let child: ChildProcess;
     try {

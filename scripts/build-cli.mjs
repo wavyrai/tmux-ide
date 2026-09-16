@@ -33,11 +33,19 @@ import { contractsInitializerPurityPlugin } from "./lib/contracts-initializer-pu
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 const entry = resolve(repoRoot, "bin", "cli.ts");
-const outfile = resolve(repoRoot, "bin", "cli.js");
+const outputIndex = process.argv.indexOf("--outfile");
+if (outputIndex !== -1 && !process.argv[outputIndex + 1])
+  throw new Error("--outfile requires a path");
+const outfile =
+  outputIndex === -1 ? resolve(repoRoot, "bin", "cli.js") : resolve(process.argv[outputIndex + 1]);
+const metadataIndex = process.argv.indexOf("--metafile");
+if (metadataIndex !== -1 && !process.argv[metadataIndex + 1])
+  throw new Error("--metafile requires a path");
 
 mkdirSync(dirname(outfile), { recursive: true });
 
-await build({
+const result = await build({
+  metafile: metadataIndex !== -1,
   entryPoints: [entry],
   outfile,
   bundle: true,
@@ -90,6 +98,11 @@ await build({
   sourcemap: false,
   minify: false,
 });
+
+if (metadataIndex !== -1)
+  writeFileSync(resolve(process.argv[metadataIndex + 1]), JSON.stringify(result.metafile), {
+    mode: 0o600,
+  });
 
 // Some bundled CommonJS dependencies contain literal C0 bytes inside string
 // constants. They are valid JavaScript, but make git treat the generated CLI

@@ -1,3 +1,4 @@
+import { readDevelopmentBuild, developmentBuildLaunch } from "../lib/development-build.ts";
 import {
   resolveRuntimeNamespace,
   developmentChildEnvironment,
@@ -72,6 +73,7 @@ export function hasDevelopmentTuiSource(
   scriptPath: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): boolean {
+  if (resolveRuntimeNamespace({ env: environment }).development) return false;
   if (!existsSync(scriptPath)) return false;
   if (environment.TMUX_IDE_TUI_SOURCE === "1") return true;
   // A dependency can itself be installed inside another pnpm workspace. Do
@@ -115,6 +117,13 @@ export function openTuiLaunchEnvironment(
       resolved.runtimeDir !== namespace.runtimeDir
     )
       throw new Error("Development TUI overlay changed namespace authority");
+    const build = readDevelopmentBuild(namespace.development, inherited);
+    for (const [key, value] of Object.entries(developmentBuildLaunch(build).environment)) {
+      if (overlay[key] !== undefined && overlay[key] !== value)
+        throw new Error("Development TUI overlay changed build authority");
+      environment[key] = value;
+    }
+    if (overlay.TMUX_IDE_TUI_SOURCE) throw new Error("Development source fallback is disabled");
     delete environment.NO_COLOR;
     return { ...environment, COLORTERM: "truecolor" };
   }
@@ -140,8 +149,13 @@ export async function ensureTuiLaunchAvailable(
   input: TuiResolveInput,
   options: TuiLaunchAcquisitionOptions = {},
 ): Promise<TuiLaunch> {
-  if (resolveRuntimeNamespace().development)
-    throw new Error("Development TUI launch requires an exact build manifest (D03)");
+  const namespace = resolveRuntimeNamespace();
+  if (namespace.development)
+    return {
+      mode: "binary",
+      bin: readDevelopmentBuild(namespace.development).tui,
+      argv: [input.surface, ...input.args],
+    };
   const current = resolveTuiLaunch(input);
   if (current.mode !== "unavailable") return current;
 
@@ -215,8 +229,8 @@ const BINARY_RELS = [
  * module-relative candidates. Returns null when none exists.
  */
 export function findCompiledTui(): string | null {
-  if (resolveRuntimeNamespace().development)
-    throw new Error("Development TUI selection requires an exact build manifest (D03)");
+  const namespace = resolveRuntimeNamespace();
+  if (namespace.development) return readDevelopmentBuild(namespace.development).tui;
   const override = process.env.TMUX_IDE_TUI_BIN;
   if (override) return existsSync(override) ? override : null;
 
