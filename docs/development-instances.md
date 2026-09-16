@@ -1,6 +1,6 @@
 # Development-instance architecture contract
 
-Status: **namespace, isolated builds, native lifecycle, and diagnostics implemented** (D02–D06). This document also records the remaining design contract for
+Status: **namespace, isolated builds, lifecycle, diagnostics, and explicit build activation implemented** (D02–D07). This document also records the remaining design contract for
 [Isolated Worktree Development and Remote Fixtures](https://www.sfora.ai/org/wavyr/notes/mx7agc0d3fqgmy35jfds23vexx8egvm3).
 The command table includes planned later operations; only the commands explicitly
 listed in the implementation sections below exist today. Existing `test`,
@@ -190,9 +190,11 @@ qualification in status. Reuse existing builders and provenance checks, adding
 output parameters/staging where needed. Never install globally or download a TUI
 as recovery. Verify the full candidate before atomically replacing `build.json`;
 failed builds preserve the previous runnable generation. Retain artifacts used by
-live owners. A changed source digest makes status stale; `app/up` must refuse a
-stale selected build with a rebuild instruction unless an explicit recorded-build
-selection is added later. Already running owners are reported, not silently replaced.
+live owners. Source edits do not revoke verified immutable generations: `app/up`
+may continue using the recorded build. Explicit diagnostics computes source
+freshness on demand; launch and status do not hash source automatically. Rebuild
+publishes a new selection, and explicit activation replaces an owner. Already
+running owners are reported, not silently replaced.
 
 ## Proposed command semantics
 
@@ -217,8 +219,8 @@ startup timeout and unsupported platform. No command exists merely by this table
 | `pnpm dev:instance reset --yes`           | Require stopped, verified instance with no live/unknown owner or build. Delete only that instance's state/artifacts/logs/runtime and record; never stop running work implicitly or delete a broad store root. New up creates fresh capability/state after rebuilding.                                                                                                     |
 
 New-code activation is deliberately separate from same-version restart. D07 implements
-`rebuild` followed by `restart --apply-build`; until then the latter reports an
-unsupported operation, never falls back to runtime reset. The instance lifecycle
+`rebuild` followed by `restart --apply-build`; code activation never falls back
+to same-process runtime reset. The instance lifecycle
 owner, not an arbitrary detached replacement, owns this transition. Preserve a
 replacement receipt and the prior artifact on failure; report stopped/failed
 truthfully rather than claiming the new build is running. Existing clients must
@@ -344,8 +346,8 @@ prevent replay from overwriting an existing owner. D05 prunes consumed receipts 
 artifacts remain until explicit reset or a future garbage-collection stage.
 
 The D05 operations below extend this lifecycle. D06 implements a bounded `logs`
-snapshot. The public `rebuild` shortcut and `restart --apply-build` remain planned. Do not use broad process-name or socket-directory
-cleanup to emulate them. The opt-in two-worktree qualification harness performs
+snapshot. D07 adds the public `rebuild` and `restart --apply-build` operations below.
+Do not use broad process-name or socket-directory cleanup to emulate lifecycle operations. The opt-in two-worktree qualification harness performs
 only authenticated, process-incarnation/socket-fenced cleanup of its explicitly
 supplied scratch instances. Linux qualification remains separate from the macOS
 acceptance evidence; this stage does not claim equivalent testing on both hosts.
@@ -374,7 +376,7 @@ tree, including a different checkout now occupying its old pathname.
 
 Restart uses the current owner credential and runtime UUID fence, then verifies
 a new UUID in the same process/incarnation and active build. It does not load
-newly built code; `--apply-build` fails explicitly until D07. Stops are idempotent.
+newly built code; D07 `--apply-build` is the separate code-replacement operation. Stops are idempotent.
 Full stop uses the exact recorded tmux socket, executable, process incarnation
 and server capability; the destructive tmux command also checks server PID and
 capability on its own connection. Daemon-only stop preserves those pane/server
@@ -419,7 +421,7 @@ execution remains a separate qualification gate.
 
 Lifecycle JSON failures contain a manager-authored `operation` and allowlisted
 `reason` (for example `confirmation-required`, `app-live`, `owner-unverified`,
-`lock-unavailable`, or `unsupported-apply-build`). Stored-ID selection failures
+`lock-unavailable`, `activation-failed`, or `tmux-restart-required`). Stored-ID selection failures
 also remain JSON with `identity-unavailable`. They never forward arbitrary raw
 exceptions or credentials. A startup receipt path is included only when that
 `up` operation wrote it; reset/down/restart refusals do not point at stale startup
@@ -460,8 +462,8 @@ Names are reduced to bounded printable ASCII for terminal presentation; the
 full identity remains in the explicit command output.
 
 ```sh
-pnpm dev:instance diagnostics --json
-pnpm dev:instance logs --json
+pnpm --silent dev:instance diagnostics --json
+pnpm --silent dev:instance logs --json
 # Both also accept --name/--worktree/--store, or verified stored --id.
 ```
 
@@ -502,3 +504,60 @@ create workspaces, or enable performance tracing. Existing owner logging keeps
 its asynchronous bounded queue and 1 MiB disk rotation; a failed or slow disk
 sink cannot stall terminal input. Source hashing runs in the explicit manager
 command, with its existing source size budget and a cancellation deadline.
+
+## Explicit rebuild and build activation (D07)
+
+```sh
+pnpm --silent dev:instance rebuild --bun /absolute/path/to/pinned/bun --json
+pnpm --silent dev:instance restart --apply-build --json
+# After a failed replacement, deliberately select the last recorded ready build:
+pnpm --silent dev:instance restart --apply-build --previous --json
+```
+
+Use `--silent` when parsing pnpm-wrapped JSON; the manager emits one document but
+pnpm's ordinary script banner is separate output. The first rebuild requires
+`--bun`; later rebuilds may reuse the compiler path in the selected manifest.
+That path is still checked against `.bun-version`. Keep the manager Node ABI and
+PATH consistent with the qualified build as described above.
+
+Rebuild stages/qualifies/publishes an immutable generation. Its receipt compares
+actual CLI, TUI, dependency and native asset hashes against the previously
+selected build and reports the selected and active daemon pins separately.
+It does not restart any process. No file watcher triggers activation.
+
+`restart --apply-build` validates source identity, namespace, selected artifact,
+prior owner and existing tmux authority before stopping. One lifecycle lock
+serializes retirement and startup; build publication uses build→lifecycle order.
+The replacement launches the exact pinned Node/CLI generation through canonical
+claim/authenticated readiness. Existing local clients rediscover the descriptor,
+reconnect and retain their own TUI code. Close and reopen each app to load a new
+TUI generation. Descriptor publication may briefly precede readiness: an observed
+replacement with absent discovery or an explicit pre-promotion daemon/routing
+unavailability (without an operation ID or error code) receives at most eight retries with
+250 ms–2 s delays (about 12 seconds total). Disposal, offline authority or a newer
+generation cancels the old retry. Typed promotion refusals and coded transport
+failures are not retried;
+recovery beyond this window requires an explicit reopen. Plain `restart` remains
+the same-process runtime reset.
+
+An existing tmux server keeps its original generation/executable provenance.
+If its tmux bundle differs from the candidate, activation refuses with
+`tmux-restart-required`; explicit full `down` then `up` is required and stops pane
+work. Compatible daemon replacement preserves the server, socket and pane PIDs.
+
+Private `activation.json` and public status/diagnostics retain operation ID,
+transition phase, exact target and previous verified ready build pins, runtime
+UUIDs/PIDs and tmux generation. A failed activation can leave the daemon stopped;
+it never reports automatic rollback. `--previous` verifies and explicitly
+activates the prior ready pin recorded by the transition, including recovery
+from a stopped failed attempt. It does not rewrite build publication. If the
+prior artifact, source identity, runtime lease or native toolchain cannot be
+verified, recovery refuses. Unknown or reused process owners remain protected.
+
+Build failures leave published artifacts and running processes untouched. The
+public allowlisted failure points to private `build-receipt.json` with phase and
+operation ID; `logs/build.log` retains bounded compiler details (64 KiB disk and
+queue limits). It is private, may contain compiler source/error text, and is
+excluded from support `logs`/`diagnostics` exports. Diagnostic sink failure never
+changes a failed build into success. A subsequent failed build replaces the
+receipt; immutable successful manifests remain the generation receipts.

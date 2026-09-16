@@ -38,7 +38,7 @@ await assert.rejects(
       throw new Error("injected publication failure");
     },
   }),
-  /injected publication/,
+  /Build failed during publication/,
 );
 assert.equal(readFileSync(join(firstInstance.root, "build.json"), "utf8"), pointer);
 assert.equal(readDevelopmentBuild(firstInstance, {}).generation, original.generation);
@@ -51,7 +51,7 @@ try {
         writeFileSync(raceInput, "export const changed = true;\n", { flag: "wx" });
       },
     }),
-    /Worktree changed before publication/,
+    /Build failed during publication/,
   );
 } finally {
   rmSync(raceInput, { force: true });

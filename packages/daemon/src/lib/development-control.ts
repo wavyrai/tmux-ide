@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   claimDevelopmentRuntimeOwner,
   verifyDevelopmentRuntimeOwner,
@@ -19,14 +20,22 @@ import {
   ownerBuildEnvironment,
   cleanManagerEnvironment,
   writeDevelopmentRecord,
+  readDevelopmentActivation,
+  type DevelopmentActivationReceipt,
   type DevelopmentOwnerRecord,
 } from "./development-state.ts";
-import { readDevelopmentBuild } from "./development-build.ts";
+import {
+  readDevelopmentBuild,
+  developmentBuildLaunch,
+  developmentTreeHash,
+} from "./development-build.ts";
 import {
   readTmux,
   verifyTmux,
   socketIdentity,
   statusDevelopmentInstance,
+  startDevelopmentInstanceUnderLock,
+  developmentOwnerEnvironment,
 } from "./development-lifecycle.ts";
 import { revalidateUnixSocketIdentity } from "./unix-socket-authority.ts";
 import { boundedTmuxRead } from "./bounded-tmux-read.ts";
@@ -144,13 +153,11 @@ async function ownedProcess(instance: DevelopmentInstance) {
 }
 export async function restartDevelopmentInstance(
   instance: DevelopmentInstance,
-  options: { applyBuild?: boolean } = {},
+  options: { applyBuild?: boolean; previous?: boolean } = {},
 ) {
+  if (options.previous && !options.applyBuild) throw new Error("--previous requires --apply-build");
   if (options.applyBuild)
-    throw new DevelopmentOperationError(
-      "unsupported-apply-build",
-      "--apply-build is not implemented; restart resets the currently loaded runtime only",
-    );
+    return activateDevelopmentInstance(instance, { previous: options.previous });
   return withDevelopmentLock(instance, "lifecycle", async () => {
     await requireIdentity(instance);
     const owner = await ownedProcess(instance);
@@ -342,4 +349,150 @@ export async function resetDevelopmentInstance(
       return { instanceId: instance.id, status: "reset" as const };
     }),
   );
+}
+
+/** One serialized stop/start transition; build publication/reset contend on the same lifecycle lock. */
+export async function activateDevelopmentInstance(
+  instance: DevelopmentInstance,
+  options: {
+    previous?: boolean;
+    /** Isolated test injection after proven old-owner retirement; never exposed as an environment flag. */
+    afterStop?: () => void | Promise<void>;
+  } = {},
+) {
+  return withDevelopmentLock(instance, "lifecycle", async () => {
+    // Source/namespace validation is required by startup and must precede any retirement.
+    let identity;
+    try {
+      identity = await readDevelopmentIdentity(instance);
+    } catch {
+      throw new DevelopmentOperationError(
+        "identity-unavailable",
+        "Source worktree identity is missing or changed; activation refused before stop",
+      );
+    }
+    if (!identity)
+      throw new DevelopmentOperationError(
+        "identity-unavailable",
+        "Activation requires an initialized source instance",
+      );
+    if (!verifyDevelopmentRuntimeOwner(instance, identity))
+      throw new DevelopmentOperationError("owner-unverified", "Runtime ownership is unavailable");
+    const owner = await ownedProcess(instance);
+    const before = await statusDevelopmentInstance(instance, { allowOrphan: true });
+    if (before.state !== "ready" && before.state !== "stopped")
+      throw new DevelopmentOperationError(
+        "owner-unverified",
+        "Activation requires a ready or verified stopped owner",
+      );
+    const priorReceipt = readDevelopmentActivation(instance);
+    const previous = options.previous ? priorReceipt?.previous : null;
+    if (options.previous && !previous)
+      throw new DevelopmentOperationError(
+        "previous-build-unavailable",
+        "No verified previous ready artifact is recorded",
+      );
+    const target = readDevelopmentBuild(
+      instance,
+      previous
+        ? {
+            TMUX_IDE_DEVELOPMENT_BUILD: previous.generation,
+            TMUX_IDE_DEVELOPMENT_BUILD_HASH: previous.manifestHash,
+          }
+        : {},
+    );
+    if (!target.capabilities?.includes("managed-development-owner-v1"))
+      throw new Error("Target lacks managed-owner capability");
+    developmentOwnerEnvironment(instance, identity, target);
+    validateDevelopmentDirectory(join(instance.root, "logs"), instance.store);
+    const launch = developmentBuildLaunch(target);
+    const targetPin = {
+      generation: target.generation,
+      manifestHash: launch.environment.TMUX_IDE_DEVELOPMENT_BUILD_HASH!,
+    };
+    if (owner && before.activeBuild?.generation === target.generation)
+      return { ...before, transition: "build-already-active" as const };
+    const tmux = readTmux(instance);
+    if (tmux && (await developmentProcessIdentity(tmux.pid)) !== null) {
+      await verifyTmux(instance, identity, tmux, cleanManagerEnvironment());
+      const tmuxBuild = readDevelopmentBuild(instance, {
+        TMUX_IDE_DEVELOPMENT_BUILD: tmux.generation,
+        TMUX_IDE_DEVELOPMENT_BUILD_HASH: tmux.manifestHash,
+      });
+      const bundle = (assets: string) =>
+        join(assets, "tmux", `${process.platform}-${process.arch}`);
+      if (
+        developmentTreeHash(bundle(tmuxBuild.assets)) !== developmentTreeHash(bundle(target.assets))
+      )
+        throw new DevelopmentOperationError(
+          "tmux-restart-required",
+          "The tmux native bundle changed; full down/up is required and will stop pane work",
+        );
+    }
+    const receipt: DevelopmentActivationReceipt = {
+      version: 1,
+      operationId: randomUUID(),
+      phase: "prepared",
+      target: targetPin,
+      previous:
+        owner && before.state === "ready"
+          ? { generation: owner.generation, manifestHash: owner.manifestHash }
+          : (priorReceipt?.previous ?? null),
+      previousRuntime: before.daemon
+        ? { pid: before.daemon.pid, instanceId: before.daemon.instanceId }
+        : null,
+      readyRuntime: null,
+      tmux: tmux && before.tmux ? { pid: tmux.pid, generation: tmux.generation } : null,
+    };
+    const path = join(instance.root, "activation.json");
+    writeDevelopmentRecord(path, receipt);
+    let phase: "stopping" | "starting" | "verification" = "stopping";
+    try {
+      receipt.phase = "stopping";
+      writeDevelopmentRecord(path, receipt);
+      await stopOwner(instance);
+      await inspectOwner(instance, null);
+      retireAdmission(instance);
+      phase = "starting";
+      receipt.phase = "starting";
+      writeDevelopmentRecord(path, receipt);
+      await options.afterStop?.();
+      const after = await startDevelopmentInstanceUnderLock(instance, { buildPin: targetPin });
+      phase = "verification";
+      if (
+        after.state !== "ready" ||
+        after.activeBuild?.generation !== target.generation ||
+        !after.daemon ||
+        after.daemon.pid === before.daemon?.pid ||
+        after.daemon.instanceId === before.daemon?.instanceId
+      )
+        throw new Error("Replacement identity/build was not verified");
+      if (tmux && before.tmux) {
+        if (JSON.stringify(readTmux(instance)) !== JSON.stringify(tmux))
+          throw new Error("Tmux provenance changed during activation");
+        await verifyTmux(instance, identity, tmux, cleanManagerEnvironment());
+      }
+      receipt.phase = "ready";
+      receipt.readyRuntime = { pid: after.daemon.pid, instanceId: after.daemon.instanceId };
+      writeDevelopmentRecord(path, receipt);
+      return {
+        ...after,
+        activation: receipt,
+        transition: options.previous
+          ? ("previous-build-activated" as const)
+          : ("build-activated" as const),
+        tuiRelaunch:
+          "Existing clients keep their launch-time TUI build; close/reopen app to replace TUI code",
+      };
+    } catch {
+      receipt.phase = "failed";
+      receipt.failurePhase = phase;
+      writeDevelopmentRecord(path, receipt);
+      throw new DevelopmentOperationError(
+        "activation-failed",
+        "Activation failed; inspect status and activation.json. Use restart --apply-build --previous for explicit known-good recovery",
+        path,
+      );
+    }
+  });
 }

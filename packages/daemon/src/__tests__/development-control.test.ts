@@ -127,7 +127,7 @@ it("selects an orphan only from its stored tuple and resets payload without dele
   expect(await selectRecordedDevelopmentInstance(instance.id, instance.store)).toEqual(orphan);
   await resetDevelopmentInstance(orphan, { yes: true });
 });
-it("protects a reused live PID and rejects unsupported code activation", async () => {
+it("protects a reused live PID across lifecycle actions", async () => {
   const { instance } = await fixture();
   writeDevelopmentRecord(join(instance.root, "owner.json"), {
     version: 1,
@@ -140,7 +140,7 @@ it("protects a reused live PID and rejects unsupported code activation", async (
   await expect(downDevelopmentInstance(instance)).rejects.toThrow("reused");
   await expect(resetDevelopmentInstance(instance, { yes: true })).rejects.toThrow("reused");
   await expect(restartDevelopmentInstance(instance, { applyBuild: true })).rejects.toThrow(
-    "not implemented",
+    "Runtime ownership is unavailable",
   );
 });
 it("holds build then lifecycle through reset so a publisher cannot lose its generation", async () => {
@@ -286,7 +286,7 @@ it("returns action-specific CLI JSON for live apps, confirmation and missing sto
   });
   expect(rejected(["restart", "--worktree", instance.worktree, "--apply-build"])).toMatchObject({
     operation: "restart",
-    reason: "unsupported-apply-build",
+    reason: "owner-unverified",
   });
   const attempt = randomUUID();
   mkdirSync(join(instance.root, "apps"), { mode: 0o700 });
@@ -315,4 +315,19 @@ it("returns action-specific CLI JSON for live apps, confirmation and missing sto
       developmentFailureResult("down", new Error("Bearer credential-must-not-leak"), instance),
     ),
   ).not.toContain("credential-must-not-leak");
+});
+
+it("refuses missing/replaced worktree activation before publishing a transition", async () => {
+  const { instance } = await fixture();
+  renameSync(instance.worktree, `${instance.worktree}-moved`);
+  await expect(restartDevelopmentInstance(instance, { applyBuild: true })).rejects.toMatchObject({
+    reason: "identity-unavailable",
+  });
+  expect(existsSync(join(instance.root, "activation.json"))).toBe(false);
+  mkdirSync(instance.worktree);
+  execFileSync("git", ["init", "--quiet", instance.worktree]);
+  await expect(restartDevelopmentInstance(instance, { applyBuild: true })).rejects.toMatchObject({
+    reason: "identity-unavailable",
+  });
+  expect(existsSync(join(instance.root, "activation.json"))).toBe(false);
 });

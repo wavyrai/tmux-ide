@@ -1,4 +1,13 @@
 import {
+  buildDevelopmentInstance,
+  developmentBuildChanges,
+} from "../packages/daemon/src/lib/development-build-manager.ts";
+import {
+  readDevelopmentBuild,
+  developmentBuildLaunch,
+  type DevelopmentBuildManifest,
+} from "../packages/daemon/src/lib/development-build.ts";
+import {
   developmentDiagnostics,
   developmentLogs,
 } from "../packages/daemon/src/lib/development-diagnostics.ts";
@@ -36,6 +45,8 @@ const { positionals, values } = parseArgs({
     yes: { type: "boolean" },
     "daemon-only": { type: "boolean" },
     "apply-build": { type: "boolean" },
+    previous: { type: "boolean" },
+    bun: { type: "string" },
     name: { type: "string" },
     store: { type: "string" },
     worktree: { type: "string" },
@@ -44,18 +55,27 @@ const { positionals, values } = parseArgs({
 const command = positionals[0];
 if (
   positionals.length !== 1 ||
-  !["up", "app", "status", "list", "restart", "down", "reset", "diagnostics", "logs"].includes(
-    command ?? "",
-  )
+  ![
+    "up",
+    "app",
+    "status",
+    "list",
+    "restart",
+    "down",
+    "reset",
+    "diagnostics",
+    "logs",
+    "rebuild",
+  ].includes(command ?? "")
 )
   throw new Error(
-    "Usage: pnpm dev:instance up|app|status|list|restart|down|reset|diagnostics|logs [--json] [--id id | --name name --worktree path] [--store absolute-path]",
+    "Usage: pnpm dev:instance up|app|status|list|restart|down|reset|diagnostics|logs|rebuild [--json] [--id id | --name name --worktree path] [--store absolute-path]",
   );
 if (
   values.id &&
   (values.name !== undefined ||
     values.worktree !== undefined ||
-    ["up", "app", "list"].includes(command!))
+    ["up", "app", "list", "rebuild"].includes(command!))
 )
   throw new Error(
     "--id selects a stored instance only for status/restart/down/reset/diagnostics/logs; it cannot combine with --name/--worktree",
@@ -63,7 +83,9 @@ if (
 if (
   (values["daemon-only"] && command !== "down") ||
   (values.yes && command !== "reset") ||
-  (values["apply-build"] && command !== "restart")
+  (values["apply-build"] && command !== "restart") ||
+  (values.previous && (command !== "restart" || !values["apply-build"])) ||
+  (values.bun && command !== "rebuild")
 )
   throw new Error("Lifecycle option does not apply to this command");
 let selectedInstance: DevelopmentInstance | undefined;
@@ -90,6 +112,47 @@ try {
         ? await developmentDiagnostics(instance)
         : await developmentLogs(instance);
     process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else if (command === "rebuild") {
+    let previousBuild: DevelopmentBuildManifest | null = null;
+    try {
+      previousBuild = readDevelopmentBuild(instance, {});
+    } catch {
+      /* First build or unavailable compiler provenance. */
+    }
+    const bun = values.bun ?? previousBuild?.tools.bun;
+    if (!bun)
+      throw new DevelopmentOperationError(
+        "build-failed",
+        "rebuild requires --bun /absolute/pinned/bun for the first build",
+      );
+    let built: DevelopmentBuildManifest;
+    try {
+      built = await buildDevelopmentInstance(instance, { bun });
+    } catch (error) {
+      if (error instanceof DevelopmentOperationError) throw error;
+      throw new DevelopmentOperationError(
+        "build-failed",
+        "Build failed; current runtime was not restarted. Verify source/toolchain and --bun path",
+      );
+    }
+    const status = await statusDevelopmentInstance(instance);
+    process.stdout.write(
+      `${JSON.stringify({
+        operation: "rebuild",
+        instanceId: instance.id,
+        built: {
+          generation: built.generation,
+          manifestHash: developmentBuildLaunch(built).environment.TMUX_IDE_DEVELOPMENT_BUILD_HASH,
+          sourceDigest: built.source.digest,
+        },
+        comparedWith: previousBuild?.generation ?? null,
+        changed: developmentBuildChanges(previousBuild, built),
+        selectedBuild: status.selectedBuild,
+        activeBuild: status.activeBuild,
+        activation: "not-requested",
+        next: "restart --apply-build replaces daemon code; close/reopen app replaces TUI code; changed tmux bundle requires full down/up",
+      })}\n`,
+    );
   } else if (command === "app") {
     if (values.json)
       throw new Error("app is interactive; use status --json for an inspection receipt");
@@ -110,7 +173,10 @@ try {
   } else if (command === "restart" || command === "down" || command === "reset") {
     const result =
       command === "restart"
-        ? await restartDevelopmentInstance(instance, { applyBuild: values["apply-build"] })
+        ? await restartDevelopmentInstance(instance, {
+            applyBuild: values["apply-build"],
+            previous: values.previous,
+          })
         : command === "down"
           ? await downDevelopmentInstance(instance, { daemonOnly: values["daemon-only"] })
           : await resetDevelopmentInstance(instance, { yes: values.yes });

@@ -35,6 +35,8 @@ import {
 import { boundedTmuxRead } from "./bounded-tmux-read.ts";
 import {
   DevelopmentOperationError,
+  readDevelopmentActivation,
+  type DevelopmentActivationReceipt,
   cleanManagerEnvironment,
   developmentProcessIdentity,
   developmentWorktreeIdentity,
@@ -73,7 +75,7 @@ export const socketIdentity = (record: TmuxRecord): UnixSocketIdentity => ({
   mtimeNs: BigInt(record.socket.mtimeNs),
   birthtimeNs: BigInt(record.socket.birthtimeNs),
 });
-function childEnvironment(
+export function developmentOwnerEnvironment(
   instance: DevelopmentInstance,
   identity: DevelopmentIdentityRecord,
   build: DevelopmentBuildManifest,
@@ -141,7 +143,7 @@ export interface DevelopmentStatus {
   selectedBuild: { generation: string; sourceDigest: string } | null;
   activeBuild: { generation: string; sourceDigest: string } | null;
   daemon: { pid: number; instanceId: string; port: number; claimId: string } | null;
-  tmux: { pid: number; socket: string; keeper: string } | null;
+  tmux: { pid: number; socket: string; keeper: string; generation: string } | null;
   readiness: {
     identity: boolean;
     health: boolean;
@@ -149,6 +151,7 @@ export interface DevelopmentStatus {
     admission: unknown | null;
   };
   logs: { owner: string; startupReceipt: string };
+  activation: DevelopmentActivationReceipt | null;
 }
 export async function statusDevelopmentInstance(
   instance: DevelopmentInstance,
@@ -164,13 +167,16 @@ export async function statusDevelopmentInstance(
     daemon: null,
     tmux: null,
     readiness: { identity: false, health: false, ownerAuthenticated: false, admission: null },
+    activation: null,
     logs: {
       owner: join(instance.root, "logs/owner.log"),
       startupReceipt: join(instance.root, "startup-receipt.json"),
     },
   };
-  let phase = "instance-identity-invalid";
+  let phase = "activation-receipt-invalid";
   try {
+    status.activation = readDevelopmentActivation(instance);
+    phase = "instance-identity-invalid";
     let selected: DevelopmentBuildManifest | null = null;
     try {
       selected = readDevelopmentBuild(instance, {});
@@ -199,7 +205,12 @@ export async function statusDevelopmentInstance(
     if (tmux) {
       if ((await developmentProcessIdentity(tmux.pid)) !== null) {
         await verifyTmux(instance, identity, tmux, cleanManagerEnvironment());
-        status.tmux = { pid: tmux.pid, socket: tmux.socket.path, keeper: tmux.keeper };
+        status.tmux = {
+          pid: tmux.pid,
+          socket: tmux.socket.path,
+          keeper: tmux.keeper,
+          generation: tmux.generation,
+        };
       } else if (pathPresent(tmux.socket.path)) {
         // Read-only status accepts only the exact dead owner's leftover socket.
         if (tmux.capability !== identity.capability) throw new Error("Tmux capability mismatch");
@@ -419,173 +430,195 @@ export async function upDevelopmentInstance(
     (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 30000)
   )
     throw new Error("timeoutMs must be between 100 and 30000");
-  let phase = "lifecycle-admission";
   return withDevelopmentLock(
     instance,
     "lifecycle",
-    async () => {
-      phase = "instance-identity";
-      let identity = await readDevelopmentIdentity(instance);
-      if (!identity) {
-        if (
-          pathPresent(join(instance.stateHome, "daemon.json")) ||
-          pathPresent(join(instance.runtimeDir, "tmux.sock"))
-        )
-          throw new Error("Unowned development resources exist");
-        identity = {
-          version: 1,
-          id: instance.id,
-          digest: instance.digest,
-          worktree: instance.worktree,
-          name: instance.name,
-          capability: randomUUID(),
-          ...(await developmentWorktreeIdentity(instance)),
-        };
-        writeDevelopmentRecord(join(instance.root, "instance.json"), identity);
-      }
-      phase = "runtime-ownership";
-      claimDevelopmentRuntimeOwner(instance, identity);
-      let current = await statusDevelopmentInstance(instance);
-      const transitionDeadline = Date.now() + 3000;
-      while (current.state === "starting" && Date.now() < transitionDeadline) {
-        options.signal?.throwIfAborted();
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        current = await statusDevelopmentInstance(instance);
-      }
-      if (current.state === "ready") return current;
-      phase = current.reason ?? "existing-owner-unavailable";
-      if (current.state === "blocked" || current.state === "starting")
-        throw new Error(
-          "Existing development owner is unavailable; inspect status and logs before recovery",
-        );
-      phase = "build-validation";
-      const build = readDevelopmentBuild(instance, {});
-      if (!build.capabilities?.includes("managed-development-owner-v1"))
-        throw new Error(
-          "Rebuild this instance: selected build predates the managed development owner",
-        );
-      for (const [path, root] of [
-        [instance.stateHome, instance.store],
-        [join(instance.root, "logs"), instance.store],
-        [instance.runtimeDir, dirname(instance.runtimeDir)],
-      ] as const) {
-        validateDevelopmentDirectory(path, root);
-        mkdirSync(path, { recursive: true, mode: 0o700 });
-      }
-      const env = childEnvironment(instance, identity, build);
-      let createdTmux = false;
-      let tmux: TmuxRecord | undefined;
-      const attempt = randomUUID();
-      const launch = developmentBuildLaunch(build);
-      writeDevelopmentRecord(join(instance.root, "startup.json"), {
+    () => startDevelopmentInstanceUnderLock(instance, options),
+    options.signal,
+  );
+}
+/** Internal transition primitive: caller MUST hold this instance lifecycle lock. */
+export async function startDevelopmentInstanceUnderLock(
+  instance: DevelopmentInstance,
+  options: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    buildPin?: { generation: string; manifestHash: string };
+  } = {},
+): Promise<DevelopmentStatus> {
+  if (
+    options.timeoutMs !== undefined &&
+    (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 30000)
+  )
+    throw new Error("timeoutMs must be between 100 and 30000");
+  let phase = "instance-identity";
+  return (async () => {
+    phase = "instance-identity";
+    let identity = await readDevelopmentIdentity(instance);
+    if (!identity) {
+      if (
+        pathPresent(join(instance.stateHome, "daemon.json")) ||
+        pathPresent(join(instance.runtimeDir, "tmux.sock"))
+      )
+        throw new Error("Unowned development resources exist");
+      identity = {
+        version: 1,
+        id: instance.id,
+        digest: instance.digest,
+        worktree: instance.worktree,
+        name: instance.name,
+        capability: randomUUID(),
+        ...(await developmentWorktreeIdentity(instance)),
+      };
+      writeDevelopmentRecord(join(instance.root, "instance.json"), identity);
+    }
+    phase = "runtime-ownership";
+    claimDevelopmentRuntimeOwner(instance, identity);
+    let current = await statusDevelopmentInstance(instance);
+    const transitionDeadline = Date.now() + 3000;
+    while (current.state === "starting" && Date.now() < transitionDeadline) {
+      options.signal?.throwIfAborted();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      current = await statusDevelopmentInstance(instance);
+    }
+    if (current.state === "ready") return current;
+    phase = current.reason ?? "existing-owner-unavailable";
+    if (current.state === "blocked" || current.state === "starting")
+      throw new Error(
+        "Existing development owner is unavailable; inspect status and logs before recovery",
+      );
+    phase = "build-validation";
+    const build = readDevelopmentBuild(
+      instance,
+      options.buildPin
+        ? {
+            TMUX_IDE_DEVELOPMENT_BUILD: options.buildPin.generation,
+            TMUX_IDE_DEVELOPMENT_BUILD_HASH: options.buildPin.manifestHash,
+          }
+        : {},
+    );
+    if (!build.capabilities?.includes("managed-development-owner-v1"))
+      throw new Error(
+        "Rebuild this instance: selected build predates the managed development owner",
+      );
+    for (const [path, root] of [
+      [instance.stateHome, instance.store],
+      [join(instance.root, "logs"), instance.store],
+      [instance.runtimeDir, dirname(instance.runtimeDir)],
+    ] as const) {
+      validateDevelopmentDirectory(path, root);
+      mkdirSync(path, { recursive: true, mode: 0o700 });
+    }
+    const env = developmentOwnerEnvironment(instance, identity, build);
+    let createdTmux = false;
+    let tmux: TmuxRecord | undefined;
+    const attempt = randomUUID();
+    const launch = developmentBuildLaunch(build);
+    writeDevelopmentRecord(join(instance.root, "startup.json"), {
+      attempt,
+      generation: build.generation,
+      manifestHash: launch.environment.TMUX_IDE_DEVELOPMENT_BUILD_HASH,
+    });
+    let child: ChildProcess | undefined;
+    let startedIdentity: string | null = null;
+    try {
+      phase = "tmux-startup";
+      const startedTmux = await startTmux(instance, identity, build, env);
+      tmux = startedTmux.record;
+      createdTmux = startedTmux.created;
+      options.signal?.throwIfAborted();
+      phase = "owner-spawn";
+      child = spawn(launch.executable, [build.cli, "--development-owner"], {
+        cwd: instance.root,
+        env: { ...env, TMUX_IDE_DEVELOPMENT_ATTEMPT: attempt },
+        detached: true,
+        stdio: "ignore",
+      });
+      await new Promise<void>((resolve, reject) => {
+        child!.once("error", reject);
+        child!.once("spawn", resolve);
+      });
+      child.unref();
+      startedIdentity = await developmentProcessIdentity(child.pid!);
+      if (!startedIdentity) throw new Error("Managed owner exited before its process receipt");
+      writeDevelopmentRecord(join(instance.root, "startup-process.json"), {
+        version: 1,
         attempt,
+        pid: child.pid,
+        incarnation: startedIdentity,
         generation: build.generation,
         manifestHash: launch.environment.TMUX_IDE_DEVELOPMENT_BUILD_HASH,
       });
-      let child: ChildProcess | undefined;
-      let startedIdentity: string | null = null;
-      try {
-        phase = "tmux-startup";
-        const startedTmux = await startTmux(instance, identity, build, env);
-        tmux = startedTmux.record;
-        createdTmux = startedTmux.created;
+      const deadline = Date.now() + Math.min(options.timeoutMs ?? 15000, 30000);
+      while (Date.now() < deadline) {
         options.signal?.throwIfAborted();
-        phase = "owner-spawn";
-        child = spawn(launch.executable, [build.cli, "--development-owner"], {
-          cwd: instance.root,
-          env: { ...env, TMUX_IDE_DEVELOPMENT_ATTEMPT: attempt },
-          detached: true,
-          stdio: "ignore",
-        });
-        await new Promise<void>((resolve, reject) => {
-          child!.once("error", reject);
-          child!.once("spawn", resolve);
-        });
-        child.unref();
-        startedIdentity = await developmentProcessIdentity(child.pid!);
-        if (!startedIdentity) throw new Error("Managed owner exited before its process receipt");
-        writeDevelopmentRecord(join(instance.root, "startup-process.json"), {
-          version: 1,
-          attempt,
-          pid: child.pid,
-          incarnation: startedIdentity,
-          generation: build.generation,
-          manifestHash: launch.environment.TMUX_IDE_DEVELOPMENT_BUILD_HASH,
-        });
-        const deadline = Date.now() + Math.min(options.timeoutMs ?? 15000, 30000);
-        while (Date.now() < deadline) {
-          options.signal?.throwIfAborted();
-          phase = "readiness";
-          const status = await statusDevelopmentInstance(instance);
-          if (status.reason) phase = status.reason;
-          if (status.state === "ready") {
-            if (status.daemon?.pid !== child.pid)
-              throw new Error("Concurrent canonical winner is not this managed process");
-            writeDevelopmentRecord(join(instance.root, "startup-receipt.json"), {
-              version: 1,
-              status: "ready",
-              attempt,
-              pid: child.pid,
-              at: new Date().toISOString(),
-            });
-            return status;
-          }
-          if (child.exitCode !== null || child.signalCode !== null)
-            throw new Error("Managed development owner exited during startup");
-          await new Promise((resolve) => setTimeout(resolve, 100));
+        phase = "readiness";
+        const status = await statusDevelopmentInstance(instance);
+        if (status.reason) phase = status.reason;
+        if (status.state === "ready") {
+          if (status.daemon?.pid !== child.pid)
+            throw new Error("Concurrent canonical winner is not this managed process");
+          writeDevelopmentRecord(join(instance.root, "startup-receipt.json"), {
+            version: 1,
+            status: "ready",
+            attempt,
+            pid: child.pid,
+            at: new Date().toISOString(),
+          });
+          return status;
         }
-        throw new Error("Managed development readiness timed out");
-      } catch (error) {
-        if (
-          child?.pid &&
-          startedIdentity &&
-          (await developmentProcessIdentity(child.pid)) === startedIdentity
-        ) {
-          child.kill("SIGTERM");
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          if ((await developmentProcessIdentity(child.pid)) === startedIdentity)
-            child.kill("SIGKILL");
-        }
-        if (createdTmux && tmux) {
-          try {
-            const canonical = inspectCanonicalDaemonInfoPath(
-              join(instance.stateHome, "daemon.json"),
-            );
-            const claim = inspectCanonicalDaemonClaimPath(join(instance.stateHome, "daemon.claim"));
-            if (canonical.status === "invalid" || claim.status === "invalid")
-              throw new Error("Unverified canonical owner protects tmux", { cause: error });
-            for (const pid of [
-              canonical.status === "valid" ? canonical.info.pid : null,
-              claim.status === "valid" ? claim.claim.pid : null,
-            ]) {
-              if (pid !== null && (await developmentProcessIdentity(pid)) !== null)
-                throw new Error("Live canonical owner protects tmux", { cause: error });
-            }
-            await verifyTmux(instance, identity, tmux, env);
-            await boundedTmuxRead(tmux.executable, ["-S", tmux.socket.path, "kill-server"], {
-              env,
-              timeoutMs: 1000,
-            });
-            // Retain the ownership receipt: tmux may leave its dead socket behind.
-          } catch {
-            /* Unknown replacements are never killed. */
-          }
-        }
-        writeDevelopmentRecord(join(instance.root, "startup-receipt.json"), {
-          version: 1,
-          status: "failed",
-          reason: options.signal?.aborted ? "cancelled" : phase,
-          attempt,
-          at: new Date().toISOString(),
-        });
-        throw new Error(
-          `Development startup failed; inspect ${join(instance.root, "startup-receipt.json")} and logs/owner.log`,
-          { cause: error },
-        );
+        if (child.exitCode !== null || child.signalCode !== null)
+          throw new Error("Managed development owner exited during startup");
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
-    },
-    options.signal,
-  ).catch((error) => {
+      throw new Error("Managed development readiness timed out");
+    } catch (error) {
+      if (
+        child?.pid &&
+        startedIdentity &&
+        (await developmentProcessIdentity(child.pid)) === startedIdentity
+      ) {
+        child.kill("SIGTERM");
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        if ((await developmentProcessIdentity(child.pid)) === startedIdentity)
+          child.kill("SIGKILL");
+      }
+      if (createdTmux && tmux) {
+        try {
+          const canonical = inspectCanonicalDaemonInfoPath(join(instance.stateHome, "daemon.json"));
+          const claim = inspectCanonicalDaemonClaimPath(join(instance.stateHome, "daemon.claim"));
+          if (canonical.status === "invalid" || claim.status === "invalid")
+            throw new Error("Unverified canonical owner protects tmux", { cause: error });
+          for (const pid of [
+            canonical.status === "valid" ? canonical.info.pid : null,
+            claim.status === "valid" ? claim.claim.pid : null,
+          ]) {
+            if (pid !== null && (await developmentProcessIdentity(pid)) !== null)
+              throw new Error("Live canonical owner protects tmux", { cause: error });
+          }
+          await verifyTmux(instance, identity, tmux, env);
+          await boundedTmuxRead(tmux.executable, ["-S", tmux.socket.path, "kill-server"], {
+            env,
+            timeoutMs: 1000,
+          });
+          // Retain the ownership receipt: tmux may leave its dead socket behind.
+        } catch {
+          /* Unknown replacements are never killed. */
+        }
+      }
+      writeDevelopmentRecord(join(instance.root, "startup-receipt.json"), {
+        version: 1,
+        status: "failed",
+        reason: options.signal?.aborted ? "cancelled" : phase,
+        attempt,
+        at: new Date().toISOString(),
+      });
+      throw new Error(
+        `Development startup failed; inspect ${join(instance.root, "startup-receipt.json")} and logs/owner.log`,
+        { cause: error },
+      );
+    }
+  })().catch(() => {
     let receipt: string | undefined;
     if (phase !== "lifecycle-admission") {
       validateDevelopmentDirectory(instance.root, instance.store);
@@ -596,7 +629,6 @@ export async function upDevelopmentInstance(
         at: new Date().toISOString(),
       });
     }
-    if (phase === "lifecycle-admission" && error instanceof DevelopmentOperationError) throw error;
     if (phase !== "lifecycle-admission") receipt = join(instance.root, "startup-receipt.json");
     throw new DevelopmentOperationError(
       "startup-failed",
@@ -619,6 +651,6 @@ export async function developmentAppLaunch(instance: DevelopmentInstance) {
     bin: build.tui,
     args: ["app"],
     cwd,
-    env: childEnvironment(instance, identity, build),
+    env: developmentOwnerEnvironment(instance, identity, build),
   };
 }

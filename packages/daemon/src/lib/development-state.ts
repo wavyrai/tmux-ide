@@ -191,6 +191,10 @@ export type DevelopmentFailureReason =
   | "unsupported-apply-build"
   | "identity-unavailable"
   | "startup-failed"
+  | "activation-failed"
+  | "previous-build-unavailable"
+  | "tmux-restart-required"
+  | "build-failed"
   | "operation-failed";
 /** Only manager-authored error data may cross the public CLI boundary. */
 export class DevelopmentOperationError extends Error {
@@ -210,8 +214,11 @@ export function developmentFailureResult(
 ) {
   const typed = error instanceof DevelopmentOperationError ? error : null;
   const receipt =
-    operation === "up" && instance && typed?.receipt === join(instance.root, "startup-receipt.json")
-      ? typed.receipt
+    instance &&
+    ((operation === "up" && typed?.receipt === join(instance.root, "startup-receipt.json")) ||
+      (operation === "restart" && typed?.receipt === join(instance.root, "activation.json")) ||
+      (operation === "rebuild" && typed?.receipt === join(instance.root, "build-receipt.json")))
+      ? typed!.receipt
       : undefined;
   return {
     ok: false as const,
@@ -220,5 +227,68 @@ export function developmentFailureResult(
     reason: typed?.reason ?? fallback,
     ...(instance ? { instanceId: instance.id } : {}),
     ...(receipt ? { receipt } : {}),
+  };
+}
+
+export interface DevelopmentBuildPin {
+  generation: string;
+  manifestHash: string;
+}
+export interface DevelopmentActivationReceipt {
+  version: 1;
+  operationId: string;
+  phase: "prepared" | "stopping" | "starting" | "ready" | "failed";
+  target: DevelopmentBuildPin;
+  previous: DevelopmentBuildPin | null;
+  previousRuntime: { pid: number; instanceId: string } | null;
+  readyRuntime: { pid: number; instanceId: string } | null;
+  tmux: { pid: number; generation: string } | null;
+  failurePhase?: "stopping" | "starting" | "verification";
+}
+/** Only fixed fields leave the private transition record through status/support output. */
+export function readDevelopmentActivation(
+  instance: DevelopmentInstance,
+): DevelopmentActivationReceipt | null {
+  const value = readPrivateDevelopmentRecord<DevelopmentActivationReceipt>(
+    join(instance.root, "activation.json"),
+  );
+  if (!value) return null;
+  const pin = (x: DevelopmentBuildPin) => {
+    if (!x || !/^build-[a-f0-9-]{36}$/.test(x.generation) || !/^[a-f0-9]{64}$/.test(x.manifestHash))
+      throw new Error("Invalid activation build pin");
+    return { generation: x.generation, manifestHash: x.manifestHash };
+  };
+  const runtime = (x: DevelopmentActivationReceipt["readyRuntime"]) => {
+    if (x === null) return null;
+    if (!x || !Number.isSafeInteger(x.pid) || x.pid <= 0 || !/^[a-f0-9-]{36}$/.test(x.instanceId))
+      throw new Error("Invalid activation runtime");
+    return { pid: x.pid, instanceId: x.instanceId };
+  };
+  if (
+    value.version !== 1 ||
+    !/^[a-f0-9-]{36}$/.test(value.operationId) ||
+    !["prepared", "stopping", "starting", "ready", "failed"].includes(value.phase) ||
+    (value.failurePhase !== undefined &&
+      !["stopping", "starting", "verification"].includes(value.failurePhase))
+  )
+    throw new Error("Invalid activation receipt");
+  if (
+    value.tmux !== null &&
+    (!value.tmux ||
+      !Number.isSafeInteger(value.tmux.pid) ||
+      value.tmux.pid <= 0 ||
+      !/^build-[a-f0-9-]{36}$/.test(value.tmux.generation))
+  )
+    throw new Error("Invalid activation tmux provenance");
+  return {
+    version: 1,
+    operationId: value.operationId,
+    phase: value.phase,
+    target: pin(value.target),
+    previous: value.previous === null ? null : pin(value.previous),
+    previousRuntime: runtime(value.previousRuntime),
+    readyRuntime: runtime(value.readyRuntime),
+    tmux: value.tmux === null ? null : { pid: value.tmux.pid, generation: value.tmux.generation },
+    ...(value.failurePhase ? { failurePhase: value.failurePhase } : {}),
   };
 }

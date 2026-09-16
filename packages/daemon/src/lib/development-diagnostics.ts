@@ -291,6 +291,8 @@ export async function developmentDiagnostics(instance: DevelopmentInstance) {
       health: status.readiness.health,
       ownerAuthenticated: status.readiness.ownerAuthenticated,
     },
+    activation: status.activation,
+    tmux: status.tmux ? { pid: status.tmux.pid, generation: status.tmux.generation } : null,
     rawLogsIncluded: false,
     guidance:
       "DEV * means dirty at build. sourceStale compares relevant source content now. Runtime generation is not build generation. TUI receipts describe admitted launches, not current liveness.",

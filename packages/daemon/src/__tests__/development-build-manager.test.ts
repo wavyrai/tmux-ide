@@ -109,3 +109,34 @@ it("derives managed-owner capability from the compiled artifact probe, never old
     ),
   ).toEqual(["managed-development-owner-v1"]);
 });
+
+it("retains actionable bounded private build diagnostics without exposing stderr publicly", async () => {
+  const f = fixture();
+  const bun = join(f.root, "failing-bun");
+  writeFileSync(
+    bun,
+    "#!/bin/sh\ni=0; while [ $i -lt 4000 ]; do printf 'private-compiler-fixture Bearer example-secret\\n' >&2; i=$((i+1)); done\nexit 1\n",
+    { mode: 0o700 },
+  );
+  let failure: unknown;
+  try {
+    await buildDevelopmentInstance(f.instance, { bun });
+  } catch (error) {
+    failure = error;
+  }
+  expect(failure).toMatchObject({
+    reason: "build-failed",
+    receipt: join(f.instance.root, "build-receipt.json"),
+  });
+  expect((failure as Error).message).not.toContain("example-secret");
+  const receipt = JSON.parse(readFileSync(join(f.instance.root, "build-receipt.json"), "utf8"));
+  expect(receipt).toMatchObject({
+    status: "failed",
+    phase: "source-and-toolchain",
+    logFailed: false,
+  });
+  expect(JSON.stringify(receipt)).not.toContain("example-secret");
+  const log = readFileSync(join(f.instance.root, "logs/build.log"));
+  expect(log.byteLength).toBeLessThanOrEqual(65536);
+  expect(log.toString()).toContain("private-compiler-fixture");
+});

@@ -1,3 +1,5 @@
+import { createBoundedDevelopmentLog } from "./development-log.ts";
+import { DevelopmentOperationError, writeDevelopmentRecord } from "./development-state.ts";
 import { withDevelopmentLock } from "./development-lock.ts";
 import { validateBundledTmux } from "./bundled-tmux.ts";
 /** Explicit build boundary. Runtime selection imports development-build.ts instead. */
@@ -267,250 +269,322 @@ export async function buildDevelopmentInstance(
     instance,
     "build",
     async () => {
-      const source = await developmentSourceSnapshot(instance.worktree, options.signal);
-      const node = realpathSync(options.node ?? process.execPath);
-      const bun = realpathSync(options.bun);
-      if (!isAbsolute(options.bun)) throw new Error("Provide an absolute pinned Bun executable");
-      const bunVersion = await command(bun, ["--version"], instance.worktree, options.signal);
-      if (bunVersion !== readFileSync(join(instance.worktree, ".bun-version"), "utf8").trim())
-        throw new Error("Development build requires the repository's pinned Bun version");
-      const nodeInfo = JSON.parse(
-        await command(
-          node,
-          ["-p", "JSON.stringify({version:process.version,abi:process.versions.modules})"],
-          instance.worktree,
-          options.signal,
-        ),
-      );
-      if (nodeInfo.abi !== process.versions.modules)
-        throw new Error("Build manager and selected Node ABI differ");
-      const nodeHash = developmentFileHash(node);
-      const bunHash = developmentFileHash(bun);
-      const generation = `build-${randomUUID()}`;
-      const stage = join(instance.root, "artifacts", `.${generation}.stage`);
-      const final = join(instance.root, "artifacts", generation);
-      validateDevelopmentDirectory(stage, instance.store);
-      mkdirSync(stage, { recursive: true, mode: 0o700 });
-      let published = false;
+      let phase = "source-and-toolchain";
+      const operationId = randomUUID();
       try {
-        const cli = join(stage, "bin/cli.js");
-        const tui = join(stage, "tui/tmux-ide-tui");
-        const metadataPath = join(stage, "esbuild.json");
-        await command(
-          node,
-          [
-            join(instance.worktree, "scripts/build-cli.mjs"),
-            "--outfile",
-            cli,
-            "--metafile",
-            metadataPath,
-          ],
-          instance.worktree,
-          options.signal,
-        );
-        const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
-        const external = Object.values(
-          metadata.outputs as Record<string, { imports: { external: boolean; path: string }[] }>,
-        ).flatMap((output) =>
-          output.imports.filter((entry) => entry.external).map((entry) => entry.path),
-        );
-        const budget: CopyBudget = { files: 0, bytes: 0, signal: options.signal };
-        const packages = await snapshotDependencies(
-          instance.worktree,
-          stage,
-          [...new Set(external)],
-          budget,
-        );
-        rmSync(metadataPath);
-        const inputPackages = [
-          "@opentui/core",
-          "@opentui/solid",
-          `@opentui/core-${process.platform}-${process.arch}`,
-          "solid-js",
-          "esbuild",
-        ];
-        const buildInputs = inputPackages.map((name) => {
-          const path = name.startsWith("@opentui/core-")
-            ? packageRoot(name, packageRoot("@opentui/core", instance.worktree), instance.worktree)
-            : packageRoot(name, instance.worktree);
-          return { name, path, digest: developmentPackageDigest(path) };
-        });
-        const packageVersion = JSON.parse(
-          readFileSync(join(instance.worktree, "package.json"), "utf8"),
-        ).version;
-        writeFileSync(
-          join(stage, "package.json"),
-          JSON.stringify({ name: "tmux-ide", type: "module", version: packageVersion }),
-          { mode: 0o600 },
-        );
-        for (const name of ["templates", "skill"])
-          if (existsSync(join(instance.worktree, name)))
-            await copyTree(join(instance.worktree, name), join(stage, name), budget);
-        const nativeRelative = "packages/daemon/dist/native";
-        mkdirSync(join(stage, nativeRelative), { recursive: true, mode: 0o700 });
-        const nativeSource = join(instance.worktree, nativeRelative);
-        if (
-          !existsSync(
-            join(nativeSource, "tmux", `${process.platform}-${process.arch}`, "manifest.json"),
-          )
-        )
-          throw new Error(
-            "Build the qualified native tmux bundle in this worktree before a development build",
-          );
-        const nativeInputHash = developmentPackageDigest(nativeSource);
-        await copyTree(nativeSource, join(stage, nativeRelative), budget);
-        validateBundledTmux(
-          join(stage, nativeRelative, "tmux", `${process.platform}-${process.arch}`),
-        );
-        if (nativeInputHash !== developmentPackageDigest(nativeSource))
-          throw new Error("Native input changed during snapshot");
-        await command(
-          bun,
-          [join(instance.worktree, "scripts/build-tui.mjs"), "--outfile", tui],
-          instance.worktree,
-          options.signal,
-        );
-        if (process.platform === "darwin")
-          await command("/usr/bin/codesign", ["--verify", "--strict", tui], stage, options.signal);
-        const provenance = JSON.parse(
-          await command(tui, ["__release-provenance"], stage, options.signal),
-        );
-        if (
-          provenance.version !== packageVersion ||
-          provenance.commit !== source.commit ||
-          provenance.platform !== `${process.platform}-${process.arch}`
-        )
-          throw new Error("Compiled development provenance mismatch");
-        await command(node, [cli, "--version"], stage, options.signal);
-        const capabilities = parseDevelopmentCapabilities(
+        const source = await developmentSourceSnapshot(instance.worktree, options.signal);
+        const node = realpathSync(options.node ?? process.execPath);
+        const bun = realpathSync(options.bun);
+        if (!isAbsolute(options.bun)) throw new Error("Provide an absolute pinned Bun executable");
+        const bunVersion = await command(bun, ["--version"], instance.worktree, options.signal);
+        if (bunVersion !== readFileSync(join(instance.worktree, ".bun-version"), "utf8").trim())
+          throw new Error("Development build requires the repository's pinned Bun version");
+        const nodeInfo = JSON.parse(
           await command(
             node,
-            [cli, "--development-capabilities", "--help", "--json"],
-            stage,
+            ["-p", "JSON.stringify({version:process.version,abi:process.versions.modules})"],
+            instance.worktree,
             options.signal,
           ),
         );
-        await command(
-          node,
-          [
-            "--input-type=module",
-            "-e",
-            `import {createRequire} from 'node:module'; const pty=createRequire(${JSON.stringify(cli)})('node-pty'); const p=pty.spawn('/bin/sh',['-c','printf development-native-ok'],{cwd:${JSON.stringify(stage)},env:{PATH:'/usr/bin:/bin'}}); let output=''; const timer=setTimeout(()=>{p.kill();process.exitCode=1;},3000); p.onData(data=>output+=data); p.onExit(()=>{clearTimeout(timer);if(!output.includes('development-native-ok'))process.exitCode=1;});`,
-          ],
-          stage,
-          options.signal,
-        );
-        for (const input of buildInputs)
-          if (developmentPackageDigest(input.path) !== input.digest)
-            throw new Error(`Build input changed: ${input.name}`);
-        const after = await developmentSourceSnapshot(instance.worktree, options.signal);
-        if (source.commit !== after.commit || source.digest !== after.digest)
-          throw new Error("Worktree changed during build; previous build retained");
-        const native: { path: string; sha256: string }[] = [];
-        const scan = (dir: string): void => {
-          for (const entry of readdirSync(dir, { withFileTypes: true })) {
-            const path = join(dir, entry.name);
-            if (entry.isDirectory()) scan(path);
-            else if (entry.isFile() && /\.(?:node|dylib|so|wasm)$/u.test(entry.name))
-              native.push({
-                path: join(final, relative(stage, path)),
-                sha256: developmentFileHash(path),
-              });
-          }
-        };
-        scan(stage);
-        const manifest: DevelopmentBuildManifest = {
-          version: 1,
-          generation,
-          instance: {
-            id: instance.id,
-            digest: instance.digest,
-            worktree: instance.worktree,
-            name: instance.name,
-          },
-          source,
-          packageVersion,
-          execution: "packaged-development",
-          capabilities,
-          host: {
-            platform: process.platform,
-            arch: process.arch,
-            nodeVersion: nodeInfo.version,
-            nodeAbi: nodeInfo.abi,
-            bunVersion,
-          },
-          tools: {
+        if (nodeInfo.abi !== process.versions.modules)
+          throw new Error("Build manager and selected Node ABI differ");
+        const nodeHash = developmentFileHash(node);
+        const bunHash = developmentFileHash(bun);
+        const generation = `build-${randomUUID()}`;
+        const stage = join(instance.root, "artifacts", `.${generation}.stage`);
+        const final = join(instance.root, "artifacts", generation);
+        validateDevelopmentDirectory(stage, instance.store);
+        mkdirSync(stage, { recursive: true, mode: 0o700 });
+        let published = false;
+        try {
+          phase = "cli-build";
+          const cli = join(stage, "bin/cli.js");
+          const tui = join(stage, "tui/tmux-ide-tui");
+          const metadataPath = join(stage, "esbuild.json");
+          await command(
             node,
+            [
+              join(instance.worktree, "scripts/build-cli.mjs"),
+              "--outfile",
+              cli,
+              "--metafile",
+              metadataPath,
+            ],
+            instance.worktree,
+            options.signal,
+          );
+          const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+          const external = Object.values(
+            metadata.outputs as Record<string, { imports: { external: boolean; path: string }[] }>,
+          ).flatMap((output) =>
+            output.imports.filter((entry) => entry.external).map((entry) => entry.path),
+          );
+          const budget: CopyBudget = { files: 0, bytes: 0, signal: options.signal };
+          phase = "dependency-snapshot";
+          const packages = await snapshotDependencies(
+            instance.worktree,
+            stage,
+            [...new Set(external)],
+            budget,
+          );
+          rmSync(metadataPath);
+          const inputPackages = [
+            "@opentui/core",
+            "@opentui/solid",
+            `@opentui/core-${process.platform}-${process.arch}`,
+            "solid-js",
+            "esbuild",
+          ];
+          const buildInputs = inputPackages.map((name) => {
+            const path = name.startsWith("@opentui/core-")
+              ? packageRoot(
+                  name,
+                  packageRoot("@opentui/core", instance.worktree),
+                  instance.worktree,
+                )
+              : packageRoot(name, instance.worktree);
+            return { name, path, digest: developmentPackageDigest(path) };
+          });
+          const packageVersion = JSON.parse(
+            readFileSync(join(instance.worktree, "package.json"), "utf8"),
+          ).version;
+          writeFileSync(
+            join(stage, "package.json"),
+            JSON.stringify({ name: "tmux-ide", type: "module", version: packageVersion }),
+            { mode: 0o600 },
+          );
+          for (const name of ["templates", "skill"])
+            if (existsSync(join(instance.worktree, name)))
+              await copyTree(join(instance.worktree, name), join(stage, name), budget);
+          const nativeRelative = "packages/daemon/dist/native";
+          mkdirSync(join(stage, nativeRelative), { recursive: true, mode: 0o700 });
+          const nativeSource = join(instance.worktree, nativeRelative);
+          if (
+            !existsSync(
+              join(nativeSource, "tmux", `${process.platform}-${process.arch}`, "manifest.json"),
+            )
+          )
+            throw new Error(
+              "Build the qualified native tmux bundle in this worktree before a development build",
+            );
+          const nativeInputHash = developmentPackageDigest(nativeSource);
+          await copyTree(nativeSource, join(stage, nativeRelative), budget);
+          validateBundledTmux(
+            join(stage, nativeRelative, "tmux", `${process.platform}-${process.arch}`),
+          );
+          if (nativeInputHash !== developmentPackageDigest(nativeSource))
+            throw new Error("Native input changed during snapshot");
+          phase = "tui-build";
+          await command(
             bun,
-            nodeHash,
-            bunHash,
-          },
-          cli: join(final, "bin/cli.js"),
-          tui: join(final, "tui/tmux-ide-tui"),
-          dependencies: join(final, "dependencies"),
-          assets: join(final, nativeRelative),
-          hashes: {
-            cli: developmentFileHash(cli),
-            tui: developmentFileHash(tui),
-            dependencies: developmentTreeHash(join(stage, "dependencies")),
-            assets: developmentTreeHash(join(stage, nativeRelative)),
-            metadata: developmentFileHash(join(stage, "package.json")),
-            payload: developmentTreeHash(stage, true),
-          },
-          packages,
-          native,
-          buildInputs: [
-            ...buildInputs,
-            { name: "bundled-tmux", path: nativeSource, digest: nativeInputHash },
-          ],
-          qualification: {
-            provenance,
-            signature: process.platform === "darwin" ? "verified" : "not-applicable",
-          },
-        };
-        if (developmentFileHash(node) !== nodeHash || developmentFileHash(bun) !== bunHash)
-          throw new Error("Toolchain changed during build");
-        options.signal?.throwIfAborted();
-        await options.beforePublish?.();
-        return await withDevelopmentLock(
-          instance,
-          "lifecycle",
-          async () => {
-            options.signal?.throwIfAborted();
-            const current = await developmentSourceSnapshot(instance.worktree, options.signal);
-            if (source.commit !== current.commit || source.digest !== current.digest)
-              throw new Error("Worktree changed before publication; previous build retained");
-            renameSync(stage, final);
-            writeFileSync(join(final, "manifest.json"), JSON.stringify(manifest, null, 2), {
-              flag: "wx",
-              mode: 0o600,
-            });
-            verifyDevelopmentBuild(instance, manifest);
-            const pointer = join(instance.root, `.build-${randomUUID()}.json`);
-            try {
-              writeFileSync(
-                pointer,
-                JSON.stringify({
-                  version: 1,
-                  generation,
-                  sha256: developmentFileHash(join(final, "manifest.json")),
-                }),
-                { flag: "wx", mode: 0o600 },
-              );
-              renameSync(pointer, join(instance.root, "build.json"));
-            } finally {
-              rmSync(pointer, { force: true });
+            [join(instance.worktree, "scripts/build-tui.mjs"), "--outfile", tui],
+            instance.worktree,
+            options.signal,
+          );
+          phase = "artifact-qualification";
+          if (process.platform === "darwin")
+            await command(
+              "/usr/bin/codesign",
+              ["--verify", "--strict", tui],
+              stage,
+              options.signal,
+            );
+          const provenance = JSON.parse(
+            await command(tui, ["__release-provenance"], stage, options.signal),
+          );
+          if (
+            provenance.version !== packageVersion ||
+            provenance.commit !== source.commit ||
+            provenance.platform !== `${process.platform}-${process.arch}`
+          )
+            throw new Error("Compiled development provenance mismatch");
+          await command(node, [cli, "--version"], stage, options.signal);
+          const capabilities = parseDevelopmentCapabilities(
+            await command(
+              node,
+              [cli, "--development-capabilities", "--help", "--json"],
+              stage,
+              options.signal,
+            ),
+          );
+          await command(
+            node,
+            [
+              "--input-type=module",
+              "-e",
+              `import {createRequire} from 'node:module'; const pty=createRequire(${JSON.stringify(cli)})('node-pty'); const p=pty.spawn('/bin/sh',['-c','printf development-native-ok'],{cwd:${JSON.stringify(stage)},env:{PATH:'/usr/bin:/bin'}}); let output=''; const timer=setTimeout(()=>{p.kill();process.exitCode=1;},3000); p.onData(data=>output+=data); p.onExit(()=>{clearTimeout(timer);if(!output.includes('development-native-ok'))process.exitCode=1;});`,
+            ],
+            stage,
+            options.signal,
+          );
+          for (const input of buildInputs)
+            if (developmentPackageDigest(input.path) !== input.digest)
+              throw new Error(`Build input changed: ${input.name}`);
+          const after = await developmentSourceSnapshot(instance.worktree, options.signal);
+          if (source.commit !== after.commit || source.digest !== after.digest)
+            throw new Error("Worktree changed during build; previous build retained");
+          const native: { path: string; sha256: string }[] = [];
+          const scan = (dir: string): void => {
+            for (const entry of readdirSync(dir, { withFileTypes: true })) {
+              const path = join(dir, entry.name);
+              if (entry.isDirectory()) scan(path);
+              else if (entry.isFile() && /\.(?:node|dylib|so|wasm)$/u.test(entry.name))
+                native.push({
+                  path: join(final, relative(stage, path)),
+                  sha256: developmentFileHash(path),
+                });
             }
-            published = true;
-            return manifest;
-          },
-          options.signal,
+          };
+          scan(stage);
+          const manifest: DevelopmentBuildManifest = {
+            version: 1,
+            generation,
+            instance: {
+              id: instance.id,
+              digest: instance.digest,
+              worktree: instance.worktree,
+              name: instance.name,
+            },
+            source,
+            packageVersion,
+            execution: "packaged-development",
+            capabilities,
+            host: {
+              platform: process.platform,
+              arch: process.arch,
+              nodeVersion: nodeInfo.version,
+              nodeAbi: nodeInfo.abi,
+              bunVersion,
+            },
+            tools: {
+              node,
+              bun,
+              nodeHash,
+              bunHash,
+            },
+            cli: join(final, "bin/cli.js"),
+            tui: join(final, "tui/tmux-ide-tui"),
+            dependencies: join(final, "dependencies"),
+            assets: join(final, nativeRelative),
+            hashes: {
+              cli: developmentFileHash(cli),
+              tui: developmentFileHash(tui),
+              dependencies: developmentTreeHash(join(stage, "dependencies")),
+              assets: developmentTreeHash(join(stage, nativeRelative)),
+              metadata: developmentFileHash(join(stage, "package.json")),
+              payload: developmentTreeHash(stage, true),
+            },
+            packages,
+            native,
+            buildInputs: [
+              ...buildInputs,
+              { name: "bundled-tmux", path: nativeSource, digest: nativeInputHash },
+            ],
+            qualification: {
+              provenance,
+              signature: process.platform === "darwin" ? "verified" : "not-applicable",
+            },
+          };
+          if (developmentFileHash(node) !== nodeHash || developmentFileHash(bun) !== bunHash)
+            throw new Error("Toolchain changed during build");
+          options.signal?.throwIfAborted();
+          phase = "publication";
+          await options.beforePublish?.();
+          return await withDevelopmentLock(
+            instance,
+            "lifecycle",
+            async () => {
+              options.signal?.throwIfAborted();
+              const current = await developmentSourceSnapshot(instance.worktree, options.signal);
+              if (source.commit !== current.commit || source.digest !== current.digest)
+                throw new Error("Worktree changed before publication; previous build retained");
+              renameSync(stage, final);
+              writeFileSync(join(final, "manifest.json"), JSON.stringify(manifest, null, 2), {
+                flag: "wx",
+                mode: 0o600,
+              });
+              verifyDevelopmentBuild(instance, manifest);
+              const pointer = join(instance.root, `.build-${randomUUID()}.json`);
+              try {
+                writeFileSync(
+                  pointer,
+                  JSON.stringify({
+                    version: 1,
+                    generation,
+                    sha256: developmentFileHash(join(final, "manifest.json")),
+                  }),
+                  { flag: "wx", mode: 0o600 },
+                );
+                renameSync(pointer, join(instance.root, "build.json"));
+              } finally {
+                rmSync(pointer, { force: true });
+              }
+              published = true;
+              return manifest;
+            },
+            options.signal,
+          );
+        } finally {
+          rmSync(stage, { recursive: true, force: true });
+          if (!published) rmSync(final, { recursive: true, force: true });
+        }
+      } catch (error) {
+        let receipt: string | undefined;
+        try {
+          const directory = join(instance.root, "logs");
+          validateDevelopmentDirectory(directory, instance.store);
+          mkdirSync(directory, { recursive: true, mode: 0o700 });
+          const logPath = join(directory, "build.log");
+          const log = createBoundedDevelopmentLog(logPath, {
+            limitBytes: 65536,
+            queueBytes: 65536,
+          });
+          const detail = error as { message?: unknown; stderr?: unknown; stdout?: unknown } | null;
+          const text =
+            `[${new Date().toISOString()}] build ${operationId} failed at ${phase}\n` +
+            [detail?.message, detail?.stderr, detail?.stdout]
+              .filter((value): value is string => typeof value === "string")
+              .map((value) => value.slice(-16384))
+              .join("\n");
+          for (let index = 0; index < text.length; index += 4096)
+            log.write(text.slice(index, index + 4096));
+          await log.close();
+          const path = join(instance.root, "build-receipt.json");
+          writeDevelopmentRecord(path, {
+            version: 1,
+            operationId,
+            status: "failed",
+            phase,
+            at: new Date().toISOString(),
+            privateLog: logPath,
+            logFailed: log.snapshot().failed,
+          });
+          receipt = path;
+        } catch {
+          /* A failed diagnostic sink must not conceal the build failure. */
+        }
+        throw new DevelopmentOperationError(
+          "build-failed",
+          `Build failed during ${phase}; inspect the private build receipt/log. Running processes were not restarted`,
+          receipt,
         );
-      } finally {
-        rmSync(stage, { recursive: true, force: true });
-        if (!published) rmSync(final, { recursive: true, force: true });
       }
     },
     options.signal,
   );
+}
+
+/** Compare verified manifests; publishing a build does not replace any running process. */
+export function developmentBuildChanges(
+  previous: DevelopmentBuildManifest | null,
+  next: DevelopmentBuildManifest,
+) {
+  return {
+    cli: previous === null || previous.hashes.cli !== next.hashes.cli,
+    tui: previous === null || previous.hashes.tui !== next.hashes.tui,
+    dependencies: previous === null || previous.hashes.dependencies !== next.hashes.dependencies,
+    nativeAssets: previous === null || previous.hashes.assets !== next.hashes.assets,
+    source: previous === null || previous.source.digest !== next.source.digest,
+  };
 }
