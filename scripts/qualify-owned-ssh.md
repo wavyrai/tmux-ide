@@ -74,9 +74,22 @@ budget; only a newly confirmed dead process can be omitted. Still-live, unknown
 or changed identities remain failures. The successful live runs do not establish
 that this confirmation branch was taken; its semantics have deterministic tests.
 
-Actual daemon replacement with the old SSH forward still alive, retained TUI
-recovery, terminal-reader stalls and fleet scheduler saturation remain separate
-D11 qualification work.
+The guarded transport at commit 54542def subsequently passed the same 12 cases
+in 3499ms; an independent audit found all 47 recorded processes absent and only
+the receipt retained. This is separate from the initial unguarded 50-process runs.
+
+Actual native daemon replacement is now qualified on clean 54542def artifacts
+for all four target/client owners. The retained TUI recovered output and typed
+input with unchanged tmux/socket/pane, and its healthy sibling stayed responsive.
+The wrong-identity old-port trap received one public identity request and one
+explicit credential-free raw-forward witness request, with zero credentials.
+All 59 captured processes and nine recorded ports were independently absent/closed;
+four managed roots were reset. The earlier baseline's 23 old-token requests and
+all fixture failures remain recorded. See ignored local evidence under
+`plans/development-instances/evidence/d11/stage4/guarded-native-live`.
+
+These are bounded macOS arm64 observations, not a long soak, native Linux/x64
+qualification, malicious-public-identity defense or terminal-reader benchmark.
 
 ## Native replacement fixture support
 
@@ -94,7 +107,29 @@ not that discovery or the new forward is ready. Callers must independently verif
 readiness and the rewritten PID file. Modified files or a relocated fixture root
 cause refusal.
 
-These helper changes pass 23 focused tests, targeted types and lint. The recorded
-12-case live qualification above predates these additions. Actual daemon/TUI
-replacement qualification remains incomplete; neither helper tests nor successful
-cleanup establish client recovery.
+These helper changes pass 23 focused tests, targeted types and lint. The original
+12-case qualification predates them; the guarded regression and native 545 run
+include them. Helper tests and cleanup remain distinct from actual client recovery.
+
+## Bounded reader and scheduler cases (source checkpoint; live proof pending)
+
+The runner adds a generic HTTP stream over the real guarded SSH transport. Its
+downstream reader pauses while a finite 16 MiB producer observes backpressure.
+Success requires an unexhausted producer plateau, a bounded producer-side writer
+queue, and fresh healthy-control responses while the reader remains paused.
+Cancellation must retire that producer and leave the healthy route usable. Reaching
+the finite cap without a plateau is an inconclusive failure, not a pass. The
+recorded bytes/queue peak measure the fixture producer, not every relay, SSH,
+kernel or RSS buffer. This is not an actual native terminal-reader workload.
+
+A separate case uses the production fleet scheduler with an explicit limit 1 to
+force contention with only one stalled real SSH dial and one queued healthy dial.
+An already established guarded control stays responsive. Aborting the stalled
+request must initially retain its active slot until the connection work settles;
+the healthy queued route then connects and serves a marker, and final active/queued
+counts must be 0/0. Default limit 4 and larger queue prioritization remain existing
+unit-test evidence; this case does not claim live fleet saturation performance.
+
+Run the pressure helper's hermetic tests with
+`node --test scripts/lib/owned-ssh-pressure.test.mjs`. No sshd or keys are started
+by those tests. Both new live cases remain unqualified until a reviewed opt-in run.

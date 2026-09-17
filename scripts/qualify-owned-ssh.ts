@@ -1,7 +1,9 @@
 /** Opt-in real OpenSSH stages 1–3. HTTP identity is synthetic; no real daemon/TUI claim. */
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createServer as httpServer } from "node:http";
+import { createServer as httpServer, request, type IncomingMessage } from "node:http";
+import { createFinitePressureWriter } from "./lib/owned-ssh-pressure.mjs";
+import { createFleetDialScheduler } from "../packages/daemon-client/src/fleet-dial-scheduler.ts";
 import { createServer as tcpServer, type Socket } from "node:net";
 import { randomBytes, randomUUID } from "node:crypto";
 import { writeFileSync, realpathSync, lstatSync } from "node:fs";
@@ -40,6 +42,7 @@ const allocations: Array<{
   disposeFiles(): Promise<void>;
   diagnostics(): { stage: string; failureStage: string | null };
 }> = [];
+const pressureWriters: Array<ReturnType<typeof createFinitePressureWriter>> = [];
 const transports: Array<Awaited<ReturnType<typeof openSshDaemonTransport>>> = [];
 const results: Array<{
   name: string;
@@ -250,6 +253,14 @@ async function refused(config: string, signal?: AbortSignal, minMs = 0) {
   await tracker.capture();
   caseFacts.step = "complete";
 }
+async function waitUntil(predicate: () => boolean, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    interrupted.signal.throwIfAborted();
+    if (Date.now() >= deadline) throw new Error("Fixture observation deadline");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
 async function freshMarker(baseUrl: string) {
   const response = await fetch(`${baseUrl}/marker`, { signal: AbortSignal.timeout(1000) });
   assert(response.ok && (await response.json()).marker === "owned-d11");
@@ -285,6 +296,14 @@ try {
           capabilities: { appWindowMutation: { available: false, reason: "fixture" } },
         }),
       );
+    } else if (
+      req.url === "/pressure" &&
+      req.method === "GET" &&
+      req.headers.authorization === `Bearer ${token}`
+    ) {
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Content-Length", 16 * 1024 * 1024);
+      pressureWriters.push(createFinitePressureWriter(res));
     } else if (req.url === "/marker" && req.method === "GET")
       res.end(JSON.stringify({ marker: "owned-d11" }));
     else {
@@ -450,7 +469,11 @@ try {
     await refused(target.config, controller.signal);
     assert(sshChildren.length === before);
   });
-  const stall = tcpServer((socket) => socket.setTimeout(5000, () => socket.destroy()));
+  let preauthAccepted = 0;
+  const stall = tcpServer((socket) => {
+    preauthAccepted++;
+    socket.setTimeout(5000, () => socket.destroy());
+  });
   retainPeers(stall);
   await new Promise<void>((r) => stall.listen(0, "127.0.0.1", r));
   const stallAddress = stall.address() as { port: number };
@@ -494,6 +517,162 @@ try {
       target.setMode("normal");
     }
   });
+  await runCase("paused-forward-reader-healthy-control", async () => {
+    const transport = await connect(directConfig);
+    const control = await connect(directConfig);
+    const offset = pressureWriters.length;
+    let reader: IncomingMessage | undefined;
+    const requestAbort = new AbortController();
+    let readerRequest: ReturnType<typeof request> | undefined;
+    try {
+      caseFacts.step = "reader-headers";
+      reader = await new Promise<IncomingMessage>((resolve, reject) => {
+        readerRequest = request(
+          transport.baseUrl + "/pressure",
+          {
+            method: "GET",
+            agent: false,
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.any([
+              requestAbort.signal,
+              interrupted.signal,
+              AbortSignal.timeout(7000),
+            ]),
+          },
+          (response) => {
+            response.pause();
+            response.on("error", () => {});
+            resolve(response);
+          },
+        );
+        readerRequest.once("error", reject);
+        readerRequest.end();
+      });
+      assert(reader.statusCode === 200);
+      await waitUntil(() => pressureWriters.length === offset + 1);
+      const writer = pressureWriters[offset]!;
+      caseFacts.step = "producer-plateau";
+      let stableSince = Date.now(),
+        previous = -1;
+      await waitUntil(() => {
+        const current = writer.snapshot();
+        caseFacts.acceptedBytes = current.acceptedBytes;
+        caseFacts.queuePeakBytes = current.queuePeakBytes;
+        caseFacts.producerLimitBytes = current.limitBytes;
+        if (current.exhausted || current.retired)
+          throw new Error("Pressure producer exhausted before reader plateau");
+        if (!current.blocked || current.acceptedBytes !== previous) {
+          previous = current.acceptedBytes;
+          stableSince = Date.now();
+        }
+        return current.blocked && Date.now() - stableSince >= 200;
+      }, 5000);
+      const plateau = writer.snapshot();
+      caseFacts.plateauMs = Date.now() - stableSince;
+      caseFacts.drains = plateau.drains;
+      caseFacts.step = "healthy-during-pause";
+      const healthyStarted = Date.now();
+      for (let n = 0; n < 3; n++) await freshMarker(control.baseUrl);
+      caseFacts.healthyElapsedMs = Date.now() - healthyStarted;
+      caseFacts.healthyMarkers = 3;
+      caseFacts.readerPaused = reader.isPaused();
+      caseFacts.plateauPreserved = writer.snapshot().acceptedBytes === plateau.acceptedBytes;
+      assert(caseFacts.readerPaused && caseFacts.plateauPreserved);
+      assert(plateau.queuePeakBytes <= plateau.chunkBytes + 1024);
+      caseFacts.step = "reader-cancellation";
+      reader.destroy();
+      requestAbort.abort();
+      await waitUntil(() => writer.snapshot().retired);
+      caseFacts.finalQueuedBytes = writer.snapshot().queuedBytes;
+      assert(writer.snapshot().queuedBytes === 0);
+      await freshMarker(control.baseUrl);
+    } finally {
+      reader?.destroy();
+      requestAbort.abort();
+      readerRequest?.destroy();
+      for (const writer of pressureWriters.slice(offset)) writer.dispose();
+      await closeTransport(transport);
+      await closeTransport(control);
+    }
+  });
+  await runCase("fleet-scheduler-stall-queued-healthy-cancellation", async () => {
+    // A configured single slot forces the queue boundary with just two real dials.
+    // Default-limit saturation is covered separately by scheduler unit tests.
+    const scheduler = createFleetDialScheduler(1);
+    const stalledAbort = new AbortController(),
+      healthyAbort = new AbortController();
+    const control = await connect(directConfig);
+    let activePeak = 0,
+      queuedPeak = 0,
+      healthyStarted = false;
+    const observe = () => {
+      const value = scheduler.snapshot();
+      activePeak = Math.max(activePeak, value.active);
+      queuedPeak = Math.max(queuedPeak, value.queued);
+      caseFacts.limit = value.limit;
+      caseFacts.activeHighWater = activePeak;
+      caseFacts.queuedHighWater = queuedPeak;
+      assert(value.active <= value.limit && value.queued <= 1);
+      return value;
+    };
+    const acceptedBefore = preauthAccepted;
+    const stalled = scheduler
+      .run(
+        "stalled",
+        stalledAbort.signal,
+        () => connect(stallConfig, stalledAbort.signal),
+        closeTransport,
+      )
+      .then(
+        () => false,
+        () => true,
+      );
+    const healthy = scheduler.run(
+      "healthy",
+      healthyAbort.signal,
+      () => {
+        healthyStarted = true;
+        return connect(directConfig, healthyAbort.signal);
+      },
+      closeTransport,
+    );
+    // Install the rejection handler immediately; independent cleanup always settles both.
+    const healthySettled = healthy.then(
+      (value) => ({ value }),
+      () => ({ value: null }),
+    );
+    try {
+      assert(observe().active === 1 && observe().queued === 1 && !healthyStarted);
+      await waitUntil(() => preauthAccepted > acceptedBefore);
+      caseFacts.stalledSshSocketAccepted = true;
+      await freshMarker(control.baseUrl);
+      caseFacts.healthyControlDuringStall = true;
+      stalledAbort.abort();
+      const postAbort = observe();
+      caseFacts.postAbortActive = postAbort.active;
+      caseFacts.postAbortQueued = postAbort.queued;
+      assert(postAbort.active === 1 && postAbort.queued === 1);
+      assert(await stalled);
+      const recovered = await healthySettled;
+      assert(recovered.value !== null && healthyStarted);
+      if (!recovered.value) throw new Error("Queued healthy dial failed");
+      await freshMarker(recovered.value.baseUrl);
+      await closeTransport(recovered.value);
+      await waitUntil(() => observe().active === 0 && observe().queued === 0);
+      caseFacts.limit = 1;
+      caseFacts.activeHighWater = activePeak;
+      caseFacts.queuedHighWater = queuedPeak;
+      caseFacts.finalActive = scheduler.snapshot().active;
+      caseFacts.finalQueued = scheduler.snapshot().queued;
+    } finally {
+      stalledAbort.abort();
+      healthyAbort.abort();
+      const [, recovered] = await Promise.all([stalled, healthySettled]);
+      if (recovered.value) await closeTransport(recovered.value);
+      await closeTransport(control);
+      await waitUntil(() => scheduler.snapshot().active === 0 && scheduler.snapshot().queued === 0);
+    }
+  });
   await runCase("discovery-output-bound", async () => {
     target.setMode("oversize");
     try {
@@ -510,6 +689,7 @@ try {
   clearInterval(captureTimer);
   await captureFlight;
   for (const timer of timers) clearTimeout(timer);
+  for (const writer of pressureWriters) writer.dispose();
   for (const transport of transports) transport.dispose();
   try {
     await tracker.dispose();
