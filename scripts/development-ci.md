@@ -39,13 +39,17 @@ runner did not reach its own receipt. GitHub hard termination can prevent even
 an `always()` step; absence of evidence is never a cleanup pass.
 
 The wrapper retains direct `ChildProcess` handles, forwards cancellation and
-waits up to 45 seconds for graceful close, then two seconds after SIGKILL. It does
+waits up to 45 seconds for graceful close (210 seconds for the installed
+qualifier to drain a bounded build), then two seconds after SIGKILL. It does
 not discover or kill arbitrary process trees. Each native qualification remains
 responsible for its own descendants, tmux sockets, daemons and files. A failed or
 cancelled command preserves its private work directory and reports cleanup as
-unconfirmed even if its direct child closed. In particular, the packed journey
-has normal/failure teardown but is not claimed to have general signal-safe
-teardown. Use ephemeral hosted runners for these jobs; do not run them against a
+unconfirmed even if its direct child closed. The packed journey now cooperatively handles SIGINT/SIGTERM: it stops new
+admissions, aborts waits/fetches and drains a current bounded build/install command
+before entering its existing owned cleanup. A timeout or buffer-killed build does
+not establish descendant retirement and makes cleanup unconfirmed. GitHub may
+escalate cancellation sooner than the 180-second command budget; arbitrary
+build-phase platform cancellation and hard kill remain unqualified. Use ephemeral hosted runners for these jobs; do not run them against a
 persistent shared runner and infer its state is clean after cancellation.
 
 `development-ci.test.mjs` exercises two simultaneous private runs, failure,
@@ -89,3 +93,21 @@ The finalizer only records evidence and never attempts broad resource cleanup.
 Local tests and YAML validation do not constitute remote CI acceptance. D13 needs
 actual runs of the exact committed workflow, parallel matrix evidence and a
 controlled cancellation run before it can claim those acceptance criteria.
+
+## Controlled packed interruption qualification
+
+After the normal native prerequisite is present, set a fresh private evidence
+path and `TMUX_IDE_PACK_INTERRUPT_AT=hold-input-ready` when launching
+`scripts/pack-check-run.mjs`. The qualifier writes `interruption-ready.json`
+only after its actual installed TUI is input-ready. Send SIGTERM to the retained
+qualifier child handle within 30 seconds. Alternatively use
+`TMUX_IDE_PACK_INTERRUPT_AT=fail-input-ready` for a fixed-stage failure.
+Both must exit unsuccessfully while `proof.json` reports owned cleanup complete,
+no retained roots and all recorded PIDs absent. The proof records cancellation
+and cleanup duration. Neither interrupted run qualifies the full golden journey.
+No signal by PID substring, global tmux shutdown or unrelated cleanup is allowed.
+
+This controlled live proof is separate from the small helper tests. Until its
+exact committed-source receipts are reviewed, signal-safe installed cleanup is
+implemented but not live-qualified. A missing final receipt after platform hard
+kill remains an unqualified result, regardless of hosted runner retirement.

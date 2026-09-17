@@ -50,6 +50,8 @@ export function developmentCiPlan(source, lane) {
       "development-container-context",
       "packed-install-environment",
       "packed-install-cleanup",
+      "packed-cancellation",
+      "release-source-state",
       "packed-install-scenarios",
       "owned-systemd-fixture",
       "owned-launchd-fixture",
@@ -103,6 +105,7 @@ export function developmentCiPlan(source, lane) {
         args: ["scripts/pack-check-run.mjs"],
         cwd: source,
         timeoutMs: 900000,
+        cancelGraceMs: 210000,
       },
     ];
   throw new Error("Unknown development CI lane");
@@ -199,7 +202,10 @@ export async function runDevelopmentCi({
         signal?.removeEventListener("abort", cancel);
       }
       if (!result) {
-        const cleanup = await settlePackedChildren([child], exits, { graceMs, killMs: 2000 });
+        const cleanup = await settlePackedChildren([child], exits, {
+          graceMs: command.cancelGraceMs ?? graceMs,
+          killMs: 2000,
+        });
         if (!cleanup.confirmed) throw new Error("child-cleanup-unconfirmed");
         result = await closed;
       }

@@ -123,6 +123,7 @@ export async function runPackedInstallScenarios(options, receipt) {
     baseEnvironment,
     runtimeEnvironment,
     node = process.execPath,
+    cancellation,
   } = options;
   const home = join(root, "home"),
     project = join(root, "project"),
@@ -157,20 +158,24 @@ export async function runPackedInstallScenarios(options, receipt) {
     cleanupConfirmed: false,
     ownedPids: [],
   });
-  const command = (file, args, override = {}, timeout = 15_000) =>
-    spawnSync(file, args, {
+  let cleaning = false;
+  const command = (file, args, override = {}, timeout = 15_000) => {
+    if (!cleaning) cancellation?.check();
+    return spawnSync(file, args, {
       cwd: project,
       env: { ...env, ...override },
       encoding: "utf8",
       timeout,
       maxBuffer: 1024 * 1024,
     });
+  };
   const success = (result) => {
     assert.equal(result.error, undefined, "Installed scenario subprocess failed to complete");
     assert.equal(result.status, 0, "Installed scenario subprocess refused");
     return result;
   };
   const owned = (file, args) => {
+    cancellation?.check();
     const child = spawn(file, args, { cwd: project, env, stdio: ["ignore", "pipe", "pipe"] });
     let bytes = 0;
     for (const stream of [child.stdout, child.stderr])
@@ -191,8 +196,13 @@ export async function runPackedInstallScenarios(options, receipt) {
   const wait = async (predicate, ms = 10_000) => {
     const end = Date.now() + ms;
     while (Date.now() < end) {
-      if (await predicate()) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      cancellation?.check();
+      if (await predicate()) {
+        cancellation?.check();
+        return;
+      }
+      if (cancellation) await cancellation.pause(25);
+      else await new Promise((resolve) => setTimeout(resolve, 25));
     }
     throw new Error("Packed installed scenario deadline exceeded");
   };
@@ -206,6 +216,7 @@ export async function runPackedInstallScenarios(options, receipt) {
     }
   };
   const boundedClose = async (child) => {
+    if (cancellation) return cancellation.waitFor(exits.get(child), 10000);
     let timer;
     try {
       return await Promise.race([
@@ -222,6 +233,7 @@ export async function runPackedInstallScenarios(options, receipt) {
     }
   };
   const caseRun = async (name, body) => {
+    cancellation?.check();
     const entry = { name, installMode: "scripts-disabled", status: "failed" };
     receipt.cases.push(entry);
     const started = Date.now();
@@ -427,6 +439,7 @@ export async function runPackedInstallScenarios(options, receipt) {
   } catch (error) {
     failure = error;
   } finally {
+    cleaning = true;
     const cleanup = (receipt.cleanup = {
       children: await settlePackedChildren(children, exits),
       tmuxSocketRemoved: !existsSync(socket),
