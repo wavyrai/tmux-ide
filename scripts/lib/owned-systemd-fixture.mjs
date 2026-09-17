@@ -16,7 +16,7 @@ export function systemdFixtureDefinition(nonce) {
   const unit = `tmux-ide-qualification-${nonce}.service`;
   const supervisionId = `systemd.${nonce}`;
   const labels = { "org.tmux-ide.qualification": "d12-systemd", "org.tmux-ide.nonce": nonce };
-  const unitText = `[Unit]\nDescription=Private tmux-ide qualification\nAfter=basic.target\n[Service]\nType=simple\nUser=1000\nGroup=1000\nWorkingDirectory=/qualification/source\nExecStart=/usr/local/bin/node /qualification/stable.mjs --headless --supervised ${supervisionId} --json\nRestart=always\nRestartSec=1\nKillMode=process\nTimeoutStopSec=10\nStandardOutput=null\nStandardError=journal\nLogRateLimitIntervalSec=30s\nLogRateLimitBurst=30\n[Install]\nWantedBy=multi-user.target\n`;
+  const unitText = `[Unit]\nDescription=Private tmux-ide qualification\nAfter=basic.target\n[Service]\nType=simple\nUser=1000\nGroup=1000\nWorkingDirectory=/qualification/source\nExecStart=/usr/local/bin/node /qualification/stable.mjs --headless --supervised ${supervisionId} --json\nRestart=always\nRestartSec=1\nKillMode=process\nTimeoutStopSec=10\nStandardOutput=journal\nStandardError=journal\nLogRateLimitIntervalSec=30s\nLogRateLimitBurst=30\n[Install]\nWantedBy=multi-user.target\n`;
   return { nonce, name, unit, supervisionId, labels, unitText, unitHash: sha256(unitText) };
 }
 
@@ -134,7 +134,30 @@ export function parseSystemdUnit(text, definition) {
     !["active", "activating", "inactive", "deactivating", "failed"].includes(values.ActiveState)
   )
     throw refuse();
-  return { pid: Number(values.MainPID), active: values.ActiveState, sub: values.SubState };
+  const result = { pid: Number(values.MainPID), active: values.ActiveState, sub: values.SubState };
+  for (const key of ["ExecMainCode", "ExecMainStatus", "ExecMainPID", "NRestarts"]) {
+    if (values[key] !== undefined) {
+      if (!/^(0|[1-9][0-9]*)$/.test(values[key]) || !Number.isSafeInteger(Number(values[key])))
+        throw refuse();
+      result[key] = Number(values[key]);
+    }
+  }
+  if (values.Result !== undefined)
+    result.result = [
+      "success",
+      "exit-code",
+      "signal",
+      "core-dump",
+      "watchdog",
+      "start-limit-hit",
+      "resources",
+      "protocol",
+      "timeout",
+      "oom-kill",
+    ].includes(values.Result)
+      ? values.Result
+      : "other";
+  return result;
 }
 
 /** Stable diagnostic witness only; this fixture never uses it to weaken product admission. */
@@ -234,10 +257,38 @@ export function verifySystemdDependencyLinks(candidate) {
 
 /** Raw private journal bytes never leave this classifier. */
 export function systemdFailureDiagnostic(text) {
-  if (typeof text !== "string" || Buffer.byteLength(text) > 65536) throw new Error("journal-bound");
+  if (typeof text !== "string" || Buffer.byteLength(text) > 131072)
+    throw new Error("journal-bound");
+  const codes = [
+    "DAEMON_SUPERVISOR_RESERVATION_REQUIRED",
+    "DAEMON_INFO_INVALID",
+    "DAEMON_STARTUP_TIMEOUT",
+    "DAEMON_INFO_MISSING",
+    "DAEMON_IDENTITY_MISMATCH",
+    "DAEMON_IDENTITY_UNAVAILABLE",
+    "DAEMON_PROTOCOL_MISMATCH",
+    "DAEMON_UNHEALTHY",
+    ...[
+      "PORT_IN_USE",
+      "PORT_INVALID",
+      "BIND_FAILED",
+      "TMUX_SESSION_MISSING",
+      "CANONICAL_ALREADY_RUNNING",
+      "CANONICAL_RECORD_INVALID",
+      "CANONICAL_CLAIM_BUSY",
+      "CANONICAL_PUBLICATION_LOST",
+      "CANONICAL_TAKEOVER_REFUSED",
+      "CANONICAL_TAKEOVER_TIMEOUT",
+      "CANONICAL_TAKEOVER_IDENTITY_MISMATCH",
+    ].map((reason) => `DAEMON_${reason}`),
+  ];
   return {
     bytes: Buffer.byteLength(text),
     lines: text.split("\n").filter(Boolean).length,
+    startupCodes: codes.filter((code) => new RegExp(`"code"\\s*:\\s*"${code}"`).test(text)),
+    statuses: ["ready", "already-running"].filter((status) =>
+      new RegExp(`"status"\\s*:\\s*"${status}"`).test(text),
+    ),
     categories: Object.entries({
       reservation: /Matching supervisor reservation|required before startup|supervisor binding/i,
       claim: /canonical(?: daemon)?[ _]claim|startup claim/i,
@@ -246,10 +297,21 @@ export function systemdFailureDiagnostic(text) {
       missingDependency: /ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|cannot find module/i,
       addressInUse: /EADDRINUSE|address already in use/i,
       serviceExit: /Main process exited|Failed with result|Failed to start/i,
+      serviceSpawn: /Failed at step|Failed to execute|Failed to determine user credentials/i,
+      tmuxAuthority:
+        /tmux.{0,40}(?:unavailable|missing|failed|refused)|(?:unavailable|missing|failed|refused).{0,40}tmux/i,
     })
       .filter(([, pattern]) => pattern.test(text))
       .map(([category]) => category),
   };
+}
+
+/** Only for a mode0600 artifact in the private fixture evidence directory. */
+export function privateSystemdJournal(text, token) {
+  if (typeof text !== "string" || typeof token !== "string" || token.length > 4096)
+    throw new Error("journal-input-refused");
+  const redacted = token ? text.replaceAll(token, "[REDACTED-FIXTURE-TOKEN]") : text;
+  return Buffer.from(redacted).subarray(-131068).toString("utf8");
 }
 
 /** Fixed classifications only; command output may contain private paths or data. */

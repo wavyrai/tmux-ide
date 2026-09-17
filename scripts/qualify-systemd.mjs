@@ -23,6 +23,7 @@ import {
   sha256,
   systemdFailureDiagnostic,
   systemdPreparationDiagnostic,
+  privateSystemdJournal,
 } from "./lib/owned-systemd-fixture.mjs";
 import { settlePackedChildren } from "./lib/packed-install-cleanup.mjs";
 const source = realpathSync(fileURLToPath(new URL("..", import.meta.url)));
@@ -298,13 +299,32 @@ try {
   if (id) {
     try {
       const current = await inspect();
-      if (current.running)
-        receipt.serviceDiagnostic = systemdFailureDiagnostic(
+      if (current.running) {
+        const token = await checkedExec(
+          [
+            "/usr/local/bin/node",
+            "-e",
+            `const fs=require('node:fs');try{const p='/qualification/state/daemon.json';const s=fs.lstatSync(p);if(s.isFile()&&s.uid===1000&&!(s.mode&0o077)&&s.size<=16384){const v=JSON.parse(fs.readFileSync(p,'utf8'));if(typeof v.authToken==='string'&&v.authToken.length<=4096)process.stdout.write(v.authToken);}}catch{}`,
+          ],
+          { timeout: 5000 },
+        );
+        const journal = privateSystemdJournal(
           await checkedExec(
-            ["/bin/journalctl", "--unit", d.unit, "--no-pager", "--output=cat", "--lines=40"],
+            ["/bin/journalctl", "--unit", d.unit, "--no-pager", "--output=cat", "--lines=200"],
             { timeout: 5000 },
           ),
+          token,
         );
+        const file = "service-journal.private.log";
+        writeFileSync(join(evidence, file), journal, { mode: 0o600 });
+        receipt.serviceJournal = {
+          file,
+          bytes: Buffer.byteLength(journal),
+          sha256: sha256(journal),
+          currentTokenRedacted: Boolean(token),
+        };
+        receipt.serviceDiagnostic = systemdFailureDiagnostic(journal);
+      }
     } catch {
       receipt.serviceDiagnostic = { unavailable: true };
     }

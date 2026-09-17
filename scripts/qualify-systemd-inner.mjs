@@ -155,7 +155,7 @@ async function unit() {
       "show",
       d.unit,
       "--no-pager",
-      "--property=Id,FragmentPath,LoadState,MainPID,User,Group,Restart,KillMode,ActiveState,SubState",
+      "--property=Id,FragmentPath,LoadState,MainPID,User,Group,Restart,KillMode,ActiveState,SubState,ExecMainCode,ExecMainStatus,ExecMainPID,NRestarts,Result",
     ]),
     d,
   );
@@ -387,6 +387,17 @@ try {
       const record = readRecord();
       receipt.retained = record ? { ...facts(record), currentBirth: birth(record.pid) } : null;
       receipt.service = await unit();
+      const claim = JSON.parse(
+        await command(process.execPath, [
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "-e",
+          `import {inspectCanonicalDaemonClaimPath,getCanonicalDaemonClaimPath} from ${JSON.stringify(join(source, "packages/daemon/src/lib/canonical-daemon.ts"))}; const v=inspectCanonicalDaemonClaimPath(getCanonicalDaemonClaimPath()); console.log(JSON.stringify(v.status === "valid" ? {status:v.status,pid:v.claim.pid,acquiredAt:v.claim.acquiredAt} : {status:v.status}));`,
+        ]),
+      );
+      receipt.claim =
+        claim.status === "valid" ? { ...claim, currentBirth: birth(claim.pid) } : claim;
     } catch {
       receipt.diagnosticRefused = true;
     }

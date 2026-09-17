@@ -16,8 +16,10 @@ import {
   systemdFailureDiagnostic,
   observeSystemdOwner,
   systemdPreparationDiagnostic,
+  privateSystemdJournal,
 } from "./owned-systemd-fixture.mjs";
 const d = systemdFixtureDefinition("a".repeat(32));
+const unit = `Id=${d.unit}\nFragmentPath=/etc/systemd/system/${d.unit}\nLoadState=loaded\nMainPID=123\nUser=1000\nGroup=1000\nRestart=always\nKillMode=process\nActiveState=active\nSubState=running\n`;
 function inspect() {
   return {
     Id: "b".repeat(64),
@@ -114,7 +116,40 @@ test("bounded service diagnostics contain only fixed classifications, never priv
   const receipt = systemdFailureDiagnostic(text);
   assert.deepEqual(receipt.categories, ["claim", "ownerNotDead"]);
   assert.equal(JSON.stringify(receipt).includes("secret-token-value"), false);
-  assert.throws(() => systemdFailureDiagnostic("x".repeat(65537)), /journal-bound/);
+  assert.throws(() => systemdFailureDiagnostic("x".repeat(131073)), /journal-bound/);
+});
+
+test("headless status and multiline error JSON produce allowlisted diagnostics only", () => {
+  const text =
+    JSON.stringify({ status: "ready", pid: 123, port: 456, apiBaseUrl: "private-url" }) +
+    "\n" +
+    JSON.stringify(
+      { error: "secret message", code: "DAEMON_CANONICAL_CLAIM_BUSY", cause: "secret cause" },
+      null,
+      2,
+    ) +
+    "\n" +
+    JSON.stringify({ code: "SECRET_UNKNOWN_CODE" });
+  const result = systemdFailureDiagnostic(text);
+  assert.deepEqual(result.startupCodes, ["DAEMON_CANONICAL_CLAIM_BUSY"]);
+  assert.deepEqual(result.statuses, ["ready"]);
+  assert.equal(JSON.stringify(result).includes("secret"), false);
+  assert.equal(JSON.stringify(result).includes("private-url"), false);
+  const diagnostic = parseSystemdUnit(
+    unit + "ExecMainCode=1\nExecMainStatus=217\nExecMainPID=55\nNRestarts=5\nResult=exit-code\n",
+    d,
+  );
+  assert.equal(diagnostic.ExecMainStatus, 217);
+  assert.equal(diagnostic.result, "exit-code");
+});
+
+test("private exact-unit journal is bounded and redacts known token before truncation", () => {
+  const token = "owned-private-token";
+  const result = privateSystemdJournal("x".repeat(200000) + token + "\nFailed at step USER", token);
+  assert.ok(Buffer.byteLength(result) <= 131072);
+  assert.equal(result.includes(token), false);
+  assert.ok(result.includes("[REDACTED-FIXTURE-TOKEN]"));
+  assert.deepEqual(systemdFailureDiagnostic(result).categories, ["serviceSpawn"]);
 });
 
 test("preparation diagnostics identify tool failures without preserving raw paths or secrets", () => {
@@ -193,7 +228,7 @@ test("Docker capability prefix normalization accepts only the exact single reque
     assert.throws(() => inspectSystemdContainer(raw, d, raw.Id));
   }
 });
-const unit = `Id=${d.unit}\nFragmentPath=/etc/systemd/system/${d.unit}\nLoadState=loaded\nMainPID=123\nUser=1000\nGroup=1000\nRestart=always\nKillMode=process\nActiveState=active\nSubState=running\n`;
+
 test("systemd observation rejects duplicates and changed service authority", () => {
   assert.equal(parseSystemdUnit(unit, d).pid, 123);
   for (const text of [
