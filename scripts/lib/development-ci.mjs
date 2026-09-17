@@ -51,6 +51,7 @@ export function developmentCiPlan(source, lane) {
       "packed-install-environment",
       "packed-install-cleanup",
       "packed-cancellation",
+      "packed-interruption-qualification",
       "release-source-state",
       "packed-install-scenarios",
       "owned-systemd-fixture",

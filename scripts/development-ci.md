@@ -26,11 +26,11 @@ caching is disabled and there is no fallback cache key.
 
 ## Bounds and evidence
 
-| Lane            | Command budget                             | Job budget | Actual scope                                                                |
-| --------------- | ------------------------------------------ | ---------- | --------------------------------------------------------------------------- |
-| Fast            | Helpers 3 min, Vitest 5 min                | 15 min     | Namespace/build/lifecycle contracts; mocked runtime boundaries              |
-| Linux installed | SSH contracts 3 min, packed journey 15 min | 25 min     | Actual installed package/TUI, hermetic SSH tests                            |
-| macOS SSH       | Existing owned fixture deadlines           | 15 min     | Actual nonroot OpenSSH, synthetic identity/HTTP stream and scheduler matrix |
+| Lane            | Command budget                                                                                               | Job budget | Actual scope                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------ | ---------- | --------------------------------------------------------------------------- |
+| Fast            | Helpers 3 min, Vitest 5 min                                                                                  | 15 min     | Namespace/build/lifecycle contracts; mocked runtime boundaries              |
+| Linux installed | SSH contracts 3 min, packed journey 15 min; two interruption cases each 6 min to readiness + 210 sec cleanup | 40 min     | Actual installed package/TUI, hermetic SSH tests, controlled interruption   |
+| macOS SSH       | Existing owned fixture deadlines                                                                             | 15 min     | Actual nonroot OpenSSH, synthetic identity/HTTP stream and scheduler matrix |
 
 Each direct child has a bounded log tail of 1 MiB. Receipts and selected logs are
 uploaded for seven days, including failed runs. No private work directory or SSH
@@ -111,3 +111,15 @@ This controlled live proof is separate from the small helper tests. Until its
 exact committed-source receipts are reviewed, signal-safe installed cleanup is
 implemented but not live-qualified. A missing final receipt after platform hard
 kill remains an unqualified result, regardless of hosted runner retirement.
+
+The Linux installed job also runs `node scripts/qualify-packed-interruption.mjs
+<fresh-evidence-directory>` after its successful ordinary journey. It runs the
+two cases sequentially, sends SIGTERM only through the retained qualifier child
+handle after the private input-ready receipt, and requires a nonzero exit with
+an incomplete journey, verified artifact hashes and confirmed owned cleanup.
+It independently checks the recorded PIDs and private paths are absent. These
+are checks of the recorded inventory, not an exhaustive process census. Failed
+cases retain a bounded 1 MiB log, qualification receipt and product proof; no
+work directory or credentials are uploaded. Timeout escalation cannot produce
+a cleanup pass. This controlled fixture does not qualify GitHub's arbitrary
+build-phase cancellation or a platform hard kill.

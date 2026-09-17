@@ -107,7 +107,7 @@ jobs:
     needs: [scope, fast]
     if: needs.scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -139,6 +139,8 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/development-ci"
           node scripts/development-ci.mjs installed "$RUNNER_TEMP/development-ci"
+      - name: Controlled installed SIGTERM and failure cleanup (sequential)
+        run: node scripts/qualify-packed-interruption.mjs "$RUNNER_TEMP/packed-interruption"
       - name: Always record cleanup result
         if: always()
         run: node scripts/development-ci.mjs installed "$RUNNER_TEMP/development-ci" --finalize
@@ -151,6 +153,9 @@ jobs:
             ${{ runner.temp }}/development-ci/*/receipt.json
             ${{ runner.temp }}/development-ci/*/*.log
             ${{ runner.temp }}/development-ci/*/package/proof.json
+            ${{ runner.temp }}/packed-interruption/receipt.json
+            ${{ runner.temp }}/packed-interruption/*/run.private.log
+            ${{ runner.temp }}/packed-interruption/*/package/proof.json
           retention-days: 7
           if-no-files-found: error
 
