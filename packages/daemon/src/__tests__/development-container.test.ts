@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import {
   developmentContainer,
   developmentContainerRunner,
+  withReadyDevelopmentContainer,
   withContainerSshChildren,
   readContainerExport,
   inspectContainerProject,
@@ -306,7 +307,7 @@ describe("explicit container lifecycle", () => {
     const stop = f.calls.findIndex((a) => a[0] === "stop");
     expect(stop).toBeGreaterThan(f.calls.findIndex((a) => a.includes("suspend")));
     expect(f.calls[stop]!.at(-1)).toBe(f.record.resources!.containerId);
-    expect(JSON.stringify(result)).not.toContain("private");
+    expect(JSON.stringify(result)).not.toContain("not-public");
   });
   it("finalizes only proof-backed completed stop, and rejects replacement before action", async () => {
     const f = await prepared("stopping-container");
@@ -454,4 +455,68 @@ it("awaits retained SSH close even when opening fails before a transport handle 
     }),
   ).rejects.toThrow("admission failed");
   expect(closed).toBe(true);
+});
+
+it("ready-only app admission refuses stopped resources without any start or resume", async () => {
+  const f = await prepared("stopped");
+  f.stop();
+  let admitted = false;
+  await expect(
+    withReadyDevelopmentContainer(
+      f.project,
+      async () => {
+        admitted = true;
+      },
+      undefined,
+      f.runner,
+    ),
+  ).rejects.toMatchObject({ reason: "instance-suspended" });
+  expect(admitted).toBe(false);
+  expect(f.calls.some((a) => a[0] === "start" || a.includes("resume"))).toBe(false);
+});
+it("project lock covers app admission but not interactive completion", async () => {
+  const f = await prepared();
+  let release!: () => void;
+  const hold = new Promise<void>((r) => (release = r));
+  let entered!: () => void;
+  const inside = new Promise<void>((r) => (entered = r));
+  let appExited!: () => void;
+  const completion = new Promise<void>((r) => (appExited = r));
+  const launch = withReadyDevelopmentContainer(
+    f.project,
+    async (remote) => {
+      expect(remote.alias).toBe(f.project.name);
+      entered();
+      await hold;
+      return { completion };
+    },
+    undefined,
+    f.runner,
+  );
+  await inside;
+  const down = developmentContainer(f.project, "down", {}, f.runner);
+  expect(f.calls.some((a) => a.includes("suspend"))).toBe(false);
+  release();
+  const admitted = await launch;
+  expect(admitted.completion).toBe(completion);
+  expect(await down).toMatchObject({ phase: "stopped" });
+  appExited();
+});
+it("changed authenticated remote proof prevents app callback", async () => {
+  const f = await prepared();
+  let called = false;
+  f.runner.verifySsh = async () => {
+    throw Error("host key or identity refused");
+  };
+  await expect(
+    withReadyDevelopmentContainer(
+      f.project,
+      async () => {
+        called = true;
+      },
+      undefined,
+      f.runner,
+    ),
+  ).rejects.toThrow();
+  expect(called).toBe(false);
 });

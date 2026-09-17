@@ -273,3 +273,29 @@ proof permits retrying/finalizing the Docker stop. Cancellation may leave a
 process already launched by Docker exec; the saved phase prevents an unsafe
 automatic retry. Do not clear records, recreate resources or use Docker prune to
 bypass a refusal. This initial slice does not yet provide reset for those cases.
+
+### Native managed client (source checkpoint; live qualification pending)
+
+After the selected container is ready, `pnpm dev:instance app --container` launches
+an immutable native TUI through the existing authenticated SSH transport. The
+first launch additionally requires `--bun /absolute/pinned/bun` to build its own
+host artifact. Repeat the same `--worktree`, `--name` and `--store` selection used
+for container startup. A stopped container must first be resumed explicitly with
+`up --container --resume`; app admission never starts or resumes Docker.
+
+The host client uses a separate canonical instance and build. Existing verified
+builds are reused; corrupt selections are refused, and source edits never trigger
+an implicit rebuild. Its child PATH contains only the private SSH wrapper before
+the existing pinned runtime PATH. User SSH configuration and saved machines are
+not modified. Admission verifies the current project, host key and daemon, then
+releases the project lock before the interactive app lifetime.
+
+The small local managed owner is retained after app exit. Container status JSON
+exposes `nativeClient` with its exact id, worktree, store and native cleanup argv;
+the same guidance prints after the TUI exits. Close its apps, then use the supplied
+native `down --id ... --store ...` arguments for scoped owner cleanup, or native
+`reset --yes --id ... --store ...` for explicit state/artifact removal. Existing
+reset refuses live or unknown app receipts. **Container down stops neither this
+host owner nor its native apps**; remote apps may become disconnected. A future
+container reset must account for these separate host resources. Linux shell,
+container reset and the two-project interactive gate remain later slices.

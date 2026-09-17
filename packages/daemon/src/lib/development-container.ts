@@ -278,6 +278,175 @@ export async function inspectContainerProject(
   verifyDevelopmentComposeResources(project, record, inspect);
   return inspect;
 }
+import { resolveDevelopmentInstance, type DevelopmentInstance } from "./development-instance.ts";
+export function developmentContainerClient(
+  project: DevelopmentComposeProject,
+): DevelopmentInstance {
+  return resolveDevelopmentInstance({
+    worktree: project.instance.worktree,
+    name: `container-client-${project.instance.id}`,
+    store: join(project.instance.store, "container-clients", project.instance.id),
+  });
+}
+export function developmentContainerClientInfo(project: DevelopmentComposeProject) {
+  const client = developmentContainerClient(project);
+  return {
+    id: client.id,
+    name: client.name,
+    worktree: client.worktree,
+    store: client.store,
+    ownerLifetime: "retained-after-app-exit",
+    cleanup: {
+      down: ["down", "--id", client.id, "--store", client.store],
+      reset: ["reset", "--yes", "--id", client.id, "--store", client.store],
+    },
+    note: "Close host apps before optional native cleanup; container down does not stop this owner",
+  };
+}
+async function verifyContainerSsh(
+  project: DevelopmentComposeProject,
+  record: DevelopmentComposeRecord,
+  journal: Journal,
+  lease: Record<string, unknown>,
+  runner: ContainerRunner,
+  signal?: AbortSignal,
+) {
+  if (!journal?.hostKey || !record?.resources?.port) refuse();
+  const key = join(project.controlRoot, "client_ed25519"),
+    known = join(project.controlRoot, "known_hosts"),
+    config = join(project.controlRoot, "ssh_config");
+  if (
+    [key, known].some(
+      (path) =>
+        [...path].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
+        /[%"\\]/u.test(path),
+    )
+  )
+    refuse();
+  if (!readPrivateDevelopmentFile(key)) refuse();
+  privateText(known, `[127.0.0.1]:${record.resources.port} ${journal.hostKey}`);
+  privateText(
+    config,
+    `Host fixture ${project.name}\n HostName 127.0.0.1\n Port ${record.resources.port}\n User node\n IdentityFile "${key}"\n UserKnownHostsFile "${known}"\n GlobalKnownHostsFile /dev/null\n StrictHostKeyChecking yes\n IdentitiesOnly yes\n IdentityAgent none\n PasswordAuthentication no\n KbdInteractiveAuthentication no\n BatchMode yes\n ConnectTimeout 5\n ControlMaster no\n ControlPath none\n ForwardAgent no\n`,
+  );
+  if (runner.verifySsh) {
+    await runner.verifySsh(config, lease, signal);
+    return config;
+  }
+  await withContainerSshChildren(async (retain) => {
+    const transport = await openSshDaemonTransport(
+      { alias: "fixture", signal: signal, timeoutMs: 15000 },
+      {
+        spawn: (args) =>
+          retain(
+            spawn("/usr/bin/ssh", ["-F", config, ...args], {
+              stdio: ["ignore", "pipe", "pipe"],
+            }),
+          ),
+        probe: probeSshDaemonIdentity,
+        allocatePort: () =>
+          new Promise((resolve, reject) => {
+            const server = createServer();
+            server.once("error", reject);
+            server.listen(0, "127.0.0.1", () => {
+              const address = server.address();
+              if (!address || typeof address === "string") {
+                server.close();
+                reject(Error());
+                return;
+              }
+              server.close((error) => (error ? reject(error) : resolve(address.port)));
+            });
+          }),
+      },
+    );
+    try {
+      if (
+        transport.daemon.instanceId !== lease.daemonId ||
+        transport.daemon.pid !== lease.pid ||
+        transport.daemon.port !== lease.port ||
+        transport.daemon.startedAt !== lease.startedAt ||
+        transport.daemon.protocolVersion !== lease.protocolVersion ||
+        transport.daemon.productVersion !== lease.productVersion
+      )
+        refuse();
+    } finally {
+      transport.dispose();
+      await transport.closed;
+    }
+  });
+
+  return config;
+}
+
+/** Admission only: never starts/resumes Docker. The callback finishes before releasing the project lock. */
+export async function withReadyDevelopmentContainer<T>(
+  project: DevelopmentComposeProject,
+  action: (remote: { alias: string; controlRoot: string; configHash: string }) => Promise<T>,
+  signal?: AbortSignal,
+  runner: ContainerRunner = developmentContainerRunner,
+): Promise<T> {
+  return withDevelopmentComposeProject(
+    project,
+    async (control) => {
+      const record = control.read(),
+        journal = readJournal(project);
+      if (!record?.resources || journal?.phase !== "ready")
+        throw new DevelopmentOperationError(
+          "instance-suspended",
+          "Container app requires ready container; use explicit up --container --resume after stop",
+        );
+      const inspect = await inspectContainerProject(project, record, runner, signal);
+      if (!inspect || !object(object(inspect.container).State).Running) refuse();
+      control.adopt(inspect);
+      const observed = control.read()!;
+      const args = [
+        "exec",
+        observed.resources!.containerId,
+        "node",
+        "--import",
+        "/workspace/tree/node_modules/tsx/dist/loader.mjs",
+        "/opt/fixture/container-lifecycle.mjs",
+        "ready",
+        project.name,
+        observed.resources!.containerId,
+        developmentComposeVolumesHash(observed.resources!),
+      ];
+      const current = async () => {
+        signal?.throwIfAborted();
+        const result = parse(await runner.run(args, { signal, timeoutMs: 60000 }));
+        if (result.state !== "ready") refuse();
+        const lease = object(result.lease);
+        if (
+          hash(JSON.stringify(lease)) !== journal.leaseHash ||
+          lease.generation !== journal.generation
+        )
+          refuse();
+        return lease;
+      };
+      const lease = await current();
+      const configured = parse(
+        await runner.run(
+          ["exec", observed.resources!.containerId, "cat", "/state/ssh/lease.json"],
+          { signal },
+        ),
+      );
+      if (JSON.stringify(configured) !== JSON.stringify(lease)) refuse();
+      const config = await verifyContainerSsh(project, observed, journal, lease, runner, signal);
+      await inspectContainerProject(project, observed, runner, signal);
+      await current();
+      signal?.throwIfAborted();
+      const bytes = readPrivateDevelopmentFile(config)?.bytes;
+      if (!bytes) refuse();
+      return action({
+        alias: project.name,
+        controlRoot: project.controlRoot,
+        configHash: hash(bytes),
+      });
+    },
+    signal,
+  );
+}
 export interface ContainerOptions {
   image?: string;
   source?: string;
@@ -329,6 +498,7 @@ export async function developmentContainer(
               ? verifyDevelopmentComposeResources(project, record, inspected)
               : null,
           generation: journal?.generation ?? null,
+          nativeClient: developmentContainerClientInfo(project),
         });
         if (command === "status") return snapshot();
         if (command === "logs") {
@@ -517,64 +687,8 @@ export async function developmentContainer(
             ),
           );
         const sshReady = async (lease: Record<string, unknown>) => {
-          if (!journal?.hostKey || !record?.resources?.port) refuse();
-          const key = join(project.controlRoot, "client_ed25519"),
-            known = join(project.controlRoot, "known_hosts"),
-            config = join(project.controlRoot, "ssh_config");
-          if ([key, known].some((path) => /[\r\n"\\]/u.test(path))) refuse();
-          privateText(known, `[127.0.0.1]:${record.resources.port} ${journal.hostKey}`);
-          privateText(
-            config,
-            `Host fixture\n HostName 127.0.0.1\n Port ${record.resources.port}\n User node\n IdentityFile "${key}"\n UserKnownHostsFile "${known}"\n GlobalKnownHostsFile /dev/null\n StrictHostKeyChecking yes\n IdentitiesOnly yes\n IdentityAgent none\n PasswordAuthentication no\n KbdInteractiveAuthentication no\n BatchMode yes\n ConnectTimeout 5\n ControlMaster no\n ControlPath none\n ForwardAgent no\n`,
-          );
-          if (runner.verifySsh) {
-            await runner.verifySsh(config, lease, options.signal);
-            sshVerified = true;
-            return;
-          }
-          await withContainerSshChildren(async (retain) => {
-            const transport = await openSshDaemonTransport(
-              { alias: "fixture", signal: options.signal, timeoutMs: 15000 },
-              {
-                spawn: (args) =>
-                  retain(
-                    spawn("/usr/bin/ssh", ["-F", config, ...args], {
-                      stdio: ["ignore", "pipe", "pipe"],
-                    }),
-                  ),
-                probe: probeSshDaemonIdentity,
-                allocatePort: () =>
-                  new Promise((resolve, reject) => {
-                    const server = createServer();
-                    server.once("error", reject);
-                    server.listen(0, "127.0.0.1", () => {
-                      const address = server.address();
-                      if (!address || typeof address === "string") {
-                        server.close();
-                        reject(Error());
-                        return;
-                      }
-                      server.close((error) => (error ? reject(error) : resolve(address.port)));
-                    });
-                  }),
-              },
-            );
-            try {
-              if (
-                transport.daemon.instanceId !== lease.daemonId ||
-                transport.daemon.pid !== lease.pid ||
-                transport.daemon.port !== lease.port ||
-                transport.daemon.startedAt !== lease.startedAt ||
-                transport.daemon.protocolVersion !== lease.protocolVersion ||
-                transport.daemon.productVersion !== lease.productVersion
-              )
-                refuse();
-              sshVerified = true;
-            } finally {
-              transport.dispose();
-              await transport.closed;
-            }
-          });
+          await verifyContainerSsh(project, record!, journal!, lease, runner, options.signal);
+          sshVerified = true;
         };
         if (command === "up") {
           if (["stopped", "suspended", "stopping-container"].includes(journal.phase)) {

@@ -28,6 +28,7 @@ import {
   type DevelopmentInstance,
 } from "./development-instance.ts";
 import {
+  readDevelopmentBuild,
   developmentFileHash,
   developmentTreeHash,
   verifyDevelopmentBuild,
@@ -262,6 +263,7 @@ export async function buildDevelopmentInstance(
   instance: DevelopmentInstance,
   options: {
     bun: string;
+    onlyIfSelectionAbsent?: boolean;
     node?: string;
     signal?: AbortSignal;
     /** Test-only failure injection immediately before publication. */
@@ -274,6 +276,16 @@ export async function buildDevelopmentInstance(
     instance,
     "build",
     async () => {
+      if (options.onlyIfSelectionAbsent) {
+        let missing = false;
+        try {
+          lstatSync(join(instance.root, "build.json"));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          missing = true;
+        }
+        if (!missing) return readDevelopmentBuild(instance, {});
+      }
       let phase = "source-and-toolchain";
       const operationId = randomUUID();
       try {

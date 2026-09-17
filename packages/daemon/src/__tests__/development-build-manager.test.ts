@@ -1,3 +1,5 @@
+import * as buildReader from "../lib/development-build.ts";
+import { withDevelopmentLock } from "../lib/development-lock.ts";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +17,7 @@ import {
 const roots: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 function fixture() {
@@ -152,4 +155,46 @@ it("retains actionable bounded private build diagnostics without exposing stderr
   const log = readFileSync(join(f.instance.root, "logs/build.log"));
   expect(log.byteLength).toBeLessThanOrEqual(65536);
   expect(log.toString()).toContain("private-compiler-fixture");
+});
+
+it("two first-build admissions recheck the exact pointer under the existing build lock", async () => {
+  const f = fixture();
+  let release!: () => void, entered!: () => void;
+  const hold = new Promise<void>((r) => (release = r)),
+    inside = new Promise<void>((r) => (entered = r));
+  const owner = withDevelopmentLock(f.instance, "build", async () => {
+    entered();
+    await hold;
+    writeFileSync(join(f.instance.root, "build.json"), "published-by-earlier-builder", {
+      mode: 0o600,
+    });
+  });
+  await inside;
+  const verified = { generation: "build-same" } as buildReader.DevelopmentBuildManifest;
+  const read = vi.spyOn(buildReader, "readDevelopmentBuild").mockImplementation(() => {
+    expect(readFileSync(join(f.instance.root, "locks/build/owner.json"), "utf8")).toBeTruthy();
+    return verified;
+  });
+  const one = buildDevelopmentInstance(f.instance, {
+    bun: "/never-executed",
+    onlyIfSelectionAbsent: true,
+  });
+  const two = buildDevelopmentInstance(f.instance, {
+    bun: "/never-executed",
+    onlyIfSelectionAbsent: true,
+  });
+  release();
+  await owner;
+  expect(await Promise.all([one, two])).toEqual([verified, verified]);
+  expect(read).toHaveBeenCalledTimes(2);
+});
+it("an invalid existing selection is preserved and never triggers automatic rebuild", async () => {
+  const f = fixture();
+  mkdirSync(f.instance.root, { recursive: true, mode: 0o700 });
+  const pointer = join(f.instance.root, "build.json");
+  writeFileSync(pointer, "null", { mode: 0o600 });
+  await expect(
+    buildDevelopmentInstance(f.instance, { bun: "/never-executed", onlyIfSelectionAbsent: true }),
+  ).rejects.toThrow("No verified development build");
+  expect(readFileSync(pointer, "utf8")).toBe("null");
 });

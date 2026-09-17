@@ -1,3 +1,4 @@
+import { launchDevelopmentContainerApp } from "../packages/daemon/src/lib/development-container-app.ts";
 import { developmentContainer } from "../packages/daemon/src/lib/development-container.ts";
 import { resolveDevelopmentComposeProject } from "../packages/daemon/src/lib/development-compose.ts";
 import {
@@ -99,25 +100,26 @@ if (
   (values.yes && command !== "reset") ||
   (values["apply-build"] && command !== "restart") ||
   (values.previous && (command !== "restart" || !values["apply-build"])) ||
-  (values.bun && command !== "rebuild") ||
+  (values.bun && command !== "rebuild" && !(values.container && command === "app")) ||
   (values["ssh-describe"] && command !== "ssh-info") ||
   (command === "ssh-info" && (!values.json || values.id))
 )
   throw new Error("Lifecycle option does not apply to this command");
 if (values.container) {
   if (
-    !["up", "status", "logs", "down"].includes(command!) ||
+    !["up", "status", "logs", "down", "app"].includes(command!) ||
     values.id ||
     values.yes ||
     values["daemon-only"] ||
     values["apply-build"] ||
     values.previous ||
-    values.bun ||
+    (values.bun && command !== "app") ||
+    (command === "app" && values.json) ||
     values["ssh-describe"] ||
     (command !== "up" && (values.resume || values["container-image"] || values["container-source"]))
   )
     throw new Error(
-      "Container mode supports up/status/logs/down; --resume and image/source pins apply only to up",
+      "Container mode supports up/status/logs/down/app; --resume and image/source pins apply only to up",
     );
   const cancellation = new AbortController();
   let cancelledExit = 130;
@@ -134,22 +136,50 @@ if (values.container) {
       name: values.name,
       store: values.store,
     });
-    const result = await developmentContainer(
-      project,
-      command as "up" | "status" | "logs" | "down",
-      {
-        image: values["container-image"],
-        source: values["container-source"],
-        resume: values.resume,
+    if (command === "app") {
+      const admitted = await launchDevelopmentContainerApp(project, {
+        bun: values.bun,
         signal: cancellation.signal,
-      },
-    );
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+      });
+      const interrupt = () => admitted.child.kill("SIGINT"),
+        terminateChild = () => admitted.child.kill("SIGTERM");
+      process.on("SIGINT", interrupt);
+      process.on("SIGTERM", terminateChild);
+      try {
+        if (cancellation.signal.aborted) admitted.child.kill("SIGTERM");
+        process.exitCode = await admitted.completion;
+      } finally {
+        process.off("SIGINT", interrupt);
+        process.off("SIGTERM", terminateChild);
+        try {
+          await admitted.release();
+        } finally {
+          process.stderr.write(
+            `Native client owner retained after exit: ${JSON.stringify(admitted.nativeClient)}\n`,
+          );
+        }
+      }
+    } else {
+      const result = await developmentContainer(
+        project,
+        command as "up" | "status" | "logs" | "down",
+        {
+          image: values["container-image"],
+          source: values["container-source"],
+          resume: values.resume,
+          signal: cancellation.signal,
+        },
+      );
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    }
   } catch (error) {
     const suspended =
       error instanceof DevelopmentOperationError && error.reason === "instance-suspended";
-    process.stdout.write(
-      `${JSON.stringify({ version: 1, mode: "container", operation: command, code: "DEVELOPMENT_CONTAINER_UNAVAILABLE", reason: suspended ? "instance-suspended" : "container-transition-refused", next: suspended ? "Use up --container --resume" : "Inspect private project transition evidence" })}\n`,
+    const missingBuild =
+      error instanceof DevelopmentOperationError && error.reason === "build-failed";
+    const sink = command === "app" ? process.stderr : process.stdout;
+    sink.write(
+      `${JSON.stringify({ version: 1, mode: "container", operation: command, code: "DEVELOPMENT_CONTAINER_UNAVAILABLE", reason: suspended ? "instance-suspended" : missingBuild ? "build-failed" : "container-transition-refused", next: suspended ? "Use up --container --resume" : missingBuild ? "First native client build requires app --container --bun /absolute/pinned/bun; inspect its private build receipt on failure" : "Inspect private project transition evidence" })}\n`,
     );
     process.exitCode = 1;
   }
