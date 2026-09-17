@@ -486,6 +486,7 @@ it("project lock covers app admission but not interactive completion", async () 
     f.project,
     async (remote) => {
       expect(remote.alias).toBe(f.project.name);
+      expect(remote.containerId).toBe(f.record.resources!.containerId);
       entered();
       await hold;
       return { completion };

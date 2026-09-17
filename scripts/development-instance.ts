@@ -1,3 +1,7 @@
+import {
+  launchDevelopmentContainerShell,
+  DevelopmentContainerTerminalRequiredError,
+} from "../packages/daemon/src/lib/development-container-shell.ts";
 import { launchDevelopmentContainerApp } from "../packages/daemon/src/lib/development-container-app.ts";
 import { developmentContainer } from "../packages/daemon/src/lib/development-container.ts";
 import { resolveDevelopmentComposeProject } from "../packages/daemon/src/lib/development-compose.ts";
@@ -72,6 +76,7 @@ if (
   ![
     "up",
     "app",
+    "shell",
     "status",
     "list",
     "restart",
@@ -84,7 +89,7 @@ if (
   ].includes(command ?? "")
 )
   throw new Error(
-    "Usage: pnpm dev:instance up|app|status|list|restart|down|reset|diagnostics|logs|rebuild [--json] [--id id | --name name --worktree path] [--store absolute-path]",
+    "Usage: pnpm dev:instance up|app|shell|status|list|restart|down|reset|diagnostics|logs|rebuild [--json] [--id id | --name name --worktree path] [--store absolute-path]",
   );
 if (
   values.id &&
@@ -107,19 +112,19 @@ if (
   throw new Error("Lifecycle option does not apply to this command");
 if (values.container) {
   if (
-    !["up", "status", "logs", "down", "app"].includes(command!) ||
+    !["up", "status", "logs", "down", "app", "shell"].includes(command!) ||
     values.id ||
     values.yes ||
     values["daemon-only"] ||
     values["apply-build"] ||
     values.previous ||
     (values.bun && command !== "app") ||
-    (command === "app" && values.json) ||
+    (["app", "shell"].includes(command!) && values.json) ||
     values["ssh-describe"] ||
     (command !== "up" && (values.resume || values["container-image"] || values["container-source"]))
   )
     throw new Error(
-      "Container mode supports up/status/logs/down/app; --resume and image/source pins apply only to up",
+      "Container mode supports up/status/logs/down/app/shell (app/shell require a terminal and reject --json); --resume and image/source pins apply only to up",
     );
   const cancellation = new AbortController();
   let cancelledExit = 130;
@@ -136,7 +141,12 @@ if (values.container) {
       name: values.name,
       store: values.store,
     });
-    if (command === "app") {
+    if (command === "shell") {
+      const admitted = await launchDevelopmentContainerShell(project, {
+        signal: cancellation.signal,
+      });
+      process.exitCode = await admitted.completion;
+    } else if (command === "app") {
       const admitted = await launchDevelopmentContainerApp(project, {
         bun: values.bun,
         signal: cancellation.signal,
@@ -173,13 +183,14 @@ if (values.container) {
       process.stdout.write(`${JSON.stringify(result)}\n`);
     }
   } catch (error) {
+    const terminalRequired = error instanceof DevelopmentContainerTerminalRequiredError;
     const suspended =
       error instanceof DevelopmentOperationError && error.reason === "instance-suspended";
     const missingBuild =
       error instanceof DevelopmentOperationError && error.reason === "build-failed";
-    const sink = command === "app" ? process.stderr : process.stdout;
+    const sink = ["app", "shell"].includes(command!) ? process.stderr : process.stdout;
     sink.write(
-      `${JSON.stringify({ version: 1, mode: "container", operation: command, code: "DEVELOPMENT_CONTAINER_UNAVAILABLE", reason: suspended ? "instance-suspended" : missingBuild ? "build-failed" : "container-transition-refused", next: suspended ? "Use up --container --resume" : missingBuild ? "First native client build requires app --container --bun /absolute/pinned/bun; inspect its private build receipt on failure" : "Inspect private project transition evidence" })}\n`,
+      `${JSON.stringify({ version: 1, mode: "container", operation: command, code: "DEVELOPMENT_CONTAINER_UNAVAILABLE", reason: terminalRequired ? "terminal-required" : suspended ? "instance-suspended" : missingBuild ? "build-failed" : "container-transition-refused", next: terminalRequired ? "Run shell --container in an interactive terminal without --json" : suspended ? "Use up --container --resume" : missingBuild ? "First native client build requires app --container --bun /absolute/pinned/bun; inspect its private build receipt on failure" : "Inspect private project transition evidence" })}\n`,
     );
     process.exitCode = 1;
   }
@@ -187,6 +198,7 @@ if (values.container) {
   process.off("SIGTERM", terminate);
   process.exit(cancellation.signal.aborted ? cancelledExit : (process.exitCode ?? 0));
 }
+if (command === "shell") throw new Error("shell requires --container");
 if (values.resume || values["container-image"] || values["container-source"])
   throw new Error("Container options require --container");
 let selectedInstance: DevelopmentInstance | undefined;

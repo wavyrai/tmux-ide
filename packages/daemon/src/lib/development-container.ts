@@ -382,7 +382,12 @@ async function verifyContainerSsh(
 /** Admission only: never starts/resumes Docker. The callback finishes before releasing the project lock. */
 export async function withReadyDevelopmentContainer<T>(
   project: DevelopmentComposeProject,
-  action: (remote: { alias: string; controlRoot: string; configHash: string }) => Promise<T>,
+  action: (remote: {
+    alias: string;
+    controlRoot: string;
+    configHash: string;
+    containerId: string;
+  }) => Promise<T>,
   signal?: AbortSignal,
   runner: ContainerRunner = developmentContainerRunner,
 ): Promise<T> {
@@ -440,6 +445,7 @@ export async function withReadyDevelopmentContainer<T>(
       if (!bytes) refuse();
       return action({
         alias: project.name,
+        containerId: observed.resources!.containerId,
         controlRoot: project.controlRoot,
         configHash: hash(bytes),
       });

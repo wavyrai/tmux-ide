@@ -233,8 +233,8 @@ loopback endpoint. Final container PID was zero, OOM counters stayed zero, and
 unrelated running container identities were unchanged.
 
 This qualifies one bounded wrapper journey, not native TUI or two-project
-acceptance. Native app integration is described below; container-shell access, reset and
-rebuild integration are subsequent stages.
+acceptance. Native app and shell integration are described below; reset and rebuild
+integration are subsequent stages.
 
 First startup requires a source export from the selected canonical worktree and
 an already-built immutable image. It verifies that the image's snapshot and fixed
@@ -324,5 +324,24 @@ native `down --id ... --store ...` arguments for scoped owner cleanup, or native
 `reset --yes --id ... --store ...` for explicit state/artifact removal. Existing
 reset refuses live or unknown app receipts. **Container down stops neither this
 host owner nor its native apps**; remote apps may become disconnected. A future
-container reset must account for these separate host resources. Linux shell,
-container reset and the two-project interactive gate remain later slices.
+container reset must account for these separate host resources. Linux shell qualification, container reset and the two-project interactive gate
+remain outstanding.
+
+### Linux shell (source checkpoint; live qualification pending)
+
+Use `pnpm dev:instance shell --container` with the same worktree, name and store
+as the ready container. It opens Bash as UID 1000 in `/workspace/tree` through the
+fully inspected container ID. It requires an interactive terminal, rejects
+`--json`, and never starts or resumes Docker. The project lock is released after
+admission so an open shell does not prevent container down.
+
+The banner prints the exact managed app command, including the project instance
+name and `/state/instances` store. Run that command inside the shell to exercise
+the Linux TUI against the existing owner. The worktree is a private exported
+snapshot: edits inside it do not synchronize to the host worktree.
+
+Exit the Linux app before exiting Bash. Cancellation tracks and reaps the owned
+Docker client; that alone does not prove the inner shell or app exited. Container
+down retires the container's private process tree. Native host clients still
+require their separate cleanup described above. Actual shell/TUI input and the
+combined two-project journey remain qualification gates.
