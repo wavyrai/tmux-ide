@@ -31,6 +31,7 @@ export type CanonicalDaemonBootstrapFailure =
   | "product-version-mismatch";
 
 export interface CanonicalDaemonBootstrapOptions {
+  readonly supervisionId?: string;
   /** The shipped CLI entry which owns `runHeadlessDaemon`. */
   readonly entryPath: string;
   readonly cwd?: string;
@@ -290,8 +291,9 @@ async function probeCanonical(
 /** Remember observed supervision through retirement and missing-record races. */
 function supervisedAdmission(
   deps: CanonicalDaemonBootstrapDependencies,
+  declaredBinding?: string,
 ): CanonicalDaemonBootstrapDependencies {
-  let binding: string | undefined;
+  let binding = declaredBinding;
   const inspect = () => {
     const state = deps.inspect();
     const next =
@@ -323,7 +325,10 @@ export function createCanonicalDaemonBootstrapCoordinator(
   options: CanonicalDaemonBootstrapOptions,
   dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
 ): DaemonBootstrapCoordinator<CanonicalDaemonInfo, never, CanonicalDaemonBootstrapFailure> {
-  const deps = supervisedAdmission({ ...defaultDependencies, ...dependencies });
+  const deps = supervisedAdmission(
+    { ...defaultDependencies, ...dependencies },
+    options.supervisionId,
+  );
   return new DaemonBootstrapCoordinator({
     probe: () => probeCanonical(deps, options.expectedProductVersion),
     spawn: () => deps.spawnOwner(resolve(options.entryPath), resolve(options.cwd ?? process.cwd())),
@@ -338,7 +343,10 @@ export function ensureCanonicalDaemon(
   options: CanonicalDaemonBootstrapOptions,
   dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
 ): Promise<DaemonBootstrapResult<CanonicalDaemonInfo, never>> {
-  const deps = supervisedAdmission({ ...defaultDependencies, ...dependencies });
+  const deps = supervisedAdmission(
+    { ...defaultDependencies, ...dependencies },
+    options.supervisionId,
+  );
   const ensure = () => createCanonicalDaemonBootstrapCoordinator(options, deps).ensure();
   return ensure().catch(async (error: unknown) => {
     if (
@@ -394,8 +402,24 @@ export async function retireOutdatedCanonicalDaemon(
   options: CanonicalDaemonBootstrapOptions,
   dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
 ): Promise<boolean> {
-  const deps = { ...defaultDependencies, ...dependencies };
+  const deps = supervisedAdmission(
+    { ...defaultDependencies, ...dependencies },
+    options.supervisionId,
+  );
   const state = deps.inspect();
+  if (
+    options.supervisionId &&
+    (state.status === "reserved"
+      ? state.reservation.supervisionId
+      : state.status === "valid"
+        ? state.info.supervisionId
+        : undefined) !== options.supervisionId
+  )
+    throw new DaemonBootstrapError(
+      "incompatible",
+      "Matching supervisor reservation required before retirement",
+      { reason: "canonical-record-invalid" },
+    );
   if (
     state.status !== "valid" ||
     !needsReplacement(state.info, options.expectedProductVersion) ||

@@ -49,7 +49,8 @@ tmux-ide daemon restart --json
 The command verifies a new daemon generation under the same process, preserving
 the active listener and remote-access settings. It does not start a missing
 daemon or load newly installed code; use `tmux-ide update --daemon` for the
-separate version-upgrade flow. The existing `tmux-ide restart` command still
+separate version-upgrade flow. Managed services require the
+[explicit supervisor setup](docs/content/docs/app-surfaces.mdx#supervised-daemon-upgrades). The existing `tmux-ide restart` command still
 restarts an IDE session.
 
 ## What ships in 2.9

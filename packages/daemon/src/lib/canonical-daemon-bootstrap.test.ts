@@ -575,6 +575,42 @@ describe("supervised bootstrap admission", () => {
     expect(results.every((r) => r.candidate.instanceId === supervised.instanceId)).toBe(true);
     expect(f.spawnOwner).not.toHaveBeenCalled();
   });
+  it.each([undefined, "fixture"])(
+    "refuses binding replacement during retirement liveness checks (declared %s)",
+    async (supervisionId) => {
+      const f = fixture();
+      const older = { ...supervised, productVersion: "2.7.0" };
+      f.set({ status: "valid", info: older, observation: observed }, true);
+      const shutdownOlderOwner = vi.fn(async () => {});
+      await expect(
+        retireOutdatedCanonicalDaemon(
+          {
+            entryPath: "/tmp/unused",
+            expectedProductVersion: info.productVersion,
+            timeoutMs: 100,
+            supervisionId,
+          },
+          {
+            ...f.dependencies,
+            shutdownOlderOwner,
+            alive: async () => {
+              f.set(
+                {
+                  status: "valid",
+                  info: { ...older, supervisionId: "replacement" },
+                  observation: observed,
+                },
+                true,
+              );
+              return true;
+            },
+          },
+        ),
+      ).rejects.toMatchObject({ reason: "canonical-record-invalid" });
+      expect(shutdownOlderOwner).not.toHaveBeenCalled();
+      expect(f.spawnOwner).not.toHaveBeenCalled();
+    },
+  );
   it("foreground retirement waits for supervisor replacement instead of permitting a takeover", async () => {
     const f = fixture();
     f.set(

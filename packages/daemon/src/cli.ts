@@ -32,6 +32,7 @@ import type { ActionResult } from "./command-center/actions/contract.ts";
 interface CliFlags {
   json?: boolean;
   headless?: boolean;
+  supervised?: string;
   tasks?: boolean;
   fix?: boolean;
   row?: string;
@@ -81,6 +82,7 @@ export async function main(): Promise<void> {
     options: {
       json: { type: "boolean" },
       headless: { type: "boolean" },
+      supervised: { type: "string" },
       tasks: { type: "boolean" },
       fix: { type: "boolean" },
       row: { type: "string" },
@@ -292,6 +294,8 @@ ${bold("Flags:")}
   }
 
   try {
+    if (values.supervised !== undefined && !values.headless)
+      throw new IdeError("--supervised requires --headless", { code: "USAGE", exitCode: 2 });
     if (values.headless) {
       if (positionals.length > 0) {
         throw new IdeError("--headless cannot be combined with a command or project path", {
@@ -304,6 +308,7 @@ ${bold("Flags:")}
         port: values.port,
         json,
         expectedVersion: pkg.default.version,
+        supervisionId: values.supervised,
       });
       if (outcome === "stopped") process.exit(0);
     } else

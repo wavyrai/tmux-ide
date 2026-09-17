@@ -162,12 +162,15 @@ A dry run reports the plan without installing or synchronizing skills.
 These are integration surfaces for process hosts, not the normal way to open
 the app.
 
-| Command                                     | What it does                                                                      |
-| ------------------------------------------- | --------------------------------------------------------------------------------- |
-| `tmux-ide --headless [--port <N>] [--json]` | Own the canonical daemon in the foreground without opening tmux or a TUI          |
-| `tmux-ide daemon restart [--json]`          | Reset the existing daemon runtime in its supervising process; preserve tmux panes |
-| `tmux-ide command-center [--port <N>]`      | Start the command-center HTTP API (default port 4000)                             |
-| `tmux-ide server [--port <N>]`              | Deprecated loopback-only PTY server; use `--headless`                             |
+| Command                                                  | What it does                                                                      |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `tmux-ide --headless [--port <N>] [--json]`              | Own the canonical daemon in the foreground without opening tmux or a TUI          |
+| `tmux-ide daemon reserve-supervisor <id> [--json]`       | Explicitly reserve a stopped daemon namespace before installing a supervisor      |
+| `tmux-ide --headless --supervised <id>`                  | Run the foreground owner only with a matching preinstalled reservation            |
+| `tmux-ide daemon release-supervisor <id> --yes [--json]` | Release the reservation after removing the service and proving its owners stopped |
+| `tmux-ide daemon restart [--json]`                       | Reset the existing daemon runtime in its supervising process; preserve tmux panes |
+| `tmux-ide command-center [--port <N>]`                   | Start the command-center HTTP API (default port 4000)                             |
+| `tmux-ide server [--port <N>]`                           | Deprecated loopback-only PTY server; use `--headless`                             |
 
 The headless owner publishes `~/.tmux-ide/daemon.json` with owner-only
 permissions. A host should wait until both `/identity` matches that record and

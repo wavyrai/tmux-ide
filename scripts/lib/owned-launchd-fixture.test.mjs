@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   launchdDefinition,
+  readLaunchdSupervisedRecord,
   inspectLaunchdLoginContext,
   inspectLaunchdResult,
   ownedLaunchdJob,
@@ -368,4 +369,62 @@ test("plist lint refusal prevents bootstrap and cannot trigger another domain", 
   await assert.rejects(job.bootstrap(), /invalid/);
   await job.retire();
   assert.deepEqual(calls, [["print", definition.target]]);
+});
+
+test("supervised service argv binds the explicit reservation without shell parsing", (t) => {
+  const { root } = setup(t);
+  const options = {
+    root,
+    node: "/private/node",
+    entry: join(root, "stable.mjs"),
+    env: {},
+    supervisionId: "fixture.service-1",
+  };
+  assert.deepEqual(launchdDefinition(options).args.slice(2), [
+    "--headless",
+    "--json",
+    "--supervised",
+    "fixture.service-1",
+  ]);
+  for (const supervisionId of ["", "bad id", "../other", "a\nb"])
+    assert.throws(() => launchdDefinition({ ...options, supervisionId }));
+});
+
+test("supervised readiness treats only a matching valid reservation as pending", () => {
+  const reservation = {
+    kind: "supervised-reservation",
+    version: 1,
+    supervisionId: "fixture",
+    reservationId: "11111111-1111-4111-8111-111111111111",
+    reservedAt: new Date().toISOString(),
+  };
+  assert.equal(readLaunchdSupervisedRecord(reservation, "fixture"), null);
+  for (const value of [
+    null,
+    {},
+    { ...reservation, supervisionId: "other" },
+    { ...reservation, reservationId: "bad" },
+    { ...reservation, pid: 123 },
+  ])
+    assert.throws(() => readLaunchdSupervisedRecord(value, "fixture"));
+  const ready = {
+    supervisionId: "fixture",
+    pid: 123,
+    port: 1234,
+    protocolVersion: 2,
+    productVersion: "2.9.0",
+    instanceId: "11111111-1111-4111-8111-111111111111",
+    startedAt: reservation.reservedAt,
+    bindHostname: "127.0.0.1",
+    authToken: "synthetic-private",
+  };
+  assert.equal(readLaunchdSupervisedRecord(ready, "fixture").pid, 123);
+  for (const value of [
+    { ...ready, kind: "supervised-reservation" },
+    { ...ready, supervisionId: undefined },
+    { ...ready, supervisionId: "other" },
+    { ...ready, authToken: null },
+    { ...ready, bindHostname: "0.0.0.0" },
+  ])
+    assert.throws(() => readLaunchdSupervisedRecord(value, "fixture"));
 });

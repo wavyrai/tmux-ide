@@ -412,7 +412,12 @@ it.each([undefined, "wrong", "fixture"])(
     const supervised = { ...owner.info, supervisionId: "fixture" };
     writeFileSync(getCanonicalDaemonInfoPath(), JSON.stringify(supervised), { mode: 0o600 });
     await expect(
-      startEmbeddedDaemon({ takeoverIfRunning: true, supervisionId, silent: true }),
+      startEmbeddedDaemon({
+        takeoverIfRunning: true,
+        supervisionId,
+        silent: true,
+        requestRestart: async () => {},
+      }),
     ).rejects.toMatchObject({
       reason: supervisionId === "wrong" ? "canonical_record_invalid" : "canonical_takeover_refused",
     });
@@ -420,3 +425,10 @@ it.each([undefined, "wrong", "fixture"])(
     expect(readCanonicalDaemonInfo()).toEqual(supervised);
   },
 );
+
+it("supervised embedded startup without its lifecycle owner refuses before claiming", async () => {
+  await expect(
+    startEmbeddedDaemon({ supervisionId: "fixture", silent: true }),
+  ).rejects.toMatchObject({ reason: "canonical_record_invalid" });
+  expect(existsSync(getCanonicalDaemonClaimPath())).toBe(false);
+});

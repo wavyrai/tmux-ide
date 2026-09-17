@@ -673,6 +673,15 @@ export function writeCanonicalDaemonInfo(
   }
 }
 
+/** Validate before any CLI-triggered retirement; startup repeats this under its claim. */
+export function assertCanonicalDaemonSupervision(supervisionId: string): void {
+  if (
+    !DaemonSupervisionIdSchema.safeParse(supervisionId).success ||
+    supervisionBinding(inspectCanonicalDaemonInfo()) !== supervisionId
+  )
+    throw new Error("Matching supervisor reservation required before startup");
+}
+
 /** Explicit installation only; startup never calls this to recreate a reservation. */
 export function reserveCanonicalDaemonSupervision(
   supervisionId: string,

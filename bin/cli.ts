@@ -52,6 +52,8 @@ const { positionals, values } = parseArgs({
   options: {
     json: { type: "boolean" },
     headless: { type: "boolean" },
+    supervised: { type: "string" },
+    yes: { type: "boolean" },
     "development-owner": { type: "boolean" },
     "development-capabilities": { type: "boolean" },
     daemon: { type: "boolean" },
@@ -216,6 +218,8 @@ ${bold("Usage:")}
   ${cyan("tmux-ide settings")}           ${dim("Interactive TUI config manager")}
   ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold .tmux-ide/workspace.yml (auto-detects stack)")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
+  ${cyan("tmux-ide daemon reserve-supervisor <id>")} ${dim("Reserve this namespace before installing a supervisor")}
+  ${cyan("tmux-ide daemon release-supervisor <id> --yes")} ${dim("Release after removing the stopped service")}
   ${cyan("tmux-ide daemon restart")}     ${dim("Reset the daemon runtime; preserve its process and tmux sessions")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
   ${cyan("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
@@ -296,6 +300,7 @@ ${bold("Discover (in the TUI):")}
 ${bold("Flags:")}
   ${cyan("--json")}                      ${dim("Structured output on commands that advertise JSON support")}
   ${cyan("--headless")}                  ${dim("Canonical daemon only; no tmux workspace or TUI")}
+  ${cyan("--supervised <id>")}           ${dim("Require a matching preinstalled supervisor reservation")}
   ${cyan("--template <name>")}           ${dim("Use specific template for init")}
   ${cyan("--write")}                     ${dim("Write detected config to .tmux-ide/workspace.yml")}
   ${cyan("--dry-run")}                   ${dim("Preview migration/restore without writing")}
@@ -647,6 +652,8 @@ function launchApp(): Promise<void> {
 }
 
 try {
+  if (values.supervised !== undefined && !values.headless)
+    throw new IdeError("--supervised requires --headless", { code: "USAGE", exitCode: 2 });
   if (values.ssh !== undefined && (command !== "app" || values.headless))
     throw new IdeError("--ssh is supported only by tmux-ide app", { code: "USAGE", exitCode: 2 });
   if ((values.daemon || values["if-running"]) && command !== "update")
@@ -671,12 +678,25 @@ try {
         exitCode: 2,
       });
     }
+    if (values.supervised !== undefined) {
+      const { assertCanonicalDaemonSupervision } =
+        await import("../packages/daemon/src/lib/canonical-daemon.ts");
+      try {
+        assertCanonicalDaemonSupervision(values.supervised);
+      } catch {
+        throw new IdeError(
+          "Matching supervisor reservation required before startup; run daemon reserve-supervisor <id> in this namespace first.",
+          { code: "DAEMON_SUPERVISOR_RESERVATION_REQUIRED", exitCode: 1 },
+        );
+      }
+    }
     const pkg = await import("../package.json");
     const { retireOutdatedCanonicalDaemon } =
       await import("../packages/daemon/src/lib/canonical-daemon-bootstrap.ts");
     await retireOutdatedCanonicalDaemon({
       entryPath: nodeCliPath,
       expectedProductVersion: pkg.version,
+      supervisionId: values.supervised,
     });
     await (
       await import("../packages/daemon/src/lib/headless-daemon.ts")
@@ -684,6 +704,7 @@ try {
       port: values.port,
       json,
       expectedVersion: pkg.version,
+      supervisionId: values.supervised,
     });
     // The daemon cleanup is complete here. Exit explicitly because stores and
     // native adapters may retain harmless timers/handles that must not turn a
@@ -763,6 +784,37 @@ try {
       break;
 
     case "daemon": {
+      if (positionals[1] === "reserve-supervisor" || positionals[1] === "release-supervisor") {
+        const release = positionals[1] === "release-supervisor";
+        if (positionals.length !== 3 || (release && values.yes !== true))
+          throw new IdeError(
+            "Usage: tmux-ide daemon reserve-supervisor <id> [--json] | daemon release-supervisor <id> --yes [--json]",
+            { code: "USAGE", exitCode: 2 },
+          );
+        const { reserveCanonicalDaemonSupervision, releaseCanonicalDaemonSupervision } =
+          await import("../packages/daemon/src/lib/canonical-daemon.ts");
+        try {
+          if (release) releaseCanonicalDaemonSupervision(positionals[2]!);
+          else reserveCanonicalDaemonSupervision(positionals[2]!);
+        } catch {
+          throw new IdeError(
+            release
+              ? "Supervisor release refused: remove the service first and verify its exact ID and stopped owners."
+              : "Supervisor reservation refused: use a valid ID and a private namespace without a live or unknown owner.",
+            { code: "DAEMON_SUPERVISION_REFUSED", exitCode: 1 },
+          );
+        }
+        console.log(
+          json
+            ? JSON.stringify({
+                ok: true,
+                status: release ? "released" : "reserved",
+                supervisionId: positionals[2],
+              })
+            : `Supervisor namespace ${release ? "released" : "reserved"}: ${positionals[2]}`,
+        );
+        break;
+      }
       if (positionals[1] !== "restart" || positionals.length !== 2)
         throw new IdeError("Usage: tmux-ide daemon restart [--json]", {
           code: "USAGE",
@@ -1988,7 +2040,9 @@ try {
         if (
           values["if-running"] &&
           (state.status === "missing" ||
-            (state.status === "valid" && !(await isCanonicalDaemonAlive(state.info))))
+            (state.status === "valid" &&
+              !state.info.supervisionId &&
+              !(await isCanonicalDaemonAlive(state.info))))
         ) {
           console.log(
             json

@@ -1,3 +1,7 @@
+import {
+  CanonicalDaemonReservationSchema,
+  CanonicalDaemonInfoSchema,
+} from "../../packages/contracts/src/daemon-wire.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, renameSync, lstatSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -26,13 +30,22 @@ export function launchdDefinition({
   node,
   entry,
   env,
+  supervisionId,
   uid = process.getuid(),
   nonce = randomUUID(),
 }) {
   if (!Number.isSafeInteger(uid) || uid <= 0 || !/^[0-9a-f-]{36}$/.test(nonce)) throw refuse();
   for (const path of [root, node, entry]) if (!isAbsolute(literal(path))) throw refuse();
   const label = `org.tmux-ide.qualification.${nonce}`;
-  const args = [node, entry, "--headless", "--json"];
+  if (supervisionId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(supervisionId))
+    throw refuse();
+  const args = [
+    node,
+    entry,
+    "--headless",
+    "--json",
+    ...(supervisionId ? ["--supervised", supervisionId] : []),
+  ];
   const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array>${args.map((v) => `<string>${xml(v)}</string>`).join("")}</array><key>WorkingDirectory</key><string>${xml(root)}</string><key>EnvironmentVariables</key><dict>${Object.entries(
     env,
   )
@@ -238,4 +251,24 @@ export function launchdCommandDiagnostic(operation, result) {
     exitCode: Number.isInteger(result.code) ? result.code : -1,
     stderrCategory: category,
   };
+}
+
+/** A reservation is pending; only the declared policy's ready record can be probed. */
+export function readLaunchdSupervisedRecord(value, supervisionId) {
+  const reservation = CanonicalDaemonReservationSchema.safeParse(value);
+  if (reservation.success) {
+    if (reservation.data.supervisionId !== supervisionId) throw new Error("invalid-daemon-record");
+    return null;
+  }
+  if (value && typeof value === "object" && "kind" in value)
+    throw new Error("invalid-daemon-record");
+  const ready = CanonicalDaemonInfoSchema.safeParse(value);
+  if (
+    !ready.success ||
+    ready.data.supervisionId !== supervisionId ||
+    ready.data.bindHostname !== "127.0.0.1" ||
+    !ready.data.authToken
+  )
+    throw new Error("invalid-daemon-record");
+  return ready.data;
 }

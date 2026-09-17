@@ -25,6 +25,7 @@ import {
 import { privatePackedInstallEnvironment } from "./lib/packed-install-environment.mjs";
 import {
   launchdDefinition,
+  readLaunchdSupervisedRecord,
   inspectLaunchdLoginContext,
   ownedLaunchdJob,
   publishLaunchdEntry,
@@ -72,6 +73,9 @@ let stage = "prepare",
   witness,
   witnessFiles,
   definition,
+  installedCli,
+  supervisionId,
+  reservationAttempted = false,
   tmuxPid,
   socketWitness,
   packedSocketWitness;
@@ -148,20 +152,7 @@ function readIdentityRecord() {
   if (!stat.isFile() || stat.uid !== process.getuid() || stat.size > 16384 || stat.mode & 0o077)
     throw new Error("unsafe-daemon-record");
   const value = JSON.parse(readFileSync(path, "utf8"));
-  if (
-    !Number.isSafeInteger(value.pid) ||
-    value.pid <= 0 ||
-    !Number.isInteger(value.port) ||
-    value.port < 1 ||
-    value.port > 65535 ||
-    !Number.isInteger(value.protocolVersion) ||
-    typeof value.startedAt !== "string" ||
-    typeof value.productVersion !== "string" ||
-    typeof value.instanceId !== "string" ||
-    typeof value.authToken !== "string"
-  )
-    throw new Error("invalid-daemon-record");
-  return value;
+  return readLaunchdSupervisedRecord(value, supervisionId);
 }
 async function identity() {
   const verified = await verifyLaunchdDaemonIdentity({
@@ -312,12 +303,14 @@ try {
     oldBundle = join(root, "older.mjs"),
     stable = join(root, "stable.mjs"),
     cli = join(root, "installed/bin/cli.js");
+  installedCli = cli;
+  supervisionId = `qualification.${randomUUID()}`;
   mkdirSync(join(root, "installed/bin"), { recursive: true, mode: 0o700 });
   copyFileSync(join(source, "package.json"), join(root, "installed/package.json"));
   copyFileSync(join(source, "bin/cli.js"), cli);
   writeFileSync(
     oldSource,
-    `import { runHeadlessDaemon } from ${JSON.stringify(join(source, "packages/daemon/src/lib/headless-daemon.ts"))}; await runHeadlessDaemon({expectedVersion:"2.9.0-beta.9",json:true}); await new Promise(r=>process.stdout.write("",r)); process.exit(0);\n`,
+    `import { runHeadlessDaemon } from ${JSON.stringify(join(source, "packages/daemon/src/lib/headless-daemon.ts"))}; await runHeadlessDaemon({expectedVersion:"2.9.0-beta.9",json:true,supervisionId:${JSON.stringify(supervisionId)}}); await new Promise(r=>process.stdout.write("",r)); process.exit(0);\n`,
     { mode: 0o600 },
   );
   await build({
@@ -354,7 +347,25 @@ try {
     tmux: hash(tmux),
   };
   receipt.oldEntry = publishLaunchdEntry(stable, oldBundle, env);
-  definition = launchdDefinition({ root, node: process.execPath, entry: stable, env });
+  definition = launchdDefinition({
+    root,
+    node: process.execPath,
+    entry: stable,
+    env,
+    supervisionId,
+  });
+  setStage("reserve-supervisor");
+  reservationAttempted = true;
+  const reserved = await command(process.execPath, [
+    cli,
+    "daemon",
+    "reserve-supervisor",
+    supervisionId,
+    "--json",
+  ]);
+  if (reserved.code !== 0) throw new Error("supervisor-reservation-refused");
+  receipt.supervisionId = supervisionId;
+  receipt.reserved = true;
   receipt.job = {
     label: definition.label,
     target: definition.target,
@@ -483,12 +494,33 @@ try {
   } catch {
     receipt.cleanup.tmux = false;
   }
+  receipt.cleanup.reservation = !reservationAttempted;
+  if (
+    reservationAttempted &&
+    receipt.cleanup.job &&
+    receipt.cleanup.owners &&
+    receipt.cleanup.commands.confirmed
+  ) {
+    if (!existsSync(join(state, "daemon.json"))) receipt.cleanup.reservation = !receipt.reserved;
+    else {
+      const released = await command(process.execPath, [
+        installedCli,
+        "daemon",
+        "release-supervisor",
+        supervisionId,
+        "--yes",
+        "--json",
+      ]);
+      receipt.cleanup.reservation = released.code === 0 && !existsSync(join(state, "daemon.json"));
+    }
+  }
   receipt.commandPids = commandChildren.map((child) => child.pid).filter(Boolean);
   receipt.witnessed = [...owners].map(([pid, birth]) => ({ pid, birth }));
   if (
     receipt.cleanup.job &&
     receipt.cleanup.owners &&
     receipt.cleanup.tmux &&
+    receipt.cleanup.reservation &&
     receipt.cleanup.commands.confirmed
   ) {
     try {

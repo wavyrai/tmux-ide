@@ -161,7 +161,7 @@ export function resolveDaemonProductVersion(
 }
 
 export interface EmbeddedDaemonOptions {
-  /** Explicit preinstalled namespace reservation, never inferred from process ancestry. */
+  /** @internal Headless lifecycle only; explicit reservation, never inferred from ancestry. */
   supervisionId?: string;
   /** @internal Successful previous generation stop in this same process. */
   predecessor?: CanonicalDaemonPredecessor;
@@ -966,6 +966,11 @@ async function startHttpServer({
 export async function startEmbeddedDaemon(
   opts: EmbeddedDaemonOptions,
 ): Promise<EmbeddedDaemonHandle> {
+  if (opts.supervisionId && !opts.requestRestart)
+    throw new DaemonStartupError(
+      "Supervised startup requires the foreground lifecycle owner",
+      "canonical_record_invalid",
+    );
   return opts.requestRestart
     ? startEmbeddedDaemonGeneration(opts)
     : startOwnedEmbeddedDaemon(opts, startEmbeddedDaemonGeneration);
