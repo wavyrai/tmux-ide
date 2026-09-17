@@ -353,10 +353,17 @@ snapshot: edits inside it do not synchronize to the host worktree.
 Exit the Linux app before exiting Bash. Cancellation tracks and reaps the owned
 Docker client; that alone does not prove the inner shell or app exited. Container
 down retires the container's private process tree. Native host clients still
-require their separate cleanup described above. Live container reset and the
-combined two-project journey remain qualification gates.
+require their separate cleanup described above. The combined two-project journey remains a qualification gate.
 
-### Scoped container reset (source checkpoint; live qualification pending)
+### Scoped container reset
+
+A live reset from committed manager `3b53ff21` passed against the stopped
+qualified project and its stopped native client. The exact container, network
+and three volumes were removed; host keys/configuration and native artifacts
+were retired, leaving only lock/reset scaffolds. Fresh status reported absent
+and an idempotent second reset passed. Source worktrees, both retained images,
+the older fixture and all nine unrelated running containers were preserved.
+The combined two-worktree isolation gate remains outstanding.
 
 `pnpm dev:instance reset --container --yes` destroys the selected private
 container, its project network and its three named volumes. Repeat the exact
@@ -382,5 +389,6 @@ Fully adopted containers can be reset after failed initialization without a
 completed core suspension. A prepared project with no Docker resources can also
 be reset. Partial creation that was never adopted remains unsupported, as does
 container `--id` selection after the canonical worktree is removed. Retain that
-worktree until cleanup completes. These source checks are covered by focused
-regressions; live deletion and the two-project isolation journey remain pending.
+worktree until cleanup completes. Focused regressions cover these source checks. Live stopped-project deletion
+is qualified above; partial-failure recovery remains regression coverage, and
+the two-project isolation journey remains pending.
