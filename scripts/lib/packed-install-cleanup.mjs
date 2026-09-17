@@ -118,10 +118,13 @@ export function createInstalledRuntimeCleanup(downloadedTui, readyPath, dependen
       .map((match) => Number(match[1]))
       .filter((pid) => Number.isSafeInteger(pid) && pid > 1);
   };
+  const phases = new Map();
   const retire = async (pid) => {
+    phases.set(pid, "initial-identity");
     const original = identity(pid);
     if (original === null) return;
     const signal = (kind) => {
+      phases.set(pid, kind === "SIGTERM" ? "term" : "kill");
       const current = identity(pid);
       if (current === null) return false;
       if (current !== original) throw new Error("Packed runtime identity changed before signal");
@@ -134,6 +137,7 @@ export function createInstalledRuntimeCleanup(downloadedTui, readyPath, dependen
       return true;
     };
     const wait = async () => {
+      phases.set(pid, "exit-confirmation");
       for (let attempt = 0; attempt < 20; attempt++) {
         await pause(25);
         const current = identity(pid);
@@ -165,8 +169,49 @@ export function createInstalledRuntimeCleanup(downloadedTui, readyPath, dependen
       }
     }
     const results = await Promise.allSettled([...pids].map(retire));
-    if (results.some((result) => result.status === "rejected"))
-      throw new Error("Packed runtime retirement unconfirmed");
+    if (results.some((result) => result.status === "rejected")) {
+      const reasons = new Map([
+        ["Packed runtime identity read failed", "identity-read-failed"],
+        ["Packed runtime identity unavailable while live", "identity-unavailable-live"],
+        ["Packed runtime identity changed", "binary-path-mismatch"],
+        ["Packed runtime identity changed before signal", "identity-changed-before-signal"],
+        ["Packed runtime incarnation changed", "identity-changed-during-wait"],
+        ["Packed runtime signal refused", "signal-refused"],
+        ["Packed runtime exit unconfirmed", "exit-unconfirmed"],
+        ["Packed runtime liveness unverified", "liveness-unverified"],
+      ]);
+      const diagnostics = results.flatMap((result, index) => {
+        if (result.status !== "rejected") return [];
+        const pid = [...pids][index];
+        let state = "unknown",
+          binaryPathMatch = null,
+          identityReadable = false;
+        try {
+          const now = inspect(["-p", String(pid), "-o", "lstart=", "-o", "command="]);
+          identityReadable = !now.error && !now.signal && now.status === 0;
+          if (identityReadable) binaryPathMatch = now.stdout?.includes(downloadedTui) ?? false;
+          const observed = inspect(["-p", String(pid), "-o", "stat="]);
+          if (!observed.error && !observed.signal && observed.status === 0) {
+            const code = observed.stdout?.trim().charAt(0);
+            state =
+              code === "Z" ? "zombie" : /^[RSDTtIW]$/.test(code ?? "") ? "present" : "unknown";
+          } else if (dead(pid)) state = "absent";
+        } catch {
+          /* Diagnostic uncertainty never authorizes cleanup. */
+        }
+        return [
+          {
+            pid,
+            phase: phases.get(pid) ?? "unknown",
+            reason: reasons.get(result.reason?.message) ?? "unknown",
+            state,
+            identityReadable,
+            binaryPathMatch,
+          },
+        ];
+      });
+      throw Object.assign(new Error("Packed runtime retirement unconfirmed"), { diagnostics });
+    }
     if (inventory().length) throw new Error("Packed runtime inventory remains live");
   };
 }

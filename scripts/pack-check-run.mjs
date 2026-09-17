@@ -33,6 +33,7 @@ import {
   verifyPackedPostinstallLinks,
 } from "./lib/packed-install-scenarios.mjs";
 import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
+import { diagnosePackedEmpty } from "./lib/packed-empty-diagnostics.mjs";
 import { diagnosePackedHome } from "./lib/packed-home-diagnostics.mjs";
 import {
   assertCleanEvidenceSource,
@@ -263,6 +264,7 @@ let installedVersion = null;
 let runtimeEvidence = null;
 let journeyObservations = null;
 let homeDiagnostics = null;
+let emptyDiagnostics = null;
 let proofCompleted = false;
 let installationScenarios = null;
 let postinstallEvidence = null;
@@ -951,12 +953,22 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     },
     empty.diagnostics,
   );
-  await observe(
-    "no-session chooser",
-    10_000,
-    () => capture(empty.targetPane).includes("No live tmux sessions yet"),
-    empty.diagnostics,
-  );
+  try {
+    await observe(
+      "no-session chooser",
+      10_000,
+      () => capture(empty.targetPane).includes("No live tmux sessions yet"),
+      empty.diagnostics,
+    );
+  } catch (error) {
+    try {
+      const info = JSON.parse(readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"));
+      emptyDiagnostics = await diagnosePackedEmpty(info);
+    } catch {
+      emptyDiagnostics = { failure: "diagnostic-unavailable" };
+    }
+    throw error;
+  }
   await cleanQuit(empty);
 
   for (const name of ["journey-alpha", "journey-beta", "journey-gamma"]) await createSession(name);
@@ -2074,7 +2086,8 @@ try {
       join(homeDir, ".tmux-ide", "bin", `tmux-ide-tui-${platformTag}-${packageVersion}`),
     )();
     cleanup.runtime = true;
-  } catch {
+  } catch (error) {
+    cleanup.runtimeDiagnostics = error.diagnostics ?? [];
     cleanup.failures.push("runtime-retirement-unconfirmed");
   }
   const tmuxStop = boundedSpawnSync("tmux", ["-S", installedTmuxSocketPath, "kill-server"], {
@@ -2157,6 +2170,7 @@ try {
       artifacts: copied,
       journey: journeyObservations,
       homeDiagnostics,
+      emptyDiagnostics,
       installationScenarios,
       tmuxWitness,
       tmuxGenerations,

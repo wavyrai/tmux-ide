@@ -403,3 +403,53 @@ test("witness diagnostics expose only fixed changed field names", () => {
     "socket.mode",
   ]);
 });
+
+test("retirement diagnostics preserve fixed refusal cause and PID without private errors", async () => {
+  const fixture = runtimeFixture({ refuse: true });
+  await assert.rejects(fixture.cleanup(), (error) => {
+    assert.deepEqual(
+      error.diagnostics.map(({ pid, phase, reason }) => ({ pid, phase, reason })),
+      [{ pid: 101, phase: "initial-identity", reason: "identity-read-failed" }],
+    );
+    assert.equal(JSON.stringify(error.diagnostics).includes("private diagnostic"), false);
+    assert.equal(JSON.stringify(error.diagnostics).includes("/private/fixture"), false);
+    return true;
+  });
+  assert.deepEqual(fixture.signals, [[102, "SIGTERM"]]);
+});
+
+test("zombie diagnostic never converts a changed binary identity into cleanup authority", async () => {
+  let signalled = false;
+  const signals = [];
+  const cleanup = createInstalledRuntimeCleanup("/private/fixture/tui", undefined, {
+    inspect(args) {
+      if (args[0] === "-axo") return { status: 0, stdout: "101 /private/fixture/tui" };
+      if (args.includes("stat=")) return { status: 0, stdout: "Z" };
+      return {
+        status: 0,
+        stdout: signalled ? "birth [tui] <defunct>" : "birth /private/fixture/tui",
+      };
+    },
+    kill(_pid, signal) {
+      if (signal !== 0) {
+        signals.push(signal);
+        signalled = true;
+      }
+    },
+    pause: async () => {},
+  });
+  await assert.rejects(cleanup(), (error) => {
+    assert.deepEqual(error.diagnostics, [
+      {
+        pid: 101,
+        phase: "exit-confirmation",
+        reason: "binary-path-mismatch",
+        state: "zombie",
+        identityReadable: true,
+        binaryPathMatch: false,
+      },
+    ]);
+    return true;
+  });
+  assert.deepEqual(signals, ["SIGTERM"]);
+});
