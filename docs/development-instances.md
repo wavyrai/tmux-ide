@@ -366,8 +366,8 @@ it and workspace promotion rejects it before persistence. Exact legacy
 is neither renamed nor restarted. Only a later explicit full `down`/`up` creates
 the hidden helper, and full `down` stops that instance's pane work. No keeper
 registry entries are blindly deleted by this migration. Existing authoritative
-registry reconciliation still retires names absent from a new server. Global
-missing/duplicate semantic-stamp checks are unchanged. The TUI now distinguishes
+registry reconciliation still retires names absent from a new server. Existing
+semantic identity checks are unchanged. The TUI now distinguishes
 an actually empty session from nonempty rejected terminal inventory and displays
 a bounded reason plus recovery guidance, including after daemon replacement.
 Missing stamps may belong to another registered session: explicitly selecting
