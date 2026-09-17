@@ -1122,7 +1122,10 @@ describe("OpenTUI generation host", () => {
 
     created.retireRuntime();
     expect(view.clear).toHaveBeenCalledOnce();
+    expect(host.getSnapshot().status).toBe("rebinding");
+    created.emitLifecycle(liveEmpty("daemon-a"));
     expect(host.getSnapshot().status).toBe("empty");
+    await host.dispose();
   });
 
   it("terminalizes authoritative empty inventory without waiting for a runtime", async () => {
@@ -1141,6 +1144,10 @@ describe("OpenTUI generation host", () => {
     expect(await started).toBe(true);
     expect(host.getSnapshot()).toMatchObject({ status: "empty", daemonGeneration: "daemon-a" });
     expect(view.adopt).not.toHaveBeenCalled();
+    const empty = host.getSnapshot();
+    created.emitLifecycle(liveEmpty("daemon-a"));
+    expect(host.getSnapshot()).toBe(empty);
+    await host.dispose();
   });
 
   it("rejects a non-identity terminal failure while retaining a previous active frame", async () => {
@@ -1615,4 +1622,152 @@ it.each([
     await host.dispose();
     vi.useRealTimers();
   }
+});
+
+function rejectedInventory(instanceId: string, reason: string): ApplicationShellSessionState {
+  return {
+    ...liveEmpty(instanceId),
+    data: {
+      terminalInventory: {
+        activeResourceId: null,
+        resources: [{ id: "terminal.one", attachability: { status: "unavailable", reason } }],
+      },
+    },
+  } as unknown as ApplicationShellSessionState;
+}
+
+it.each(["missing-semantic-stamp", "duplicate-semantic-stamp", "invalid-runtime-proof"])(
+  "rejects %s before empty success and retires listeners exactly once",
+  async (reason) => {
+    const view = presentation();
+    const progress = vi.fn();
+    let created!: FakeBundle;
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: async () => connection("daemon-a"),
+      onConnectionProgress: progress,
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+    });
+    const started = host.start();
+    await flushHostStart();
+    created.retireRuntime();
+    expect(host.getSnapshot().status).not.toBe("empty");
+    created.emitLifecycle(rejectedInventory("daemon-a", reason));
+    expect(await started).toBe(false);
+    expect(host.getSnapshot()).toMatchObject({
+      status: "unavailable",
+      authorityClient: null,
+      startupFailure: { reason, daemonGeneration: "daemon-a" },
+    });
+    const calls = progress.mock.calls.length;
+    created.emitLifecycle(rejectedInventory("daemon-a", reason));
+    created.activate();
+    expect(progress).toHaveBeenCalledTimes(calls);
+    expect(host.getSnapshot().status).toBe("unavailable");
+    await host.dispose();
+    expect(created.disposeSpy).toHaveBeenCalledOnce();
+  },
+);
+
+it("rejects retained runtime inventory then permits explicit recovery without reviving retired callbacks", async () => {
+  const view = presentation();
+  const bundles: FakeBundle[] = [];
+  const host = createOpenTuiGenerationHost("alpha", view.value, {
+    observeCanonicalGeneration: inertCanonicalObserver,
+    resolveConnection: async () => connection("daemon-a"),
+    buildBundle: (resolved, callbacks) => {
+      const created = bundle(resolved, callbacks);
+      bundles.push(created);
+      return created;
+    },
+  });
+  const started = host.start();
+  await flushHostStart();
+  bundles[0]!.activate();
+  await started;
+  bundles[0]!.retireRuntime();
+  bundles[0]!.emitLifecycle(rejectedInventory("daemon-a", "missing-window-stamp"));
+  expect(bundles[0]!.revokeSpy).toHaveBeenCalledOnce();
+  expect(host.getSnapshot().status).toBe("unavailable");
+  const retry = host.start();
+  await flushHostStart();
+  bundles[1]!.activate();
+  expect(await retry).toBe(true);
+  bundles[0]!.activate();
+  bundles[0]!.emitLifecycle(rejectedInventory("daemon-a", "missing-window-stamp"));
+  expect(host.getSnapshot().status).toBe("live");
+  expect(host.getSnapshot().startupFailure).toBeUndefined();
+  await host.dispose();
+  for (const item of bundles) expect(item.disposeSpy).toHaveBeenCalledOnce();
+});
+
+it("ignores revoked old inventory after replacement rejection and recovers on explicit retry", async () => {
+  const observer = canonicalObserver();
+  const view = presentation();
+  const bundles: FakeBundle[] = [];
+  let generation = "daemon-a";
+  const host = createOpenTuiGenerationHost("alpha", view.value, {
+    observeCanonicalGeneration: observer.observe,
+    resolveConnection: async () => connection(generation),
+    buildBundle: (resolved, callbacks) => {
+      const created = bundle(resolved, callbacks);
+      bundles.push(created);
+      return created;
+    },
+  });
+  const started = host.start();
+  await flushHostStart();
+  bundles[0]!.activate();
+  await started;
+  generation = "daemon-b";
+  observer.emit(generation);
+  await flushHostStart();
+  bundles[1]!.retireRuntime();
+  bundles[1]!.emitLifecycle(rejectedInventory(generation, "duplicate-semantic-stamp"));
+  await flushHostStart();
+  const failed = host.getSnapshot();
+  expect(failed).toMatchObject({
+    status: "unavailable",
+    startupFailure: { daemonGeneration: generation },
+  });
+  bundles[0]!.emitLifecycle(liveEmpty("daemon-a"));
+  bundles[0]!.emitLifecycle(rejectedInventory("daemon-a", "missing-semantic-stamp"));
+  bundles[0]!.activate();
+  expect(host.getSnapshot()).toBe(failed);
+  const retry = host.start();
+  await flushHostStart();
+  bundles[2]!.activate();
+  expect(await retry).toBe(true);
+  expect(host.getSnapshot().startupFailure).toBeUndefined();
+  await host.dispose();
+  for (const item of bundles) expect(item.disposeSpy).toHaveBeenCalledOnce();
+});
+
+it("cleans synchronously rejected subscription admission and isolates throwing diagnostics", async () => {
+  let unsubscribeCount = 0;
+  const host = createOpenTuiGenerationHost("alpha", presentation().value, {
+    observeCanonicalGeneration: inertCanonicalObserver,
+    resolveConnection: async () => connection("daemon-a"),
+    onDiagnostic: () => {
+      throw new Error("diagnostic sink");
+    },
+    onConnectionProgress: (phase) => {
+      if (phase === "startup-failed") throw new Error("progress sink");
+    },
+    buildBundle: (resolved, callbacks) => {
+      const created = bundle(resolved, callbacks);
+      created.client.subscribe = ((_scope: string, listener: LifecycleListener) => {
+        listener({ shell: rejectedInventory("daemon-a", "invalid-runtime-proof") });
+        return () => {
+          unsubscribeCount++;
+        };
+      }) as typeof created.client.subscribe;
+      return created;
+    },
+  });
+  expect(await host.start()).toBe(false);
+  expect(host.getSnapshot().status).toBe("unavailable");
+  expect(unsubscribeCount).toBe(1);
+  await host.dispose();
+  expect(unsubscribeCount).toBe(1);
 });

@@ -75,3 +75,123 @@ it("retains safe startup detail through generic failure notes and copy, clearing
   expect(owner.snapshot()?.failure).toBeUndefined();
   owner.dispose();
 });
+
+it("keeps rebind failure visible after startup clears, but rejects cancelled and unrelated snapshots", () => {
+  vi.useFakeTimers();
+  const owner = createApplicationConnectionFeedback();
+  const value = (status: string, reason?: string) =>
+    ({
+      status,
+      daemonGeneration: "daemon-b",
+      ...(reason ? { startupFailure: { reason, daemonGeneration: "daemon-b" } } : {}),
+    }) as Parameters<typeof owner.adopt>[1];
+  owner.note("opening main");
+  owner.adopt("main", value("live"));
+  owner.note(null, "opened");
+  owner.adopt("other", value("unavailable", "missing-semantic-stamp"));
+  expect(owner.snapshot()).toBeNull();
+  owner.adopt("main", value("unavailable", "missing-semantic-stamp"));
+  expect(owner.snapshot()).toMatchObject({
+    failed: true,
+    failure: { reason: "missing-semantic-stamp" },
+  });
+  expect(owner.snapshot()?.recovery).toContain("different session");
+  owner.adopt(undefined, null);
+  expect(owner.snapshot()?.failed).toBe(true);
+  owner.note(null, "cancelled");
+  owner.adopt("main", value("unavailable", "missing-semantic-stamp"));
+  expect(owner.snapshot()).toBeNull();
+  owner.note("opening main");
+  owner.adopt("main", value("unavailable", "duplicate-semantic-stamp"));
+  expect(owner.snapshot()?.recovery).toContain("does not repair");
+  owner.note("opening main");
+  owner.adopt("main", value("live"));
+  expect(owner.snapshot()).toBeNull();
+  expect(vi.getTimerCount()).toBe(0);
+  owner.dispose();
+});
+
+it("rejects old same-name host and machine callbacks after a new owner starts", () => {
+  const owner = createApplicationConnectionFeedback();
+  let epoch = 1;
+  owner.note("opening main");
+  const old = owner.hostOptions(
+    "main",
+    false,
+    () => {},
+    () => epoch === 1,
+  );
+  epoch = 2;
+  owner.note("opening main");
+  old.onConnectionProgress("startup-failed", { reason: "missing-semantic-stamp" });
+  expect(owner.snapshot()?.failed).toBe(false);
+  const current = owner.hostOptions(
+    "main",
+    false,
+    () => {},
+    () => epoch === 2,
+  );
+  old.onConnectionProgress("startup-failed", { reason: "missing-semantic-stamp" });
+  expect(owner.snapshot()?.failed).toBe(false);
+  current.onConnectionProgress("startup-failed", { reason: "duplicate-semantic-stamp" });
+  expect(owner.snapshot()?.failure?.reason).toBe("duplicate-semantic-stamp");
+  owner.dispose();
+});
+
+it("defers retained-owner failure on Home and resumes it on Terminals without reopening", () => {
+  const owner = createApplicationConnectionFeedback();
+  const value = (status: string, reason?: string) =>
+    ({
+      status,
+      daemonGeneration: "daemon-b",
+      ...(reason ? { startupFailure: { reason, daemonGeneration: "daemon-b" } } : {}),
+    }) as Parameters<typeof owner.adopt>[1];
+  owner.note("opening main");
+  owner.adopt("main", value("live"));
+  owner.note(null, "opened");
+  owner.note(null, "cancelled");
+  owner.adopt("main", value("unavailable", "missing-semantic-stamp"));
+  expect(owner.snapshot()).toBeNull();
+  owner.resume();
+  expect(owner.snapshot()?.failure?.reason).toBe("missing-semantic-stamp");
+  owner.note(null, "cancelled");
+  owner.adopt(undefined, null);
+  owner.resume();
+  expect(owner.snapshot()).toBeNull();
+  owner.dispose();
+});
+
+it("cannot replay a prior machine failure while a replacement owner is preparing", () => {
+  const owner = createApplicationConnectionFeedback();
+  owner.note("opening main");
+  owner.adopt("main", {
+    status: "unavailable",
+    startupFailure: { reason: "missing-semantic-stamp" },
+  } as Parameters<typeof owner.adopt>[1]);
+  owner.note(null, "cancelled");
+  owner.replaceOwner();
+  owner.note("opening main");
+  owner.note(null, "cancelled");
+  owner.resume();
+  expect(owner.snapshot()).toBeNull();
+  owner.dispose();
+});
+
+it("updates failure correlation for a replacement daemon without repeating identical failures", () => {
+  const publish = vi.fn();
+  const owner = createApplicationConnectionFeedback(publish);
+  owner.note("opening main");
+  const failed = (generation: string) =>
+    ({
+      status: "unavailable",
+      daemonGeneration: generation,
+      startupFailure: { reason: "missing-semantic-stamp", daemonGeneration: generation },
+    }) as Parameters<typeof owner.adopt>[1];
+  owner.adopt("main", failed("daemon-a"));
+  const count = publish.mock.calls.length;
+  owner.adopt("main", failed("daemon-a"));
+  expect(publish).toHaveBeenCalledTimes(count);
+  owner.adopt("main", failed("daemon-b"));
+  expect(owner.snapshot()?.failure?.daemonGeneration).toBe("daemon-b");
+  owner.dispose();
+});

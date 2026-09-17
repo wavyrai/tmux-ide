@@ -2,6 +2,16 @@ import { WorkspacePromotionFailureCodeSchemaZ } from "@tmux-ide/contracts";
 import { ApplicationShellTransportError } from "@tmux-ide/daemon-client/application-shell-session";
 
 const reasons = new Set([
+  "terminal-inventory-rejected",
+  "invalid-runtime-proof",
+  "missing-semantic-stamp",
+  "invalid-semantic-stamp",
+  "duplicate-semantic-stamp",
+  "duplicate-runtime-pane-binding",
+  "not-single-pane-window",
+  "missing-window-stamp",
+  "window-stamp-inconsistent",
+  "duplicate-window-stamp",
   "daemon-unavailable",
   "routing-unavailable",
   "daemon-generation-changed",
