@@ -2516,6 +2516,29 @@ describe("layout push", () => {
     },
   );
 
+  it("preserves unavailable tmux 3.4 cursor fields as unknown slots", async () => {
+    const rig = await startedRig();
+    const collected = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", collected.onEvent);
+      rig.sim.reply(["screen"]);
+      const command = rig.sim.written.find((value) => value.includes("#{cursor_x}"));
+      expect(command).toContain("#{?#{==:#{bracket_paste_flag},},unknown,#{bracket_paste_flag}}");
+      expect(command).toContain("#{?#{==:#{scroll-on-clear},},unknown,#{scroll-on-clear}}");
+      // Exact 3.4 observation with its unsupported bracket-paste field retained.
+      rig.sim.reply(["0 0 100 50 0 1 0 0 0 0 0 0 0 1 0 2000 unknown 0 0 0 0 49 1"]);
+      const cursor = collected.events.at(-1);
+      expect(cursor?.type).toBe("cursor");
+      if (cursor?.type === "cursor") {
+        expect(cursor.observedModes).not.toHaveProperty("bracketedPaste");
+        expect(cursor.observedModes?.scrollOnClear).toBe(true);
+        expect(cursor.observedModes?.scrolling).toEqual({ top: 0, bottom: 49, origin: false });
+      }
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
   it("reseeds on observed scroll-on-clear changes without guessing unknown policy", async () => {
     const rig = await startedRig();
     const collected = collect();

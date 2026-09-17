@@ -152,7 +152,12 @@ const RECOVERY_CURSOR_PROBE_FORMAT = [
   "#{scroll_region_upper}",
   "#{scroll_region_lower}",
   "#{scroll-on-clear}",
-].join(" ");
+]
+  // Older tmux versions leave unsupported format fields empty (for example
+  // bracket_paste_flag on 3.4). Preserve their slots without guessing a mode:
+  // collapsing an empty field shifts every later observation to the wrong key.
+  .map((field) => `#{?#{==:${field},},unknown,${field}}`)
+  .join(" ");
 
 export type MirrorFlowRecoveryPhase =
   | "pause"
