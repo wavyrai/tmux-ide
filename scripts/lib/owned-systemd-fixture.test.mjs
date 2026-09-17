@@ -38,7 +38,7 @@ function inspect() {
       NetworkMode: "none",
       CgroupnsMode: "private",
       Memory: 536870912,
-      PidsLimit: 256,
+      PidsLimit: 512,
       ReadonlyRootfs: false,
       CapAdd: ["SYS_ADMIN"],
       SecurityOpt: ["no-new-privileges"],
@@ -208,6 +208,17 @@ test("complete inspection rejects foreign, recreated, broadened or incomplete co
     const raw = structuredClone(good);
     change(raw);
     assert.throws(() => inspectSystemdContainer(raw, d, good.Id));
+  }
+});
+
+test("preparation PID budget is exact and memory remains bounded", () => {
+  const args = systemdContainerArguments(d);
+  assert.equal(args[args.indexOf("--pids-limit") + 1], "512");
+  assert.equal(args[args.indexOf("--memory") + 1], "512m");
+  for (const limit of [256, 1024, 0, -1]) {
+    const raw = inspect();
+    raw.HostConfig.PidsLimit = limit;
+    assert.throws(() => inspectSystemdContainer(raw, d, raw.Id));
   }
 });
 

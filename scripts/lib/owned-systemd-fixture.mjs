@@ -31,7 +31,7 @@ export function systemdContainerArguments(definition) {
     "--memory",
     "512m",
     "--pids-limit",
-    "256",
+    "512",
     "--network",
     "none",
     "--cgroupns",
@@ -79,7 +79,7 @@ export function inspectSystemdContainer(raw, definition, expectedId) {
     h.NetworkMode !== "none" ||
     h.CgroupnsMode !== "private" ||
     h.Memory !== 536870912 ||
-    h.PidsLimit !== 256 ||
+    h.PidsLimit !== 512 ||
     h.ReadonlyRootfs !== false ||
     !(equal(h.CapAdd, ["SYS_ADMIN"]) || equal(h.CapAdd, ["CAP_SYS_ADMIN"])) ||
     !equal(h.SecurityOpt, ["no-new-privileges"]) ||
