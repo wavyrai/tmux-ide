@@ -220,3 +220,56 @@ manager still requires exactly one actual SSH mapping on `127.0.0.1`, no extra
 published ports or network attachments, and exact project-owned network identity.
 An absent mapping on a running container is an error, never an accepted endpoint.
 This fixture does not claim to be an outbound-network sandbox.
+
+## Initial container wrapper
+
+The source wrapper supports `up`, `status`, `logs` and `down` with explicit
+`--container`. A native Linux arm64 journey from clean commit `29e6f891` passed
+startup, status/logs, idempotent startup, down, ordinary-up suspension refusal,
+explicit resume and down again using only the wrapper. The artifact manifest and
+SSH host key remained identical; a new daemon authenticated through its refreshed
+loopback endpoint. Final container PID was zero, OOM counters stayed zero, and
+unrelated running container identities were unchanged.
+
+This qualifies one bounded wrapper journey, not native TUI or two-project
+acceptance. Native app launch, container-shell access, reset and rebuild
+integration are subsequent stages.
+
+First startup requires a source export from the selected canonical worktree and
+an already-built immutable image. It verifies that the image's snapshot and fixed
+helpers match that export before preparing or building the private Linux instance.
+It does not build an image implicitly or mount the host worktree.
+
+```sh
+node scripts/lib/development-container-context.mjs "$PWD" /tmp/ti-ssh-context
+docker build --target source-ssh-fixture \
+  -f /tmp/ti-ssh-context/docker/development/Dockerfile \
+  -t tmux-ide-dev:local /tmp/ti-ssh-context
+image_id=$(docker image inspect tmux-ide-dev:local --format '{{.Id}}')
+pnpm --silent dev:instance up --container --name demo --json \
+  --container-image "$image_id" --container-source /tmp/ti-ssh-context
+pnpm --silent dev:instance status --container --name demo --json
+pnpm --silent dev:instance logs --container --name demo --json
+pnpm --silent dev:instance down --container --name demo --json
+pnpm --silent dev:instance up --container --name demo --resume --json
+```
+
+Run subsequent commands from the same worktree with the same name and store.
+`--store` selects a private development store when the default is unsuitable.
+Different worktrees have distinct project identities even with the same name.
+Status separates observed Docker state from the saved transition phase and
+explicitly reports that it has not probed SSH. Logs expose the existing bounded
+structured owner-log projection, excluding raw messages and SSH credentials.
+
+Ordinary down preserves resources and data: it retires the SSH listener, completes
+core suspension, then stops the exact container. Ordinary up preserves this
+barrier; `--resume` explicitly admits a proof-backed same-container restart and
+refreshes the endpoint while preserving host-key trust. A new container, changed
+volume witnesses or changed Docker VM cannot reuse that proof.
+
+Interrupted creation, preparation, build, startup, resume or listener retirement
+remain protected for diagnosis. Only a completed suspension with its retained
+proof permits retrying/finalizing the Docker stop. Cancellation may leave a
+process already launched by Docker exec; the saved phase prevents an unsafe
+automatic retry. Do not clear records, recreate resources or use Docker prune to
+bypass a refusal. This initial slice does not yet provide reset for those cases.
