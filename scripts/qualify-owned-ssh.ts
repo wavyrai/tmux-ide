@@ -32,7 +32,11 @@ const rootStat = lstatSync(root);
 if (!rootStat.isDirectory() || rootStat.uid !== process.getuid!() || rootStat.mode & 0o077)
   throw new Error("Private fixture root required");
 const env = { PATH: "/usr/bin:/bin", HOME: root, ZDOTDIR: root };
-const allocations: Array<{ root: string; disposeFiles(): Promise<void> }> = [];
+const allocations: Array<{
+  root: string;
+  disposeFiles(): Promise<void>;
+  diagnostics(): { stage: string; failureStage: string | null };
+}> = [];
 const transports: Array<Awaited<ReturnType<typeof openSshDaemonTransport>>> = [];
 const results: Array<{ name: string; ok: boolean; elapsedMs: number; code?: string }> = [];
 const forwardPorts: number[] = [];
@@ -147,8 +151,11 @@ async function fixture(options: {
     parent: root,
     node,
     processes: tracker,
-    onAllocated: (owner: { root: string; disposeFiles(): Promise<void> }) =>
-      allocations.push(owner),
+    onAllocated: (owner: {
+      root: string;
+      disposeFiles(): Promise<void>;
+      diagnostics(): { stage: string; failureStage: string | null };
+    }) => allocations.push(owner),
     ...options,
   });
 }
@@ -502,6 +509,10 @@ try {
     results,
     cleanup,
     allocatedRoots: allocations.map((owner) => owner.root),
+    allocationDiagnostics: allocations.map((owner) => ({
+      root: owner.root,
+      ...owner.diagnostics(),
+    })),
     platform: process.platform,
     node: process.version,
   };

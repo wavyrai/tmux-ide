@@ -201,3 +201,40 @@ test("file witness rejects oversized owned contents before hashing", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("root title-change diagnostics expose booleans without command contents", async () => {
+  let reads = 0;
+  const prefix = "Thu Sep 17 12:34:56 2026";
+  const tracker = ownedProcesses({
+    identify: async () => `${prefix} ${++reads === 1 ? "SECRET-original" : "SECRET-title"}`,
+    list: async () => [],
+  });
+  const child = tracker.retain(fake(45));
+  await assert.rejects(tracker.capture());
+  const snapshot = tracker.snapshot();
+  assert.deepEqual(snapshot.diagnostics, [
+    {
+      stage: "root-verification-changed",
+      pid: 45,
+      sameStartPrefix: true,
+      commandTailChanged: true,
+    },
+  ]);
+  assert.equal(JSON.stringify(snapshot).includes("SECRET"), false);
+  await assert.rejects(tracker.dispose());
+  assert.deepEqual(child.signals, ["SIGTERM"]);
+});
+test("root identity read diagnostic preserves cleanup without raw exception text", async () => {
+  const tracker = ownedProcesses({
+    identify: async () => {
+      throw Error("SECRET-cause");
+    },
+    list: async () => [],
+  });
+  tracker.retain(fake(46));
+  await assert.rejects(tracker.dispose());
+  const snapshot = tracker.snapshot();
+  assert.deepEqual(snapshot.diagnostics, [{ stage: "root-identity-read-refused", pid: 46 }]);
+  assert.equal(JSON.stringify(snapshot).includes("SECRET"), false);
+  assert.deepEqual(snapshot.retainedRoots, [{ pid: 46, closed: true }]);
+});

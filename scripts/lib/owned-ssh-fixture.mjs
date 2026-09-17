@@ -150,6 +150,30 @@ export function ownedProcesses({ identify, list, signal = (pid, s) => process.ki
   const roots = [],
     descendants = new Map(),
     ancestry = new Map();
+  const diagnostics = [];
+  function diagnostic(value) {
+    if (diagnostics.length < 16) diagnostics.push(value);
+  }
+  function recordIdentityChange(stage, pid, previous, current) {
+    const prefix = /^([A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2} \d{4})\s+(.+)$/u;
+    const before = prefix.exec(previous),
+      after = prefix.exec(current);
+    diagnostic({
+      stage,
+      pid,
+      sameStartPrefix: before && after ? before[1] === after[1] : null,
+      commandTailChanged: before && after ? before[2] !== after[2] : null,
+    });
+    throw fail();
+  }
+  async function rootIdentity(pid) {
+    try {
+      return await identify(pid);
+    } catch (error) {
+      diagnostic({ stage: "root-identity-read-refused", pid });
+      throw error;
+    }
+  }
   let flight = null;
   const capture = () => {
     if (!flight)
@@ -183,9 +207,10 @@ export function ownedProcesses({ identify, list, signal = (pid, s) => process.ki
   async function captureNow() {
     for (const r of roots) {
       if (r.done || !r.child.pid) continue;
-      const identity = await identify(r.child.pid);
+      const identity = await rootIdentity(r.child.pid);
       if (identity === null) continue;
-      if (r.identity && r.identity !== identity) throw fail();
+      if (r.identity && r.identity !== identity)
+        recordIdentityChange("root-identity-changed", r.child.pid, r.identity, identity);
       r.identity = identity;
     }
     const before = await list();
@@ -211,8 +236,9 @@ export function ownedProcesses({ identify, list, signal = (pid, s) => process.ki
     for (const [pid, identity] of selected) {
       const root = roots.find((r) => r.child.pid === pid);
       if (root) {
-        const current = await identify(pid);
-        if (!root.done && current !== null && current !== identity) throw fail();
+        const current = await rootIdentity(pid);
+        if (!root.done && current !== null && current !== identity)
+          recordIdentityChange("root-verification-changed", pid, identity, current);
         continue;
       }
       const a = before.find((v) => v.pid === pid),
@@ -299,6 +325,8 @@ export function ownedProcesses({ identify, list, signal = (pid, s) => process.ki
     dispose,
     snapshot: () => ({
       roots: roots.length,
+      retainedRoots: roots.map((r) => ({ pid: r.child.pid ?? null, closed: r.done })),
+      diagnostics: [...diagnostics],
       descendants: descendants.size,
       ancestry: [...ancestry].map(([pid, rootPid]) => ({ pid, rootPid })),
     }),
@@ -471,6 +499,8 @@ export async function createOwnedSshFixture({
   let mode = "normal",
     disposed = false,
     listenPort = null;
+  let stage = "allocated",
+    failureStage = null;
   const timers = new Set();
   const metrics = { requests: 0, deliveredBytes: 0, stalls: 0 };
   const disposeFiles = async () => {
@@ -483,7 +513,7 @@ export async function createOwnedSshFixture({
     files.clean();
     disposed = true;
   };
-  onAllocated({ root, disposeFiles });
+  onAllocated({ root, disposeFiles, diagnostics: () => ({ stage, failureStage }) });
   const write = (name, text, mode = 0o600) => {
     writeFileSync(join(root, name), text, { flag: "wx", mode });
     files.capture(name);
@@ -502,6 +532,7 @@ export async function createOwnedSshFixture({
     ).stdout;
   let child, configProof;
   try {
+    stage = "keys";
     for (const name of ["host", "client"]) {
       await tool("/usr/bin/ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", join(root, name)]);
       chmodSync(join(root, name + ".pub"), 0o600);
@@ -514,6 +545,7 @@ export async function createOwnedSshFixture({
       "known_hosts",
       `[127.0.0.1]:${listenPort} ${readFileSync(join(root, "host.pub"), "utf8")}`,
     );
+    stage = "discovery-listener";
     const ipc = join(root, "discovery.sock");
     const server = createServer((socket) => {
       metrics.requests++;
@@ -564,8 +596,10 @@ export async function createOwnedSshFixture({
       "dispatch.mjs",
       `import{spawn}from'node:child_process';if(process.env.TMUX_IDE_D11_PRIVATE_SHELL!=='1'||process.env.SSH_ORIGINAL_COMMAND!=='tmux-ide remote-daemon-info --json'||process.env.HOME!==${JSON.stringify(join(root, "home"))}||process.env.ZDOTDIR!==${JSON.stringify(join(root, "home"))}||process.env.PATH!==${JSON.stringify(join(root, missingPath ? "empty" : "bin"))})process.exit(64);const c=spawn('tmux-ide',['remote-daemon-info','--json'],{stdio:'inherit',env:{HOME:process.env.HOME,ZDOTDIR:process.env.ZDOTDIR,PATH:process.env.PATH}});c.on('error',()=>{process.exitCode=127;});c.on('exit',(code)=>{process.exitCode=code??1;});\n`,
     );
+    stage = "configuration";
     const spec = { root, node, account, port: listenPort, targetPort, jump, missingPath };
     write("sshd_config", serverConfiguration(spec));
+    stage = "effective-config";
     const effective = await tool("/usr/sbin/sshd", [
       "-T",
       "-f",
@@ -575,6 +609,7 @@ export async function createOwnedSshFixture({
     ]);
     configProof = verifyEffectiveServer(effective, spec);
     write("client_config", clientConfiguration({ ...spec, jump: undefined }));
+    stage = "spawn";
     child = processes.retain(
       spawn("/usr/sbin/sshd", ["-D", "-e", "-f", join(root, "sshd_config")], {
         stdio: ["ignore", "ignore", "pipe"],
@@ -582,13 +617,17 @@ export async function createOwnedSshFixture({
       }),
     );
     child.stderr.resume();
+    stage = "process-capture";
     await processes.capture();
+    stage = "listen";
     await waitForPort(listenPort, true);
+    stage = "pid-witness";
     try {
       files.capture("sshd.pid");
     } catch {
       throw fail();
     }
+    stage = "ready";
     return {
       root,
       port: listenPort,
@@ -605,6 +644,7 @@ export async function createOwnedSshFixture({
       disposeFiles,
     };
   } catch {
+    failureStage = stage;
     throw fail();
   }
 }
