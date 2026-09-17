@@ -57848,8 +57848,10 @@ var init_registry2 = __esm({
       /**
        * Mark the exact retained runtime as eligible for daemon-private inventory.
        * This is intentionally separate from ordinary renderer prewarming: only
-       * the native discovery path may call it after its parser and global catalog
-       * analyzer proved the session attachable.
+       * native discovery may call it after validating the selected session's cold
+       * pane/window proof and its qualification admission guards. This grants fresh
+       * session-scoped control-channel inventory, not a global uniqueness certificate;
+       * consumers still validate each inventory and its exact-runtime token.
        */
       async prewarmProofQualifiedSession(session, runtimeSessionId, signal) {
         signal?.throwIfAborted();
@@ -63180,6 +63182,53 @@ function projectTrustedMirrorInventory(trusted, workspaceName, expectedSessionNa
   }
   return Object.freeze(panes);
 }
+function analyzeInventoryPanes(panes) {
+  return analyzeTrustedSemanticPaneCatalog(
+    panes.map(
+      ({
+        sessionName: _sessionName,
+        index: _index,
+        title: _title,
+        currentCommand: _currentCommand,
+        active: _active,
+        role: _role,
+        name: _name,
+        type: _type,
+        missionStamp: _missionStamp,
+        dir: _dir,
+        ...row
+      }) => row
+    )
+  );
+}
+function hasWindowStampCollision(rows) {
+  const windows = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    if (row.windowStamp == null) continue;
+    const previous = windows.get(row.windowStamp);
+    if (previous !== void 0 && previous !== row.windowId) return true;
+    windows.set(row.windowStamp, row.windowId);
+  }
+  return false;
+}
+function hasCompleteWindowIdentity(rows) {
+  const stamps = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    if (row.windowStamp == null) return false;
+    const previous = stamps.get(row.windowId);
+    if (previous !== void 0 && previous !== row.windowStamp) return false;
+    stamps.set(row.windowId, row.windowStamp);
+  }
+  return !hasWindowStampCollision(rows);
+}
+function projectQualifiedInventory(trusted, workspaceName, sessionName) {
+  const panes = projectTrustedMirrorInventory(trusted, workspaceName, sessionName);
+  const catalog = analyzeInventoryPanes(panes);
+  if (catalog.invalidRuntimeProof || catalog.missingSemanticStamp || catalog.duplicateSemanticStamp || catalog.duplicateRuntimePaneBinding) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  return Object.freeze({ panes, catalog });
+}
 async function awaitInventoryUnlessAborted(promise, signal) {
   if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
   let rejectAbort;
@@ -63840,32 +63889,11 @@ var init_native_runtime = __esm({
           if (trustedRetry) return trustedRetry;
           if (trusted) {
             try {
-              const panes2 = projectTrustedMirrorInventory(
+              inventory = projectQualifiedInventory(
                 trusted.inventory,
                 workspace.name,
                 workspace.sessionName
               );
-              const catalog = analyzeTrustedSemanticPaneCatalog(
-                panes2.map(
-                  ({
-                    sessionName: _sessionName,
-                    index: _index,
-                    title: _title,
-                    currentCommand: _currentCommand,
-                    active: _active,
-                    role: _role,
-                    name: _name,
-                    type: _type,
-                    missionStamp: _missionStamp,
-                    dir: _dir,
-                    ...row
-                  }) => row
-                )
-              );
-              if (catalog.invalidRuntimeProof || catalog.missingSemanticStamp || catalog.duplicateSemanticStamp || catalog.duplicateRuntimePaneBinding) {
-                throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
-              }
-              inventory = Object.freeze({ panes: panes2, catalog });
               trustedInventory = true;
               trustedInventoryToken = trusted.token;
             } catch {
@@ -63889,53 +63917,75 @@ var init_native_runtime = __esm({
         }
         const inventoryRetry = retryIfReplaced();
         if (inventoryRetry) return inventoryRetry;
-        const panes = inventory.panes.filter(
+        let panes = inventory.panes.filter(
           (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName
         );
         if (panes.length === 0) return null;
-        const active2 = panes.find((pane) => pane.active) ?? panes[0];
-        const sessionCatalog = analyzeTrustedSemanticPaneCatalog(
-          panes.map(
-            ({
-              sessionName: _sessionName,
-              index: _index,
-              title: _title,
-              currentCommand: _currentCommand,
-              active: _active,
-              role: _role,
-              name: _name,
-              type: _type,
-              missionStamp: _missionStamp,
-              dir: _dir,
-              ...row
-            }) => row
-          )
-        );
-        const windowStamps = /* @__PURE__ */ new Map();
-        let windowIdentityReady = true;
-        for (const pane of sessionCatalog.rows) {
-          const stamp = pane.windowStamp ?? null;
-          const previous = windowStamps.get(pane.windowId);
-          if (stamp === null || previous !== void 0 && previous !== stamp) {
-            windowIdentityReady = false;
-            break;
-          }
-          windowStamps.set(pane.windowId, stamp);
-        }
-        if (new Set(windowStamps.values()).size !== windowStamps.size) windowIdentityReady = false;
-        const shouldPrewarm = !sessionCatalog.invalidRuntimeProof && !sessionCatalog.missingSemanticStamp && !sessionCatalog.duplicateSemanticStamp && !sessionCatalog.duplicateRuntimePaneBinding && windowIdentityReady;
-        const catalogIssue = inventory.catalog.invalidRuntimeProof ? "invalid-runtime-proof" : inventory.catalog.missingSemanticStamp ? "missing-semantic-stamp" : inventory.catalog.duplicateSemanticStamp ? "duplicate-semantic-stamp" : inventory.catalog.duplicateRuntimePaneBinding ? "duplicate-runtime-pane-binding" : null;
-        if (shouldPrewarm && this.#prewarmSessionRuntime) {
-          await awaitInventoryUnlessAborted(
-            this.#prewarmSessionRuntime(workspace.sessionName, active2.sessionId, signal),
+        let active2 = panes.find((pane) => pane.active) ?? panes[0];
+        const sessionCatalog = analyzeInventoryPanes(panes);
+        const shouldPrewarm = !sessionCatalog.invalidRuntimeProof && !sessionCatalog.missingSemanticStamp && !sessionCatalog.duplicateSemanticStamp && !sessionCatalog.duplicateRuntimePaneBinding && hasCompleteWindowIdentity(sessionCatalog.rows);
+        const coldAmbiguous = inventory.catalog.invalidRuntimeProof || inventory.catalog.duplicateSemanticStamp || inventory.catalog.duplicateRuntimePaneBinding;
+        const missingElsewhere = !trustedInventory && inventory.catalog.missingSemanticStamp;
+        const allowColdQualification = !coldAmbiguous && (!missingElsewhere || !hasWindowStampCollision(inventory.catalog.rows));
+        let catalogIssue = inventory.catalog.invalidRuntimeProof ? "invalid-runtime-proof" : inventory.catalog.missingSemanticStamp ? "missing-semantic-stamp" : inventory.catalog.duplicateSemanticStamp ? "duplicate-semantic-stamp" : inventory.catalog.duplicateRuntimePaneBinding ? "duplicate-runtime-pane-binding" : null;
+        if (shouldPrewarm && (trustedInventory || allowColdQualification) && this.#prewarmSessionRuntime) {
+          const coldRuntimeSessionId = active2.sessionId;
+          const qualified = await awaitInventoryUnlessAborted(
+            this.#prewarmSessionRuntime(workspace.sessionName, coldRuntimeSessionId, signal),
             signal
-          ).catch(() => void 0);
+          ).then(
+            () => true,
+            () => false
+          );
           const prewarmRetry = retryIfReplaced();
           if (prewarmRetry) return prewarmRetry;
+          if (missingElsewhere && qualified && this.#discoverTrustedSessionInventory) {
+            const candidate = await awaitInventoryUnlessAborted(
+              this.#discoverTrustedSessionInventory(workspace.sessionName, signal),
+              signal
+            ).catch(() => null);
+            const handoffRetry = retryIfReplaced();
+            if (handoffRetry) return handoffRetry;
+            if (candidate) {
+              if (candidate.inventory.runtimeSessionId !== coldRuntimeSessionId) {
+                if (staleRetry < 1)
+                  return this.#discoverTerminalRuntimeSession(
+                    requestedSessionName,
+                    signal,
+                    staleRetry + 1
+                  );
+                throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+              }
+              let projected = null;
+              try {
+                const candidateProjection = projectQualifiedInventory(
+                  candidate.inventory,
+                  workspace.name,
+                  workspace.sessionName
+                );
+                if (hasCompleteWindowIdentity(candidateProjection.catalog.rows)) {
+                  projected = candidateProjection;
+                }
+              } catch {
+              }
+              if (projected) {
+                inventory = projected;
+                panes = projected.panes;
+                active2 = panes.find((pane) => pane.active) ?? panes[0];
+                trustedInventory = true;
+                trustedInventoryToken = candidate.token;
+                catalogIssue = null;
+              }
+            }
+          }
         }
         const finalRetry = retryIfReplaced();
         if (finalRetry) return finalRetry;
         if (trustedInventory) {
+          const currentMembership = this.#registry.list().filter((entry) => entry.sessionName === workspace.sessionName);
+          if (currentMembership.length !== 1 || currentMembership[0].name !== workspace.name || currentMembership[0].projectDir !== workspace.projectDir) {
+            throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+          }
           if (trustedInventoryToken === null || this.#trustedSessionInventoryCurrent?.(workspace.sessionName, trustedInventoryToken) !== true) {
             if (staleRetry < 1)
               return this.#discoverTerminalRuntimeSession(requestedSessionName, signal, staleRetry + 1);
