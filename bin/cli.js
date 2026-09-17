@@ -38243,7 +38243,7 @@ var init_session_channel = __esm({
       "#{scroll_region_upper}",
       "#{scroll_region_lower}",
       "#{scroll-on-clear}"
-    ].join(" ");
+    ].map((field) => `#{?#{==:${field},},unknown,${field}}`).join(" ");
     FAILED_RESEED_RESULT = Object.freeze({
       ok: false,
       fingerprint: null,
