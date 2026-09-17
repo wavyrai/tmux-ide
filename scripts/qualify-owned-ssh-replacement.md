@@ -102,3 +102,34 @@ the retained TUI and preserved tmux identity, but failed the credential assertio
 the independent 60-process/eight-port audit passed. Earlier fixture timeout,
 listener-refresh and malformed-handshake failures remain separate evidence. This
 baseline demonstrates the defect; it is not a passing qualification of its fix.
+
+## Fixed-product qualification
+
+A fresh bounded run passed with manager and all four native artifact sources at
+clean `54542def`, using Node 26.8.2 and Bun 1.4.2 on macOS 27 arm64. Each immutable
+manifest and CLI/TUI hash was independently verified before interpreting the
+result. The retained TUI recovered fresh shell output and keyboard input with the
+same tmux PID, socket inode and pane; the daemon UUID, token, port and SSH tunnel
+changed. The healthy sibling stayed responsive during and after replacement.
+
+The wrong-identity trap received exactly two requests: one public identity probe
+and one independent raw-forward witness, both without credentials. No old or
+replacement owner token reached it. The original TUI's SSH process and listener
+were alive at daemon death; the separate retained raw witness survived fixture
+listener refresh. Raw and guarded witness ports are recorded separately, and TUI
+traffic stayed behind the production identity guard.
+
+The run took 62,272ms including four builds, fixture work and teardown. Every
+cleanup field passed. Independent checks found all 59 captured processes absent,
+all nine recorded ports closed, four runtime/artifact roots retired through managed
+reset, and an empty private SSH parent. Both source worktrees remained clean.
+Exact manifests, frames, trap counters, cleanup audits and the unchanged original
+receipt are under ignored local evidence
+`plans/development-instances/evidence/d11/stage4/guarded-native-live`.
+
+The baseline and earlier failed receipts are preserved separately. This is a
+bounded accidental stale-endpoint credential and real recovery qualification,
+not a long soak, native Linux/x64 proof, terminal-reader performance benchmark or
+defense against a malicious listener copying the public identity. Generic paused
+HTTP-reader and configured fleet-scheduler cases have separate receipts described
+in [the transport qualification](qualify-owned-ssh.md).

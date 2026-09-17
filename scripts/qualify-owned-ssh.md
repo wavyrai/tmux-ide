@@ -111,7 +111,7 @@ These helper changes pass 23 focused tests, targeted types and lint. The origina
 12-case qualification predates them; the guarded regression and native 545 run
 include them. Helper tests and cleanup remain distinct from actual client recovery.
 
-## Bounded reader and scheduler cases (source checkpoint; live proof pending)
+## Bounded reader and scheduler qualification
 
 The runner adds a generic HTTP stream over the real guarded SSH transport. Its
 downstream reader pauses while a finite 16 MiB producer observes backpressure.
@@ -132,4 +132,25 @@ unit-test evidence; this case does not claim live fleet saturation performance.
 
 Run the pressure helper's hermetic tests with
 `node --test scripts/lib/owned-ssh-pressure.test.mjs`. No sshd or keys are started
-by those tests. Both new live cases remain unqualified until a reviewed opt-in run.
+by those tests.
+
+The actual 14-case matrix passed from `efcaafe9` on macOS 27 arm64 and pinned
+Node 26.8.2 in 4437ms including fixture instrumentation and cleanup. The paused
+reader held the producer at 5,570,560 accepted bytes for 207ms, below its 16 MiB
+cap. Three healthy requests completed during the same plateau (3ms aggregate
+observation). Producer writer queue peak was 65,705 bytes and returned to zero
+after cancellation. These numbers describe this bounded fixture, not a latency
+benchmark or total process/network memory.
+
+The scheduler case observed active/queued high-water 1/1, immediate post-abort
+occupancy 1/1, successful queued healthy admission after settlement, and final
+0/0. All original 12 cases also passed. Every cleanup flag passed; an independent
+audit found all 64 captured process owners absent, all private key/config roots
+removed and only the receipt remaining. The runner verified actual listener and
+forward-port closure, but did not persist numeric ports for an independent replay.
+Source hashes remained unchanged. Exact receipts are under ignored local evidence
+`plans/development-instances/evidence/d11/reader-scheduler/live`.
+
+This completes the bounded generic-reader and configured-scheduler fault cases.
+Native terminal-reader performance, default-limit fleet saturation and sustained
+resource/latency qualification remain separate performance work.
