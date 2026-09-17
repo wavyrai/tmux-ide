@@ -493,6 +493,13 @@ exceptions or credentials. A startup receipt path is included only when that
 `up` operation wrote it; reset/down/restart refusals do not point at stale startup
 receipts. Invalid CLI syntax/option combinations may still fail at argument parsing.
 
+Failed `down --json` also includes a bounded `diagnostic` with the failing stage,
+such as `owner-request`, `tmux-command`, or `socket-revalidate`, an error category,
+and an allowlisted code when available. It excludes raw messages, commands and
+credentials. The stage is recorded only on failure; it does not change exit status,
+ownership checks or deadlines. Preserve a failed receipt even if later inspection
+shows all processes stopped: process exit alone does not prove cleanup completed.
+
 The short runtime path keeps the worktree/name identity, but now has a private
 atomic ownership receipt binding that full tuple, canonical store/root and
 runtime capability. Up, app admission, stop and reset verify it before touching
