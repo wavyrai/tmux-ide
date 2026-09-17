@@ -107,10 +107,10 @@ no retained roots and all recorded PIDs absent. The proof records cancellation
 and cleanup duration. Neither interrupted run qualifies the full golden journey.
 No signal by PID substring, global tmux shutdown or unrelated cleanup is allowed.
 
-This controlled live proof is separate from the small helper tests. Until its
-exact committed-source receipts are reviewed, signal-safe installed cleanup is
-implemented but not live-qualified. A missing final receipt after platform hard
-kill remains an unqualified result, regardless of hosted runner retirement.
+This controlled live proof is separate from the small helper tests. Qualify
+cleanup only for the exact source and platform recorded in reviewed receipts.
+A missing final receipt after platform hard kill remains an unqualified result,
+regardless of hosted runner retirement.
 
 The Linux installed job also runs `node scripts/qualify-packed-interruption.mjs
 <fresh-evidence-directory>` after its successful ordinary journey. It runs the
