@@ -3816,7 +3816,7 @@ import { z as z24 } from "zod";
 function isDaemonWireProtocolCompatible(protocolVersion) {
   return protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION;
 }
-var DAEMON_WIRE_PROTOCOL_VERSION, DaemonWireProtocolVersionSchema, DaemonInstanceIdSchema, EnvironmentIdSchema, DaemonInstanceIdentitySchemaZ, CanonicalDaemonInfoSchema, DaemonHealthSchema, DaemonIdentitySchema;
+var DAEMON_WIRE_PROTOCOL_VERSION, DaemonWireProtocolVersionSchema, DaemonInstanceIdSchema, EnvironmentIdSchema, DaemonInstanceIdentitySchemaZ, DaemonSupervisionIdSchema, CanonicalDaemonReservationSchema, CanonicalDaemonInfoSchema, DaemonHealthSchema, DaemonIdentitySchema;
 var init_daemon_wire = __esm({
   "packages/contracts/src/daemon-wire.ts"() {
     "use strict";
@@ -3831,7 +3831,16 @@ var init_daemon_wire = __esm({
       startedAt: z24.iso.datetime({ offset: true }),
       environmentId: EnvironmentIdSchema.optional()
     }).strict())();
+    DaemonSupervisionIdSchema = /* @__PURE__ */ (() => z24.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/))();
+    CanonicalDaemonReservationSchema = /* @__PURE__ */ (() => z24.object({
+      kind: z24.literal("supervised-reservation"),
+      version: z24.literal(1),
+      supervisionId: DaemonSupervisionIdSchema,
+      reservationId: z24.uuid(),
+      reservedAt: z24.iso.datetime({ offset: true })
+    }).strict())();
     CanonicalDaemonInfoSchema = /* @__PURE__ */ (() => z24.object({
+      supervisionId: DaemonSupervisionIdSchema.optional(),
       pid: z24.number().int().positive(),
       port: z24.number().int().min(1).max(65535),
       protocolVersion: DaemonWireProtocolVersionSchema,
@@ -10958,7 +10967,7 @@ var require_package = __commonJS({
         "dev:web": "node scripts/dev-web.mjs",
         test: "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/web-workspace --filter @tmux-ide/electron-shell run test",
         "test:unit": "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/web-workspace --filter @tmux-ide/electron-shell run test",
-        "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts ./packages/daemon/src/command-center/resources/application-shell.test.ts ./packages/daemon/src/command-center/resources/agent-graph-overlay.test.ts ./packages/daemon/src/tui/mirror/runtime/runtime-layout-presentation.test.ts ./packages/daemon/src/tui/mirror/runtime/terminal-fast-lane-renderer-adapter.test.ts ./packages/daemon/src/tui/mirror/runtime/terminal-pane-input-router.test.ts",
+        "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon-supervision.test.ts ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts ./packages/daemon/src/command-center/resources/application-shell.test.ts ./packages/daemon/src/command-center/resources/agent-graph-overlay.test.ts ./packages/daemon/src/tui/mirror/runtime/runtime-layout-presentation.test.ts ./packages/daemon/src/tui/mirror/runtime/terminal-fast-lane-renderer-adapter.test.ts ./packages/daemon/src/tui/mirror/runtime/terminal-pane-input-router.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/core/src packages/daemon-client/src packages/sdk/src packages/tmux-bridge/src packages/daemon/src",
         "lint:workspace": "turbo run lint",
         format: "prettier --write .",
@@ -11910,6 +11919,7 @@ var init_process_tree = __esm({
 // packages/daemon/src/lib/canonical-daemon.ts
 var canonical_daemon_exports = {};
 __export(canonical_daemon_exports, {
+  assertCanonicalDaemonSupervision: () => assertCanonicalDaemonSupervision,
   canonicalDaemonClaimAllowsStartupAttempt: () => canonicalDaemonClaimAllowsStartupAttempt,
   canonicalDaemonUrl: () => canonicalDaemonUrl,
   clearCanonicalDaemonInfoIfOwned: () => clearCanonicalDaemonInfoIfOwned,
@@ -11921,11 +11931,14 @@ __export(canonical_daemon_exports, {
   inspectCanonicalDaemonInfoPath: () => inspectCanonicalDaemonInfoPath,
   isCanonicalDaemonAlive: () => isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead: () => isCanonicalDaemonRecordOwnerProvenDead,
+  matchesCanonicalDaemonPredecessor: () => matchesCanonicalDaemonPredecessor,
   prepareCanonicalDaemonInfoForBootstrap: () => prepareCanonicalDaemonInfoForBootstrap,
   probeCanonicalDaemonHealth: () => probeCanonicalDaemonHealth,
   probeCanonicalDaemonIdentity: () => probeCanonicalDaemonIdentity,
   readCanonicalDaemonInfo: () => readCanonicalDaemonInfo,
   releaseCanonicalDaemonClaim: () => releaseCanonicalDaemonClaim,
+  releaseCanonicalDaemonSupervision: () => releaseCanonicalDaemonSupervision,
+  reserveCanonicalDaemonSupervision: () => reserveCanonicalDaemonSupervision,
   tryAcquireCanonicalDaemonClaim: () => tryAcquireCanonicalDaemonClaim,
   warnOnDaemonVersionSkew: () => warnOnDaemonVersionSkew,
   writeCanonicalDaemonInfo: () => writeCanonicalDaemonInfo
@@ -12110,12 +12123,30 @@ function inspectCanonicalDaemonInfoPath(path2) {
         openedObservation
       );
     }
+    if (raw && typeof raw === "object" && "kind" in raw) {
+      const reservation = CanonicalDaemonReservationSchema.safeParse(raw);
+      if (!reservation.success)
+        return invalidState(
+          "invalid-schema",
+          "Invalid supervision reservation",
+          null,
+          openedObservation
+        );
+      return {
+        status: "reserved",
+        reservation: reservation.data,
+        observation: openedObservation,
+        reason: "supervised-reservation",
+        detail: "Daemon namespace is reserved for its supervisor",
+        ownerPid: null
+      };
+    }
     const parsed = CanonicalDaemonInfoSchema.safeParse(raw);
     if (!parsed.success) {
       return invalidState(
         "invalid-schema",
         parsed.error.issues.map((issue) => issue.message).join("; "),
-        ownerPidFromRaw(raw),
+        raw && typeof raw === "object" && "supervisionId" in raw ? null : ownerPidFromRaw(raw),
         openedObservation
       );
     }
@@ -12207,7 +12238,21 @@ function retireCanonicalClaimIfMatches(expected) {
   }
   return false;
 }
-function tryAcquireCanonicalDaemonClaim() {
+function supervisionBinding(state) {
+  return state.status === "reserved" ? state.reservation.supervisionId : state.status === "valid" ? state.info.supervisionId ?? null : null;
+}
+function matchesCanonicalDaemonPredecessor(state, predecessor, supervisionId) {
+  return !!predecessor && state.status === "valid" && state.info.pid === process.pid && state.info.supervisionId === supervisionId && predecessor.info.supervisionId === supervisionId && sameObservation(state.observation, predecessor.observation) && JSON.stringify(state.info) === JSON.stringify(predecessor.info);
+}
+function admitsClaim(state, intent) {
+  const binding = supervisionBinding(state);
+  if (intent.kind === "ordinary") return binding === null;
+  if (!DaemonSupervisionIdSchema.safeParse(intent.supervisionId).success) return false;
+  if (intent.kind === "reserve")
+    return state.status === "missing" || state.status === "valid" && binding === null && pidLiveness(state.info.pid) === "dead" || state.status === "reserved" && binding === intent.supervisionId;
+  return binding === intent.supervisionId && (state.status === "reserved" || state.status === "valid" && (pidLiveness(state.info.pid) === "dead" || intent.kind === "supervised" && matchesCanonicalDaemonPredecessor(state, intent.predecessor, intent.supervisionId)));
+}
+function tryAcquireCanonicalDaemonClaim(intent = { kind: "ordinary" }) {
   const path2 = getCanonicalDaemonClaimPath();
   const root = dirname12(path2);
   try {
@@ -12218,6 +12263,11 @@ function tryAcquireCanonicalDaemonClaim() {
       detail: error instanceof Error ? error.message : "canonical daemon parent could not be prepared"
     };
   }
+  if (!admitsClaim(inspectCanonicalDaemonInfo(), intent))
+    return {
+      status: "invalid",
+      detail: "Supervisor reservation does not admit this startup intent"
+    };
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const claim = {
       claimId: randomUUID3(),
@@ -12233,7 +12283,14 @@ function tryAcquireCanonicalDaemonClaim() {
     });
     try {
       renameSync6(candidate, path2);
-      activeClaims.add(claim.claimId);
+      activeClaims.set(claim.claimId, Object.freeze(structuredClone(intent)));
+      if (!admitsClaim(inspectCanonicalDaemonInfo(), intent)) {
+        releaseCanonicalDaemonClaim(claim);
+        return {
+          status: "invalid",
+          detail: "Supervisor reservation changed during claim acquisition"
+        };
+      }
       return { status: "acquired", claim };
     } catch (error) {
       rmSync(candidate, { recursive: true, force: true });
@@ -12271,10 +12328,17 @@ function releaseCanonicalDaemonClaim(claim) {
 }
 function writeCanonicalDaemonInfo(info, claim) {
   assertCanonicalDaemonClaimHeld(claim);
+  const before = inspectCanonicalDaemonInfo();
+  const intent = activeClaims.get(claim.claimId);
+  if (!admitsClaim(before, intent) || intent.kind === "reserve" || intent.kind === "release" || (intent.kind === "supervised" ? info.supervisionId !== intent.supervisionId : info.supervisionId !== void 0))
+    throw new Error("Canonical publication does not match supervision intent");
+  if (before.status === "valid" && info.supervisionId && pidLiveness(before.info.pid) !== "dead" && !(intent.kind === "supervised" && matchesCanonicalDaemonPredecessor(before, intent.predecessor, intent.supervisionId)))
+    throw new Error("Supervised predecessor is not proven dead");
   const path2 = getCanonicalDaemonInfoPath();
   prepareCanonicalDaemonRoot(dirname12(path2));
   const tmpPath = `${path2}.${claim.claimId}.${randomUUID3()}.tmp`;
   const persisted = {
+    ...info.supervisionId ? { supervisionId: info.supervisionId } : {},
     pid: info.pid,
     port: info.port,
     protocolVersion: info.protocolVersion,
@@ -12291,9 +12355,76 @@ function writeCanonicalDaemonInfo(info, claim) {
   });
   chmodSync2(tmpPath, 384);
   try {
-    linkSync(tmpPath, path2);
+    if (intent.kind === "supervised") {
+      const current = inspectCanonicalDaemonInfo();
+      if (before.status === "missing" || current.status === "missing" || !before.observation || !current.observation || !sameObservation(before.observation, current.observation) || supervisionBinding(current) !== intent.supervisionId)
+        throw new Error("Supervision reservation changed before publication");
+      renameSync6(tmpPath, path2);
+    } else linkSync(tmpPath, path2);
   } finally {
     rmSync(tmpPath, { force: true });
+  }
+}
+function assertCanonicalDaemonSupervision(supervisionId) {
+  if (!DaemonSupervisionIdSchema.safeParse(supervisionId).success || supervisionBinding(inspectCanonicalDaemonInfo()) !== supervisionId)
+    throw new Error("Matching supervisor reservation required before startup");
+}
+function reserveCanonicalDaemonSupervision(supervisionId) {
+  const attempt = tryAcquireCanonicalDaemonClaim({ kind: "reserve", supervisionId });
+  if (attempt.status !== "acquired") throw new Error("Cannot reserve supervised daemon namespace");
+  const claim = attempt.claim;
+  try {
+    const before = inspectCanonicalDaemonInfo();
+    if (!admitsClaim(before, { kind: "reserve", supervisionId }))
+      throw new Error("Reservation admission changed");
+    if (before.status === "reserved") return before.reservation;
+    const reservation = CanonicalDaemonReservationSchema.parse({
+      kind: "supervised-reservation",
+      version: 1,
+      supervisionId,
+      reservationId: randomUUID3(),
+      reservedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    const path2 = getCanonicalDaemonInfoPath();
+    const temp = `${path2}.${claim.claimId}.${randomUUID3()}.tmp`;
+    writeFileSync7(temp, JSON.stringify(reservation) + "\n", { flag: "wx", mode: 384 });
+    try {
+      assertCanonicalDaemonClaimHeld(claim);
+      const current = inspectCanonicalDaemonInfo();
+      if (!admitsClaim(current, { kind: "reserve", supervisionId }) || current.status !== before.status || before.status !== "missing" && (current.status === "missing" || !before.observation || !current.observation || !sameObservation(before.observation, current.observation)))
+        throw new Error("Reservation record changed");
+      if (before.status === "missing") linkSync(temp, path2);
+      else renameSync6(temp, path2);
+    } finally {
+      rmSync(temp, { force: true });
+    }
+    return reservation;
+  } finally {
+    releaseCanonicalDaemonClaim(claim);
+  }
+}
+function releaseCanonicalDaemonSupervision(supervisionId) {
+  const intent = { kind: "release", supervisionId };
+  const attempt = tryAcquireCanonicalDaemonClaim(intent);
+  if (attempt.status !== "acquired") throw new Error("Cannot release supervised daemon namespace");
+  const claim = attempt.claim;
+  try {
+    const before = inspectCanonicalDaemonInfo();
+    if (!admitsClaim(before, intent) || before.status === "missing" || !before.observation)
+      throw new Error("Supervisor release refused");
+    const captured = captureCanonicalDaemonInfo(claim);
+    if (!captured) throw new Error("Supervisor release record disappeared");
+    try {
+      const current = inspectCanonicalDaemonInfoPath(captured);
+      if (!admitsClaim(current, intent) || current.status === "missing" || !current.observation || !sameObservation(before.observation, current.observation))
+        throw new Error("Supervisor release record changed");
+      rmSync(captured);
+    } catch (error) {
+      restoreCapturedFile(captured, getCanonicalDaemonInfoPath());
+      throw error;
+    }
+  } finally {
+    releaseCanonicalDaemonClaim(claim);
   }
 }
 function inspectCanonicalDaemonInfo() {
@@ -12385,7 +12516,7 @@ function captureCanonicalDaemonInfo(claim) {
   }
 }
 function clearCanonicalDaemonInfoIfUnchanged(state, claim) {
-  if (state.status === "missing" || !state.observation) return false;
+  if (state.status === "missing" || !state.observation || supervisionBinding(state)) return false;
   const path2 = getCanonicalDaemonInfoPath();
   const captured = captureCanonicalDaemonInfo(claim);
   if (!captured) return false;
@@ -12403,6 +12534,7 @@ function clearCanonicalDaemonInfoIfUnchanged(state, claim) {
   }
 }
 function clearCanonicalDaemonInfoIfOwned(instanceId, claim) {
+  if (supervisionBinding(inspectCanonicalDaemonInfo())) return false;
   const path2 = getCanonicalDaemonInfoPath();
   const captured = captureCanonicalDaemonInfo(claim);
   if (!captured) return false;
@@ -12426,6 +12558,7 @@ function pidLiveness(pid) {
   }
 }
 function canonicalDaemonClaimAllowsStartupAttempt() {
+  if (supervisionBinding(inspectCanonicalDaemonInfo())) return false;
   const claimPath = getCanonicalDaemonClaimPath();
   try {
     const root = lstatSync6(dirname12(claimPath));
@@ -12508,7 +12641,7 @@ var init_canonical_daemon = __esm({
     DAEMON_CLAIM_OWNER_FILE = "owner.json";
     MAX_DAEMON_INFO_BYTES = 64 * 1024;
     MAX_DAEMON_CLAIM_BYTES = 4 * 1024;
-    activeClaims = /* @__PURE__ */ new Set();
+    activeClaims = /* @__PURE__ */ new Map();
   }
 });
 
@@ -17163,7 +17296,7 @@ var init_bootstrap_coordinator = __esm({
             } catch (error) {
               probe = await this.#options.probe();
               if (probe.status === "incompatible") this.#throwIncompatible(probe.reason);
-              if (probe.status !== "compatible" && probe.status !== "control-pending") {
+              if (probe.status !== "compatible" && probe.status !== "control-pending" && probe.status !== "owner-pending") {
                 throw new DaemonBootstrapError(
                   "spawn-failed",
                   "The canonical daemon could not start.",
@@ -17365,7 +17498,7 @@ async function replaceOlderCanonicalDaemon(deps2, info, timeoutMs, expectedProdu
     );
   }
   const latest = deps2.inspect();
-  if (latest.status !== "valid" || !sameCanonicalInstance(latest.info, info) || latest.info.authToken !== info.authToken || latest.info.bindHostname !== info.bindHostname || latest.info.productVersion !== info.productVersion || latest.info.protocolVersion !== info.protocolVersion) {
+  if (latest.status !== "valid" || !sameCanonicalInstance(latest.info, info) || latest.info.authToken !== info.authToken || latest.info.bindHostname !== info.bindHostname || latest.info.productVersion !== info.productVersion || latest.info.protocolVersion !== info.protocolVersion || latest.info.supervisionId !== info.supervisionId) {
     throw new DaemonBootstrapError("incompatible", "Canonical daemon changed before upgrade.", {
       reason: "identity-mismatch"
     });
@@ -17388,6 +17521,7 @@ async function replaceOlderCanonicalDaemon(deps2, info, timeoutMs, expectedProdu
 async function probeCanonical(deps2, expectedProductVersion) {
   const state = deps2.inspect();
   if (state.status === "missing") return { status: "absent-or-stale" };
+  if (state.status === "reserved") return { status: "owner-pending" };
   if (state.status === "invalid") {
     if (await deps2.ownerProvenDead(state)) return { status: "absent-or-stale" };
     throw new DaemonBootstrapError(
@@ -17396,7 +17530,8 @@ async function probeCanonical(deps2, expectedProductVersion) {
       { reason: "canonical-record-invalid" }
     );
   }
-  if (!await deps2.alive(state.info)) return { status: "absent-or-stale" };
+  if (!await deps2.alive(state.info))
+    return { status: state.info.supervisionId ? "owner-pending" : "absent-or-stale" };
   const [identity, health] = await Promise.all([
     deps2.identity(state.info),
     deps2.health(state.info)
@@ -17416,19 +17551,55 @@ async function probeCanonical(deps2, expectedProductVersion) {
     if (comparison === null || comparison < 0)
       return { status: "incompatible", reason: "product-version-mismatch" };
   }
+  if (state.info.supervisionId) {
+    const current = deps2.inspect();
+    if (current.status !== "valid" || !sameCanonicalInstance(current.info, state.info) || current.info.supervisionId !== state.info.supervisionId)
+      return { status: "owner-pending" };
+  }
   return { status: "compatible", candidate: state.info };
 }
+function supervisedAdmission(deps2, declaredBinding) {
+  let binding = declaredBinding;
+  const inspect2 = () => {
+    const state = deps2.inspect();
+    const next = state.status === "reserved" ? state.reservation.supervisionId : state.status === "valid" ? state.info.supervisionId : void 0;
+    if (binding && (state.status === "valid" || state.status === "reserved") && next !== binding)
+      throw new DaemonBootstrapError(
+        "incompatible",
+        "Supervisor namespace binding changed during bootstrap",
+        { reason: "canonical-record-invalid" }
+      );
+    binding ??= next;
+    return state;
+  };
+  return {
+    ...deps2,
+    inspect: inspect2,
+    spawnOwner: async (entry, cwd) => {
+      inspect2();
+      if (!binding) await deps2.spawnOwner(entry, cwd);
+    }
+  };
+}
 function createCanonicalDaemonBootstrapCoordinator(options, dependencies = {}) {
-  const deps2 = { ...defaultDependencies, ...dependencies };
+  const deps2 = supervisedAdmission(
+    { ...defaultDependencies, ...dependencies },
+    options.supervisionId
+  );
   return new DaemonBootstrapCoordinator({
     probe: () => probeCanonical(deps2, options.expectedProductVersion),
     spawn: () => deps2.spawnOwner(resolve14(options.entryPath), resolve14(options.cwd ?? process.cwd())),
     timeoutMs: options.timeoutMs,
-    onPhaseChanged: options.onPhaseChanged
+    onPhaseChanged: options.onPhaseChanged,
+    now: deps2.now,
+    sleep: deps2.sleep
   });
 }
 function ensureCanonicalDaemon(options, dependencies = {}) {
-  const deps2 = { ...defaultDependencies, ...dependencies };
+  const deps2 = supervisedAdmission(
+    { ...defaultDependencies, ...dependencies },
+    options.supervisionId
+  );
   const ensure = () => createCanonicalDaemonBootstrapCoordinator(options, deps2).ensure();
   return ensure().catch(async (error) => {
     if (!(error instanceof DaemonBootstrapError) || error.code !== "incompatible" || error.reason !== "protocol-mismatch" && error.reason !== "product-version-mismatch") {
@@ -17461,10 +17632,23 @@ function ensureCanonicalDaemon(options, dependencies = {}) {
   });
 }
 async function retireOutdatedCanonicalDaemon(options, dependencies = {}) {
-  const deps2 = { ...defaultDependencies, ...dependencies };
+  const deps2 = supervisedAdmission(
+    { ...defaultDependencies, ...dependencies },
+    options.supervisionId
+  );
   const state = deps2.inspect();
+  if (options.supervisionId && (state.status === "reserved" ? state.reservation.supervisionId : state.status === "valid" ? state.info.supervisionId : void 0) !== options.supervisionId)
+    throw new DaemonBootstrapError(
+      "incompatible",
+      "Matching supervisor reservation required before retirement",
+      { reason: "canonical-record-invalid" }
+    );
   if (state.status !== "valid" || !needsReplacement(state.info, options.expectedProductVersion) || !await deps2.alive(state.info))
     return false;
+  if (state.info.supervisionId) {
+    await ensureCanonicalDaemon(options, deps2);
+    return false;
+  }
   try {
     await replaceOlderCanonicalDaemon(
       deps2,
@@ -76903,6 +77087,11 @@ function sameCanonicalInstance2(left, right) {
   return left.pid === right.pid && left.port === right.port && left.protocolVersion === right.protocolVersion && left.instanceId === right.instanceId && left.startedAt === right.startedAt && left.bindHostname === right.bindHostname;
 }
 async function requestValidatedDaemonShutdown(info, deadline) {
+  if (info.supervisionId)
+    throw new DaemonStartupError(
+      "A supervised daemon cannot be taken over",
+      "canonical_takeover_refused"
+    );
   const identity = await probeCanonicalDaemonIdentity(info, deadline.signal);
   assertTakeoverDeadline(
     deadline,
@@ -76926,7 +77115,7 @@ async function requestValidatedDaemonShutdown(info, deadline) {
     );
   }
   const current = inspectCanonicalDaemonInfo();
-  if (current.status !== "valid" || !sameCanonicalInstance2(current.info, info)) {
+  if (current.status !== "valid" || current.info.supervisionId || !sameCanonicalInstance2(current.info, info)) {
     throw new DaemonStartupError(
       "Canonical daemon generation changed before takeover",
       "canonical_takeover_identity_mismatch"
@@ -77031,8 +77220,8 @@ async function acquireCanonicalDaemonClaimAfterTakeover(info, deadline) {
     "Canonical daemon did not release its startup claim after accepting takeover"
   );
 }
-function acquireCanonicalDaemonClaim() {
-  const attempt = tryAcquireCanonicalDaemonClaim();
+function acquireCanonicalDaemonClaim(intent = { kind: "ordinary" }) {
+  const attempt = tryAcquireCanonicalDaemonClaim(intent);
   if (attempt.status === "busy") {
     throw new DaemonStartupError(
       `Canonical daemon startup is owned by PID ${attempt.owner.pid}`,
@@ -77222,6 +77411,11 @@ async function startHttpServer({
   };
 }
 async function startEmbeddedDaemon(opts) {
+  if (opts.supervisionId && !opts.requestRestart)
+    throw new DaemonStartupError(
+      "Supervised startup requires the foreground lifecycle owner",
+      "canonical_record_invalid"
+    );
   return opts.requestRestart ? startEmbeddedDaemonGeneration(opts) : startOwnedEmbeddedDaemon(opts, startEmbeddedDaemonGeneration);
 }
 async function startEmbeddedDaemonGeneration(opts) {
@@ -77232,6 +77426,16 @@ async function startEmbeddedDaemonGeneration(opts) {
   const bindHostname = opts.bindHostname ?? opts.hostname ?? (persistedRemoteAccess ? "0.0.0.0" : DEFAULT_HOSTNAME);
   const authToken = Object.prototype.hasOwnProperty.call(opts, "authToken") ? opts.authToken ?? null : persistedRemoteAccess?.token ?? null;
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
+  const claimIntent = opts.supervisionId ? { kind: "supervised", supervisionId: opts.supervisionId, predecessor: opts.predecessor } : { kind: "ordinary" };
+  if (opts.supervisionId) {
+    const reserved = inspectCanonicalDaemonInfo();
+    const binding = reserved.status === "reserved" ? reserved.reservation.supervisionId : reserved.status === "valid" ? reserved.info.supervisionId : void 0;
+    if (binding !== opts.supervisionId)
+      throw new DaemonStartupError(
+        "Matching supervisor reservation is required",
+        "canonical_record_invalid"
+      );
+  }
   let claim;
   if (opts.takeoverIfRunning) {
     const state = inspectCanonicalDaemonInfo();
@@ -77244,10 +77448,10 @@ async function startEmbeddedDaemonGeneration(opts) {
         takeoverDeadline.dispose();
       }
     } else {
-      claim = acquireCanonicalDaemonClaim();
+      claim = acquireCanonicalDaemonClaim(claimIntent);
     }
   } else {
-    claim = acquireCanonicalDaemonClaim();
+    claim = acquireCanonicalDaemonClaim(claimIntent);
   }
   try {
     const existingCanonical = inspectCanonicalDaemonInfo();
@@ -77266,13 +77470,13 @@ async function startEmbeddedDaemonGeneration(opts) {
         );
       }
     } else if (existingCanonical.status === "valid") {
-      if (await isCanonicalDaemonAlive(existingCanonical.info)) {
+      if (await isCanonicalDaemonAlive(existingCanonical.info) && !(opts.supervisionId && matchesCanonicalDaemonPredecessor(existingCanonical, opts.predecessor, opts.supervisionId))) {
         throw new DaemonStartupError(
           `Canonical daemon is already running on port ${existingCanonical.info.port}`,
           "canonical_already_running"
         );
       } else {
-        if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
+        if (!existingCanonical.info.supervisionId && !clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
           throw new DaemonStartupError(
             "Canonical daemon metadata changed while stale state was being removed",
             "canonical_already_running"
@@ -77711,6 +77915,7 @@ async function startEmbeddedDaemonGeneration(opts) {
     try {
       writeCanonicalDaemonInfo(
         {
+          ...opts.supervisionId ? { supervisionId: opts.supervisionId } : {},
           pid: process.pid,
           port,
           protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
@@ -78085,10 +78290,20 @@ async function assertAttachableDaemon(deps2, info, options) {
     );
   }
 }
-async function findLiveCanonicalDaemon(deps2, options) {
+async function findLiveCanonicalDaemon(deps2, options, predecessor) {
   const existing = deps2.inspectCanonicalDaemonInfo();
+  if (options.supervisionId) {
+    const binding = existing.status === "reserved" ? existing.reservation.supervisionId : existing.status === "valid" ? existing.info.supervisionId : void 0;
+    if (binding !== options.supervisionId)
+      throw new IdeError("Matching supervisor reservation is required before startup", {
+        code: "DAEMON_SUPERVISOR_RESERVATION_REQUIRED",
+        exitCode: 1
+      });
+    if (existing.status === "reserved" || matchesCanonicalDaemonPredecessor(existing, predecessor, options.supervisionId))
+      return null;
+  }
   if (existing.status === "missing") return null;
-  if (existing.status === "invalid") {
+  if (existing.status === "invalid" || existing.status === "reserved") {
     if (await deps2.isCanonicalDaemonRecordOwnerProvenDead(existing)) {
       return null;
     }
@@ -78170,14 +78385,14 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
   try {
     let existing;
     try {
-      existing = await findLiveCanonicalDaemon(deps2, options);
+      existing = await findLiveCanonicalDaemon(deps2, options, lifecycle.predecessor);
     } catch (error) {
       if (!isTransientAttachabilityError(error)) throw error;
       const startupGraceMs = publishedStartupGraceMs(deps2.inspectCanonicalDaemonInfo());
       if (startupGraceMs <= 0) throw error;
       existing = await waitForCanonicalWinner(deps2, options, startupGraceMs);
       if (!existing) {
-        existing = await findLiveCanonicalDaemon(deps2, options);
+        existing = await findLiveCanonicalDaemon(deps2, options, lifecycle.predecessor);
       }
     }
     if (existing) {
@@ -78187,6 +78402,7 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
     for (let startAttempt = 0; startAttempt < 2 && !handle; startAttempt += 1) {
       try {
         handle = await deps2.startEmbeddedDaemon({
+          ...options.supervisionId ? { supervisionId: options.supervisionId, predecessor: lifecycle.predecessor } : {},
           ...restoreTmuxWorkspaces ? { restoreTmuxWorkspaces: true } : {},
           port,
           bindHostname: lifecycle.restart?.bindHostname ?? "127.0.0.1",
@@ -78227,12 +78443,15 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
       resolveStopped = resolve40;
     });
     let stopFailure;
+    let ownedPublication;
     const originalStop = handle.stop.bind(handle);
     const mutableHandle = handle;
     mutableHandle.stop = async (stopOptions) => {
       stopStarted = true;
       try {
         await originalStop(stopOptions);
+        if (restartRequested && !signalRequested && options.supervisionId && ownedPublication)
+          lifecycle.predecessor = ownedPublication;
       } catch (error) {
         stopFailure = error;
         throw error;
@@ -78261,6 +78480,15 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
         exitCode: 2
       });
     }
+    if (options.supervisionId && info.supervisionId !== options.supervisionId) {
+      await handle.stop().catch(() => void 0);
+      throw new IdeError("Published supervisor binding differs from startup", {
+        code: "DAEMON_IDENTITY_MISMATCH",
+        exitCode: 2
+      });
+    }
+    ownedPublication = structuredClone(published);
+    lifecycle.predecessor = void 0;
     try {
       await waitForAttachableDaemon(
         deps2,
@@ -81542,6 +81770,8 @@ var { positionals, values } = parseArgs({
   options: {
     json: { type: "boolean" },
     headless: { type: "boolean" },
+    supervised: { type: "string" },
+    yes: { type: "boolean" },
     "development-owner": { type: "boolean" },
     "development-capabilities": { type: "boolean" },
     daemon: { type: "boolean" },
@@ -81697,6 +81927,8 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide settings")}           ${dim3("Interactive TUI config manager")}
   ${cyan2("tmux-ide init")} [--template]  ${dim3("Scaffold .tmux-ide/workspace.yml (auto-detects stack)")}
   ${cyan2("tmux-ide stop")}               ${dim3("Kill the current IDE session")}
+  ${cyan2("tmux-ide daemon reserve-supervisor <id>")} ${dim3("Reserve this namespace before installing a supervisor")}
+  ${cyan2("tmux-ide daemon release-supervisor <id> --yes")} ${dim3("Release after removing the stopped service")}
   ${cyan2("tmux-ide daemon restart")}     ${dim3("Reset the daemon runtime; preserve its process and tmux sessions")}
   ${cyan2("tmux-ide restart")}            ${dim3("Stop and relaunch the IDE session")}
   ${cyan2("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
@@ -81777,6 +82009,7 @@ ${bold3("Discover (in the TUI):")}
 ${bold3("Flags:")}
   ${cyan2("--json")}                      ${dim3("Structured output on commands that advertise JSON support")}
   ${cyan2("--headless")}                  ${dim3("Canonical daemon only; no tmux workspace or TUI")}
+  ${cyan2("--supervised <id>")}           ${dim3("Require a matching preinstalled supervisor reservation")}
   ${cyan2("--template <name>")}           ${dim3("Use specific template for init")}
   ${cyan2("--write")}                     ${dim3("Write detected config to .tmux-ide/workspace.yml")}
   ${cyan2("--dry-run")}                   ${dim3("Preview migration/restore without writing")}
@@ -82035,6 +82268,8 @@ function launchApp() {
   return runApp([]);
 }
 try {
+  if (values.supervised !== void 0 && !values.headless)
+    throw new IdeError("--supervised requires --headless", { code: "USAGE", exitCode: 2 });
   if (values.ssh !== void 0 && (command !== "app" || values.headless))
     throw new IdeError("--ssh is supported only by tmux-ide app", { code: "USAGE", exitCode: 2 });
   if ((values.daemon || values["if-running"]) && command !== "update")
@@ -82057,16 +82292,29 @@ try {
         exitCode: 2
       });
     }
+    if (values.supervised !== void 0) {
+      const { assertCanonicalDaemonSupervision: assertCanonicalDaemonSupervision2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
+      try {
+        assertCanonicalDaemonSupervision2(values.supervised);
+      } catch {
+        throw new IdeError(
+          "Matching supervisor reservation required before startup; run daemon reserve-supervisor <id> in this namespace first.",
+          { code: "DAEMON_SUPERVISOR_RESERVATION_REQUIRED", exitCode: 1 }
+        );
+      }
+    }
     const pkg = await Promise.resolve().then(() => __toESM(require_package(), 1));
     const { retireOutdatedCanonicalDaemon: retireOutdatedCanonicalDaemon2 } = await Promise.resolve().then(() => (init_canonical_daemon_bootstrap(), canonical_daemon_bootstrap_exports));
     await retireOutdatedCanonicalDaemon2({
       entryPath: nodeCliPath,
-      expectedProductVersion: pkg.version
+      expectedProductVersion: pkg.version,
+      supervisionId: values.supervised
     });
     await (await Promise.resolve().then(() => (init_headless_daemon(), headless_daemon_exports))).runHeadlessDaemon({
       port: values.port,
       json,
-      expectedVersion: pkg.version
+      expectedVersion: pkg.version,
+      supervisionId: values.supervised
     });
     await new Promise((resolveFlush) => process.stdout.write("", resolveFlush));
     process.exit(0);
@@ -82124,6 +82372,32 @@ try {
       await (await Promise.resolve().then(() => (init_attach(), attach_exports))).attach(positionals[1], { json });
       break;
     case "daemon": {
+      if (positionals[1] === "reserve-supervisor" || positionals[1] === "release-supervisor") {
+        const release = positionals[1] === "release-supervisor";
+        if (positionals.length !== 3 || release && values.yes !== true)
+          throw new IdeError(
+            "Usage: tmux-ide daemon reserve-supervisor <id> [--json] | daemon release-supervisor <id> --yes [--json]",
+            { code: "USAGE", exitCode: 2 }
+          );
+        const { reserveCanonicalDaemonSupervision: reserveCanonicalDaemonSupervision2, releaseCanonicalDaemonSupervision: releaseCanonicalDaemonSupervision2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
+        try {
+          if (release) releaseCanonicalDaemonSupervision2(positionals[2]);
+          else reserveCanonicalDaemonSupervision2(positionals[2]);
+        } catch {
+          throw new IdeError(
+            release ? "Supervisor release refused: remove the service first and verify its exact ID and stopped owners." : "Supervisor reservation refused: use a valid ID and a private namespace without a live or unknown owner.",
+            { code: "DAEMON_SUPERVISION_REFUSED", exitCode: 1 }
+          );
+        }
+        console.log(
+          json ? JSON.stringify({
+            ok: true,
+            status: release ? "released" : "reserved",
+            supervisionId: positionals[2]
+          }) : `Supervisor namespace ${release ? "released" : "reserved"}: ${positionals[2]}`
+        );
+        break;
+      }
       if (positionals[1] !== "restart" || positionals.length !== 2)
         throw new IdeError("Usage: tmux-ide daemon restart [--json]", {
           code: "USAGE",
@@ -83069,7 +83343,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           );
         const { inspectCanonicalDaemonInfo: inspectCanonicalDaemonInfo2, isCanonicalDaemonAlive: isCanonicalDaemonAlive2 } = await Promise.resolve().then(() => (init_canonical_daemon(), canonical_daemon_exports));
         const state = inspectCanonicalDaemonInfo2();
-        if (values["if-running"] && (state.status === "missing" || state.status === "valid" && !await isCanonicalDaemonAlive2(state.info))) {
+        if (values["if-running"] && (state.status === "missing" || state.status === "valid" && !state.info.supervisionId && !await isCanonicalDaemonAlive2(state.info))) {
           console.log(
             json ? JSON.stringify({ ok: true, status: "not-running" }) : "No running daemon to update."
           );
