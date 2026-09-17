@@ -324,10 +324,18 @@ native `down --id ... --store ...` arguments for scoped owner cleanup, or native
 `reset --yes --id ... --store ...` for explicit state/artifact removal. Existing
 reset refuses live or unknown app receipts. **Container down stops neither this
 host owner nor its native apps**; remote apps may become disconnected. A future
-container reset must account for these separate host resources. Linux shell qualification, container reset and the two-project interactive gate
-remain outstanding.
+container reset must account for these separate host resources. Container reset and the two-project interactive gate remain outstanding.
 
-### Linux shell (source checkpoint; live qualification pending)
+### Linux shell
+
+A bounded Linux arm64 shell/TUI journey passed on its first run with host manager
+`fb552a5b` and the unchanged Linux artifact from clean `29e6f891`. The printed app
+command opened that existing instance. Its selected terminal displayed fresh
+shell output and the decoded result of keyboard input. The TUI returned to Bash,
+a separate shell command succeeded, and Bash exited zero. App/manager processes
+and receipts were gone before wrapper down; final container PID was zero with
+no OOM kill. The native host client stayed stopped and unrelated containers
+were unchanged. This remains a single-project bounded run.
 
 Use `pnpm dev:instance shell --container` with the same worktree, name and store
 as the ready container. It opens Bash as UID 1000 in `/workspace/tree` through the
@@ -343,5 +351,5 @@ snapshot: edits inside it do not synchronize to the host worktree.
 Exit the Linux app before exiting Bash. Cancellation tracks and reaps the owned
 Docker client; that alone does not prove the inner shell or app exited. Container
 down retires the container's private process tree. Native host clients still
-require their separate cleanup described above. Actual shell/TUI input and the
+require their separate cleanup described above. Scoped container reset and the
 combined two-project journey remain qualification gates.
