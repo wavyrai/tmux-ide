@@ -224,3 +224,50 @@ it("actual ordinary bootstrap refuses malformed supervision even with a dead-loo
     releaseCanonicalDaemonClaim(claim);
   }
 });
+
+it("same-process restart requires the exact completed predecessor observation", () => {
+  reserveCanonicalDaemonSupervision("fixture");
+  const first = acquire("fixture");
+  writeCanonicalDaemonInfo(info("fixture", process.pid), first);
+  const predecessor = inspectCanonicalDaemonInfo();
+  if (predecessor.status !== "valid") throw Error("expected ready");
+  releaseCanonicalDaemonClaim(first);
+  expect(
+    tryAcquireCanonicalDaemonClaim({ kind: "supervised", supervisionId: "fixture" }).status,
+  ).toBe("invalid");
+  for (const altered of [
+    {
+      ...predecessor,
+      info: { ...predecessor.info, instanceId: "22222222-2222-4222-8222-222222222222" },
+    },
+    {
+      ...predecessor,
+      observation: { ...predecessor.observation, ino: predecessor.observation.ino + 1 },
+    },
+    { ...predecessor, info: { ...predecessor.info, authToken: "other" } },
+  ])
+    expect(
+      tryAcquireCanonicalDaemonClaim({
+        kind: "supervised",
+        supervisionId: "fixture",
+        predecessor: altered,
+      }).status,
+    ).toBe("invalid");
+  const attempt = tryAcquireCanonicalDaemonClaim({
+    kind: "supervised",
+    supervisionId: "fixture",
+    predecessor,
+  });
+  expect(attempt.status).toBe("acquired");
+  if (attempt.status !== "acquired") throw Error("handoff refused");
+  claims.push(attempt.claim);
+  writeCanonicalDaemonInfo(
+    { ...info("fixture", process.pid), instanceId: "22222222-2222-4222-8222-222222222222" },
+    attempt.claim,
+  );
+  releaseCanonicalDaemonClaim(attempt.claim);
+  expect(
+    tryAcquireCanonicalDaemonClaim({ kind: "supervised", supervisionId: "fixture", predecessor })
+      .status,
+  ).toBe("invalid");
+});

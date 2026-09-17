@@ -53,8 +53,10 @@ type CanonicalDaemonClaimState =
   | { status: "valid"; claim: CanonicalDaemonClaim }
   | { status: "invalid"; detail: string };
 
+export type CanonicalDaemonPredecessor = Extract<CanonicalDaemonInfoState, { status: "valid" }>;
 export type CanonicalDaemonClaimIntent =
-  | { kind: "supervised" | "reserve" | "release"; supervisionId: string }
+  | { kind: "supervised"; supervisionId: string; predecessor?: CanonicalDaemonPredecessor }
+  | { kind: "reserve" | "release"; supervisionId: string }
   | { kind: "ordinary" };
 const activeClaims = new Map<string, CanonicalDaemonClaimIntent>();
 
@@ -480,6 +482,22 @@ function supervisionBinding(state: CanonicalDaemonInfoState): string | null {
       ? (state.info.supervisionId ?? null)
       : null;
 }
+/** Internal lifecycle handoff, captured before and supplied only after successful owned stop. */
+export function matchesCanonicalDaemonPredecessor(
+  state: CanonicalDaemonInfoState,
+  predecessor: CanonicalDaemonPredecessor | undefined,
+  supervisionId: string,
+): boolean {
+  return (
+    !!predecessor &&
+    state.status === "valid" &&
+    state.info.pid === process.pid &&
+    state.info.supervisionId === supervisionId &&
+    predecessor.info.supervisionId === supervisionId &&
+    sameObservation(state.observation, predecessor.observation) &&
+    JSON.stringify(state.info) === JSON.stringify(predecessor.info)
+  );
+}
 function admitsClaim(state: CanonicalDaemonInfoState, intent: CanonicalDaemonClaimIntent): boolean {
   const binding = supervisionBinding(state);
   if (intent.kind === "ordinary") return binding === null;
@@ -493,7 +511,10 @@ function admitsClaim(state: CanonicalDaemonInfoState, intent: CanonicalDaemonCla
   return (
     binding === intent.supervisionId &&
     (state.status === "reserved" ||
-      (state.status === "valid" && pidLiveness(state.info.pid) === "dead"))
+      (state.status === "valid" &&
+        (pidLiveness(state.info.pid) === "dead" ||
+          (intent.kind === "supervised" &&
+            matchesCanonicalDaemonPredecessor(state, intent.predecessor, intent.supervisionId)))))
   );
 }
 /**
@@ -535,7 +556,7 @@ export function tryAcquireCanonicalDaemonClaim(
     });
     try {
       renameSync(candidate, path);
-      activeClaims.set(claim.claimId, Object.freeze({ ...intent }));
+      activeClaims.set(claim.claimId, Object.freeze(structuredClone(intent)));
       if (!admitsClaim(inspectCanonicalDaemonInfo(), intent)) {
         releaseCanonicalDaemonClaim(claim);
         return {
@@ -601,7 +622,15 @@ export function writeCanonicalDaemonInfo(
       : info.supervisionId !== undefined)
   )
     throw new Error("Canonical publication does not match supervision intent");
-  if (before.status === "valid" && info.supervisionId && pidLiveness(before.info.pid) !== "dead")
+  if (
+    before.status === "valid" &&
+    info.supervisionId &&
+    pidLiveness(before.info.pid) !== "dead" &&
+    !(
+      intent.kind === "supervised" &&
+      matchesCanonicalDaemonPredecessor(before, intent.predecessor, intent.supervisionId)
+    )
+  )
     throw new Error("Supervised predecessor is not proven dead");
   const path = getCanonicalDaemonInfoPath();
   prepareCanonicalDaemonRoot(dirname(path));

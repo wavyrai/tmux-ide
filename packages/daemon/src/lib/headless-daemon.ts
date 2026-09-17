@@ -1,5 +1,7 @@
 import {
   canonicalDaemonUrl,
+  matchesCanonicalDaemonPredecessor,
+  type CanonicalDaemonPredecessor,
   getCanonicalDaemonInfoPath,
   prepareCanonicalDaemonInfoForBootstrap,
   isCanonicalDaemonAlive,
@@ -26,6 +28,7 @@ import { generateAuthToken } from "./auth-token.ts";
 import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
 
 export interface HeadlessDaemonOptions {
+  readonly supervisionId?: string;
   /** Managed launch receipt, only after this process wins election and is attachable. */
   readonly onOwnedReady?: (info: CanonicalDaemonInfo) => void;
   readonly port?: string | number;
@@ -168,8 +171,27 @@ async function assertAttachableDaemon(
 async function findLiveCanonicalDaemon(
   deps: HeadlessDaemonDependencies,
   options: HeadlessDaemonOptions,
+  predecessor?: CanonicalDaemonPredecessor,
 ): Promise<CanonicalDaemonInfo | null> {
   const existing = deps.inspectCanonicalDaemonInfo();
+  if (options.supervisionId) {
+    const binding =
+      existing.status === "reserved"
+        ? existing.reservation.supervisionId
+        : existing.status === "valid"
+          ? existing.info.supervisionId
+          : undefined;
+    if (binding !== options.supervisionId)
+      throw new IdeError("Matching supervisor reservation is required before startup", {
+        code: "DAEMON_SUPERVISOR_RESERVATION_REQUIRED",
+        exitCode: 1,
+      });
+    if (
+      existing.status === "reserved" ||
+      matchesCanonicalDaemonPredecessor(existing, predecessor, options.supervisionId)
+    )
+      return null;
+  }
   if (existing.status === "missing") return null;
   if (existing.status === "invalid" || existing.status === "reserved") {
     if (await deps.isCanonicalDaemonRecordOwnerProvenDead(existing)) {
@@ -267,7 +289,8 @@ export async function runHeadlessDaemon(
   deps: HeadlessDaemonDependencies = defaultDependencies,
 ): Promise<"stopped" | "already-running"> {
   let restoreTmuxWorkspaces = false;
-  const lifecycle: { restart?: DaemonRestartRequest } = {};
+  const lifecycle: { restart?: DaemonRestartRequest; predecessor?: CanonicalDaemonPredecessor } =
+    {};
   while (true) {
     const result = await runHeadlessDaemonGeneration(
       options,
@@ -284,7 +307,7 @@ async function runHeadlessDaemonGeneration(
   options: HeadlessDaemonOptions,
   deps: HeadlessDaemonDependencies,
   restoreTmuxWorkspaces: boolean,
-  lifecycle: { restart?: DaemonRestartRequest },
+  lifecycle: { restart?: DaemonRestartRequest; predecessor?: CanonicalDaemonPredecessor },
 ): Promise<"stopped" | "already-running" | "restart"> {
   const port = parsePort(lifecycle.restart?.port ?? options.port);
   let restartRequested = false;
@@ -300,7 +323,7 @@ async function runHeadlessDaemonGeneration(
   try {
     let existing: CanonicalDaemonInfo | null;
     try {
-      existing = await findLiveCanonicalDaemon(deps, options);
+      existing = await findLiveCanonicalDaemon(deps, options, lifecycle.predecessor);
     } catch (error) {
       if (!isTransientAttachabilityError(error)) throw error;
 
@@ -314,7 +337,7 @@ async function runHeadlessDaemonGeneration(
       if (!existing) {
         // Distinguish a winner which died during startup (safe to claim) from
         // one which remains alive but unavailable (must still be refused).
-        existing = await findLiveCanonicalDaemon(deps, options);
+        existing = await findLiveCanonicalDaemon(deps, options, lifecycle.predecessor);
       }
     }
     if (existing) {
@@ -325,6 +348,9 @@ async function runHeadlessDaemonGeneration(
     for (let startAttempt = 0; startAttempt < 2 && !handle; startAttempt += 1) {
       try {
         handle = await deps.startEmbeddedDaemon({
+          ...(options.supervisionId
+            ? { supervisionId: options.supervisionId, predecessor: lifecycle.predecessor }
+            : {}),
           ...(restoreTmuxWorkspaces ? { restoreTmuxWorkspaces: true } : {}),
           port,
           bindHostname: lifecycle.restart?.bindHostname ?? "127.0.0.1",
@@ -372,12 +398,15 @@ async function runHeadlessDaemonGeneration(
       resolveStopped = resolve;
     });
     let stopFailure: unknown;
+    let ownedPublication: CanonicalDaemonPredecessor | undefined;
     const originalStop = handle.stop.bind(handle);
     const mutableHandle = handle as { stop: EmbeddedDaemonHandle["stop"] };
     mutableHandle.stop = async (stopOptions) => {
       stopStarted = true;
       try {
         await originalStop(stopOptions);
+        if (restartRequested && !signalRequested && options.supervisionId && ownedPublication)
+          lifecycle.predecessor = ownedPublication;
       } catch (error) {
         stopFailure = error;
         throw error;
@@ -412,6 +441,15 @@ async function runHeadlessDaemonGeneration(
         exitCode: 2,
       });
     }
+    if (options.supervisionId && info.supervisionId !== options.supervisionId) {
+      await handle.stop().catch(() => undefined);
+      throw new IdeError("Published supervisor binding differs from startup", {
+        code: "DAEMON_IDENTITY_MISMATCH",
+        exitCode: 2,
+      });
+    }
+    ownedPublication = structuredClone(published);
+    lifecycle.predecessor = undefined;
     try {
       // Publication precedes the external handshake. Under CPU or module-load
       // contention, one 750ms loopback probe is not a sound reason for the
