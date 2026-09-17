@@ -158,8 +158,8 @@ and SSH authenticated a new daemon through a refreshed dynamic endpoint with the
 same host key. Listener retirement, a second suspension and exact Docker stop
 then passed. No container recreation or changed-VM recovery was exercised.
 The wrapper and one native TUI journey are qualified separately below.
-Two-project isolation remains an acceptance gate before this lane is advertised
-as a complete workflow.
+Two-project isolation is qualified below within the stated platform and lifecycle
+limits.
 
 The image idles as UID 1000, precreates `/tmp/ti-dev-1000` with private ownership,
 and never starts a development daemon or erases lifecycle witnesses at boot.
@@ -326,7 +326,7 @@ native `down --id ... --store ...` arguments for scoped owner cleanup, or native
 reset refuses live or unknown app receipts. **Container down stops neither this
 host owner nor its native apps**; remote apps may become disconnected. Container reset
 checks and retires these separate host resources under their native locks. The
-two-project interactive gate remains outstanding.
+two-project interactive gate is qualified below.
 
 ### Linux shell
 
@@ -353,7 +353,7 @@ snapshot: edits inside it do not synchronize to the host worktree.
 Exit the Linux app before exiting Bash. Cancellation tracks and reaps the owned
 Docker client; that alone does not prove the inner shell or app exited. Container
 down retires the container's private process tree. Native host clients still
-require their separate cleanup described above. The combined two-project journey remains a qualification gate.
+require their separate cleanup described above. The combined two-project journey is qualified below.
 
 ### Scoped container reset
 
@@ -363,7 +363,7 @@ and three volumes were removed; host keys/configuration and native artifacts
 were retired, leaving only lock/reset scaffolds. Fresh status reported absent
 and an idempotent second reset passed. Source worktrees, both retained images,
 the older fixture and all nine unrelated running containers were preserved.
-The combined two-worktree isolation gate remains outstanding.
+The combined two-worktree isolation gate is qualified below.
 
 `pnpm dev:instance reset --container --yes` destroys the selected private
 container, its project network and its three named volumes. Repeat the exact
@@ -391,4 +391,41 @@ be reset. Partial creation that was never adopted remains unsupported, as does
 container `--id` selection after the canonical worktree is removed. Retain that
 worktree until cleanup completes. Focused regressions cover these source checks. Live stopped-project deletion
 is qualified above; partial-failure recovery remains regression coverage, and
-the two-project isolation journey remains pending.
+the two-project isolation journey is qualified below.
+
+### Two-worktree isolation qualification
+
+The combined gate passed on its first run with host manager `3b53ff21`, two clean
+`29e6f891` worktrees, native macOS arm64 clients and Linux arm64 daemons. Both
+worktrees used the same instance name, shared private store and identical tmux
+session name. Project resources, SSH keys, native builds and runtime identities
+were distinct.
+
+Both actual native clients passed fresh terminal output and keyboard input.
+After ordinary down of project A with both clients present, B's existing client
+still accepted input. After A's native client/owner cleanup and container reset,
+B retained its exact daemon, tmux/socket/pane, artifact and key identities and
+passed fresh input/output again. A separate private native instance kept the
+same process/socket/pane witnesses and passed fresh shell input/output through
+both transitions.
+
+Final scoped cleanup removed both projects' Docker resources and native state,
+plus the private native instance. Independent checks found all 14 captured host
+processes absent, no surviving SSH child referencing either private config, and
+only intended lock/reset scaffolds. Unrelated running containers and the older
+fixture were unchanged. Both cgroups recorded zero OOM events. Their memory peaks
+included initial builds and are not simultaneous runtime RSS measurements.
+
+The Linux shell/TUI path has a separate passing receipt described above. Source
+exports and images are deliberately retained. The second ordinary image build
+failed during dependency fetch with memory allocation exhaustion in the existing
+2.16 GiB Docker VM. For identical source snapshots, its qualified replacement
+reused the verified first image's layers/configuration and added only independently
+exported worktree metadata. That demonstrates this bounded isolation workflow;
+it does not qualify another full image build or solve dependency-cache resource
+usage. No Docker VM settings were changed.
+
+This qualification does not cover a long soak, Linux x64/emulation, changed-VM
+recovery, unadopted partial creation, removed-worktree container selection,
+automatic source synchronization or container rebuild/restart commands. The
+broader SSH failure and clean install/update matrices remain D11/D12 work.
