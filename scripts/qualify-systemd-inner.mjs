@@ -20,6 +20,7 @@ import {
   verifySystemdDependencyInputs,
   verifySystemdDependencyLinks,
   observeSystemdOwner,
+  systemdPreparationDiagnostic,
 } from "./lib/owned-systemd-fixture.mjs";
 import {
   readLaunchdSupervisedRecord,
@@ -82,9 +83,18 @@ function command(executable, args, timeout = 30000) {
         maxBuffer: 65536,
         ...(!cleaning ? { signal: controller.signal } : {}),
       },
-      (error, stdout) => {
-        if (error) reject(new Error("fixture-command-refused"));
-        else resolveCommand(stdout);
+      (error, stdout, stderr) => {
+        if (error) {
+          receipt.commandFailures ??= [];
+          if (receipt.commandFailures.length < 30)
+            receipt.commandFailures.push({
+              stage,
+              exitCode: Number.isInteger(error.code) ? error.code : null,
+              terminated: Boolean(error.killed),
+              diagnostic: systemdPreparationDiagnostic(stdout, stderr),
+            });
+          reject(new Error("fixture-command-refused"));
+        } else resolveCommand(stdout);
       },
     );
     children.push(child);
@@ -193,10 +203,12 @@ try {
   for (const path of [state, env.HOME, join(root, "cache")])
     mkdirSync(path, { recursive: true, mode: 0o700 });
   if (phase === "prepare") {
+    next("prepare-input-provenance");
     receipt.dependencies = {
       inputs: verifySystemdDependencyInputs(source, "/opt/source-snapshot"),
       links: verifySystemdDependencyLinks(source),
     };
+    next("prepare-native-validation");
     await command(process.execPath, [
       "--import",
       "tsx",
@@ -204,7 +216,9 @@ try {
       "-e",
       `import {validateBundledTmux} from ${JSON.stringify(join(source, "packages/daemon/src/lib/bundled-tmux.ts"))}; validateBundledTmux("/opt/native/tmux");`,
     ]);
+    next("prepare-cli-build");
     await command(process.execPath, [join(source, "scripts/build-cli.mjs")]);
+    next("prepare-older-build");
     const olderSource = join(root, "older.ts"),
       olderBundle = join(root, "older.mjs");
     writeFileSync(
@@ -246,6 +260,7 @@ try {
       nativeProvenance: sha256(readFileSync("/opt/native/tmux/manifest.json")),
     };
     receipt.oldEntry = publishLaunchdEntry(join(root, "stable.mjs"), olderBundle, env);
+    next("prepare-reservation");
     await cli("daemon", "reserve-supervisor", d.supervisionId);
     receipt.reserved = true;
     next("prepare-external-sentinel");

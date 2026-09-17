@@ -15,6 +15,7 @@ import {
   verifySystemdDependencyLinks,
   systemdFailureDiagnostic,
   observeSystemdOwner,
+  systemdPreparationDiagnostic,
 } from "./owned-systemd-fixture.mjs";
 const d = systemdFixtureDefinition("a".repeat(32));
 function inspect() {
@@ -114,6 +115,19 @@ test("bounded service diagnostics contain only fixed classifications, never priv
   assert.deepEqual(receipt.categories, ["claim", "ownerNotDead"]);
   assert.equal(JSON.stringify(receipt).includes("secret-token-value"), false);
   assert.throws(() => systemdFailureDiagnostic("x".repeat(65537)), /journal-bound/);
+});
+
+test("preparation diagnostics identify tool failures without preserving raw paths or secrets", () => {
+  const result = systemdPreparationDiagnostic(
+    "secret-bearer\nERR_PNPM_NO_OFFLINE_TARBALL",
+    "gyp ERR! build error\nfatal error: Killed signal terminated program cc1plus\nEEXIST: secret-path",
+  );
+  assert.deepEqual(result.categories, ["offlinePackage", "fileExists", "memory", "nativeBuild"]);
+  assert.equal(JSON.stringify(result).includes("secret"), false);
+  const bounded = systemdPreparationDiagnostic("x".repeat(100000) + " ENOSPC", "SyntaxError");
+  assert.equal(bounded.truncated, true);
+  assert.deepEqual(bounded.categories, ["diskSpace", "syntax"]);
+  assert.throws(() => systemdPreparationDiagnostic(null, ""));
 });
 test("complete inspection rejects foreign, recreated, broadened or incomplete containers", () => {
   const good = inspect();

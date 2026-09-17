@@ -252,6 +252,36 @@ export function systemdFailureDiagnostic(text) {
   };
 }
 
+/** Fixed classifications only; command output may contain private paths or data. */
+export function systemdPreparationDiagnostic(stdout, stderr) {
+  if (typeof stdout !== "string" || typeof stderr !== "string")
+    throw new Error("diagnostic-input-refused");
+  const bounded = (value) => value.slice(0, 16384) + value.slice(-16384);
+  const text = bounded(stdout) + "\n" + bounded(stderr);
+  return {
+    stdoutBytes: Buffer.byteLength(stdout),
+    stderrBytes: Buffer.byteLength(stderr),
+    truncated: stdout.length > 32768 || stderr.length > 32768,
+    categories: Object.entries({
+      dependencyInput: /dependency-input-mismatch/,
+      offlinePackage:
+        /ERR_PNPM_NO_OFFLINE_META|ERR_PNPM_NO_OFFLINE_TARBALL|ERR_PNPM_MISSING_PACKAGE_FROM_LOCKFILE/,
+      frozenLockfile: /ERR_PNPM_OUTDATED_LOCKFILE|ERR_PNPM_FROZEN_LOCKFILE/,
+      fileExists: /EEXIST|[Ff]ile exists/,
+      missingFile: /ENOENT|[Nn]o such file or directory/,
+      permission: /EACCES|EPERM|[Pp]ermission denied/,
+      memory: /ENOMEM|out of memory|Killed signal terminated program|fatal error: Killed/,
+      diskSpace: /ENOSPC|[Nn]o space left on device/,
+      nativeBuild: /gyp ERR!|make(?:\[[0-9]+\])?: .*Error/,
+      missingModule: /ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|Cannot find module/,
+      syntax: /SyntaxError/,
+      type: /TypeError/,
+    })
+      .filter(([, pattern]) => pattern.test(text))
+      .map(([category]) => category),
+  };
+}
+
 /** Reject only a stable, reauthenticated owner outside the observed service.
  * Transitional samples remain pending; no sampled PID authorizes signalling.
  */

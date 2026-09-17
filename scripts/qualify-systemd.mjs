@@ -22,6 +22,7 @@ import {
   systemdFixtureImage,
   sha256,
   systemdFailureDiagnostic,
+  systemdPreparationDiagnostic,
 } from "./lib/owned-systemd-fixture.mjs";
 import { settlePackedChildren } from "./lib/packed-install-cleanup.mjs";
 const source = realpathSync(fileURLToPath(new URL("..", import.meta.url)));
@@ -77,7 +78,7 @@ function run(executable, args, { timeout = 30000, maxBuffer = 1048576 } = {}) {
         maxBuffer,
         ...(!cleaning ? { signal: controller.signal } : {}),
       },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         if (error) {
           receipt.commandFailures ??= [];
           if (receipt.commandFailures.length < 30)
@@ -87,7 +88,33 @@ function run(executable, args, { timeout = 30000, maxBuffer = 1048576 } = {}) {
               exitCode: Number.isInteger(error.code) ? error.code : null,
               terminated: Boolean(error.killed),
               cancelled: error.name === "AbortError",
+              diagnostic: systemdPreparationDiagnostic(stdout, stderr),
             });
+          // These fixed commands run before any daemon reservation or service.
+          // Preserve bounded private tool output so an unfamiliar native-build
+          // error does not require another run merely to recover its message.
+          if (
+            [
+              "prepare-dependency-inputs",
+              "prepare-offline-install-and-native-rebuild",
+              "prepare-runtime-link",
+            ].includes(stage)
+          ) {
+            try {
+              for (const [stream, text] of [
+                ["stdout", stdout],
+                ["stderr", stderr],
+              ]) {
+                writeFileSync(
+                  join(evidence, `${stage}.${stream}.private.log`),
+                  Buffer.from(text).subarray(-131072),
+                  { mode: 0o600 },
+                );
+              }
+            } catch {
+              receipt.privateDiagnosticWriteFailed = true;
+            }
+          }
         }
         if (error) reject(new Error("fixture-command-refused"));
         else resolveRun(stdout);
@@ -186,7 +213,7 @@ try {
   await inspect();
   await docker("start", id);
   await waitForSystemd();
-  stage = "candidate-prepare";
+  stage = "prepare-directories";
   await checkedExec([
     "/bin/mkdir",
     "-p",
@@ -195,6 +222,7 @@ try {
     "/qualification/cache",
     "/qualification/input",
   ]);
+  stage = "prepare-source-copy";
   await inspect();
   await docker("cp", `${context}/.`, `${id}:/qualification/input`);
   writeFileSync(
@@ -205,9 +233,12 @@ try {
       snapshotDigest: receipt.snapshotDigest,
     }),
   );
+  stage = "prepare-descriptor-copy";
   await inspect();
   await docker("cp", join(temporary, "descriptor.json"), `${id}:/qualification/descriptor.json`);
+  stage = "prepare-ownership";
   await checkedExec(["/bin/chown", "-R", "1000:1000", "/qualification"]);
+  stage = "prepare-dependency-inputs";
   await checkedExec(
     [
       "/usr/local/bin/node",
@@ -217,6 +248,7 @@ try {
     ],
     { user: "1000:1000" },
   );
+  stage = "prepare-offline-install-and-native-rebuild";
   await checkedExec(
     [
       "/usr/bin/env",
@@ -229,6 +261,7 @@ try {
     ],
     { user: "1000:1000", timeout: 180000 },
   );
+  stage = "prepare-runtime-link";
   await checkedExec(
     ["/bin/ln", "-s", "/qualification/source/node_modules", "/qualification/node_modules"],
     { user: "1000:1000" },
