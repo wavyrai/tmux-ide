@@ -157,8 +157,9 @@ the suspension barrier, explicit proof-bound resume admitted the unchanged build
 and SSH authenticated a new daemon through a refreshed dynamic endpoint with the
 same host key. Listener retirement, a second suspension and exact Docker stop
 then passed. No container recreation or changed-VM recovery was exercised.
-The wrapper, native TUI and two-project isolation remain acceptance gates before
-this lane is advertised as a complete workflow.
+The wrapper journey is qualified separately below. Native TUI and two-project
+isolation remain acceptance gates before this lane is advertised as a complete
+workflow.
 
 The image idles as UID 1000, precreates `/tmp/ti-dev-1000` with private ownership,
 and never starts a development daemon or erases lifecycle witnesses at boot.
@@ -205,7 +206,7 @@ restrictions follow the [OpenSSH server manual](https://man.openbsd.org/sshd) an
 implementation passed the bounded component checks described above; the broader
 SSH failure matrix remains a separate qualification.
 
-The future wrapper must order listener stop, core instance suspension, verified
+The wrapper orders listener stop, core instance suspension, verified
 same-container Docker stop, and then full-stop acknowledgement. Suspension stops
 the exact daemon/tmux/apps and blocks late discovery/start; Docker stop retires
 remaining private SSH children. Neither listener exit nor missing PID records
@@ -232,8 +233,8 @@ loopback endpoint. Final container PID was zero, OOM counters stayed zero, and
 unrelated running container identities were unchanged.
 
 This qualifies one bounded wrapper journey, not native TUI or two-project
-acceptance. Native app launch, container-shell access, reset and rebuild
-integration are subsequent stages.
+acceptance. Native app integration is described below; container-shell access, reset and
+rebuild integration are subsequent stages.
 
 First startup requires a source export from the selected canonical worktree and
 an already-built immutable image. It verifies that the image's snapshot and fixed
@@ -279,7 +280,17 @@ bypass a refusal. This initial slice does not yet provide reset for those cases.
 After the selected container is ready, `pnpm dev:instance app --container` launches
 an immutable native TUI through the existing authenticated SSH transport. The
 first launch additionally requires `--bun /absolute/pinned/bun` to build its own
-host artifact. Repeat the same `--worktree`, `--name` and `--store` selection used
+host artifact. That selected worktree must also contain its platform-native tmux
+bundle in `packages/daemon/dist/native/tmux/<platform>-<arch>`. Build it with
+`pnpm build:tmux --source /absolute/pinned/tmux-checkout`; the source commit and
+patch must match `native/tmux/provenance.json`. The script builds in private
+scratch space and stages the bundle without changing system tmux. A previously
+built bundle may be copied only after checking its manifest hashes, provenance
+and host compatibility. Keep the recorded Node runtime/ABI consistent with the
+worktree dependencies and artifact. Supplying Bun alone does not provide these
+native prerequisites.
+
+Repeat the same `--worktree`, `--name` and `--store` selection used
 for container startup. A stopped container must first be resumed explicitly with
 `up --container --resume`; app admission never starts or resumes Docker.
 
