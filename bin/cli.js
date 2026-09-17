@@ -32968,10 +32968,15 @@ var init_terminal_delivery2 = __esm({
       #high = 2166136261;
       #low = 2654435769;
       write(bytes) {
-        for (const byte of bytes) {
-          this.#high = Math.imul(this.#high ^ byte, 16777619) >>> 0;
-          this.#low = Math.imul(this.#low ^ byte, 2246822507) >>> 0;
+        let high = this.#high;
+        let low = this.#low;
+        for (let index = 0; index < bytes.length; index += 1) {
+          const byte = bytes[index];
+          high = Math.imul(high ^ byte, 16777619) >>> 0;
+          low = Math.imul(low ^ byte, 2246822507) >>> 0;
         }
+        this.#high = high;
+        this.#low = low;
       }
       digest() {
         return this.#high.toString(16).padStart(8, "0") + this.#low.toString(16).padStart(8, "0");
