@@ -227,7 +227,7 @@ export function renderDevelopmentComposeConfig(
     volumes: Object.fromEntries(
       Object.keys(destinations).map((role) => [role, { labels: labels(record, role) }]),
     ),
-    networks: { default: { internal: true, labels: labels(record, "network") } },
+    networks: { default: { internal: false, labels: labels(record, "network") } },
   };
 }
 /** Complete raw Docker inspect objects/arrays, never a caller-filtered subset of mounts,
@@ -276,8 +276,17 @@ export function verifyDevelopmentComposeResources(
   exact(host.CapDrop, ["ALL"]);
   exact(host.CapAdd, null);
   exact(host.SecurityOpt, ["no-new-privileges:true"]);
-  exact(host.Binds, null);
-  exact(host.Devices, []);
+  if (host.Binds !== null) {
+    const binds = array(host.Binds);
+    if (binds.some((value) => typeof value !== "string")) refuse();
+    exact(
+      [...binds].sort(),
+      Object.entries(destinations)
+        .map(([role, target]) => `${project.name}_${role}:${target}:rw`)
+        .sort(),
+    );
+  }
+  if (host.Devices !== null) exact(host.Devices, []);
   exact(host.PidMode, "");
   exact(host.IpcMode, "private");
   const attachments = object(object(container.NetworkSettings).Networks);
@@ -286,7 +295,7 @@ export function verifyDevelopmentComposeResources(
   if (attachedId !== networkId && !(attachedId === "" && !running)) refuse();
   exact(network.Name, networkName);
   exact(network.Driver, "bridge");
-  exact(network.Internal, true);
+  exact(network.Internal, false);
   verifyLabels(network.Labels, record, "network", "network", "default");
   const members = object(network.Containers);
   if (Object.keys(members).some((member) => member !== containerId)) refuse();

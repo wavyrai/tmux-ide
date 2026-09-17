@@ -101,7 +101,7 @@ function inspect(record: DevelopmentComposeRecord) {
       Id: networkId,
       Name: networkName,
       Driver: "bridge",
-      Internal: true,
+      Internal: false,
       Labels: labels("network", "network", "default"),
       Containers: { [containerId]: {} },
     },
@@ -301,4 +301,43 @@ describe("private Compose ownership planning", () => {
     const other = fixture().project;
     expect(() => verifyDevelopmentComposeResources(other, record, inspect(record))).toThrow();
   });
+});
+
+it("accepts actual Compose named-volume Binds/null Devices while refusing host binds and alternate modes", async () => {
+  const { project, record } = await prepared();
+  const raw = inspect(record);
+  const host = raw.container.HostConfig as unknown as Record<string, unknown>;
+  const expected = [
+    `${project.name}_runtime:/tmp/ti-dev-1000:rw`,
+    `${project.name}_workspace:/workspace:rw`,
+    `${project.name}_state:/state:rw`,
+  ];
+  host.Binds = expected;
+  host.Devices = null;
+  expect(verifyDevelopmentComposeResources(project, record, raw).port).toBe(49152);
+  for (const binds of [
+    ["/host/home:/workspace:rw", ...expected.slice(1)],
+    [...expected, "/var/run/docker.sock:/var/run/docker.sock:rw"],
+    expected.map((value) => value.replace(":rw", ":ro")),
+    undefined,
+  ]) {
+    host.Binds = binds;
+    expect(() => verifyDevelopmentComposeResources(project, record, raw)).toThrow();
+  }
+  host.Binds = expected;
+  for (const devices of [undefined, [{ PathOnHost: "/dev/private" }]]) {
+    host.Devices = devices;
+    expect(() => verifyDevelopmentComposeResources(project, record, raw)).toThrow();
+  }
+});
+
+it("requires the explicit ordinary project bridge and an observed running loopback port", async () => {
+  const { project, record } = await prepared();
+  const raw = inspect(record);
+  expect(renderDevelopmentComposeConfig(project, record).networks.default.internal).toBe(false);
+  raw.network.Internal = true;
+  expect(() => verifyDevelopmentComposeResources(project, record, raw)).toThrow();
+  raw.network.Internal = false;
+  raw.container.NetworkSettings.Ports["2222/tcp"] = [];
+  expect(() => verifyDevelopmentComposeResources(project, record, raw)).toThrow();
 });

@@ -197,3 +197,12 @@ the exact daemon/tmux/apps and blocks late discovery/start; Docker stop retires
 remaining private SSH children. Neither listener exit nor missing PID records
 alone authorizes full down/reset. Same-container resume must use the separate
 completed suspension proof; no SSH helper clears that barrier.
+
+The SSH project uses one ordinary project-local bridge (`internal: false`), with
+outbound access available for development work. The initial internal-only bridge
+accepted the Compose port request but produced no host mapping on the qualified
+Docker Desktop engine; that failed inspection is retained as evidence. The
+manager still requires exactly one actual SSH mapping on `127.0.0.1`, no extra
+published ports or network attachments, and exact project-owned network identity.
+An absent mapping on a running container is an error, never an accepted endpoint.
+This fixture does not claim to be an outbound-network sandbox.

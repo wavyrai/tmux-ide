@@ -38,7 +38,7 @@ volumes:
       io.tmux-ide.development.role: runtime
 networks:
   default:
-    internal: true
+    internal: false
     labels:
       io.tmux-ide.development.owner: ${TI_OWNER:?saved ownership nonce required}
       io.tmux-ide.development.source: ${TI_SOURCE_DIGEST:?source digest required}
