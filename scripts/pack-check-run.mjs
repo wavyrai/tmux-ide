@@ -23,6 +23,7 @@ import {
   createInstalledRuntimeCleanup,
   waitForPackedSocketRemoval,
 } from "./lib/packed-install-cleanup.mjs";
+import { runPackedInstallScenarios } from "./lib/packed-install-scenarios.mjs";
 import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
 import { assertCleanEvidenceSource, releaseSourceState } from "./lib/release-source-state.mjs";
 
@@ -206,6 +207,7 @@ let installedVersion = null;
 let runtimeEvidence = null;
 let journeyObservations = null;
 let proofCompleted = false;
+let installationScenarios = null;
 
 function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -1873,6 +1875,21 @@ try {
   // persistent canonical daemon; running it before this section would make the
   // election warm and leave an untracked detached owner outside `children`.
   runtimeEvidence = await runInstalledTuiGate(installedCli);
+  installationScenarios = {};
+  await runPackedInstallScenarios(
+    {
+      root: join(tmpRoot, "scripts-disabled"),
+      socket: join(tmuxTmpDir, "disabled.sock"),
+      tarball: rootTarball,
+      primaryCli: join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js"),
+      version: packageVersion,
+      runtimeBinary: mockReleaseBinaryPath,
+      platform: platformTag,
+      baseEnvironment: capturedEnvironment,
+      runtimeEnvironment: tmuxEnv(dirname(installedCli)),
+    },
+    installationScenarios,
+  );
   journeyObservations = await runPackedGoldenJourney(installedCli, owner);
   proofCompleted = true;
 } finally {
@@ -1896,8 +1913,15 @@ try {
   cleanup.children = await settlePackedChildren(children, childExits);
   if (!cleanup.children.confirmed) cleanup.failures.push("child-close-unconfirmed");
   else if (!cleanup.children.graceful) cleanup.failures.push("child-required-forced-retirement");
+  cleanup.installationScenarios =
+    installationScenarios === null || installationScenarios.cleanupConfirmed === true;
+  if (!cleanup.installationScenarios)
+    cleanup.failures.push("installed-scenarios-retirement-unconfirmed");
   const cleanupConfirmed =
-    cleanup.runtime && cleanup.tmuxSocketRemoved && cleanup.children.confirmed;
+    cleanup.runtime &&
+    cleanup.tmuxSocketRemoved &&
+    cleanup.children.confirmed &&
+    cleanup.installationScenarios;
   let completed = proofCompleted && cleanupConfirmed && cleanup.failures.length === 0;
   let proof = null;
   if (cleanup.failures.length)
@@ -1940,6 +1964,7 @@ try {
       runtime: runtimeEvidence,
       artifacts: copied,
       journey: journeyObservations,
+      installationScenarios,
       isolation: {
         emptyHome: true,
         emptyCwd: true,
