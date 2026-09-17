@@ -3,7 +3,16 @@ import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { spawn } from "node:child_process";
 import { PassThrough } from "node:stream";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, existsSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  symlinkSync,
+  renameSync,
+  existsSync,
+  rmSync,
+  unlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,6 +22,8 @@ import {
   confirmMacProcessExit,
   KernelWitnessReadError,
   sshDiagnosticSink,
+  encodeFixtureHandshake,
+  createFixtureHandshakeWork,
   socketPath,
   serverConfiguration,
   clientConfiguration,
@@ -381,4 +392,83 @@ test("kernel read refusal permits only one bounded confirmed-dead result", async
     (e) => e === error,
   );
   assert.equal(calls, 1);
+});
+
+test("async fixture handshake is awaited, bounded and never silently publishes a promise", async () => {
+  assert.equal(await encodeFixtureHandshake(async () => ({ version: 1 })), '{"version":1}');
+  await assert.rejects(encodeFixtureHandshake(() => new Promise(() => {}), "normal", 10));
+  await assert.rejects(encodeFixtureHandshake(async () => "x".repeat(65537)));
+});
+test("response timeout does not qualify producer cleanup; later settlement permits retry", async () => {
+  let finish;
+  const work = createFixtureHandshakeWork(() => new Promise((resolve) => (finish = resolve)));
+  await assert.rejects(work.encode("normal", 10));
+  await assert.rejects(work.settle(10));
+  finish({ version: 1 });
+  await work.settle(100);
+  await assert.rejects(work.encode());
+});
+test("closing handshake admission fences work queued before its producer starts", async () => {
+  for (const admitted of [false, true]) {
+    let calls = 0;
+    const work = createFixtureHandshakeWork(() => {
+      calls++;
+      return { version: 1 };
+    });
+    const response = work.encode();
+    if (admitted) await Promise.resolve();
+    work.close();
+    await assert.rejects(response);
+    await work.settle(100);
+    assert.equal(calls, 0);
+  }
+});
+test("producer rejection settles cleanup while another unfinished producer remains protected", async () => {
+  let rejectFirst, finishSecond;
+  let calls = 0;
+  const work = createFixtureHandshakeWork(
+    () =>
+      new Promise((resolve, reject) => {
+        if (++calls === 1) rejectFirst = reject;
+        else finishSecond = resolve;
+      }),
+  );
+  await Promise.all([
+    assert.rejects(work.encode("normal", 10)),
+    assert.rejects(work.encode("normal", 10)),
+  ]);
+  rejectFirst(new Error("fixture private failure must not be reported"));
+  await assert.rejects(work.settle(10));
+  finishSecond({ version: 1 });
+  await work.settle(100);
+});
+test("configuration refresh witness refuses modified private config before publication", () => {
+  const root = mkdtempSync(join(tmpdir(), "ssh-refresh-"));
+  try {
+    const files = privateFiles(root);
+    writeFileSync(join(root, "sshd_config"), "owned", { mode: 0o600 });
+    files.capture("sshd_config");
+    files.verify("sshd_config");
+    writeFileSync(join(root, "sshd_config"), "changed");
+    assert.throws(() => files.verify("sshd_config"));
+    assert.equal(existsSync(join(root, "sshd_config")), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("private refresh verification refuses a relocated root even if file inode survives", () => {
+  const root = mkdtempSync(join(tmpdir(), "ssh-root-"));
+  const relocated = root + "-moved";
+  const files = privateFiles(root);
+  writeFileSync(join(root, "config"), "owned", { mode: 0o600 });
+  files.capture("config");
+  renameSync(root, relocated);
+  symlinkSync(relocated, root);
+  try {
+    assert.throws(() => files.verify("config"));
+  } finally {
+    unlinkSync(root);
+    rmSync(relocated, { recursive: true });
+  }
 });

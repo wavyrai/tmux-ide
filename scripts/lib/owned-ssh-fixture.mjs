@@ -15,6 +15,7 @@ import {
   unlinkSync,
   rmdirSync,
   chmodSync,
+  renameSync,
   openSync,
   closeSync,
   fstatSync,
@@ -439,7 +440,7 @@ export function privateFiles(root) {
   )
     throw fail();
   const records = new Map();
-  const capture = (name) => {
+  const capture = (name, expected = null) => {
     if (
       !/^[a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?$/u.test(name) ||
       name.split("/").some((v) => v === "." || v === "..")
@@ -459,12 +460,15 @@ export function privateFiles(root) {
       (s.nlink !== 1 && !s.isDirectory())
     )
       throw fail();
+    const digest = s.isFile() ? hashPrivateFile(path, s) : null;
+    if (expected && (s.dev !== expected.dev || s.ino !== expected.ino || digest !== expected.hash))
+      throw fail();
     records.set(name, {
       dev: s.dev,
       ino: s.ino,
       directory: s.isDirectory(),
       socket: s.isSocket(),
-      hash: s.isFile() ? hashPrivateFile(path, s) : null,
+      hash: digest,
     });
   };
   const clean = () => {
@@ -509,7 +513,30 @@ export function privateFiles(root) {
     }
     rmdirSync(root);
   };
-  return { capture, clean };
+  const verify = (name) => {
+    const rootNow = lstatSync(root);
+    if (
+      rootNow.isSymbolicLink() ||
+      rootNow.dev !== stat.dev ||
+      rootNow.ino !== stat.ino ||
+      rootNow.uid !== stat.uid ||
+      rootNow.mode & 0o077
+    )
+      throw fail();
+    const record = records.get(name);
+    if (!record) throw fail();
+    const current = lstatSync(join(root, name));
+    if (
+      current.isSymbolicLink() ||
+      current.dev !== record.dev ||
+      current.ino !== record.ino ||
+      current.uid !== process.getuid() ||
+      current.mode & 0o077 ||
+      (record.hash && hashPrivateFile(join(root, name), current) !== record.hash)
+    )
+      throw fail();
+  };
+  return { capture, clean, verify };
 }
 export async function createOwnedSshFixture({
   parent,
@@ -535,18 +562,30 @@ export async function createOwnedSshFixture({
     sockets = new Set();
   let mode = "normal",
     disposed = false,
+    closing = false,
     listenPort = null;
   let stage = "allocated",
     failureStage = null;
   let sshdDiagnostics = null;
   const timers = new Set();
-  const metrics = { requests: 0, deliveredBytes: 0, stalls: 0 };
+  const metrics = { requests: 0, deliveredBytes: 0, stalls: 0, handshakeFailures: 0 };
+  const pending = new Set();
+  const handshakeWork = createFixtureHandshakeWork(handshake);
   const disposeFiles = async () => {
     if (disposed) return;
+    closing = true;
+    handshakeWork.close();
     for (const timer of timers) clearTimeout(timer);
+    timers.clear();
+    const listenerClosures = listeners
+      .filter((listener) => listener.listening)
+      .map((listener) => new Promise((resolve) => listener.close(resolve)));
     for (const socket of sockets) socket.destroy();
-    for (const listener of listeners)
-      if (listener.listening) await new Promise((r) => listener.close(r));
+    await Promise.all(listenerClosures);
+    await Promise.allSettled([...pending]);
+    // A response deadline does not cancel its producer. Preserve private files if
+    // actual discovery work cannot be confirmed settled within the cleanup budget.
+    await handshakeWork.settle();
     if (listenPort) await waitForPort(listenPort, false);
     files.clean();
     disposed = true;
@@ -594,6 +633,10 @@ export async function createOwnedSshFixture({
     stage = "discovery-listener";
     const ipc = join(root, "discovery.sock");
     const server = createServer((socket) => {
+      if (closing) {
+        socket.destroy();
+        return;
+      }
       metrics.requests++;
       if (sockets.size >= 8) {
         socket.destroy();
@@ -609,9 +652,19 @@ export async function createOwnedSshFixture({
       }
       const deliver = () => {
         if (socket.destroyed) return;
-        const value = mode === "oversize" ? "x".repeat(33000) : JSON.stringify(handshake());
-        metrics.deliveredBytes += Buffer.byteLength(value);
-        socket.end(value);
+        const task = handshakeWork
+          .encode(mode)
+          .then((value) => {
+            if (socket.destroyed) return;
+            metrics.deliveredBytes += Buffer.byteLength(value);
+            socket.end(value);
+          })
+          .catch(() => {
+            metrics.handshakeFailures++;
+            socket.destroy();
+          })
+          .finally(() => pending.delete(task));
+        pending.add(task);
       };
       if (mode === "delay") {
         const timer = setTimeout(() => {
@@ -677,6 +730,72 @@ export async function createOwnedSshFixture({
     return {
       root,
       port: listenPort,
+      sshdPid: child.pid,
+      async refreshTargetPort(nextPort) {
+        if (closing || disposed || child.exitCode !== null || child.signalCode !== null)
+          throw fail();
+        const next = { ...spec, targetPort: port(nextPort) };
+        files.verify("sshd_config");
+        files.verify("host");
+        files.verify("authorized_keys");
+        write("refresh_config", serverConfiguration(next));
+        const effective = await tool("/usr/sbin/sshd", [
+          "-T",
+          "-f",
+          join(root, "refresh_config"),
+          "-C",
+          `user=${account},host=localhost,addr=127.0.0.1`,
+        ]);
+        const proof = verifyEffectiveServer(effective, next);
+        files.verify("sshd_config");
+        files.verify("refresh_config");
+        renameSync(join(root, "refresh_config"), join(root, "sshd_config"));
+        files.capture("sshd_config");
+        if (!child.kill("SIGHUP")) throw fail();
+        spec.targetPort = next.targetPort;
+        return {
+          signalled: true,
+          pid: child.pid,
+          targetPort: next.targetPort,
+          effectiveConfiguration: proof,
+        };
+      },
+      confirmRefreshedPid() {
+        if (closing || disposed || child.exitCode !== null || child.signalCode !== null)
+          throw fail();
+        files.verify("sshd_config");
+        const fd = openSync(join(root, "sshd.pid"), constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const stat = fstatSync(fd);
+          if (
+            !stat.isFile() ||
+            stat.uid !== process.getuid() ||
+            stat.mode & 0o077 ||
+            stat.nlink !== 1 ||
+            stat.size > 32
+          )
+            throw fail();
+          const bytes = Buffer.alloc(33),
+            count = readSync(fd, bytes, 0, 33, 0),
+            text = bytes.subarray(0, count).toString("utf8");
+          if (count !== stat.size || text !== `${child.pid}\n`) throw fail();
+          const after = fstatSync(fd);
+          if (
+            after.ctimeMs !== stat.ctimeMs ||
+            after.mtimeMs !== stat.mtimeMs ||
+            after.size !== stat.size
+          )
+            throw fail();
+          files.capture("sshd.pid", {
+            dev: stat.dev,
+            ino: stat.ino,
+            hash: createHash("sha256").update(bytes.subarray(0, count)).digest("hex"),
+          });
+        } finally {
+          closeSync(fd);
+        }
+        return { pid: child.pid, verified: true };
+      },
       config: join(root, "client_config"),
       configProof,
       metrics: () => ({ ...metrics }),
@@ -837,4 +956,64 @@ export function sshDiagnosticSink(stream) {
   });
   stream.resume();
   return () => ({ categories: [...categories].sort(), bytes, truncated });
+}
+
+/** Tracks actual producers separately from their bounded response promises. */
+export function createFixtureHandshakeWork(getHandshake) {
+  const producers = new Set();
+  let closing = false;
+  const run = () => {
+    if (closing) throw fail();
+    const producer = Promise.resolve().then(() => {
+      if (closing) throw fail();
+      return getHandshake();
+    });
+    producers.add(producer);
+    // Observe either outcome without retaining credential-bearing results/errors.
+    void producer.then(
+      () => producers.delete(producer),
+      () => producers.delete(producer),
+    );
+    return producer;
+  };
+  return {
+    encode(mode = "normal", timeoutMs = 6000) {
+      return encodeFixtureHandshake(run, mode, timeoutMs);
+    },
+    close() {
+      closing = true;
+    },
+    async settle(timeoutMs = 7000) {
+      closing = true;
+      let timer;
+      try {
+        await Promise.race([
+          Promise.allSettled([...producers]),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(fail()), timeoutMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
+
+/** Bounds response waiting only; callers own underlying producer settlement. */
+export async function encodeFixtureHandshake(getHandshake, mode = "normal", timeoutMs = 6000) {
+  let timer;
+  try {
+    const value = await Promise.race([
+      Promise.resolve().then(getHandshake),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(fail()), timeoutMs);
+      }),
+    ]);
+    const encoded = mode === "oversize" ? "x".repeat(33000) : JSON.stringify(value);
+    if (typeof encoded !== "string" || Buffer.byteLength(encoded) > 65536) throw fail();
+    return encoded;
+  } finally {
+    clearTimeout(timer);
+  }
 }

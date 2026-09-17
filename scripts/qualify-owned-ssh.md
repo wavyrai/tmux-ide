@@ -77,3 +77,24 @@ that this confirmation branch was taken; its semantics have deterministic tests.
 Actual daemon replacement with the old SSH forward still alive, retained TUI
 recovery, terminal-reader stalls and fleet scheduler saturation remain separate
 D11 qualification work.
+
+## Native replacement fixture support
+
+The shared helper also accepts asynchronous discovery producers for actual
+development daemons. A response deadline only stops waiting for the response;
+it does not cancel the producer. Teardown closes discovery admission and listeners,
+then waits for the original producers within a separate bounded cleanup budget.
+Unsettled work causes cleanup refusal and preserves private files. Cleanup can be
+retried after the producer settles.
+
+For replacement journeys, `refreshTargetPort` verifies the owned configuration,
+host key and authorized keys, validates the new exact forwarding destination with
+`sshd -T`, and signals the retained listener. Its result means the signal was sent,
+not that discovery or the new forward is ready. Callers must independently verify
+readiness and the rewritten PID file. Modified files or a relocated fixture root
+cause refusal.
+
+These helper changes pass 23 focused tests, targeted types and lint. The recorded
+12-case live qualification above predates these additions. Actual daemon/TUI
+replacement qualification remains incomplete; neither helper tests nor successful
+cleanup establish client recovery.
