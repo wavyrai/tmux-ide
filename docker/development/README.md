@@ -138,3 +138,62 @@ OOM events. Deterministic tests cover the confirmation branch; this does not pro
 all earlier uninstrumented failures had the same cause. The separate manager
 memory improvement is not a production TUI throughput claim. Packed postinstall/download/upgrade and
 persistent container restart remain the separate D12/D10 requirements above.
+
+## Private source SSH fixture (D10 implementation checkpoint)
+
+`source-ssh-fixture` is a separate target derived from the source lane. It adds
+OpenSSH from the same dated Debian snapshot; the packed target is unchanged.
+This checkpoint's unit/config tests do **not** qualify a live Debian SSH login.
+A reviewed exact source export, named resources and a nonroot smoke test are
+required before the wrapper advertises this lane.
+
+The image idles as UID 1000, precreates `/tmp/ti-dev-1000` with private ownership,
+and never starts a development daemon or erases lifecycle witnesses at boot.
+After explicit source preparation/build/up, the fixture helper supports:
+
+- `init <ti-dev-project-id> <public-key-file>`: inspect the verified active owner
+  using the worktree's compiled manager, save a credential-free runtime lease,
+  generate a private host key, install one plain ed25519 public key and configure
+  exact loopback forwarding. Its stdout contains only the host **public** key,
+  for trust establishment through an already verified Docker exec channel.
+- `serve`: reverify that lease and start nonroot sshd on port 2222. Use the
+  project-scoped dynamic loopback mapping; never expose a wildcard host mapping.
+- `stop`: authenticate to the live supervisor's private Unix socket using its
+  saved nonce. The supervisor signals only its retained sshd child, waits for
+  exit, checks/removes its own admission records, then acknowledges retirement
+  of the **listener**. This receipt explicitly allows authenticated SSH children
+  to remain; it is not a full process-tree or container-stop proof.
+
+All commands run as `/usr/local/bin/node /opt/fixture/ssh-fixture.mjs <command>`.
+The fixed source path is `/workspace/tree`, store `/state/instances`, instance
+name the project ID. Configuration lives in private `/state/ssh`; interrupted
+serve/admission records block reuse rather than authorize a PID-only kill or
+boot-time deletion. Init cannot replace keys or refresh configuration while a
+listener admission exists. Refresh requires orderly listener stop and fresh
+verified readiness; a daemon replacement invalidates the old configured lease.
+
+The only accepted SSH command is exactly `tmux-ide remote-daemon-info --json`.
+An internal read-only manager dispatch validates the active immutable build,
+namespace, readiness and configured lease before running that build's exact
+Node/CLI. It buffers the bounded handshake and verifies returned runtime identity
+before releasing credentials to the authenticated SSH channel. No owner startup,
+installed executable fallback or unchecked port is accepted. Do not log or
+persist this handshake. Private sshd error capture is bounded to 64 KiB and is
+not a public support-log source.
+
+SSH permits public-key authentication as `node`, one verified `127.0.0.1` daemon
+port, and local TCP forwarding only. Password/PAM/root login, remote forwarding,
+Unix socket forwarding, tunnels, PTYs, user environment/rc, agent and X11
+forwarding are disabled. The test-only image gives `node` an unusable password
+hash so public-key login can be tested without a locked-account rejection;
+password authentication remains disabled. Nonroot explicit host keys and these
+restrictions follow the [OpenSSH server manual](https://man.openbsd.org/sshd) and
+[configuration manual](https://man.openbsd.org/sshd_config); the pinned Debian
+implementation still needs its live smoke check.
+
+The future wrapper must order listener stop, core instance suspension, verified
+same-container Docker stop, and then full-stop acknowledgement. Suspension stops
+the exact daemon/tmux/apps and blocks late discovery/start; Docker stop retires
+remaining private SSH children. Neither listener exit nor missing PID records
+alone authorizes full down/reset. Same-container resume must use the separate
+completed suspension proof; no SSH helper clears that barrier.

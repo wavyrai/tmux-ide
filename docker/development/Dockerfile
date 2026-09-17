@@ -41,6 +41,21 @@ RUN test -f .development-container-source.json && test "$(node -p 'require("./pa
 WORKDIR /workspace
 CMD ["bash"]
 
+# Test-only SSH lane; packed image and ordinary source target remain unchanged.
+FROM source-development AS source-ssh-fixture
+USER root
+RUN apt-get -o Acquire::Check-Valid-Until=false -o Acquire::http::Timeout=30 -o Acquire::Retries=1 update && \
+    apt-get install -y --no-install-recommends openssh-server && \
+    mkdir -p /run/sshd /tmp/ti-dev-1000 && chmod 700 /tmp/ti-dev-1000 && \
+    chown node:node /tmp/ti-dev-1000 && \
+    usermod --password '*' node && \
+    rm -f /etc/ssh/ssh_host_* && \
+    dpkg-query -W > /opt/fixture/ssh-debian-packages.txt && rm -rf /var/lib/apt/lists/*
+COPY docker/development/ssh-fixture.mjs docker/development/ssh-control.mjs /opt/fixture/
+USER node
+WORKDIR /workspace
+CMD ["node", "/opt/fixture/ssh-fixture.mjs", "idle"]
+
 # Build artifacts and fresh runtime dependencies separately from source node_modules.
 FROM source-development AS packed-build
 RUN node /opt/source-snapshot/docker/development/prepare-source.mjs /opt/source-snapshot /workspace/packed-source

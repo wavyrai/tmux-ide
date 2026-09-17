@@ -1,4 +1,10 @@
 import {
+  developmentSshAuthority,
+  developmentSshHandshake,
+} from "../packages/daemon/src/lib/development-ssh.ts";
+import { readPrivateDevelopmentFile } from "../packages/daemon/src/lib/development-state.ts";
+import { validateDevelopmentDirectory } from "../packages/daemon/src/lib/development-instance.ts";
+import {
   buildDevelopmentInstance,
   developmentBuildChanges,
 } from "../packages/daemon/src/lib/development-build-manager.ts";
@@ -41,6 +47,7 @@ const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
     json: { type: "boolean" },
+    "ssh-describe": { type: "boolean" },
     id: { type: "string" },
     yes: { type: "boolean" },
     "daemon-only": { type: "boolean" },
@@ -66,6 +73,7 @@ if (
     "diagnostics",
     "logs",
     "rebuild",
+    "ssh-info",
   ].includes(command ?? "")
 )
   throw new Error(
@@ -85,7 +93,9 @@ if (
   (values.yes && command !== "reset") ||
   (values["apply-build"] && command !== "restart") ||
   (values.previous && (command !== "restart" || !values["apply-build"])) ||
-  (values.bun && command !== "rebuild")
+  (values.bun && command !== "rebuild") ||
+  (values["ssh-describe"] && command !== "ssh-info") ||
+  (command === "ssh-info" && (!values.json || values.id))
 )
   throw new Error("Lifecycle option does not apply to this command");
 let selectedInstance: DevelopmentInstance | undefined;
@@ -106,7 +116,22 @@ try {
       });
   selectedInstance = instance;
   selectionComplete = true;
-  if (command === "diagnostics" || command === "logs") {
+  if (command === "ssh-info") {
+    if (values["ssh-describe"]) {
+      process.stdout.write(`${JSON.stringify((await developmentSshAuthority(instance)).lease)}\n`);
+    } else {
+      validateDevelopmentDirectory("/state/ssh", "/state/ssh");
+      const file = readPrivateDevelopmentFile("/state/ssh/lease.json");
+      if (!file) throw new Error("SSH fixture lease is unavailable");
+      let lease: unknown;
+      try {
+        lease = JSON.parse(file.bytes.toString("utf8"));
+      } catch {
+        throw new Error("SSH fixture lease is invalid");
+      }
+      process.stdout.write(await developmentSshHandshake(instance, lease));
+    }
+  } else if (command === "diagnostics" || command === "logs") {
     const result =
       command === "diagnostics"
         ? await developmentDiagnostics(instance)
