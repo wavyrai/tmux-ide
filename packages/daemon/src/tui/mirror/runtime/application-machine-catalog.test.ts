@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
+import { createApplicationHomeAgentTransport } from "./application-home-agent-transport.ts";
+import { projectApplicationShellResource } from "../../../command-center/resources/application-shell.ts";
 import { createApplicationMachineCatalog } from "./application-machine-catalog.ts";
 import type {
   ApplicationHomeCatalog,
@@ -309,3 +311,67 @@ it("shows cold-start cache as unavailable and isolates cache writer failure from
   expect(f.owner.getSnapshot().groups.find((group) => group.id === REMOTE)!.state).toBe("ready");
   f.owner.dispose();
 });
+
+it.each(["local", REMOTE])(
+  "Home reads the actual machine-selected session for %s",
+  async (machineId) => {
+    for (const environmentId of [undefined, "44444444-4444-4444-8444-444444444444"]) {
+      const f = fixture();
+      const machine = f.machines.get(machineId)!;
+      machine.daemon = { ...machine.daemon!, ...(environmentId ? { environmentId } : {}) };
+      f.owner.start();
+      const daemon = machine.daemon!;
+      const liveSessionId = "live-session.11111111111111111111";
+      const rawId = `${daemon.instanceId}:${liveSessionId}`;
+      f.catalogs.get(machineId)![0]!.emit({
+        phase: "live",
+        daemonInstanceId: daemon.instanceId,
+        note: null,
+        sessions: [{ id: rawId, liveSessionId, name: "shared", paneCount: 0 }],
+      });
+      f.select(machineId);
+      const selected = f.owner.getSelectedCatalogSnapshot().sessions[0]!;
+      expect(selected.id).not.toBe(rawId);
+      const peer = {
+        instanceId: daemon.instanceId,
+        startedAt: daemon.startedAt,
+        productVersion: daemon.productVersion,
+        protocolVersion: daemon.protocolVersion,
+      };
+      const shell = {
+        version: 2,
+        daemon: peer,
+        resource: projectApplicationShellResource({
+          name: "shared",
+          runtimeSessionId: "$1",
+          dir: "/tmp/fixture",
+          panes: [],
+        }),
+      };
+      const wireCatalog = {
+        version: 3,
+        daemon: peer,
+        intents: [],
+        liveSessions: [
+          {
+            sessionName: "shared",
+            liveSessionId,
+            fleetSessionId: "session.11111111111111111111",
+            paneCount: 0,
+          },
+        ],
+      };
+      const transport = createApplicationHomeAgentTransport({
+        fetch: async (url) =>
+          Response.json(String(url).includes("application-shell") ? shell : wireCatalog),
+      });
+      try {
+        await expect(
+          transport.fetchShell(daemon, selected, new AbortController().signal),
+        ).resolves.toMatchObject({ version: 2 });
+      } finally {
+        f.owner.dispose();
+      }
+    }
+  },
+);
