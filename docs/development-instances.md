@@ -388,9 +388,8 @@ handoff fix. After daemon replacement, a retained client resumed fresh output
 before any diagnostic REST read; a fresh client also attached, and both accepted
 real input while the unrelated recreated session remained unstamped. Target
 server/pane/socket and private sibling identities stayed unchanged. That bounded
-run completed cleanup with no OOM events. Previously observed intermittent
-managed-down failures remain a separate open issue; this passing run does not
-establish their cause or resolution. Ownership of linked physical windows across
+run completed cleanup with no OOM events. A later shutdown investigation located
+and addressed a Linux exit-observation failure, as described below. Ownership of linked physical windows across
 already-qualified sessions also remains separate qualification work.
 
 Admission checks worktree filesystem identity, private records, exact artifacts,
@@ -499,6 +498,16 @@ and an allowlisted code when available. It excludes raw messages, commands and
 credentials. The stage is recorded only on failure; it does not change exit status,
 ownership checks or deadlines. Preserve a failed receipt even if later inspection
 shows all processes stopped: process exit alone does not prove cleanup completed.
+
+One reproduced Linux failure occurred in `tmux-wait`: process identity observation
+returned `ENOENT` after the stop command completed. The manager now permits one
+confirmation read after 50 ms, only within the original deadline. Cleanup continues
+only if that read proves the process has exited. A live, reused or unverifiable
+PID remains protected; `ENOENT` alone never establishes death. Six subsequent
+two-client replacement journeys completed all twelve daemon-only/full shutdowns
+with sibling identities preserved and no OOM events. Deterministic tests cover the
+confirmation branch; the passing native runs do not establish that it executed in
+any particular run or explain every earlier uninstrumented failure.
 
 The short runtime path keeps the worktree/name identity, but now has a private
 atomic ownership receipt binding that full tuple, canonical store/root and
@@ -688,9 +697,9 @@ run sampled at most 26 owned processes and 308 file descriptors, ended with zero
 gate subscriptions and all tracked processes/apps gone, and recorded no new OOM
 kills. This is a bounded qualification run, not a long-soak or throughput claim.
 
-Earlier crash-recovery and final-down failures remain retained evidence. The
-intermittent final-down rejection was not reproduced in 27 bounded diagnostic
-shutdowns; its cause is not claimed fixed. No substitute system-tmux manifest,
+Earlier crash-recovery and final-down failures remain retained evidence. After
+27 initial diagnostic shutdowns did not reproduce the rejection, failure-only
+diagnostics captured the Linux exit-observation case described above. No substitute system-tmux manifest,
 installed TUI fallback, relaxed ownership check, increased production deadline or
 global Docker memory change was used. Linux x64 and emulated performance remain
 unqualified.

@@ -129,8 +129,12 @@ owned processes/apps exited, gate subscriptions returned to zero, and OOM counte
 did not increase. This is a bounded run, not a long soak or Linux x64/emulation
 qualification.
 
-Prior failures are retained: an intermittent final-down rejection despite process
-cleanup remains unexplained (27 smaller diagnostic shutdowns did not reproduce it).
-The manager change is measured wrapper-memory reduction, not a claimed fix for
-that error or production TUI throughput. Packed postinstall/download/upgrade and
+Prior failures are retained. After 27 smaller diagnostic shutdowns did not
+reproduce the rejection, failure-only diagnostics located a Linux process identity
+`ENOENT` during `tmux-wait`. A single bounded confirmation read now permits cleanup
+only after proving process exit. Six subsequent two-client replacement journeys
+passed all twelve daemon-only/full shutdowns, preserved siblings and recorded no
+OOM events. Deterministic tests cover the confirmation branch; this does not prove
+all earlier uninstrumented failures had the same cause. The separate manager
+memory improvement is not a production TUI throughput claim. Packed postinstall/download/upgrade and
 persistent container restart remain the separate D12/D10 requirements above.
