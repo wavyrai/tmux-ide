@@ -29,6 +29,7 @@ import {
   publishLaunchdEntry,
   privateRootReferences,
   verifyLaunchdDaemonIdentity,
+  launchdCommandDiagnostic,
 } from "./lib/owned-launchd-fixture.mjs";
 
 const source = realpathSync(fileURLToPath(new URL("..", import.meta.url)));
@@ -105,12 +106,19 @@ function command(executable, args, extra = {}) {
         ...(!cleaning ? { signal: controller.signal } : {}),
         ...extra,
       },
-      (error, stdout, stderr) =>
-        resolveCommand({
+      (error, stdout, stderr) => {
+        const result = {
           code: error ? (Number.isInteger(error.code) ? error.code : -1) : 0,
           stdout,
           stderr,
-        }),
+        };
+        if (executable === "/bin/launchctl") {
+          receipt.launchctl ??= [];
+          if (receipt.launchctl.length < 300)
+            receipt.launchctl.push(launchdCommandDiagnostic(args[0], result));
+        }
+        resolveCommand(result);
+      },
     );
     commandChildren.push(child);
     commandExits.set(child, new Promise((resolveExit) => child.once("close", resolveExit)));

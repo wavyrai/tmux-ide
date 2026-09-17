@@ -187,3 +187,24 @@ export async function verifyLaunchdDaemonIdentity({ read, identify, request }) {
   if (confirmed !== birth) throw new Error("owner-incarnation-changed");
   return { value, birth };
 }
+
+export function launchdCommandDiagnostic(operation, result) {
+  if (!["print", "bootstrap", "bootout"].includes(operation)) throw refuse();
+  const text = result.stderr.slice(0, 65536);
+  const category = !text
+    ? "none"
+    : text.includes("Could not find service")
+      ? "service-not-found"
+      : text.includes("Input/output error")
+        ? "input-output-error"
+        : text.includes("Permission denied") || text.includes("Operation not permitted")
+          ? "permission-denied"
+          : text.includes("Could not find domain")
+            ? "domain-unavailable"
+            : "other";
+  return {
+    operation,
+    exitCode: Number.isInteger(result.code) ? result.code : -1,
+    stderrCategory: category,
+  };
+}

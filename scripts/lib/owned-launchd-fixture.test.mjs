@@ -12,6 +12,7 @@ import {
   publishLaunchdEntry,
   privateRootReferences,
   verifyLaunchdDaemonIdentity,
+  launchdCommandDiagnostic,
 } from "./owned-launchd-fixture.mjs";
 const absent = { code: 113, stdout: "", stderr: "Could not find service" };
 function setup(t) {
@@ -282,4 +283,20 @@ test("generation change during public request is pending rather than authority o
     },
   });
   assert.equal(result, null);
+});
+
+test("launchctl failure diagnostics retain fixed classification without raw stderr", () => {
+  assert.deepEqual(
+    launchdCommandDiagnostic("bootstrap", {
+      code: 5,
+      stderr: "Bootstrap failed: 5: Input/output error\nprivate-secret",
+    }),
+    { operation: "bootstrap", exitCode: 5, stderrCategory: "input-output-error" },
+  );
+  assert.deepEqual(launchdCommandDiagnostic("bootstrap", { code: 1, stderr: "private-secret" }), {
+    operation: "bootstrap",
+    exitCode: 1,
+    stderrCategory: "other",
+  });
+  assert.throws(() => launchdCommandDiagnostic("arbitrary", { code: 0, stderr: "" }));
 });
