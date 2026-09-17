@@ -25,6 +25,7 @@ import {
   capturePackedTmuxWitness,
   retirePackedTmuxSocket,
   verifyPackedTmuxHandoff,
+  packedTmuxWitnessDifferences,
 } from "./lib/packed-install-cleanup.mjs";
 import {
   runPackedInstallScenarios,
@@ -219,12 +220,24 @@ let npmVersion = null;
 let tmuxWitness = null;
 let tmuxStarted = false;
 const tmuxGenerations = [];
+const tmuxObservations = [];
+let omittedTmuxObservations = 0;
 
 async function recordTmuxGeneration(stage) {
   const pid = Number(
     run("tmux", ["-S", installedTmuxSocketPath, "display-message", "-p", "#{pid}"]).stdout.trim(),
   );
   const next = capturePackedTmuxWitness(installedTmuxSocketPath, pid);
+  if (tmuxObservations.length < 64)
+    tmuxObservations.push({
+      stage,
+      observedAt: new Date().toISOString(),
+      pid,
+      mode: next.socket.mode & 0o7777,
+      previousMode: tmuxWitness ? tmuxWitness.socket.mode & 0o7777 : null,
+      changedFields: packedTmuxWitnessDifferences(tmuxWitness, next),
+    });
+  else omittedTmuxObservations++;
   const transition = await verifyPackedTmuxHandoff(tmuxWitness, next);
   if (!tmuxWitness || transition.replaced)
     tmuxGenerations.push({
@@ -2016,6 +2029,8 @@ try {
       installationScenarios,
       tmuxWitness,
       tmuxGenerations,
+      tmuxObservations,
+      omittedTmuxObservations,
       isolation: {
         emptyHome: true,
         emptyCwd: true,

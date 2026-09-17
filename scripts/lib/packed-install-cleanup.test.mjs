@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   verifyPackedTmuxHandoff,
+  packedTmuxWitnessDifferences,
   capturePackedTmuxWitness,
   retirePackedTmuxSocket,
   settlePackedChildren,
@@ -347,4 +348,58 @@ test("tmux handoff refuses same-PID changed socket, changed root and replacement
   );
   const next = { ...previous, pid: 456, socket: { ...previous.socket, ino: 10 } };
   await assert.rejects(verifyPackedTmuxHandoff(previous, next, deps), /changed during handoff/);
+});
+
+test("documented owner-execute socket toggle preserves identity through reuse and final retirement", async () => {
+  const f = socketFixture(),
+    detached = f.witness;
+  f.socket.mode = 0o140700;
+  const attached = capturePackedTmuxWitness(detached.path, detached.pid, {
+    stat: f.dependencies.stat,
+    uid: 501,
+    dead: () => false,
+  });
+  assert.deepEqual(packedTmuxWitnessDifferences(detached, attached), ["socket.mode"]);
+  assert.deepEqual(
+    await verifyPackedTmuxHandoff(detached, attached, { recapture: () => attached }),
+    { replaced: false, retiredPid: null },
+  );
+  f.socket.mode = 0o140600;
+  assert.deepEqual(
+    await verifyPackedTmuxHandoff(attached, detached, { recapture: () => detached }),
+    { replaced: false, retiredPid: null },
+  );
+  assert.equal((await retirePackedTmuxSocket(attached, f.dependencies)).staleSocketRemoved, true);
+});
+test("socket mode contract refuses group/other access, missing owner access and special bits", async () => {
+  for (const permission of [0o666, 0o660, 0o610, 0o601, 0o400, 0o200, 0o1600, 0o4600]) {
+    const f = socketFixture();
+    f.socket.mode = 0o140000 | permission;
+    assert.throws(
+      () =>
+        capturePackedTmuxWitness(f.witness.path, 123, {
+          stat: f.dependencies.stat,
+          uid: 501,
+          dead: () => false,
+        }),
+      /unsafe/,
+    );
+    await assert.rejects(retirePackedTmuxSocket(f.witness, f.dependencies), /changed/);
+    assert.deepEqual(f.removed, []);
+  }
+});
+test("witness diagnostics expose only fixed changed field names", () => {
+  const f = socketFixture(),
+    next = {
+      ...f.witness,
+      pid: 456,
+      socket: { ...f.witness.socket, ino: 8, uid: 502, mode: 0o140700 },
+      extraSecret: "never returned",
+    };
+  assert.deepEqual(packedTmuxWitnessDifferences(f.witness, next), [
+    "pid",
+    "socket.ino",
+    "socket.uid",
+    "socket.mode",
+  ]);
 });

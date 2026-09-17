@@ -189,8 +189,24 @@ const packedSocketStat = (stat) => ({
   mode: stat.mode,
   birthtimeMs: stat.birthtimeMs,
 });
+// tmux 3.7c server_update_socket toggles owner execute for attached sessions.
+// Permissions remain private; only this documented bit is mutable identity metadata.
+const safePackedSocketMode = (mode) => [0o600, 0o700].includes(mode & 0o7777);
 const samePackedSocket = (a, b) =>
-  ["dev", "ino", "uid", "mode", "birthtimeMs"].every((key) => a[key] === b[key]);
+  safePackedSocketMode(a.mode) &&
+  safePackedSocketMode(b.mode) &&
+  (a.mode & ~0o100) === (b.mode & ~0o100) &&
+  ["dev", "ino", "uid", "birthtimeMs"].every((key) => a[key] === b[key]);
+export function packedTmuxWitnessDifferences(previous, next) {
+  if (!previous) return [];
+  const fields = [];
+  for (const key of ["pid", "path"]) if (previous[key] !== next[key]) fields.push(key);
+  for (const key of ["dev", "ino", "uid", "mode"])
+    if (previous.parent[key] !== next.parent[key]) fields.push(`parent.${key}`);
+  for (const key of ["dev", "ino", "uid", "mode", "birthtimeMs"])
+    if (previous.socket[key] !== next.socket[key]) fields.push(`socket.${key}`);
+  return fields;
+}
 const absentPid = (pid) => {
   try {
     process.kill(pid, 0);
@@ -215,7 +231,8 @@ export function capturePackedTmuxWitness(
     parent.uid !== uid ||
     (parent.mode & 0o777) !== 0o700 ||
     !socket.isSocket() ||
-    socket.uid !== uid
+    socket.uid !== uid ||
+    !safePackedSocketMode(socket.mode)
   )
     throw new Error("Packed tmux socket witness unsafe");
   return {
