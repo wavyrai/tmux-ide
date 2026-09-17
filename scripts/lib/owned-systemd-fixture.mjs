@@ -20,6 +20,15 @@ export function systemdFixtureDefinition(nonce) {
   return { nonce, name, unit, supervisionId, labels, unitText, unitHash: sha256(unitText) };
 }
 
+export function systemdFixtureTmux(nonce) {
+  const { name } = systemdFixtureDefinition(nonce);
+  return {
+    socket: `/tmp/tmux-1000/${name}`,
+    argv: ["-L", name, "-f", "/dev/null"],
+    environment: { TMUX_TMPDIR: "/tmp", TMUX_IDE_TMUX_SOCKET_NAME: name },
+  };
+}
+
 export function systemdContainerArguments(definition) {
   return [
     "create",

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   systemdFixtureDefinition,
+  systemdFixtureTmux,
   systemdContainerArguments,
   inspectSystemdContainer,
   parseSystemdUnit,
@@ -62,6 +63,18 @@ test("fixed service declares successful-exit restart, nonroot owner and exact po
   assert.equal(args.includes("--privileged"), false);
   assert.equal(args.includes("--mount"), false);
   assert.equal(args.includes("--volume"), false);
+});
+
+test("private named tmux selector shares one nonce and uses cold-cleared tmpfs", () => {
+  const tmux = systemdFixtureTmux(d.nonce);
+  assert.deepEqual(tmux.argv, ["-L", d.name, "-f", "/dev/null"]);
+  assert.deepEqual(tmux.environment, {
+    TMUX_TMPDIR: "/tmp",
+    TMUX_IDE_TMUX_SOCKET_NAME: d.name,
+  });
+  assert.equal(tmux.socket, `/tmp/tmux-1000/${d.name}`);
+  assert.notEqual(tmux.socket, systemdFixtureTmux("b".repeat(32)).socket);
+  assert.throws(() => systemdFixtureTmux("../foreign"));
 });
 
 test("dependency reuse requires exact inputs while ignoring unrelated script metadata", (t) => {

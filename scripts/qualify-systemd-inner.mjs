@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { build } from "esbuild";
 import {
   systemdFixtureDefinition,
+  systemdFixtureTmux,
   parseSystemdUnit,
   linuxBirth,
   sha256,
@@ -41,8 +42,9 @@ if (
 process.umask(0o077);
 const descriptor = JSON.parse(readFileSync(join(root, "descriptor.json"), "utf8"));
 const d = systemdFixtureDefinition(descriptor.nonce);
+const tmux = systemdFixtureTmux(descriptor.nonce);
 const state = join(root, "state"),
-  socket = join(root, "tmux.sock");
+  socket = tmux.socket;
 const env = privatePackedInstallEnvironment(
   { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" },
   {
@@ -53,7 +55,7 @@ const env = privatePackedInstallEnvironment(
       TMUX_IDE_DAEMON_INFO_DIR: state,
       TMUX_IDE_REGISTRY_DIR: state,
       TMUX_IDE_SETTINGS_DIR: state,
-      TMUX_IDE_TMUX_SOCKET_PATH: socket,
+      ...tmux.environment,
       TMUX_IDE_TMUX_BIN: "/opt/native/tmux/tmux",
       NO_COLOR: "1",
     },
@@ -102,8 +104,7 @@ function command(executable, args, timeout = 30000) {
   });
 }
 const cli = (...args) => command(process.execPath, [join(source, "bin/cli.js"), ...args, "--json"]);
-const tm = (...args) =>
-  command("/opt/native/tmux/tmux", ["-S", socket, "-f", "/dev/null", ...args]);
+const tm = (...args) => command("/opt/native/tmux/tmux", [...tmux.argv, ...args]);
 const facts = (v) => ({
   pid: v.pid,
   instanceId: v.instanceId,
@@ -265,6 +266,9 @@ try {
     receipt.reserved = true;
     next("prepare-external-sentinel");
     await tm("new-session", "-d", "-s", "keep", "-x", "80", "-y", "24", "/bin/sh");
+    const actualSocket = (await tm("display-message", "-p", "#{socket_path}")).trim();
+    if (actualSocket !== socket) throw new Error("fixture-tmux-socket-mismatch");
+    receipt.tmux = { selector: "name", socket: actualSocket };
     const pane = await sentinel();
     const [serverPid, , panePid] = pane.split("|");
     receipt.sentinel = {
