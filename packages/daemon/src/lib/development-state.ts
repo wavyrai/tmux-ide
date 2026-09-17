@@ -231,12 +231,130 @@ export type DevelopmentFailureReason =
   | "tmux-restart-required"
   | "build-failed"
   | "operation-failed";
+const DEVELOPMENT_FAILURE_STAGES = [
+  "lock-acquire",
+  "identity",
+  "runtime-ownership",
+  "owner-admission",
+  "owner-inspect",
+  "owner-probe",
+  "owner-request",
+  "owner-signal",
+  "owner-wait",
+  "owner-final-inspect",
+  "tmux-identity",
+  "tmux-verify",
+  "tmux-command",
+  "tmux-wait",
+  "socket-revalidate",
+  "socket-remove",
+  "admission-retire",
+  "lock-release",
+] as const;
+export type DevelopmentFailureStage = (typeof DEVELOPMENT_FAILURE_STAGES)[number];
+const FAILURE_CATEGORIES = [
+  "Error",
+  "TypeError",
+  "RangeError",
+  "AbortError",
+  "TimeoutError",
+] as const;
+const FAILURE_CODES = new Set([
+  "ENOENT",
+  "ESRCH",
+  "EPERM",
+  "EACCES",
+  "EEXIST",
+  "ENOTEMPTY",
+  "EIO",
+  "EMFILE",
+  "ENFILE",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EPIPE",
+  "ETIMEDOUT",
+  "ENOTCONN",
+  "EBADF",
+  "EINVAL",
+  "ABORT_ERR",
+  "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_ABORTED",
+]);
+function safeFailureCode(value: unknown): string | number | undefined {
+  if (typeof value === "string" && FAILURE_CODES.has(value)) return value;
+  if (typeof value === "number" && Number.isInteger(value) && value >= -255 && value <= 255)
+    return value;
+  return undefined;
+}
+function failureField(value: unknown, key: string): unknown {
+  if (value === null || typeof value !== "object") return undefined;
+  // Error metadata is data only: diagnostics never invoke arbitrary getters.
+  try {
+    return Object.getOwnPropertyDescriptor(value, key)?.value;
+  } catch {
+    return undefined; // Optional diagnostics cannot introduce a new failure.
+  }
+}
+export interface DevelopmentFailureDiagnostic {
+  readonly stage: DevelopmentFailureStage;
+  readonly category: string;
+  readonly code?: string | number;
+  readonly causeCode?: string | number;
+}
+function safeFailureDiagnostic(value: DevelopmentFailureDiagnostic | undefined) {
+  const stage = failureField(value, "stage");
+  if (!DEVELOPMENT_FAILURE_STAGES.some((known) => known === stage)) return undefined;
+  const category = failureField(value, "category");
+  const code = safeFailureCode(failureField(value, "code"));
+  const causeCode = safeFailureCode(failureField(value, "causeCode"));
+  return {
+    stage: stage as DevelopmentFailureStage,
+    category: FAILURE_CATEGORIES.some((known) => known === category)
+      ? (category as string)
+      : "unknown",
+    ...(code === undefined ? {} : { code }),
+    ...(causeCode === undefined ? {} : { causeCode }),
+  };
+}
+/** Failure-only context: preserve typed reason/receipt, never arbitrary error text. */
+export function developmentStageError(
+  error: unknown,
+  stage: DevelopmentFailureStage,
+): DevelopmentOperationError {
+  const typed = error instanceof DevelopmentOperationError ? error : null;
+  const category =
+    failureField(error, "name") ??
+    (error instanceof TypeError
+      ? "TypeError"
+      : error instanceof RangeError
+        ? "RangeError"
+        : error instanceof Error
+          ? "Error"
+          : "unknown");
+  return new DevelopmentOperationError(
+    typed?.reason ?? "operation-failed",
+    typed?.message ?? "Development operation failed",
+    typed?.receipt,
+    {
+      stage,
+      category: typeof category === "string" ? category : "unknown",
+      code: safeFailureCode(failureField(error, "code")),
+      causeCode: safeFailureCode(failureField(failureField(error, "cause"), "code")),
+    },
+  );
+}
+
 /** Only manager-authored error data may cross the public CLI boundary. */
 export class DevelopmentOperationError extends Error {
   constructor(
     readonly reason: DevelopmentFailureReason,
     message: string,
     readonly receipt?: string,
+    readonly diagnostic?: DevelopmentFailureDiagnostic,
   ) {
     super(message);
   }
@@ -255,6 +373,7 @@ export function developmentFailureResult(
       (operation === "rebuild" && typed?.receipt === join(instance.root, "build-receipt.json")))
       ? typed!.receipt
       : undefined;
+  const diagnostic = safeFailureDiagnostic(typed?.diagnostic);
   return {
     ok: false as const,
     code: "DEVELOPMENT_INSTANCE_FAILED",
@@ -262,6 +381,7 @@ export function developmentFailureResult(
     reason: typed?.reason ?? fallback,
     ...(instance ? { instanceId: instance.id } : {}),
     ...(receipt ? { receipt } : {}),
+    ...(diagnostic ? { diagnostic } : {}),
   };
 }
 

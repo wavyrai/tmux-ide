@@ -13,6 +13,8 @@ import { validateDevelopmentDirectory } from "./development-instance.ts";
 import { withDevelopmentLock } from "./development-lock.ts";
 import {
   DevelopmentOperationError,
+  developmentStageError,
+  type DevelopmentFailureStage,
   readDevelopmentIdentity,
   readDevelopmentOwner,
   readPrivateDevelopmentRecord,
@@ -189,9 +191,14 @@ export async function restartDevelopmentInstance(
     return { ...after, transition: "runtime-restarted" as const };
   });
 }
-async function stopOwner(instance: DevelopmentInstance) {
+async function stopOwner(
+  instance: DevelopmentInstance,
+  stage: (value: DevelopmentFailureStage) => void = () => {},
+) {
+  stage("owner-admission");
   const owner = await ownedProcess(instance);
   if (!owner) return;
+  stage("owner-inspect");
   const { info, claim } = await inspectOwner(instance, owner);
   let requested = false;
   if (
@@ -203,6 +210,7 @@ async function stopOwner(instance: DevelopmentInstance) {
     info.info.bindHostname === "127.0.0.1"
   ) {
     const record = info.info;
+    stage("owner-probe");
     const remote = await probeCanonicalDaemonIdentity(record);
     const again = inspectCanonicalDaemonInfoPath(join(instance.stateHome, "daemon.json"));
     if (
@@ -214,6 +222,7 @@ async function stopOwner(instance: DevelopmentInstance) {
       JSON.stringify(again.info) === JSON.stringify(record) &&
       (await developmentProcessIdentity(owner.pid)) === owner.incarnation
     ) {
+      stage("owner-request");
       const response = await fetch(
         canonicalDaemonUrl(
           "http",
@@ -239,13 +248,19 @@ async function stopOwner(instance: DevelopmentInstance) {
   if (!requested) {
     // Interrupted startup or unavailable HTTP: nonce + exact OS incarnation +
     // immutable build proof is still explicit ownership, never a PID-only kill.
+    stage("owner-signal");
     if (JSON.stringify(await ownedProcess(instance)) !== JSON.stringify(owner))
       throw new Error("Managed owner changed before stop");
     process.kill(owner.pid, "SIGTERM");
   }
+  stage("owner-wait");
   await waitDead(owner.pid, owner.incarnation);
 }
-async function stopTmux(instance: DevelopmentInstance) {
+async function stopTmux(
+  instance: DevelopmentInstance,
+  stage: (value: DevelopmentFailureStage) => void = () => {},
+) {
+  stage("tmux-identity");
   const identity = await requireIdentity(instance);
   const tmux = readTmux(instance);
   const socket = join(instance.runtimeDir, "tmux.sock");
@@ -261,7 +276,9 @@ async function stopTmux(instance: DevelopmentInstance) {
     throw new DevelopmentOperationError("owner-unverified", "Tmux capability mismatch");
   const current = await developmentProcessIdentity(tmux.pid);
   if (current !== null) {
+    stage("tmux-verify");
     await verifyTmux(instance, identity, tmux, cleanManagerEnvironment());
+    stage("tmux-command");
     await boundedTmuxRead(
       tmux.executable,
       [
@@ -278,9 +295,15 @@ async function stopTmux(instance: DevelopmentInstance) {
         timeoutMs: 1000,
       },
     );
+    stage("tmux-wait");
     await waitDead(tmux.pid, tmux.incarnation);
   }
-  if (present(socket)) rmSync(revalidateUnixSocketIdentity(socketIdentity(tmux)));
+  stage("socket-revalidate");
+  if (present(socket)) {
+    const verified = revalidateUnixSocketIdentity(socketIdentity(tmux));
+    stage("socket-remove");
+    rmSync(verified);
+  }
 }
 function retireAdmission(instance: DevelopmentInstance) {
   // No owner survives here. Remove admission first so consumed attempts are no longer eligible.
@@ -296,19 +319,32 @@ export async function downDevelopmentInstance(
   instance: DevelopmentInstance,
   options: { daemonOnly?: boolean } = {},
 ) {
-  return withDevelopmentLock(instance, "lifecycle", async () => {
-    const identity = await requireIdentity(instance);
-    verifyDevelopmentRuntimeOwner(instance, identity);
-    await stopOwner(instance);
-    await inspectOwner(instance, null);
-    if (!options.daemonOnly) await stopTmux(instance);
-    retireAdmission(instance);
-    return {
-      instanceId: instance.id,
-      status: "stopped" as const,
-      scope: options.daemonOnly ? "daemon" : "instance",
-    };
-  });
+  let stage: DevelopmentFailureStage = "lock-acquire";
+  const note = (value: DevelopmentFailureStage) => {
+    stage = value;
+  };
+  try {
+    return await withDevelopmentLock(instance, "lifecycle", async () => {
+      note("identity");
+      const identity = await requireIdentity(instance);
+      note("runtime-ownership");
+      verifyDevelopmentRuntimeOwner(instance, identity);
+      await stopOwner(instance, note);
+      note("owner-final-inspect");
+      await inspectOwner(instance, null);
+      if (!options.daemonOnly) await stopTmux(instance, note);
+      note("admission-retire");
+      retireAdmission(instance);
+      note("lock-release");
+      return {
+        instanceId: instance.id,
+        status: "stopped" as const,
+        scope: options.daemonOnly ? "daemon" : "instance",
+      };
+    });
+  } catch (error) {
+    throw developmentStageError(error, stage);
+  }
 }
 export async function resetDevelopmentInstance(
   instance: DevelopmentInstance,
