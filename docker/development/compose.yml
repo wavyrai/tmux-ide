@@ -1,0 +1,45 @@
+# Planning template only. No SSH fixture image is deployed by this checkpoint.
+# Wrapper must set these from a verified private project record, never ambient defaults.
+name: ${TI_PROJECT:?verified project required}
+services:
+  fixture:
+    image: ${TI_IMAGE_ID:?immutable image required}
+    user: "1000:1000"
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    labels:
+      io.tmux-ide.development.owner: ${TI_OWNER:?saved ownership nonce required}
+      io.tmux-ide.development.source: ${TI_SOURCE_DIGEST:?source digest required}
+      io.tmux-ide.development.role: fixture
+    ports:
+      - target: 2222
+        host_ip: 127.0.0.1
+        protocol: tcp
+    volumes:
+      - { type: volume, source: workspace, target: /workspace }
+      - { type: volume, source: state, target: /state }
+      - { type: volume, source: runtime, target: /tmp/ti-dev-1000 }
+volumes:
+  workspace:
+    labels:
+      io.tmux-ide.development.owner: ${TI_OWNER:?saved ownership nonce required}
+      io.tmux-ide.development.source: ${TI_SOURCE_DIGEST:?source digest required}
+      io.tmux-ide.development.role: workspace
+  state:
+    labels:
+      io.tmux-ide.development.owner: ${TI_OWNER:?saved ownership nonce required}
+      io.tmux-ide.development.source: ${TI_SOURCE_DIGEST:?source digest required}
+      io.tmux-ide.development.role: state
+  runtime:
+    labels:
+      io.tmux-ide.development.owner: ${TI_OWNER:?saved ownership nonce required}
+      io.tmux-ide.development.source: ${TI_SOURCE_DIGEST:?source digest required}
+      io.tmux-ide.development.role: runtime
+networks:
+  default:
+    internal: true
+    labels:
+      io.tmux-ide.development.owner: ${TI_OWNER:?saved ownership nonce required}
+      io.tmux-ide.development.source: ${TI_SOURCE_DIGEST:?source digest required}
+      io.tmux-ide.development.role: network
