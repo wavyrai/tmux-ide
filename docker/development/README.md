@@ -157,9 +157,9 @@ the suspension barrier, explicit proof-bound resume admitted the unchanged build
 and SSH authenticated a new daemon through a refreshed dynamic endpoint with the
 same host key. Listener retirement, a second suspension and exact Docker stop
 then passed. No container recreation or changed-VM recovery was exercised.
-The wrapper journey is qualified separately below. Native TUI and two-project
-isolation remain acceptance gates before this lane is advertised as a complete
-workflow.
+The wrapper and one native TUI journey are qualified separately below.
+Two-project isolation remains an acceptance gate before this lane is advertised
+as a complete workflow.
 
 The image idles as UID 1000, precreates `/tmp/ti-dev-1000` with private ownership,
 and never starts a development daemon or erases lifecycle witnesses at boot.
@@ -275,7 +275,23 @@ process already launched by Docker exec; the saved phase prevents an unsafe
 automatic retry. Do not clear records, recreate resources or use Docker prune to
 bypass a refusal. This initial slice does not yet provide reset for those cases.
 
-### Native managed client (source checkpoint; live qualification pending)
+### Native managed client
+
+A bounded macOS arm64 client journey passed with host manager `14137948` and
+separate native/Linux artifacts from clean `29e6f891` source. The actual native
+TUI selected the Linux workspace, displayed fresh shell output and delivered
+keyboard input whose decoded result appeared in the active terminal. The remote
+server, socket and pane stayed unchanged. The app exited zero, its receipts were
+released, scoped native cleanup retired all captured host processes, and wrapper
+down left the same container stopped with PID zero and no OOM kill. Unrelated
+running containers were unchanged. The native build used Node 26.8.2 / ABI 147,
+Bun 1.4.2 and a separately verified macOS tmux bundle.
+
+Two earlier harness failures are retained: an incorrect named development-label
+check and input sent while the command palette was open. Neither counts as a
+passing interactive run. The corrected terminal-selection journey passed without
+product changes. This qualifies one client/container, not two-project isolation,
+Linux shell access, reset or a long-duration performance run.
 
 After the selected container is ready, `pnpm dev:instance app --container` launches
 an immutable native TUI through the existing authenticated SSH transport. The
