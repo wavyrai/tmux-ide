@@ -15,6 +15,7 @@ import {
 import {
   createOwnedSshFixture,
   createMacProcessIdentity,
+  sshDiagnosticSink,
   ownedProcesses,
   unusedLoopbackPort,
   waitForPort,
@@ -22,6 +23,7 @@ import {
   clientConfiguration,
 } from "./lib/owned-ssh-fixture.mjs";
 process.umask(0o077);
+const runStarted = Date.now();
 const execute = promisify(execFile);
 const args = process.argv.slice(2);
 if (args.length !== 3 || args[0] !== "--run-owned-local" || args[1] !== "--root")
@@ -39,9 +41,17 @@ const allocations: Array<{
   diagnostics(): { stage: string; failureStage: string | null };
 }> = [];
 const transports: Array<Awaited<ReturnType<typeof openSshDaemonTransport>>> = [];
-const results: Array<{ name: string; ok: boolean; elapsedMs: number; code?: string }> = [];
+const results: Array<{
+  name: string;
+  ok: boolean;
+  elapsedMs: number;
+  code?: string;
+  facts?: Record<string, string | number | boolean | null>;
+}> = [];
+let caseFacts: Record<string, string | number | boolean | null> = {};
 const forwardPorts: number[] = [];
 const sshChildren: number[] = [];
+const sshDiagnostics: Array<{ role: string; snapshot: ReturnType<typeof sshDiagnosticSink> }> = [];
 let currentStage = "setup";
 let proxyChildObserved = false;
 const interrupted = new AbortController();
@@ -118,6 +128,7 @@ async function runCase(name: string, work: () => Promise<void>) {
   if (interrupted.signal.aborted) throw new Error("Qualification interrupted");
   currentStage = name;
   expectedFailureCode = undefined;
+  caseFacts = {};
   const started = Date.now();
   try {
     await work();
@@ -125,6 +136,7 @@ async function runCase(name: string, work: () => Promise<void>) {
       name,
       ok: true,
       elapsedMs: Date.now() - started,
+      facts: { ...caseFacts },
       ...(expectedFailureCode ? { code: expectedFailureCode } : {}),
     });
   } catch (error) {
@@ -132,7 +144,12 @@ async function runCase(name: string, work: () => Promise<void>) {
       name,
       ok: false,
       elapsedMs: Date.now() - started,
-      ...(error instanceof SshConnectionError ? { code: error.code } : {}),
+      facts: { ...caseFacts },
+      ...(error instanceof SshConnectionError
+        ? { code: error.code }
+        : expectedFailureCode
+          ? { code: expectedFailureCode }
+          : {}),
     });
     throw new Error("Owned SSH qualification failed", { cause: error });
   }
@@ -167,6 +184,7 @@ function adapter(config: string) {
       const child = tracker.retain(
         spawn("/usr/bin/ssh", ["-F", config, ...argv], { stdio: ["ignore", "pipe", "pipe"], env }),
       );
+      sshDiagnostics.push({ role: "production", snapshot: sshDiagnosticSink(child.stderr) });
       if (child.pid) sshChildren.push(child.pid);
       return child;
     },
@@ -213,14 +231,24 @@ async function refused(config: string, signal?: AbortSignal, minMs = 0) {
   } catch (error) {
     if (!(error instanceof SshConnectionError)) throw error;
     expectedFailureCode = error.code;
+    caseFacts.step = "error-code";
     assert(error.code === "unavailable");
     rejected = true;
   }
+  caseFacts.elapsedMs = Date.now() - started;
+  caseFacts.spawned = sshChildren.length - before;
+  caseFacts.aborted = signal?.aborted ?? false;
+  caseFacts.step = "rejected";
   assert(rejected);
+  caseFacts.step = "elapsed-bound";
   assert(Date.now() - started >= minMs && Date.now() - started < 3000);
+  caseFacts.step = "spawn-count";
   assert(sshChildren.length - before === (signal?.aborted && minMs === 0 ? 0 : 1));
+  caseFacts.step = "abort-observed";
   if (minMs > 0) assert(signal?.aborted);
+  caseFacts.step = "capture";
   await tracker.capture();
+  caseFacts.step = "complete";
 }
 async function freshMarker(baseUrl: string) {
   const response = await fetch(`${baseUrl}/marker`, { signal: AbortSignal.timeout(1000) });
@@ -313,9 +341,9 @@ try {
         { stdio: ["ignore", "ignore", "pipe"], env },
       ),
     );
-    master.stderr?.resume();
+    sshDiagnostics.push({ role: "baseline-master", snapshot: sshDiagnosticSink(master.stderr) });
     await waitForPort(baseline, true);
-    target.files.capture("master.sock");
+    target.files.capture("m");
     await tracker.capture();
     await marker();
     const transport = await connect(target.config);
@@ -507,11 +535,13 @@ try {
   cleanup.forwards = portResults.every((r) => r.status === "fulfilled");
   const receipt = {
     version: 1,
+    elapsedMs: Date.now() - runStarted,
     ok: overall && Object.values(cleanup).every(Boolean),
     scope: "synthetic-identity-production-ssh-transport-only",
     realDaemon: false,
     failureStage: overall ? null : currentStage,
     proxyChildObserved,
+    sshDiagnostics: sshDiagnostics.map((item) => ({ role: item.role, ...item.snapshot() })),
     processObservation: tracker.snapshot(),
     kernelWitness: kernelIdentity
       ? { sourceHash: kernelIdentity.sourceHash, artifactHash: kernelIdentity.artifactHash }

@@ -36,9 +36,10 @@ export function fixturePath(path) {
     throw fail();
   return path;
 }
-export function socketPath(path) {
+export function socketPath(path, reserve = 0) {
   fixturePath(path);
-  if (Buffer.byteLength(path) > 103) throw fail();
+  if (!Number.isInteger(reserve) || reserve < 0 || Buffer.byteLength(path) + reserve > 103)
+    throw fail();
   return path;
 }
 const quote = (path) => `"${fixturePath(path)}"`;
@@ -58,7 +59,7 @@ export function serverConfiguration({
   fixturePath(root);
   fixturePath(node);
   socketPath(join(root, "discovery.sock"));
-  socketPath(join(root, "master.sock"));
+  socketPath(join(root, "m"), 17);
   if (!/^[a-z_][a-z0-9_-]{0,31}$/iu.test(account)) throw fail();
   return `Port ${port(listenPort)}\nListenAddress 127.0.0.1\nHostKey ${quote(join(root, "host"))}\nPidFile ${quote(join(root, "sshd.pid"))}\nAuthorizedKeysFile ${quote(join(root, "authorized_keys"))}\nAllowUsers ${account}\nStrictModes yes\nPubkeyAuthentication yes\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nHostbasedAuthentication no\nUsePAM no\nPermitUserRC no\nPermitUserEnvironment no\nAllowAgentForwarding no\nX11Forwarding no\nPermitTunnel no\nAllowStreamLocalForwarding no\nAllowTcpForwarding local\nGatewayPorts no\nPermitListen none\nPermitOpen 127.0.0.1:${port(targetPort)}\nMaxSessions 4\nMaxStartups 4\nLoginGraceTime 5\nSetEnv HOME=${quote(join(root, "home"))} ZDOTDIR=${quote(join(root, "home"))} PATH=${quote(join(root, missingPath ? "empty" : "bin"))}\nForceCommand ${jump ? "/usr/bin/false" : `${quote(node)} ${quote(join(root, "dispatch.mjs"))}`}\n`;
 }
@@ -141,10 +142,10 @@ export function clientConfiguration({
   defaults = true,
 }) {
   if (jump && !/^[a-z][a-z0-9-]{0,31}$/u.test(jump)) throw fail();
-  socketPath(join(root, "master.sock"));
+  socketPath(join(root, "m"), 17);
   if (!/^[a-z][a-z0-9-]{0,31}$/u.test(alias) || !/^[a-z_][a-z0-9_-]{0,31}$/iu.test(account))
     throw fail();
-  return `Host ${alias}\n HostName 127.0.0.1\n Port ${port(remotePort)}\n User ${account}\n IdentityFile ${quote(identity ?? join(root, "client"))}\n UserKnownHostsFile ${quote(known ?? join(root, "known_hosts"))}\n GlobalKnownHostsFile /dev/null\n StrictHostKeyChecking yes\n IdentitiesOnly yes\n IdentityAgent none\n ForwardAgent no\n BatchMode yes\n PasswordAuthentication no\n KbdInteractiveAuthentication no\n${jump ? ` ProxyJump ${jump}\n` : ""}${sharing ? "" : ` ControlMaster no\n ControlPath none\n`}${defaults ? `Host *\n ControlMaster auto\n ControlPath ${quote(join(root, "master.sock"))}\n ControlPersist 10m\n ForkAfterAuthentication yes\n` : ""}`;
+  return `Host ${alias}\n HostName 127.0.0.1\n Port ${port(remotePort)}\n User ${account}\n IdentityFile ${quote(identity ?? join(root, "client"))}\n UserKnownHostsFile ${quote(known ?? join(root, "known_hosts"))}\n GlobalKnownHostsFile /dev/null\n StrictHostKeyChecking yes\n IdentitiesOnly yes\n IdentityAgent none\n ForwardAgent no\n BatchMode yes\n PasswordAuthentication no\n KbdInteractiveAuthentication no\n${jump ? ` ProxyJump ${jump}\n` : ""}${sharing ? "" : ` ControlMaster no\n ControlPath none\n`}${defaults ? `Host *\n ControlMaster auto\n ControlPath ${quote(join(root, "m"))}\n ControlPersist 10m\n ForkAfterAuthentication yes\n` : ""}`;
 }
 /** Handles authorize only their own signals. Captured descendants require exact ancestry and incarnation. */
 export function ownedProcesses({ identify, list, signal = (pid, s) => process.kill(pid, s) }) {
@@ -206,59 +207,94 @@ export function ownedProcesses({ identify, list, signal = (pid, s) => process.ki
     return child;
   };
   async function captureNow() {
-    for (const r of roots) {
-      if (r.done || !r.child.pid) continue;
-      const identity = await rootIdentity(r.child.pid);
-      if (identity === null) continue;
-      if (r.identity && r.identity !== identity)
-        recordIdentityChange("root-identity-changed", r.child.pid, r.identity, identity);
-      r.identity = identity;
-    }
-    const before = await list();
-    if (before.length > 8192) throw fail();
-    const selected = new Map(
-      roots.filter((r) => !r.done && r.identity).map((r) => [r.child.pid, r.identity]),
-    );
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const row of before) {
-        if (selected.has(row.ppid) && !selected.has(row.pid)) {
-          if (selected.size >= 128) throw fail();
-          const value = await identify(row.pid);
-          if (value !== null) {
-            selected.set(row.pid, value);
-            changed = true;
+    let at = "roots",
+      capturePid = null;
+    const diagnosticCount = diagnostics.length;
+    try {
+      for (const r of roots) {
+        if (r.done || !r.child.pid) continue;
+        const identity = await rootIdentity(r.child.pid);
+        if (identity === null) continue;
+        if (r.identity && r.identity !== identity)
+          recordIdentityChange("root-identity-changed", r.child.pid, r.identity, identity);
+        r.identity = identity;
+      }
+      at = "before-process-list";
+      const before = await list();
+      if (before.length > 8192) throw fail();
+      const selected = new Map(
+        roots.filter((r) => !r.done && r.identity).map((r) => [r.child.pid, r.identity]),
+      );
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const row of before) {
+          if (selected.has(row.ppid) && !selected.has(row.pid)) {
+            if (selected.size >= 128) throw fail();
+            at = "descendant-identity-read";
+            capturePid = row.pid;
+            const value = await identify(row.pid);
+            if (value !== null) {
+              selected.set(row.pid, value);
+              changed = true;
+            }
           }
         }
       }
-    }
-    const after = await list();
-    for (const [pid, identity] of selected) {
-      const root = roots.find((r) => r.child.pid === pid);
-      if (root) {
-        const current = await rootIdentity(pid);
-        if (!root.done && current !== null && current !== identity)
-          recordIdentityChange("root-verification-changed", pid, identity, current);
-        continue;
+      at = "after-process-list";
+      capturePid = null;
+      const after = await list();
+      for (const [pid, identity] of selected) {
+        at = "verification";
+        capturePid = pid;
+        const root = roots.find((r) => r.child.pid === pid);
+        if (root) {
+          const current = await rootIdentity(pid);
+          if (!root.done && current !== null && current !== identity)
+            recordIdentityChange("root-verification-changed", pid, identity, current);
+          continue;
+        }
+        const a = before.find((v) => v.pid === pid),
+          b = after.find((v) => v.pid === pid);
+        const current = await identify(pid);
+        if (current === null) continue;
+        if (!a || !b || a.ppid !== b.ppid || !selected.has(b.ppid) || current !== identity) {
+          diagnostic({
+            stage: "descendant-binding-refused",
+            pid,
+            beforePresent: !!a,
+            afterPresent: !!b,
+            parentEqual: a && b ? a.ppid === b.ppid : null,
+            identityEqual: current === identity,
+            previouslyOwned: descendants.has(pid),
+          });
+          throw fail();
+        }
+        if (descendants.has(pid) && descendants.get(pid) !== identity) {
+          diagnostic({ stage: "descendant-incarnation-refused", pid });
+          throw fail();
+        }
+        descendants.set(pid, identity);
+        at = "ancestor-chain";
+        let ancestor = b.ppid;
+        let hops = 0;
+        while (!roots.some((r) => r.child.pid === ancestor)) {
+          if (++hops > 128) throw fail();
+          const parent = before.find((r) => r.pid === ancestor);
+          if (!parent) throw fail();
+          ancestor = parent.ppid;
+        }
+        ancestry.set(pid, ancestor);
       }
-      const a = before.find((v) => v.pid === pid),
-        b = after.find((v) => v.pid === pid);
-      const current = await identify(pid);
-      if (current === null) continue;
-      if (!a || !b || a.ppid !== b.ppid || !selected.has(b.ppid) || current !== identity)
-        throw fail();
-      if (descendants.has(pid) && descendants.get(pid) !== identity) throw fail();
-      descendants.set(pid, identity);
-      let ancestor = b.ppid;
-      let hops = 0;
-      while (!roots.some((r) => r.child.pid === ancestor)) {
-        if (++hops > 128) throw fail();
-        const parent = before.find((r) => r.pid === ancestor);
-        if (!parent) throw fail();
-        ancestor = parent.ppid;
-      }
-      ancestry.set(pid, ancestor);
+    } catch (error) {
+      if (diagnostics.length === diagnosticCount)
+        diagnostic({
+          stage: "capture-refused",
+          at,
+          pid: capturePid,
+          ...(error instanceof KernelWitnessReadError ? { kernelExit: error.status } : {}),
+        });
+      throw error;
     }
   }
   async function dispose() {
@@ -502,6 +538,7 @@ export async function createOwnedSshFixture({
     listenPort = null;
   let stage = "allocated",
     failureStage = null;
+  let sshdDiagnostics = null;
   const timers = new Set();
   const metrics = { requests: 0, deliveredBytes: 0, stalls: 0 };
   const disposeFiles = async () => {
@@ -514,7 +551,15 @@ export async function createOwnedSshFixture({
     files.clean();
     disposed = true;
   };
-  onAllocated({ root, disposeFiles, diagnostics: () => ({ stage, failureStage }) });
+  onAllocated({
+    root,
+    disposeFiles,
+    diagnostics: () => ({
+      stage,
+      failureStage,
+      ...(sshdDiagnostics ? { sshd: sshdDiagnostics() } : {}),
+    }),
+  });
   const write = (name, text, mode = 0o600) => {
     writeFileSync(join(root, name), text, { flag: "wx", mode });
     files.capture(name);
@@ -617,7 +662,7 @@ export async function createOwnedSshFixture({
         env: { PATH: "/usr/bin:/bin", HOME: join(root, "home"), ZDOTDIR: join(root, "home") },
       }),
     );
-    child.stderr.resume();
+    sshdDiagnostics = sshDiagnosticSink(child.stderr);
     stage = "process-capture";
     await processes.capture();
     stage = "listen";
@@ -669,6 +714,32 @@ export function decodeMacProcessWitness(value, pid, uid = process.getuid()) {
     throw fail();
   return `darwin-kernel:${pid}:${uid}:${value.seconds}:${value.microseconds}`;
 }
+export class KernelWitnessReadError extends Error {
+  constructor(status) {
+    super("Owned kernel witness refused");
+    this.status = [64, 65, 66].includes(status) ? status : null;
+  }
+}
+/** One confirmation, inside the original read budget; only newly proven death permits omission. */
+export async function confirmMacProcessExit(read, options = {}) {
+  const now = options.now ?? Date.now,
+    wait = options.wait ?? delay,
+    deadline = now() + 1000;
+  try {
+    return await read(1000);
+  } catch (error) {
+    if (!(error instanceof KernelWitnessReadError) || error.status !== 65 || deadline - now() <= 25)
+      throw error;
+    await wait(25);
+    if (deadline - now() <= 0) throw error;
+    try {
+      if ((await read(deadline - now())) === null) return null;
+    } catch {
+      /* Preserve the original refusal. */
+    }
+    throw error;
+  }
+}
 /** Compiles only this fixed test helper; no production identity semantics are changed. */
 export async function createMacProcessIdentity({ parent, onAllocated }) {
   if (process.platform !== "darwin" || process.getuid() === 0 || typeof onAllocated !== "function")
@@ -711,22 +782,59 @@ export async function createMacProcessIdentity({ parent, onAllocated }) {
       artifactHash,
       artifactBytes: artifact.size,
       async identify(pid) {
-        if (
-          !Number.isSafeInteger(pid) ||
-          pid <= 0 ||
-          hashPrivateFile(binary, artifact) !== artifactHash
-        )
-          throw fail();
-        const { stdout } = await execute(binary, [String(pid)], {
-          timeout: 1000,
-          maxBuffer: 1024,
-          env: { PATH: "/usr/bin:/bin", HOME: root, ZDOTDIR: root },
+        if (!Number.isSafeInteger(pid) || pid <= 0) throw fail();
+        return confirmMacProcessExit(async (timeout) => {
+          if (hashPrivateFile(binary, artifact) !== artifactHash) throw fail();
+          let stdout;
+          try {
+            ({ stdout } = await execute(binary, [String(pid)], {
+              timeout,
+              maxBuffer: 1024,
+              env: { PATH: "/usr/bin:/bin", HOME: root, ZDOTDIR: root },
+            }));
+          } catch (error) {
+            throw new KernelWitnessReadError(error.code);
+          }
+          return decodeMacProcessWitness(JSON.parse(stdout), pid);
         });
-        return decodeMacProcessWitness(JSON.parse(stdout), pid);
       },
     };
   } catch {
     failureStage = stage;
     throw fail();
   }
+}
+
+/** Bounded in-memory classifier. Never exposes raw remote text, paths or key material. */
+export function sshDiagnosticSink(stream) {
+  const categories = new Set();
+  let tail = "",
+    bytes = 0,
+    truncated = false;
+  const patterns = [
+    ["bad-ownership", /bad ownership or modes/iu],
+    ["permission-denied", /permission denied/iu],
+    ["host-key-refused", /host key verification failed|remote host identification has changed/iu],
+    ["connection-refused", /connection refused/iu],
+    ["socket-path-too-long", /too long for unix domain socket|unix_listener[^\n]*too long/iu],
+    ["forwarding-refused", /administratively prohibited|port forwarding failed/iu],
+    [
+      "session-helper-unavailable",
+      /sshd-session[^\n]*(?:no such file|not found)|(?:exec|posix_spawn)[^\n]*sshd-session/iu,
+    ],
+    ["bad-option", /bad configuration option|unsupported option/iu],
+    ["accepted-publickey", /accepted publickey/iu],
+    ["authentication-refused", /authentication refused|not allowed because/iu],
+  ];
+  stream.on("data", (chunk) => {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const count = Math.min(buffer.length, 65536 - bytes);
+    truncated ||= count < buffer.length;
+    bytes += count;
+    const value = tail + buffer.subarray(0, count).toString("utf8");
+    for (const [category, pattern] of patterns) if (pattern.test(value)) categories.add(category);
+    tail = count ? value.slice(-512) : "";
+  });
+  stream.resume();
+  return () => ({ categories: [...categories].sort(), bytes, truncated });
 }

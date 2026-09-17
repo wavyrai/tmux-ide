@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { spawn } from "node:child_process";
+import { PassThrough } from "node:stream";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,9 @@ import {
   fixturePath,
   decodeMacProcessWitness,
   createMacProcessIdentity,
+  confirmMacProcessExit,
+  KernelWitnessReadError,
+  sshDiagnosticSink,
   socketPath,
   serverConfiguration,
   clientConfiguration,
@@ -50,6 +54,7 @@ test("rejects shell expansion, token paths and overlong canonical sockets before
     assert.throws(() => fixturePath(p));
   assert.equal(fixturePath("/private/tmp/safe-root"), "/private/tmp/safe-root");
   assert.throws(() => socketPath("/tmp/" + "x".repeat(100)));
+  assert.throws(() => socketPath("/tmp/" + "x".repeat(82), 17));
   assert.throws(() => serverConfiguration({ ...spec, node: "/tmp/$(id)" }));
 });
 test("effective pre-exec policy requires exact private environment without duplicate aliases", () => {
@@ -309,3 +314,71 @@ test(
     t.diagnostic(JSON.stringify({ ...proof, cleanup: true }));
   },
 );
+
+test("SSH classifier bounds input and only exposes fixed categories across chunks", () => {
+  const stream = new PassThrough();
+  const inspect = sshDiagnosticSink(stream);
+  stream.write("SECRET Authentication refused: bad owner");
+  stream.write("ship or modes for directory SECRET");
+  stream.write(Buffer.alloc(70000, 120));
+  stream.end();
+  const result = inspect();
+  assert.ok(result.categories.includes("bad-ownership"));
+  assert.ok(result.categories.includes("authentication-refused"));
+  assert.equal(result.bytes, 65536);
+  assert.equal(result.truncated, true);
+  assert.equal(JSON.stringify(result).includes("SECRET"), false);
+});
+
+test("kernel read refusal permits only one bounded confirmed-dead result", async () => {
+  const error = new KernelWitnessReadError(65);
+  let calls = 0;
+  const options = { wait: async () => {}, now: () => 0 };
+  assert.equal(
+    await confirmMacProcessExit(async () => {
+      if (++calls === 1) throw error;
+      return null;
+    }, options),
+    null,
+  );
+  assert.equal(calls, 2);
+  for (const after of ["same-live", "reused", new KernelWitnessReadError(65)]) {
+    calls = 0;
+    await assert.rejects(
+      confirmMacProcessExit(async () => {
+        if (++calls === 1) throw error;
+        if (after instanceof Error) throw after;
+        return after;
+      }, options),
+      (e) => e === error,
+    );
+    assert.equal(calls, 2);
+  }
+  calls = 0;
+  await assert.rejects(
+    confirmMacProcessExit(async () => {
+      calls++;
+      throw new KernelWitnessReadError(66);
+    }, options),
+  );
+  assert.equal(calls, 1);
+  let now = 0;
+  calls = 0;
+  await assert.rejects(
+    confirmMacProcessExit(
+      async () => {
+        calls++;
+        now = 990;
+        throw error;
+      },
+      {
+        now: () => now,
+        wait: async () => {
+          throw Error("must not wait");
+        },
+      },
+    ),
+    (e) => e === error,
+  );
+  assert.equal(calls, 1);
+});
