@@ -168,7 +168,23 @@ export function createInstalledRuntimeCleanup(downloadedTui, readyPath, dependen
         /* Partial readiness does not prevent exact-binary inventory cleanup. */
       }
     }
-    const results = await Promise.allSettled([...pids].map(retire));
+    const results = await Promise.allSettled(
+      [...pids].map(async (pid) => {
+        try {
+          await retire(pid);
+        } catch (error) {
+          // Inventory and ps identity reads can race process exit. Only a fresh
+          // ESRCH confirms retirement; changed/live/unknown identities remain
+          // refused and are never granted additional signal authority.
+          try {
+            if (dead(pid)) return;
+          } catch {
+            // Preserve the original refusal when liveness is uncertain.
+          }
+          throw error;
+        }
+      }),
+    );
     if (results.some((result) => result.status === "rejected")) {
       const reasons = new Map([
         ["Packed runtime identity read failed", "identity-read-failed"],

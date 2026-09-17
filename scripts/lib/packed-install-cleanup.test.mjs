@@ -453,3 +453,53 @@ test("zombie diagnostic never converts a changed binary identity into cleanup au
   });
   assert.deepEqual(signals, ["SIGTERM"]);
 });
+
+test("identity refusal followed by fresh ESRCH confirms exit without signalling", async () => {
+  let reads = 0;
+  const signals = [];
+  const cleanup = createInstalledRuntimeCleanup("/private/fixture/tui", undefined, {
+    inspect(args) {
+      if (args[0] === "-axo") return { status: 0, stdout: reads ? "" : "101 /private/fixture/tui" };
+      reads++;
+      return { status: 0, stdout: "birth [tui] <defunct>" };
+    },
+    kill(_pid, signal) {
+      signals.push(signal);
+      throw Object.assign(new Error(), { code: "ESRCH" });
+    },
+  });
+  await cleanup();
+  assert.deepEqual(signals, [0]);
+});
+
+test("refused identity cannot use alive or uncertain liveness as exit evidence", async () => {
+  for (const code of [null, "EPERM"]) {
+    const signals = [];
+    const cleanup = createInstalledRuntimeCleanup("/private/fixture/tui", undefined, {
+      inspect(args) {
+        if (args[0] === "-axo") return { status: 0, stdout: "101 /private/fixture/tui" };
+        if (args.includes("stat=")) return { status: 0, stdout: "S" };
+        return { status: 0, stdout: "new-birth /foreign/program" };
+      },
+      kill(_pid, signal) {
+        signals.push(signal);
+        if (code) throw Object.assign(new Error(), { code });
+      },
+    });
+    await assert.rejects(cleanup(), /retirement unconfirmed/);
+    assert.ok(signals.every((signal) => signal === 0));
+  }
+});
+
+test("ESRCH confirmation still requires the final runtime inventory to be empty", async () => {
+  const cleanup = createInstalledRuntimeCleanup("/private/fixture/tui", undefined, {
+    inspect(args) {
+      if (args[0] === "-axo") return { status: 0, stdout: "101 /private/fixture/tui" };
+      return { status: 0, stdout: "birth [tui] <defunct>" };
+    },
+    kill() {
+      throw Object.assign(new Error(), { code: "ESRCH" });
+    },
+  });
+  await assert.rejects(cleanup(), /inventory remains live/);
+});
