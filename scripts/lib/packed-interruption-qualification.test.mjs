@@ -90,6 +90,11 @@ test("injected failure is distinct from SIGTERM but still requires exact ready o
   value.proof.interruption.requested = false;
   value.proof.interruption.signal = null;
   assert.equal(assessPackedInterruption(value).ok, true);
+  value.proof.interruption.requested = true;
+  value.proof.interruption.signal = "SIGTERM";
+  assert.equal(assessPackedInterruption(value).ok, false);
+  value.proof.interruption.requested = false;
+  value.proof.interruption.signal = null;
   value.ready.runnerPid++;
   assert.equal(assessPackedInterruption(value).ok, false);
 });

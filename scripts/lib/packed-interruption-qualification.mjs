@@ -30,6 +30,9 @@ export function assessPackedInterruption({
   if (mode === "hold-input-ready")
     require(proof?.interruption?.requested &&
       proof.interruption.signal === "SIGTERM", "signal-not-observed");
+  if (mode === "fail-input-ready")
+    require(proof?.interruption?.requested === false &&
+      proof.interruption.signal === null, "unexpected-cancellation");
   const pids = [
     ...new Set([
       pid,
