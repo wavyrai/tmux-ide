@@ -1145,6 +1145,31 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       `Agent pane ${preparedAgentPane} has no durable semantic identity: ${semanticAgentPane}`,
     );
   }
+  // Exercise Home through its actual observer and wire resources. Sidebar
+  // publication alone does not prove that the Home roster receives agent data.
+  send(one, "F1");
+  await observe(
+    "installed Home real-process agent indicator",
+    10_000,
+    () => {
+      const frame = capture(one.targetPane);
+      return (
+        frame.includes("1 observed agent") &&
+        frame.includes("STATUS") &&
+        frame
+          .split("\n")
+          .some((line) => line.includes(agentClickLabel) && line.includes("journey-beta"))
+      );
+    },
+    one.diagnostics,
+  );
+  send(one, "F2");
+  await observe(
+    "installed Home returns to terminals",
+    5_000,
+    () => frameShowsTerminalFocus(capture(one.targetPane)),
+    one.diagnostics,
+  );
   clickText(one, agentClickLabel);
   const agentJumpMarker = `PACK_AGENT_JUMP_${process.pid}`;
   typeCommand(one, agentJumpMarker);
