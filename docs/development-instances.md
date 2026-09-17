@@ -353,12 +353,22 @@ there is no fallback to an installed CLI or source runtime.
 
 `up` serializes lifecycle admission and starts one detached, exact-build Node
 owner plus an explicitly socket-selected tmux server using `-f /dev/null`. The
-private `tmux-ide-dev-keeper` session keeps the server alive. Repeated/concurrent
+private `_tmux-ide-dev-keeper` session keeps the server alive. Repeated/concurrent
 `up` reuses a ready owner. A new selected build does not replace a running owner:
 `status` reports both generations, and `app` pins the active owner's TUI. Closing
 an app leaves the owner and tmux work running. Runtime UUID and canonical claim
 may change during an authenticated runtime restart; process incarnation and the
 launch receipt continue to identify the same supervised process.
+
+The new keeper follows the existing internal-session convention: discovery hides
+it and workspace promotion rejects it before persistence. Exact legacy
+`tmux-ide-dev-keeper` ownership receipts remain valid; an already-running server
+is neither renamed nor restarted. Only a later explicit full `down`/`up` creates
+the hidden helper, and full `down` stops that instance's pane work. No keeper
+registry entries are blindly deleted by this migration. Existing authoritative
+registry reconciliation still retires names absent from a new server. Global
+missing/duplicate semantic-stamp rejection is unchanged; stale ordinary workspace
+recovery and actionable attachment errors remain separate work.
 
 Admission checks worktree filesystem identity, private records, exact artifacts,
 process incarnation and tmux socket identity. Readiness checks canonical record
