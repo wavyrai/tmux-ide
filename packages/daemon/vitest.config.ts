@@ -71,6 +71,7 @@ export default defineConfig({
       "src/lib/auth/middleware.test.ts",
       "src/lib/authorship.test.ts",
       "src/lib/canonical-daemon.test.ts",
+      "src/lib/canonical-daemon-supervision.test.ts",
       "src/lib/dot-path.test.ts",
       "src/lib/filesystem-browser.test.ts",
       "src/lib/launch-plan.test.ts",
