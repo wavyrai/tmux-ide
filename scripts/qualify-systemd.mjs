@@ -255,6 +255,8 @@ try {
       "/usr/bin/env",
       "HOME=/qualification/home",
       "XDG_CACHE_HOME=/qualification/cache",
+      "npm_config_child_concurrency=1",
+      "GOMAXPROCS=2",
       "/usr/local/bin/node",
       "/qualification/input/docker/development/prepare-source.mjs",
       "/qualification/input",
