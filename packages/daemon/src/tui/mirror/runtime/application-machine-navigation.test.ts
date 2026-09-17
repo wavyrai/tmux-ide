@@ -90,7 +90,7 @@ const options = () => ({
   openAgent: vi.fn(async () => {
     state.trace.push(`agent:${state.selected}`);
   }),
-  sessionName: () => null,
+  sessionName: (): string | null => null,
   setSurface: vi.fn(),
   setNote: vi.fn(),
 });
@@ -333,4 +333,48 @@ it("F5 routes same-name sessions explicitly and rejects an obsolete generation",
   );
   expect(callbacks.openSession).not.toHaveBeenCalled();
   expect(callbacks.setNote).toHaveBeenCalledWith("That fleet target changed. Select it again.");
+});
+
+it("reselects exact same-machine incarnation when sidebar leaves a pinned tab for another session", async () => {
+  const { owner, callbacks } = navigation();
+  state.listener?.({
+    selectedMachineId: "local",
+    groups: [
+      {
+        id: "local",
+        label: "Local",
+        state: "ready",
+        sessions: [
+          { id: "local:shared", name: "shared", liveSessionId: "live-shared", disabled: false },
+          {
+            id: "local:recreated",
+            name: "recreated",
+            liveSessionId: "live-recreated",
+            disabled: false,
+          },
+        ],
+      },
+    ],
+  });
+  const shared = owner
+    .paletteCommands()
+    .find(
+      (command) =>
+        typeof command === "object" &&
+        command.kind === "open-session" &&
+        command.sessionName === "shared",
+    );
+  if (!shared || typeof shared !== "object") throw Error("Missing shared command");
+  await owner.openPalette(shared, "keyboard");
+  expect(callbacks.resetWorkspace).toHaveBeenLastCalledWith("local", "live-shared");
+  callbacks.resetWorkspace.mockClear();
+  const currentSession = vi.spyOn(callbacks, "sessionName").mockReturnValue("shared");
+  state.trace = [];
+  owner.sidebar.onOpen("local", "recreated", "mouse");
+  expect(callbacks.resetWorkspace).toHaveBeenCalledWith("local", "live-recreated");
+  expect(state.trace.indexOf("reset")).toBeLessThan(state.trace.indexOf("open:local:recreated"));
+  currentSession.mockReturnValue("recreated");
+  callbacks.resetWorkspace.mockClear();
+  owner.sidebar.onOpen("local", "recreated", "mouse");
+  expect(callbacks.resetWorkspace).not.toHaveBeenCalled();
 });

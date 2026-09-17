@@ -80,6 +80,14 @@ export function createApplicationMachineNavigation(options: {
   ) => {
     // A same-machine session click supersedes any pending exact-agent focus too.
     if (manager.snapshot().selectedMachineId === id) options.cancelOpen();
+    // A sidebar selection can leave a tab whose route is pinned to a different
+    // live incarnation on this same machine. Select a new exact owner before
+    // preparation; never apply that old tab's identity fence to the new name.
+    if (!expectedLiveSessionId && options.sessionName() !== name) {
+      expectedLiveSessionId = snapshot()
+        .groups.find((group) => group.id === id || group.routeIds?.includes(id))
+        ?.sessions.find((row) => row.name === name && !row.disabled)?.liveSessionId;
+    }
     if (!select(id, expectedLiveSessionId)) return;
     const token = ++navigation;
     setFocused(false);
