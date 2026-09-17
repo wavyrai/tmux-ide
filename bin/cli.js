@@ -11017,7 +11017,8 @@ var require_package = __commonJS({
         "build:terminal-parser": "node scripts/build-xterm-native-parser.mjs",
         "test:postinstall": "node --test scripts/postinstall-daemon-upgrade.test.mjs",
         "test:development-isolation": "tsx scripts/lib/development-isolation-qualification.ts",
-        "test:development-isolation-unit": "node --test scripts/lib/development-isolation-resources.test.mjs"
+        "test:development-isolation-unit": "node --test scripts/lib/development-isolation-resources.test.mjs",
+        "test:development-ci": "node --test scripts/lib/development-ci.test.mjs"
       },
       keywords: [
         "tmux",
