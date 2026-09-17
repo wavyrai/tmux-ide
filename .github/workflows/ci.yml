@@ -48,6 +48,9 @@ jobs:
         with:
           bun-version-file: ".bun-version"
 
+      - name: Install tmux for installed ownership smoke
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

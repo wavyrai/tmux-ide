@@ -1,0 +1,200 @@
+name: Isolated development
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      macos_ssh:
+        description: Run actual nonroot macOS SSH fixture (not native TUI or launchd)
+        type: boolean
+        default: false
+  schedule:
+    - cron: "23 4 * * 1"
+
+env:
+  DEVELOPMENT_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+permissions:
+  contents: read
+
+# Do not automatically interrupt owned qualification teardown on a newer push.
+concurrency:
+  group: development-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      heavy: ${{ steps.scope.outputs.heavy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEVELOPMENT_CANDIDATE_SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          node --input-type=module <<'JS'
+          import {execFileSync} from 'node:child_process';
+          import {appendFileSync} from 'node:fs';
+          import {developmentCiScope} from './scripts/lib/development-ci.mjs';
+          const base = process.env.BASE_SHA;
+          let heavy = true;
+          if (base && /^[a-f0-9]{40}$/.test(base) && !/^0+$/.test(base)) {
+            const paths = execFileSync('git', ['diff', '--name-only', base, 'HEAD', '--'], {encoding:'utf8', maxBuffer:1048576}).trim().split('\n');
+            heavy = developmentCiScope(paths);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `heavy=${heavy}\n`);
+          JS
+
+  fast:
+    name: Development contracts (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEVELOPMENT_CANDIDATE_SHA }}
+      - name: Verify exact candidate
+        run: test "$(git rev-parse HEAD)" = "$DEVELOPMENT_CANDIDATE_SHA"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        id: node
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Cache dependency downloads only
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pnpm-store
+          key: dev-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.node.outputs.node-version }}-${{ hashFiles('.bun-version', 'pnpm-lock.yaml') }}
+      - run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pnpm-store" --side-effects-cache=false
+      - name: Fast isolated contracts
+        run: |
+          mkdir -p "$RUNNER_TEMP/development-ci"
+          node scripts/development-ci.mjs fast "$RUNNER_TEMP/development-ci"
+      - name: Always record cleanup result
+        if: always()
+        run: node scripts/development-ci.mjs fast "$RUNNER_TEMP/development-ci" --finalize
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: development-fast-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}-node${{ matrix.node }}
+          path: |
+            ${{ runner.temp }}/development-ci/*/receipt.json
+            ${{ runner.temp }}/development-ci/*/*.log
+          retention-days: 7
+          if-no-files-found: error
+
+  installed_linux:
+    name: Scoped Linux installed package and SSH contracts
+    needs: [scope, fast]
+    if: needs.scope.outputs.heavy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEVELOPMENT_CANDIDATE_SHA }}
+      - name: Verify exact candidate
+        run: test "$(git rev-parse HEAD)" = "$DEVELOPMENT_CANDIDATE_SHA"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: sudo apt-get update && sudo apt-get install -y tmux build-essential autoconf automake pkg-config libevent-dev libncurses-dev libutf8proc-dev bison patchelf
+      - run: pnpm install --frozen-lockfile --side-effects-cache=false
+      - name: Build exact patched native prerequisite (two compiler jobs)
+        timeout-minutes: 8
+        run: |
+          repository="$(node -p 'require("./native/tmux/provenance.json").repository')"
+          commit="$(node -p 'require("./native/tmux/provenance.json").commit')"
+          git init --quiet "$RUNNER_TEMP/tmux-source"
+          git -C "$RUNNER_TEMP/tmux-source" remote add origin "$repository"
+          git -C "$RUNNER_TEMP/tmux-source" fetch --depth=1 origin "$commit"
+          git -C "$RUNNER_TEMP/tmux-source" checkout --detach FETCH_HEAD
+          node scripts/build-bundled-tmux.mjs --source "$RUNNER_TEMP/tmux-source" --jobs 2
+          echo "$GITHUB_WORKSPACE/packages/daemon/dist/native/tmux/linux-x64" >> "$GITHUB_PATH"
+
+      - name: Installed journey (not a real Linux SSH server qualification)
+        run: |
+          mkdir -p "$RUNNER_TEMP/development-ci"
+          node scripts/development-ci.mjs installed "$RUNNER_TEMP/development-ci"
+      - name: Always record cleanup result
+        if: always()
+        run: node scripts/development-ci.mjs installed "$RUNNER_TEMP/development-ci" --finalize
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: development-installed-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: |
+            ${{ runner.temp }}/development-ci/*/receipt.json
+            ${{ runner.temp }}/development-ci/*/*.log
+            ${{ runner.temp }}/development-ci/*/package/proof.json
+          retention-days: 7
+          if-no-files-found: error
+
+  macos_ssh:
+    name: Actual macOS SSH qualification (short matrix)
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.macos_ssh)
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEVELOPMENT_CANDIDATE_SHA }}
+      - name: Verify exact candidate
+        run: test "$(git rev-parse HEAD)" = "$DEVELOPMENT_CANDIDATE_SHA"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile --side-effects-cache=false
+      - name: Private short root and required native tools
+        run: |
+          test "$(id -u)" -ne 0
+          node -e 'if(require("node:os").userInfo().shell!=="/bin/zsh")process.exit(1)'
+          xcrun --find clang >/dev/null
+          test -x /usr/sbin/sshd
+          umask 077
+          root="$(mktemp -d "${TMPDIR%/}/ti13.XXXXXX")"
+          echo "D13_SSH_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Actual 14-case SSH matrix
+        run: node --import tsx scripts/qualify-owned-ssh.ts --run-owned-local --root "$D13_SSH_ROOT"
+      - name: Always retain fixture receipt
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/development-ssh"
+          if test -n "$D13_SSH_ROOT" && test -f "$D13_SSH_ROOT/qualification.json"; then
+            cp "$D13_SSH_ROOT/qualification.json" "$RUNNER_TEMP/development-ssh/qualification.json"
+          else
+            printf '%s\n' '{"ok":false,"cleanup":{"confirmed":false},"reason":"no-fixture-receipt"}' > "$RUNNER_TEMP/development-ssh/qualification.json"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: development-macos-ssh-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: ${{ runner.temp }}/development-ssh/qualification.json
+          retention-days: 7
+          if-no-files-found: error
