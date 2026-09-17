@@ -1,3 +1,5 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -21,6 +23,12 @@ describe("compact terminal delivery cold process", () => {
       uniqueHistoryRows: number;
       profiles: Array<Record<string, unknown>>;
     };
+    if (process.env.COMPACT_COLD_DIAGNOSTICS_DIR)
+      writeFileSync(
+        join(process.env.COMPACT_COLD_DIAGNOSTICS_DIR, "measurement.json"),
+        JSON.stringify(measurement, null, 2) + "\n",
+        { mode: 0o600 },
+      );
     expect(measurement).toMatchObject({ revision: 1, uniqueHistoryRows: 5_000 });
     expect(measurement.rssBytes).toBeLessThan(1_073_741_824);
     expect(measurement.heapBytes).toBeLessThan(536_870_912);

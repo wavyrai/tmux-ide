@@ -1,0 +1,68 @@
+name: Compact cold diagnosis (not release qualification)
+on:
+  push:
+    branches: [codex/compact-cold-diagnosis]
+permissions:
+  contents: read
+concurrency:
+  group: compact-cold-diagnosis-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  paired:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Frozen pure-core dependencies (no native install scripts needed)
+        timeout-minutes: 3
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Two isolated/full-core pairs, unchanged assertions
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          umask 077
+          evidence="$RUNNER_TEMP/compact-cold/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/source.txt"
+          node --version > "$evidence/node.txt"
+          bun --version > "$evidence/bun.txt"
+          uname -m > "$evidence/architecture.txt"
+          cd packages/core
+          for pair in 1 2; do
+            for mode in isolated full-core; do
+              case_dir="$evidence/$pair-$mode"
+              mkdir "$case_dir"
+              args=()
+              if test "$mode" = isolated; then args+=(src/terminal-compact-cold.test.ts); fi
+              started=$(date +%s)
+              set +e
+              (
+                ulimit -f 16384
+                COMPACT_COLD_DIAGNOSTICS_DIR="$case_dir" timeout --signal=TERM --kill-after=5s 75s pnpm exec vitest run "${args[@]}"
+              ) > "$case_dir/test.log" 2>&1
+              status=$?
+              set -e
+              printf '{"exitCode":%s,"elapsedSeconds":%s,"case":"%s","pair":%s,"diagnosticOnly":true}\n' "$status" "$(( $(date +%s) - started ))" "$mode" "$pair" > "$case_dir/result.json"
+              CASE_DIR="$case_dir" node --input-type=module -e 'import fs from "node:fs"; const p=process.env.CASE_DIR; const r=JSON.parse(fs.readFileSync(p+"/result.json")); try { const m=JSON.parse(fs.readFileSync(p+"/measurement.json")); Object.assign(r,{measurementPresent:true,timerDelayMs:m.timerDelayMs,budgetMs:33,budgetPass:m.timerDelayMs<=33,maxSliceWallMs:m.maxSliceWallMs,maxSliceCpuMs:m.maxSliceCpuMs,maxSliceStage:m.maxSliceStage,maxHeartbeatWallCpuMs:m.maxHeartbeatWallCpuMs}); } catch { r.measurementPresent=false; } fs.writeFileSync(p+"/result.json",JSON.stringify(r,null,2)+"\n"); console.log(JSON.stringify(r));'
+              # A timed-out group has been retired by timeout; do not accumulate
+              # further work or interpret this incomplete pair as timing evidence.
+              if test "$status" = 124 || test "$status" = 137; then exit 1; fi
+            done
+          done
+      - name: Retain bounded diagnostic evidence, including failed assertions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compact-cold-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/compact-cold
+          retention-days: 7
+          if-no-files-found: error

@@ -62,12 +62,48 @@ const deliveries = [
 let state: TerminalReplicaState | null = null;
 const profiles: CompactSemanticCommitProfile[] = [];
 const started = performance.now();
+let sliceAt = performance.now();
+let sliceCpu = process.cpuUsage();
+let maxSliceWallMs = 0;
+let maxSliceCpuMs = 0;
+let maxSliceStage = "";
+let yieldCount = 0;
+const recordSlice = (stage: string): void => {
+  const wallMs = performance.now() - sliceAt;
+  const cpu = process.cpuUsage(sliceCpu);
+  const cpuMs = (cpu.user + cpu.system) / 1000;
+  if (wallMs > maxSliceWallMs) {
+    maxSliceWallMs = wallMs;
+    maxSliceStage =
+      stage === "decode-yield"
+        ? (new Error().stack?.split("\n").slice(3, 7).join("\n") ?? stage)
+        : stage;
+  }
+  maxSliceCpuMs = Math.max(maxSliceCpuMs, cpuMs);
+  sliceAt = performance.now();
+  sliceCpu = process.cpuUsage();
+};
+const yieldControl = async (): Promise<void> => {
+  recordSlice("decode-yield");
+  yieldCount++;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  sliceAt = performance.now();
+  sliceCpu = process.cpuUsage();
+};
 let timerDelayMs = 0;
 let heartbeatActive = true;
 let heartbeatAt = performance.now();
+let heartbeatCpu = process.cpuUsage();
+let maxHeartbeatCpuMs = 0;
+let maxHeartbeatWallCpuMs = 0;
 const heartbeat = (): void => {
   const now = performance.now();
+  const cpu = process.cpuUsage(heartbeatCpu);
+  const cpuMs = (cpu.user + cpu.system) / 1000;
+  if (now - heartbeatAt > timerDelayMs) maxHeartbeatWallCpuMs = cpuMs;
+  maxHeartbeatCpuMs = Math.max(maxHeartbeatCpuMs, cpuMs);
   timerDelayMs = Math.max(timerDelayMs, now - heartbeatAt);
+  heartbeatCpu = process.cpuUsage();
   heartbeatAt = now;
   if (heartbeatActive) setImmediate(heartbeat);
 };
@@ -79,12 +115,13 @@ for (const { revision, bytes, stateHash } of deliveries) {
     stateHash,
     {
       grantReducerAdoption: true,
-      yieldControl: () => new Promise<void>((resolve) => setImmediate(resolve)),
+      yieldControl,
       onComplete: (profile) => profiles.push(profile),
     },
   );
   if (verified.payload.frame !== (revision === 0 ? "seed" : "patch"))
     throw new Error("cold compact frame mismatch");
+  recordSlice("decode-return");
   const applied = applyTerminalReplicaUpdate(
     state,
     verified.payload.frame === "seed"
@@ -121,12 +158,21 @@ for (const { revision, bytes, stateHash } of deliveries) {
   if (applied.state.snapshot !== verified.canonicalSnapshot)
     throw new Error("cold compact snapshot was cloned");
   state = applied.state;
+  recordSlice("representation-hash-and-adoption");
 }
 await new Promise<void>((resolve) => setImmediate(resolve));
 heartbeatActive = false;
 const memory = process.memoryUsage();
 process.stdout.write(
   `${JSON.stringify({
+    node: process.version,
+    architecture: process.arch,
+    maxSliceWallMs,
+    maxSliceCpuMs,
+    maxSliceStage,
+    yieldCount,
+    maxHeartbeatCpuMs,
+    maxHeartbeatWallCpuMs,
     durationMs: performance.now() - started,
     timerDelayMs,
     rssBytes: memory.rss,
