@@ -897,20 +897,23 @@ describe("WorkspacePromotionAuthority", () => {
     expect(registry.list()).toHaveLength(1);
   });
 
-  it("refuses to promote an internal session", async () => {
-    const mock = new MockTmux();
-    const session = mock.session("zz-scratch", "$1", { "@tmux_ide_adopted": "1" });
-    const window = mock.window(session, "@1", "shell");
-    mock.pane(window, "%1", { active: true });
-    const authority = new WorkspacePromotionAuthority({
-      daemonInstanceId: DAEMON,
-      registry: new FakeRegistry(),
-      io: io(mock),
-    });
-    await expect(
-      authority.promote(request(fleetSessionIdForName("zz-scratch"))),
-    ).rejects.toMatchObject({ code: "session_internal" });
-  });
+  it.each(["zz-scratch", "_tmux-ide-dev-keeper"])(
+    "refuses to promote internal session %s",
+    async (name) => {
+      const mock = new MockTmux();
+      const session = mock.session(name, "$1", { "@tmux_ide_adopted": "1" });
+      const window = mock.window(session, "@1", "shell");
+      mock.pane(window, "%1", { active: true });
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry: new FakeRegistry(),
+        io: io(mock),
+      });
+      await expect(authority.promote(request(fleetSessionIdForName(name)))).rejects.toMatchObject({
+        code: "session_internal",
+      });
+    },
+  );
 
   it("rejects a daemon generation mismatch", async () => {
     const mock = new MockTmux();

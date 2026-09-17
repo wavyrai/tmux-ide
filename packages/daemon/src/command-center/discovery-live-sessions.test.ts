@@ -12,6 +12,7 @@ describe("live tmux session summaries", () => {
           "41\t$0\t100\tordinary",
           "41\t$1\t101\tsecond",
           "41\t$2\t102\t_tmux-ide-chrome",
+          "41\t$4\t104\t_tmux-ide-dev-keeper",
           "41\t$3\t103\tzz-scratch",
           "41\t$3\t103\tzz-scratch",
         ].join("\n"),
@@ -36,4 +37,12 @@ describe("live tmux session summaries", () => {
       }),
     ).toEqual([]);
   });
+});
+
+it("keeps legacy names visible while hiding new internal development keepers", () => {
+  expect(
+    discoverLiveSessionSummaries(
+      () => "41\t$1\t100\ttmux-ide-dev-keeper\n41\t$2\t101\t_tmux-ide-dev-keeper",
+    ).map((session) => session.sessionName),
+  ).toEqual(["tmux-ide-dev-keeper"]);
 });

@@ -22,7 +22,11 @@ import {
   cleanManagerEnvironment,
 } from "../lib/development-state.ts";
 import { claimManagedDevelopmentLaunch } from "../lib/development-owner.ts";
-import { statusDevelopmentInstance, upDevelopmentInstance } from "../lib/development-lifecycle.ts";
+import {
+  readTmux,
+  statusDevelopmentInstance,
+  upDevelopmentInstance,
+} from "../lib/development-lifecycle.ts";
 const roots: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -141,3 +145,40 @@ it("protects an unrecorded dangling socket alias and keeps status read-only", as
   await expect(upDevelopmentInstance(instance)).rejects.toThrow("tmux-owner-invalid");
   expect(lstatSync(socket).isSymbolicLink()).toBe(true);
 });
+
+it.each(["_tmux-ide-dev-keeper", "tmux-ide-dev-keeper"])(
+  "reads exact owned keeper receipt %s without migration",
+  (keeper) => {
+    const { instance } = fixture();
+    mkdirSync(instance.root, { recursive: true, mode: 0o700 });
+    const path = join(instance.root, "tmux.json");
+    const record = {
+      version: 1,
+      pid: 123,
+      incarnation: "fixture-incarnation",
+      capability: "fixture-capability",
+      socket: { path: join(instance.runtimeDir, "tmux.sock") },
+      keeper,
+    };
+    writeDevelopmentRecord(path, record);
+    const before = readFileSync(path, "utf8");
+    expect(readTmux(instance)).toEqual(record);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  },
+);
+it.each(["_tmux-ide-dev-keeper-other", "tmux-ide-dev-keeper-other", "_other", "shared"])(
+  "rejects unrecognized keeper receipt %s",
+  (keeper) => {
+    const { instance } = fixture();
+    mkdirSync(instance.root, { recursive: true, mode: 0o700 });
+    writeDevelopmentRecord(join(instance.root, "tmux.json"), {
+      version: 1,
+      pid: 123,
+      incarnation: "fixture-incarnation",
+      capability: "fixture-capability",
+      socket: { path: join(instance.runtimeDir, "tmux.sock") },
+      keeper,
+    });
+    expect(() => readTmux(instance)).toThrow("Invalid development tmux owner");
+  },
+);

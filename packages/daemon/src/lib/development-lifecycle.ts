@@ -48,7 +48,10 @@ import {
   type DevelopmentIdentityRecord,
 } from "./development-state.ts";
 
-const KEEPER = "tmux-ide-dev-keeper";
+// Internal plumbing must never enter fleet discovery or workspace promotion.
+const KEEPER = "_tmux-ide-dev-keeper";
+// Existing owned servers remain usable until an explicit full down/up.
+const LEGACY_KEEPER = "tmux-ide-dev-keeper";
 function pathPresent(path: string): boolean {
   try {
     lstatSync(path);
@@ -100,7 +103,7 @@ export function readTmux(instance: DevelopmentInstance): TmuxRecord | null {
       typeof record.incarnation !== "string" ||
       typeof record.capability !== "string" ||
       record.socket?.path !== join(instance.runtimeDir, "tmux.sock") ||
-      record.keeper !== KEEPER)
+      (record.keeper !== KEEPER && record.keeper !== LEGACY_KEEPER))
   )
     throw new Error("Invalid development tmux owner");
   return record;
