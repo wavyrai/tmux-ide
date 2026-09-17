@@ -18,6 +18,9 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import {
   CanonicalDaemonInfoSchema,
+  CanonicalDaemonReservationSchema,
+  DaemonSupervisionIdSchema,
+  type CanonicalDaemonReservation,
   type CanonicalDaemonInfo,
   DaemonHealthSchema,
   type DaemonHealth,
@@ -50,7 +53,10 @@ type CanonicalDaemonClaimState =
   | { status: "valid"; claim: CanonicalDaemonClaim }
   | { status: "invalid"; detail: string };
 
-const activeClaims = new Set<string>();
+export type CanonicalDaemonClaimIntent =
+  | { kind: "supervised" | "reserve" | "release"; supervisionId: string }
+  | { kind: "ordinary" };
+const activeClaims = new Map<string, CanonicalDaemonClaimIntent>();
 
 export type CanonicalDaemonInfoInvalidReason =
   | "parent-symlink"
@@ -85,6 +91,15 @@ export type CanonicalDaemonInfoState =
       status: "valid";
       info: CanonicalDaemonInfo;
       observation: CanonicalDaemonInfoObservation;
+    }
+  | {
+      status: "reserved";
+      reservation: CanonicalDaemonReservation;
+      observation: CanonicalDaemonInfoObservation;
+      recoveryDetail?: never;
+      reason: "supervised-reservation";
+      detail: string;
+      ownerPid: null;
     }
   | {
       status: "invalid";
@@ -318,12 +333,30 @@ export function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInf
         openedObservation,
       );
     }
+    if (raw && typeof raw === "object" && "kind" in raw) {
+      const reservation = CanonicalDaemonReservationSchema.safeParse(raw);
+      if (!reservation.success)
+        return invalidState(
+          "invalid-schema",
+          "Invalid supervision reservation",
+          null,
+          openedObservation,
+        );
+      return {
+        status: "reserved",
+        reservation: reservation.data,
+        observation: openedObservation,
+        reason: "supervised-reservation",
+        detail: "Daemon namespace is reserved for its supervisor",
+        ownerPid: null,
+      };
+    }
     const parsed = CanonicalDaemonInfoSchema.safeParse(raw);
     if (!parsed.success) {
       return invalidState(
         "invalid-schema",
         parsed.error.issues.map((issue) => issue.message).join("; "),
-        ownerPidFromRaw(raw),
+        raw && typeof raw === "object" && "supervisionId" in raw ? null : ownerPidFromRaw(raw),
         openedObservation,
       );
     }
@@ -440,12 +473,37 @@ function retireCanonicalClaimIfMatches(expected: CanonicalDaemonClaim): boolean 
   return false;
 }
 
+function supervisionBinding(state: CanonicalDaemonInfoState): string | null {
+  return state.status === "reserved"
+    ? state.reservation.supervisionId
+    : state.status === "valid"
+      ? (state.info.supervisionId ?? null)
+      : null;
+}
+function admitsClaim(state: CanonicalDaemonInfoState, intent: CanonicalDaemonClaimIntent): boolean {
+  const binding = supervisionBinding(state);
+  if (intent.kind === "ordinary") return binding === null;
+  if (!DaemonSupervisionIdSchema.safeParse(intent.supervisionId).success) return false;
+  if (intent.kind === "reserve")
+    return (
+      state.status === "missing" ||
+      (state.status === "valid" && binding === null && pidLiveness(state.info.pid) === "dead") ||
+      (state.status === "reserved" && binding === intent.supervisionId)
+    );
+  return (
+    binding === intent.supervisionId &&
+    (state.status === "reserved" ||
+      (state.status === "valid" && pidLiveness(state.info.pid) === "dead"))
+  );
+}
 /**
  * Publish a complete, process-lifetime startup claim with one atomic rename.
  * The winner holds it until daemon shutdown; contenders cannot pass inspection,
  * bind, or publication concurrently.
  */
-export function tryAcquireCanonicalDaemonClaim(): CanonicalDaemonClaimAttempt {
+export function tryAcquireCanonicalDaemonClaim(
+  intent: CanonicalDaemonClaimIntent = { kind: "ordinary" },
+): CanonicalDaemonClaimAttempt {
   const path = getCanonicalDaemonClaimPath();
   const root = dirname(path);
   try {
@@ -458,6 +516,11 @@ export function tryAcquireCanonicalDaemonClaim(): CanonicalDaemonClaimAttempt {
     };
   }
 
+  if (!admitsClaim(inspectCanonicalDaemonInfo(), intent))
+    return {
+      status: "invalid",
+      detail: "Supervisor reservation does not admit this startup intent",
+    };
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const claim: CanonicalDaemonClaim = {
       claimId: randomUUID(),
@@ -472,7 +535,14 @@ export function tryAcquireCanonicalDaemonClaim(): CanonicalDaemonClaimAttempt {
     });
     try {
       renameSync(candidate, path);
-      activeClaims.add(claim.claimId);
+      activeClaims.set(claim.claimId, Object.freeze({ ...intent }));
+      if (!admitsClaim(inspectCanonicalDaemonInfo(), intent)) {
+        releaseCanonicalDaemonClaim(claim);
+        return {
+          status: "invalid",
+          detail: "Supervisor reservation changed during claim acquisition",
+        };
+      }
       return { status: "acquired", claim };
     } catch (error) {
       rmSync(candidate, { recursive: true, force: true });
@@ -520,10 +590,24 @@ export function writeCanonicalDaemonInfo(
   claim: CanonicalDaemonClaim,
 ): void {
   assertCanonicalDaemonClaimHeld(claim);
+  const before = inspectCanonicalDaemonInfo();
+  const intent = activeClaims.get(claim.claimId)!;
+  if (
+    !admitsClaim(before, intent) ||
+    intent.kind === "reserve" ||
+    intent.kind === "release" ||
+    (intent.kind === "supervised"
+      ? info.supervisionId !== intent.supervisionId
+      : info.supervisionId !== undefined)
+  )
+    throw new Error("Canonical publication does not match supervision intent");
+  if (before.status === "valid" && info.supervisionId && pidLiveness(before.info.pid) !== "dead")
+    throw new Error("Supervised predecessor is not proven dead");
   const path = getCanonicalDaemonInfoPath();
   prepareCanonicalDaemonRoot(dirname(path));
   const tmpPath = `${path}.${claim.claimId}.${randomUUID()}.tmp`;
   const persisted: CanonicalDaemonInfo = {
+    ...(info.supervisionId ? { supervisionId: info.supervisionId } : {}),
     pid: info.pid,
     port: info.port,
     protocolVersion: info.protocolVersion,
@@ -542,9 +626,98 @@ export function writeCanonicalDaemonInfo(
   try {
     // link(2) is an atomic create-if-absent publication. It cannot overwrite a
     // canonical generation published by another process.
-    linkSync(tmpPath, path);
+    if (intent.kind === "supervised") {
+      const current = inspectCanonicalDaemonInfo();
+      if (
+        before.status === "missing" ||
+        current.status === "missing" ||
+        !before.observation ||
+        !current.observation ||
+        !sameObservation(before.observation, current.observation) ||
+        supervisionBinding(current) !== intent.supervisionId
+      )
+        throw new Error("Supervision reservation changed before publication");
+      renameSync(tmpPath, path);
+    } else linkSync(tmpPath, path);
   } finally {
     rmSync(tmpPath, { force: true });
+  }
+}
+
+/** Explicit installation only; startup never calls this to recreate a reservation. */
+export function reserveCanonicalDaemonSupervision(
+  supervisionId: string,
+): CanonicalDaemonReservation {
+  const attempt = tryAcquireCanonicalDaemonClaim({ kind: "reserve", supervisionId });
+  if (attempt.status !== "acquired") throw new Error("Cannot reserve supervised daemon namespace");
+  const claim = attempt.claim;
+  try {
+    const before = inspectCanonicalDaemonInfo();
+    if (!admitsClaim(before, { kind: "reserve", supervisionId }))
+      throw new Error("Reservation admission changed");
+    if (before.status === "reserved") return before.reservation;
+    const reservation = CanonicalDaemonReservationSchema.parse({
+      kind: "supervised-reservation",
+      version: 1,
+      supervisionId,
+      reservationId: randomUUID(),
+      reservedAt: new Date().toISOString(),
+    });
+    const path = getCanonicalDaemonInfoPath();
+    const temp = `${path}.${claim.claimId}.${randomUUID()}.tmp`;
+    writeFileSync(temp, JSON.stringify(reservation) + "\n", { flag: "wx", mode: 0o600 });
+    try {
+      assertCanonicalDaemonClaimHeld(claim);
+      const current = inspectCanonicalDaemonInfo();
+      if (
+        !admitsClaim(current, { kind: "reserve", supervisionId }) ||
+        current.status !== before.status ||
+        (before.status !== "missing" &&
+          (current.status === "missing" ||
+            !before.observation ||
+            !current.observation ||
+            !sameObservation(before.observation, current.observation)))
+      )
+        throw new Error("Reservation record changed");
+      if (before.status === "missing") linkSync(temp, path);
+      else renameSync(temp, path);
+    } finally {
+      rmSync(temp, { force: true });
+    }
+    return reservation;
+  } finally {
+    releaseCanonicalDaemonClaim(claim);
+  }
+}
+
+/** Service removal is a caller precondition; only exact dead namespace state is retired here. */
+export function releaseCanonicalDaemonSupervision(supervisionId: string): void {
+  const intent = { kind: "release" as const, supervisionId };
+  const attempt = tryAcquireCanonicalDaemonClaim(intent);
+  if (attempt.status !== "acquired") throw new Error("Cannot release supervised daemon namespace");
+  const claim = attempt.claim;
+  try {
+    const before = inspectCanonicalDaemonInfo();
+    if (!admitsClaim(before, intent) || before.status === "missing" || !before.observation)
+      throw new Error("Supervisor release refused");
+    const captured = captureCanonicalDaemonInfo(claim);
+    if (!captured) throw new Error("Supervisor release record disappeared");
+    try {
+      const current = inspectCanonicalDaemonInfoPath(captured);
+      if (
+        !admitsClaim(current, intent) ||
+        current.status === "missing" ||
+        !current.observation ||
+        !sameObservation(before.observation, current.observation)
+      )
+        throw new Error("Supervisor release record changed");
+      rmSync(captured);
+    } catch (error) {
+      restoreCapturedFile(captured, getCanonicalDaemonInfoPath());
+      throw error;
+    }
+  } finally {
+    releaseCanonicalDaemonClaim(claim);
   }
 }
 
@@ -679,7 +852,7 @@ export function clearCanonicalDaemonInfoIfUnchanged(
   state: CanonicalDaemonInfoState,
   claim: CanonicalDaemonClaim,
 ): boolean {
-  if (state.status === "missing" || !state.observation) return false;
+  if (state.status === "missing" || !state.observation || supervisionBinding(state)) return false;
   const path = getCanonicalDaemonInfoPath();
   const captured = captureCanonicalDaemonInfo(claim);
   if (!captured) return false;
@@ -702,6 +875,7 @@ export function clearCanonicalDaemonInfoIfOwned(
   instanceId: string,
   claim: CanonicalDaemonClaim,
 ): boolean {
+  if (supervisionBinding(inspectCanonicalDaemonInfo())) return false;
   const path = getCanonicalDaemonInfoPath();
   const captured = captureCanonicalDaemonInfo(claim);
   if (!captured) return false;
@@ -734,6 +908,7 @@ function pidLiveness(pid: number): PidLiveness {
  * recover them; live, unknown, and malformed claims remain authoritative.
  */
 export function canonicalDaemonClaimAllowsStartupAttempt(): boolean {
+  if (supervisionBinding(inspectCanonicalDaemonInfo())) return false;
   const claimPath = getCanonicalDaemonClaimPath();
   try {
     const root = lstatSync(dirname(claimPath));

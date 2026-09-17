@@ -171,7 +171,7 @@ async function findLiveCanonicalDaemon(
 ): Promise<CanonicalDaemonInfo | null> {
   const existing = deps.inspectCanonicalDaemonInfo();
   if (existing.status === "missing") return null;
-  if (existing.status === "invalid") {
+  if (existing.status === "invalid" || existing.status === "reserved") {
     if (await deps.isCanonicalDaemonRecordOwnerProvenDead(existing)) {
       // The process which wins the atomic startup claim removes stale state.
       return null;

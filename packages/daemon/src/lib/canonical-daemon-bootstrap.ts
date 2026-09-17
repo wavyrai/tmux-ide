@@ -225,7 +225,7 @@ async function probeCanonical(
 ): Promise<DaemonBootstrapProbe<CanonicalDaemonInfo, CanonicalDaemonBootstrapFailure>> {
   const state = deps.inspect();
   if (state.status === "missing") return { status: "absent-or-stale" };
-  if (state.status === "invalid") {
+  if (state.status === "invalid" || state.status === "reserved") {
     if (await deps.ownerProvenDead(state)) return { status: "absent-or-stale" };
     throw new DaemonBootstrapError(
       "incompatible",

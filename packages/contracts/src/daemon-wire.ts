@@ -54,7 +54,21 @@ export const DaemonInstanceIdentitySchemaZ = z
   .strict();
 export type DaemonInstanceIdentity = z.infer<typeof DaemonInstanceIdentitySchemaZ>;
 
+/** Explicit private namespace binding; not an OS service identity assertion. */
+export const DaemonSupervisionIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
+export const CanonicalDaemonReservationSchema = z
+  .object({
+    kind: z.literal("supervised-reservation"),
+    version: z.literal(1),
+    supervisionId: DaemonSupervisionIdSchema,
+    reservationId: z.uuid(),
+    reservedAt: z.iso.datetime({ offset: true }),
+  })
+  .strict();
+export type CanonicalDaemonReservation = z.infer<typeof CanonicalDaemonReservationSchema>;
+
 export const CanonicalDaemonInfoSchema = z.object({
+  supervisionId: DaemonSupervisionIdSchema.optional(),
   pid: z.number().int().positive(),
   port: z.number().int().min(1).max(65_535),
   protocolVersion: DaemonWireProtocolVersionSchema,
