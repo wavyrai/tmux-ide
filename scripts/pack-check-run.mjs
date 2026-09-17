@@ -32,6 +32,7 @@ import {
   verifyPackedPostinstallLinks,
 } from "./lib/packed-install-scenarios.mjs";
 import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
+import { diagnosePackedHome } from "./lib/packed-home-diagnostics.mjs";
 import { assertCleanEvidenceSource, releaseSourceState } from "./lib/release-source-state.mjs";
 
 // Read only intentional top-level selectors before dropping all ambient child overrides.
@@ -213,6 +214,7 @@ let installedCliPath = null;
 let installedVersion = null;
 let runtimeEvidence = null;
 let journeyObservations = null;
+let homeDiagnostics = null;
 let proofCompleted = false;
 let installationScenarios = null;
 let postinstallEvidence = null;
@@ -1148,21 +1150,33 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // Exercise Home through its actual observer and wire resources. Sidebar
   // publication alone does not prove that the Home roster receives agent data.
   send(one, "F1");
-  await observe(
-    "installed Home real-process agent indicator",
-    10_000,
-    () => {
-      const frame = capture(one.targetPane);
-      return (
-        frame.includes("1 observed agent") &&
-        frame.includes("STATUS") &&
-        frame
-          .split("\n")
-          .some((line) => line.includes(agentClickLabel) && line.includes("journey-beta"))
-      );
-    },
-    one.diagnostics,
-  );
+  try {
+    await observe(
+      "installed Home real-process agent indicator",
+      10_000,
+      () => {
+        const frame = capture(one.targetPane);
+        return (
+          frame.includes("1 observed agent") &&
+          frame.includes("STATUS") &&
+          frame
+            .split("\n")
+            .some((line) => line.includes(agentClickLabel) && line.includes("journey-beta"))
+        );
+      },
+      one.diagnostics,
+    );
+  } catch (error) {
+    // Probe only after the observation failed; extra subscriptions must not
+    // repair or otherwise influence the behavior being qualified.
+    try {
+      const info = JSON.parse(readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"));
+      homeDiagnostics = await diagnosePackedHome(info, "journey-beta");
+    } catch {
+      homeDiagnostics = { failure: "diagnostic-unavailable" };
+    }
+    throw error;
+  }
   send(one, "F2");
   await observe(
     "installed Home returns to terminals",
@@ -2051,6 +2065,7 @@ try {
       runtime: runtimeEvidence,
       artifacts: copied,
       journey: journeyObservations,
+      homeDiagnostics,
       installationScenarios,
       tmuxWitness,
       tmuxGenerations,
