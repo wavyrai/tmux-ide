@@ -28,6 +28,7 @@ import {
   statusDevelopmentInstance,
 } from "../lib/development-lifecycle.ts";
 import { launchDevelopmentApp } from "../lib/development-app.ts";
+import * as appAdmission from "../lib/development-app.ts";
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return { ...actual };
@@ -252,8 +253,28 @@ it("refuses altered raw bytes or new records after the retirement plan", async (
 });
 it("never erases a new owner on completed resume, and serializes concurrent suspend/up", async () => {
   const { instance, owner } = await fixture();
+  let entered!: () => void;
+  let release!: () => void;
+  const atBarrier = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const requireStopped = appAdmission.requireStoppedDevelopmentApps;
+  vi.spyOn(appAdmission, "requireStoppedDevelopmentApps").mockImplementationOnce(async (target) => {
+    entered();
+    await held;
+    return requireStopped(target);
+  });
   const first = suspendDevelopmentInstance(instance, binding);
+  // Both contenders discover process identity asynchronously before locking. Call order
+  // is not acquisition order: start up only after suspension owns its durable barrier.
+  await atBarrier;
+  expect(suspension.readDevelopmentSuspension(instance)?.phase).toBe("stopping");
+  expect(fs.existsSync(join(instance.root, "locks/lifecycle/owner.json"))).toBe(true);
   const admitted = upDevelopmentInstance(instance).catch((error) => error);
+  release();
   const result = await first;
   expect(await admitted).toMatchObject({ reason: "instance-suspended" });
   writeDevelopmentRecord(join(instance.root, "owner.json"), {
