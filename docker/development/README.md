@@ -143,9 +143,22 @@ persistent container restart remain the separate D12/D10 requirements above.
 
 `source-ssh-fixture` is a separate target derived from the source lane. It adds
 OpenSSH from the same dated Debian snapshot; the packed target is unchanged.
-This checkpoint's unit/config tests do **not** qualify a live Debian SSH login.
-A reviewed exact source export, named resources and a nonroot smoke test are
-required before the wrapper advertises this lane.
+A bounded native Linux arm64 smoke now qualifies nonroot login through the
+production SSH transport, authenticated daemon discovery and the allowed local
+forward. Command, key, password, remote-forward and unsupported-destination
+restrictions passed, including a Unix socket restriction checked against a live
+private echo target. These are combined component receipts: the original harness
+failures are retained, not presented as one uninterrupted passing journey.
+
+The source image is an exact clean `b494367a` export; the host Compose ownership
+and networking correction is `04e3dec3`. Actual core suspension followed by exact
+owned Docker stop passed, with PID zero and no OOM kill. A subsequent same-container resume check also passed: ordinary up first refused
+the suspension barrier, explicit proof-bound resume admitted the unchanged build,
+and SSH authenticated a new daemon through a refreshed dynamic endpoint with the
+same host key. Listener retirement, a second suspension and exact Docker stop
+then passed. No container recreation or changed-VM recovery was exercised.
+The wrapper, native TUI and two-project isolation remain acceptance gates before
+this lane is advertised as a complete workflow.
 
 The image idles as UID 1000, precreates `/tmp/ti-dev-1000` with private ownership,
 and never starts a development daemon or erases lifecycle witnesses at boot.
@@ -188,8 +201,9 @@ forwarding are disabled. The test-only image gives `node` an unusable password
 hash so public-key login can be tested without a locked-account rejection;
 password authentication remains disabled. Nonroot explicit host keys and these
 restrictions follow the [OpenSSH server manual](https://man.openbsd.org/sshd) and
-[configuration manual](https://man.openbsd.org/sshd_config); the pinned Debian
-implementation still needs its live smoke check.
+[configuration manual](https://man.openbsd.org/sshd_config). The pinned Debian
+implementation passed the bounded component checks described above; the broader
+SSH failure matrix remains a separate qualification.
 
 The future wrapper must order listener stop, core instance suspension, verified
 same-container Docker stop, and then full-stop acknowledgement. Suspension stops
