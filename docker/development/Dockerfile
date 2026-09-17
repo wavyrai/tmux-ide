@@ -51,7 +51,7 @@ RUN apt-get -o Acquire::Check-Valid-Until=false -o Acquire::http::Timeout=30 -o 
     usermod --password '*' node && \
     rm -f /etc/ssh/ssh_host_* && \
     dpkg-query -W > /opt/fixture/ssh-debian-packages.txt && rm -rf /var/lib/apt/lists/*
-COPY docker/development/ssh-fixture.mjs docker/development/ssh-control.mjs /opt/fixture/
+COPY docker/development/ssh-fixture.mjs docker/development/ssh-control.mjs docker/development/container-lifecycle.mjs /opt/fixture/
 USER node
 WORKDIR /workspace
 CMD ["node", "/opt/fixture/ssh-fixture.mjs", "idle"]

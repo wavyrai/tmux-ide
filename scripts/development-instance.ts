@@ -1,3 +1,5 @@
+import { developmentContainer } from "../packages/daemon/src/lib/development-container.ts";
+import { resolveDevelopmentComposeProject } from "../packages/daemon/src/lib/development-compose.ts";
 import {
   developmentSshAuthority,
   developmentSshHandshake,
@@ -47,6 +49,10 @@ const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
     json: { type: "boolean" },
+    container: { type: "boolean" },
+    resume: { type: "boolean" },
+    "container-image": { type: "string" },
+    "container-source": { type: "string" },
     "ssh-describe": { type: "boolean" },
     id: { type: "string" },
     yes: { type: "boolean" },
@@ -98,6 +104,61 @@ if (
   (command === "ssh-info" && (!values.json || values.id))
 )
   throw new Error("Lifecycle option does not apply to this command");
+if (values.container) {
+  if (
+    !["up", "status", "logs", "down"].includes(command!) ||
+    values.id ||
+    values.yes ||
+    values["daemon-only"] ||
+    values["apply-build"] ||
+    values.previous ||
+    values.bun ||
+    values["ssh-describe"] ||
+    (command !== "up" && (values.resume || values["container-image"] || values["container-source"]))
+  )
+    throw new Error(
+      "Container mode supports up/status/logs/down; --resume and image/source pins apply only to up",
+    );
+  const cancellation = new AbortController();
+  let cancelledExit = 130;
+  const abort = () => cancellation.abort();
+  const terminate = () => {
+    cancelledExit = 143;
+    cancellation.abort();
+  };
+  process.once("SIGINT", abort);
+  process.once("SIGTERM", terminate);
+  try {
+    const project = resolveDevelopmentComposeProject({
+      worktree: discoverDevelopmentWorktree(values.worktree ?? process.cwd()),
+      name: values.name,
+      store: values.store,
+    });
+    const result = await developmentContainer(
+      project,
+      command as "up" | "status" | "logs" | "down",
+      {
+        image: values["container-image"],
+        source: values["container-source"],
+        resume: values.resume,
+        signal: cancellation.signal,
+      },
+    );
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } catch (error) {
+    const suspended =
+      error instanceof DevelopmentOperationError && error.reason === "instance-suspended";
+    process.stdout.write(
+      `${JSON.stringify({ version: 1, mode: "container", operation: command, code: "DEVELOPMENT_CONTAINER_UNAVAILABLE", reason: suspended ? "instance-suspended" : "container-transition-refused", next: suspended ? "Use up --container --resume" : "Inspect private project transition evidence" })}\n`,
+    );
+    process.exitCode = 1;
+  }
+  process.off("SIGINT", abort);
+  process.off("SIGTERM", terminate);
+  process.exit(cancellation.signal.aborted ? cancelledExit : (process.exitCode ?? 0));
+}
+if (values.resume || values["container-image"] || values["container-source"])
+  throw new Error("Container options require --container");
 let selectedInstance: DevelopmentInstance | undefined;
 let selectionComplete = false;
 try {
