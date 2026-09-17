@@ -1,6 +1,11 @@
-import type { OpenTuiGenerationHostSnapshot } from "../runtime/open-tui-generation-host.ts";
 import { safeStartupFailure, type StartupFailure } from "../startup-failure.ts";
 import { createSignal } from "solid-js";
+
+/** Presentation consumes status/failure only; it never retains runtime authority. */
+interface ConnectionFeedbackSnapshot {
+  readonly status: string;
+  readonly startupFailure?: StartupFailure;
+}
 
 export interface ApplicationConnectionFeedback {
   readonly session: string;
@@ -24,7 +29,7 @@ export function createApplicationConnectionFeedback(
   let admittedSession: string | null = null;
   let hostToken = 0;
   let suppressed = false;
-  let retained: { session: string; value: OpenTuiGenerationHostSnapshot } | null = null;
+  let retained: { session: string; value: ConnectionFeedbackSnapshot } | null = null;
   let started = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
   const stop = () => {
@@ -38,14 +43,14 @@ export function createApplicationConnectionFeedback(
   };
   const owner = {
     snapshot,
-    adopt(session: string | undefined, value: OpenTuiGenerationHostSnapshot | null) {
+    adopt(session: string | undefined, value: ConnectionFeedbackSnapshot | null) {
       if (!value || value.status === "disposed") {
         admittedSession = null;
         retained = null;
         return; // A failed initial open retires its host; retain its explanation.
       }
       if (!session || (session !== admittedSession && session !== retained?.session)) return;
-      retained = { session, value };
+      retained = { session, value: { status: value.status, startupFailure: value.startupFailure } };
       if (suppressed || session !== admittedSession) return;
       if (value.startupFailure) {
         const failure = safeStartupFailure({ ...value.startupFailure });

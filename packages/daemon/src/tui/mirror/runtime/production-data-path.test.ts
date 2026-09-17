@@ -357,6 +357,9 @@ describe("production OpenTUI v2 data path", () => {
       "packages/daemon/src/lib/development-build-manager.ts",
     );
     expect(authorityDataPathFiles).not.toContain("packages/daemon/src/lib/development-build.ts");
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(149);
+    // D11 adds one same-connection identity relay beneath the existing SSH
+    // transport; it prevents credentials reaching a replaced forwarded endpoint.
+    expect(authorityDataPathFiles).toContain("packages/daemon/src/lib/ssh-daemon-relay.ts");
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(150);
   });
 });
