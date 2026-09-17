@@ -1,3 +1,8 @@
+import {
+  OpenTuiStartupError,
+  startupFailureFromError,
+  type StartupFailure,
+} from "../startup-failure.ts";
 import { observeApplicationDaemonGeneration } from "./application-daemon-authority.ts";
 import { readApplicationDaemonInfo as readCanonicalDaemonInfo } from "./application-daemon-authority.ts";
 import type {
@@ -21,7 +26,7 @@ import type {
 } from "@tmux-ide/daemon-client/workspace-client-types";
 
 import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
-import { ensureOpenTuiSessionWorkspace } from "../configless-session-bootstrap.ts";
+import { ensureOpenTuiSessionWorkspaceResult } from "../configless-session-bootstrap.ts";
 import {
   OPEN_TUI_HOST_CLIENT_ID,
   connectOpenTuiWorkspaceRuntimePort,
@@ -84,6 +89,7 @@ export type OpenTuiGenerationHostStatus =
 
 export interface OpenTuiGenerationHostSnapshot {
   readonly status: OpenTuiGenerationHostStatus;
+  readonly startupFailure?: StartupFailure;
   /** Monotonic paint identity; forces resident pane surfaces across a bundle swap. */
   readonly rendererEpoch: number;
   readonly daemonGeneration: string | null;
@@ -105,6 +111,7 @@ export function openTuiGenerationRenderEqual(
     (left !== null &&
       right !== null &&
       left.status === right.status &&
+      left.startupFailure === right.startupFailure &&
       left.rendererEpoch === right.rendererEpoch &&
       left.daemonGeneration === right.daemonGeneration &&
       left.connection === right.connection &&
@@ -144,6 +151,7 @@ export interface OpenTuiGenerationHostDependencies {
   ) => Promise<() => void | Promise<void>>;
   readonly onDiagnostic?: (
     phase:
+      | "startup-failed"
       | "connection-start"
       | "connection-resolved"
       | "shell-lifecycle"
@@ -380,7 +388,9 @@ const DEFAULT_DEPENDENCIES: OpenTuiGenerationHostDependencies = {
     // A fresh daemon generation does not retain the previous ephemeral
     // promotion. Re-establish the ordinary-session workspace through the
     // typed owner action before minting a new generation-bound connection.
-    if (!(await ensureOpenTuiSessionWorkspace(sessionName))) return null;
+    const result = await ensureOpenTuiSessionWorkspaceResult(sessionName);
+    if (result.status === "unavailable")
+      throw new OpenTuiStartupError({ ...result, reason: result.detailReason ?? result.reason });
     return resolveOpenTuiApplicationShellConnection(sessionName);
   },
   buildBundle: buildProductionBundle,
@@ -501,6 +511,12 @@ export function createOpenTuiGenerationHost(
   let stopCanonicalObserver: (() => void | Promise<void>) | null = null;
   let requestedCanonicalGeneration: string | null = null;
   let authorityOffline = false;
+  let rebindRetry: ReturnType<typeof setTimeout> | null = null;
+  let rebindAttempts = 0;
+  const cancelRebindRetry = (): void => {
+    if (rebindRetry !== null) clearTimeout(rebindRetry);
+    rebindRetry = null;
+  };
   const retirementPromises = new Set<Promise<void>>();
 
   const publish = (next: OpenTuiGenerationHostSnapshot): void => {
@@ -526,7 +542,7 @@ export function createOpenTuiGenerationHost(
   };
 
   const activate = (owner: Candidate, runtime: OpenTuiWorkspaceRuntimePort | null): void => {
-    if (disposed || owner.settled) return;
+    if (disposed || owner.settled || owner.revoked) return;
     if (active === owner) {
       // WorkspaceClient may replace its terminal inventory without changing
       // daemon/client generation. Adopt that runtime atomically into the live
@@ -610,6 +626,7 @@ export function createOpenTuiGenerationHost(
   const connectFresh = (): Promise<boolean> => {
     if (disposed || authorityOffline) return Promise.resolve(false);
     if (connectFlight) return connectFlight;
+    cancelRebindRetry();
     const expectedEpoch = ++epoch;
     const preparedConnection = initialConnection;
     initialConnection = null;
@@ -639,6 +656,8 @@ export function createOpenTuiGenerationHost(
         }
         return current;
       };
+    let connectingDaemonGeneration: string | undefined;
+    let retryUnavailable = false;
     connectFlight = resolveCurrentConnection()
       .then((connection) => {
         if (disposed || expectedEpoch !== epoch) {
@@ -646,10 +665,14 @@ export function createOpenTuiGenerationHost(
           return false;
         }
         if (!connection) {
+          retryUnavailable = true;
           if (!active) publish({ ...EMPTY_SNAPSHOT, status: "unavailable" });
           return false;
         }
-        overrides.onConnectionProgress?.("connection-resolved", {});
+        connectingDaemonGeneration = connection.target.daemon.instanceId;
+        overrides.onConnectionProgress?.("connection-resolved", {
+          daemonGeneration: connectingDaemonGeneration,
+        });
         diagnose?.("connection-resolved", {
           daemonGeneration: connection.target.daemon.instanceId,
           workspaceName: connection.workspaceName,
@@ -658,7 +681,6 @@ export function createOpenTuiGenerationHost(
         let pendingRuntime: OpenTuiWorkspaceRuntimePort | null = null;
         let activeRuntimeInventory: WorkspaceClientRuntimeInventory | null = null;
         let emitWorkspaceClientState: (() => void) | null = null;
-        let pendingEmpty = false;
         let resolveReady!: (usable: boolean) => void;
         const ready = new Promise<boolean>((resolve) => {
           resolveReady = resolve;
@@ -684,14 +706,12 @@ export function createOpenTuiGenerationHost(
             },
             didRetireRuntime() {
               activeRuntimeInventory = null;
-              if (!owner) {
-                pendingEmpty = true;
-                return;
-              }
-              if (candidate === owner) activate(owner, null);
-              else if (active === owner && !owner.revoked) {
+              pendingRuntime = null;
+              // Retirement precedes the authoritative lifecycle publication. It
+              // cannot distinguish an empty session from rejected inventory.
+              if (owner && active === owner && !owner.revoked) {
                 presentation.clear();
-                publish({ ...snapshot, status: "empty" });
+                publish({ ...snapshot, status: "rebinding", authorityClient: null });
               }
               emitWorkspaceClientState?.();
             },
@@ -758,7 +778,7 @@ export function createOpenTuiGenerationHost(
                 let lastProjectionSignature: string | null = null;
                 return (): void => {
                   try {
-                    if (disposed || owned.settled) return;
+                    if (disposed || owned.settled || owned.revoked) return;
                     const snapshot = bundle.client.getSnapshot();
                     if (snapshot.phase !== "live") return;
                     const terminalResources =
@@ -810,7 +830,7 @@ export function createOpenTuiGenerationHost(
               })()
             : null;
         const stopLifecycle = bundle.client.subscribe("lifecycle", (lifecycle) => {
-          if (disposed || owned.settled) return;
+          if (disposed || owned.settled || owned.revoked) return;
           diagnose?.("shell-lifecycle", {
             clientPhase: lifecycle.phase,
             shellStatus: lifecycle.shell.status,
@@ -847,7 +867,7 @@ export function createOpenTuiGenerationHost(
             },
             reconnect: connectFresh,
           });
-          if (requested || candidate !== owned || active === owned) return;
+          if (requested || (candidate !== owned && active !== owned)) return;
           const shell = lifecycle.shell;
           if (
             shell.status === "live" &&
@@ -856,9 +876,43 @@ export function createOpenTuiGenerationHost(
               (resource) => resource.attachability.status !== "available",
             )
           ) {
-            activate(owned, null);
+            const resources = shell.data.terminalInventory.resources;
+            if (resources.length === 0) {
+              if (active === owned && snapshot.status === "empty") return;
+              activate(owned, null);
+              return;
+            }
+            const first = resources[0]!.attachability;
+            const failure = startupFailureFromError(
+              new OpenTuiStartupError({
+                reason:
+                  first.status === "unavailable" ? first.reason : "terminal-inventory-rejected",
+                daemonGeneration: connection.target.daemon.instanceId,
+                ...(process.env.TMUX_IDE_RUNTIME_MODE === "development"
+                  ? { tuiGeneration: process.env.TMUX_IDE_DEVELOPMENT_BUILD }
+                  : {}),
+              }),
+            );
+            // Reject before reporting: no input, geometry or subscription may
+            // remain authoritative behind an actionable failure screen.
+            if (active) revokeRetainedGeneration(active);
+            if (candidate === owned) candidate = null;
+            disposeCandidate(owned);
+            publish({
+              ...EMPTY_SNAPSHOT,
+              status: "unavailable",
+              daemonGeneration: connection.target.daemon.instanceId,
+              startupFailure: failure,
+            });
+            diagnose?.("startup-failed", { ...failure });
+            try {
+              overrides.onConnectionProgress?.("startup-failed", { ...failure });
+            } catch {
+              /* observer */
+            }
             return;
           }
+          if (active === owned) return;
           if (
             shell.status === "unavailable" ||
             shell.status === "error" ||
@@ -878,15 +932,59 @@ export function createOpenTuiGenerationHost(
           stopLifecycle();
           for (const stop of diagnosticStops) stop();
         };
-        if (pendingRuntime) {
+        if (owned.settled) owned.stopLifecycle();
+        else if (pendingRuntime) {
           activate(owned, pendingRuntime);
           emitWorkspaceClientState?.();
-        } else if (pendingEmpty) activate(owned, null);
+        }
         return owned.ready;
       })
-      .catch(() => false)
+      .catch((error: unknown) => {
+        if (disposed || expectedEpoch !== epoch) return false;
+        const failure = new OpenTuiStartupError({
+          ...startupFailureFromError(error),
+          ...(process.env.TMUX_IDE_RUNTIME_MODE === "development"
+            ? { tuiGeneration: process.env.TMUX_IDE_DEVELOPMENT_BUILD }
+            : {}),
+          ...(connectingDaemonGeneration ? { daemonGeneration: connectingDaemonGeneration } : {}),
+        }).failure;
+        retryUnavailable =
+          !failure.code &&
+          !failure.operationId &&
+          ["daemon-unavailable", "routing-unavailable", "daemon-generation-changed"].includes(
+            failure.reason,
+          );
+        diagnose?.("startup-failed", { ...failure });
+        try {
+          overrides.onConnectionProgress?.("startup-failed", { ...failure });
+        } catch {
+          /* observer */
+        }
+        if (!active) publish({ ...EMPTY_SNAPSHOT, status: "unavailable", startupFailure: failure });
+        return false;
+      })
       .finally(() => {
         connectFlight = null;
+        // Descriptor publication can precede readiness. Retry only discovery
+        // absence or explicit pre-promotion unavailability during an observed
+        // replacement, never a rejected promotion.
+        if (
+          retryUnavailable &&
+          !disposed &&
+          !authorityOffline &&
+          expectedEpoch === epoch &&
+          requestedCanonicalGeneration !== null &&
+          rebindAttempts < 8
+        ) {
+          const generation = requestedCanonicalGeneration;
+          const delay = Math.min(250 * 2 ** rebindAttempts++, 2000);
+          cancelRebindRetry();
+          rebindRetry = setTimeout(() => {
+            rebindRetry = null;
+            if (!disposed && !authorityOffline && requestedCanonicalGeneration === generation)
+              void connectFresh();
+          }, delay);
+        }
       });
     return connectFlight;
   };
@@ -896,6 +994,7 @@ export function createOpenTuiGenerationHost(
     if (daemonGeneration === null) {
       if (authorityOffline) return;
       authorityOffline = true;
+      cancelRebindRetry();
       requestedCanonicalGeneration = null;
       initialConnection = null;
       epoch += 1;
@@ -909,6 +1008,8 @@ export function createOpenTuiGenerationHost(
     }
     authorityOffline = false;
     if (requestedCanonicalGeneration === daemonGeneration) return;
+    cancelRebindRetry();
+    rebindAttempts = 0;
     const currentGeneration = active?.bundle.connection.target.daemon.instanceId ?? null;
     const candidateGeneration = candidate?.bundle.connection.target.daemon.instanceId ?? null;
     if (
@@ -979,6 +1080,7 @@ export function createOpenTuiGenerationHost(
         return;
       }
       disposed = true;
+      cancelRebindRetry();
       epoch += 1;
       canonicalObserverEpoch += 1;
       const stopObserver = stopCanonicalObserver;

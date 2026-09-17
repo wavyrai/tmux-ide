@@ -72,6 +72,44 @@ describe("canonical Electron daemon attachment", () => {
     expect(probeIdentity).not.toHaveBeenCalled();
   });
 
+  it("waits for a reserved supervisor without treating the reservation as an endpoint", async () => {
+    const isAlive = vi.fn(async () => true);
+    const probeIdentity = vi.fn(async () => identity);
+    const probeHealth = vi.fn(async () => health);
+    const httpOrigin = vi.fn(() => "http://127.0.0.1:6060");
+    const preflight = createCanonicalDaemonPreflight(
+      operations({
+        inspect: () => ({
+          status: "reserved",
+          reservation: {
+            kind: "supervised-reservation",
+            version: 1,
+            supervisionId: "fixture.service",
+            reservationId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
+            reservedAt: "2026-07-21T00:00:00.000Z",
+          },
+          observation: { dev: 1, ino: 2, size: 3, mtimeMs: 4 },
+          reason: "supervised-reservation",
+          detail: "Daemon namespace is reserved for its supervisor",
+          ownerPid: null,
+        }),
+        isAlive,
+        probeIdentity,
+        probeHealth,
+        httpOrigin,
+      }),
+    );
+
+    await expect(runDaemonPreflight(preflight)).resolves.toEqual({
+      status: "unavailable",
+      code: "process-not-running",
+      reason: "Waiting for the configured supervisor to start the daemon.",
+    });
+    for (const probe of [isAlive, probeIdentity, probeHealth, httpOrigin]) {
+      expect(probe).not.toHaveBeenCalled();
+    }
+  });
+
   it.each(["malformed-json", "unsafe-permissions", "parent-unsafe-permissions"] as const)(
     "degrades an insecure or malformed record (%s)",
     async (reason) => {

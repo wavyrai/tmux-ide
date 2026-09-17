@@ -26,3 +26,18 @@ export function assertCleanEvidenceSource(state) {
     );
   }
 }
+
+/** A failed/truncated git status is unknown, never an empty clean checkout. */
+export function checkedReleaseSourceState(result) {
+  if (
+    !result ||
+    result.error ||
+    result.status !== 0 ||
+    result.signal !== null ||
+    typeof result.stdout !== "string" ||
+    Buffer.byteLength(result.stdout, "utf8") >= 1024 * 1024
+  ) {
+    throw new Error("Source status command failed or exceeded its output bound");
+  }
+  return releaseSourceState(result.stdout);
+}

@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "../../lib/runtime-namespace.ts";
 import { execFileSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { relative } from "node:path";
@@ -62,7 +63,7 @@ function getTmuxOption(key: string): string | null {
   if (!session) return null;
   try {
     return (
-      execFileSync("tmux", ["show-option", "-t", session, "-v", key], {
+      execFileSync("tmux", runtimeTmuxArgs(["show-option", "-t", session, "-v", key]), {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "ignore"],
       }).trim() || null
@@ -75,7 +76,9 @@ function getTmuxOption(key: string): string | null {
 function setTmuxOption(key: string, value: string): void {
   if (!session) return;
   try {
-    execFileSync("tmux", ["set-option", "-t", session, key, value], { stdio: "ignore" });
+    execFileSync("tmux", runtimeTmuxArgs(["set-option", "-t", session, key, value]), {
+      stdio: "ignore",
+    });
   } catch {}
 }
 
@@ -83,11 +86,15 @@ function setPreviewFile(filePath: string | null): void {
   if (!session) return;
   try {
     if (filePath) {
-      execFileSync("tmux", ["set-option", "-t", session, "@preview_file", filePath], {
-        stdio: "ignore",
-      });
+      execFileSync(
+        "tmux",
+        runtimeTmuxArgs(["set-option", "-t", session, "@preview_file", filePath]),
+        {
+          stdio: "ignore",
+        },
+      );
     } else {
-      execFileSync("tmux", ["set-option", "-t", session, "-u", "@preview_file"], {
+      execFileSync("tmux", runtimeTmuxArgs(["set-option", "-t", session, "-u", "@preview_file"]), {
         stdio: "ignore",
       });
     }

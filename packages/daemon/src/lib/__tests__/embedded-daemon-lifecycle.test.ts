@@ -36,6 +36,36 @@ function fixture() {
 const request = { enabled: false, bindHostname: "127.0.0.1", token: null } as const;
 
 describe("standalone embedded lifecycle", () => {
+  it("resets the runtime under the same process and preserves effective remote access", async () => {
+    const f = fixture();
+    const handle = await startOwnedEmbeddedDaemon({ productVersion: "same-version" }, f.start);
+    await f.options[0]!.requestRestart!({
+      kind: "runtime",
+      bindHostname: "::",
+      token: "remote-token",
+      port: 4001,
+    });
+    expect(handle.pid).toBe(42);
+    expect(handle.instanceId).toBe("generation-2");
+    expect(f.options[1]).toMatchObject({
+      productVersion: "same-version",
+      bindHostname: "::",
+      authToken: "remote-token",
+      port: 4001,
+      restoreTmuxWorkspaces: true,
+      takeoverIfRunning: false,
+    });
+    await handle.stop();
+    // A deferred restart action cannot revive an owner explicitly stopped while
+    // its HTTP response was being flushed.
+    await f.options[1]!.requestRestart!({
+      kind: "runtime",
+      bindHostname: "::",
+      token: "remote-token",
+      port: 4001,
+    });
+    expect(f.start).toHaveBeenCalledTimes(2);
+  });
   it("delegates identity, authority and actions to each replacement and preserves launch options", async () => {
     const f = fixture();
     const handle = await startOwnedEmbeddedDaemon(

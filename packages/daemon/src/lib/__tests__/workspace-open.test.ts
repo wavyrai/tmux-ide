@@ -255,6 +255,7 @@ class FakeTmux {
 function rig(
   options: {
     canonicalRoot?: string;
+    maxOperations?: number;
     registry?: MemoryRegistry;
     tmux?: FakeTmux;
   } = {},
@@ -273,6 +274,7 @@ function rig(
     daemonInstanceId: DAEMON,
     registry,
     io,
+    maxOperations: options.maxOperations,
   });
   return { authority, registry, tmux, identity: deriveWorkspaceOpenIdentity(canonicalRoot) };
 }
@@ -615,4 +617,21 @@ describe("WorkspaceOpenAuthority", () => {
       authority.open(request({ intent: { projectDir: "/different/intent" } })),
     ).rejects.toSatisfy((error: unknown) => errorCode(error) === "operation_conflict");
   });
+});
+
+it("reports retained-ledger pressure without retiring or probing during snapshots", async () => {
+  const { authority, tmux } = rig({ maxOperations: 1 });
+  await authority.open(request());
+  const calls = tmux.calls.length;
+  for (let index = 0; index < 10; index++)
+    expect(authority.admissionSnapshot()).toMatchObject({
+      pending: 0,
+      retained: 1,
+      retentionLimit: 1,
+      retentionMayBlock: true,
+    });
+  expect(tmux.calls).toHaveLength(calls);
+  expect(await authority.open(request())).toBeDefined();
+  await authority.dispose();
+  expect(authority.admissionSnapshot()).toMatchObject({ disposed: true, retained: 0 });
 });

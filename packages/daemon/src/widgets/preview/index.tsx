@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "../../lib/runtime-namespace.ts";
 import { parseArgs } from "node:util";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { extname, basename, resolve } from "node:path";
@@ -64,7 +65,7 @@ function getPreviewFile(): string | null {
   if (!session) return null;
   try {
     return (
-      execFileSync("tmux", ["show-option", "-t", session, "-v", "@preview_file"], {
+      execFileSync("tmux", runtimeTmuxArgs(["show-option", "-t", session, "-v", "@preview_file"]), {
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "ignore"],
       }).trim() || null

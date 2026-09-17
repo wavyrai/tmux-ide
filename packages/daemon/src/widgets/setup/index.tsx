@@ -1,3 +1,6 @@
+import { assertQualifiedDevelopmentLaunch } from "../../lib/runtime-namespace.ts";
+// Installed CLI fallbacks are not an isolated development launch.
+assertQualifiedDevelopmentLaunch();
 import "@opentui/solid/runtime-plugin-support";
 import { parseArgs } from "node:util";
 import { execFileSync } from "node:child_process";

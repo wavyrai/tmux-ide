@@ -438,8 +438,10 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   /**
    * Mark the exact retained runtime as eligible for daemon-private inventory.
    * This is intentionally separate from ordinary renderer prewarming: only
-   * the native discovery path may call it after its parser and global catalog
-   * analyzer proved the session attachable.
+   * native discovery may call it after validating the selected session's cold
+   * pane/window proof and its qualification admission guards. This grants fresh
+   * session-scoped control-channel inventory, not a global uniqueness certificate;
+   * consumers still validate each inventory and its exact-runtime token.
    */
   async prewarmProofQualifiedSession(
     session: string,

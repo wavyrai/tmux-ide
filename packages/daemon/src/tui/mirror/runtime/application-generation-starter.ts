@@ -35,7 +35,7 @@ export function createApplicationGenerationStarter(
     binding: Pick<ApplicationShellBinding, "openSession">;
     sessionOwner: () => OpenTuiSessionOwner;
     focusOwner: () => ApplicationSessionFocusOwner | null;
-    setNote: (note: string | null) => void;
+    setNote: (note: string | null, outcome?: "opened" | "cancelled") => void;
     setSurface: (surface: "terminals") => void;
   }>,
 ) {
@@ -71,7 +71,7 @@ export function createApplicationGenerationStarter(
     if (result.opened && snapshot && (snapshot.status === "live" || snapshot.status === "empty")) {
       if (!result.activated) options.setSurface("terminals");
       if (focusFirstPane) options.focusOwner()?.request(sourceFor(source));
-      options.setNote(null);
+      options.setNote(null, "opened");
       return {
         opened: true,
         sessionName,
@@ -90,7 +90,7 @@ export function createApplicationGenerationStarter(
     cancel() {
       startToken++;
       options.sessionOwner().cancelPending?.();
-      options.setNote(null);
+      options.setNote(null, "cancelled");
     },
   });
 }

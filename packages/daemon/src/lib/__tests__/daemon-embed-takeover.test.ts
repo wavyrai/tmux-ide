@@ -404,3 +404,31 @@ describe.sequential("embedded daemon cooperative takeover", () => {
     expect(existsSync(getCanonicalDaemonClaimPath())).toBe(false);
   });
 });
+
+it.each([undefined, "wrong", "fixture"])(
+  "refuses supervised takeover before shutdown for caller %s",
+  async (supervisionId) => {
+    const owner = await fakeOwner({ action: "accept-stuck" });
+    const supervised = { ...owner.info, supervisionId: "fixture" };
+    writeFileSync(getCanonicalDaemonInfoPath(), JSON.stringify(supervised), { mode: 0o600 });
+    await expect(
+      startEmbeddedDaemon({
+        takeoverIfRunning: true,
+        supervisionId,
+        silent: true,
+        requestRestart: async () => {},
+      }),
+    ).rejects.toMatchObject({
+      reason: supervisionId === "wrong" ? "canonical_record_invalid" : "canonical_takeover_refused",
+    });
+    expect(owner.actionRequests).toHaveLength(0);
+    expect(readCanonicalDaemonInfo()).toEqual(supervised);
+  },
+);
+
+it("supervised embedded startup without its lifecycle owner refuses before claiming", async () => {
+  await expect(
+    startEmbeddedDaemon({ supervisionId: "fixture", silent: true }),
+  ).rejects.toMatchObject({ reason: "canonical_record_invalid" });
+  expect(existsSync(getCanonicalDaemonClaimPath())).toBe(false);
+});

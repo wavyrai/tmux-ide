@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createPackedCancellation } from "./lib/packed-cancellation.mjs";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -14,9 +15,42 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
+import {
+  capturePackedInstallEnvironment,
+  privatePackedInstallEnvironment,
+} from "./lib/packed-install-environment.mjs";
+import {
+  settlePackedChildren,
+  createInstalledRuntimeCleanup,
+  waitForPackedSocketRemoval,
+  capturePackedTmuxWitness,
+  retirePackedTmuxSocket,
+  verifyPackedTmuxHandoff,
+  packedTmuxWitnessDifferences,
+} from "./lib/packed-install-cleanup.mjs";
+import {
+  runPackedInstallScenarios,
+  verifyPackedPostinstallLinks,
+} from "./lib/packed-install-scenarios.mjs";
 import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
-import { assertCleanEvidenceSource, releaseSourceState } from "./lib/release-source-state.mjs";
+import { diagnosePackedEmpty } from "./lib/packed-empty-diagnostics.mjs";
+import { diagnosePackedHome } from "./lib/packed-home-diagnostics.mjs";
+import {
+  assertCleanEvidenceSource,
+  checkedReleaseSourceState,
+} from "./lib/release-source-state.mjs";
 
+function boundedSpawnSync(file, args, options = {}) {
+  return spawnSync(file, args, { timeout: 5000, ...options });
+}
+
+// Read only intentional top-level selectors before dropping all ambient child overrides.
+const gateEvidenceDir = process.env.TMUX_IDE_PACK_EVIDENCE_DIR;
+const interruptionMode = process.env.TMUX_IDE_PACK_INTERRUPT_AT;
+if (interruptionMode && !["hold-input-ready", "fail-input-ready"].includes(interruptionMode))
+  throw new Error("Unknown packed interruption fixture");
+const cancellation = createPackedCancellation();
+const capturedEnvironment = capturePackedInstallEnvironment(process.env);
 const root = process.cwd();
 const packageVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const daemonPackageVersion = JSON.parse(
@@ -27,25 +61,29 @@ if (packageVersion !== daemonPackageVersion) {
     `Release package versions disagree: tmux-ide=${packageVersion}, @tmux-ide/daemon=${daemonPackageVersion}`,
   );
 }
-const releaseCommitResult = spawnSync("git", ["rev-parse", "HEAD"], {
+const releaseCommitResult = boundedSpawnSync("git", ["rev-parse", "HEAD"], {
   cwd: root,
   encoding: "utf8",
 });
 const releaseCommit = releaseCommitResult.stdout?.trim() ?? "";
-if (releaseCommitResult.status !== 0 || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(releaseCommit)) {
+if (
+  releaseCommitResult.error ||
+  releaseCommitResult.signal !== null ||
+  releaseCommitResult.status !== 0 ||
+  !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(releaseCommit)
+) {
   throw new Error(
     `Could not resolve canonical release commit: ${releaseCommitResult.stderr ?? ""}`,
   );
 }
 const platformTag = `${process.platform}-${process.arch}`;
-const evidenceDir = process.env.TMUX_IDE_PACK_EVIDENCE_DIR
-  ? join(process.env.TMUX_IDE_PACK_EVIDENCE_DIR)
-  : null;
-const sourceState = releaseSourceState(
-  spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+const evidenceDir = gateEvidenceDir ? join(gateEvidenceDir) : null;
+const sourceState = checkedReleaseSourceState(
+  boundedSpawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
     cwd: root,
     encoding: "utf8",
-  }).stdout ?? "",
+    maxBuffer: 1024 * 1024,
+  }),
 );
 if (evidenceDir) assertCleanEvidenceSource(sourceState);
 const tmpRoot = mkdtempSync(join(tmpdir(), "tmux-ide-pack-run-"));
@@ -53,6 +91,10 @@ const tarballDir = join(tmpRoot, "tarballs");
 const projectDir = join(tmpRoot, "project");
 const launchDir = join(tmpRoot, "configless-cwd");
 const homeDir = join(tmpRoot, "home");
+const privateEnvironment = privatePackedInstallEnvironment(capturedEnvironment, {
+  home: homeDir,
+  cache: join(tmpRoot, "npm-cache"),
+});
 const mockReleaseDir = join(tmpRoot, "mock-release");
 const runtimeName = `tmux-ide-tui-${platformTag}`;
 const mockReleaseBinaryPath = join(mockReleaseDir, runtimeName);
@@ -102,16 +144,18 @@ globalThis.fetch = async (resource, init) => {
 );
 
 function run(command, args, opts = {}) {
-  const res = spawnSync(command, args, {
+  cancellation.check();
+  const res = boundedSpawnSync(command, args, {
     cwd: opts.cwd ?? root,
     env: {
-      ...process.env,
+      ...privateEnvironment,
       HOME: homeDir,
       npm_config_cache: join(tmpRoot, "npm-cache"),
       ...opts.env,
     },
     encoding: "utf-8",
     stdio: opts.stdio ?? "pipe",
+    timeout: opts.timeout ?? 5000,
   });
   if (res.status !== 0) {
     throw new Error(
@@ -120,6 +164,30 @@ function run(command, args, opts = {}) {
   }
   return res;
 }
+
+async function runAsync(command, args, opts = {}) {
+  const result = await cancellation.command(command, args, {
+    ...opts,
+    cwd: opts.cwd ?? root,
+    env: {
+      ...privateEnvironment,
+      HOME: homeDir,
+      npm_config_cache: join(tmpRoot, "npm-cache"),
+      ...opts.env,
+    },
+  });
+  if (result.status !== 0)
+    throw new Error(`Packed command failed: ${command} (exit ${result.status})`);
+  return result;
+}
+const fixtureFetch = (url, options = {}) =>
+  fetch(url, {
+    ...options,
+    signal: AbortSignal.any([
+      AbortSignal.timeout(5000),
+      ...(cancellation.signal() ? [cancellation.signal()] : []),
+    ]),
+  });
 
 function shQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
@@ -161,8 +229,12 @@ function tmuxEnv(runtimePath, fetchMode = "success", includeBun = false) {
 async function waitUntil(predicate, timeoutMs, description, diagnostics) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+    cancellation.check();
+    if (await predicate()) {
+      cancellation.check();
+      return;
+    }
+    await cancellation.pause(100);
   }
   const detail = (() => {
     try {
@@ -191,20 +263,57 @@ let installedCliPath = null;
 let installedVersion = null;
 let runtimeEvidence = null;
 let journeyObservations = null;
+let homeDiagnostics = null;
+let emptyDiagnostics = null;
 let proofCompleted = false;
+let installationScenarios = null;
+let postinstallEvidence = null;
+let npmVersion = null;
+let tmuxWitness = null;
+let tmuxStarted = false;
+const tmuxGenerations = [];
+const tmuxObservations = [];
+let omittedTmuxObservations = 0;
+
+async function recordTmuxGeneration(stage) {
+  const pid = Number(
+    run("tmux", ["-S", installedTmuxSocketPath, "display-message", "-p", "#{pid}"]).stdout.trim(),
+  );
+  const next = capturePackedTmuxWitness(installedTmuxSocketPath, pid);
+  if (tmuxObservations.length < 64)
+    tmuxObservations.push({
+      stage,
+      observedAt: new Date().toISOString(),
+      pid,
+      mode: next.socket.mode & 0o7777,
+      previousMode: tmuxWitness ? tmuxWitness.socket.mode & 0o7777 : null,
+      changedFields: packedTmuxWitnessDifferences(tmuxWitness, next),
+    });
+  else omittedTmuxObservations++;
+  const transition = await verifyPackedTmuxHandoff(tmuxWitness, next);
+  if (!tmuxWitness || transition.replaced)
+    tmuxGenerations.push({
+      stage,
+      observedAt: new Date().toISOString(),
+      ...transition,
+      witness: next,
+    });
+  tmuxWitness = next;
+}
 
 function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 function spawnInstalledCli(installedCli) {
+  cancellation.check();
   const child = spawn(installedCli, ["--headless", "--json"], {
     cwd: projectDir,
     // The elected daemon and the later installed TUI must observe the same
     // isolated tmux server. Otherwise the daemon can be healthy while its
     // workspace catalog is reading the developer's default tmux socket.
     env: {
-      ...process.env,
+      ...privateEnvironment,
       ...tmuxEnv(dirname(installedCli)),
       npm_config_cache: join(tmpRoot, "npm-cache"),
     },
@@ -222,89 +331,22 @@ function spawnInstalledCli(installedCli) {
   childExits.set(
     child,
     new Promise((resolveExit, rejectExit) => {
-      child.once("exit", (code, signal) => resolveExit({ code, signal }));
+      child.once("close", (code, signal) => resolveExit({ code, signal }));
       child.once("error", rejectExit);
     }),
   );
+  void childExits.get(child).catch(() => {});
   children.push(child);
   return child;
 }
 
 async function waitForChild(child, timeoutMs = 20_000) {
-  const exit = await Promise.race([
-    childExits.get(child),
-    new Promise((_, rejectTimeout) =>
-      setTimeout(() => rejectTimeout(new Error(`PID ${child.pid} did not exit`)), timeoutMs),
-    ),
-  ]);
+  const exit = await cancellation.waitFor(childExits.get(child), timeoutMs);
   return { ...exit, ...childOutput.get(child) };
 }
 
-function createInstalledRuntimeCleanup(downloadedTui, readyPath) {
-  const processIdentity = (pid) => {
-    const observed = spawnSync("ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const identity = observed.status === 0 ? observed.stdout.trim() : "";
-    return identity && identity.includes(downloadedTui) ? identity : null;
-  };
-  const launchedTuiPids = () => {
-    const observed = spawnSync("ps", ["-axo", "pid=,command="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (observed.status !== 0) return [];
-    return observed.stdout
-      .split("\n")
-      .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
-      .filter((match) => match?.[2]?.includes(downloadedTui))
-      .map((match) => Number(match[1]))
-      .filter((pid) => Number.isSafeInteger(pid) && pid > 1);
-  };
-  const terminateExactTui = async (pid) => {
-    const identity = processIdentity(pid);
-    if (!identity) return;
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      return;
-    }
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
-      const currentIdentity = processIdentity(pid);
-      if (!currentIdentity || currentIdentity !== identity) return;
-    }
-    if (processIdentity(pid) !== identity) return;
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // The exact hosted TUI exited between the final probe and escalation.
-    }
-  };
-  return async () => {
-    const pids = new Set(launchedTuiPids());
-    if (readyPath && existsSync(readyPath)) {
-      try {
-        const readiness = JSON.parse(readFileSync(readyPath, "utf8"));
-        if (
-          readiness?.version === 1 &&
-          readiness.phase === "input-ready" &&
-          readiness.surface === "app" &&
-          Number.isSafeInteger(readiness.pid) &&
-          readiness.pid > 1
-        ) {
-          pids.add(readiness.pid);
-        }
-      } catch {
-        // A partial readiness write must not prevent exact-binary cleanup.
-      }
-    }
-    await Promise.all([...pids].map(terminateExactTui));
-  };
-}
-
 async function runInstalledTuiGate(installedCli) {
+  cancellation.check();
   if (!new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]).has(platformTag)) {
     throw new Error(`Installed TUI gate has no release binary for ${platformTag}`);
   }
@@ -322,20 +364,25 @@ async function runInstalledTuiGate(installedCli) {
   // `npm pack` compiles the tracked CLI before the runtime build. Capture that
   // post-pack source state so the assertion describes the exact compiled input
   // while the evidence record still proves qualification began from `sourceState`.
-  const compiledSourceState = releaseSourceState(
-    spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+  const compiledSourceState = checkedReleaseSourceState(
+    boundedSpawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
       cwd: root,
       encoding: "utf8",
-    }).stdout ?? "",
+      maxBuffer: 1024 * 1024,
+    }),
   );
-  run("bun", ["scripts/build-tui.mjs", "--outfile", mockReleaseBinaryPath], {
+  await runAsync("bun", ["scripts/build-tui.mjs", "--outfile", mockReleaseBinaryPath], {
     stdio: "inherit",
   });
-  const runtimeProvenanceResult = spawnSync(mockReleaseBinaryPath, ["__release-provenance"], {
-    cwd: launchDir,
-    env: { ...process.env, ...tmuxEnv(dirname(installedCli)) },
-    encoding: "utf8",
-  });
+  const runtimeProvenanceResult = boundedSpawnSync(
+    mockReleaseBinaryPath,
+    ["__release-provenance"],
+    {
+      cwd: launchDir,
+      env: { ...privateEnvironment, ...tmuxEnv(dirname(installedCli)) },
+      encoding: "utf8",
+    },
+  );
   if (runtimeProvenanceResult.status !== 0) {
     throw new Error(
       `Compiled runtime provenance failed (${runtimeProvenanceResult.status}):\n${runtimeProvenanceResult.stdout}${runtimeProvenanceResult.stderr}`,
@@ -366,9 +413,9 @@ async function runInstalledTuiGate(installedCli) {
         'process.stdout.write("UNEXPECTED_PROJECT_PRELOAD\\n"); process.exit(87);\n',
       );
     }
-    const isolatedProvenance = spawnSync(mockReleaseBinaryPath, ["__release-provenance"], {
+    const isolatedProvenance = boundedSpawnSync(mockReleaseBinaryPath, ["__release-provenance"], {
       cwd: configuredCwd,
-      env: { ...process.env, ...tmuxEnv(dirname(installedCli)) },
+      env: { ...privateEnvironment, ...tmuxEnv(dirname(installedCli)) },
       encoding: "utf8",
       timeout: 5_000,
     });
@@ -401,9 +448,9 @@ async function runInstalledTuiGate(installedCli) {
     throw new Error("Installed TUI gate was not a clean automatic-acquisition first run");
   }
 
-  const treeSitterSmoke = spawnSync(mockReleaseBinaryPath, ["__tree-sitter-smoke"], {
+  const treeSitterSmoke = boundedSpawnSync(mockReleaseBinaryPath, ["__tree-sitter-smoke"], {
     cwd: launchDir,
-    env: { ...process.env, ...tmuxEnv(dirname(installedCli)) },
+    env: { ...privateEnvironment, ...tmuxEnv(dirname(installedCli)) },
     encoding: "utf8",
   });
   if (
@@ -427,9 +474,9 @@ async function runInstalledTuiGate(installedCli) {
   const runtimeEnv = tmuxEnv(dirname(installedCli), "success", true);
   const tmuxArgs = (...args) => ["-S", installedTmuxSocketPath, ...args];
   const tmuxResult = (args, stdio = "pipe") =>
-    spawnSync("tmux", tmuxArgs(...args), {
+    boundedSpawnSync("tmux", tmuxArgs(...args), {
       cwd: launchDir,
-      env: { ...process.env, ...runtimeEnv },
+      env: { ...privateEnvironment, ...runtimeEnv },
       encoding: "utf8",
       stdio,
     });
@@ -525,6 +572,32 @@ async function runInstalledTuiGate(installedCli) {
       "the installed TUI's input-ready barrier",
       gateDiagnostics,
     );
+
+    cancellation.check();
+    if (interruptionMode) {
+      const ready = JSON.parse(readFileSync(readyPath, "utf8"));
+      if (ready.version !== 1 || ready.phase !== "input-ready" || ready.surface !== "app")
+        throw new Error("Packed interruption readiness refused");
+      if (!evidenceDir) throw new Error("Packed interruption requires evidence directory");
+      mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
+      writeFileSync(
+        join(evidenceDir, "interruption-ready.json"),
+        JSON.stringify({
+          stage: "installed-tui-input-ready",
+          runnerPid: process.pid,
+          runtimePid: Number.isSafeInteger(ready.pid) ? ready.pid : null,
+          directPids: children.map((child) => child.pid ?? null),
+          tmuxWitness,
+          roots: [tmpRoot, tmuxTmpDir],
+          mode: interruptionMode,
+        }) + "\n",
+        { mode: 0o600 },
+      );
+      if (interruptionMode === "fail-input-ready")
+        throw new Error("Injected packed qualification failure");
+      await cancellation.pause(30000);
+      throw new Error("Packed interruption signal was not delivered");
+    }
 
     // Once the host is ready, every remaining milestone is mandatory. An early
     // clean exit above is a failure, never a shortcut around these assertions.
@@ -627,8 +700,10 @@ async function runInstalledTuiGate(installedCli) {
       );
     }
   } finally {
-    await terminateLaunchedTui();
-    tmuxResult(["kill-server"]);
+    await cancellation.cleanup(async () => {
+      await terminateLaunchedTui();
+      tmuxResult(["kill-server"]);
+    });
   }
   return {
     provenance: runtimeProvenance,
@@ -644,9 +719,9 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   const runtimeEnv = tmuxEnv(dirname(installedCli));
   const tmuxArgs = (...args) => ["-S", installedTmuxSocketPath, ...args];
   const tmuxResult = (args, options = {}) =>
-    spawnSync("tmux", tmuxArgs(...args), {
+    boundedSpawnSync("tmux", tmuxArgs(...args), {
       cwd: launchDir,
-      env: { ...process.env, ...runtimeEnv },
+      env: { ...privateEnvironment, ...runtimeEnv },
       encoding: "utf8",
       ...options,
     });
@@ -665,7 +740,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     if (!existsSync(infoPath)) return [];
     const info = JSON.parse(readFileSync(infoPath, "utf8"));
     try {
-      const response = await fetch(
+      const response = await fixtureFetch(
         `http://127.0.0.1:${info.port}/api/resources/workspace-catalog?version=2`,
       );
       if (!response.ok) return [];
@@ -682,7 +757,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     if (!existsSync(infoPath)) return null;
     const info = JSON.parse(readFileSync(infoPath, "utf8"));
     try {
-      const response = await fetch(
+      const response = await fixtureFetch(
         `http://127.0.0.1:${info.port}/api/project/${encodeURIComponent(sessionName)}/application-shell?version=3`,
       );
       return response.ok ? await response.json() : null;
@@ -754,6 +829,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       launcherPath,
     ]);
     if (created.status !== 0) throw new Error(`Could not launch ${hostSession}: ${created.stderr}`);
+    await recordTmuxGeneration(`golden-app:${hostSession}`);
     if (hosted) {
       const binding = tmuxResult([
         "bind-key",
@@ -839,7 +915,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     const status = readFileSync(app.statusPath, "utf8").trim();
     if (status !== "0") throw new Error(`Packed app quit with ${status}\n${app.diagnostics()}`);
   };
-  const createSession = (name) => {
+  const createSession = async (name) => {
     const result = tmuxResult([
       "new-session",
       "-d",
@@ -853,6 +929,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       launchDir,
     ]);
     if (result.status !== 0) throw new Error(`Could not create ${name}: ${result.stderr}`);
+    await recordTmuxGeneration(`golden-session:${name}`);
   };
 
   // The preceding first-run gate killed the isolated tmux server. Its host
@@ -876,15 +953,25 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     },
     empty.diagnostics,
   );
-  await observe(
-    "no-session chooser",
-    10_000,
-    () => capture(empty.targetPane).includes("No live tmux sessions yet"),
-    empty.diagnostics,
-  );
+  try {
+    await observe(
+      "no-session chooser",
+      10_000,
+      () => capture(empty.targetPane).includes("No live tmux sessions yet"),
+      empty.diagnostics,
+    );
+  } catch (error) {
+    try {
+      const info = JSON.parse(readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"));
+      emptyDiagnostics = await diagnosePackedEmpty(info);
+    } catch {
+      emptyDiagnostics = { failure: "diagnostic-unavailable" };
+    }
+    throw error;
+  }
   await cleanQuit(empty);
 
-  for (const name of ["journey-alpha", "journey-beta", "journey-gamma"]) createSession(name);
+  for (const name of ["journey-alpha", "journey-beta", "journey-gamma"]) await createSession(name);
   // The first-run gate intentionally killed and recreated the isolated tmux
   // server. Restart the installed daemon so its tmux observer is bound to the
   // new server generation before asserting catalog-driven chooser behavior.
@@ -1056,14 +1143,24 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     () => `tmux sessions: ${sessionNames().join(", ")}`,
   );
   // Prove process discovery rather than synthetic @agent_hint metadata. The
-  // already-required Node runtime is copied under a representative manifest
-  // basename and acts as a deterministic stdin/stdout agent fixture.
+  // already-required Bun compiler produces a standalone stdin/stdout fixture
+  // under a representative manifest basename. Copying the current Node binary
+  // is not portable: shared-library distributions lose their relative libnode
+  // dependency when relocated to this temporary directory.
   const agentFixtureBinary = join(tmpRoot, "codex");
-  copyFileSync(process.execPath, agentFixtureBinary);
-  chmodSync(agentFixtureBinary, 0o700);
+  const agentFixtureSource = join(tmpRoot, "agent-fixture.js");
   const agentFixtureProgram =
     "process.stdin.on('data',chunk=>process.stdout.write(chunk));process.stdin.resume();setInterval(()=>{},2147483647)";
-  const agentFixtureCommand = `${shQuote(agentFixtureBinary)} -e ${shQuote(agentFixtureProgram)}`;
+  writeFileSync(agentFixtureSource, agentFixtureProgram, { mode: 0o600 });
+  await runAsync("bun", [
+    "build",
+    "--compile",
+    agentFixtureSource,
+    "--outfile",
+    agentFixtureBinary,
+  ]);
+  chmodSync(agentFixtureBinary, 0o700);
+  const agentFixtureCommand = shQuote(agentFixtureBinary);
   const createPackedAgentWindow = (deferAgentExec = false) => {
     const created = tmuxResult([
       "new-window",
@@ -1146,6 +1243,43 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       `Agent pane ${preparedAgentPane} has no durable semantic identity: ${semanticAgentPane}`,
     );
   }
+  // Exercise Home through its actual observer and wire resources. Sidebar
+  // publication alone does not prove that the Home roster receives agent data.
+  send(one, "F1");
+  try {
+    await observe(
+      "installed Home real-process agent indicator",
+      10_000,
+      () => {
+        const frame = capture(one.targetPane);
+        return (
+          frame.includes("1 observed agent") &&
+          frame.includes("STATUS") &&
+          frame
+            .split("\n")
+            .some((line) => line.includes(agentClickLabel) && line.includes("journey-beta"))
+        );
+      },
+      one.diagnostics,
+    );
+  } catch (error) {
+    // Probe only after the observation failed; extra subscriptions must not
+    // repair or otherwise influence the behavior being qualified.
+    try {
+      const info = JSON.parse(readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"));
+      homeDiagnostics = await diagnosePackedHome(info, "journey-beta");
+    } catch {
+      homeDiagnostics = { failure: "diagnostic-unavailable" };
+    }
+    throw error;
+  }
+  send(one, "F2");
+  await observe(
+    "installed Home returns to terminals",
+    5_000,
+    () => frameShowsTerminalFocus(capture(one.targetPane)),
+    one.diagnostics,
+  );
   clickText(one, agentClickLabel);
   const agentJumpMarker = `PACK_AGENT_JUMP_${process.pid}`;
   typeCommand(one, agentJumpMarker);
@@ -1519,20 +1653,22 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
 
   // Exercise hosted put-away with a real isolated tmux client. Control mode is
   // terminal-independent but still owns a genuine client/session stack.
-  createSession("_tmux-ide-pack-return-seed");
+  await createSession("_tmux-ide-pack-return-seed");
   const hosted = await launchApp({ target: "journey-beta", hosted: true });
   const controlClient = spawn(
     "tmux",
     tmuxArgs("-C", "attach-session", "-t", "=_tmux-ide-pack-return-seed"),
-    { env: { ...process.env, ...runtimeEnv }, stdio: ["pipe", "pipe", "pipe"] },
+    { env: { ...privateEnvironment, ...runtimeEnv }, stdio: ["pipe", "pipe", "pipe"] },
   );
   children.push(controlClient);
   childExits.set(
     controlClient,
-    new Promise((resolveExit) =>
-      controlClient.once("exit", (code, signal) => resolveExit({ code, signal })),
-    ),
+    new Promise((resolveExit, rejectExit) => {
+      controlClient.once("close", (code, signal) => resolveExit({ code, signal }));
+      controlClient.once("error", rejectExit);
+    }),
   );
+  void childExits.get(controlClient).catch(() => {});
   childOutput.set(controlClient, { stdout: "", stderr: "" });
   const controlClientTarget = () => {
     const clients = tmuxResult([
@@ -1619,7 +1755,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   ]);
   const hostedRendererPid = Number(hostedRendererPidResult.stdout.trim());
   const hostedRendererIdentity = Number.isSafeInteger(hostedRendererPid)
-    ? spawnSync("ps", ["-p", String(hostedRendererPid), "-o", "lstart=", "-o", "command="], {
+    ? boundedSpawnSync("ps", ["-p", String(hostedRendererPid), "-o", "lstart=", "-o", "command="], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       }).stdout.trim()
@@ -1632,7 +1768,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // leaks the process it created or targets any ambient tmux-ide process.
   if (hostedRendererIdentity) {
     const stillExactRenderer = () => {
-      const observed = spawnSync(
+      const observed = boundedSpawnSync(
         "ps",
         ["-p", String(hostedRendererPid), "-o", "lstart=", "-o", "command="],
         { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
@@ -1680,13 +1816,18 @@ try {
   // workspace-owned TypeScript. The private @tmux-ide/daemon workspace package
   // is not an installed runtime dependency of that CLI and must not mask an
   // incomplete root tarball in this smoke test.
-  run("pnpm", ["build:cli"], { stdio: "inherit" });
-  run("pnpm", ["pack", "--pack-destination", tarballDir], { stdio: "inherit" });
+  await runAsync("pnpm", ["build:cli"], { stdio: "inherit" });
+  await runAsync("pnpm", ["pack", "--pack-destination", tarballDir], { stdio: "inherit" });
 
   rootTarball = findTarball("tmux-ide-");
-  run("npm", ["init", "-y"], { cwd: projectDir });
-  run("npm", ["install", rootTarball], { cwd: projectDir, stdio: "inherit" });
+  npmVersion = run("npm", ["--version"]).stdout.trim();
+  await runAsync("npm", ["init", "-y"], { cwd: projectDir });
+  await runAsync("npm", ["install", rootTarball], { cwd: projectDir, stdio: "inherit" });
 
+  postinstallEvidence = verifyPackedPostinstallLinks(
+    join(projectDir, "node_modules", "tmux-ide"),
+    true,
+  );
   const installedCli = join(projectDir, "node_modules", ".bin", "tmux-ide");
   installedCliPath = installedCli;
   installedVersion = run(installedCli, ["--version"], { cwd: projectDir })
@@ -1705,10 +1846,10 @@ try {
   }
   const daemonInfo = join(homeDir, ".tmux-ide", "daemon.json");
   const installedCommand = (args, fetchMode = "success", timeout = 10_000) =>
-    spawnSync(installedCli, args, {
+    boundedSpawnSync(installedCli, args, {
       cwd: launchDir,
       env: {
-        ...process.env,
+        ...privateEnvironment,
         ...tmuxEnv(dirname(installedCli), fetchMode),
         npm_config_cache: join(tmpRoot, "npm-cache"),
       },
@@ -1763,7 +1904,8 @@ try {
     throw new Error("Failed automatic acquisition left a runtime in the clean install HOME");
   }
 
-  const target = spawnSync(
+  tmuxStarted = true;
+  const target = boundedSpawnSync(
     "tmux",
     [
       "-S",
@@ -1781,13 +1923,14 @@ try {
     ],
     {
       cwd: launchDir,
-      env: { ...process.env, ...tmuxEnv(dirname(installedCli)) },
+      env: { ...privateEnvironment, ...tmuxEnv(dirname(installedCli)) },
       encoding: "utf8",
     },
   );
   if (target.status !== 0) {
     throw new Error(`Could not create isolated target session: ${target.stderr}`);
   }
+  await recordTmuxGeneration("initial-target");
   const installedBundle = readFileSync(
     join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js"),
     "utf8",
@@ -1852,7 +1995,7 @@ try {
   if (typeof info.instanceId !== "string" || info.instanceId.length === 0) {
     throw new Error("daemon.json has no instance identity");
   }
-  const health = await fetch(`http://127.0.0.1:${info.port}/health`);
+  const health = await fixtureFetch(`http://127.0.0.1:${info.port}/health`);
   if (!health.ok) throw new Error(`Headless daemon health returned HTTP ${health.status}`);
   const healthBody = await health.json();
   if (healthBody.protocolVersion !== info.protocolVersion) {
@@ -1865,7 +2008,7 @@ try {
       `daemon.json product ${info.productVersion} disagrees with health ${healthBody.productVersion}`,
     );
   }
-  const healthz = await fetch(`http://127.0.0.1:${info.port}/healthz`);
+  const healthz = await fixtureFetch(`http://127.0.0.1:${info.port}/healthz`);
   if (!healthz.ok) throw new Error(`Headless daemon healthz returned HTTP ${healthz.status}`);
   const healthzBody = await healthz.json();
   if (healthzBody.productVersion !== info.productVersion) {
@@ -1873,7 +2016,7 @@ try {
       `daemon.json product ${info.productVersion} disagrees with healthz ${healthzBody.productVersion}`,
     );
   }
-  const identity = await fetch(`http://127.0.0.1:${info.port}/identity`);
+  const identity = await fixtureFetch(`http://127.0.0.1:${info.port}/identity`);
   if (!identity.ok) throw new Error(`Headless daemon identity returned HTTP ${identity.status}`);
   const identityBody = await identity.json();
   for (const key of ["pid", "protocolVersion", "productVersion", "instanceId", "startedAt"]) {
@@ -1916,42 +2059,75 @@ try {
   // persistent canonical daemon; running it before this section would make the
   // election warm and leave an untracked detached owner outside `children`.
   runtimeEvidence = await runInstalledTuiGate(installedCli);
+  installationScenarios = {};
+  await runPackedInstallScenarios(
+    {
+      root: join(tmpRoot, "scripts-disabled"),
+      socket: join(tmuxTmpDir, "disabled.sock"),
+      tarball: rootTarball,
+      primaryCli: join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js"),
+      version: packageVersion,
+      runtimeBinary: mockReleaseBinaryPath,
+      platform: platformTag,
+      baseEnvironment: capturedEnvironment,
+      runtimeEnvironment: tmuxEnv(dirname(installedCli)),
+      cancellation,
+    },
+    installationScenarios,
+  );
   journeyObservations = await runPackedGoldenJourney(installedCli, owner);
   proofCompleted = true;
 } finally {
-  // A failed golden journey may leave its compiled app alive after tmux dies.
-  // Reuse exact-binary/PID-identity cleanup for every app in this private run.
-  await createInstalledRuntimeCleanup(
-    join(homeDir, ".tmux-ide", "bin", `tmux-ide-tui-${platformTag}-${packageVersion}`),
-  )();
-  spawnSync("tmux", ["-S", installedTmuxSocketPath, "kill-server"], {
-    env: { ...process.env, TMUX: "" },
+  cancellation.beginCleanup();
+  const cleanupStarted = Date.now();
+  const cleanup = { runtime: false, tmuxSocketRemoved: false, children: null, failures: [] };
+  try {
+    await createInstalledRuntimeCleanup(
+      join(homeDir, ".tmux-ide", "bin", `tmux-ide-tui-${platformTag}-${packageVersion}`),
+    )();
+    cleanup.runtime = true;
+  } catch (error) {
+    cleanup.runtimeDiagnostics = error.diagnostics ?? [];
+    cleanup.failures.push("runtime-retirement-unconfirmed");
+  }
+  const tmuxStop = boundedSpawnSync("tmux", ["-S", installedTmuxSocketPath, "kill-server"], {
+    env: { ...privateEnvironment, TMUX: "" },
     stdio: "ignore",
+    timeout: 5000,
   });
-  for (const child of children) {
-    if (child.exitCode !== null || child.signalCode !== null) continue;
+  if (tmuxWitness) {
     try {
-      child.kill("SIGTERM");
+      const retired = await retirePackedTmuxSocket(tmuxWitness);
+      cleanup.tmuxSocketRemoved = retired.socketRemoved;
+      cleanup.tmuxOwnerDead = retired.ownerDead;
+      cleanup.staleSocketRemoved = retired.staleSocketRemoved;
     } catch {
-      // Already exited.
+      cleanup.tmuxOwnerDead = false;
     }
+  } else if (!tmuxStarted) {
+    cleanup.tmuxSocketRemoved =
+      !tmuxStop.error && (await waitForPackedSocketRemoval(installedTmuxSocketPath));
   }
-
-  const liveChildren = children.filter(
-    (child) => child.exitCode === null && child.signalCode === null,
-  );
-  if (liveChildren.length > 0) {
-    const stopped = await Promise.race([
-      Promise.all(liveChildren.map((child) => childExits.get(child))).then(() => true),
-      new Promise((resolveDelay) => setTimeout(() => resolveDelay(false), 5_000)),
-    ]);
-    if (!stopped) {
-      for (const child of liveChildren) {
-        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-      }
-      cleanupError = new Error("Installed headless contender did not exit after SIGTERM");
-    }
-  }
+  if (!cleanup.tmuxSocketRemoved) cleanup.failures.push("tmux-retirement-unconfirmed");
+  cleanup.children = await settlePackedChildren(children, childExits);
+  if (!cleanup.children.confirmed) cleanup.failures.push("child-close-unconfirmed");
+  else if (!cleanup.children.graceful) cleanup.failures.push("child-required-forced-retirement");
+  cleanup.installationScenarios =
+    installationScenarios === null || installationScenarios.cleanupConfirmed === true;
+  if (!cleanup.installationScenarios)
+    cleanup.failures.push("installed-scenarios-retirement-unconfirmed");
+  const cleanupConfirmed =
+    !cancellation.facts().uncertainCommand &&
+    cleanup.runtime &&
+    cleanup.tmuxSocketRemoved &&
+    cleanup.children.confirmed &&
+    cleanup.installationScenarios;
+  let completed = proofCompleted && cleanupConfirmed && cleanup.failures.length === 0;
+  let proof = null;
+  if (cancellation.facts().uncertainCommand)
+    cleanup.failures.push("command-tree-retirement-unconfirmed");
+  if (cleanup.failures.length)
+    cleanupError = new Error("Packed fixture cleanup did not complete cleanly");
   if (evidenceDir) {
     mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
     const copied = [];
@@ -1972,48 +2148,86 @@ try {
         sha256: sha256File(destination),
       });
     }
+    proof = {
+      schemaVersion: 1,
+      completed,
+      interruption: cancellation.facts(),
+      cleanup,
+      retainedRoots: cleanupConfirmed ? [] : [tmpRoot, tmuxTmpDir],
+      install: {
+        manager: "npm",
+        managerVersion: npmVersion,
+        postinstall: postinstallEvidence,
+        scripts: "enabled",
+        tarballSha256: rootTarball && existsSync(rootTarball) ? sha256File(rootTarball) : null,
+      },
+      version: packageVersion,
+      commit: releaseCommit,
+      platform: platformTag,
+      sourceState,
+      installedVersion,
+      runtime: runtimeEvidence,
+      artifacts: copied,
+      journey: journeyObservations,
+      homeDiagnostics,
+      emptyDiagnostics,
+      installationScenarios,
+      tmuxWitness,
+      tmuxGenerations,
+      tmuxObservations,
+      omittedTmuxObservations,
+      isolation: {
+        emptyHome: true,
+        emptyCwd: true,
+        repositoryNodeModulesOnPath: false,
+        sourceOverride: false,
+        preseededRuntime: false,
+        privateTmuxSocket: true,
+      },
+      platformMatrix: Object.fromEntries(
+        ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"].map((platform) => [
+          platform,
+          platform === platformTag
+            ? completed
+              ? "passed-local"
+              : "failed-local"
+            : platform.startsWith("linux-")
+              ? "requires-ci"
+              : "not-tested-locally",
+        ]),
+      ),
+    };
+  }
+  if (cleanupConfirmed) {
+    for (const path of [tmpRoot, tmuxTmpDir]) {
+      try {
+        rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch {
+        cleanup.failures.push("fixture-root-removal-failed");
+      }
+    }
+  } else {
+    // Leave exact owned files available for recovery; never erase uncertain ownership.
     writeFileSync(
-      join(evidenceDir, "proof.json"),
-      `${JSON.stringify(
-        {
-          schemaVersion: 1,
-          completed: proofCompleted,
-          version: packageVersion,
-          commit: releaseCommit,
-          platform: platformTag,
-          sourceState,
-          installedVersion,
-          runtime: runtimeEvidence,
-          artifacts: copied,
-          journey: journeyObservations,
-          isolation: {
-            emptyHome: true,
-            emptyCwd: true,
-            repositoryNodeModulesOnPath: false,
-            sourceOverride: false,
-            preseededRuntime: false,
-            privateTmuxSocket: true,
-          },
-          platformMatrix: Object.fromEntries(
-            ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"].map((platform) => [
-              platform,
-              platform === platformTag
-                ? proofCompleted
-                  ? "passed-local"
-                  : "failed-local"
-                : platform.startsWith("linux-")
-                  ? "requires-ci"
-                  : "not-tested-locally",
-            ]),
-          ),
-        },
-        null,
-        2,
-      )}\n`,
+      join(tmpRoot, "cleanup-refused.json"),
+      JSON.stringify({ cleanup, roots: [tmpRoot, tmuxTmpDir] }, null, 2) + "\n",
+      { flag: "wx", mode: 0o600 },
     );
   }
-  rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  rmSync(tmuxTmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  completed = completed && cleanup.failures.length === 0;
+  if (!completed && cleanup.failures.length)
+    cleanupError = new Error("Packed fixture cleanup did not complete cleanly");
+  if (proof) {
+    proof.interruption = cancellation.facts();
+    proof.cleanup.elapsedMs = Date.now() - cleanupStarted;
+    proof.completed = completed;
+    proof.retainedRoots = [tmpRoot, tmuxTmpDir].filter((path) => existsSync(path));
+    proof.platformMatrix[platformTag] = completed ? "passed-local" : "failed-local";
+    writeFileSync(join(evidenceDir, "proof.json"), JSON.stringify(proof, null, 2) + "\n", {
+      mode: 0o600,
+    });
+  }
 }
 
+cancellation.dispose();
 if (cleanupError) throw cleanupError;

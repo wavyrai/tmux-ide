@@ -385,6 +385,152 @@ describe("WorkspacePromotionAuthority", () => {
     expect(registry.list()).toHaveLength(1);
   });
 
+  describe("bounded completed-operation retention", () => {
+    it("keeps opening one retained workspace beyond 10,000 requests and repairs new panes", async () => {
+      const mock = new MockTmux();
+      const { name } = adoptedAgentSession(mock);
+      const registry = new FakeRegistry();
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock),
+      });
+      const sessionId = fleetSessionIdForName(name);
+      const first = await authority.promote(request(sessionId));
+      const originalStamp = mock.paneOption("%1")!.options.get("@tmux_ide_pane_id");
+      for (let index = 1; index <= 10_000; index += 1) {
+        if (index === 128 || index === 5_000) {
+          mock.pane(mock.windowOf("@1")!.window, `%${index}`);
+        }
+        const result = await authority.promote(request(sessionId));
+        expect(result.resource).toEqual(first.resource);
+        expect(result.outcome).toBe("replayed");
+      }
+      expect(authority.admissionSnapshot()).toMatchObject({
+        pending: 0,
+        retained: 128,
+        retentionLimit: 128,
+        retentionMayBlock: false,
+      });
+      expect(registry.list()).toHaveLength(1);
+      expect(mock.paneOption("%1")!.options.get("@tmux_ide_pane_id")).toBe(originalStamp);
+      for (const id of ["%128", "%5000"]) {
+        expect(mock.paneOption(id)!.options.get("@tmux_ide_pane_id")).toMatch(/^pane\.promoted\./u);
+      }
+      await authority.dispose();
+    });
+
+    it("bounds successful replay by completion order without refreshing receipts on retry", async () => {
+      const mock = new MockTmux();
+      const { name } = adoptedAgentSession(mock);
+      const registry = new FakeRegistry();
+      let tmuxCalls = 0;
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        maxOperations: 2,
+        io: io(mock, {
+          runTmux: (args) => {
+            tmuxCalls += 1;
+            return mock.run(args);
+          },
+        }),
+      });
+      const first = request(fleetSessionIdForName(name));
+      const second = request(fleetSessionIdForName(name));
+      const original = await authority.promote(first);
+      await authority.promote(second);
+      const beforeRetry = tmuxCalls;
+      await expect(authority.promote(first)).resolves.toMatchObject({ outcome: "replayed" });
+      expect(tmuxCalls).toBe(beforeRetry);
+      await authority.promote(request(fleetSessionIdForName(name)));
+      // Retrying the oldest receipt did not keep it in the two-result window.
+      // An expired identical request must re-read current truth and repair panes.
+      mock.pane(mock.windowOf("@1")!.window, "%2");
+      const beforeExpiredRetry = tmuxCalls;
+      await expect(authority.promote(first)).resolves.toMatchObject({
+        outcome: "replayed",
+        resource: original.resource,
+      });
+      expect(tmuxCalls).toBeGreaterThan(beforeExpiredRetry);
+      expect(mock.paneOption("%2")!.options.get("@tmux_ide_pane_id")).toMatch(/^pane\.promoted\./u);
+      const beforeConflict = tmuxCalls;
+      await expect(
+        authority.promote({ ...first, intent: { sessionId: fleetSessionIdForName("other") } }),
+      ).rejects.toMatchObject({ code: "operation_conflict" });
+      expect(tmuxCalls).toBe(beforeConflict);
+      expect(registry.list()).toHaveLength(1);
+    });
+
+    it("keeps failure replay separate from successful retention and admits later repair", async () => {
+      const mock = new MockTmux();
+      const { name } = adoptedAgentSession(mock);
+      const registry = new FakeRegistry();
+      let stampingFails = true;
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        maxOperations: 1,
+        io: io(mock, {
+          runTmux: (args) => {
+            if (stampingFails && args[0] === "set-option") {
+              throw new TmuxError("injected stamp failure", "TMUX_UNAVAILABLE");
+            }
+            return mock.run(args);
+          },
+        }),
+      });
+      const failed = request(fleetSessionIdForName(name));
+      const error = await authority.promote(failed).catch((error: unknown) => error);
+      expect(error).toMatchObject({ code: "stamp_failed" });
+      expect(registry.list()).toHaveLength(0);
+      stampingFails = false;
+      for (let index = 0; index < 3; index += 1) {
+        await authority.promote(request(fleetSessionIdForName(name)));
+      }
+      await expect(authority.promote(failed)).rejects.toBe(error);
+      await expect(
+        authority.promote({ ...failed, intent: { sessionId: fleetSessionIdForName("other") } }),
+      ).rejects.toMatchObject({ code: "operation_conflict" });
+      // Failures have their own bounded window; none consumes pending admission.
+      for (let index = 0; index < 64; index += 1) {
+        await expect(
+          authority.promote(request(fleetSessionIdForName("missing"))),
+        ).rejects.toMatchObject({ code: "session_not_found" });
+      }
+      await expect(authority.promote(failed)).resolves.toMatchObject({ outcome: "replayed" });
+      expect(registry.list()).toHaveLength(1);
+    });
+
+    it("still bounds queued work and releases admission after completion and disposal", async () => {
+      const mock = new MockTmux();
+      const { name } = adoptedAgentSession(mock);
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry: new FakeRegistry(),
+        maxOperations: 1,
+        maxPendingOperations: 1,
+        io: io(mock),
+      });
+      const first = authority.promote(request(fleetSessionIdForName(name)));
+      await expect(authority.promote(request(fleetSessionIdForName(name)))).rejects.toMatchObject({
+        code: "operation_capacity",
+        context: { reason: "admission_queue_full" },
+      });
+      await first;
+      await expect(authority.promote(request(fleetSessionIdForName(name)))).resolves.toMatchObject({
+        outcome: "replayed",
+      });
+      const queued = authority.promote(request(fleetSessionIdForName(name)));
+      const disposed = authority.dispose();
+      await expect(queued).rejects.toMatchObject({ context: { reason: "authority_disposed" } });
+      await disposed;
+      await expect(authority.promote(request(fleetSessionIdForName(name)))).rejects.toMatchObject({
+        context: { reason: "authority_disposed" },
+      });
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // Reconciliation. A registry entry is keyed by session NAME and lives on disk,
   // so it outlives the tmux server; the pane-local stamps do not. A session
@@ -751,20 +897,23 @@ describe("WorkspacePromotionAuthority", () => {
     expect(registry.list()).toHaveLength(1);
   });
 
-  it("refuses to promote an internal session", async () => {
-    const mock = new MockTmux();
-    const session = mock.session("zz-scratch", "$1", { "@tmux_ide_adopted": "1" });
-    const window = mock.window(session, "@1", "shell");
-    mock.pane(window, "%1", { active: true });
-    const authority = new WorkspacePromotionAuthority({
-      daemonInstanceId: DAEMON,
-      registry: new FakeRegistry(),
-      io: io(mock),
-    });
-    await expect(
-      authority.promote(request(fleetSessionIdForName("zz-scratch"))),
-    ).rejects.toMatchObject({ code: "session_internal" });
-  });
+  it.each(["zz-scratch", "_tmux-ide-dev-keeper"])(
+    "refuses to promote internal session %s",
+    async (name) => {
+      const mock = new MockTmux();
+      const session = mock.session(name, "$1", { "@tmux_ide_adopted": "1" });
+      const window = mock.window(session, "@1", "shell");
+      mock.pane(window, "%1", { active: true });
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry: new FakeRegistry(),
+        io: io(mock),
+      });
+      await expect(authority.promote(request(fleetSessionIdForName(name)))).rejects.toMatchObject({
+        code: "session_internal",
+      });
+    },
+  );
 
   it("rejects a daemon generation mismatch", async () => {
     const mock = new MockTmux();

@@ -115,3 +115,30 @@ describe("notifierRow", () => {
     expect(row.detail).toContain("AppleScript");
   });
 });
+
+describe("runtime prerequisites", () => {
+  it("requires Node20 while accepting newer runtimes", async () => {
+    const { nodeVersionRow } = await import("./doctor.ts");
+    expect(nodeVersionRow("18.20.0").pass).toBe(false);
+    expect(nodeVersionRow("20.0.0").pass).toBe(true);
+    expect(nodeVersionRow("24.2.0").pass).toBe(true);
+  });
+  it("accepts absent optional configuration but fails malformed present configuration", async () => {
+    const { workspaceConfigRow } = await import("./doctor.ts");
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = mkdtempSync(join(tmpdir(), "doctor-configless-"));
+    try {
+      expect(await workspaceConfigRow(root)).toMatchObject({
+        pass: true,
+        detail: "absent (optional; configless mode)",
+      });
+      mkdirSync(join(root, ".tmux-ide"));
+      writeFileSync(join(root, ".tmux-ide/workspace.yml"), "version: [malformed");
+      expect(await workspaceConfigRow(root)).toMatchObject({ pass: false, optional: false });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

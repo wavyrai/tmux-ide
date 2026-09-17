@@ -1,5 +1,5 @@
-import { execFile, execFileSync } from "node:child_process";
-import { promisify } from "node:util";
+import { execFileSync } from "node:child_process";
+import { boundedTmuxRead } from "./bounded-tmux-read.ts";
 import {
   captureUnixSocketIdentity,
   revalidateUnixSocketIdentity,
@@ -7,7 +7,6 @@ import {
 } from "./unix-socket-authority.ts";
 import type { WorkspacePaneTmuxAuthority } from "./workspace-pane-creation.ts";
 
-const execAsync = promisify(execFile);
 // One authority object belongs to one daemon generation. A runner created
 // later in that generation must inherit its first server, not repin a new one.
 const states = new WeakMap<WorkspacePaneTmuxAuthority, { identity: UnixSocketIdentity | null }>();
@@ -54,7 +53,12 @@ export function createNamedSocketFence(
       if (shared.identity) return argv();
       let path: string;
       try {
-        path = (await execAsync(executable, query, { ...options, signal })).stdout;
+        path = await boundedTmuxRead(executable, query, {
+          env: environment,
+          signal,
+          timeoutMs: 1000,
+          maxBuffer: 8192,
+        });
       } catch {
         if (signal?.aborted) signal.throwIfAborted();
         return argv();

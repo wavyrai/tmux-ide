@@ -1,3 +1,5 @@
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
+import { readDevelopmentBuild } from "./development-build.ts";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, resolve } from "node:path";
@@ -72,6 +74,8 @@ interface CliActionBridgeDeps {
 }
 
 function defaultCliEntryPath(): string {
+  const namespace = resolveRuntimeNamespace();
+  if (namespace.development) return readDevelopmentBuild(namespace.development).cli;
   if (process.env.TMUX_IDE_CLI) return resolve(process.env.TMUX_IDE_CLI);
   const current = fileURLToPath(import.meta.url);
   // esbuild collapses import.meta.url to bin/cli.js for this bundled module.

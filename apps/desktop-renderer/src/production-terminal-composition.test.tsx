@@ -1,6 +1,7 @@
 /* @vitest-environment happy-dom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { Storage } from "happy-dom";
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
@@ -399,6 +400,9 @@ function click(element: Element | null): void {
 }
 
 beforeEach(() => {
+  // Keep browser state per test; Node's native storage may require a file and
+  // must not shadow the Happy DOM storage used by this browser fixture.
+  vi.stubGlobal("localStorage", new Storage());
   /*
    * These are AppWindow CANVAS tests, and the canvas is parked behind the
    * experimental-surfaces flag since m50. `<App />` reads the flag from

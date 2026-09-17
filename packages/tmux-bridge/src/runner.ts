@@ -53,6 +53,9 @@ export function _getSpawner(): Spawner {
 }
 
 export function runTmux(args: string[], options: ExecFileSyncOptions = {}): string | Buffer {
+  if ((options.env ?? process.env).TMUX_IDE_RUNTIME_MODE === "development") {
+    throw new Error("Development tmux operations require an explicitly pinned namespace runner");
+  }
   return runTmuxBinary("tmux", args, options);
 }
 

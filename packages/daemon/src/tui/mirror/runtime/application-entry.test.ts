@@ -150,8 +150,8 @@ describe("production OpenTUI entry boundary", () => {
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
     const host = read("packages/daemon/src/tui/mirror/runtime/open-tui-generation-host.ts");
     const feedback = read("packages/daemon/src/tui/mirror/workspace/connection-feedback.ts");
-    expect(root).toContain(
-      "connectionProgress.hostOptions(sessionName, tuiLifecycleStream, tuiPerfMark)",
+    expect(root).toMatch(
+      /connectionProgress\.hostOptions\(\s*sessionName,\s*tuiLifecycleStream,\s*tuiPerfMark,\s*\(\) => ownedEpoch === sessionOwnerEpoch,?\s*\)/u,
     );
     expect(feedback).toMatch(/performanceEnabled[\s\S]*onDiagnostic/u);
     expect(host).not.toContain("onDiagnostic: () => undefined");

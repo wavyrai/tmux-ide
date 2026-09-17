@@ -1,3 +1,5 @@
+import { runtimeOwnedPath } from "../../lib/runtime-namespace.ts";
+import { resolveRuntimeNamespace } from "../../lib/runtime-namespace.ts";
 /**
  * Persisted app state for the unified IDE (M18.4) — the one small JSON that
  * makes the app remember where you were: the last surface TAB, the workspace
@@ -17,7 +19,6 @@
  */
 import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { isSpawnWhere, type LastSpawn } from "./agent-lifecycle.ts";
 
@@ -266,12 +267,12 @@ function sanitizeRecents(v: unknown): string[] {
 
 /** The tmux-ide home dir: `TMUX_IDE_HOME` when set, else `~/.tmux-ide`. */
 export function appStateHome(): string {
-  return process.env.TMUX_IDE_HOME ?? join(homedir(), ".tmux-ide");
+  return resolveRuntimeNamespace().stateHome;
 }
 
 /** Absolute path to `app-state.json` under {@link appStateHome}. */
 export function appStatePath(): string {
-  return join(appStateHome(), "app-state.json");
+  return runtimeOwnedPath(join(appStateHome(), "app-state.json"));
 }
 
 /** A string field that must be non-empty, else `null`. */

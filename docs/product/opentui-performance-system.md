@@ -1,8 +1,8 @@
 # OpenTUI performance system
 
-Status: implementation contract<br>
+Status: current architecture and qualification contract, reviewed 2026-09-16<br>
 Scope: tmux-ide OpenTUI host, shared terminal/core boundaries, and daemon handshakes<br>
-Reference: OpenCode v2 (`context/opencode`) observed at the 2026-08-10 checkout
+Historical reference: OpenCode v2 (`context/opencode`) observed at the 2026-08-10 checkout
 
 ## Outcome
 
@@ -88,83 +88,86 @@ Primary observed implementation seams:
 - `context/opencode/packages/opencode/src/cli/cmd/run/scrollback.surface.ts` —
   retained unstable stream surface versus immutable scrollback.
 
-## tmux-ide native-speed graph
+## Current tmux-ide terminal path
+
+The daemon owns terminal interpretation and canonical replicas. The TUI consumes
+validated updates through `WorkspaceClient` and the shared terminal fast lane; it
+does not open a second control-mode parser as its own terminal authority.
 
 ```mermaid
 flowchart LR
-  subgraph Authority["Process and state authority"]
-    Tmux["tmux server\nPTY · topology · history"]
-    Daemon["tmux-ide daemon\nresources · interactions · discovery"]
-    Tmux <--> Daemon
+  subgraph Authority["Daemon and tmux authority"]
+    Tmux["tmux server: PTY, topology, history"]
+    Runtime["SessionRuntime: terminal interpretation and canonical replicas"]
+    Delivery["generation-scoped terminal delivery"]
+    Tmux <--> Runtime
+    Runtime --> Delivery
   end
 
-  subgraph PixelPath["TUI pixel hot path — local by design"]
-    Control["tmux control client"] --> Bytes["%output bytes"]
-    Bytes --> Writer["bounded ack-paced writer"]
-    Writer --> Xterm["per-pane xterm parser"]
-    Xterm --> Parsed["onParsed authority"]
-    Parsed --> Coalescer["microtask first burst\n60 Hz sustained ceiling"]
-    Coalescer --> Version["per-pane content version"]
-    Version --> Surface["one PaneSurface framebuffer"]
-    Surface --> Dirty["exact dirty-row blit"]
-    Dirty --> Native["OpenTUI native compositor\ntarget 30 / max 60"]
+  subgraph Host["OpenTUI host"]
+    Client["WorkspaceClient validated updates"] --> Lane["shared terminal fast lane"]
+    Lane --> Surface["persistent per-pane framebuffer"]
+    Surface --> Dirty["changed rows and cursor invalidation"]
+    Dirty --> Native["OpenTUI compositor: target 60, demand max Infinity"]
+    Input["keyboard / mouse owner"] --> Lane
+    Focus["local focus and keyed chrome"] --> Native
   end
 
-  subgraph ControlPath["Immediate semantic control path"]
-    Input["keyboard / mouse"] --> InputOwner["one tmux-ide input owner"]
-    InputOwner --> FastSend["fire-and-forget control write"]
-    FastSend --> Tmux
-    InputOwner --> Focus["optimistic focus signal"]
-    Daemon --> Interactions["read / send / resize events"]
-    Focus --> Chrome["keyed pane chrome"]
-    Interactions --> Chrome
-    Chrome --> Native
-    Focus --> CursorRows["old/new cursor marker rows only"]
-    CursorRows --> Surface
-  end
-
-  Daemon -. "shared resources/events" .-> ControlPath
-  Tmux --> Control
+  Delivery --> Client
+  Lane -->|"generation-fenced input and resize"| Runtime
+  Runtime -->|"semantic resources and events"| Focus
 ```
 
-The control and pixel paths intentionally converge only at the compositor. A
-`send-keys`, pane read, or local focus action can illuminate pane chrome immediately;
-it does not wait for terminal output and it never marks every pane cell dirty. When
-the PTY output subsequently arrives, the parser and framebuffer independently paint
-the exact changed terminal rows.
+Terminal content updates and semantic chrome invalidate their own projections.
+A local focus change can update chrome without waiting for terminal output; input
+and resize still pass through the active daemon authority. A replica gap or wrong
+generation triggers repair rather than giving the TUI a second source of truth.
+
+The current renderer targets 60 fps and sets `maxFps` to Infinity. That removes the
+maximum-FPS delay for requested frames; it does not request continuous frames.
+Invalidation coalescing, idle behavior and output backpressure remain essential.
+The 30/60 cadence above describes the historical OpenCode reference only.
+
+Current source boundaries:
+
+- [daemon terminal replica owner](../../packages/daemon/src/terminal/session-runtime/terminal-replica-owner.ts);
+- [shared client terminal fast lane](../../packages/daemon-client/src/terminal-fast-lane.ts);
+- [OpenTUI fast-lane adapter](../../packages/daemon/src/tui/mirror/runtime/workspace-terminal-fast-lane.ts);
+- [renderer cadence](../../packages/daemon/src/tui/mirror/runtime/renderer-cadence.ts);
+- [pane framebuffer](../../packages/daemon/src/tui/mirror/pane-surface.tsx).
 
 ## Reference-to-product mapping
 
-| OpenCode technique                   | tmux-ide application                                                                                               | Decision                             |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
-| Backend worker/RPC                   | Existing daemon owns discovery and shared resources; TUI keeps only latency-sensitive control-mode mirroring local | Applied architectural equivalent     |
-| Immutable transcript scrollback      | Per-pane xterm buffer plus exact dirty-row framebuffer shadow                                                      | Adapted for random-access VT screens |
-| One retained unstable stream surface | One persistent `PaneSurfaceRenderable` per visible pane                                                            | Applied                              |
-| Microtask commit batching            | First dirty burst publishes in a microtask; sustained output is frame-capped                                       | Applied                              |
-| Tiny reactive footer                 | Terminal pixels stay outside Solid JSX; status/focus/communication remain keyed chrome                             | Applied                              |
-| 30 target / 60 maximum fps           | Same OpenTUI cadence; explicit renders can still burst to 60                                                       | Applied                              |
-| Single focus/keymap owner            | OpenTUI `autoFocus` disabled; tmux-ide semantic focus is authoritative                                             | Applied                              |
-| Lazy optional systems                | TUI dispatcher and compiled binary already lazy-load surfaces; palette discovery is non-blocking                   | Retained and enforced                |
-| Split-footer terminal mode           | Not compatible with a full-screen multi-pane tmux mirror                                                           | Rejected intentionally               |
-| Move terminal parser to worker       | Would add serialization/IPC to every cell update and input echo                                                    | Rejected; pixels stay local          |
+| OpenCode technique                   | Current tmux-ide application                                                                          |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Backend worker/RPC                   | Daemon owns discovery, terminal interpretation and shared resources; host consumes canonical replicas |
+| Immutable transcript scrollback      | Retained terminal state and visible framebuffer support random-access and alternate-screen VT content |
+| One retained unstable stream surface | Persistent pane surfaces, with addressed-pane invalidation                                            |
+| Microtask commit batching            | Coalesce invalidations and obey output backpressure; no fixed 60 Hz publication claim                 |
+| Tiny reactive footer                 | Terminal pixels stay outside Solid JSX; status and focus remain semantic chrome                       |
+| 30 target / 60 maximum fps           | Reference only; current product cadence is 60 / Infinity on demand                                    |
+| Single focus/keymap owner            | OpenTUI auto-focus is disabled; tmux-ide owns semantic focus                                          |
+| Lazy optional systems                | Optional surfaces and discovery stay outside the initial terminal path                                |
+| Split-footer terminal mode           | Does not fit a full-screen multi-pane terminal workbench                                              |
 
 ## Frame invalidation contract
 
 Only these causes may request terminal cell work:
 
-| Cause                            | Allowed terminal work                                          |
-| -------------------------------- | -------------------------------------------------------------- |
-| Parsed PTY output                | Compare and blit dirty rows for that pane                      |
-| Scroll offset change             | Full visible-pane repaint because every source row remaps      |
-| Surface resize or palette change | One full visible-pane repaint                                  |
-| Selection/search change          | Old and new highlighted rows only                              |
-| Focus change                     | Old and new cursor-marker rows only; chrome separately         |
-| Agent read/send activity         | Chrome/separator overlay only; zero terminal-body invalidation |
-| Sidebar, dock, or fleet update   | Affected keyed chrome/app surface only                         |
+| Cause                             | Allowed terminal work                                          |
+| --------------------------------- | -------------------------------------------------------------- |
+| Accepted canonical replica update | Compare and blit dirty rows for that pane                      |
+| Scroll offset change              | Full visible-pane repaint because every source row remaps      |
+| Surface resize or palette change  | One full visible-pane repaint                                  |
+| Selection/search change           | Old and new highlighted rows only                              |
+| Focus change                      | Old and new cursor-marker rows only; chrome separately         |
+| Agent read/send activity          | Chrome/separator overlay only; zero terminal-body invalidation |
+| Sidebar, dock, or fleet update    | Affected keyed chrome/app surface only                         |
 
-Output enqueue is not paint authority. The xterm write completion is: scheduling on
-both enqueue and parse creates an old-grid frame followed by the real frame. Likewise,
-focus is not a terminal-content mutation and must never force a full framebuffer walk.
+Raw output enqueue is not paint authority. The daemon publishes interpreted terminal
+state; the host paints accepted canonical updates. Scheduling speculative content
+work before that state arrives risks an old-grid frame followed by the real frame.
+Focus is not a terminal-content mutation and must never force a full framebuffer walk.
 
 ## Performance budgets and gates
 
@@ -183,7 +186,7 @@ Additional invariants:
 
 - idle terminal panes produce zero grid walks;
 - a focus-only change cannot issue a full pane blit;
-- one parsed output burst produces one publication request, not enqueue plus parse;
+- one accepted terminal update must not acquire duplicate enqueue and parse invalidations;
 - communication chrome never remounts or repaints a terminal body;
 - input, resize, and focus commands never wait for fleet/discovery subprocesses;
 - portable CI publishes deterministic convergence, queue, mutation, and renderer-adapter
@@ -193,7 +196,8 @@ Additional invariants:
 - all live performance runs use isolated test-drive sessions and leave user sessions
   untouched.
 
-The checked-in 16.67 ms value is a **reference budget**, not an observed result. A
+The checked-in [reference budgets](../../performance/reference-budgets.json), including
+the 16.67 ms value, are targets, not observed results. A
 reference result is generated outside portable CI with
 `pnpm measure:performance-reference`. The runner requires a clean macOS/arm64
 checkout, builds the production TUI, records process-cold and warm-repeat lifecycle
@@ -235,10 +239,22 @@ measurements; only the local input/paint endpoints form the end-to-end latency.
 
 ## Next measured frontier
 
-The remaining large first-frame cost is compiled-module loading and evaluation, not
-cell painting. Keep optional dock, mission, file, and discovery code behind the lazy
-surface dispatcher, record `module-loaded`, `renderer-created`, `first-frame`,
-`solid-mounted`, and `first-terminal-frame`, and only split another startup module when
-those marks prove it is on the critical path. Do not add a worker between the control
-client and pane framebuffer: the worker boundary is valuable for business/discovery
-work, but harmful to the terminal pixel loop.
+The dominant startup and interaction costs must be established on the exact current
+artifact. Older module-loading measurements do not prove that module evaluation is
+still the largest first-frame cost. Record CLI selection, daemon readiness,
+`module-loaded`, `renderer-created`, `first-frame`, `solid-mounted`, and
+`first-terminal-frame` separately before changing module boundaries.
+
+Qualification should cover ordinary application wheel input and local history,
+quiet and sustained output, alternate-screen apps, resize, and independent clients.
+Long active/idle runs with 1/4/8 clients must establish settled queue counts and
+retained-generation behavior. Report combined daemon/TUI RSS consistently; summed
+RSS is not unique physical memory. The roughly 500 MiB accepted stable footprint is
+context, while the 1 GiB TUI reference ceiling is a safety gate, not a new target.
+
+Every published measurement must identify its source commit/tree, CLI/TUI/native
+artifact hashes, platform, toolchain, renderer mode, tracing flags, scenario, sample
+count and raw evidence. Separate shipping builds from experimental renderers and
+record instrumentation overhead. Parser completion and consumed-paint timings are
+not physical-display smoothness measurements. Portable test passes and suite
+runtimes cannot substitute for these live measurements.

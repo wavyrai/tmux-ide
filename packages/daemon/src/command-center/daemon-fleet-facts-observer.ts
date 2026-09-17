@@ -1,4 +1,7 @@
-import { execFile } from "node:child_process";
+import {
+  createPinnedWorkspaceTmuxAsyncRunner,
+  resolveWorkspacePaneTmuxAuthority,
+} from "../lib/workspace-pane-creation.ts";
 
 import {
   diffChangedSessions,
@@ -18,14 +21,15 @@ export interface SessionCompositionFacts {
 }
 
 export interface DaemonFleetFactsObserverOptions {
-  readonly readSessions: () => Promise<SessionCompositionFacts | null>;
-  readonly readAgents: () => Promise<AgentStateReading | null>;
+  readonly readSessions: (signal?: AbortSignal) => Promise<SessionCompositionFacts | null>;
+  readonly readAgents: (signal?: AbortSignal) => Promise<AgentStateReading | null>;
   readonly onSessionsChanged: () => void;
   readonly onTerminalTopologyChanged?: () => void;
   readonly onAdoptedChanged: () => void;
   readonly onAgentSessionsChanged: (sessions: readonly string[]) => void;
   readonly onAgentTurnCompleted: (completion: AgentTurnCompletion) => void;
   readonly intervalMs?: number;
+  readonly readTimeoutMs?: number;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
   readonly diagnostics?: {
@@ -48,6 +52,7 @@ export interface DaemonFleetFactsObserverDiagnostic {
   readonly sessions: boolean;
   readonly agents: boolean;
   readonly succeeded?: boolean;
+  readonly freshness?: ReturnType<DaemonFleetFactsObserver["freshnessSnapshot"]>;
 }
 
 interface ReadyWaiter {
@@ -65,6 +70,13 @@ export class DaemonFleetFactsObserver {
   readonly #demandEpochs = new Map<FleetFactsDemand, number>();
   readonly #baselined = new Set<FleetFactsDemand>();
   readonly #waiters = new Set<ReadyWaiter>();
+  readonly #pendingReads = new Map<"sessions" | "agents", Promise<unknown>>();
+  readonly #freshness = {
+    adopted: { status: "unknown", lastSuccessAt: null as number | null },
+    sessions: { status: "unknown", lastSuccessAt: null as number | null },
+    agents: { status: "unknown", lastSuccessAt: null as number | null },
+  };
+  #controller: AbortController | null = null;
   #sessionNames: readonly string[] | null = null;
   #adoptedNames: readonly string[] | null = null;
   #terminalTopology: readonly string[] | null = null;
@@ -121,6 +133,7 @@ export class DaemonFleetFactsObserver {
             this.#refs.delete(demand);
             this.#bumpDemandEpoch(demand);
             this.#baselined.delete(demand);
+            this.#freshness[demand].status = "inactive";
             if (demand === "sessions") this.#sessionNames = null;
             else if (demand === "adopted") this.#adoptedNames = null;
             else this.#agentFacts = null;
@@ -154,6 +167,7 @@ export class DaemonFleetFactsObserver {
     this.#running = this.#cycle(generation, demandEpochs, wantsSessions, wantsAgents).finally(
       () => {
         this.#running = null;
+        this.#controller = null;
         if (this.#refs.size === 0) return;
         // A connection can release the final demand and a replacement can
         // acquire the same observer while the retired tmux read is still in
@@ -189,6 +203,10 @@ export class DaemonFleetFactsObserver {
 
   stop(): void {
     this.#generation += 1;
+    this.#controller?.abort();
+    this.#freshness.sessions.status = "stopped";
+    this.#freshness.adopted.status = "stopped";
+    this.#freshness.agents.status = "stopped";
     if (this.#timer) this.#clearTimer(this.#timer);
     this.#timer = null;
     this.#startQueued = false;
@@ -210,19 +228,105 @@ export class DaemonFleetFactsObserver {
     };
   }
 
+  /** Passive freshness only; never probes or starts a cycle. */
+  freshnessSnapshot() {
+    return {
+      sessions: { ...this.#freshness.sessions },
+      adopted: { ...this.#freshness.adopted },
+      agents: { ...this.#freshness.agents },
+      pendingReads: this.#pendingReads.size,
+    };
+  }
+
+  async #read<T>(
+    kind: "sessions" | "agents",
+    read: (signal?: AbortSignal) => Promise<T | null>,
+    signal: AbortSignal,
+    generation: number,
+    demandEpochs: ReadonlyMap<FleetFactsDemand, number>,
+  ): Promise<T | null> {
+    const mark = (status: string) => {
+      for (const demand of kind === "sessions"
+        ? (["sessions", "adopted"] as const)
+        : (["agents"] as const)) {
+        if (generation !== this.#generation || !this.#sameDemandEpoch(demand, demandEpochs))
+          continue;
+        this.#freshness[demand].status = status;
+      }
+    };
+    if (this.#pendingReads.has(kind)) {
+      mark("blocked");
+      return null; // quarantine noncooperative injected readers
+    }
+    let done!: () => void;
+    let timedOut = false;
+    const cancelled = new Promise<null>((resolve) => {
+      done = () => resolve(null);
+    });
+    const controller = new AbortController();
+    const abort = () => {
+      controller.abort();
+      done();
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      abort();
+    }, this.#options.readTimeoutMs ?? 6000);
+    timer.unref?.();
+    let pending: Promise<T | null>;
+    try {
+      pending = Promise.resolve(read(controller.signal)).catch(() => null);
+    } catch {
+      pending = Promise.resolve(null);
+    }
+    this.#pendingReads.set(kind, pending);
+    void pending.finally(() => {
+      if (this.#pendingReads.get(kind) === pending) this.#pendingReads.delete(kind);
+    });
+    if (signal.aborted) abort();
+    try {
+      const value = await Promise.race([pending, cancelled]);
+      if (generation !== this.#generation || signal.aborted) return null;
+      if (value === null) mark(timedOut ? "deadline" : "failed");
+      return value;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
   async #cycle(
     generation: number,
     demandEpochs: ReadonlyMap<FleetFactsDemand, number>,
     wantsSessions: boolean,
     wantsAgents: boolean,
   ): Promise<void> {
+    const controller = new AbortController();
+    this.#controller = controller;
     const finish = this.#beginDiagnostic(wantsSessions, wantsAgents);
     let sessions: SessionCompositionFacts | null;
     let agents: AgentStateReading | null;
     try {
       [sessions, agents] = await Promise.all([
-        wantsSessions ? this.#options.readSessions() : Promise.resolve(null),
-        wantsAgents ? this.#options.readAgents() : Promise.resolve(null),
+        wantsSessions
+          ? this.#read(
+              "sessions",
+              this.#options.readSessions,
+              controller.signal,
+              generation,
+              demandEpochs,
+            )
+          : Promise.resolve(null),
+        wantsAgents
+          ? this.#read(
+              "agents",
+              this.#options.readAgents,
+              controller.signal,
+              generation,
+              demandEpochs,
+            )
+          : Promise.resolve(null),
       ]);
     } catch (error) {
       finish(false);
@@ -236,16 +340,23 @@ export class DaemonFleetFactsObserver {
       if (wantsSessions && sessions) {
         const acceptSessions = this.#sameDemandEpoch("sessions", demandEpochs);
         const acceptAdopted = this.#sameDemandEpoch("adopted", demandEpochs);
-        if (acceptSessions) this.#baselined.add("sessions");
-        if (acceptAdopted) this.#baselined.add("adopted");
+        if (acceptSessions) {
+          this.#baselined.add("sessions");
+          this.#freshness.sessions = { status: "fresh", lastSuccessAt: Date.now() };
+        }
+        if (acceptAdopted) {
+          this.#baselined.add("adopted");
+          this.#freshness.adopted = { status: "fresh", lastSuccessAt: Date.now() };
+        }
         this.#acceptSessions(sessions, acceptSessions, acceptAdopted);
       }
       if (wantsAgents && agents && this.#sameDemandEpoch("agents", demandEpochs)) {
         this.#baselined.add("agents");
+        this.#freshness.agents = { status: "fresh", lastSuccessAt: Date.now() };
         this.#acceptAgents(agents);
       }
       this.#settleWaiters();
-      finish(true);
+      finish((!wantsSessions || sessions !== null) && (!wantsAgents || agents !== null));
     } catch (error) {
       finish(false);
       throw error;
@@ -282,6 +393,7 @@ export class DaemonFleetFactsObserver {
           sessions: wantsSessions,
           agents: wantsAgents,
           ...(succeeded === undefined ? {} : { succeeded }),
+          ...(phase === "end" ? { freshness: this.freshnessSnapshot() } : {}),
         });
       } catch {
         // Fleet observation remains authoritative when diagnostics fail.
@@ -420,12 +532,30 @@ export function parseAgentStateFacts(raw: string): AgentStateReading {
   return result;
 }
 
-function execTmux(args: readonly string[]): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile("tmux", [...args], { encoding: "utf8", maxBuffer: 1024 * 1024 }, (error, stdout) =>
-      resolve(error ? null : stdout.trim()),
-    );
-  });
+/** One lazy authority pin per observer generation, with genuinely asynchronous reads. */
+export function createDefaultFleetFactsReaders(): Pick<
+  DaemonFleetFactsObserverOptions,
+  "readSessions" | "readAgents"
+> {
+  let runner: ReturnType<typeof createPinnedWorkspaceTmuxAsyncRunner> | null = null;
+  const execute = async (args: readonly string[], signal?: AbortSignal) => {
+    try {
+      runner ??= createPinnedWorkspaceTmuxAsyncRunner(resolveWorkspacePaneTmuxAuthority());
+      return await runner(args, signal);
+    } catch {
+      return null;
+    }
+  };
+  return {
+    readSessions: async (signal) => {
+      const raw = await execute(SESSION_COMPOSITION_TMUX_ARGS, signal);
+      return raw === null ? null : parseSessionCompositionFacts(raw);
+    },
+    readAgents: async (signal) => {
+      const raw = await execute(AGENT_STATE_TMUX_ARGS, signal);
+      return raw === null ? null : parseAgentStateFacts(raw);
+    },
+  };
 }
 
 export const SESSION_COMPOSITION_TMUX_ARGS = [
@@ -447,9 +577,10 @@ export const SESSION_COMPOSITION_TMUX_ARGS = [
   ].join("\t"),
 ] as const;
 
-export async function readSessionCompositionFacts(): Promise<SessionCompositionFacts | null> {
-  const raw = await execTmux(SESSION_COMPOSITION_TMUX_ARGS);
-  return raw === null ? null : parseSessionCompositionFacts(raw);
+export async function readSessionCompositionFacts(
+  signal?: AbortSignal,
+): Promise<SessionCompositionFacts | null> {
+  return createDefaultFleetFactsReaders().readSessions(signal);
 }
 
 export const AGENT_STATE_TMUX_ARGS = [
@@ -459,7 +590,6 @@ export const AGENT_STATE_TMUX_ARGS = [
   "#{session_name}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{@agent_state}\t#{pane_current_command}",
 ] as const;
 
-export async function readAgentStateFacts(): Promise<AgentStateReading | null> {
-  const raw = await execTmux(AGENT_STATE_TMUX_ARGS);
-  return raw === null ? null : parseAgentStateFacts(raw);
+export async function readAgentStateFacts(signal?: AbortSignal): Promise<AgentStateReading | null> {
+  return createDefaultFleetFactsReaders().readAgents(signal);
 }

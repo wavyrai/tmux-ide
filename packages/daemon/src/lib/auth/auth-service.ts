@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "../runtime-namespace.ts";
 // Based on VibeTunnel (MIT) — github.com/amantus-ai/vibetunnel
 import * as crypto from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
@@ -207,6 +208,7 @@ export class AuthService {
   }
 
   private checkSSHKeyAuthorization(userId: string, publicKey: string): boolean {
+    if (resolveRuntimeNamespace().development) return false; // no host SSH trust import
     try {
       const home = userId === process.env.USER ? homedir() : `/home/${userId}`;
       const authKeysPath = join(home, ".ssh", "authorized_keys");

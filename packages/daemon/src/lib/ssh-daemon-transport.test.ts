@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import {
   SshConnectionError,
@@ -50,6 +54,13 @@ function fixture(payload: unknown = { version: 1, daemon }) {
       return child as unknown as SshTransportChild;
     },
     allocatePort: async () => 43210,
+    relay: async ({ upstreamPort }) => {
+      let finish!: () => void;
+      const closed = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return { baseUrl: `http://127.0.0.1:${upstreamPort}`, closed, dispose: finish };
+    },
     probe: async () => true,
   };
   return { dependencies, children, argv };
@@ -62,6 +73,8 @@ describe("owned SSH daemon transport", () => {
       "-T",
       "-o",
       "BatchMode=yes",
+      "-o",
+      "ForkAfterAuthentication=no",
       "--",
       "work-machine",
       "tmux-ide",
@@ -69,6 +82,13 @@ describe("owned SSH daemon transport", () => {
       "--json",
     ]);
     expect(f.argv[1]).toContain("127.0.0.1:43210:127.0.0.1:7331");
+    expect(f.argv[1]).toEqual(
+      expect.arrayContaining([
+        "ControlMaster=no",
+        "ControlPath=none",
+        "ForkAfterAuthentication=no",
+      ]),
+    );
     expect(f.argv.flat().join(" ")).not.toContain(daemon.authToken);
     expect(f.argv.flat().join(" ")).not.toContain("StrictHostKeyChecking");
     expect(result.daemon.pid).toBe(99999999); // Remote PID is data, never a local liveness check.
@@ -79,6 +99,153 @@ describe("owned SSH daemon transport", () => {
     expect(f.children[0].kills).toEqual([]);
     expect(f.children[1].kills).toEqual(["SIGTERM"]);
   });
+  it("publishes the guarded endpoint and awaits relay plus SSH retirement", async () => {
+    const f = fixture();
+    let retireRelay!: () => void;
+    let relayDisposals = 0;
+    const relayClosed = new Promise<void>((resolve) => {
+      retireRelay = resolve;
+    });
+    f.dependencies.relay = async (options) => {
+      expect(options.upstreamPort).toBe(43210);
+      expect(options.expected.instanceId).toBe(daemon.instanceId);
+      expect(options.expected).not.toHaveProperty("authToken");
+      return {
+        baseUrl: "http://127.0.0.1:45678",
+        closed: relayClosed,
+        dispose: () => {
+          relayDisposals++;
+        },
+      };
+    };
+    f.dependencies.probe = async (baseUrl) => {
+      expect(baseUrl).toBe("http://127.0.0.1:45678");
+      return true;
+    };
+    const result = await openSshDaemonTransport({ alias: "work-machine" }, f.dependencies);
+    let closed = false;
+    void result.closed.then(() => {
+      closed = true;
+    });
+    result.dispose();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.children[1].kills).toEqual(["SIGTERM"]);
+    expect(closed).toBe(false);
+    expect(relayDisposals).toBe(1);
+    retireRelay();
+    await result.closed;
+    expect(closed).toBe(true);
+  });
+  it("retires the owned SSH tunnel when its relay rejects a replacement identity", async () => {
+    const f = fixture();
+    let retireRelay!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      retireRelay = resolve;
+    });
+    f.dependencies.relay = async () => ({
+      baseUrl: "http://127.0.0.1:45678",
+      closed,
+      dispose: retireRelay,
+    });
+    const result = await openSshDaemonTransport({ alias: "work-machine" }, f.dependencies);
+    retireRelay();
+    await result.closed;
+    expect(f.children[1].kills).toEqual(["SIGTERM"]);
+    expect(f.children[0].kills).toEqual([]);
+  });
+  it("disposes a relay whose initialization completes after cancellation", async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    let disposals = 0;
+    f.dependencies.relay = async () => {
+      controller.abort();
+      let finish!: () => void;
+      const closed = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return {
+        baseUrl: "http://127.0.0.1:45678",
+        closed,
+        dispose: () => {
+          disposals++;
+          finish();
+        },
+      };
+    };
+    await expect(
+      openSshDaemonTransport({ alias: "work-machine", signal: controller.signal }, f.dependencies),
+    ).rejects.toThrow();
+    expect(disposals).toBe(1);
+    expect(f.children[1].kills).toEqual(["SIGTERM"]);
+  });
+  it.skipIf(spawnSync("ssh", ["-V"], { timeout: 2_000 }).status !== 0)(
+    "keeps tunnel ownership under real OpenSSH Host defaults while preserving discovery reuse and trust",
+    async () => {
+      const directory = mkdtempSync(join(tmpdir(), "tmux-ide-ssh-config-"));
+      const config = join(directory, "config");
+      const f = fixture();
+      let connection: Awaited<ReturnType<typeof openSshDaemonTransport>> | undefined;
+      try {
+        writeFileSync(
+          config,
+          [
+            "Host work-machine",
+            "  HostName target.invalid",
+            "  User configured-user",
+            "  Port 2201",
+            "  ProxyJump jump-user@jump.invalid:2202",
+            "  StrictHostKeyChecking yes",
+            `  UserKnownHostsFile ${directory}/known_hosts`,
+            "Host *",
+            "  ControlMaster auto",
+            `  ControlPath ${directory}/master-%C`,
+            "  ControlPersist 10m",
+            "  ForkAfterAuthentication yes",
+            "",
+          ].join("\n"),
+        );
+        connection = await openSshDaemonTransport({ alias: "work-machine" }, f.dependencies);
+        // -G evaluates ONLY this fixture config; it neither connects nor reads
+        // the user's config. Evaluate the exact argv produced by the transport.
+        const resolved = f.argv.map(
+          (argv) =>
+            new Map(
+              execFileSync("ssh", ["-G", "-F", config, ...argv], {
+                encoding: "utf8",
+                timeout: 2_000,
+                stdio: ["ignore", "pipe", "pipe"],
+              })
+                .trim()
+                .split("\n")
+                .map((line) => {
+                  const separator = line.indexOf(" ");
+                  return [line.slice(0, separator), line.slice(separator + 1)];
+                }),
+            ),
+        );
+        const [discovery, tunnel] = resolved;
+        expect(discovery.get("controlmaster")).toBe("auto");
+        expect(discovery.get("controlpath")).toContain(`${directory}/master-`);
+        expect(discovery.get("controlpersist")).toBe("600");
+        expect(tunnel.get("controlmaster")).toBe("false");
+        // OpenSSH omits disabled ControlPath from -G output.
+        expect(tunnel.has("controlpath")).toBe(false);
+        for (const settings of resolved) {
+          expect(settings.get("forkafterauthentication")).toBe("no");
+          expect(settings.get("hostname")).toBe("target.invalid");
+          expect(settings.get("user")).toBe("configured-user");
+          expect(settings.get("port")).toBe("2201");
+          expect(settings.get("proxyjump")).toBe("jump-user@jump.invalid:2202");
+          expect(settings.get("stricthostkeychecking")).toBe("true");
+          expect(settings.get("userknownhostsfile")).toBe(`${directory}/known_hosts`);
+        }
+      } finally {
+        connection?.dispose();
+        await connection?.closed;
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
   it("preserves remote localhost resolution for IPv6-only listeners", async () => {
     const f = fixture({ version: 1, daemon: { ...daemon, bindHostname: "localhost" } });
     const result = await openSshDaemonTransport({ alias: "host" }, f.dependencies);

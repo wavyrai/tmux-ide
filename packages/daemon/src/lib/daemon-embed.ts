@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "./runtime-namespace.ts";
 import { createFleetPreviewCapture } from "../command-center/resources/fleet-preview-route.ts";
 import { mountTerminalNativeBackingRoute } from "../command-center/resources/terminal-native-backing-route.ts";
 import { startOwnedEmbeddedDaemon } from "./embedded-daemon-lifecycle.ts";
@@ -48,11 +49,12 @@ import {
   setFleetFactsTmuxRunner,
   shutdownWsEventObservation,
 } from "../command-center/ws-events.ts";
+import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
+import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
 import {
-  setRemoteAccessRestartBackend,
-  type RemoteAccessRestartRequest,
-} from "../command-center/actions/handlers/app-set-remote-access.ts";
-import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
+  setDaemonShutdownBackend,
+  setDaemonRestartBackend,
+} from "../command-center/actions/handlers/daemon-shutdown.ts";
 import type { WorkspaceMultiplexerBackend } from "../command-center/actions/handlers/workspace-multiplexer.ts";
 import { readAppSettings } from "./app-settings.ts";
 import {
@@ -114,6 +116,9 @@ import {
   releaseCanonicalDaemonClaim,
   tryAcquireCanonicalDaemonClaim,
   writeCanonicalDaemonInfo,
+  matchesCanonicalDaemonPredecessor,
+  type CanonicalDaemonClaimIntent,
+  type CanonicalDaemonPredecessor,
   type CanonicalDaemonClaim,
   type CanonicalDaemonInfo,
 } from "./canonical-daemon.ts";
@@ -156,8 +161,12 @@ export function resolveDaemonProductVersion(
 }
 
 export interface EmbeddedDaemonOptions {
+  /** @internal Headless lifecycle only; explicit reservation, never inferred from ancestry. */
+  supervisionId?: string;
+  /** @internal Successful previous generation stop in this same process. */
+  predecessor?: CanonicalDaemonPredecessor;
   /** @internal Let the foreground lifecycle owner serialize settings restarts. */
-  requestRestart?: (request: RemoteAccessRestartRequest) => Promise<void>;
+  requestRestart?: (request: DaemonRestartRequest) => Promise<void>;
   /** @internal Reconcile existing intent after a retired tmux server generation. */
   restoreTmuxWorkspaces?: boolean;
   sessionName?: string;
@@ -192,7 +201,7 @@ export interface EmbeddedDaemonHandle {
 }
 
 function tmux(...args: string[]): string {
-  return execFileSync("tmux", args, {
+  return execFileSync("tmux", runtimeTmuxArgs(args), {
     encoding: "utf-8",
     // Pipe stdio explicitly. Inheriting (the default) inherits the parent's
     // file descriptors; when the daemon is launched detached (nohup, disown,
@@ -533,6 +542,11 @@ async function requestValidatedDaemonShutdown(
   info: CanonicalDaemonInfo,
   deadline: TakeoverDeadline,
 ): Promise<void> {
+  if (info.supervisionId)
+    throw new DaemonStartupError(
+      "A supervised daemon cannot be taken over",
+      "canonical_takeover_refused",
+    );
   const identity = await probeCanonicalDaemonIdentity(info, deadline.signal);
   assertTakeoverDeadline(
     deadline,
@@ -567,7 +581,11 @@ async function requestValidatedDaemonShutdown(
     );
   }
   const current = inspectCanonicalDaemonInfo();
-  if (current.status !== "valid" || !sameCanonicalInstance(current.info, info)) {
+  if (
+    current.status !== "valid" ||
+    current.info.supervisionId ||
+    !sameCanonicalInstance(current.info, info)
+  ) {
     throw new DaemonStartupError(
       "Canonical daemon generation changed before takeover",
       "canonical_takeover_identity_mismatch",
@@ -689,8 +707,10 @@ async function acquireCanonicalDaemonClaimAfterTakeover(
   );
 }
 
-function acquireCanonicalDaemonClaim(): CanonicalDaemonClaim {
-  const attempt = tryAcquireCanonicalDaemonClaim();
+function acquireCanonicalDaemonClaim(
+  intent: CanonicalDaemonClaimIntent = { kind: "ordinary" },
+): CanonicalDaemonClaim {
+  const attempt = tryAcquireCanonicalDaemonClaim(intent);
   if (attempt.status === "busy") {
     throw new DaemonStartupError(
       `Canonical daemon startup is owned by PID ${attempt.owner.pid}`,
@@ -946,6 +966,11 @@ async function startHttpServer({
 export async function startEmbeddedDaemon(
   opts: EmbeddedDaemonOptions,
 ): Promise<EmbeddedDaemonHandle> {
+  if (opts.supervisionId && !opts.requestRestart)
+    throw new DaemonStartupError(
+      "Supervised startup requires the foreground lifecycle owner",
+      "canonical_record_invalid",
+    );
   return opts.requestRestart
     ? startEmbeddedDaemonGeneration(opts)
     : startOwnedEmbeddedDaemon(opts, startEmbeddedDaemonGeneration);
@@ -970,6 +995,23 @@ async function startEmbeddedDaemonGeneration(
     ? (opts.authToken ?? null)
     : (persistedRemoteAccess?.token ?? null);
   const localBypassToken = opts.localBypassToken ?? generateLocalBypassToken();
+  const claimIntent: CanonicalDaemonClaimIntent = opts.supervisionId
+    ? { kind: "supervised", supervisionId: opts.supervisionId, predecessor: opts.predecessor }
+    : { kind: "ordinary" };
+  if (opts.supervisionId) {
+    const reserved = inspectCanonicalDaemonInfo();
+    const binding =
+      reserved.status === "reserved"
+        ? reserved.reservation.supervisionId
+        : reserved.status === "valid"
+          ? reserved.info.supervisionId
+          : undefined;
+    if (binding !== opts.supervisionId)
+      throw new DaemonStartupError(
+        "Matching supervisor reservation is required",
+        "canonical_record_invalid",
+      );
+  }
   let claim: CanonicalDaemonClaim;
   if (opts.takeoverIfRunning) {
     const state = inspectCanonicalDaemonInfo();
@@ -982,10 +1024,10 @@ async function startEmbeddedDaemonGeneration(
         takeoverDeadline.dispose();
       }
     } else {
-      claim = acquireCanonicalDaemonClaim();
+      claim = acquireCanonicalDaemonClaim(claimIntent);
     }
   } else {
-    claim = acquireCanonicalDaemonClaim();
+    claim = acquireCanonicalDaemonClaim(claimIntent);
   }
   try {
     const existingCanonical = inspectCanonicalDaemonInfo();
@@ -1005,13 +1047,22 @@ async function startEmbeddedDaemonGeneration(
         );
       }
     } else if (existingCanonical.status === "valid") {
-      if (await isCanonicalDaemonAlive(existingCanonical.info)) {
+      if (
+        (await isCanonicalDaemonAlive(existingCanonical.info)) &&
+        !(
+          opts.supervisionId &&
+          matchesCanonicalDaemonPredecessor(existingCanonical, opts.predecessor, opts.supervisionId)
+        )
+      ) {
         throw new DaemonStartupError(
           `Canonical daemon is already running on port ${existingCanonical.info.port}`,
           "canonical_already_running",
         );
       } else {
-        if (!clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)) {
+        if (
+          !existingCanonical.info.supervisionId &&
+          !clearCanonicalDaemonInfoIfUnchanged(existingCanonical, claim)
+        ) {
           throw new DaemonStartupError(
             "Canonical daemon metadata changed while stale state was being removed",
             "canonical_already_running",
@@ -1510,6 +1561,7 @@ async function startEmbeddedDaemonGeneration(
     try {
       writeCanonicalDaemonInfo(
         {
+          ...(opts.supervisionId ? { supervisionId: opts.supervisionId } : {}),
           pid: process.pid,
           port,
           protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
@@ -1732,6 +1784,7 @@ async function startEmbeddedDaemonGeneration(
             await capture(() => closeRuntimeTraceStream());
             await capture(() => setRemoteAccessRestartBackend(null));
             await capture(() => setDaemonShutdownBackend(null));
+            await capture(() => setDaemonRestartBackend(null));
 
             if (failures.length > 0) {
               const cause =
@@ -1755,6 +1808,16 @@ async function startEmbeddedDaemonGeneration(
     setDaemonShutdownBackend(async () => {
       await handle.stop({ gracefulMs: 500 });
     }, instanceId);
+    setDaemonRestartBackend(
+      opts.requestRestart
+        ? async () => {
+            // Let the accepted action response leave the listener before retiring it.
+            await delay(50);
+            await opts.requestRestart!({ kind: "runtime", bindHostname, token: authToken, port });
+          }
+        : null,
+      instanceId,
+    );
     setRemoteAccessRestartBackend((request) => {
       setTimeout(() => {
         void (async () => {

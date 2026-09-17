@@ -87,8 +87,10 @@ On the remote machine, start the daemon:
 tmux-ide --headless
 ```
 
-This runs in the foreground; keep that process alive in a separate shell or under
-your process supervisor. If a healthy daemon already exists, the command reports
+This runs in the foreground; keep that process alive in a separate shell. For a
+managed service, use the [explicit supervisor setup](#supervised-daemon-upgrades).
+
+If a healthy daemon already exists, the command reports
 it and exits. Create any sessions you want to open using ordinary tmux on that
 machine.
 
@@ -150,3 +152,41 @@ The Missions panel is presentational in this beta. `harnesses`, `agents`, and
 `missions` workspace blocks are validated, but there is no public CLI command
 that dispatches those mission defaults yet. `tmux-ide web` is also explicitly
 unavailable; the daemon remains renderer-neutral for future clients.
+
+## Supervised daemon upgrades
+
+For automatic upgrades under a supervisor, explicitly reserve
+its daemon namespace before the first service start:
+
+```bash
+tmux-ide daemon reserve-supervisor my-service --json
+# Configure the service's foreground command:
+tmux-ide --headless --supervised my-service
+```
+
+Run both commands with the same user and daemon state directory. The ID declares
+ownership of that namespace; it does not install or identify an operating-system
+service. Use `KeepAlive=true` with launchd or `Restart=always` with systemd:
+upgrades exit successfully, so restart-on-failure alone is insufficient. The
+service's stable executable/entry must already point to the updated installed
+code before `tmux-ide update --daemon --if-running` requests replacement. The
+updater waits for the supervisor and never starts a detached replacement for a
+reserved namespace. An unavailable supervisor produces a bounded failure and
+leaves the reservation intact.
+
+Remove or disable the service and confirm its processes have stopped before
+releasing the namespace:
+
+```bash
+tmux-ide daemon release-supervisor my-service --yes --json
+```
+
+Release refuses live or uncertain owners. It does not verify that the operating-system service was removed; that is an operator precondition. Existing unmarked services require a
+one-time migration: stop and remove/disable the old service, reserve the stopped
+namespace, then configure and start the supervised command. There is no implicit
+migration or supervisor detection from process ancestry. Plain `--headless`
+remains a foreground process and does not provide this automatic-upgrade contract.
+Retained PID reuse after a cold boot remains conservatively refused pending
+separate qualification. For systemd, also choose a process-group policy that
+preserves external tmux sessions; this does not promise survival for tmux
+processes placed inside a service cgroup that systemd kills.

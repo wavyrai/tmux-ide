@@ -1,3 +1,4 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
 import {
   closeSync,
   fstatSync,
@@ -20,7 +21,7 @@ import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 
 const MAX_BYTES = 1024 * 1024;
 export function fleetClientStatePath(): string {
-  return join(resolveRuntimeNamespace().registryDir, "fleet-view.json");
+  return runtimeOwnedPath(join(resolveRuntimeNamespace().registryDir, "fleet-view.json"));
 }
 export function loadFleetClientState(path = fleetClientStatePath()) {
   let fd: number;

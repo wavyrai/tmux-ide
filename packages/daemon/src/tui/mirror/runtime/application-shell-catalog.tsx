@@ -100,6 +100,7 @@ function CatalogTerminalSurface(props: {
   readonly onCreateSession?: () => void;
 }): JSX.Element {
   const title = () => {
+    if (props.connection?.failed) return "Terminal connection needs attention";
     if (props.phase === "loading") return "Finding tmux sessions…";
     if (props.phase === "unavailable") return "Reconnecting to tmux-ide…";
     if (props.sessionCount === 0) return "No tmux sessions are running";
@@ -134,9 +135,24 @@ function CatalogTerminalSurface(props: {
       <text fg={props.theme.roles.text.secondary}>{clipTerminal(title(), props.width - 4)}</text>
       <For each={detail() ? [detail()!] : []}>
         {(message) => (
-          <text fg={props.theme.roles.text.muted}>{clipTerminal(message, props.width - 4)}</text>
+          <text
+            width={Math.max(1, props.width - 4)}
+            wrapMode="word"
+            fg={props.theme.roles.text.muted}
+          >
+            {props.connection?.failed ? message : clipTerminal(message, props.width - 4)}
+          </text>
         )}
       </For>
+      <Show when={props.connection?.recovery}>
+        <text
+          width={Math.max(1, props.width - 4)}
+          wrapMode="word"
+          fg={props.theme.roles.text.secondary}
+        >
+          {props.connection?.recovery}
+        </text>
+      </Show>
       <Show when={props.connection}>
         <box flexDirection="column" gap={1}>
           <Show when={props.connection?.failed}>
@@ -405,7 +421,7 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
         >
           <box flexGrow={1} overflow="hidden">
             <Show
-              when={props.surface() === "home"}
+              when={props.surface() === "home" && !props.connectionFeedback?.()?.failed}
               fallback={
                 <CatalogTerminalSurface
                   phase={phase()}

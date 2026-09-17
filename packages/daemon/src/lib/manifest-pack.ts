@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 /**
  * Remote agent-detection manifest packs — `tmux-ide update --manifests` (M25.4).
  *
@@ -245,6 +246,7 @@ export async function updateManifestPack(
  * previous `latest`.
  */
 export async function maybeRefreshManifestPack(): Promise<void> {
+  if (resolveRuntimeNamespace().development) return;
   try {
     if (!getAppConfig().updates.manifests) return;
     await updateManifestPack();

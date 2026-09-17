@@ -31,7 +31,10 @@ import {
 import { createApplicationHomeCatalogOwner } from "./application-home-catalog-owner.ts";
 import { createApplicationHomeNavigationOwner } from "./application-home-agents-owner.ts";
 import { ApplicationShellView, applicationShellKeyAction } from "./application-shell-view.tsx";
-import { createApplicationGenerationStarter } from "./application-generation-starter.ts";
+import {
+  applicationGenerationNavigationKey,
+  createApplicationGenerationStarter,
+} from "./application-generation-starter.ts";
 import { createApplicationInputReadiness } from "./application-input-readiness.ts";
 import { applyApplicationAppearanceToRenderer } from "./application-theme-repaint.ts";
 import { createApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
@@ -173,12 +176,17 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           expectedLiveSessionId?: string,
         ) => {
           const ownedEpoch = ++sessionOwnerEpoch;
+          connectionProgress.replaceOwner();
           const route = applicationRouteConnection(
             applicationMachineAuthorityManager.getMachine(machineId)!,
             expectedLiveSessionId,
             tuiLifecycleStream ? tuiPerfMark : undefined,
           );
           return createOpenTuiSessionOwner({
+            onStartupFailure: (sessionName, failure) => {
+              if (ownedEpoch !== sessionOwnerEpoch) return;
+              connectionProgress.progress(sessionName, "startup-failed", { ...failure });
+            },
             prepareConnection: (sessionName) => {
               if (initialPreparation?.sessionName !== sessionName)
                 return route.resolveConnection(sessionName);
@@ -190,25 +198,19 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               createOpenTuiGenerationHost(sessionName, presentation, {
                 initialConnection,
                 ...route,
-                ...connectionProgress.hostOptions(sessionName, tuiLifecycleStream, tuiPerfMark),
+                ...connectionProgress.hostOptions(
+                  sessionName,
+                  tuiLifecycleStream,
+                  tuiPerfMark,
+                  () => ownedEpoch === sessionOwnerEpoch,
+                ),
                 performanceDiagnostics: Boolean(tuiPerfStream),
               }),
-            onSnapshot: (snapshot) => {
+            onSnapshot: (snapshot, sessionName) => {
               if (ownedEpoch !== sessionOwnerEpoch) return;
+              connectionProgress.adopt(sessionName, snapshot);
               setGenerationMachineId(snapshot ? machineId : null);
-              let clientGeneration: number | null = null;
-              try {
-                const value = snapshot?.client?.getSnapshot().generation;
-                clientGeneration = Number.isSafeInteger(value) ? value! : null;
-              } catch {
-                clientGeneration = null;
-              }
-              const focusGenerationKey =
-                snapshot?.status === "live" &&
-                snapshot.daemonGeneration &&
-                clientGeneration !== null
-                  ? `${snapshot.daemonGeneration}:${clientGeneration}:${snapshot.rendererEpoch}`
-                  : null;
+              const focusGenerationKey = applicationGenerationNavigationKey(snapshot);
               if (
                 observedFocusGenerationKey !== null &&
                 focusGenerationKey !== observedFocusGenerationKey
@@ -251,6 +253,9 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const activeSurface = createMemo<"home" | "terminals">(
           () => shell().semantic?.workspaceCanvas.activeMode ?? surface(),
         );
+        createEffect(() => {
+          if (activeSurface() === "terminals") connectionProgress.resume();
+        });
         const { terminalRendererSource, terminalGestureRuntime, focusRendererSource } =
           createApplicationTerminalRendererSources(generation);
         const paneInteractions = createApplicationPaneActivityOwner(generation);
@@ -292,8 +297,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           binding: shellBinding,
           sessionOwner: () => sessionOwner!,
           focusOwner: () => sessionFocusOwner,
-          setNote: (note) => {
-            connectionProgress.note(note);
+          setNote: (note, outcome) => {
+            connectionProgress.note(note, outcome);
             appearance.setNote(note);
           },
           setSurface,
@@ -313,10 +318,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           resetWorkspace(machineId, expectedLiveSessionId) {
             if (initialPreparation) {
               void initialPreparation.preparedConnection
-                .then(
-                  (connection) => connection?.dispose(),
-                  () => undefined,
-                )
+                .then((connection) => connection?.dispose())
                 .catch(() => undefined);
               initialPreparation = null;
             }

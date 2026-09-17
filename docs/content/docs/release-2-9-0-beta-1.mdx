@@ -1,9 +1,9 @@
 ---
-title: OpenTUI 2.9 beta.15
-description: The current 2.9.0-beta.15 visual tmux release with agent-aware chrome
+title: OpenTUI 2.9 beta.18
+description: The current 2.9.0-beta.18 visual tmux release with agent-aware chrome
 ---
 
-The current package is `2.9.0-beta.15`. It ships an OpenTUI client around ordinary tmux
+The current package is `2.9.0-beta.18`. It ships an OpenTUI client around ordinary tmux
 sessions. tmux owns PTYs, processes, topology, and persistence. Each machine has
 its own daemon, which publishes workspace state and pane streams. The local TUI
 connects through SSH tunnels and owns presentation and input.
@@ -21,7 +21,7 @@ Pass a session name to bypass Home:
 tmux-ide app work
 ```
 
-## New in beta.15
+## Scroll improvements from beta.15
 
 Native scroll optimization now activates correctly on normal TUI launches. The
 resolved setting is passed directly to the native renderer before startup, so
@@ -49,8 +49,10 @@ the terminal CLI and daemon, not a packaged Electron desktop application.
   session. Agent rows still open the exact pane in the selected workspace.
 
 See [SSH setup and limitations](/docs/app-surfaces#connect-to-another-machine-over-ssh).
-Machines added during a run are not saved automatically. Remote daemons and
-sessions must already be running; this beta does not provision remote hosts.
+Saved SSH profiles can be listed, exported and imported with `tmux-ide machines`.
+Remote packages must already be installed. `tmux-ide machines start <alias> --write`
+explicitly starts the installed remote daemon; it does not provision a host or
+install packages.
 
 ## Earlier 2.9 beta improvements
 

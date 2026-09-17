@@ -3,7 +3,7 @@
  * helpers, plus the cache round-trip and the toast-once persistence (both driven
  * through a `TMUX_IDE_HOME` scratch dir so they never touch the real user cache).
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +19,11 @@ import {
   shouldCheck,
   updateCachePath,
   writeUpdateCache,
+  updateChannel,
+  runUpdateCheck,
 } from "../update-check.ts";
+
+vi.mock("../manifest-pack.ts", () => ({ maybeRefreshManifestPack: vi.fn() }));
 
 describe("compareSemver", () => {
   it("orders the numeric core field-by-field (not lexically)", () => {
@@ -32,8 +36,8 @@ describe("compareSemver", () => {
     expect(compareSemver("1.2.3", "1.2.4")).toBe(-1);
   });
 
-  it("tolerates a leading v and build metadata", () => {
-    expect(compareSemver("v2.7.0", "2.6.0")).toBe(1);
+  it("rejects a leading v and ignores valid build metadata", () => {
+    expect(compareSemver("v2.7.0", "2.6.0")).toBeNull();
     expect(compareSemver("2.6.0+build.5", "2.6.0")).toBe(0);
   });
 
@@ -44,10 +48,10 @@ describe("compareSemver", () => {
     expect(compareSemver("1.0.0-rc.1", "1.0.0-rc.1")).toBe(0);
   });
 
-  it("coerces garbage/missing parts to 0", () => {
-    expect(compareSemver("2", "2.0.0")).toBe(0);
-    expect(compareSemver("garbage", "0.0.0")).toBe(0);
-    expect(compareSemver("2.x.0", "2.0.0")).toBe(0);
+  it("rejects malformed and partial versions", () => {
+    expect(compareSemver("2", "2.0.0")).toBeNull();
+    expect(compareSemver("garbage", "0.0.0")).toBeNull();
+    expect(compareSemver("2.x.0", "2.0.0")).toBeNull();
   });
 });
 
@@ -117,7 +121,9 @@ describe("cache round-trip + toast-once (TMUX_IDE_HOME scratch)", () => {
   });
 
   it("points the cache path at the scratch home", () => {
-    expect(updateCachePath()).toBe(join(home, "update-check.json"));
+    expect(updateCachePath({ currentVersion: "1.0.0-beta.9" })).toBe(
+      join(home, "update-check-beta.json"),
+    );
   });
 
   it("reads null when the cache is absent", () => {
@@ -130,12 +136,12 @@ describe("cache round-trip + toast-once (TMUX_IDE_HOME scratch)", () => {
   });
 
   it("tolerates a malformed cache file (→ null)", () => {
-    writeFileSync(join(home, "update-check.json"), "{garbage");
+    writeFileSync(updateCachePath(), "{garbage");
     expect(readUpdateCache()).toBeNull();
   });
 
   it("getUpdateStatus derives availability from the cache without the network", () => {
-    writeUpdateCache({ lastCheckedAt: 1, latest: "9.9.9" });
+    writeUpdateCache({ lastCheckedAt: 1, latest: "9.9.9" }, { currentVersion: "2.6.0" });
     expect(getUpdateStatus({ currentVersion: "2.6.0" })).toEqual({
       latest: "9.9.9",
       updateAvailable: true,
@@ -163,4 +169,52 @@ describe("cache round-trip + toast-once (TMUX_IDE_HOME scratch)", () => {
     expect(markUpdateNotified("1.2.3")).toBe(true);
     expect(readUpdateCache()?.notified).toEqual(["1.2.3"]);
   });
+  it("fetches the running channel and preserves notifications recorded while fetching", async () => {
+    const scope = { currentVersion: "3.0.0-beta.9" };
+    const request = vi.fn(async (url: string | URL | Request) => {
+      expect(url).toBe("https://registry.npmjs.org/tmux-ide/beta");
+      markUpdateNotified("3.0.0-beta.18", scope);
+      return new Response(JSON.stringify({ version: "3.0.0-beta.18" }));
+    });
+    vi.stubGlobal("fetch", request);
+    try {
+      await runUpdateCheck({ ...scope, now: 123 });
+      expect(readUpdateCache(scope)).toEqual({
+        lastCheckedAt: 123,
+        latest: "3.0.0-beta.18",
+        notified: ["3.0.0-beta.18"],
+      });
+      await runUpdateCheck({ ...scope, now: 124 });
+      expect(request).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("separates stable and beta cache throttle and notification receipts", () => {
+    const stable = { currentVersion: "3.0.0" };
+    const beta = { currentVersion: "3.1.0-beta.9" };
+    writeUpdateCache({ lastCheckedAt: 123, latest: "3.0.1" }, stable);
+    expect(readUpdateCache(beta)).toBeNull();
+    writeUpdateCache({ lastCheckedAt: 456, latest: "3.1.0-beta.18" }, beta);
+    expect(getUpdateStatus(beta)).toEqual({ latest: "3.1.0-beta.18", updateAvailable: true });
+    expect(getUpdateStatus(stable)).toEqual({ latest: "3.0.1", updateAvailable: true });
+    expect(markUpdateNotified("3.1.0", stable)).toBe(true);
+    expect(markUpdateNotified("3.1.0", beta)).toBe(true);
+    expect(markUpdateNotified("3.1.0", stable)).toBe(false);
+  });
+});
+
+it("orders numeric prereleases strictly and fails closed on unknown versions", () => {
+  expect(compareSemver("3.0.0-beta.9", "3.0.0-beta.18")).toBe(-1);
+  expect(
+    compareSemver("3.0.0-beta.999999999999999999999", "3.0.0-beta.999999999999999999998"),
+  ).toBe(1);
+  expect(compareSemver("3.0.0-1", "3.0.0-alpha")).toBe(-1);
+  expect(compareSemver("3.0.0-beta.01", "3.0.0-beta.1")).toBeNull();
+  expect(deriveStatus("9.0.0", "unknown").updateAvailable).toBe(false);
+  expect(deriveStatus("9.0.0-beta.1", "3.0.0").updateAvailable).toBe(false);
+  expect(parseRegistryResponse('{"version":"malformed"}')).toBeNull();
+  expect(updateChannel("3.0.0-beta.9")).toBe("beta");
+  expect(updateChannel("3.0.0")).toBe("latest");
 });

@@ -1,3 +1,4 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
 /**
  * The first-run onboarding marker — a machine-local record that the desktop
  * app's gentle intro layer has been dismissed, so it shows exactly once and
@@ -16,7 +17,7 @@ import { stateHome } from "./state-home.ts";
 
 /** Absolute path to the marker file: `<state-home>/onboarding.json`. */
 export function onboardingMarkerPath(): string {
-  return join(stateHome(), "onboarding.json");
+  return runtimeOwnedPath(join(stateHome(), "onboarding.json"));
 }
 
 /**

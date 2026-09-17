@@ -186,61 +186,80 @@ describe("runHeadlessDaemon", () => {
     expect(harness.signals.size).toBe(0);
   });
 
-  it("keeps settings restarts and later tmux recovery under the same lifecycle owner", async () => {
-    const harness = createHarness();
-    const start = harness.deps.startEmbeddedDaemon;
-    const retired = deferred();
-    const events: string[] = [];
-    let starts = 0;
-    const running = runHeadlessDaemon(
-      {},
-      {
-        ...harness.deps,
-        startEmbeddedDaemon: async (options) => {
-          const generation = ++starts;
-          events.push(`start-${generation}`);
-          const handle = await start(options);
-          return {
-            ...handle,
-            tmuxAuthorityReplaced: async () => generation === 2,
-            stop: async () => {
-              events.push(`stop-${generation}`);
-              if (generation === 1) await retired.promise;
-            },
-          };
+  it.each(["settings", "runtime"] as const)(
+    "keeps %s restarts and later tmux recovery under the same lifecycle owner",
+    async (kind) => {
+      const harness = createHarness();
+      const start = harness.deps.startEmbeddedDaemon;
+      const retired = deferred();
+      const events: string[] = [];
+      let starts = 0;
+      const running = runHeadlessDaemon(
+        {},
+        {
+          ...harness.deps,
+          startEmbeddedDaemon: async (options) => {
+            const generation = ++starts;
+            events.push(`start-${generation}`);
+            const handle = await start(options);
+            return {
+              ...handle,
+              tmuxAuthorityReplaced: async () => generation === 2,
+              stop: async () => {
+                events.push(`stop-${generation}`);
+                if (generation === 1) await retired.promise;
+              },
+            };
+          },
         },
-      },
-    );
-    try {
-      await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
-      expect(harness.startOptions[0]?.requestRestart).toBeTypeOf("function");
-      const restarting = harness.startOptions[0]!.requestRestart!({
-        enabled: true,
-        bindHostname: "0.0.0.0",
-        token: "test-remote-token",
-        port: 4321,
-      });
-      await vi.waitFor(() => expect(events).toContain("stop-1"));
-      expect(starts).toBe(1);
-      retired.resolve();
-      await restarting;
-      await vi.waitFor(() => expect(starts).toBe(3), { timeout: 2500 });
-      expect(events.slice(0, 5)).toEqual(["start-1", "stop-1", "start-2", "stop-2", "start-3"]);
-      for (const options of harness.startOptions.slice(1)) {
-        expect(options).toMatchObject({
-          port: 4321,
+      );
+      try {
+        await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
+        expect(harness.startOptions[0]?.requestRestart).toBeTypeOf("function");
+        const restarting = harness.startOptions[0]!.requestRestart!({
+          ...(kind === "runtime" ? { kind: "runtime" as const } : { enabled: true }),
           bindHostname: "0.0.0.0",
-          authToken: "test-remote-token",
-          restoreTmuxWorkspaces: true,
+          token: "test-remote-token",
+          port: 4321,
         });
+        await vi.waitFor(() => expect(events).toContain("stop-1"));
+        expect(starts).toBe(1);
+        retired.resolve();
+        await restarting;
+        await vi.waitFor(() => expect(starts).toBe(3), { timeout: 2500 });
+        expect(events.slice(0, 5)).toEqual(["start-1", "stop-1", "start-2", "stop-2", "start-3"]);
+        for (const options of harness.startOptions.slice(1)) {
+          expect(options).toMatchObject({
+            port: 4321,
+            bindHostname: "0.0.0.0",
+            authToken: "test-remote-token",
+            restoreTmuxWorkspaces: true,
+          });
+        }
+      } finally {
+        retired.resolve();
+        harness.signals.get("SIGTERM")?.();
+        await running;
       }
-    } finally {
-      retired.resolve();
-      harness.signals.get("SIGTERM")?.();
-      await running;
-    }
-    expect(events.at(-1)).toBe("stop-3");
-    expect(harness.signals.size).toBe(0);
+      expect(events.at(-1)).toBe("stop-3");
+      expect(harness.signals.size).toBe(0);
+    },
+  );
+
+  it("ignores a deferred runtime restart after the foreground owner was stopped", async () => {
+    const harness = createHarness();
+    const running = runHeadlessDaemon({}, harness.deps);
+    await vi.waitFor(() => expect(harness.lines).toHaveLength(1));
+    const deferredRestart = harness.startOptions[0]!.requestRestart!;
+    harness.signals.get("SIGTERM")?.();
+    await expect(running).resolves.toBe("stopped");
+    await deferredRestart({
+      kind: "runtime",
+      bindHostname: "0.0.0.0",
+      token: "retained-token",
+      port: 4321,
+    });
+    expect(harness.startOptions).toHaveLength(1);
   });
 
   it.each(["signal", "failure"] as const)(
@@ -295,10 +314,24 @@ describe("runHeadlessDaemon", () => {
     expect(resolveDaemonProductVersion(undefined, () => ({ version: 42 }))).toBe("0.0.0");
   });
 
+  it("publishes managed ownership only after this process becomes ready", async () => {
+    const harness = createHarness();
+    const onOwnedReady = vi.fn();
+    const running = runHeadlessDaemon({ json: true, onOwnedReady }, harness.deps);
+    await vi.waitFor(() => expect(onOwnedReady).toHaveBeenCalledOnce());
+    expect(onOwnedReady.mock.calls[0]![0]).toMatchObject({ pid: daemonInfo().pid });
+    await harness.stop();
+    await running;
+  });
+
   it("reuses a compatible live canonical daemon without takeover", async () => {
     const harness = createHarness({ state: validState(daemonInfo()), alive: true });
 
-    await expect(runHeadlessDaemon({ json: true }, harness.deps)).resolves.toBe("already-running");
+    const onOwnedReady = vi.fn();
+    await expect(runHeadlessDaemon({ json: true, onOwnedReady }, harness.deps)).resolves.toBe(
+      "already-running",
+    );
+    expect(onOwnedReady).not.toHaveBeenCalled();
 
     expect(harness.startOptions).toEqual([]);
     expect(JSON.parse(harness.lines[0]!)).toEqual({
@@ -607,5 +640,121 @@ describe("runHeadlessDaemon", () => {
       exitCode: 2,
     });
     expect(harness.startOptions).toEqual([]);
+  });
+});
+
+describe("supervised foreground generation handoff", () => {
+  it.each(["runtime", "tmux", "failed-stop"])(
+    "passes exact predecessor only after successful %s retirement",
+    async (kind) => {
+      const h = createHarness();
+      const starts: EmbeddedDaemonOptions[] = [];
+      let state: CanonicalDaemonInfoState = {
+        status: "reserved",
+        reservation: {
+          kind: "supervised-reservation",
+          version: 1,
+          supervisionId: "fixture",
+          reservationId: "11111111-1111-4111-8111-111111111111",
+          reservedAt: "2026-09-17T00:00:00.000Z",
+        },
+        reason: "supervised-reservation",
+        detail: "reserved",
+        ownerPid: null,
+        observation: { dev: 1, ino: 1, size: 1, mtimeMs: 1 },
+      };
+      let first: CanonicalDaemonInfoState | undefined;
+      const retirement = deferred();
+      let stopping = false;
+      const deps: HeadlessDaemonDependencies = {
+        ...h.deps,
+        inspectCanonicalDaemonInfo: () => state,
+        isCanonicalDaemonAlive: async () => true,
+        probeCanonicalDaemonHealth: async () =>
+          state.status === "valid"
+            ? {
+                ok: true,
+                protocolVersion: state.info.protocolVersion,
+                productVersion: state.info.productVersion,
+                uptime: 1,
+              }
+            : null,
+        probeCanonicalDaemonIdentity: async () =>
+          state.status === "valid" ? { ok: true, ...state.info } : null,
+        startEmbeddedDaemon: async (options) => {
+          starts.push(options);
+          const n = starts.length;
+          const base = await h.deps.startEmbeddedDaemon(options);
+          const info = daemonInfo({
+            pid: process.pid,
+            supervisionId: "fixture",
+            instanceId:
+              n === 1
+                ? "11111111-1111-4111-8111-111111111111"
+                : "22222222-2222-4222-8222-222222222222",
+          });
+          state = validState(info);
+          if (n === 1) first = structuredClone(state);
+          return {
+            ...base,
+            pid: info.pid,
+            instanceId: info.instanceId,
+            tmuxAuthorityReplaced: async () => kind === "tmux" && n === 1,
+            stop: async () => {
+              if (n === 1) {
+                stopping = true;
+                await retirement.promise;
+                if (kind === "failed-stop") throw new Error("owned-stop-failed");
+              }
+            },
+          };
+        },
+      };
+      const running = runHeadlessDaemon({ supervisionId: "fixture" }, deps);
+      void running.catch(() => undefined);
+      try {
+        await vi.waitFor(() => expect(h.lines).toHaveLength(1));
+        expect(starts[0]!.predecessor).toBeUndefined();
+        const request =
+          kind !== "tmux"
+            ? starts[0]!.requestRestart!({
+                kind: "runtime",
+                bindHostname: "127.0.0.1",
+                token: null,
+                port: 4321,
+              })
+            : Promise.resolve();
+        await vi.waitFor(() => expect(stopping).toBe(true), { timeout: 2000 });
+        expect(starts).toHaveLength(1);
+        retirement.resolve();
+        if (kind === "failed-stop") {
+          await expect(request).rejects.toThrow("owned-stop-failed");
+          await expect(running).rejects.toThrow("owned-stop-failed");
+          expect(starts).toHaveLength(1);
+          return;
+        }
+        await request;
+        await vi.waitFor(() => expect(h.lines).toHaveLength(2));
+        expect(starts[1]!.predecessor).toEqual(first);
+        expect(starts[1]!.supervisionId).toBe("fixture");
+      } finally {
+        retirement.resolve();
+        h.signals.get("SIGTERM")?.();
+        if (kind === "failed-stop") await running.catch(() => undefined);
+        else await running;
+      }
+    },
+  );
+  it("missing or mismatched reservation refuses before embedded startup", async () => {
+    for (const state of [
+      { status: "missing" as const },
+      validState(daemonInfo({ supervisionId: "other" })),
+    ]) {
+      const h = createHarness({ state });
+      await expect(runHeadlessDaemon({ supervisionId: "fixture" }, h.deps)).rejects.toMatchObject({
+        code: "DAEMON_SUPERVISOR_RESERVATION_REQUIRED",
+      });
+      expect(h.startOptions).toHaveLength(0);
+    }
   });
 });

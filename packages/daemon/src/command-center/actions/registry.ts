@@ -44,7 +44,7 @@ import {
   configSetHandler,
 } from "./handlers/config-actions.ts";
 import { appSetRemoteAccessHandler } from "./handlers/app-set-remote-access.ts";
-import { daemonShutdownHandler } from "./handlers/daemon-shutdown.ts";
+import { daemonShutdownHandler, daemonRestartHandler } from "./handlers/daemon-shutdown.ts";
 import { workspacePaneCreateHandler } from "./handlers/workspace-pane-create.ts";
 import {
   workspaceOpenCancelHandler,
@@ -199,6 +199,11 @@ export const actionRegistry: RegistryShape = {
     inputSchema: ActionContractsZ["daemon.shutdown"].input,
     resultSchema: ActionContractsZ["daemon.shutdown"].result,
     handler: daemonShutdownHandler,
+  },
+  "daemon.restart": {
+    inputSchema: ActionContractsZ["daemon.restart"].input,
+    resultSchema: ActionContractsZ["daemon.restart"].result,
+    handler: daemonRestartHandler,
   },
   "workspace.pane.create": {
     inputSchema: ActionContractsZ["workspace.pane.create"].input,

@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "../../../lib/runtime-namespace.ts";
 import { execFile } from "node:child_process";
 import { closeSync, openSync, writeSync } from "node:fs";
 
@@ -13,7 +14,9 @@ export interface OpenTuiHostLocalTmuxAdapter {
 
 function runTmux(args: readonly string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile("tmux", [...args], { timeout: 1_500 }, (error) => (error ? reject(error) : resolve()));
+    execFile("tmux", runtimeTmuxArgs([...args]), { timeout: 1_500 }, (error) =>
+      error ? reject(error) : resolve(),
+    );
   });
 }
 

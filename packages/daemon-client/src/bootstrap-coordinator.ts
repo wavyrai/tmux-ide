@@ -15,6 +15,7 @@ export type DaemonBootstrapPhase =
 export type DaemonBootstrapProbe<Candidate, Reason> =
   | { readonly status: "compatible"; readonly candidate: Candidate }
   | { readonly status: "control-pending"; readonly candidate: Candidate }
+  | { readonly status: "owner-pending" }
   | { readonly status: "absent-or-stale" }
   | { readonly status: "incompatible"; readonly reason: Reason };
 
@@ -163,7 +164,11 @@ export class DaemonBootstrapCoordinator<Candidate, Inventory = never, Reason = s
           // A concurrent starter can make a local spawn failure benign.
           probe = await this.#options.probe();
           if (probe.status === "incompatible") this.#throwIncompatible(probe.reason);
-          if (probe.status !== "compatible" && probe.status !== "control-pending") {
+          if (
+            probe.status !== "compatible" &&
+            probe.status !== "control-pending" &&
+            probe.status !== "owner-pending"
+          ) {
             throw new DaemonBootstrapError(
               "spawn-failed",
               "The canonical daemon could not start.",

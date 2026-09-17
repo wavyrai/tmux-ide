@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "../../../lib/runtime-namespace.ts";
 import { randomUUID } from "node:crypto";
 import { SavedMachineSchema, type SavedMachine } from "@tmux-ide/contracts";
 import { loadSavedMachines } from "../../../lib/saved-machines.ts";
@@ -24,7 +25,7 @@ export function ephemeralMachineProfile(
 
 /** Local discovery and rendering never wait for any remote handshake. */
 export function initializeApplicationMachines(aliases: readonly string[]): void {
-  const profiles = [...loadSavedMachines().machines];
+  const profiles = resolveRuntimeNamespace().development ? [] : [...loadSavedMachines().machines];
   let preferred: string | null = null;
   for (const alias of aliases) {
     let profile = profiles.find((p) => p.sshTarget === alias && p.enabled);

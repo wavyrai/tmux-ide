@@ -52,6 +52,10 @@ const { positionals, values } = parseArgs({
   options: {
     json: { type: "boolean" },
     headless: { type: "boolean" },
+    supervised: { type: "string" },
+    yes: { type: "boolean" },
+    "development-owner": { type: "boolean" },
+    "development-capabilities": { type: "boolean" },
     daemon: { type: "boolean" },
     "if-running": { type: "boolean" },
     ssh: { type: "string", multiple: true },
@@ -115,6 +119,7 @@ const { positionals, values } = parseArgs({
 });
 
 const knownCommands = new Set([
+  "daemon",
   "machines",
   "start",
   "init",
@@ -163,6 +168,16 @@ const knownCommands = new Set([
 ]);
 
 // --version / -v
+if (values["development-capabilities"]) {
+  console.log(
+    JSON.stringify({
+      version: 1,
+      capabilities: ["managed-development-owner-v1", "container-suspension-v1"],
+    }),
+  );
+  process.exit(0);
+}
+
 if (values.version) {
   const pkg = await import("../package.json");
   console.log(`tmux-ide v${pkg.version}`);
@@ -203,6 +218,9 @@ ${bold("Usage:")}
   ${cyan("tmux-ide settings")}           ${dim("Interactive TUI config manager")}
   ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold .tmux-ide/workspace.yml (auto-detects stack)")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
+  ${cyan("tmux-ide daemon reserve-supervisor <id>")} ${dim("Reserve this namespace before installing a supervisor")}
+  ${cyan("tmux-ide daemon release-supervisor <id> --yes")} ${dim("Release after removing the stopped service")}
+  ${cyan("tmux-ide daemon restart")}     ${dim("Reset the daemon runtime; preserve its process and tmux sessions")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
   ${cyan("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
                               ${dim("Rebuild the fleet from the last snapshot after a tmux crash")}
@@ -282,6 +300,7 @@ ${bold("Discover (in the TUI):")}
 ${bold("Flags:")}
   ${cyan("--json")}                      ${dim("Structured output on commands that advertise JSON support")}
   ${cyan("--headless")}                  ${dim("Canonical daemon only; no tmux workspace or TUI")}
+  ${cyan("--supervised <id>")}           ${dim("Require a matching preinstalled supervisor reservation")}
   ${cyan("--template <name>")}           ${dim("Use specific template for init")}
   ${cyan("--write")}                     ${dim("Write detected config to .tmux-ide/workspace.yml")}
   ${cyan("--dry-run")}                   ${dim("Preview migration/restore without writing")}
@@ -633,6 +652,8 @@ function launchApp(): Promise<void> {
 }
 
 try {
+  if (values.supervised !== undefined && !values.headless)
+    throw new IdeError("--supervised requires --headless", { code: "USAGE", exitCode: 2 });
   if (values.ssh !== undefined && (command !== "app" || values.headless))
     throw new IdeError("--ssh is supported only by tmux-ide app", { code: "USAGE", exitCode: 2 });
   if ((values.daemon || values["if-running"]) && command !== "update")
@@ -642,6 +663,14 @@ try {
     });
   if (values["if-running"] && !values.daemon)
     throw new IdeError("--if-running requires --daemon", { code: "USAGE", exitCode: 2 });
+  if (values["development-owner"]) {
+    if (positionals.length || values.headless)
+      throw new IdeError("Invalid managed development entry", { code: "USAGE", exitCode: 2 });
+    await (
+      await import("../packages/daemon/src/lib/development-owner.ts")
+    ).runManagedDevelopmentOwner();
+    process.exit(0);
+  }
   if (values.headless) {
     if (positionals.length > 0) {
       throw new IdeError("--headless cannot be combined with a command or project path", {
@@ -649,12 +678,25 @@ try {
         exitCode: 2,
       });
     }
+    if (values.supervised !== undefined) {
+      const { assertCanonicalDaemonSupervision } =
+        await import("../packages/daemon/src/lib/canonical-daemon.ts");
+      try {
+        assertCanonicalDaemonSupervision(values.supervised);
+      } catch {
+        throw new IdeError(
+          "Matching supervisor reservation required before startup; run daemon reserve-supervisor <id> in this namespace first.",
+          { code: "DAEMON_SUPERVISOR_RESERVATION_REQUIRED", exitCode: 1 },
+        );
+      }
+    }
     const pkg = await import("../package.json");
     const { retireOutdatedCanonicalDaemon } =
       await import("../packages/daemon/src/lib/canonical-daemon-bootstrap.ts");
     await retireOutdatedCanonicalDaemon({
       entryPath: nodeCliPath,
       expectedProductVersion: pkg.version,
+      supervisionId: values.supervised,
     });
     await (
       await import("../packages/daemon/src/lib/headless-daemon.ts")
@@ -662,6 +704,7 @@ try {
       port: values.port,
       json,
       expectedVersion: pkg.version,
+      supervisionId: values.supervised,
     });
     // The daemon cleanup is complete here. Exit explicitly because stores and
     // native adapters may retain harmless timers/handles that must not turn a
@@ -740,6 +783,53 @@ try {
       await (await import("../packages/daemon/src/attach.ts")).attach(positionals[1], { json });
       break;
 
+    case "daemon": {
+      if (positionals[1] === "reserve-supervisor" || positionals[1] === "release-supervisor") {
+        const release = positionals[1] === "release-supervisor";
+        if (positionals.length !== 3 || (release && values.yes !== true))
+          throw new IdeError(
+            "Usage: tmux-ide daemon reserve-supervisor <id> [--json] | daemon release-supervisor <id> --yes [--json]",
+            { code: "USAGE", exitCode: 2 },
+          );
+        const { reserveCanonicalDaemonSupervision, releaseCanonicalDaemonSupervision } =
+          await import("../packages/daemon/src/lib/canonical-daemon.ts");
+        try {
+          if (release) releaseCanonicalDaemonSupervision(positionals[2]!);
+          else reserveCanonicalDaemonSupervision(positionals[2]!);
+        } catch {
+          throw new IdeError(
+            release
+              ? "Supervisor release refused: remove the service first and verify its exact ID and stopped owners."
+              : "Supervisor reservation refused: use a valid ID and a private namespace without a live or unknown owner.",
+            { code: "DAEMON_SUPERVISION_REFUSED", exitCode: 1 },
+          );
+        }
+        console.log(
+          json
+            ? JSON.stringify({
+                ok: true,
+                status: release ? "released" : "reserved",
+                supervisionId: positionals[2],
+              })
+            : `Supervisor namespace ${release ? "released" : "reserved"}: ${positionals[2]}`,
+        );
+        break;
+      }
+      if (positionals[1] !== "restart" || positionals.length !== 2)
+        throw new IdeError("Usage: tmux-ide daemon restart [--json]", {
+          code: "USAGE",
+          exitCode: 2,
+        });
+      const result = await (
+        await import("../packages/daemon/src/lib/restart-canonical-daemon.ts")
+      ).restartCanonicalDaemon();
+      console.log(
+        json
+          ? JSON.stringify(result)
+          : `Daemon runtime restarted (${result.instanceId}, pid ${result.pid}). Installed code was not reloaded.`,
+      );
+      break;
+    }
     case "restart":
       await (await import("../packages/daemon/src/restart.ts")).restart(positionals[1], { json });
       break;
@@ -1318,8 +1408,8 @@ try {
         console.log(`settings:    ${settingsPath} (backup written once as .tmux-ide.bak)`);
         console.log(`skill:       ${skill.action} → ${skill.path} (v${skill.to})`);
         console.log(
-          "installed — NEW Claude Code sessions now report working/blocked/done " +
-            "authoritatively into the tmux-ide chrome.",
+          "configured — verify registration in Claude /hooks; older Claude versions may require a new session. " +
+            "Runtime delivery has not been verified.",
         );
         // M25.1: this is the moment the user is wiring notifications, so offer
         // the macOS banner channel here — one plain y/N key, same shape as the
@@ -1421,8 +1511,9 @@ try {
         // and (for agents we integrate) whether the integration is installed.
         const { discoverAgents } = await import("../packages/daemon/src/lib/agent-discovery.ts");
         const agents = discoverAgents();
+        const claude = mod.claudeIntegrationStatus();
         if (json) {
-          console.log(JSON.stringify({ agents }, null, 2));
+          console.log(JSON.stringify({ agents, claude }, null, 2));
           break;
         }
         for (const a of agents) {
@@ -1443,6 +1534,14 @@ try {
             else capture = " · session-id capture: none";
           }
           console.log(`  ${a.id.padEnd(10)} ${state}${capture}`);
+          if (a.id === "claude") {
+            console.log(
+              `    user-settings readiness: ${claude.issues.join(", ") || "ready"}; runtime delivery unverified`,
+            );
+            if (claude.issues.length && claude.repairCommand)
+              console.log(`    repair: ${claude.repairCommand}`);
+            console.log(`    ${claude.guidance}`);
+          }
         }
       }
       break;
@@ -1941,7 +2040,9 @@ try {
         if (
           values["if-running"] &&
           (state.status === "missing" ||
-            (state.status === "valid" && !(await isCanonicalDaemonAlive(state.info))))
+            (state.status === "valid" &&
+              !state.info.supervisionId &&
+              !(await isCanonicalDaemonAlive(state.info))))
         ) {
           console.log(
             json
@@ -2018,22 +2119,7 @@ try {
       // package-manager path heuristic (see lib/update.ts).
       const { runUpdate } = await import("../packages/daemon/src/lib/update.ts");
       const dryRun = values["dry-run"] === true;
-      const plan = runUpdate({ cliDir: __dirname, dryRun });
-      if (!dryRun) {
-        // The managed skill copy has to track the CLI. A global install refreshes
-        // it via the package's own postinstall (which just ran); a dev checkout
-        // has no postinstall, so `tmux-ide update` IS the checkout's refresh path
-        // — sync the skill directly here.
-        const { syncSkill } = await import("../packages/daemon/src/lib/skill-sync.ts");
-        if (plan.method === "dev") {
-          const result = syncSkill();
-          console.log("");
-          console.log(`skill: ${result.action} → ${result.path} (v${result.to})`);
-        } else {
-          console.log("");
-          console.log("skill: refreshed by the package postinstall (~/.claude/skills/tmux-ide)");
-        }
-      }
+      runUpdate({ cliDir: __dirname, dryRun, json });
       break;
     }
 

@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -396,7 +397,7 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     });
   });
 
-  it("refuses live protocol-less, malformed, and insecure canonical records", async () => {
+  it("refuses invalid records and repairs trusted legacy permissions without replacing a live owner", async () => {
     const valid = {
       pid: process.pid,
       port: 9,
@@ -425,10 +426,18 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
       { mode: 0o600 },
     );
     chmodSync(daemonInfoPath(), 0o644);
+    const legacy = await waitForExit(spawnCli(["--headless", "--json"]));
+    expect(legacy.code).toBe(1);
+    expect(JSON.parse(legacy.stderr)).toMatchObject({ code: "DAEMON_IDENTITY_UNAVAILABLE" });
+    expect(statSync(daemonInfoPath()).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(daemonInfoPath(), "utf-8"))).toMatchObject({ pid: process.pid });
+
+    chmodSync(daemonInfoPath(), 0o666);
     const insecure = await waitForExit(spawnCli(["--headless", "--json"]));
     expect(insecure.code).toBe(1);
     expect(JSON.parse(insecure.stderr)).toMatchObject({ code: "DAEMON_INFO_INVALID" });
     expect(existsSync(daemonInfoPath())).toBe(true);
+    expect(statSync(daemonInfoPath()).mode & 0o777).toBe(0o666);
   });
 
   it("cleans canonical state and exits zero on SIGTERM", async () => {

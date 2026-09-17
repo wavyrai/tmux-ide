@@ -1,3 +1,4 @@
+import { runtimeOwnedPath } from "../../lib/runtime-namespace.ts";
 /**
  * Persistence for the notification debounce map (M25.1) — `lastNotified`
  * survives updater restarts, so a respawned updater can't re-ping inside the
@@ -17,7 +18,7 @@ import { NOTIFY_DEBOUNCE_MS } from "./notify.ts";
 
 /** Absolute path to the persisted debounce map. */
 export function notifyStatePath(): string {
-  return join(stateHome(), "notify-state.json");
+  return runtimeOwnedPath(join(stateHome(), "notify-state.json"));
 }
 
 /** PURE — the JSON body for a debounce map, dropping entries whose timestamp

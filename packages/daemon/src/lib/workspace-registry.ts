@@ -1,3 +1,4 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
 /**
  * Workspace registry — runtime list of projects the daemon is serving.
  *
@@ -253,7 +254,7 @@ export class WorkspaceRegistry {
   // ----------------- io -----------------
 
   private filePath(): string {
-    return join(this.dir, "workspaces.json");
+    return runtimeOwnedPath(join(this.dir, "workspaces.json"));
   }
 
   private readDisk(): Workspace[] {

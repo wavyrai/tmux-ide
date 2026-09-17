@@ -45,18 +45,24 @@ it("retains newer optimistic edits through a failed write and retries against th
       }),
     );
   vi.stubGlobal("fetch", request);
-  const preferences = createApplicationFleetPreferences();
+  const onError = vi.fn();
+  const onRecovered = vi.fn();
+  const preferences = createApplicationFleetPreferences({ onError, onRecovered });
   try {
     preferences.change({ type: "favorite", key: "session", enabled: true });
     await vi.advanceTimersByTimeAsync(0);
     preferences.change({ type: "favorite", key: "session", enabled: false });
     fail(new Error("transient"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onRecovered).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(5000);
     expect(request).toHaveBeenCalledTimes(2);
     const init = request.mock.calls[1][1];
     expect(JSON.parse(init.body).change.enabled).toBe(false);
     expect(init.headers.Authorization).toBe("Bearer local-only");
     expect(preferences.getSnapshot().favorites).toEqual([]);
+    expect(onRecovered).toHaveBeenCalledExactlyOnceWith(onError.mock.calls[0][0]);
   } finally {
     preferences.dispose();
   }
@@ -73,4 +79,39 @@ it("preserves a corrupt file and stays memory-only", () => {
   expect(preferences.getSnapshot().recent).toEqual(["session"]);
   expect(request).not.toHaveBeenCalled();
   preferences.dispose();
+});
+
+it("does not report recovery for a response from a replaced daemon", async () => {
+  vi.useFakeTimers();
+  f.load.mockReturnValue(emptyFleetClientState());
+  const daemon = {
+    instanceId: "11111111-1111-4111-8111-111111111111",
+    startedAt: "2026-09-10T00:00:00Z",
+    productVersion: "test",
+    protocolVersion: 2,
+    authToken: "local-only",
+  };
+  f.read.mockReturnValue(daemon);
+  const request = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("transient"))
+    .mockImplementation(async () =>
+      Response.json({
+        daemon: { ...daemon, startedAt: "2026-09-10T00:01:00Z" },
+        state: emptyFleetClientState(),
+      }),
+    );
+  vi.stubGlobal("fetch", request);
+  const onError = vi.fn();
+  const onRecovered = vi.fn();
+  const preferences = createApplicationFleetPreferences({ onError, onRecovered });
+  try {
+    preferences.change({ type: "favorite", key: "session", enabled: true });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onRecovered).not.toHaveBeenCalled();
+  } finally {
+    preferences.dispose();
+  }
 });

@@ -443,3 +443,194 @@ describe("product version upgrades", () => {
     expect(f.spawnOwner).not.toHaveBeenCalled();
   });
 });
+
+describe("supervised bootstrap admission", () => {
+  const observed = { dev: 1, ino: 1, size: 1, mtimeMs: 1 };
+  const supervised = { ...info, supervisionId: "fixture" };
+  const reservation = {
+    status: "reserved" as const,
+    reservation: {
+      kind: "supervised-reservation" as const,
+      version: 1 as const,
+      supervisionId: "fixture",
+      reservationId: "11111111-1111-4111-8111-111111111111",
+      reservedAt: info.startedAt,
+    },
+    observation: observed,
+    reason: "supervised-reservation" as const,
+    detail: "reserved",
+    ownerPid: null,
+  };
+  function fixture() {
+    let state: import("./canonical-daemon.ts").CanonicalDaemonInfoState = reservation;
+    let now = 0;
+    let alive = false;
+    const spawnOwner = vi.fn(async () => {});
+    const dependencies = {
+      inspect: () => state,
+      alive: async () => alive,
+      spawnOwner,
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+      identity: async (i: CanonicalDaemonInfo) => ({
+        ok: true as const,
+        pid: i.pid,
+        instanceId: i.instanceId,
+        startedAt: i.startedAt,
+        protocolVersion: i.protocolVersion,
+        productVersion: i.productVersion,
+      }),
+      health: async (i: CanonicalDaemonInfo) => ({
+        ok: true as const,
+        protocolVersion: i.protocolVersion,
+        productVersion: i.productVersion,
+        uptime: 1,
+      }),
+    };
+    return {
+      dependencies,
+      spawnOwner,
+      set: (next: typeof state, live = false) => {
+        state = next;
+        alive = live;
+      },
+      publish: () => {
+        state = { status: "valid", info: supervised, observation: observed };
+        alive = true;
+      },
+      tick: (ms: number) => {
+        now += ms;
+      },
+    };
+  }
+  it("waits for reserved and dead supervised owners, with bounded timeout and no detached spawn", async () => {
+    for (const state of [
+      reservation,
+      { status: "valid" as const, info: supervised, observation: observed },
+    ]) {
+      const f = fixture();
+      f.set(state);
+      await expect(
+        ensureCanonicalDaemon({ entryPath: "/tmp/unused", timeoutMs: 100 }, f.dependencies),
+      ).rejects.toMatchObject({ code: "control-timeout" });
+      expect(f.spawnOwner).not.toHaveBeenCalled();
+    }
+  });
+  it("adopts the supervisor publication and refuses changed reservation instead of falling back", async () => {
+    const f = fixture();
+    const result = await ensureCanonicalDaemon(
+      { entryPath: "/tmp/unused", timeoutMs: 100 },
+      {
+        ...f.dependencies,
+        sleep: async (ms) => {
+          f.tick(ms);
+          f.publish();
+        },
+      },
+    );
+    expect(result.candidate).toEqual(supervised);
+    expect(f.spawnOwner).not.toHaveBeenCalled();
+    const changed = fixture();
+    await expect(
+      ensureCanonicalDaemon(
+        { entryPath: "/tmp/unused", timeoutMs: 100 },
+        {
+          ...changed.dependencies,
+          sleep: async (ms) => {
+            changed.tick(ms);
+            changed.set({
+              ...reservation,
+              reservation: { ...reservation.reservation, supervisionId: "other" },
+            });
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ reason: "canonical-record-invalid" });
+    expect(changed.spawnOwner).not.toHaveBeenCalled();
+  });
+  it("concurrent upgraders wait for replacement, including a disappearing record, without owning startup", async () => {
+    const f = fixture();
+    const older = { ...supervised, productVersion: "2.7.0" };
+    f.set({ status: "valid", info: older, observation: observed }, true);
+    const dependencies = {
+      ...f.dependencies,
+      shutdownOlderOwner: async () => {
+        f.set({ status: "missing" });
+      },
+      sleep: async (ms: number) => {
+        f.tick(ms);
+        f.publish();
+      },
+    };
+    const results = await Promise.all(
+      [0, 1].map(() =>
+        ensureCanonicalDaemon(
+          { entryPath: "/tmp/unused", expectedProductVersion: info.productVersion, timeoutMs: 100 },
+          dependencies,
+        ),
+      ),
+    );
+    expect(results.every((r) => r.candidate.instanceId === supervised.instanceId)).toBe(true);
+    expect(f.spawnOwner).not.toHaveBeenCalled();
+  });
+  it.each([undefined, "fixture"])(
+    "refuses binding replacement during retirement liveness checks (declared %s)",
+    async (supervisionId) => {
+      const f = fixture();
+      const older = { ...supervised, productVersion: "2.7.0" };
+      f.set({ status: "valid", info: older, observation: observed }, true);
+      const shutdownOlderOwner = vi.fn(async () => {});
+      await expect(
+        retireOutdatedCanonicalDaemon(
+          {
+            entryPath: "/tmp/unused",
+            expectedProductVersion: info.productVersion,
+            timeoutMs: 100,
+            supervisionId,
+          },
+          {
+            ...f.dependencies,
+            shutdownOlderOwner,
+            alive: async () => {
+              f.set(
+                {
+                  status: "valid",
+                  info: { ...older, supervisionId: "replacement" },
+                  observation: observed,
+                },
+                true,
+              );
+              return true;
+            },
+          },
+        ),
+      ).rejects.toMatchObject({ reason: "canonical-record-invalid" });
+      expect(shutdownOlderOwner).not.toHaveBeenCalled();
+      expect(f.spawnOwner).not.toHaveBeenCalled();
+    },
+  );
+  it("foreground retirement waits for supervisor replacement instead of permitting a takeover", async () => {
+    const f = fixture();
+    f.set(
+      { status: "valid", info: { ...supervised, productVersion: "2.7.0" }, observation: observed },
+      true,
+    );
+    const result = await retireOutdatedCanonicalDaemon(
+      { entryPath: "/tmp/unused", expectedProductVersion: info.productVersion, timeoutMs: 100 },
+      {
+        ...f.dependencies,
+        shutdownOlderOwner: async () => {
+          f.set(reservation);
+        },
+        sleep: async (ms) => {
+          f.tick(ms);
+          f.publish();
+        },
+      },
+    );
+    expect(result).toBe(false);
+    expect(f.spawnOwner).not.toHaveBeenCalled();
+  });
+});

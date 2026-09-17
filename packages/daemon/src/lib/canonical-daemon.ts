@@ -18,13 +18,16 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import {
   CanonicalDaemonInfoSchema,
+  CanonicalDaemonReservationSchema,
+  DaemonSupervisionIdSchema,
+  type CanonicalDaemonReservation,
   type CanonicalDaemonInfo,
   DaemonHealthSchema,
   type DaemonHealth,
   DaemonIdentitySchema,
   type DaemonIdentity,
 } from "@tmux-ide/contracts";
-import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
+import { resolveRuntimeNamespace, runtimeOwnedPath } from "./runtime-namespace.ts";
 
 export type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
 
@@ -50,7 +53,12 @@ type CanonicalDaemonClaimState =
   | { status: "valid"; claim: CanonicalDaemonClaim }
   | { status: "invalid"; detail: string };
 
-const activeClaims = new Set<string>();
+export type CanonicalDaemonPredecessor = Extract<CanonicalDaemonInfoState, { status: "valid" }>;
+export type CanonicalDaemonClaimIntent =
+  | { kind: "supervised"; supervisionId: string; predecessor?: CanonicalDaemonPredecessor }
+  | { kind: "reserve" | "release"; supervisionId: string }
+  | { kind: "ordinary" };
+const activeClaims = new Map<string, CanonicalDaemonClaimIntent>();
 
 export type CanonicalDaemonInfoInvalidReason =
   | "parent-symlink"
@@ -87,16 +95,27 @@ export type CanonicalDaemonInfoState =
       observation: CanonicalDaemonInfoObservation;
     }
   | {
+      status: "reserved";
+      reservation: CanonicalDaemonReservation;
+      observation: CanonicalDaemonInfoObservation;
+      recoveryDetail?: never;
+      reason: "supervised-reservation";
+      detail: string;
+      ownerPid: null;
+    }
+  | {
       status: "invalid";
       reason: CanonicalDaemonInfoInvalidReason;
       detail: string;
+      /** Fixed permission-recovery guidance; never includes parsed record contents. */
+      recoveryDetail?: string;
       /** Present only when it came from a securely opened JSON object. */
       ownerPid: number | null;
       observation: CanonicalDaemonInfoObservation | null;
     };
 
 export function getCanonicalDaemonInfoPath(): string {
-  return join(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE);
+  return runtimeOwnedPath(join(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE));
 }
 
 export function getCanonicalDaemonClaimPath(): string {
@@ -132,18 +151,23 @@ function canonicalDaemonRootError(detail: string): Error {
  * untrusted endpoint. The directory descriptor pins the object being changed;
  * the final lstat proves the configured path still names that same object.
  */
-function prepareCanonicalDaemonRoot(root: string): void {
+function prepareCanonicalDaemonRoot(root: string, expected?: Stats): void {
   let descriptor: number | undefined;
   try {
-    try {
-      mkdirSync(root, { recursive: true, mode: 0o700 });
-    } catch (error) {
-      // Recursive mkdir reports EEXIST for a non-directory endpoint. Let the
-      // lstat below classify it deterministically instead of trusting it.
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (!expected) {
+      try {
+        mkdirSync(root, { recursive: true, mode: 0o700 });
+      } catch (error) {
+        // Recursive mkdir reports EEXIST for a non-directory endpoint. Let the
+        // lstat below classify it deterministically instead of trusting it.
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
     }
 
     const pathStat = lstatSync(root);
+    if (expected && (!sameFileIdentity(expected, pathStat) || (pathStat.mode & 0o022) !== 0)) {
+      throw canonicalDaemonRootError("changed before permission recovery");
+    }
     if (pathStat.isSymbolicLink()) {
       throw canonicalDaemonRootError("must not be a symbolic link");
     }
@@ -162,6 +186,7 @@ function prepareCanonicalDaemonRoot(root: string): void {
     if (
       !openedStat.isDirectory() ||
       !sameFileIdentity(pathStat, openedStat) ||
+      (expected !== undefined && (openedStat.mode & 0o022) !== 0) ||
       (typeof process.getuid === "function" && openedStat.uid !== process.getuid())
     ) {
       throw canonicalDaemonRootError("changed or became unsafe while it was opened");
@@ -193,7 +218,7 @@ function invalidState(
   detail: string,
   ownerPid: number | null = null,
   observed: CanonicalDaemonInfoObservation | null = null,
-): CanonicalDaemonInfoState {
+): Extract<CanonicalDaemonInfoState, { status: "invalid" }> {
   return { status: "invalid", reason, detail, ownerPid, observation: observed };
 }
 
@@ -203,7 +228,7 @@ function ownerPidFromRaw(raw: unknown): number | null {
   return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState {
+export function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState {
   let descriptor: number | undefined;
   try {
     const pathStat = lstatSync(path);
@@ -310,12 +335,30 @@ function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState 
         openedObservation,
       );
     }
+    if (raw && typeof raw === "object" && "kind" in raw) {
+      const reservation = CanonicalDaemonReservationSchema.safeParse(raw);
+      if (!reservation.success)
+        return invalidState(
+          "invalid-schema",
+          "Invalid supervision reservation",
+          null,
+          openedObservation,
+        );
+      return {
+        status: "reserved",
+        reservation: reservation.data,
+        observation: openedObservation,
+        reason: "supervised-reservation",
+        detail: "Daemon namespace is reserved for its supervisor",
+        ownerPid: null,
+      };
+    }
     const parsed = CanonicalDaemonInfoSchema.safeParse(raw);
     if (!parsed.success) {
       return invalidState(
         "invalid-schema",
         parsed.error.issues.map((issue) => issue.message).join("; "),
-        ownerPidFromRaw(raw),
+        raw && typeof raw === "object" && "supervisionId" in raw ? null : ownerPidFromRaw(raw),
         openedObservation,
       );
     }
@@ -331,7 +374,7 @@ function inspectCanonicalDaemonInfoPath(path: string): CanonicalDaemonInfoState 
   }
 }
 
-function inspectCanonicalDaemonClaimPath(path: string): CanonicalDaemonClaimState {
+export function inspectCanonicalDaemonClaimPath(path: string): CanonicalDaemonClaimState {
   let descriptor: number | undefined;
   try {
     const claimStat = lstatSync(path);
@@ -432,12 +475,56 @@ function retireCanonicalClaimIfMatches(expected: CanonicalDaemonClaim): boolean 
   return false;
 }
 
+function supervisionBinding(state: CanonicalDaemonInfoState): string | null {
+  return state.status === "reserved"
+    ? state.reservation.supervisionId
+    : state.status === "valid"
+      ? (state.info.supervisionId ?? null)
+      : null;
+}
+/** Internal lifecycle handoff, captured before and supplied only after successful owned stop. */
+export function matchesCanonicalDaemonPredecessor(
+  state: CanonicalDaemonInfoState,
+  predecessor: CanonicalDaemonPredecessor | undefined,
+  supervisionId: string,
+): boolean {
+  return (
+    !!predecessor &&
+    state.status === "valid" &&
+    state.info.pid === process.pid &&
+    state.info.supervisionId === supervisionId &&
+    predecessor.info.supervisionId === supervisionId &&
+    sameObservation(state.observation, predecessor.observation) &&
+    JSON.stringify(state.info) === JSON.stringify(predecessor.info)
+  );
+}
+function admitsClaim(state: CanonicalDaemonInfoState, intent: CanonicalDaemonClaimIntent): boolean {
+  const binding = supervisionBinding(state);
+  if (intent.kind === "ordinary") return binding === null;
+  if (!DaemonSupervisionIdSchema.safeParse(intent.supervisionId).success) return false;
+  if (intent.kind === "reserve")
+    return (
+      state.status === "missing" ||
+      (state.status === "valid" && binding === null && pidLiveness(state.info.pid) === "dead") ||
+      (state.status === "reserved" && binding === intent.supervisionId)
+    );
+  return (
+    binding === intent.supervisionId &&
+    (state.status === "reserved" ||
+      (state.status === "valid" &&
+        (pidLiveness(state.info.pid) === "dead" ||
+          (intent.kind === "supervised" &&
+            matchesCanonicalDaemonPredecessor(state, intent.predecessor, intent.supervisionId)))))
+  );
+}
 /**
  * Publish a complete, process-lifetime startup claim with one atomic rename.
  * The winner holds it until daemon shutdown; contenders cannot pass inspection,
  * bind, or publication concurrently.
  */
-export function tryAcquireCanonicalDaemonClaim(): CanonicalDaemonClaimAttempt {
+export function tryAcquireCanonicalDaemonClaim(
+  intent: CanonicalDaemonClaimIntent = { kind: "ordinary" },
+): CanonicalDaemonClaimAttempt {
   const path = getCanonicalDaemonClaimPath();
   const root = dirname(path);
   try {
@@ -450,6 +537,11 @@ export function tryAcquireCanonicalDaemonClaim(): CanonicalDaemonClaimAttempt {
     };
   }
 
+  if (!admitsClaim(inspectCanonicalDaemonInfo(), intent))
+    return {
+      status: "invalid",
+      detail: "Supervisor reservation does not admit this startup intent",
+    };
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const claim: CanonicalDaemonClaim = {
       claimId: randomUUID(),
@@ -464,7 +556,14 @@ export function tryAcquireCanonicalDaemonClaim(): CanonicalDaemonClaimAttempt {
     });
     try {
       renameSync(candidate, path);
-      activeClaims.add(claim.claimId);
+      activeClaims.set(claim.claimId, Object.freeze(structuredClone(intent)));
+      if (!admitsClaim(inspectCanonicalDaemonInfo(), intent)) {
+        releaseCanonicalDaemonClaim(claim);
+        return {
+          status: "invalid",
+          detail: "Supervisor reservation changed during claim acquisition",
+        };
+      }
       return { status: "acquired", claim };
     } catch (error) {
       rmSync(candidate, { recursive: true, force: true });
@@ -512,10 +611,32 @@ export function writeCanonicalDaemonInfo(
   claim: CanonicalDaemonClaim,
 ): void {
   assertCanonicalDaemonClaimHeld(claim);
+  const before = inspectCanonicalDaemonInfo();
+  const intent = activeClaims.get(claim.claimId)!;
+  if (
+    !admitsClaim(before, intent) ||
+    intent.kind === "reserve" ||
+    intent.kind === "release" ||
+    (intent.kind === "supervised"
+      ? info.supervisionId !== intent.supervisionId
+      : info.supervisionId !== undefined)
+  )
+    throw new Error("Canonical publication does not match supervision intent");
+  if (
+    before.status === "valid" &&
+    info.supervisionId &&
+    pidLiveness(before.info.pid) !== "dead" &&
+    !(
+      intent.kind === "supervised" &&
+      matchesCanonicalDaemonPredecessor(before, intent.predecessor, intent.supervisionId)
+    )
+  )
+    throw new Error("Supervised predecessor is not proven dead");
   const path = getCanonicalDaemonInfoPath();
   prepareCanonicalDaemonRoot(dirname(path));
   const tmpPath = `${path}.${claim.claimId}.${randomUUID()}.tmp`;
   const persisted: CanonicalDaemonInfo = {
+    ...(info.supervisionId ? { supervisionId: info.supervisionId } : {}),
     pid: info.pid,
     port: info.port,
     protocolVersion: info.protocolVersion,
@@ -534,9 +655,107 @@ export function writeCanonicalDaemonInfo(
   try {
     // link(2) is an atomic create-if-absent publication. It cannot overwrite a
     // canonical generation published by another process.
-    linkSync(tmpPath, path);
+    if (intent.kind === "supervised") {
+      const current = inspectCanonicalDaemonInfo();
+      if (
+        before.status === "missing" ||
+        current.status === "missing" ||
+        !before.observation ||
+        !current.observation ||
+        !sameObservation(before.observation, current.observation) ||
+        supervisionBinding(current) !== intent.supervisionId
+      )
+        throw new Error("Supervision reservation changed before publication");
+      renameSync(tmpPath, path);
+    } else linkSync(tmpPath, path);
   } finally {
     rmSync(tmpPath, { force: true });
+  }
+}
+
+/** Validate before any CLI-triggered retirement; startup repeats this under its claim. */
+export function assertCanonicalDaemonSupervision(supervisionId: string): void {
+  if (
+    !DaemonSupervisionIdSchema.safeParse(supervisionId).success ||
+    supervisionBinding(inspectCanonicalDaemonInfo()) !== supervisionId
+  )
+    throw new Error("Matching supervisor reservation required before startup");
+}
+
+/** Explicit installation only; startup never calls this to recreate a reservation. */
+export function reserveCanonicalDaemonSupervision(
+  supervisionId: string,
+): CanonicalDaemonReservation {
+  const attempt = tryAcquireCanonicalDaemonClaim({ kind: "reserve", supervisionId });
+  if (attempt.status !== "acquired") throw new Error("Cannot reserve supervised daemon namespace");
+  const claim = attempt.claim;
+  try {
+    const before = inspectCanonicalDaemonInfo();
+    if (!admitsClaim(before, { kind: "reserve", supervisionId }))
+      throw new Error("Reservation admission changed");
+    if (before.status === "reserved") return before.reservation;
+    const reservation = CanonicalDaemonReservationSchema.parse({
+      kind: "supervised-reservation",
+      version: 1,
+      supervisionId,
+      reservationId: randomUUID(),
+      reservedAt: new Date().toISOString(),
+    });
+    const path = getCanonicalDaemonInfoPath();
+    const temp = `${path}.${claim.claimId}.${randomUUID()}.tmp`;
+    writeFileSync(temp, JSON.stringify(reservation) + "\n", { flag: "wx", mode: 0o600 });
+    try {
+      assertCanonicalDaemonClaimHeld(claim);
+      const current = inspectCanonicalDaemonInfo();
+      if (
+        !admitsClaim(current, { kind: "reserve", supervisionId }) ||
+        current.status !== before.status ||
+        (before.status !== "missing" &&
+          (current.status === "missing" ||
+            !before.observation ||
+            !current.observation ||
+            !sameObservation(before.observation, current.observation)))
+      )
+        throw new Error("Reservation record changed");
+      if (before.status === "missing") linkSync(temp, path);
+      else renameSync(temp, path);
+    } finally {
+      rmSync(temp, { force: true });
+    }
+    return reservation;
+  } finally {
+    releaseCanonicalDaemonClaim(claim);
+  }
+}
+
+/** Service removal is a caller precondition; only exact dead namespace state is retired here. */
+export function releaseCanonicalDaemonSupervision(supervisionId: string): void {
+  const intent = { kind: "release" as const, supervisionId };
+  const attempt = tryAcquireCanonicalDaemonClaim(intent);
+  if (attempt.status !== "acquired") throw new Error("Cannot release supervised daemon namespace");
+  const claim = attempt.claim;
+  try {
+    const before = inspectCanonicalDaemonInfo();
+    if (!admitsClaim(before, intent) || before.status === "missing" || !before.observation)
+      throw new Error("Supervisor release refused");
+    const captured = captureCanonicalDaemonInfo(claim);
+    if (!captured) throw new Error("Supervisor release record disappeared");
+    try {
+      const current = inspectCanonicalDaemonInfoPath(captured);
+      if (
+        !admitsClaim(current, intent) ||
+        current.status === "missing" ||
+        !current.observation ||
+        !sameObservation(before.observation, current.observation)
+      )
+        throw new Error("Supervisor release record changed");
+      rmSync(captured);
+    } catch (error) {
+      restoreCapturedFile(captured, getCanonicalDaemonInfoPath());
+      throw error;
+    }
+  } finally {
+    releaseCanonicalDaemonClaim(claim);
   }
 }
 
@@ -545,8 +764,108 @@ export function inspectCanonicalDaemonInfo(): CanonicalDaemonInfoState {
 }
 
 /**
+ * Bootstrap-only migration of legacy 0755/0644-style state. This does not read
+ * metadata until its permissions are private, inspect PIDs, or retire an owner.
+ * Writable-by-others state cannot be made trustworthy by chmod and is refused.
+ * Read-only consumers must continue using inspectCanonicalDaemonInfo().
+ */
+export function prepareCanonicalDaemonInfoForBootstrap(): CanonicalDaemonInfoState {
+  const initial = inspectCanonicalDaemonInfo();
+  if (
+    initial.status !== "invalid" ||
+    (initial.reason !== "parent-unsafe-permissions" && initial.reason !== "unsafe-permissions")
+  )
+    return initial;
+
+  const path = getCanonicalDaemonInfoPath();
+  const root = dirname(path);
+  let descriptor: number | undefined;
+  const blocked = (reason: CanonicalDaemonInfoInvalidReason, detail: string) => ({
+    ...invalidState(reason, `${path}: permission recovery refused: ${detail}`),
+    recoveryDetail: detail,
+  });
+  try {
+    const parent = lstatSync(root);
+    const file = lstatSync(path);
+    if (parent.isSymbolicLink()) return blocked("parent-symlink", "parent is a symbolic link");
+    if (!parent.isDirectory()) return blocked("parent-not-directory", "parent is not a directory");
+    if (typeof process.getuid !== "function" || parent.uid !== process.getuid())
+      return blocked(
+        "parent-wrong-owner",
+        "parent ownership cannot be verified as the current user",
+      );
+    if ((parent.mode & 0o022) !== 0)
+      return blocked(
+        "parent-unsafe-permissions",
+        "parent is writable by other users; verify its provenance before repairing permissions",
+      );
+    if (file.isSymbolicLink()) return blocked("symlink", "record is a symbolic link");
+    if (!file.isFile()) return blocked("not-regular-file", "record is not a regular file");
+    if (file.uid !== process.getuid())
+      return blocked("wrong-owner", "record belongs to another user");
+    if (file.size > MAX_DAEMON_INFO_BYTES)
+      return blocked("oversized", "record exceeds the size limit");
+    if ((file.mode & 0o022) !== 0 || file.nlink !== 1)
+      return blocked(
+        "unsafe-permissions",
+        "record is writable by other users or has multiple hard links; verify its provenance before repairing permissions",
+      );
+    if (!initial.observation || !sameObservation(initial.observation, observation(file)))
+      return blocked("changed-while-opening", "record changed before recovery; retry bootstrap");
+
+    // The existing root hardener pins the directory and rejects a path swap.
+    prepareCanonicalDaemonRoot(root, parent);
+    descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(descriptor);
+    const unchanged = (): boolean => {
+      const current = lstatSync(path);
+      const currentParent = lstatSync(root);
+      const pinned = fstatSync(descriptor!);
+      return (
+        current.isFile() &&
+        pinned.isFile() &&
+        currentParent.isDirectory() &&
+        sameObservation(observation(file), observation(current)) &&
+        sameObservation(observation(file), observation(pinned)) &&
+        sameFileIdentity(parent, currentParent) &&
+        current.uid === process.getuid!() &&
+        pinned.uid === process.getuid!() &&
+        currentParent.uid === process.getuid!() &&
+        current.nlink === 1 &&
+        pinned.nlink === 1 &&
+        (current.mode & 0o022) === 0 &&
+        (pinned.mode & 0o022) === 0 &&
+        (currentParent.mode & 0o077) === 0
+      );
+    };
+    if (!sameFileIdentity(file, opened) || !unchanged())
+      return blocked(
+        "changed-while-opening",
+        "record or parent changed while opening; retry bootstrap",
+      );
+    fchmodSync(descriptor, 0o600);
+    if (!unchanged() || (fstatSync(descriptor).mode & 0o077) !== 0)
+      return blocked(
+        "changed-while-opening",
+        "record or parent changed while hardening; retry bootstrap",
+      );
+    // Re-enter the normal secure parser. Invalid legacy schemas may now expose
+    // a trusted PID, but only the existing owner/claim logic can prove it dead.
+    return inspectCanonicalDaemonInfo();
+  } catch {
+    return blocked(
+      "changed-while-opening",
+      "record or parent changed or could not be securely opened/hardened; verify filesystem permissions and retry bootstrap",
+    );
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+/**
  * Convenience for non-ownership consumers. Startup and takeover code must use
- * inspectCanonicalDaemonInfo() so an invalid record is never treated as absent.
+ * inspectCanonicalDaemonInfo() (or explicit bootstrap permission preparation)
+ * so an invalid record is never treated as absent.
  */
 export function readCanonicalDaemonInfo(): CanonicalDaemonInfo | null {
   const state = inspectCanonicalDaemonInfo();
@@ -571,7 +890,7 @@ export function clearCanonicalDaemonInfoIfUnchanged(
   state: CanonicalDaemonInfoState,
   claim: CanonicalDaemonClaim,
 ): boolean {
-  if (state.status === "missing" || !state.observation) return false;
+  if (state.status === "missing" || !state.observation || supervisionBinding(state)) return false;
   const path = getCanonicalDaemonInfoPath();
   const captured = captureCanonicalDaemonInfo(claim);
   if (!captured) return false;
@@ -594,6 +913,7 @@ export function clearCanonicalDaemonInfoIfOwned(
   instanceId: string,
   claim: CanonicalDaemonClaim,
 ): boolean {
+  if (supervisionBinding(inspectCanonicalDaemonInfo())) return false;
   const path = getCanonicalDaemonInfoPath();
   const captured = captureCanonicalDaemonInfo(claim);
   if (!captured) return false;
@@ -626,6 +946,7 @@ function pidLiveness(pid: number): PidLiveness {
  * recover them; live, unknown, and malformed claims remain authoritative.
  */
 export function canonicalDaemonClaimAllowsStartupAttempt(): boolean {
+  if (supervisionBinding(inspectCanonicalDaemonInfo())) return false;
   const claimPath = getCanonicalDaemonClaimPath();
   try {
     const root = lstatSync(dirname(claimPath));

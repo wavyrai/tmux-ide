@@ -727,3 +727,42 @@ describe("/ws/events client frame protocol", () => {
     socket.disconnect();
   });
 });
+
+it("retires a physically slow socket without awaiting close and keeps another peer flowing", async () => {
+  class SlowSocket extends EventEmitter {
+    readyState = 1;
+    bufferedAmount = 2 * 1024 * 1024;
+    send = vi.fn();
+    close = vi.fn(); // deliberately never emits close
+    terminate = vi.fn();
+  }
+  class HealthySocket extends EventEmitter {
+    readyState = 1;
+    bufferedAmount = 0;
+    frames: string[] = [];
+    send(data: string, callback?: (error?: Error) => void) {
+      this.frames.push(data);
+      callback?.();
+    }
+    close() {
+      this.readyState = 3;
+      this.emit("close");
+    }
+  }
+  const slow = new SlowSocket();
+  const healthy = new HealthySocket();
+  handleWsEventsConnection(slow as never, daemonIdentity, { mode: "semantic" });
+  handleWsEventsConnection(healthy as never, daemonIdentity, { mode: "semantic" });
+  expect(slow.close).toHaveBeenCalledWith(1013, expect.any(String));
+  expect(slow.send).not.toHaveBeenCalled();
+  healthy.emit("message", JSON.stringify({ type: "ping" }), false);
+  expect(healthy.frames.map((frame) => JSON.parse(frame).type)).toEqual(["hello", "pong"]);
+  expect(_resourceObserverStateForTests()).toMatchObject({
+    sessions: 0,
+    projects: 0,
+    agents: 0,
+    fleet: 0,
+  });
+  healthy.close();
+  slow.emit("close");
+});

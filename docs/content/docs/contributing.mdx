@@ -7,9 +7,9 @@ description: Development workflow, release checks, and open source project conve
 
 Requirements:
 
-- Node.js 18 or newer
-- pnpm 10 or newer
-- tmux 3.0 or newer for manual session smoke tests
+- A supported Node.js runtime; keep the same executable and ABI for installation, builds and tests
+- The pnpm version pinned in `package.json` and Bun version in `.bun-version`
+- The native toolchain and pinned, patched tmux bundle for TUI and installed-runtime checks
 
 Install dependencies from the repo root:
 
@@ -17,13 +17,22 @@ Install dependencies from the repo root:
 pnpm install --frozen-lockfile
 ```
 
+## Independent Worktrees
+
+The repository's [isolated worktree quickstart](https://github.com/wavyrai/tmux-ide/blob/main/docs/guides/development-worktrees.md)
+walks through two branches with separate daemons, tmux servers, state and immutable
+builds. Use `pnpm dev:instance` for rebuild/apply, status, logs, stop and explicit
+reset. The same instance name in different worktrees selects different instances.
+The guide also covers Docker/SSH fixtures and migration from ad-hoc scripts.
+Production ownership and disposable test fixtures remain separate workflows.
+
 ## Main Commands
 
 Run these from the repository root:
 
 ```bash
 pnpm test
-pnpm typecheck
+pnpm typecheck:workspace
 pnpm build
 pnpm docs:build
 pnpm pack:check
@@ -32,12 +41,13 @@ pnpm check
 
 What they do:
 
-- `pnpm test` runs the Node CLI test suite (uses `--experimental-strip-types` on `.ts` files)
-- `pnpm typecheck` runs `tsc --noEmit` to verify types without emitting output
-- `pnpm build` compiles TypeScript to `dist/` via `tsc`
+- `pnpm test` runs the selected workspace package suites, including daemon unit and live tests
+- `pnpm typecheck:workspace` runs package type checks through Turbo
+- `pnpm build` bundles the CLI; package TypeScript builds have separate scripts
 - `pnpm docs:build` validates the docs site production build
 - `pnpm pack:check` verifies the published npm package can be packed cleanly
-- `pnpm check` runs the full default pre-push and pre-release check path
+- `pnpm check` runs the main contributor gate, including installed-runtime, docs, native and desktop checks
+- `pnpm release:opentui:check` separately qualifies terminal release artifacts and the installed journey
 
 `npm publish` is guarded by `prepublishOnly`, so publishing runs `pnpm check` automatically before npm actually publishes the package.
 
@@ -129,11 +139,15 @@ tests, and do not interpret a small smoke run as a performance ranking.
 
 GitHub Actions validates:
 
-- the CLI test suite on Node 18, 20, and 22
+- CLI compatibility jobs on Node 20 and 22, with runtime test steps on Node 22
 - the docs production build
-- package packing with `npm pack --dry-run`
+- package contents, installed OpenTUI qualification, coverage and performance contract checks
 
-That keeps the release path close to the local `pnpm check` workflow while still exercising multiple Node versions in CI.
+The separate isolated-development workflow adds a Node 22/24 contract matrix,
+scoped Linux installed-package checks and a weekly/manual macOS SSH fixture.
+Its [CI guide](https://github.com/wavyrai/tmux-ide/blob/main/scripts/development-ci.md)
+explains resource bounds, evidence and cancellation limits. These jobs supplement
+`pnpm check`; their configuration alone is not evidence of a passing run.
 
 ## Release Workflow
 

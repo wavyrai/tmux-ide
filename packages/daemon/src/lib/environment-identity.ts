@@ -1,3 +1,4 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
 /**
  * The stable environment identity — a UUID minted ONCE per daemon state home
  * and preserved across every daemon restart. It answers "which environment is
@@ -21,7 +22,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 /** Absolute path to the identity file: `<state-home>/environment.json`. */
 export function environmentIdentityPath(): string {
-  return join(stateHome(), "environment.json");
+  return runtimeOwnedPath(join(stateHome(), "environment.json"));
 }
 
 function readPersistedEnvironmentId(path: string): string | null {

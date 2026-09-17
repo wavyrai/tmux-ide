@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "../../lib/runtime-namespace.ts";
 /**
  * The SIDEBAR — the app's persistent nav column.
  *
@@ -108,7 +109,7 @@ function resolveCurrentSession(): string {
   const fromEnv = process.env.TMUX_IDE_SESSION?.trim();
   if (fromEnv) return fromEnv;
   try {
-    return execFileSync("tmux", ["display-message", "-p", "#{session_name}"], {
+    return execFileSync("tmux", runtimeTmuxArgs(["display-message", "-p", "#{session_name}"]), {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();

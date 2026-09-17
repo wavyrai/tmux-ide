@@ -60,3 +60,45 @@ describe("connected sidebar live catalog", () => {
     setup.renderer.destroy();
   });
 });
+
+// Exercise the actual pre-connection Home and post-retirement terminal surfaces.
+import { ApplicationCatalogShell } from "./application-shell-catalog.tsx";
+import { createApplicationConnectionFeedback } from "../workspace/connection-feedback.ts";
+for (const surface of ["home", "terminals"] as const) {
+  it(`shows actionable rejected inventory from ${surface} at 80 columns`, async () => {
+    const feedback = createApplicationConnectionFeedback();
+    feedback.note("opening shared");
+    feedback.progress("shared", "startup-failed", {
+      reason: "missing-semantic-stamp",
+      daemonGeneration: "daemon-b",
+    });
+    const setup = await renderForTest(
+      () => (
+        <ApplicationCatalogShell
+          dimensions={() => ({ width: 80, height: 24 })}
+          surface={() => surface}
+          sessions={["shared", "recreated"]}
+          selectedSession={() => 0}
+          bootstrapNote={feedback.text}
+          connectionFeedback={feedback.snapshot}
+          paletteOpen={() => false}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          onOpenSurface={() => {}}
+          onOpenSession={() => {}}
+          onSetPaletteOpen={() => {}}
+        />
+      ),
+      { width: 80, height: 24 },
+    );
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("needs attention");
+    expect(frame).toContain("missing-semantic-stamp");
+    expect(frame).toContain("registered session");
+    expect(frame).toContain("different session");
+    expect(frame).toContain("Choose another session");
+    expect(frame).toContain("Copy connection details");
+    feedback.dispose();
+    setup.renderer.destroy();
+  });
+}

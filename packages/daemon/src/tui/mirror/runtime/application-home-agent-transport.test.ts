@@ -128,6 +128,18 @@ describe("Home agent production transport", () => {
     }
   });
 
+  it("requires the explicit live incarnation even when the UI key still matches the raw catalog", async () => {
+    for (const liveSessionId of [undefined, "live-session.22222222222222222222"]) {
+      let count = 0;
+      const adapter = createApplicationHomeAgentTransport({
+        fetch: async () => Response.json(++count === 1 ? shell : catalog),
+      });
+      await expect(
+        adapter.fetchShell(daemon, { ...session, liveSessionId }, new AbortController().signal),
+      ).rejects.toThrow("incarnation changed");
+    }
+  });
+
   it("subscribes only read-only resource interests and waits for acknowledgement; gaps refresh observations", () => {
     const socket = new Socket();
     const ready: string[][] = [];

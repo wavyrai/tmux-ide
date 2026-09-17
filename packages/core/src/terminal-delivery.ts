@@ -2427,10 +2427,15 @@ class TerminalDeliveryRepresentationHasher {
   #low = 0x9e3779b9;
 
   write(bytes: Uint8Array): void {
-    for (const byte of bytes) {
-      this.#high = Math.imul(this.#high ^ byte, 0x01000193) >>> 0;
-      this.#low = Math.imul(this.#low ^ byte, 0x85ebca6b) >>> 0;
+    let high = this.#high;
+    let low = this.#low;
+    for (let index = 0; index < bytes.length; index += 1) {
+      const byte = bytes[index]!;
+      high = Math.imul(high ^ byte, 0x01000193) >>> 0;
+      low = Math.imul(low ^ byte, 0x85ebca6b) >>> 0;
     }
+    this.#high = high;
+    this.#low = low;
   }
 
   digest(): string {

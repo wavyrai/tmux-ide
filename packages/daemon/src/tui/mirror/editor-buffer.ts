@@ -14,7 +14,7 @@
 export const MAX_EDITABLE_BYTES = 1_000_000;
 export { BINARY_SNIFF_BYTES, isBinary } from "./runtime/file-content-primitives.ts";
 
-export type ReadOnlyReason = "binary" | "large" | null;
+export type ReadOnlyReason = "binary" | "large" | "preview" | null;
 
 /** Decide whether a freshly-read file is editable, and why not. */
 export function classifyFile(byteLength: number, binary: boolean): ReadOnlyReason {
@@ -25,6 +25,7 @@ export function classifyFile(byteLength: number, binary: boolean): ReadOnlyReaso
 
 /** Human banner for a read-only reason (null = editable, no banner). */
 export function readOnlyBanner(reason: ReadOnlyReason): string | null {
+  if (reason === "preview") return "read-only · truncated preview";
   if (reason === "binary") return "read-only · binary file (null byte detected)";
   if (reason === "large") return `read-only · file ≥ ${MAX_EDITABLE_BYTES / 1_000_000} MB`;
   return null;

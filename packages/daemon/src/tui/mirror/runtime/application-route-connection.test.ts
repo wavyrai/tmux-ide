@@ -4,7 +4,9 @@ const f = vi.hoisted(() => ({ prepare: vi.fn(), ensure: vi.fn() }));
 vi.mock("../application-shell-daemon-connection.ts", () => ({
   prepareOpenTuiApplicationShellConnection: f.prepare,
 }));
-vi.mock("../configless-session-bootstrap.ts", () => ({ ensureOpenTuiSessionWorkspace: f.ensure }));
+vi.mock("../configless-session-bootstrap.ts", () => ({
+  ensureOpenTuiSessionWorkspaceResult: f.ensure,
+}));
 import { applicationRouteConnection } from "./application-route-connection.ts";
 it("pins reads, promotion and observation to the tab's route and rejects a replacement incarnation", async () => {
   const handle = {
@@ -22,4 +24,22 @@ it("pins reads, promotion and observation to the tab's route and rejects a repla
   const deps = f.prepare.mock.calls[0][1];
   expect(deps.readCanonicalDaemonInfo).toBe(handle.read);
   expect(deps.isCanonicalDaemonAlive).toBe(handle.isAlive);
+});
+it("keeps typed promotion outcome through the machine-route adapter", async () => {
+  const failure = {
+    status: "unavailable",
+    reason: "promotion-rejected",
+    code: "operation_capacity",
+    operationId: "op-1",
+  };
+  f.ensure.mockResolvedValue(failure);
+  f.prepare.mockImplementation(async (_session, dependencies) =>
+    dependencies.ensureSessionWorkspace("alpha"),
+  );
+  const handle = {
+    read: vi.fn(),
+    isAlive: vi.fn(),
+    observe: vi.fn(),
+  } as unknown as ApplicationMachineAuthorityHandle;
+  expect(await applicationRouteConnection(handle).resolveConnection("alpha")).toBe(failure);
 });

@@ -457,3 +457,37 @@ describe("ShellChrome OpenTUI renderer", () => {
     expect(colorKey(lightBg)).not.toBe(colorKey(darkBg));
   });
 });
+
+it("renders distinct DEV identities from launch metadata without changing keyboard routing", async () => {
+  const keys = [
+    "TMUX_IDE_RUNTIME_MODE",
+    "TMUX_IDE_DEVELOPMENT_ID",
+    "TMUX_IDE_DEVELOPMENT_NAME",
+    "TMUX_IDE_DEVELOPMENT_BUILD_DIRTY",
+  ];
+  const previous = keys.map((key) => process.env[key]);
+  try {
+    process.env.TMUX_IDE_RUNTIME_MODE = "development";
+    process.env.TMUX_IDE_DEVELOPMENT_NAME = "first";
+    process.env.TMUX_IDE_DEVELOPMENT_ID = "dev-123456789012345678901234";
+    process.env.TMUX_IDE_DEVELOPMENT_BUILD_DIRTY = "1";
+    const first = await renderShell(120, 40);
+    expect(first.frame()).toContain("DEV first:123456*");
+    setup!.mockInput.pressArrow("right");
+    await setup!.renderOnce();
+    expect(first.frame()).toContain("selected files");
+    setup!.renderer.destroy();
+    process.env.TMUX_IDE_DEVELOPMENT_ID = "dev-abcdef789012345678901234";
+    process.env.TMUX_IDE_DEVELOPMENT_NAME = "second";
+    process.env.TMUX_IDE_DEVELOPMENT_BUILD_DIRTY = "0";
+    const second = await renderShell(120, 40);
+    expect(second.frame()).toContain("DEV second:abcdef");
+    expect(second.frame()).not.toContain("DEV first");
+    setup!.renderer.destroy();
+  } finally {
+    keys.forEach((key, index) => {
+      if (previous[index] === undefined) delete process.env[key];
+      else process.env[key] = previous[index];
+    });
+  }
+});

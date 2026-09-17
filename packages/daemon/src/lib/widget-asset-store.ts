@@ -1,3 +1,4 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -50,7 +51,7 @@ export class WidgetAssetStoreError extends Error {
 }
 
 function assetRoot(): string {
-  return join(stateHome(), ASSET_DIRECTORY);
+  return runtimeOwnedPath(join(stateHome(), ASSET_DIRECTORY));
 }
 
 function ensureAssetRoot(): string {

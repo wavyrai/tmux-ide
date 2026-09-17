@@ -5,6 +5,10 @@ const state = vi.hoisted(() => ({
   selected: "local",
   agentGroups: [] as readonly ApplicationMachineAgentGroup[],
   agentCurrent: true,
+  preferenceOptions: null as null | {
+    onError(message: string): void;
+    onRecovered(message: string): void;
+  },
   handles: new Map<
     string,
     {
@@ -68,12 +72,15 @@ vi.mock("../../../lib/local-fleet-request.ts", () => ({
   saveMachineProfiles: vi.fn(async () => ({ version: 1, machines: [] })),
 }));
 vi.mock("./application-fleet-preferences.ts", () => ({
-  createApplicationFleetPreferences: () => ({
-    getSnapshot: () => ({ version: 1, favorites: [], collapsed: [], recent: [], catalog: [] }),
-    subscribe: () => () => {},
-    change: vi.fn(),
-    dispose: vi.fn(),
-  }),
+  createApplicationFleetPreferences: (options: NonNullable<typeof state.preferenceOptions>) => {
+    state.preferenceOptions = options;
+    return {
+      getSnapshot: () => ({ version: 1, favorites: [], collapsed: [], recent: [], catalog: [] }),
+      subscribe: () => () => {},
+      change: vi.fn(),
+      dispose: vi.fn(),
+    };
+  },
 }));
 import { createApplicationMachineNavigation } from "./application-machine-navigation.ts";
 let dispose: () => void;
@@ -90,7 +97,7 @@ const options = () => ({
   openAgent: vi.fn(async () => {
     state.trace.push(`agent:${state.selected}`);
   }),
-  sessionName: () => null,
+  sessionName: (): string | null => null,
   setSurface: vi.fn(),
   setNote: vi.fn(),
 });
@@ -102,6 +109,17 @@ function navigation() {
   });
   return { owner, callbacks };
 }
+
+it("clears a recovered preference warning without clearing a newer unrelated note", () => {
+  const { callbacks } = navigation();
+  state.preferenceOptions!.onRecovered("preferences failed");
+  const update = callbacks.setNote.mock.calls.at(-1)![0] as (
+    current: string | null,
+  ) => string | null;
+  expect(update("preferences failed")).toBeNull();
+  expect(update("session disconnected")).toBe("session disconnected");
+  expect(update(null)).toBeNull();
+});
 function machine(id: string, ready: Promise<boolean> = Promise.resolve(true), status = "ready") {
   state.handles.set(id, {
     id,
@@ -333,4 +351,48 @@ it("F5 routes same-name sessions explicitly and rejects an obsolete generation",
   );
   expect(callbacks.openSession).not.toHaveBeenCalled();
   expect(callbacks.setNote).toHaveBeenCalledWith("That fleet target changed. Select it again.");
+});
+
+it("reselects exact same-machine incarnation when sidebar leaves a pinned tab for another session", async () => {
+  const { owner, callbacks } = navigation();
+  state.listener?.({
+    selectedMachineId: "local",
+    groups: [
+      {
+        id: "local",
+        label: "Local",
+        state: "ready",
+        sessions: [
+          { id: "local:shared", name: "shared", liveSessionId: "live-shared", disabled: false },
+          {
+            id: "local:recreated",
+            name: "recreated",
+            liveSessionId: "live-recreated",
+            disabled: false,
+          },
+        ],
+      },
+    ],
+  });
+  const shared = owner
+    .paletteCommands()
+    .find(
+      (command) =>
+        typeof command === "object" &&
+        command.kind === "open-session" &&
+        command.sessionName === "shared",
+    );
+  if (!shared || typeof shared !== "object") throw Error("Missing shared command");
+  await owner.openPalette(shared, "keyboard");
+  expect(callbacks.resetWorkspace).toHaveBeenLastCalledWith("local", "live-shared");
+  callbacks.resetWorkspace.mockClear();
+  const currentSession = vi.spyOn(callbacks, "sessionName").mockReturnValue("shared");
+  state.trace = [];
+  owner.sidebar.onOpen("local", "recreated", "mouse");
+  expect(callbacks.resetWorkspace).toHaveBeenCalledWith("local", "live-recreated");
+  expect(state.trace.indexOf("reset")).toBeLessThan(state.trace.indexOf("open:local:recreated"));
+  currentSession.mockReturnValue("recreated");
+  callbacks.resetWorkspace.mockClear();
+  owner.sidebar.onOpen("local", "recreated", "mouse");
+  expect(callbacks.resetWorkspace).not.toHaveBeenCalled();
 });
