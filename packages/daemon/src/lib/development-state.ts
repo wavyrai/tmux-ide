@@ -29,7 +29,9 @@ export function cleanManagerEnvironment(
     ),
   );
 }
-export function readPrivateDevelopmentRecord<T>(path: string): T | null {
+export function readPrivateDevelopmentFile(
+  path: string,
+): { bytes: Buffer; dev: number; ino: number } | null {
   let fd: number | undefined;
   try {
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -42,13 +44,17 @@ export function readPrivateDevelopmentRecord<T>(path: string): T | null {
       stat.nlink !== 1
     )
       throw new Error("Unsafe development ownership record");
-    return JSON.parse(readFileSync(fd, "utf8")) as T;
+    return { bytes: readFileSync(fd), dev: stat.dev, ino: stat.ino };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+export function readPrivateDevelopmentRecord<T>(path: string): T | null {
+  const file = readPrivateDevelopmentFile(path);
+  return file === null ? null : (JSON.parse(file.bytes.toString("utf8")) as T);
 }
 export function writeDevelopmentRecord(path: string, value: unknown): void {
   const temp = `${path}.${randomUUID()}.tmp`;
@@ -216,6 +222,8 @@ export function ownerBuildEnvironment(owner: DevelopmentOwnerRecord): NodeJS.Pro
 }
 
 export type DevelopmentFailureReason =
+  | "instance-suspended"
+  | "suspension-unverified"
   | "confirmation-required"
   | "app-live"
   | "app-unknown"

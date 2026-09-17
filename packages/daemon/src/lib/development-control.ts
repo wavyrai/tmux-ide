@@ -1,3 +1,17 @@
+import {
+  requireDevelopmentNotSuspended,
+  readDevelopmentSuspension,
+  developmentExecutionWitness,
+  validateContainerBinding,
+  validateExecutionWitness,
+  suspensionIdentityHash,
+  suspensionPath,
+  suspensionRefusal,
+  suspensionFileInventory,
+  suspensionFileWitness,
+  type DevelopmentContainerBinding,
+  type DevelopmentSuspension,
+} from "./development-suspension.ts";
 import { randomUUID } from "node:crypto";
 import {
   claimDevelopmentRuntimeOwner,
@@ -186,6 +200,7 @@ export async function restartDevelopmentInstance(
   if (options.applyBuild)
     return activateDevelopmentInstance(instance, { previous: options.previous });
   return withDevelopmentLock(instance, "lifecycle", async () => {
+    requireDevelopmentNotSuspended(instance);
     await requireIdentity(instance);
     const owner = await ownedProcess(instance);
     const before = await statusDevelopmentInstance(instance, { allowOrphan: true });
@@ -350,6 +365,7 @@ export async function downDevelopmentInstance(
   };
   try {
     return await withDevelopmentLock(instance, "lifecycle", async () => {
+      requireDevelopmentNotSuspended(instance);
       note("identity");
       const identity = await requireIdentity(instance);
       note("runtime-ownership");
@@ -382,6 +398,7 @@ export async function resetDevelopmentInstance(
     );
   return withDevelopmentLock(instance, "build", () =>
     withDevelopmentLock(instance, "lifecycle", async () => {
+      requireDevelopmentNotSuspended(instance);
       const identity = await requireIdentity(instance);
       await requireStoppedDevelopmentApps(instance);
       if (await ownedProcess(instance))
@@ -422,6 +439,7 @@ export async function activateDevelopmentInstance(
   } = {},
 ) {
   return withDevelopmentLock(instance, "lifecycle", async () => {
+    requireDevelopmentNotSuspended(instance);
     // Source/namespace validation is required by startup and must precede any retirement.
     let identity;
     try {
@@ -555,5 +573,270 @@ export async function activateDevelopmentInstance(
         path,
       );
     }
+  });
+}
+
+function requireSuspensionBuild(instance: DevelopmentInstance, owner?: DevelopmentOwnerRecord) {
+  const build = readDevelopmentBuild(instance, owner ? ownerBuildEnvironment(owner) : {});
+  if (!build.capabilities?.includes("container-suspension-v1"))
+    suspensionRefusal(
+      "Rebuild this instance: selected/recorded owner artifact lacks container suspension support",
+    );
+}
+async function suspensionIdentity(instance: DevelopmentInstance) {
+  const identity = await readDevelopmentIdentity(instance);
+  if (!identity || !verifyDevelopmentRuntimeOwner(instance, identity))
+    suspensionRefusal("Suspension requires unchanged worktree and runtime ownership");
+  return identity;
+}
+function sameSuspensionBinding(a: DevelopmentContainerBinding, b: DevelopmentContainerBinding) {
+  return (
+    a.project === b.project && a.containerId === b.containerId && a.volumesHash === b.volumesHash
+  );
+}
+/** All private callers hold the lifecycle lock. No missing file is a substitute for this proof. */
+async function stoppedSuspensionPids(
+  instance: DevelopmentInstance,
+  retirement?: DevelopmentSuspension,
+) {
+  await requireStoppedDevelopmentApps(instance);
+  const pids = new Set<number>();
+  const owners: DevelopmentOwnerRecord[] = [];
+  for (const filename of ["owner.json", "startup-process.json"] as const) {
+    const owner = readDevelopmentOwner(instance, filename);
+    if (owner) {
+      pids.add(owner.pid);
+      owners.push(owner);
+    }
+  }
+  const pending = readPrivateDevelopmentRecord<{
+    attempt: string;
+    generation: string;
+    manifestHash: string;
+  }>(join(instance.root, "startup.json"));
+  if (
+    pending &&
+    !retirement &&
+    !owners.some(
+      (owner) =>
+        owner.attempt === pending.attempt &&
+        owner.generation === pending.generation &&
+        owner.manifestHash === pending.manifestHash,
+    )
+  )
+    suspensionRefusal("Interrupted startup without an exact process witness is protected");
+  for (const file of suspensionFileInventory(instance)) {
+    if (!file.name.startsWith("launch-")) continue;
+    const launch = readPrivateDevelopmentRecord<{ version: number; attempt: string; pid: number }>(
+      join(instance.root, file.name),
+    );
+    if (
+      !launch ||
+      launch.version !== 1 ||
+      `launch-${launch.attempt}.json` !== file.name ||
+      !Number.isSafeInteger(launch.pid) ||
+      launch.pid <= 0
+    )
+      suspensionRefusal("Unverified consumed launch is protected");
+    if (
+      !retirement &&
+      !owners.some((owner) => owner.attempt === launch.attempt && owner.pid === launch.pid)
+    )
+      suspensionRefusal("Consumed launch has no exact dead process witness");
+    pids.add(launch.pid);
+  }
+  const tmux = readTmux(instance);
+  if (tmux) pids.add(tmux.pid);
+  const tmuxStartup = readPrivateDevelopmentRecord<{
+    version: number;
+    socket: string;
+    executable: string;
+    generation: string;
+  }>(join(instance.root, "tmux-startup.json"));
+  if (
+    tmuxStartup &&
+    !retirement &&
+    (!tmux ||
+      tmuxStartup.version !== 1 ||
+      tmuxStartup.socket !== tmux.socket.path ||
+      tmuxStartup.executable !== tmux.executable ||
+      tmuxStartup.generation !== tmux.generation)
+  )
+    suspensionRefusal("Interrupted tmux startup has no exact process witness");
+  validateDevelopmentDirectory(instance.runtimeDir, dirname(instance.runtimeDir));
+  for (const name of readdirSync(instance.runtimeDir)) {
+    if (name === "development-owner.json") continue;
+    if (name === "compiled-tui") {
+      validateDevelopmentDirectory(join(instance.runtimeDir, name), instance.runtimeDir);
+      continue;
+    }
+    suspensionRefusal("Unknown runtime entries protect suspension");
+  }
+  const info = inspectCanonicalDaemonInfoPath(join(instance.stateHome, "daemon.json"));
+  const claim = inspectCanonicalDaemonClaimPath(join(instance.stateHome, "daemon.claim"));
+  if (
+    !retirement &&
+    claim.status === "missing" &&
+    present(join(instance.stateHome, "daemon.claim"))
+  )
+    suspensionRefusal("Incomplete canonical claim is protected");
+  const plannedEmptyClaim =
+    claim.status === "invalid" &&
+    retirement?.phase === "retiring" &&
+    retirement.plan?.files.some((file) => file.name === "state/daemon.claim/owner.json") &&
+    JSON.stringify(suspensionClaimDirectory(instance)) ===
+      JSON.stringify(retirement.plan.claimDirectory) &&
+    readdirSync(join(instance.stateHome, "daemon.claim")).length === 0;
+  if (info.status === "invalid" || (claim.status === "invalid" && !plannedEmptyClaim))
+    suspensionRefusal("Unverified canonical owner protects suspension");
+  if (info.status === "valid") pids.add(info.info.pid);
+  if (claim.status === "valid") pids.add(claim.claim.pid);
+  for (const pid of pids) {
+    if ((await developmentProcessIdentity(pid)) !== null)
+      suspensionRefusal("Live or reused process protects suspension witnesses");
+  }
+  if (present(join(instance.runtimeDir, "tmux.sock")))
+    suspensionRefusal("Suspension requires proven socket retirement");
+  return [...pids];
+}
+function suspensionClaimDirectory(instance: DevelopmentInstance) {
+  const path = join(instance.stateHome, "daemon.claim");
+  if (!present(path)) return null;
+  validateDevelopmentDirectory(path, instance.root);
+  if (readdirSync(path).some((name) => name !== "owner.json"))
+    suspensionRefusal("Unknown canonical claim contents");
+  const stat = lstatSync(path);
+  return { dev: stat.dev, ino: stat.ino };
+}
+function verifyRetirementInventory(instance: DevelopmentInstance, record: DevelopmentSuspension) {
+  const plan = record.plan!;
+  for (const current of suspensionFileInventory(instance)) {
+    const expected = plan.files.find((file) => file.name === current.name);
+    if (!expected || JSON.stringify(expected) !== JSON.stringify(current))
+      suspensionRefusal("New or replaced process receipt protects suspension");
+  }
+  const claim = suspensionClaimDirectory(instance);
+  if (claim && JSON.stringify(claim) !== JSON.stringify(plan.claimDirectory))
+    suspensionRefusal("Canonical claim directory changed during retirement");
+}
+/** Container wrapper boundary: binding must come from verified Docker ownership, never ambient env. */
+export async function suspendDevelopmentInstance(
+  instance: DevelopmentInstance,
+  binding: DevelopmentContainerBinding,
+) {
+  validateContainerBinding(binding);
+  return withDevelopmentLock(instance, "lifecycle", async () => {
+    const identity = await suspensionIdentity(instance);
+    requireSuspensionBuild(instance);
+    const witness = developmentExecutionWitness();
+    validateExecutionWitness(witness);
+    for (const filename of ["owner.json", "startup-process.json"] as const) {
+      const owner = readDevelopmentOwner(instance, filename);
+      if (owner) requireSuspensionBuild(instance, owner);
+    }
+    let record = readDevelopmentSuspension(instance);
+    const identityHash = suspensionIdentityHash(instance, identity);
+    if (record) {
+      if (
+        record.identityHash !== identityHash ||
+        !sameSuspensionBinding(record.binding, binding) ||
+        record.witness.bootId !== witness.bootId ||
+        record.witness.pidNamespace !== witness.pidNamespace
+      )
+        suspensionRefusal("Suspension can only finish in its original owned execution namespace");
+      if (record.phase === "suspended") {
+        if (suspensionFileInventory(instance).length || suspensionClaimDirectory(instance))
+          suspensionRefusal("New records appeared after suspension");
+        await stoppedSuspensionPids(instance);
+        return { status: "suspended" as const, nonce: record.nonce };
+      }
+    } else {
+      record = {
+        version: 1,
+        phase: "stopping",
+        nonce: randomUUID(),
+        identityHash,
+        binding: {
+          project: binding.project,
+          containerId: binding.containerId,
+          volumesHash: binding.volumesHash,
+        },
+        witness,
+        plan: null,
+      };
+      writeDevelopmentRecord(suspensionPath(instance), record);
+    }
+    if (record.phase === "stopping") {
+      await requireStoppedDevelopmentApps(instance);
+      await stopOwner(instance);
+      await inspectOwner(instance, null);
+      await stopTmux(instance);
+      const deadPids = await stoppedSuspensionPids(instance);
+      record = {
+        ...record,
+        phase: "retiring",
+        plan: {
+          files: suspensionFileInventory(instance),
+          deadPids,
+          claimDirectory: suspensionClaimDirectory(instance),
+        },
+      };
+      writeDevelopmentRecord(suspensionPath(instance), record);
+    }
+    // Crash recovery is restricted to the original namespace and persisted
+    // proven-dead plan; absence alone never authorizes retirement or resume.
+    verifyRetirementInventory(instance, record);
+    await stoppedSuspensionPids(instance, record);
+    for (const pid of record.plan!.deadPids) {
+      if ((await developmentProcessIdentity(pid)) !== null)
+        suspensionRefusal("Retirement PID is live or reused");
+    }
+    for (const expected of record.plan!.files) {
+      const current = suspensionFileWitness(instance, expected.name);
+      if (!current) continue; // Complete plan authorized this exact path before the crash.
+      if (JSON.stringify(current) !== JSON.stringify(expected))
+        suspensionRefusal("Retirement file changed");
+      rmSync(join(instance.root, expected.name));
+    }
+    const claim = suspensionClaimDirectory(instance);
+    if (claim) {
+      if (JSON.stringify(claim) !== JSON.stringify(record.plan!.claimDirectory))
+        suspensionRefusal("Retirement claim changed");
+      rmdirSync(join(instance.stateHome, "daemon.claim"));
+    }
+    if (suspensionFileInventory(instance).length) suspensionRefusal("Retirement is incomplete");
+    await stoppedSuspensionPids(instance);
+    record = { ...record, phase: "suspended" };
+    writeDevelopmentRecord(suspensionPath(instance), record);
+    return { status: "suspended" as const, nonce: record.nonce };
+  });
+}
+/** Explicit same-container resume; complete retired proof permits a new PID namespace, not VM. */
+export async function resumeDevelopmentInstance(
+  instance: DevelopmentInstance,
+  binding: DevelopmentContainerBinding,
+  nonce: string,
+) {
+  validateContainerBinding(binding);
+  return withDevelopmentLock(instance, "lifecycle", async () => {
+    const identity = await suspensionIdentity(instance);
+    requireSuspensionBuild(instance);
+    const witness = developmentExecutionWitness();
+    validateExecutionWitness(witness);
+    const record = readDevelopmentSuspension(instance);
+    if (
+      !record ||
+      record.phase !== "suspended" ||
+      record.nonce !== nonce ||
+      record.identityHash !== suspensionIdentityHash(instance, identity) ||
+      !sameSuspensionBinding(record.binding, binding) ||
+      record.witness.bootId !== witness.bootId
+    )
+      suspensionRefusal("Explicit resume requires complete matching same-container suspension");
+    if (suspensionFileInventory(instance).length || suspensionClaimDirectory(instance))
+      suspensionRefusal("Resume cannot erase new process records");
+    await stoppedSuspensionPids(instance);
+    rmSync(suspensionPath(instance));
+    return { status: "resumed" as const, instanceId: instance.id };
   });
 }

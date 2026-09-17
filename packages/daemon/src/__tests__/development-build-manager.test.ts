@@ -108,6 +108,19 @@ it("derives managed-owner capability from the compiled artifact probe, never old
       JSON.stringify({ version: 1, capabilities: ["managed-development-owner-v1"] }),
     ),
   ).toEqual(["managed-development-owner-v1"]);
+  expect(
+    parseDevelopmentCapabilities(
+      JSON.stringify({ version: 1, capabilities: ["container-suspension-v1"] }),
+    ),
+  ).toEqual([]);
+  expect(
+    parseDevelopmentCapabilities(
+      JSON.stringify({
+        version: 1,
+        capabilities: ["managed-development-owner-v1", "container-suspension-v1", "unknown"],
+      }),
+    ),
+  ).toEqual(["managed-development-owner-v1", "container-suspension-v1"]);
 });
 
 it("retains actionable bounded private build diagnostics without exposing stderr publicly", async () => {

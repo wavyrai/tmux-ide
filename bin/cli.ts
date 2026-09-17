@@ -167,7 +167,12 @@ const knownCommands = new Set([
 
 // --version / -v
 if (values["development-capabilities"]) {
-  console.log(JSON.stringify({ version: 1, capabilities: ["managed-development-owner-v1"] }));
+  console.log(
+    JSON.stringify({
+      version: 1,
+      capabilities: ["managed-development-owner-v1", "container-suspension-v1"],
+    }),
+  );
   process.exit(0);
 }
 

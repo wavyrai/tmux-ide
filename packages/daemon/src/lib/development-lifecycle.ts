@@ -1,4 +1,8 @@
 import {
+  requireDevelopmentNotSuspended,
+  readDevelopmentSuspension,
+} from "./development-suspension.ts";
+import {
   claimDevelopmentRuntimeOwner,
   verifyDevelopmentRuntimeOwner,
 } from "./development-runtime-owner.ts";
@@ -194,6 +198,13 @@ export async function statusDevelopmentInstance(
     if (!identity) return status;
     phase = "runtime-owner-invalid";
     verifyDevelopmentRuntimeOwner(instance, identity);
+    const suspension = readDevelopmentSuspension(instance);
+    if (suspension) {
+      status.state = "blocked";
+      status.reason =
+        suspension.phase === "suspended" ? "instance-suspended" : "suspension-incomplete";
+      return status;
+    }
     phase = "process-owner-invalid";
     const publishedOwner = readDevelopmentOwner(instance);
     const startupOwner = readDevelopmentOwner(instance, "startup-process.json");
@@ -449,6 +460,7 @@ export async function startDevelopmentInstanceUnderLock(
     buildPin?: { generation: string; manifestHash: string };
   } = {},
 ): Promise<DevelopmentStatus> {
+  requireDevelopmentNotSuspended(instance);
   if (
     options.timeoutMs !== undefined &&
     (!Number.isFinite(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 30000)

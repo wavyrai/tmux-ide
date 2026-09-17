@@ -1,3 +1,4 @@
+import { requireDevelopmentNotSuspended } from "./development-suspension.ts";
 /** Exact packaged foreground owner entry. Only the manager admits this process. */
 import { realpathSync, writeFileSync } from "node:fs";
 import { createBoundedDevelopmentLog } from "./development-log.ts";
@@ -23,11 +24,33 @@ export async function claimManagedDevelopmentLaunch(
   const owner = readDevelopmentOwner(instance);
   if (owner && (await developmentProcessIdentity(owner.pid)) !== null)
     throw new Error("A live or unknown managed owner is protected");
+  requireDevelopmentNotSuspended(instance);
   writeFileSync(
     join(instance.root, `launch-${attempt}.json`),
     JSON.stringify({ version: 1, attempt, pid: process.pid }),
     { flag: "wx", mode: 0o600 },
   );
+  requireDevelopmentNotSuspended(instance);
+}
+
+/** Recheck the exact pending tuple after asynchronous claim work; no stale-read replay. */
+export function verifyManagedDevelopmentAdmission(
+  instance: DevelopmentInstance,
+  attempt: string,
+  expected: { attempt: string; generation: string; manifestHash: string },
+): void {
+  requireDevelopmentNotSuspended(instance);
+  const current = readPrivateDevelopmentRecord<typeof expected>(
+    join(instance.root, "startup.json"),
+  );
+  if (
+    !current ||
+    current.attempt !== attempt ||
+    current.attempt !== expected.attempt ||
+    current.generation !== expected.generation ||
+    current.manifestHash !== expected.manifestHash
+  )
+    throw new Error("Managed owner admission changed before startup");
 }
 
 export async function runManagedDevelopmentOwner(): Promise<void> {
@@ -60,6 +83,7 @@ export async function runManagedDevelopmentOwner(): Promise<void> {
   const incarnation = await developmentProcessIdentity(process.pid);
   if (!incarnation) throw new Error("Cannot establish managed owner incarnation");
   await claimManagedDevelopmentLaunch(instance, attempt);
+  verifyManagedDevelopmentAdmission(instance, attempt, pending);
   const log = createBoundedDevelopmentLog(join(instance.root, "logs/owner.log"));
   const originalOut = process.stdout.write;
   const originalErr = process.stderr.write;
@@ -76,6 +100,7 @@ export async function runManagedDevelopmentOwner(): Promise<void> {
   process.stdout.write = writer;
   process.stderr.write = writer;
   try {
+    verifyManagedDevelopmentAdmission(instance, attempt, pending);
     await runHeadlessDaemon({
       json: true,
       expectedVersion: build.packageVersion,

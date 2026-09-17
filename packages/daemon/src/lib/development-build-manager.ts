@@ -240,13 +240,18 @@ function developmentPackageDigest(source: string): string {
 /** Older CLIs receive --help as well, so capability probing can never launch their app. */
 export function parseDevelopmentCapabilities(
   output: string,
-): readonly "managed-development-owner-v1"[] {
+): readonly ("managed-development-owner-v1" | "container-suspension-v1")[] {
   try {
     const value = JSON.parse(output);
     return value?.version === 1 &&
       Array.isArray(value.capabilities) &&
       value.capabilities.includes("managed-development-owner-v1")
-      ? ["managed-development-owner-v1"]
+      ? [
+          "managed-development-owner-v1",
+          ...(value.capabilities.includes("container-suspension-v1")
+            ? ["container-suspension-v1" as const]
+            : []),
+        ]
       : [];
   } catch {
     return [];

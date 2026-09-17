@@ -1,3 +1,4 @@
+import { requireDevelopmentNotSuspended } from "./development-suspension.ts";
 import { verifyDevelopmentRuntimeOwner } from "./development-runtime-owner.ts";
 /** Manager-owned app admission. A pre-spawn receipt closes reset's child-registration gap. */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -97,6 +98,7 @@ export async function requireStoppedDevelopmentApps(instance: DevelopmentInstanc
 export async function launchDevelopmentApp(instance: DevelopmentInstance) {
   const launch = await developmentAppLaunch(instance);
   return withDevelopmentLock(instance, "lifecycle", async () => {
+    requireDevelopmentNotSuspended(instance);
     const current = await statusDevelopmentInstance(instance);
     if (
       current.state !== "ready" ||
