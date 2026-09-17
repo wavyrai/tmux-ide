@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import * as developmentState from "../lib/development-state.ts";
 import * as lifecycle from "../lib/development-lifecycle.ts";
 import * as tmuxRead from "../lib/bounded-tmux-read.ts";
 import { resolveDevelopmentInstance } from "../lib/development-instance.ts";
@@ -510,3 +511,90 @@ it("filters forged typed diagnostic fields without invoking getters", () => {
   );
   expect(developmentFailureResult("down", invalid)).not.toHaveProperty("diagnostic");
 });
+
+it.each([
+  "dead",
+  "live",
+  "reused",
+  "unknown",
+  "other-error",
+  "deadline",
+  "expired-after-delay",
+  "non-linux",
+] as const)(
+  "confirms Linux exit observation once without weakening %s protection",
+  async (scenario) => {
+    const { instance } = await fixture();
+    const identity = JSON.parse(readFileSync(join(instance.root, "instance.json"), "utf8"));
+    writeDevelopmentRecord(join(instance.root, "startup.json"), { preserve: true });
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", {
+      value: scenario === "non-linux" ? "darwin" : "linux",
+    });
+    const original = new Error("Cannot establish process incarnation", {
+      cause: Object.assign(new Error("private proc path"), {
+        code: scenario === "other-error" ? "EACCES" : "ENOENT",
+      }),
+    });
+    let waiting = false,
+      reads = 0,
+      now = 0,
+      deadlineChecks = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => {
+      if (scenario === "expired-after-delay" && reads === 1 && ++deadlineChecks > 1) return 5000;
+      return now;
+    });
+    const pid = vi
+      .spyOn(developmentState, "developmentProcessIdentity")
+      .mockImplementation(async () => {
+        if (!waiting) return "owned";
+        reads++;
+        if (reads === 1) {
+          if (scenario === "deadline") now = 4990;
+          throw original;
+        }
+        if (scenario === "unknown") throw new Error("Still unverified");
+        return scenario === "dead" ? null : scenario === "reused" ? "replacement" : "owned";
+      });
+    const read = vi.spyOn(lifecycle, "readTmux").mockReturnValue({
+      pid: process.pid,
+      incarnation: "owned",
+      capability: identity.capability,
+      executable: "/unused-fixture",
+      socket: { path: "/unused-fixture" },
+    } as ReturnType<typeof lifecycle.readTmux>);
+    const verify = vi.spyOn(lifecycle, "verifyTmux").mockResolvedValue(undefined);
+    const command = vi.spyOn(tmuxRead, "boundedTmuxRead").mockImplementation(async () => {
+      waiting = true;
+      return "";
+    });
+    try {
+      if (scenario === "dead") {
+        await expect(downDevelopmentInstance(instance)).resolves.toMatchObject({
+          status: "stopped",
+        });
+        expect(existsSync(join(instance.root, "startup.json"))).toBe(false);
+      } else {
+        const failure = await downDevelopmentInstance(instance).catch((error) => error);
+        expect(developmentFailureResult("down", failure, instance)).toMatchObject({
+          ok: false,
+          reason: scenario === "reused" ? "owner-unverified" : "operation-failed",
+          diagnostic: { stage: "tmux-wait" },
+        });
+        expect(existsSync(join(instance.root, "startup.json"))).toBe(true);
+        if (scenario === "live") expect(failure.diagnostic.causeCode).toBe("ENOENT");
+      }
+      expect(reads).toBe(
+        ["other-error", "deadline", "expired-after-delay", "non-linux"].includes(scenario) ? 1 : 2,
+      );
+      expect(command).toHaveBeenCalledOnce();
+    } finally {
+      clock.mockRestore();
+      pid.mockRestore();
+      read.mockRestore();
+      verify.mockRestore();
+      command.mockRestore();
+      Object.defineProperty(process, "platform", platform);
+    }
+  },
+);

@@ -70,7 +70,32 @@ async function requireIdentity(instance: DevelopmentInstance) {
 async function waitDead(pid: number, incarnation: string, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const current = await developmentProcessIdentity(pid);
+    let current: string | null;
+    try {
+      current = await developmentProcessIdentity(pid);
+    } catch (error) {
+      // Linux can lose /proc identity data during exit while kill(pid, 0)
+      // still sees the departing process. Confirm once, never infer death
+      // from ENOENT alone or retry the shutdown action.
+      if (
+        process.platform !== "linux" ||
+        !(error instanceof Error) ||
+        (error.cause as NodeJS.ErrnoException | undefined)?.code !== "ENOENT" ||
+        Date.now() + 50 >= deadline
+      )
+        throw error;
+      await delay(50);
+      if (Date.now() >= deadline) throw error;
+      const confirmed = await developmentProcessIdentity(pid);
+      if (confirmed === null) return;
+      if (confirmed !== incarnation) {
+        throw new DevelopmentOperationError(
+          "owner-unverified",
+          "Process PID was reused; replacement is protected",
+        );
+      }
+      throw error; // Still live: preserve the original identity refusal.
+    }
     if (current === null) return;
     if (current !== incarnation)
       throw new DevelopmentOperationError(
