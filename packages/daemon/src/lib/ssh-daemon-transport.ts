@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import type { Readable } from "node:stream";
 import { z } from "zod";
+import { createSshDaemonRelay, type SshDaemonRelay } from "./ssh-daemon-relay.ts";
 import {
   CanonicalDaemonInfoSchema,
   DAEMON_WIRE_PROTOCOL_VERSION,
@@ -34,6 +35,8 @@ export type SshTransportChild = Pick<ChildProcess, "once" | "kill" | "exitCode" 
 export interface SshDaemonTransportDependencies {
   spawn(args: string[]): SshTransportChild;
   allocatePort(): Promise<number>;
+  /** Test seam; production always guards every upstream TCP connection. */
+  relay?: typeof createSshDaemonRelay;
   /** Must authenticate and compare the complete expected daemon identity. */
   probe(baseUrl: string, daemon: RemoteDaemon, signal: AbortSignal): Promise<boolean>;
 }
@@ -223,7 +226,7 @@ function delay(signal: AbortSignal): Promise<void> {
   });
 }
 
-/** Owns only its two OpenSSH subprocesses, never remote daemon lifetime. */
+/** Owns its discovery/tunnel children and identity-gated relay, never remote daemon lifetime. */
 export async function openSshDaemonTransport(
   options: { alias: string; signal?: AbortSignal; timeoutMs?: number },
   dependencies: SshDaemonTransportDependencies = defaults,
@@ -241,6 +244,7 @@ export async function openSshDaemonTransport(
   if (options.signal?.aborted) abort();
   const timer = setTimeout(abort, timeoutMs);
   let child: SshTransportChild | undefined;
+  let relay: SshDaemonRelay | undefined;
   let disposed = false;
   const dispose = () => {
     if (disposed) return;
@@ -249,6 +253,7 @@ export async function openSshDaemonTransport(
     options.signal?.removeEventListener("abort", abort);
     controller.abort();
     if (child) stop(child);
+    relay?.dispose();
   };
   signal.addEventListener("abort", dispose, { once: true });
   try {
@@ -304,7 +309,7 @@ export async function openSshDaemonTransport(
     child.stdout?.resume();
     child.stderr?.resume();
     child.once("exit", dispose);
-    const closed = new Promise<void>((resolve) => {
+    const tunnelClosed = new Promise<void>((resolve) => {
       child!.once("close", () => {
         dispose();
         resolve();
@@ -314,7 +319,15 @@ export async function openSshDaemonTransport(
         resolve();
       });
     });
-    const baseUrl = `http://127.0.0.1:${port}`;
+    relay = await (dependencies.relay ?? createSshDaemonRelay)({
+      upstreamPort: port,
+      expected: DaemonIdentitySchema.parse({ ...daemon, ok: true }),
+      signal,
+    });
+    if (disposed) relay.dispose();
+    void relay.closed.then(dispose, dispose);
+    const closed = Promise.all([tunnelClosed, relay.closed]).then(() => {});
+    const baseUrl = relay.baseUrl;
     while (!signal.aborted) {
       try {
         if (await cancellable(dependencies.probe(baseUrl, daemon, signal), signal)) {

@@ -17167,14 +17167,14 @@ function spawnOwner(entryPath, cwd) {
   });
 }
 async function shutdownOlderOwner(info) {
-  const headers = { "content-type": "application/json" };
-  if (info.authToken) headers.authorization = `Bearer ${info.authToken}`;
+  const headers2 = { "content-type": "application/json" };
+  if (info.authToken) headers2.authorization = `Bearer ${info.authToken}`;
   const response3 = await fetch(
     canonicalDaemonUrl("http", info.bindHostname, info.port, "/api/v2/action/daemon.shutdown"),
     {
       method: "POST",
       redirect: "error",
-      headers,
+      headers: headers2,
       body: JSON.stringify({
         reason: "daemon-version-upgrade",
         expectedInstanceId: info.instanceId
@@ -17604,7 +17604,7 @@ async function tryDispatchAction(name, input, options = {}) {
     return null;
   }
   const operationSignal = timeoutSignal2(ACTION_OPERATION_TIMEOUT_MS);
-  const request = () => bridgeDeps.fetch(`${daemon.baseUrl}/api/v2/action/${encodeURIComponent(name)}`, {
+  const request2 = () => bridgeDeps.fetch(`${daemon.baseUrl}/api/v2/action/${encodeURIComponent(name)}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -17619,7 +17619,7 @@ async function tryDispatchAction(name, input, options = {}) {
   for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
     let body;
     try {
-      const response3 = await request();
+      const response3 = await request2();
       body = await response3.json();
     } catch {
       if (operationSignal.aborted) break;
@@ -18845,7 +18845,7 @@ function wrap(socket) {
   socket.on("close", teardown);
   socket.on("error", () => {
   });
-  const request = (verb, params) => {
+  const request2 = (verb, params) => {
     const id2 = nextId++;
     return new Promise((resolve40, reject) => {
       if (socket.destroyed) {
@@ -18857,10 +18857,10 @@ function wrap(socket) {
     });
   };
   return {
-    request,
+    request: request2,
     subscribe: async (onEvent) => {
       eventSinks.push(onEvent);
-      await request("subscribe");
+      await request2("subscribe");
     },
     close: () => socket.destroy(),
     done
@@ -19840,13 +19840,13 @@ async function startOwnedEmbeddedDaemon(options, start2) {
   const launch2 = async (nextOptions) => {
     const generation = await start2({
       ...nextOptions,
-      requestRestart: (request) => restart2(generation, request)
+      requestRestart: (request2) => restart2(generation, request2)
     });
     return generation;
   };
-  const restart2 = (generation, request) => {
+  const restart2 = (generation, request2) => {
     if (closed || generation !== current) return Promise.resolve();
-    pendingRequest = { ...request };
+    pendingRequest = { ...request2 };
     if (restarting) return restarting;
     available = false;
     restarting = Promise.resolve().then(async () => {
@@ -25157,8 +25157,8 @@ function provisionalWindowName(operationId) {
 function tmuxFormatLiteral(value) {
   return value.replaceAll("#", "##");
 }
-function fingerprint(request) {
-  return JSON.stringify(request);
+function fingerprint(request2) {
+  return JSON.stringify(request2);
 }
 function parseCreatedRuntime(output, creationId, scope, provisionalName) {
   const match = /^(%[0-9]+)\t(@[0-9]+)$/u.exec(output);
@@ -25172,22 +25172,22 @@ function parseCreatedRuntime(output, creationId, scope, provisionalName) {
     ownershipProof: "create-output"
   };
 }
-function defaultTitle(request, harness) {
-  const intent = request.intent;
+function defaultTitle(request2, harness) {
+  const intent = request2.intent;
   if (intent.displayTitle) return intent.displayTitle;
   if (intent.kind === "agent") return (harness?.label ?? intent.harnessProfileId).slice(0, 80);
-  return memorablePaneName(semanticPaneId2(request.operationId));
+  return memorablePaneName(semanticPaneId2(request2.operationId));
 }
 function nameSource(intent) {
   if (intent.displayTitle) return "manual";
   return intent.kind === "agent" ? "agent" : "generated";
 }
-function resourceFor(request, title, resolvedMissionId) {
-  const intent = request.intent;
+function resourceFor(request2, title, resolvedMissionId) {
+  const intent = request2.intent;
   const common = {
     resourceVersion: 1,
     workspaceName: intent.workspaceName,
-    semanticPaneId: semanticPaneId2(request.operationId),
+    semanticPaneId: semanticPaneId2(request2.operationId),
     displayTitle: title
   };
   if (intent.kind === "agent") {
@@ -25383,31 +25383,31 @@ var init_workspace_pane_creation2 = __esm({
       }
       async #create(raw) {
         this.#assertActive();
-        const request = WorkspacePaneCreateMutationRequestSchemaZ.parse(raw);
-        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
+        const request2 = WorkspacePaneCreateMutationRequestSchemaZ.parse(raw);
+        if (request2.expectedDaemonInstanceId !== this.#daemonInstanceId) {
           throw new WorkspacePaneCreationError("daemon_instance_mismatch", {
-            operationId: request.operationId
+            operationId: request2.operationId
           });
         }
-        const requestFingerprint3 = fingerprint(request);
-        const existing = this.#operations.get(request.operationId) ?? this.#replayableFailures.get(request.operationId);
-        if (existing) return this.#replay(existing, request, requestFingerprint3);
+        const requestFingerprint3 = fingerprint(request2);
+        const existing = this.#operations.get(request2.operationId) ?? this.#replayableFailures.get(request2.operationId);
+        if (existing) return this.#replay(existing, request2, requestFingerprint3);
         if (this.#operations.size >= this.#maxLiveOrUnsafeOperations) {
           this.#retireClosedResources();
         }
         if (this.#operations.size >= this.#maxLiveOrUnsafeOperations) {
           throw new WorkspacePaneCreationError("operation_capacity", {
-            operationId: request.operationId
+            operationId: request2.operationId
           });
         }
-        const workspace = this.#registry.get(request.intent.workspaceName);
+        const workspace = this.#registry.get(request2.intent.workspaceName);
         if (!workspace) {
           return this.#rememberFailure(
-            request,
+            request2,
             requestFingerprint3,
             new WorkspacePaneCreationError("workspace_not_found", {
-              operationId: request.operationId,
-              workspaceName: request.intent.workspaceName
+              operationId: request2.operationId,
+              workspaceName: request2.intent.workspaceName
             })
           );
         }
@@ -25416,22 +25416,22 @@ var init_workspace_pane_creation2 = __esm({
           const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
           const trustedWorkspace = workspaceWithTrustedConfig(workspace, canonicalRoot);
           this.#io.runTmux(["has-session", "-t", `=${workspace.sessionName}`]);
-          const harness = request.intent.kind === "agent" ? await this.#io.resolveHarness(
+          const harness = request2.intent.kind === "agent" ? await this.#io.resolveHarness(
             trustedWorkspace,
             canonicalRoot,
-            request.intent.harnessProfileId
+            request2.intent.harnessProfileId
           ) : null;
-          this.#assertActive(request.operationId);
+          this.#assertActive(request2.operationId);
           if (harness) assertBoundedLaunch(harness);
-          const resolvedMissionId = request.intent.kind === "agent" && request.intent.missionId ? await this.#io.resolveMission(trustedWorkspace, canonicalRoot, request.intent.missionId) : null;
-          this.#assertActive(request.operationId);
-          const title = defaultTitle(request, harness);
-          const resource3 = resourceFor(request, title, resolvedMissionId);
-          const placement = request.intent.placement ?? { kind: "window" };
+          const resolvedMissionId = request2.intent.kind === "agent" && request2.intent.missionId ? await this.#io.resolveMission(trustedWorkspace, canonicalRoot, request2.intent.missionId) : null;
+          this.#assertActive(request2.operationId);
+          const title = defaultTitle(request2, harness);
+          const resource3 = resourceFor(request2, title, resolvedMissionId);
+          const placement = request2.intent.placement ?? { kind: "window" };
           const runtimeScope = placement.kind === "window" ? "window" : "pane";
           const markerRuntime = this.#runtimeForCreationMarker(
             workspace.sessionName,
-            request.operationId,
+            request2.operationId,
             runtimeScope
           );
           let recoveredSuccess = null;
@@ -25443,26 +25443,26 @@ var init_workspace_pane_creation2 = __esm({
               runtime = markerRuntime;
             } else {
               throw new WorkspacePaneCreationError("pane_resource_changed", {
-                operationId: request.operationId,
+                operationId: request2.operationId,
                 workspaceName: workspace.name
               });
             }
           } else {
             recoveredSuccess = this.#completedRuntime(
               workspace.sessionName,
-              request.operationId,
+              request2.operationId,
               resource3,
               runtimeScope
             );
           }
           if (recoveredSuccess) {
             const result2 = WorkspacePaneCreateMutationResultSchemaZ.parse({
-              operationId: request.operationId,
+              operationId: request2.operationId,
               daemonInstanceId: this.#daemonInstanceId,
               outcome: "replayed",
               resource: resource3
             });
-            this.#operations.set(request.operationId, {
+            this.#operations.set(request2.operationId, {
               fingerprint: requestFingerprint3,
               status: "success",
               result: result2,
@@ -25470,11 +25470,11 @@ var init_workspace_pane_creation2 = __esm({
             });
             return result2;
           }
-          const provisionalName = placement.kind === "window" ? provisionalWindowName(request.operationId) : null;
+          const provisionalName = placement.kind === "window" ? provisionalWindowName(request2.operationId) : null;
           if (!runtime) {
-            if (provisionalName !== null && this.#provisionalRuntimes(workspace.sessionName, provisionalName, request.operationId).length > 0) {
+            if (provisionalName !== null && this.#provisionalRuntimes(workspace.sessionName, provisionalName, request2.operationId).length > 0) {
               throw new WorkspacePaneCreationError("pane_resource_changed", {
-                operationId: request.operationId,
+                operationId: request2.operationId,
                 workspaceName: workspace.name
               });
             }
@@ -25518,19 +25518,19 @@ var init_workspace_pane_creation2 = __esm({
                 "-t",
                 "{next}",
                 CREATION_OPTION,
-                request.operationId
+                request2.operationId
               );
             }
             let createOutput = null;
             try {
               createOutput = this.#io.runTmux(createArgs);
             } catch (error) {
-              runtime = placement.kind === "split" ? this.#runtimeForCreationMarker(workspace.sessionName, request.operationId, "pane") : null;
+              runtime = placement.kind === "split" ? this.#runtimeForCreationMarker(workspace.sessionName, request2.operationId, "pane") : null;
               if (!runtime) {
                 if (this.#io.creationFailureCannotHaveMutated(error)) throw error;
                 throw new WorkspacePaneCreationError(
                   "pane_cleanup_unproven",
-                  { operationId: request.operationId, workspaceName: workspace.name },
+                  { operationId: request2.operationId, workspaceName: workspace.name },
                   error
                 );
               }
@@ -25539,27 +25539,27 @@ var init_workspace_pane_creation2 = __esm({
               try {
                 runtime = parseCreatedRuntime(
                   createOutput,
-                  request.operationId,
+                  request2.operationId,
                   runtimeScope,
                   provisionalName
                 );
               } catch (error) {
                 throw new WorkspacePaneCreationError(
                   "pane_cleanup_unproven",
-                  { operationId: request.operationId, workspaceName: workspace.name },
+                  { operationId: request2.operationId, workspaceName: workspace.name },
                   error
                 );
               }
             }
           }
-          this.#assertActive(request.operationId);
+          this.#assertActive(request2.operationId);
           const options = [
-            [CREATION_OPTION, request.operationId],
+            [CREATION_OPTION, request2.operationId],
             [SEMANTIC_PANE_OPTION, resource3.semanticPaneId],
             ["@ide_type", resource3.kind === "agent" ? "agent" : "shell"],
             ["@ide_role", resource3.role ?? "shell"],
             ["@ide_name", resource3.displayTitle],
-            ["@tmux_ide_name_source", nameSource(request.intent)],
+            ["@tmux_ide_name_source", nameSource(request2.intent)],
             ["@agent_hint", agentHintForCommand(harness?.command.join(" ")) ?? ""],
             [HARNESS_OPTION, resource3.harnessProfileId ?? ""],
             [MISSION_OPTION, resource3.missionId ?? ""]
@@ -25586,18 +25586,18 @@ var init_workspace_pane_creation2 = __esm({
           const inspected = this.#io.runTmux(inspectArgs(runtime));
           if (!inspectMatches(inspected, runtime, resource3)) {
             throw new WorkspacePaneCreationError("pane_creation_failed", {
-              operationId: request.operationId,
+              operationId: request2.operationId,
               workspaceName: workspace.name
             });
           }
-          this.#assertActive(request.operationId);
+          this.#assertActive(request2.operationId);
           const result = WorkspacePaneCreateMutationResultSchemaZ.parse({
-            operationId: request.operationId,
+            operationId: request2.operationId,
             daemonInstanceId: this.#daemonInstanceId,
             outcome: "created",
             resource: resource3
           });
-          this.#operations.set(request.operationId, {
+          this.#operations.set(request2.operationId, {
             fingerprint: requestFingerprint3,
             status: "success",
             result,
@@ -25608,26 +25608,26 @@ var init_workspace_pane_creation2 = __esm({
           const mapped = error instanceof WorkspacePaneCreationError ? error : new WorkspacePaneCreationError(
             runtime ? "pane_creation_failed" : "workspace_unavailable",
             {
-              operationId: request.operationId,
-              workspaceName: request.intent.workspaceName
+              operationId: request2.operationId,
+              workspaceName: request2.intent.workspaceName
             },
             error
           );
           if (runtime && !this.#cleanupOwnedRuntime(runtime)) {
             return this.#rememberFailure(
-              request,
+              request2,
               requestFingerprint3,
               new WorkspacePaneCreationError(
                 "pane_cleanup_unproven",
                 {
-                  operationId: request.operationId,
-                  workspaceName: request.intent.workspaceName
+                  operationId: request2.operationId,
+                  workspaceName: request2.intent.workspaceName
                 },
                 mapped
               )
             );
           }
-          return this.#rememberFailure(request, requestFingerprint3, mapped);
+          return this.#rememberFailure(request2, requestFingerprint3, mapped);
         }
       }
       #assertActive(operationId) {
@@ -25639,10 +25639,10 @@ var init_workspace_pane_creation2 = __esm({
           reason: "authority_disposed"
         });
       }
-      #replay(existing, request, requestFingerprint3) {
+      #replay(existing, request2, requestFingerprint3) {
         if (existing.fingerprint !== requestFingerprint3) {
           throw new WorkspacePaneCreationError("operation_conflict", {
-            operationId: request.operationId
+            operationId: request2.operationId
           });
         }
         if (existing.status === "error") throw existing.error;
@@ -25653,12 +25653,12 @@ var init_workspace_pane_creation2 = __esm({
           const changed = new WorkspacePaneCreationError(
             "pane_resource_changed",
             {
-              operationId: request.operationId,
-              workspaceName: request.intent.workspaceName
+              operationId: request2.operationId,
+              workspaceName: request2.intent.workspaceName
             },
             cause
           );
-          this.#operations.set(request.operationId, {
+          this.#operations.set(request2.operationId, {
             fingerprint: requestFingerprint3,
             status: "error",
             error: changed
@@ -25895,17 +25895,17 @@ var init_workspace_pane_creation2 = __esm({
           }
         }
       }
-      #rememberFailure(request, requestFingerprint3, error) {
+      #rememberFailure(request2, requestFingerprint3, error) {
         const failure3 = {
           fingerprint: requestFingerprint3,
           status: "error",
           error
         };
         if (error.code === "pane_cleanup_unproven" || error.code === "pane_resource_changed") {
-          this.#operations.set(request.operationId, failure3);
+          this.#operations.set(request2.operationId, failure3);
         } else {
-          this.#replayableFailures.delete(request.operationId);
-          this.#replayableFailures.set(request.operationId, failure3);
+          this.#replayableFailures.delete(request2.operationId);
+          this.#replayableFailures.set(request2.operationId, failure3);
           while (this.#replayableFailures.size > MAX_REPLAYABLE_FAILURES) {
             const oldest = this.#replayableFailures.keys().next().value;
             if (oldest === void 0) break;
@@ -27751,7 +27751,7 @@ async function appSetRemoteAccessHandler(input, deps2 = {}) {
   };
   writeSettings(next);
   const port = currentPort(deps2);
-  const request = {
+  const request2 = {
     enabled: nextEnabled,
     bindHostname: nextEnabled ? "0.0.0.0" : "127.0.0.1",
     token,
@@ -27760,7 +27760,7 @@ async function appSetRemoteAccessHandler(input, deps2 = {}) {
   const restartDaemon = deps2.restartDaemon ?? remoteAccessRestartBackend;
   if (restartDaemon) {
     (deps2.deferRestart ?? defaultDeferRestart)(() => {
-      void Promise.resolve(restartDaemon(request)).catch((err) => {
+      void Promise.resolve(restartDaemon(request2)).catch((err) => {
         console.error(
           `[actions] Failed to restart daemon for remote access: ${err.message ?? String(err)}`
         );
@@ -28203,8 +28203,8 @@ async function resolveConfigFreeProjectDir(projectDir) {
     );
   }
 }
-function requestFingerprint(request) {
-  return JSON.stringify(request);
+function requestFingerprint(request2) {
+  return JSON.stringify(request2);
 }
 function parseSessionRecords(output) {
   const normalized = boundedTmuxOutput(output);
@@ -28425,32 +28425,32 @@ var init_workspace_open2 = __esm({
       }
       async #open(raw) {
         this.#assertActive();
-        const request = WorkspaceOpenMutationRequestSchemaZ.parse(raw);
-        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
+        const request2 = WorkspaceOpenMutationRequestSchemaZ.parse(raw);
+        if (request2.expectedDaemonInstanceId !== this.#daemonInstanceId) {
           throw new WorkspaceOpenError("daemon_instance_mismatch", {
-            operationId: request.operationId
+            operationId: request2.operationId
           });
         }
-        const fingerprint2 = requestFingerprint(request);
-        const existing = this.#operations.get(request.operationId) ?? this.#failures.get(request.operationId);
-        if (existing) return this.#replay(existing, request, fingerprint2);
+        const fingerprint2 = requestFingerprint(request2);
+        const existing = this.#operations.get(request2.operationId) ?? this.#failures.get(request2.operationId);
+        if (existing) return this.#replay(existing, request2, fingerprint2);
         this.#retireClosedOperations();
         if (this.#operations.size >= this.#maxOperations) {
-          throw new WorkspaceOpenError("operation_capacity", { operationId: request.operationId });
+          throw new WorkspaceOpenError("operation_capacity", { operationId: request2.operationId });
         }
         let canonicalRoot;
         try {
-          canonicalRoot = await this.#io.resolveConfigFreeProjectDir(request.intent.projectDir);
+          canonicalRoot = await this.#io.resolveConfigFreeProjectDir(request2.intent.projectDir);
         } catch (error) {
-          return this.#rememberFailure(request, fingerprint2, this.#mapFailure(error, request));
+          return this.#rememberFailure(request2, fingerprint2, this.#mapFailure(error, request2));
         }
-        this.#assertActive(request.operationId);
+        this.#assertActive(request2.operationId);
         const identity = deriveWorkspaceOpenIdentity(canonicalRoot);
         let registryRecord;
         try {
           registryRecord = this.#compatibleRegistryRecord(identity, canonicalRoot);
         } catch (error) {
-          return this.#rememberFailure(request, fingerprint2, this.#mapFailure(error, request));
+          return this.#rememberFailure(request2, fingerprint2, this.#mapFailure(error, request2));
         }
         let createdRuntime = null;
         try {
@@ -28461,12 +28461,12 @@ var init_workspace_open2 = __esm({
             runtime = this.#compatibleRuntime(existingSession, identity);
             outcome = "reopened";
           } else {
-            const opened = this.#createOrReopenSession(request, identity, canonicalRoot);
+            const opened = this.#createOrReopenSession(request2, identity, canonicalRoot);
             runtime = opened.runtime;
             createdRuntime = opened.created ? runtime : null;
             outcome = opened.created ? "created" : "reopened";
           }
-          this.#assertActive(request.operationId);
+          this.#assertActive(request2.operationId);
           if (!registryRecord) {
             try {
               registryRecord = this.#registry.add({
@@ -28487,17 +28487,17 @@ var init_workspace_open2 = __esm({
             }
             if (!registryRecord) {
               throw new WorkspaceOpenError("workspace_conflict", {
-                operationId: request.operationId
+                operationId: request2.operationId
               });
             }
           }
           const result = WorkspaceOpenMutationResultSchemaZ.parse({
-            operationId: request.operationId,
+            operationId: request2.operationId,
             daemonInstanceId: this.#daemonInstanceId,
             outcome,
             resource: resource(identity)
           });
-          this.#operations.set(request.operationId, {
+          this.#operations.set(request2.operationId, {
             status: "success",
             fingerprint: fingerprint2,
             result,
@@ -28507,19 +28507,19 @@ var init_workspace_open2 = __esm({
           });
           return result;
         } catch (error) {
-          const mapped = this.#mapFailure(error, request);
-          if (createdRuntime && !this.#cleanupCreatedSession(createdRuntime, identity, request.operationId)) {
+          const mapped = this.#mapFailure(error, request2);
+          if (createdRuntime && !this.#cleanupCreatedSession(createdRuntime, identity, request2.operationId)) {
             return this.#rememberFailure(
-              request,
+              request2,
               fingerprint2,
               new WorkspaceOpenError(
                 "workspace_cleanup_unproven",
-                { operationId: request.operationId },
+                { operationId: request2.operationId },
                 mapped
               )
             );
           }
-          return this.#rememberFailure(request, fingerprint2, mapped);
+          return this.#rememberFailure(request2, fingerprint2, mapped);
         }
       }
       #compatibleRegistryRecord(identity, canonicalRoot) {
@@ -28657,7 +28657,7 @@ var init_workspace_open2 = __esm({
           windowId: initial.windowId
         };
       }
-      #createOrReopenSession(request, identity, canonicalRoot) {
+      #createOrReopenSession(request2, identity, canonicalRoot) {
         let output;
         try {
           output = this.#io.runTmux([
@@ -28683,7 +28683,7 @@ var init_workspace_open2 = __esm({
           }
           throw new WorkspaceOpenError(
             "workspace_creation_failed",
-            { operationId: request.operationId },
+            { operationId: request2.operationId },
             cause
           );
         }
@@ -28691,7 +28691,7 @@ var init_workspace_open2 = __esm({
         try {
           prepareTmuxTruecolorEnvironment(this.#io.runTmux, identity.sessionName);
           for (const [option, value] of [
-            [SESSION_OPERATION_OPTION, request.operationId],
+            [SESSION_OPERATION_OPTION, request2.operationId],
             [SESSION_MARKER_OPTION, identity.projectKey],
             [SESSION_WORKSPACE_OPTION, identity.workspaceName]
           ]) {
@@ -28719,26 +28719,26 @@ var init_workspace_open2 = __esm({
           );
           if (!session || session.sessionName !== identity.sessionName) {
             throw new WorkspaceOpenError("workspace_creation_failed", {
-              operationId: request.operationId
+              operationId: request2.operationId
             });
           }
           const verified = this.#compatibleRuntime(session, identity);
           if (verified.paneId !== runtime.paneId || verified.windowId !== runtime.windowId) {
             throw new WorkspaceOpenError("workspace_creation_failed", {
-              operationId: request.operationId
+              operationId: request2.operationId
             });
           }
           return { runtime: { ...runtime, paneId: verified.paneId }, created: true };
         } catch (error) {
           const mapped = error instanceof WorkspaceOpenError ? error : new WorkspaceOpenError(
             "workspace_creation_failed",
-            { operationId: request.operationId },
+            { operationId: request2.operationId },
             error
           );
-          if (!this.#cleanupCreatedSession(runtime, identity, request.operationId)) {
+          if (!this.#cleanupCreatedSession(runtime, identity, request2.operationId)) {
             throw new WorkspaceOpenError(
               "workspace_cleanup_unproven",
-              { operationId: request.operationId },
+              { operationId: request2.operationId },
               mapped
             );
           }
@@ -28780,9 +28780,9 @@ var init_workspace_open2 = __esm({
           return false;
         }
       }
-      #replay(existing, request, fingerprint2) {
+      #replay(existing, request2, fingerprint2) {
         if (existing.fingerprint !== fingerprint2) {
-          throw new WorkspaceOpenError("operation_conflict", { operationId: request.operationId });
+          throw new WorkspaceOpenError("operation_conflict", { operationId: request2.operationId });
         }
         if (existing.status === "error") throw existing.error;
         let registryRecord;
@@ -28791,13 +28791,13 @@ var init_workspace_open2 = __esm({
         } catch (cause) {
           throw new WorkspaceOpenError(
             "workspace_resource_changed",
-            { operationId: request.operationId, reason: "registry_mapping_changed" },
+            { operationId: request2.operationId, reason: "registry_mapping_changed" },
             cause
           );
         }
         if (!registryRecord) {
           throw new WorkspaceOpenError("workspace_resource_changed", {
-            operationId: request.operationId,
+            operationId: request2.operationId,
             reason: "registry_mapping_missing"
           });
         }
@@ -28806,7 +28806,7 @@ var init_workspace_open2 = __esm({
         );
         if (!session) {
           throw new WorkspaceOpenError("workspace_resource_changed", {
-            operationId: request.operationId
+            operationId: request2.operationId
           });
         }
         let runtime;
@@ -28815,13 +28815,13 @@ var init_workspace_open2 = __esm({
         } catch (cause) {
           throw new WorkspaceOpenError(
             "workspace_resource_changed",
-            { operationId: request.operationId, reason: "live_workspace_proof_changed" },
+            { operationId: request2.operationId, reason: "live_workspace_proof_changed" },
             cause
           );
         }
         if (runtime.paneId !== existing.runtime.paneId || runtime.windowId !== existing.runtime.windowId) {
           throw new WorkspaceOpenError("workspace_resource_changed", {
-            operationId: request.operationId
+            operationId: request2.operationId
           });
         }
         return WorkspaceOpenMutationResultSchemaZ.parse({
@@ -28842,19 +28842,19 @@ var init_workspace_open2 = __esm({
           if (!live.has(operation.runtime.sessionId)) this.#operations.delete(operationId);
         }
       }
-      #rememberFailure(request, fingerprint2, error) {
+      #rememberFailure(request2, fingerprint2, error) {
         if (this.#failures.size >= MAX_REPLAYABLE_FAILURES2) {
           const oldest = this.#failures.keys().next().value;
           if (oldest) this.#failures.delete(oldest);
         }
-        this.#failures.set(request.operationId, { status: "error", fingerprint: fingerprint2, error });
+        this.#failures.set(request2.operationId, { status: "error", fingerprint: fingerprint2, error });
         throw error;
       }
-      #mapFailure(error, request) {
+      #mapFailure(error, request2) {
         if (error instanceof WorkspaceOpenError) return error;
         return new WorkspaceOpenError(
           "workspace_unavailable",
-          { operationId: request.operationId },
+          { operationId: request2.operationId },
           error
         );
       }
@@ -28996,8 +28996,8 @@ function parseVerifyPanes(output) {
 function resource2(workspaceName) {
   return { resourceVersion: 1, workspaceName };
 }
-function requestFingerprint2(request) {
-  return JSON.stringify(request);
+function requestFingerprint2(request2) {
+  return JSON.stringify(request2);
 }
 function digest2(value) {
   return createHash13("sha256").update(value).digest("hex").slice(0, 20);
@@ -29166,37 +29166,37 @@ var init_workspace_promotion2 = __esm({
       }
       async #promote(raw) {
         this.#assertActive();
-        const request = WorkspacePromoteMutationRequestSchemaZ.parse(raw);
-        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
+        const request2 = WorkspacePromoteMutationRequestSchemaZ.parse(raw);
+        if (request2.expectedDaemonInstanceId !== this.#daemonInstanceId) {
           throw new WorkspacePromotionError("daemon_instance_mismatch", {
-            operationId: request.operationId
+            operationId: request2.operationId
           });
         }
-        const fingerprint2 = requestFingerprint2(request);
-        const existing = this.#completedOperations.get(request.operationId) ?? this.#failures.get(request.operationId);
-        if (existing) return this.#replay(existing, request, fingerprint2);
+        const fingerprint2 = requestFingerprint2(request2);
+        const existing = this.#completedOperations.get(request2.operationId) ?? this.#failures.get(request2.operationId);
+        if (existing) return this.#replay(existing, request2, fingerprint2);
         try {
-          const session = this.#resolveSession(request.intent.sessionId);
+          const session = this.#resolveSession(request2.intent.sessionId);
           const alreadyRegistered = this.#registry.list().find((workspace) => workspace.sessionName === session.sessionName);
           if (alreadyRegistered) {
             const registeredIdentity = {
               workspaceName: alreadyRegistered.name,
               sessionName: session.sessionName
             };
-            this.#stampPaneInventory(request, session, registeredIdentity);
-            this.#assertActive(request.operationId);
+            this.#stampPaneInventory(request2, session, registeredIdentity);
+            this.#assertActive(request2.operationId);
             this.#verifyPromotedInventory(session.sessionId, registeredIdentity);
-            this.#publishFleetEnrollment(request, session, registeredIdentity);
-            return this.#succeed(request, fingerprint2, alreadyRegistered.name, session.sessionName, {
+            this.#publishFleetEnrollment(request2, session, registeredIdentity);
+            return this.#succeed(request2, fingerprint2, alreadyRegistered.name, session.sessionName, {
               replayed: true
             });
           }
           const identity = derivePromotionIdentity(session.sessionName);
           this.#assertConflictFreeIdentity(identity);
-          const canonicalRoot = this.#stampSession(request, session, identity);
-          this.#assertActive(request.operationId);
+          const canonicalRoot = this.#stampSession(request2, session, identity);
+          this.#assertActive(request2.operationId);
           this.#verifyPromotedInventory(session.sessionId, identity);
-          this.#publishFleetEnrollment(request, session, identity);
+          this.#publishFleetEnrollment(request2, session, identity);
           let registered;
           try {
             registered = this.#registry.add({
@@ -29212,22 +29212,22 @@ var init_workspace_promotion2 = __esm({
             if (error instanceof WorkspaceAlreadyExistsError) {
               const raced = this.#registry.list().find((workspace) => workspace.name === identity.workspaceName);
               if (raced && raced.sessionName === identity.sessionName) {
-                return this.#succeed(request, fingerprint2, raced.name, identity.sessionName, {
+                return this.#succeed(request2, fingerprint2, raced.name, identity.sessionName, {
                   replayed: true
                 });
               }
               throw new WorkspacePromotionError("workspace_conflict", {
-                operationId: request.operationId,
+                operationId: request2.operationId,
                 workspaceName: identity.workspaceName
               });
             }
             throw error;
           }
-          return this.#succeed(request, fingerprint2, registered.name, identity.sessionName, {
+          return this.#succeed(request2, fingerprint2, registered.name, identity.sessionName, {
             replayed: false
           });
         } catch (error) {
-          return this.#rememberFailure(request, fingerprint2, this.#mapFailure(error, request));
+          return this.#rememberFailure(request2, fingerprint2, this.#mapFailure(error, request2));
         }
       }
       #resolveSession(sessionId) {
@@ -29267,14 +29267,14 @@ var init_workspace_promotion2 = __esm({
        * a newly published marker makes the soon-to-be registered workspace visible
        * to the shared FleetCatalog in the same mutation transaction.
        */
-      #publishFleetEnrollment(request, session, identity) {
+      #publishFleetEnrollment(request2, session, identity) {
         if (session.adopted) return;
         try {
           this.#io.runTmux(["set-option", "-t", session.sessionId, ADOPTED_OPTION2, "1"]);
         } catch (error) {
           throw new WorkspacePromotionError(
             "stamp_failed",
-            { operationId: request.operationId, workspaceName: identity.workspaceName },
+            { operationId: request2.operationId, workspaceName: identity.workspaceName },
             error
           );
         }
@@ -29285,11 +29285,11 @@ var init_workspace_promotion2 = __esm({
        * `set-option` failure maps to `stamp_failed`; the caller has not yet touched
        * the registry, so a failure here leaves the session harmless.
        */
-      #stampSession(request, session, identity) {
-        const scanned = this.#stampPaneInventory(request, session, identity);
+      #stampSession(request2, session, identity) {
+        const scanned = this.#stampPaneInventory(request2, session, identity);
         try {
           for (const [option, value] of [
-            [SESSION_OPERATION_OPTION2, request.operationId],
+            [SESSION_OPERATION_OPTION2, request2.operationId],
             [SESSION_WORKSPACE_OPTION2, identity.workspaceName],
             [SESSION_PROMOTED_MARKER_OPTION, "1"]
           ]) {
@@ -29298,7 +29298,7 @@ var init_workspace_promotion2 = __esm({
         } catch (error) {
           throw new WorkspacePromotionError(
             "stamp_failed",
-            { operationId: request.operationId, workspaceName: identity.workspaceName },
+            { operationId: request2.operationId, workspaceName: identity.workspaceName },
             error
           );
         }
@@ -29311,7 +29311,7 @@ var init_workspace_promotion2 = __esm({
        * session, which may be an m32-open workspace whose provenance must never
        * acquire the promotion marker.
        */
-      #stampPaneInventory(request, session, identity) {
+      #stampPaneInventory(request2, session, identity) {
         let scanned;
         try {
           scanned = parseScanPanes(
@@ -29384,7 +29384,7 @@ var init_workspace_promotion2 = __esm({
         } catch (error) {
           throw new WorkspacePromotionError(
             "stamp_failed",
-            { operationId: request.operationId, workspaceName: identity.workspaceName },
+            { operationId: request2.operationId, workspaceName: identity.workspaceName },
             error
           );
         }
@@ -29523,9 +29523,9 @@ var init_workspace_promotion2 = __esm({
           });
         }
       }
-      #succeed(request, fingerprint2, workspaceName, sessionName, options) {
+      #succeed(request2, fingerprint2, workspaceName, sessionName, options) {
         const result = WorkspacePromoteMutationResultSchemaZ.parse({
-          operationId: request.operationId,
+          operationId: request2.operationId,
           daemonInstanceId: this.#daemonInstanceId,
           outcome: options.replayed ? "replayed" : "promoted",
           resource: resource2(workspaceName)
@@ -29534,7 +29534,7 @@ var init_workspace_promotion2 = __esm({
           const oldest = this.#completedOperations.keys().next().value;
           if (oldest !== void 0) this.#completedOperations.delete(oldest);
         }
-        this.#completedOperations.set(request.operationId, {
+        this.#completedOperations.set(request2.operationId, {
           status: "success",
           fingerprint: fingerprint2,
           result,
@@ -29543,9 +29543,9 @@ var init_workspace_promotion2 = __esm({
         });
         return result;
       }
-      #replay(existing, request, fingerprint2) {
+      #replay(existing, request2, fingerprint2) {
         if (existing.fingerprint !== fingerprint2) {
-          throw new WorkspacePromotionError("operation_conflict", { operationId: request.operationId });
+          throw new WorkspacePromotionError("operation_conflict", { operationId: request2.operationId });
         }
         if (existing.status === "error") throw existing.error;
         const stillRegistered = this.#registry.list().some(
@@ -29553,7 +29553,7 @@ var init_workspace_promotion2 = __esm({
         );
         if (!stillRegistered) {
           throw new WorkspacePromotionError("promotion_verification_failed", {
-            operationId: request.operationId,
+            operationId: request2.operationId,
             reason: "registry_mapping_missing"
           });
         }
@@ -29562,19 +29562,19 @@ var init_workspace_promotion2 = __esm({
           outcome: "replayed"
         });
       }
-      #rememberFailure(request, fingerprint2, error) {
+      #rememberFailure(request2, fingerprint2, error) {
         if (this.#failures.size >= MAX_REPLAYABLE_FAILURES3) {
           const oldest = this.#failures.keys().next().value;
           if (oldest) this.#failures.delete(oldest);
         }
-        this.#failures.set(request.operationId, { status: "error", fingerprint: fingerprint2, error });
+        this.#failures.set(request2.operationId, { status: "error", fingerprint: fingerprint2, error });
         throw error;
       }
-      #mapFailure(error, request) {
+      #mapFailure(error, request2) {
         if (error instanceof WorkspacePromotionError) return error;
         return new WorkspacePromotionError(
           "promotion_verification_failed",
-          { operationId: request.operationId, reason: "unexpected_failure" },
+          { operationId: request2.operationId, reason: "unexpected_failure" },
           error
         );
       }
@@ -33974,9 +33974,9 @@ function writeAppWindowDocumentLocked(repository, writer, expectedRevision, docu
     );
   }
 }
-function resetAppWindowDocumentLocked(repository, writer, request) {
+function resetAppWindowDocumentLocked(repository, writer, request2) {
   const loaded = loadAppWindowDocument(repository, {
-    loadedAt: request.resetAt,
+    loadedAt: request2.resetAt,
     migrateLegacy: false
   });
   if (!loaded.writeProtected) {
@@ -33985,16 +33985,16 @@ function resetAppWindowDocumentLocked(repository, writer, request) {
       "app window state is valid; normal revision CAS must be used"
     );
   }
-  if (!loaded.recoveryToken || loaded.recoveryToken !== request.expectedRecoveryToken) {
+  if (!loaded.recoveryToken || loaded.recoveryToken !== request2.expectedRecoveryToken) {
     throw new AppWindowRepositoryError(
       "RECOVERY_CONFLICT",
       "app window recovery token no longer matches the preserved document"
     );
   }
-  let resetDocument = request.document;
+  let resetDocument = request2.document;
   if (resetDocument === void 0) {
     try {
-      resetDocument = emptyAppWindowDocument(request.resetAt);
+      resetDocument = emptyAppWindowDocument(request2.resetAt);
     } catch (error) {
       throw new AppWindowRepositoryError(
         "INVALID_DOCUMENT",
@@ -34015,8 +34015,8 @@ function resetAppWindowDocumentLocked(repository, writer, request) {
   try {
     const payload = JSON.parse(serializeAppWindowDocument(document));
     const recovered = writer.recoverDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
-      expectedRawSha256: request.expectedRecoveryToken,
-      reason: request.reason,
+      expectedRawSha256: request2.expectedRecoveryToken,
+      reason: request2.reason,
       details: {
         diagnostics: loaded.diagnostics.map((entry) => ({ ...entry }))
       }
@@ -34338,11 +34338,11 @@ var init_app_window_repository = __esm({
           throw new Error("unreachable app-window retry exhaustion");
         });
       }
-      reset(request) {
+      reset(request2) {
         return withAppWindowWriterLock(
           this.#runtime,
           this.#writerLock,
-          (writer) => resetAppWindowDocumentLocked(this.#runtime, writer, request)
+          (writer) => resetAppWindowDocumentLocked(this.#runtime, writer, request2)
         );
       }
     };
@@ -34419,12 +34419,12 @@ var init_app_window_mutation2 = __esm({
       }
       async mutate(rawRequest) {
         if (this.#disposed) throw new AppWindowMutationError("workspace_unavailable");
-        const request = AppWindowMutationRequestSchemaZ.parse(rawRequest);
-        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
+        const request2 = AppWindowMutationRequestSchemaZ.parse(rawRequest);
+        if (request2.expectedDaemonInstanceId !== this.#daemonInstanceId) {
           throw new AppWindowMutationError("daemon_instance_mismatch");
         }
-        const fingerprint2 = JSON.stringify(request);
-        const existing = this.#operations.get(request.operationId);
+        const fingerprint2 = JSON.stringify(request2);
+        const existing = this.#operations.get(request2.operationId);
         if (existing) {
           if (existing.fingerprint !== fingerprint2) {
             throw new AppWindowMutationError("operation_conflict");
@@ -34437,13 +34437,13 @@ var init_app_window_mutation2 = __esm({
           if (!settled) throw new AppWindowMutationError("operation_capacity");
           this.#operations.delete(settled[0]);
         }
-        const result = this.#execute(request);
+        const result = this.#execute(request2);
         const record = { fingerprint: fingerprint2, result, settled: false };
-        this.#operations.set(request.operationId, record);
+        this.#operations.set(request2.operationId, record);
         try {
           return await result;
         } catch (error) {
-          this.#operations.delete(request.operationId);
+          this.#operations.delete(request2.operationId);
           throw error;
         } finally {
           record.settled = true;
@@ -34453,28 +34453,28 @@ var init_app_window_mutation2 = __esm({
         this.#disposed = true;
         this.#operations.clear();
       }
-      async #execute(request) {
+      async #execute(request2) {
         try {
-          const workspace = this.#registry.get(request.intent.workspaceName);
+          const workspace = this.#registry.get(request2.intent.workspaceName);
           if (!workspace) throw new AppWindowMutationError("workspace_not_found");
           const runtime = await this.#openRuntime(workspace.projectDir);
           if (this.#disposed) throw new AppWindowMutationError("workspace_unavailable");
           const service = new AppWindowService(runtime);
           const loaded = service.load();
           if (loaded.writeProtected) throw new AppWindowMutationError("document_unavailable");
-          if (loaded.document.revision !== request.intent.expectedDocumentRevision) {
+          if (loaded.document.revision !== request2.intent.expectedDocumentRevision) {
             throw new AppWindowMutationError("revision_conflict", {
-              expectedRevision: String(request.intent.expectedDocumentRevision),
+              expectedRevision: String(request2.intent.expectedDocumentRevision),
               actualRevision: String(loaded.document.revision)
             });
           }
-          const next = service.execute(request.intent.command, { expectedRevision: loaded.revision });
+          const next = service.execute(request2.intent.command, { expectedRevision: loaded.revision });
           const unchanged = next.document.revision === loaded.document.revision;
           return AppWindowMutationResultSchemaZ.parse({
-            operationId: request.operationId,
+            operationId: request2.operationId,
             daemonInstanceId: this.#daemonInstanceId,
             outcome: unchanged ? "unchanged" : "applied",
-            workspaceName: request.intent.workspaceName,
+            workspaceName: request2.intent.workspaceName,
             documentRevision: next.document.revision
           });
         } catch (error) {
@@ -35276,17 +35276,17 @@ var init_workspace_multiplexer_verbs = __esm({
             reason: "authority_disposed"
           });
         }
-        const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
-        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
+        const request2 = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
+        if (request2.expectedDaemonInstanceId !== this.#daemonInstanceId) {
           throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
-            operationId: request.operationId
+            operationId: request2.operationId
           });
         }
-        if (request.intent.verb === "workspace.session.kill" && request.intent.fleetTarget) {
-          const target = request.intent.fleetTarget;
+        if (request2.intent.verb === "workspace.session.kill" && request2.intent.fleetTarget) {
+          const target = request2.intent.fleetTarget;
           if (target.daemonInstanceId !== this.#daemonInstanceId)
             throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
-              operationId: request.operationId
+              operationId: request2.operationId
             });
           const raw2 = this.#io.runTmux([
             "list-panes",
@@ -35306,30 +35306,30 @@ var init_workspace_multiplexer_verbs = __esm({
           return this.#killSession(
             target.sessionName,
             {
-              operationId: request.operationId,
+              operationId: request2.operationId,
               daemonInstanceId: this.#daemonInstanceId,
-              workspaceName: request.intent.workspaceName
+              workspaceName: request2.intent.workspaceName
             },
             runtimeId
           );
         }
-        const workspace = this.#registry.get(request.intent.workspaceName);
+        const workspace = this.#registry.get(request2.intent.workspaceName);
         if (!workspace) {
           throw new WorkspaceMultiplexerError("workspace_not_found", {
-            operationId: request.operationId,
-            workspaceName: request.intent.workspaceName
+            operationId: request2.operationId,
+            workspaceName: request2.intent.workspaceName
           });
         }
         try {
           return WorkspaceMultiplexerMutationResultSchemaZ.parse(
-            this.#perform(request, workspace, timing)
+            this.#perform(request2, workspace, timing)
           );
         } catch (error) {
           const mapped = error instanceof WorkspaceMultiplexerError ? error : new WorkspaceMultiplexerError(
             "mutation_failed",
             {
-              operationId: request.operationId,
-              workspaceName: request.intent.workspaceName
+              operationId: request2.operationId,
+              workspaceName: request2.intent.workspaceName
             },
             error
           );
@@ -35365,17 +35365,17 @@ var init_workspace_multiplexer_verbs = __esm({
         this.#setPaneIdentities(sessionName, identities);
         return rows;
       }
-      #perform(request, workspace, timing) {
-        const intent = request.intent;
+      #perform(request2, workspace, timing) {
+        const intent = request2.intent;
         const sessionName = workspace.sessionName;
         const envelope = {
-          operationId: request.operationId,
+          operationId: request2.operationId,
           daemonInstanceId: this.#daemonInstanceId,
           workspaceName: intent.workspaceName
         };
         switch (intent.verb) {
           case "workspace.window.split":
-            return this.#split(request, workspace, envelope);
+            return this.#split(request2, workspace, envelope);
           case "workspace.window.kill":
             return this.#killWindow(intent, sessionName, envelope);
           case "workspace.pane.kill":
@@ -35399,15 +35399,15 @@ var init_workspace_multiplexer_verbs = __esm({
       // -------------------------------------------------------------------------
       // split
       // -------------------------------------------------------------------------
-      #split(request, workspace, envelope) {
-        const intent = request.intent;
+      #split(request2, workspace, envelope) {
+        const intent = request2.intent;
         if (intent.verb !== "workspace.window.split") throw new TypeError("wrong intent");
         const sessionName = workspace.sessionName;
-        const semanticPaneId3 = semanticPaneIdForOperation(request.operationId);
+        const semanticPaneId3 = semanticPaneIdForOperation(request2.operationId);
         const displayTitle = intent.displayTitle ?? memorablePaneName(semanticPaneId3);
         const displayNameSource = intent.displayTitle ? "manual" : "generated";
         const rows = this.#panes(sessionName);
-        const already = rows.find((row) => row.creationId === request.operationId);
+        const already = rows.find((row) => row.creationId === request2.operationId);
         if (already) {
           return {
             ...envelope,
@@ -35436,14 +35436,14 @@ var init_workspace_multiplexer_verbs = __esm({
         const match = /^(%[0-9]+)\t(@[0-9]+)$/u.exec(created);
         if (!match) {
           throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId: request.operationId,
+            operationId: request2.operationId,
             reason: "split_output_unparseable"
           });
         }
         const paneId = match[1];
         try {
           for (const [option, value] of [
-            [CREATION_OPTION2, request.operationId],
+            [CREATION_OPTION2, request2.operationId],
             [SEMANTIC_PANE_OPTION4, semanticPaneId3],
             ["@ide_type", "shell"],
             ["@ide_role", "shell"],
@@ -35465,14 +35465,14 @@ var init_workspace_multiplexer_verbs = __esm({
               `#{${DISPLAY_NAME_SOURCE_OPTION}}`
             ].join("	")
           ]);
-          if (inspected !== [paneId, semanticPaneId3, request.operationId, displayTitle, displayNameSource].join("	")) {
+          if (inspected !== [paneId, semanticPaneId3, request2.operationId, displayTitle, displayNameSource].join("	")) {
             throw new WorkspaceMultiplexerError("mutation_unverified", {
-              operationId: request.operationId,
+              operationId: request2.operationId,
               reason: "split_stamp_mismatch"
             });
           }
         } catch (error) {
-          this.#cleanupOwnedPane(paneId, request.operationId);
+          this.#cleanupOwnedPane(paneId, request2.operationId);
           throw error;
         }
         return {
@@ -37201,8 +37201,8 @@ function parseSessionPaneDescriptorReply(lines) {
     if (!/^[1-9][0-9]*$/u.test(windowPaneCountRaw) || !Number.isSafeInteger(windowPaneCount) || !/^[1-9][0-9]*$/u.test(sessionWindowCountRaw) || !Number.isSafeInteger(sessionWindowCount) || windowPaneCount < 1 || sessionWindowCount < 1)
       continue;
     if (!["0", "1"].includes(paneActiveRaw) || !["0", "1"].includes(windowActiveRaw)) continue;
-    const bounded2 = (value, maximum) => value.length <= maximum && !/[\0\r\n\t]/u.test(value);
-    if (!bounded2(semanticPaneId3, 256) || !bounded2(role, 256) || !bounded2(type, 256) || !bounded2(currentCommand, 512) || !bounded2(cwd, 4096) || !bounded2(title, 1024) || !bounded2(windowName, 1024) || !bounded2(name, 256) || !bounded2(missionStamp, 256) || !bounded2(semanticWindowId, 256) || !bounded2(sessionName, 160) || sessionName.length === 0 || windowId.length > 32) {
+    const bounded3 = (value, maximum) => value.length <= maximum && !/[\0\r\n\t]/u.test(value);
+    if (!bounded3(semanticPaneId3, 256) || !bounded3(role, 256) || !bounded3(type, 256) || !bounded3(currentCommand, 512) || !bounded3(cwd, 4096) || !bounded3(title, 1024) || !bounded3(windowName, 1024) || !bounded3(name, 256) || !bounded3(missionStamp, 256) || !bounded3(semanticWindowId, 256) || !bounded3(sessionName, 160) || sessionName.length === 0 || windowId.length > 32) {
       continue;
     }
     descriptors.push({
@@ -40425,24 +40425,24 @@ var init_mirror_service = __esm({
         if (this.channels.get(session) !== entry || entry.retired) return null;
         return identity;
       }
-      async subscribe(request) {
-        const entry = await this.acquire(request.session);
+      async subscribe(request2) {
+        const entry = await this.acquire(request2.session);
         let handle;
         try {
           handle = entry.channel.subscribePane(
-            request.semanticPaneId,
-            request.onEvent,
-            request.onLayout,
-            request.nativeBootstrap
+            request2.semanticPaneId,
+            request2.onEvent,
+            request2.onLayout,
+            request2.nativeBootstrap
           );
         } catch (cause) {
-          this.release(request.session, entry);
+          this.release(request2.session, entry);
           throw cause;
         }
         let closed = false;
         return {
-          session: request.session,
-          semanticPaneId: request.semanticPaneId,
+          session: request2.session,
+          semanticPaneId: request2.semanticPaneId,
           freeze: () => handle.freeze(),
           thaw: () => handle.thaw(),
           reseed: () => handle.reseed(),
@@ -40454,7 +40454,7 @@ var init_mirror_service = __esm({
             if (closed) return;
             closed = true;
             handle.close();
-            this.release(request.session, entry);
+            this.release(request2.session, entry);
             await Promise.allSettled([...this.pendingDisposals]);
           }
         };
@@ -58225,10 +58225,10 @@ var init_registry2 = __esm({
           }
         };
       }
-      async subscribe(request) {
-        const runtime = this.#runtime(request.session);
+      async subscribe(request2) {
+        const runtime = this.#runtime(request2.session);
         await runtime.whenReady();
-        return await this.#mirror.subscribe(request);
+        return await this.#mirror.subscribe(request2);
       }
       #submitAuthorizedIntent(runtime, lease, operationId, rawIntent, authenticatedSourceSemanticPaneId = null, authorizeBeforeEffect, authenticatedOrigin) {
         if (this.#disposed) return Promise.reject(new Error("SessionRuntimeRegistry is disposed"));
@@ -59647,22 +59647,22 @@ var init_transport_binding = __esm({
         this.#clients = existing ?? /* @__PURE__ */ new Map();
         if (!existing) clientsByRegistry.set(registryKey, this.#clients);
       }
-      bind(request) {
-        const transport = TransportSchemaZ.parse(request.transport);
-        LeaseIdSchemaZ.parse(request.transportLeaseId);
-        if (request.diagnosticRequestId !== void 0)
-          LeaseIdSchemaZ.parse(request.diagnosticRequestId);
-        const hostClientId = HostClientIdSchemaZ.parse(request.hostClientId);
-        const allowedSourcePaneIds = request.allowedSourcePaneIds.map(
+      bind(request2) {
+        const transport = TransportSchemaZ.parse(request2.transport);
+        LeaseIdSchemaZ.parse(request2.transportLeaseId);
+        if (request2.diagnosticRequestId !== void 0)
+          LeaseIdSchemaZ.parse(request2.diagnosticRequestId);
+        const hostClientId = HostClientIdSchemaZ.parse(request2.hostClientId);
+        const allowedSourcePaneIds = request2.allowedSourcePaneIds.map(
           (paneId) => TerminalAttachmentSemanticPaneIdSchemaZ.parse(paneId)
         );
-        const contributedSourcePaneIds = request.interactive ? allowedSourcePaneIds : [];
-        const key2 = `${request.session}\0${hostClientId}`;
+        const contributedSourcePaneIds = request2.interactive ? allowedSourcePaneIds : [];
+        const key2 = `${request2.session}\0${hostClientId}`;
         let shared = this.#clients.get(key2);
         if (!shared) {
           shared = {
             consumer: this.registry.connect(
-              request.session,
+              request2.session,
               authenticatedSurface(transport, hostClientId),
               hostClientId
             ),
@@ -59675,7 +59675,7 @@ var init_transport_binding = __esm({
           this.#clients.set(key2, shared);
         }
         shared.refs += 1;
-        if (request.interactive) shared.interactiveRefs += 1;
+        if (request2.interactive) shared.interactiveRefs += 1;
         for (const paneId of contributedSourcePaneIds) {
           shared.grantRefs.set(paneId, (shared.grantRefs.get(paneId) ?? 0) + 1);
         }
@@ -59685,14 +59685,14 @@ var init_transport_binding = __esm({
             shared,
             allowedSourcePaneIds,
             contributedSourcePaneIds,
-            request.interactive,
-            request.transportLeaseId,
-            request.diagnosticRequestId ?? request.transportLeaseId,
-            request.ownsGeometry === true,
-            request.explicitAuthority === true
+            request2.interactive,
+            request2.transportLeaseId,
+            request2.diagnosticRequestId ?? request2.transportLeaseId,
+            request2.ownsGeometry === true,
+            request2.explicitAuthority === true
           );
         } catch (error) {
-          void this.release(shared, new Set(contributedSourcePaneIds), request.interactive);
+          void this.release(shared, new Set(contributedSourcePaneIds), request2.interactive);
           throw error;
         }
       }
@@ -60105,9 +60105,9 @@ var init_lease_manager = __esm({
         );
         this.#onAudit = options.onAudit;
       }
-      issue(request, context) {
+      issue(request2, context) {
         return this.#exclusive(async () => {
-          const parsedRequest = TerminalAttachRequestSchemaZ.parse(request);
+          const parsedRequest = TerminalAttachRequestSchemaZ.parse(request2);
           const requestId = RequestIdSchemaZ.parse(context.requestId);
           const projectIdentity = BindingIdSchemaZ.parse(context.projectIdentity);
           const hostClientId = context.hostClientId ? BindingIdSchemaZ.parse(context.hostClientId) : null;
@@ -60524,14 +60524,14 @@ var init_lease_manager = __esm({
         }
         return state;
       }
-      #buildPlan(leaseId, generation, request, resolution) {
+      #buildPlan(leaseId, generation, request2, resolution) {
         return planGroupedTmuxAttachment({
           attachmentId: leaseId,
           generation,
-          target: request.target,
-          viewerMode: request.viewerMode,
-          geometryOwnership: request.geometryOwnership,
-          viewport: request.viewport,
+          target: request2.target,
+          viewerMode: request2.viewerMode,
+          geometryOwnership: request2.geometryOwnership,
+          viewport: request2.viewport,
           source: {
             sessionId: resolution.source.sessionId,
             windowId: resolution.source.windowId,
@@ -60884,7 +60884,7 @@ var init_direct_websocket = __esm({
         this.#now = options.now ?? Date.now;
         this.#schedule = options.schedule ?? defaultSchedule;
       }
-      issue(request, context) {
+      issue(request2, context) {
         return this.#exclusive(async () => {
           try {
             await this.#startupBarrier;
@@ -60906,7 +60906,7 @@ var init_direct_websocket = __esm({
               "Terminal attachment admission is shutting down."
             );
           }
-          const parsedRequest = TerminalAttachRequestSchemaZ.parse(request);
+          const parsedRequest = TerminalAttachRequestSchemaZ.parse(request2);
           const origin = canonicalRendererOrigin(context.rendererOrigin);
           const requestId = z84.uuid().parse(context.requestId);
           const projectIdentity = BindingIdSchemaZ2.parse(context.projectIdentity);
@@ -62633,19 +62633,19 @@ var init_pty_tmux_attachment_launcher = __esm({
       }
       beginGuardedAttach(input) {
         const canonical = canonicalRequest(input);
-        const request = canonical.input;
-        const existing = this.#ownedByAttachment.get(request.identity.attachmentId);
-        if (existing && request.identity.generation <= existing.generation) {
+        const request2 = canonical.input;
+        const existing = this.#ownedByAttachment.get(request2.identity.attachmentId);
+        if (existing && request2.identity.generation <= existing.generation) {
           throw new TypeError("attachment generation is stale or already owned");
         }
-        if (this.#reservedAttachments.has(request.identity.attachmentId)) {
+        if (this.#reservedAttachments.has(request2.identity.attachmentId)) {
           throw new TypeError("attachment is already being synchronously claimed");
         }
         if (!existing && this.#ownedByAttachment.size + this.#reservedAttachments.size >= this.#maxOwnedAttempts) {
           throw new TypeError("PTY attachment capacity is exhausted");
         }
         if (existing) this.#dispose(existing);
-        this.#reservedAttachments.add(request.identity.attachmentId);
+        this.#reservedAttachments.add(request2.identity.attachmentId);
         const lifecycleEpoch = this.#lifecycleEpoch;
         const attemptId = randomUUID14();
         let resolveOutcome;
@@ -62681,8 +62681,8 @@ var init_pty_tmux_attachment_launcher = __esm({
               shell: this.#tmuxExecutable,
               args: [...this.#socketArgv, ...canonical.command.argv],
               cwd: this.#trustedCwd,
-              cols: request.viewport.cols,
-              rows: request.viewport.rows,
+              cols: request2.viewport.cols,
+              rows: request2.viewport.rows,
               env: { ...this.#environment },
               name: this.#environment.TERM,
               encoding: null
@@ -62690,11 +62690,11 @@ var init_pty_tmux_attachment_launcher = __esm({
             { onData: receiveData, onExit: receiveExit }
           );
         } catch (error) {
-          this.#reservedAttachments.delete(request.identity.attachmentId);
+          this.#reservedAttachments.delete(request2.identity.attachmentId);
           throw error;
         }
         if (lifecycleEpoch !== this.#lifecycleEpoch) {
-          this.#reservedAttachments.delete(request.identity.attachmentId);
+          this.#reservedAttachments.delete(request2.identity.attachmentId);
           try {
             process2.kill("SIGTERM");
           } catch {
@@ -62702,7 +62702,7 @@ var init_pty_tmux_attachment_launcher = __esm({
           throw new TypeError("PTY attachment launch was cancelled");
         }
         if (!Number.isSafeInteger(process2.pid) || process2.pid <= 0) {
-          this.#reservedAttachments.delete(request.identity.attachmentId);
+          this.#reservedAttachments.delete(request2.identity.attachmentId);
           try {
             process2.kill("SIGTERM");
           } catch {
@@ -62711,13 +62711,13 @@ var init_pty_tmux_attachment_launcher = __esm({
         }
         state = {
           attemptId,
-          attachmentId: request.identity.attachmentId,
-          generation: request.identity.generation,
-          viewSessionName: request.identity.viewSessionName,
-          markerValue: request.identity.markerValue,
-          expectedWindowId: request.identity.expectedWindowId,
-          expectedPaneId: request.identity.expectedPaneId,
-          viewerMode: request.viewerMode,
+          attachmentId: request2.identity.attachmentId,
+          generation: request2.identity.generation,
+          viewSessionName: request2.identity.viewSessionName,
+          markerValue: request2.identity.markerValue,
+          expectedWindowId: request2.identity.expectedWindowId,
+          expectedPaneId: request2.identity.expectedPaneId,
+          viewerMode: request2.viewerMode,
           process: process2,
           outcome,
           resolveOutcome,
@@ -64817,11 +64817,11 @@ function protocols(value) {
   if (typeof value !== "string") return [];
   return value.split(",").map((entry) => entry.trim());
 }
-function rawHeaderValues(request, expectedName) {
+function rawHeaderValues(request2, expectedName) {
   const values2 = [];
-  for (let index = 0; index < request.rawHeaders.length; index += 2) {
-    if (request.rawHeaders[index]?.toLowerCase() === expectedName) {
-      values2.push(request.rawHeaders[index + 1] ?? "");
+  for (let index = 0; index < request2.rawHeaders.length; index += 2) {
+    if (request2.rawHeaders[index]?.toLowerCase() === expectedName) {
+      values2.push(request2.rawHeaders[index + 1] ?? "");
     }
   }
   return values2;
@@ -64855,25 +64855,25 @@ function attachTerminalAttachmentWebSocket(server, coordinatorOrProvider) {
       return offered.size === 1 && offered.has(TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL) ? TERMINAL_ATTACHMENT_WEBSOCKET_SUBPROTOCOL : false;
     }
   });
-  const upgrade = (request, socket, head3) => {
-    const rawPath = request.url ?? "";
+  const upgrade = (request2, socket, head3) => {
+    const rawPath = request2.url ?? "";
     const pathname = rawPath.split("?", 1)[0] ?? "";
     if (!pathname.startsWith("/v1/terminal/attachments/")) return;
     if (pathname !== TERMINAL_ATTACHMENT_REDEEM_PATH) {
       rejectUpgrade(socket, 404);
       return;
     }
-    const originHeaders = rawHeaderValues(request, "origin");
+    const originHeaders = rawHeaderValues(request2, "origin");
     if (originHeaders.length !== 1) {
       rejectUpgrade(socket, 403);
       return;
     }
-    const protocolHeaders = rawHeaderValues(request, "sec-websocket-protocol");
+    const protocolHeaders = rawHeaderValues(request2, "sec-websocket-protocol");
     if (protocolHeaders.length !== 1) {
       rejectUpgrade(socket, 426);
       return;
     }
-    const hostClientHeaders = rawHeaderValues(request, "x-tmux-ide-host-client-id");
+    const hostClientHeaders = rawHeaderValues(request2, "x-tmux-ide-host-client-id");
     if (hostClientHeaders.length > 1) {
       rejectUpgrade(socket, 403);
       return;
@@ -64897,7 +64897,7 @@ function attachTerminalAttachmentWebSocket(server, coordinatorOrProvider) {
     socket.once("close", cancelUnbound);
     socket.once("error", cancelUnbound);
     try {
-      wss.handleUpgrade(request, socket, head3, (ws) => {
+      wss.handleUpgrade(request2, socket, head3, (ws) => {
         socket.off("close", cancelUnbound);
         socket.off("error", cancelUnbound);
         decision.admission.bind(ws);
@@ -64989,8 +64989,8 @@ var init_lease_manager2 = __esm({
           "redemptionProcessingTtlMs"
         );
       }
-      async issue(request, context) {
-        const parsedRequest = PaneStreamLeaseRequestSchemaZ.parse(request);
+      async issue(request2, context) {
+        const parsedRequest = PaneStreamLeaseRequestSchemaZ.parse(request2);
         const requestId = RequestIdSchemaZ2.parse(context.requestId);
         const projectIdentity = BindingIdSchemaZ3.parse(context.projectIdentity);
         const hostClientId = context.hostClientId ? BindingIdSchemaZ3.parse(context.hostClientId) : null;
@@ -65423,7 +65423,7 @@ var init_pane_stream_websocket = __esm({
         this.#diagnosticSharedNowMicros = options.diagnosticSharedNowMicros;
         this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
       }
-      issue(request, context) {
+      issue(request2, context) {
         const trace = this.#observability?.beginTrace(
           "pane-stream-connect",
           { generation: this.#instanceId, incarnation: null },
@@ -65484,7 +65484,7 @@ var init_pane_stream_websocket = __esm({
             );
           }
           const known = new Set(described.panes.map((pane) => pane.semanticPaneId));
-          for (const pane of request.panes) {
+          for (const pane of request2.panes) {
             if (!known.has(pane)) {
               throw new PaneStreamAdmissionError(
                 "pane-not-found",
@@ -65492,7 +65492,7 @@ var init_pane_stream_websocket = __esm({
               );
             }
           }
-          const issued = await this.#leaseManager.issue(request, {
+          const issued = await this.#leaseManager.issue(request2, {
             requestId,
             projectIdentity,
             sessionName: context.sessionName,
@@ -65501,7 +65501,7 @@ var init_pane_stream_websocket = __esm({
           });
           const descriptor = issued.descriptor;
           const ticket = issued.redemptionTicket;
-          const valid = TicketPattern3.test(ticket) && z88.uuid().safeParse(descriptor.leaseId).success && descriptor.requestId === requestId && (this.#mirror.describeSessionAuthority === void 0 || descriptor.runtimeSessionId === runtimeSessionId) && descriptor.status === "awaiting-redemption" && descriptor.viewerMode === request.viewerMode && descriptor.workspaceName === request.workspaceName && descriptor.panes.length === request.panes.length && descriptor.panes.every((pane, index) => pane === request.panes[index]) && descriptor.expiresAt > this.#now();
+          const valid = TicketPattern3.test(ticket) && z88.uuid().safeParse(descriptor.leaseId).success && descriptor.requestId === requestId && (this.#mirror.describeSessionAuthority === void 0 || descriptor.runtimeSessionId === runtimeSessionId) && descriptor.status === "awaiting-redemption" && descriptor.viewerMode === request2.viewerMode && descriptor.workspaceName === request2.workspaceName && descriptor.panes.length === request2.panes.length && descriptor.panes.every((pane, index) => pane === request2.panes[index]) && descriptor.expiresAt > this.#now();
           const ticketDigest = digestSecret(ticket);
           const duplicate = [...this.#pending.values()].some(
             (pending2) => digestsEqual(pending2.ticketDigest, ticketDigest)
@@ -67189,11 +67189,11 @@ function protocols2(value) {
   if (typeof value !== "string") return [];
   return value.split(",").map((entry) => entry.trim());
 }
-function rawHeaderValues2(request, expectedName) {
+function rawHeaderValues2(request2, expectedName) {
   const values2 = [];
-  for (let index = 0; index < request.rawHeaders.length; index += 2) {
-    if (request.rawHeaders[index]?.toLowerCase() === expectedName) {
-      values2.push(request.rawHeaders[index + 1] ?? "");
+  for (let index = 0; index < request2.rawHeaders.length; index += 2) {
+    if (request2.rawHeaders[index]?.toLowerCase() === expectedName) {
+      values2.push(request2.rawHeaders[index + 1] ?? "");
     }
   }
   return values2;
@@ -67221,30 +67221,30 @@ function attachPaneStreamWebSocket(server, coordinator) {
       return offered.size === 1 && offered.has(PANE_STREAM_WEBSOCKET_SUBPROTOCOL) ? PANE_STREAM_WEBSOCKET_SUBPROTOCOL : false;
     }
   });
-  const upgrade = (request, socket, head3) => {
-    const rawPath = request.url ?? "";
+  const upgrade = (request2, socket, head3) => {
+    const rawPath = request2.url ?? "";
     const pathname = rawPath.split("?", 1)[0] ?? "";
     if (!pathname.startsWith("/v1/terminal/pane-streams/")) return;
     if (pathname !== PANE_STREAM_REDEEM_PATH) {
       rejectUpgrade2(socket, 404);
       return;
     }
-    const originHeaders = rawHeaderValues2(request, "origin");
+    const originHeaders = rawHeaderValues2(request2, "origin");
     if (originHeaders.length !== 1) {
       rejectUpgrade2(socket, 403);
       return;
     }
-    const protocolHeaders = rawHeaderValues2(request, "sec-websocket-protocol");
+    const protocolHeaders = rawHeaderValues2(request2, "sec-websocket-protocol");
     if (protocolHeaders.length !== 1) {
       rejectUpgrade2(socket, 426);
       return;
     }
-    const hostClientHeaders = rawHeaderValues2(request, "x-tmux-ide-host-client-id");
+    const hostClientHeaders = rawHeaderValues2(request2, "x-tmux-ide-host-client-id");
     if (hostClientHeaders.length > 1) {
       rejectUpgrade2(socket, 403);
       return;
     }
-    const requestIdHeaders = rawHeaderValues2(request, "x-tmux-ide-request-id");
+    const requestIdHeaders = rawHeaderValues2(request2, "x-tmux-ide-request-id");
     if (requestIdHeaders.length > 1) {
       rejectUpgrade2(socket, 403);
       return;
@@ -67264,7 +67264,7 @@ function attachPaneStreamWebSocket(server, coordinator) {
     socket.once("close", cancelUnbound);
     socket.once("error", cancelUnbound);
     try {
-      wss.handleUpgrade(request, socket, head3, (ws) => {
+      wss.handleUpgrade(request2, socket, head3, (ws) => {
         socket.off("close", cancelUnbound);
         socket.off("error", cancelUnbound);
         decision.admission.bind(ws);
@@ -67388,21 +67388,21 @@ function createSessionRuntimeMultiplexerBackend(options) {
     await owner.consumer.close();
   };
   return {
-    mutate: async (request, authenticatedHostClientId, sourcePaneCredential, ownerAuthorized = false) => {
-      const fleetTarget = request.intent.verb === "workspace.session.kill" ? request.intent.fleetTarget : void 0;
+    mutate: async (request2, authenticatedHostClientId, sourcePaneCredential, ownerAuthorized = false) => {
+      const fleetTarget = request2.intent.verb === "workspace.session.kill" ? request2.intent.fleetTarget : void 0;
       if (fleetTarget && (!ownerAuthorized || authenticatedHostClientId || sourcePaneCredential))
         throw new WorkspaceMultiplexerError("operation_conflict", {
           reason: "fleet_close_requires_explicit_owner"
         });
       if (fleetTarget && fleetTarget.daemonInstanceId !== options.registry.generation)
         throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
-          operationId: request.operationId
+          operationId: request2.operationId
         });
-      const session = fleetTarget && ownerAuthorized && !authenticatedHostClientId && !sourcePaneCredential ? fleetTarget.sessionName : options.resolveSession(request.intent.workspaceName);
+      const session = fleetTarget && ownerAuthorized && !authenticatedHostClientId && !sourcePaneCredential ? fleetTarget.sessionName : options.resolveSession(request2.intent.workspaceName);
       if (!session) {
-        throw new Error(`Workspace ${request.intent.workspaceName} has no live tmux session`);
+        throw new Error(`Workspace ${request2.intent.workspaceName} has no live tmux session`);
       }
-      const claimedSource = request.intent.verb === "workspace.pane.send" ? request.intent.sourceSemanticPaneId : void 0;
+      const claimedSource = request2.intent.verb === "workspace.pane.send" ? request2.intent.sourceSemanticPaneId : void 0;
       if (authenticatedHostClientId) {
         const authenticatedContext = transportBinder.resolveExecutionHandle(
           session,
@@ -67411,15 +67411,15 @@ function createSessionRuntimeMultiplexerBackend(options) {
         );
         if (!authenticatedContext) {
           throw new WorkspaceMultiplexerError("operation_conflict", {
-            operationId: request.operationId,
+            operationId: request2.operationId,
             reason: "authenticated_controller_unavailable"
           });
         }
         const result = await submit(
           () => options.registry.submitAuthenticatedIntent(
             authenticatedContext,
-            request.operationId,
-            request.intent
+            request2.operationId,
+            request2.intent
           )
         );
         if (!result) throw new Error("Session mutation completed without a mutation result");
@@ -67435,8 +67435,8 @@ function createSessionRuntimeMultiplexerBackend(options) {
         const result = await submit(
           () => options.registry.submitPaneCredentialIntent(
             session,
-            request.operationId,
-            request.intent,
+            request2.operationId,
+            request2.intent,
             credentialSource,
             () => {
               const current = options.resolvePaneSourceCredential?.(
@@ -67464,7 +67464,7 @@ function createSessionRuntimeMultiplexerBackend(options) {
         } catch (error) {
           if (error instanceof SessionRuntimeControllerLeaseError && error.code === "controller-conflict") {
             throw new WorkspaceMultiplexerError("operation_conflict", {
-              operationId: request.operationId,
+              operationId: request2.operationId,
               reason: "controller_conflict"
             });
           }
@@ -67473,8 +67473,8 @@ function createSessionRuntimeMultiplexerBackend(options) {
         const result = await submit(
           () => owner.consumer.submitIntent(
             lease,
-            request.operationId,
-            request.intent
+            request2.operationId,
+            request2.intent
           )
         );
         if (!result) throw new Error("Session mutation completed without a mutation result");
@@ -70497,13 +70497,13 @@ async function runVerb(verb, input, context, deps2) {
     });
   }
   try {
-    const request = {
+    const request2 = {
       operationId: context.operationId,
       expectedDaemonInstanceId: context.daemonInstanceId,
       intent: { ...input, verb }
     };
     return await authority.mutate(
-      request,
+      request2,
       context.hostClientId,
       context.sourcePaneCredential,
       context.ownerAuthorized
@@ -72292,7 +72292,7 @@ var init_workspace_files_authority = __esm({
           });
         }
         const decoded = buffer.toString("utf8");
-        const bounded2 = boundPreviewText(decoded);
+        const bounded3 = boundPreviewText(decoded);
         return this.previewParse(fileId, {
           status: "ready",
           workspaceName: this.workspaceName,
@@ -72302,10 +72302,10 @@ var init_workspace_files_authority = __esm({
           relativePath: relPath,
           encoding: "utf-8",
           languageHint: languageHintFor(name),
-          content: bounded2.content,
+          content: bounded3.content,
           totalBytes,
-          totalLines: bounded2.totalLines,
-          truncated: bounded2.truncated
+          totalLines: bounded3.totalLines,
+          truncated: bounded3.truncated
         });
       }
       buildBreadcrumbs(rootId, rootLabel, relPath) {
@@ -72854,14 +72854,14 @@ var init_workspace_changes_authority = __esm({
         return this.readyDiff(changeId, base, rawLines.length === 0 ? [] : [synthetic], false);
       }
       readyDiff(changeId, base, hunks, lineTruncated) {
-        const bounded2 = boundHunks(hunks);
+        const bounded3 = boundHunks(hunks);
         const candidate = {
           status: "ready",
           ...base,
-          hunks: bounded2.hunks,
+          hunks: bounded3.hunks,
           totalHunks: hunks.length,
-          totalLines: bounded2.totalLines,
-          truncated: bounded2.truncated || lineTruncated
+          totalLines: bounded3.totalLines,
+          truncated: bounded3.truncated || lineTruncated
         };
         return this.diffParse(changeId, candidate);
       }
@@ -73914,9 +73914,9 @@ function response(result) {
     }
   });
 }
-async function readBoundedJson(request) {
-  if (!request.body) throw new TypeError("missing body");
-  const reader = request.body.getReader();
+async function readBoundedJson(request2) {
+  if (!request2.body) throw new TypeError("missing body");
+  const reader = request2.body.getReader();
   const chunks = [];
   let total = 0;
   try {
@@ -73941,8 +73941,8 @@ async function readBoundedJson(request) {
   }
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
 }
-function exactHeader(request, name) {
-  const value = request.headers.get(name);
+function exactHeader(request2, name) {
+  const value = request2.headers.get(name);
   if (!value || value.includes(",") || /[\0\r\n]/u.test(value)) return null;
   return value;
 }
@@ -74009,27 +74009,27 @@ function mapBackendError(error) {
 function mountTerminalAttachmentIssueRoute(app, options) {
   app.post(TERMINAL_ATTACHMENT_ISSUE_PATH, async (c) => {
     const invalid = () => response(issueError("invalid-request", "Terminal attachment request is invalid."));
-    const request = c.req.raw;
-    if (new URL(request.url).search.length > 0) return invalid();
+    const request2 = c.req.raw;
+    if (new URL(request2.url).search.length > 0) return invalid();
     const owner = decideOwnerAuthority(
-      request.headers.get("Authorization"),
+      request2.headers.get("Authorization"),
       options.ownerToken,
       "reject"
     );
     if (owner.kind !== "authorized") {
       return response(issueError("invalid-request", "Terminal attachment request was rejected."));
     }
-    if (exactHeader(request, "Content-Type")?.toLowerCase() !== "application/json") {
+    if (exactHeader(request2, "Content-Type")?.toLowerCase() !== "application/json") {
       return invalid();
     }
-    const origin = canonicalRendererOrigin2(exactHeader(request, "Origin"));
-    const requestId = exactHeader(request, "X-Tmux-Ide-Request-Id");
-    const expectedInstanceId = exactHeader(request, "X-Tmux-Ide-Expected-Daemon-Instance-Id");
-    const hostClientId = exactHeader(request, "X-Tmux-Ide-Host-Client-Id");
+    const origin = canonicalRendererOrigin2(exactHeader(request2, "Origin"));
+    const requestId = exactHeader(request2, "X-Tmux-Ide-Request-Id");
+    const expectedInstanceId = exactHeader(request2, "X-Tmux-Ide-Expected-Daemon-Instance-Id");
+    const hostClientId = exactHeader(request2, "X-Tmux-Ide-Host-Client-Id");
     if (!origin || !requestId || !expectedInstanceId || !hostClientId) return invalid();
     let raw;
     try {
-      raw = await readBoundedJson(request);
+      raw = await readBoundedJson(request2);
     } catch {
       return invalid();
     }
@@ -74102,9 +74102,9 @@ function response2(result) {
     }
   });
 }
-async function readBoundedJson2(request) {
-  if (!request.body) throw new TypeError("missing body");
-  const reader = request.body.getReader();
+async function readBoundedJson2(request2) {
+  if (!request2.body) throw new TypeError("missing body");
+  const reader = request2.body.getReader();
   const chunks = [];
   let total = 0;
   try {
@@ -74129,8 +74129,8 @@ async function readBoundedJson2(request) {
   }
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
 }
-function exactHeader2(request, name) {
-  const value = request.headers.get(name);
+function exactHeader2(request2, name) {
+  const value = request2.headers.get(name);
   if (!value || value.includes(",") || /[\0\r\n]/u.test(value)) return null;
   return value;
 }
@@ -74186,27 +74186,27 @@ function mapBackendError2(error) {
 function mountPaneStreamIssueRoute(app, options) {
   app.post(PANE_STREAM_ISSUE_PATH, async (c) => {
     const invalid = () => response2(issueError2("invalid-request", "Pane-stream request is invalid."));
-    const request = c.req.raw;
-    if (new URL(request.url).search.length > 0) return invalid();
+    const request2 = c.req.raw;
+    if (new URL(request2.url).search.length > 0) return invalid();
     const owner = decideOwnerAuthority(
-      request.headers.get("Authorization"),
+      request2.headers.get("Authorization"),
       options.ownerToken,
       "reject"
     );
     if (owner.kind !== "authorized") {
       return response2(issueError2("invalid-request", "Pane-stream request was rejected."));
     }
-    if (exactHeader2(request, "Content-Type")?.toLowerCase() !== "application/json") {
+    if (exactHeader2(request2, "Content-Type")?.toLowerCase() !== "application/json") {
       return invalid();
     }
-    const origin = canonicalRendererOrigin3(exactHeader2(request, "Origin"));
-    const requestId = exactHeader2(request, "X-Tmux-Ide-Request-Id");
-    const expectedInstanceId = exactHeader2(request, "X-Tmux-Ide-Expected-Daemon-Instance-Id");
-    const hostClientId = exactHeader2(request, "X-Tmux-Ide-Host-Client-Id");
+    const origin = canonicalRendererOrigin3(exactHeader2(request2, "Origin"));
+    const requestId = exactHeader2(request2, "X-Tmux-Ide-Request-Id");
+    const expectedInstanceId = exactHeader2(request2, "X-Tmux-Ide-Expected-Daemon-Instance-Id");
+    const hostClientId = exactHeader2(request2, "X-Tmux-Ide-Host-Client-Id");
     if (!origin || !requestId || !expectedInstanceId || !hostClientId) return invalid();
     let raw;
     try {
-      raw = await readBoundedJson2(request);
+      raw = await readBoundedJson2(request2);
     } catch {
       return invalid();
     }
@@ -76789,15 +76789,15 @@ async function requestValidatedDaemonShutdown(info, deadline) {
       "canonical_takeover_identity_mismatch"
     );
   }
-  const headers = { "Content-Type": "application/json" };
-  if (info.authToken) headers.Authorization = `Bearer ${info.authToken}`;
+  const headers2 = { "Content-Type": "application/json" };
+  if (info.authToken) headers2.Authorization = `Bearer ${info.authToken}`;
   let response3;
   try {
     response3 = await fetch(
       canonicalDaemonUrl("http", info.bindHostname, info.port, "/api/v2/action/daemon.shutdown"),
       {
         method: "POST",
-        headers,
+        headers: headers2,
         body: JSON.stringify({ reason: "takeover", expectedInstanceId: info.instanceId }),
         signal: deadline.signal
       }
@@ -76981,7 +76981,7 @@ async function startHttpServer({
     workspaceMultiplexerBackend,
     workspaceRegistry,
     terminalAttachmentIssueBackend: {
-      issue: (request, context) => getTerminalAttachmentRuntime().admission.issue(request, context)
+      issue: (request2, context) => getTerminalAttachmentRuntime().admission.issue(request2, context)
     },
     paneStreamIssueBackend: paneStreamRuntime.coordinator,
     applicationShellInventoryBackend: terminalInventoryRuntime,
@@ -77357,8 +77357,8 @@ async function startEmbeddedDaemonGeneration(opts) {
       });
       workspaceOpenHandoff = new WorkspaceOpenHandoffCoordinator({
         daemonInstanceId: instanceId,
-        openProject: (request) => workspaceOpen.open(request),
-        adoptLiveSession: (request) => workspacePromotion.promote(request),
+        openProject: (request2) => workspaceOpen.open(request2),
+        adoptLiveSession: (request2) => workspacePromotion.promote(request2),
         prewarmPrevious: async (workspaceName) => {
           const record = workspaceRegistry.get(workspaceName);
           if (record) await sessionRuntimeRegistry.prewarmSession(record.sessionName);
@@ -77791,10 +77791,10 @@ async function startEmbeddedDaemonGeneration(opts) {
       } : null,
       instanceId
     );
-    setRemoteAccessRestartBackend((request) => {
+    setRemoteAccessRestartBackend((request2) => {
       setTimeout(() => {
         void (async () => {
-          await opts.requestRestart(request);
+          await opts.requestRestart(request2);
         })().catch((err) => {
           console.error("[daemon] Remote access restart failed:", err);
         });
@@ -78050,9 +78050,9 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
           // Persisted only in the owner-only daemon record. This capability is
           // independent from the remotely shared access token.
           authToken: lifecycle.restart?.token ?? null,
-          requestRestart: async (request) => {
+          requestRestart: async (request2) => {
             if (!handle || stopStarted || signalRequested) return;
-            lifecycle.restart = request;
+            lifecycle.restart = request2;
             restartRequested = true;
             await handle.stop();
           },
@@ -79394,6 +79394,387 @@ var init_doctor = __esm({
   }
 });
 
+// packages/daemon/src/lib/ssh-daemon-relay.ts
+import {
+  Agent,
+  createServer as createServer3,
+  request
+} from "node:http";
+function headers(source, upgrade = false) {
+  const omit = /* @__PURE__ */ new Set([
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    ...(source.connection ?? "").split(",").map((v) => v.trim().toLowerCase())
+  ]);
+  const result = {};
+  for (const [name, value] of Object.entries(source)) if (!omit.has(name)) result[name] = value;
+  if (upgrade) {
+    result.connection = "Upgrade";
+    result.upgrade = source.upgrade;
+  }
+  return result;
+}
+function sameIdentity(actual, expected) {
+  return actual.pid === expected.pid && actual.instanceId === expected.instanceId && actual.startedAt === expected.startedAt && actual.protocolVersion === expected.protocolVersion && actual.productVersion === expected.productVersion && actual.environmentId === expected.environmentId;
+}
+async function createSshDaemonRelay(options) {
+  const upstreamPort = bounded2(options.upstreamPort, 0, 65535);
+  const expected = DaemonIdentitySchema.parse(options.expected);
+  const probeTimeout = bounded2(options.probeTimeoutMs, 1500, 15e3);
+  const maxPending = bounded2(options.maxPending, 32, 1024);
+  const maxConnections = bounded2(options.maxConnections, 1024, 4096);
+  const sockets = /* @__PURE__ */ new Set();
+  const clients = /* @__PURE__ */ new Set();
+  const leases = /* @__PURE__ */ new Map();
+  const requests = /* @__PURE__ */ new Set();
+  let disposed = false, starting = false, listenerClosed = false, pending = 0, admitted = 0;
+  let finish;
+  const closed = new Promise((resolve40) => {
+    finish = resolve40;
+  });
+  const maybeClosed = () => {
+    if (disposed && listenerClosed && sockets.size === 0 && pending === 0 && requests.size === 0)
+      finish();
+  };
+  const retain = (socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {
+    });
+    socket.once("close", () => {
+      sockets.delete(socket);
+      maybeClosed();
+    });
+    if (disposed) socket.destroy();
+  };
+  const retire = (lease) => {
+    if (lease.retired) return;
+    lease.retired = true;
+    lease.controller.abort();
+    for (const req of lease.requests) req.destroy();
+    lease.agent.socket?.destroy();
+    lease.agent.destroy();
+  };
+  const server = createServer3({ maxHeaderSize: 16 * 1024 });
+  const dispose2 = () => {
+    if (disposed) return;
+    disposed = true;
+    options.signal?.removeEventListener("abort", dispose2);
+    for (const lease of leases.values()) retire(lease);
+    for (const req of requests) req.destroy();
+    for (const socket of sockets) socket.destroy();
+    if (server.listening || starting)
+      server.close(() => {
+        listenerClosed = true;
+        maybeClosed();
+      });
+    else {
+      listenerClosed = true;
+      maybeClosed();
+    }
+  };
+  const ownRequest = (lease, req) => {
+    requests.add(req);
+    lease.requests.add(req);
+    req.once("close", () => {
+      requests.delete(req);
+      lease.requests.delete(req);
+      maybeClosed();
+    });
+    return req;
+  };
+  const authenticate = async (lease) => {
+    const timer = setTimeout(() => lease.controller.abort(), probeTimeout);
+    try {
+      const actual = await new Promise((resolve40, reject) => {
+        const req = ownRequest(
+          lease,
+          request(
+            {
+              hostname: "127.0.0.1",
+              port: upstreamPort,
+              path: "/identity",
+              method: "GET",
+              headers: { accept: "application/json", connection: "keep-alive" },
+              agent: lease.agent,
+              signal: lease.controller.signal
+            },
+            (response3) => {
+              const chunks = [];
+              let bytes = 0;
+              response3.on("error", reject);
+              response3.on("data", (chunk) => {
+                bytes += chunk.length;
+                if (bytes > 32 * 1024) {
+                  req.destroy(refused());
+                  return;
+                }
+                chunks.push(chunk);
+              });
+              response3.once("end", () => {
+                try {
+                  if (response3.statusCode !== 200 || !response3.complete || response3.headers.connection === "close")
+                    throw refused();
+                  resolve40(
+                    DaemonIdentitySchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")))
+                  );
+                } catch {
+                  reject(refused());
+                }
+              });
+            }
+          )
+        );
+        req.once("error", reject);
+        req.end();
+      });
+      if (!sameIdentity(actual, expected)) throw new IdentityMismatch();
+      await new Promise((resolve40) => setImmediate(resolve40));
+      if (lease.retired || lease.controller.signal.aborted || !lease.agent.socket || lease.agent.socket.destroyed || lease.agent.socket.readableLength !== 0)
+        throw refused();
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const admission = (client) => {
+    const existing = leases.get(client);
+    if (existing) return existing;
+    if (disposed || pending >= maxPending) throw refused();
+    const lease = {
+      agent: new VerifiedConnectionAgent(retain),
+      controller: new AbortController(),
+      ready: Promise.resolve(),
+      requests: /* @__PURE__ */ new Set(),
+      retired: false,
+      admitted: 0
+    };
+    leases.set(client, lease);
+    pending++;
+    client.once("close", () => {
+      retire(lease);
+      leases.delete(client);
+    });
+    lease.ready = authenticate(lease).catch((error) => {
+      retire(lease);
+      if (error instanceof IdentityMismatch) dispose2();
+      throw refused();
+    }).finally(() => {
+      pending--;
+      maybeClosed();
+    });
+    return lease;
+  };
+  const prepare = async (incoming, lifetime) => {
+    if (!incoming.url?.startsWith("/") || incoming.url.startsWith("//")) throw refused();
+    const lease = admission(incoming.socket);
+    if (lease.admitted >= 32 || admitted >= 2048) {
+      incoming.socket.destroy();
+      throw refused();
+    }
+    lease.admitted++;
+    admitted++;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      lease.admitted--;
+      admitted--;
+      lifetime.removeListener("close", release);
+    };
+    lifetime.once("close", release);
+    try {
+      await lease.ready;
+      if (disposed || lease.retired || incoming.socket.destroyed || released) throw refused();
+      return lease;
+    } catch {
+      release();
+      throw refused();
+    }
+  };
+  const forward = (incoming, lease, upgrade) => ownRequest(
+    lease,
+    request({
+      hostname: "127.0.0.1",
+      port: upstreamPort,
+      path: incoming.url,
+      method: incoming.method,
+      headers: headers(incoming.headers, upgrade),
+      agent: lease.agent
+    })
+  );
+  const rejectResponse = (response3) => {
+    if (response3.headersSent) response3.destroy();
+    else {
+      response3.writeHead(503, { connection: "close", "content-length": "0" });
+      response3.end();
+    }
+  };
+  server.on("connection", (socket) => {
+    if (disposed || clients.size >= maxConnections) {
+      socket.destroy();
+      return;
+    }
+    clients.add(socket);
+    socket.once("close", () => clients.delete(socket));
+    retain(socket);
+  });
+  server.on("error", dispose2);
+  server.on("clientError", (_error, socket) => socket.destroy());
+  server.on("connect", (_request, socket) => socket.destroy());
+  server.on("request", (incoming, response3) => {
+    incoming.pause();
+    void prepare(incoming, response3).then(
+      (lease) => {
+        const outgoing = forward(incoming, lease, false);
+        const cancel = () => outgoing.destroy();
+        incoming.once("aborted", cancel);
+        response3.once("close", () => {
+          if (!response3.writableFinished) cancel();
+        });
+        outgoing.once("error", () => rejectResponse(response3));
+        outgoing.once("socket", (socket) => {
+          if (lease.retired || socket !== lease.agent.socket || socket.destroyed) {
+            outgoing.destroy(refused());
+            return;
+          }
+          incoming.pipe(outgoing);
+        });
+        outgoing.once("response", (upstream) => {
+          upstream.once("error", () => response3.destroy());
+          const responseHeaders = headers(upstream.headers);
+          if (upstream.headers.connection === "close") responseHeaders.connection = "close";
+          response3.writeHead(upstream.statusCode ?? 502, responseHeaders);
+          upstream.pipe(response3);
+        });
+      },
+      () => rejectResponse(response3)
+    ).catch(() => rejectResponse(response3));
+  });
+  server.on("upgrade", (incoming, client, head3) => {
+    client.pause();
+    if (head3.length > 64 * 1024) {
+      client.destroy();
+      return;
+    }
+    void prepare(incoming, client).then(
+      (lease) => {
+        const outgoing = forward(incoming, lease, true);
+        outgoing.once("error", () => client.destroy());
+        outgoing.once("socket", (socket) => {
+          if (lease.retired || socket !== lease.agent.socket || socket.destroyed) {
+            outgoing.destroy(refused());
+            return;
+          }
+          outgoing.end();
+        });
+        outgoing.once("response", (upstream) => {
+          upstream.destroy();
+          client.destroy();
+        });
+        outgoing.once("upgrade", (upstream, socket, upstreamHead) => {
+          if (lease.retired || socket !== lease.agent.socket || upstream.statusCode !== 101) {
+            socket.destroy();
+            client.destroy();
+            return;
+          }
+          const accepted = headers(upstream.headers, true);
+          const lines = Object.entries(accepted).flatMap(
+            ([name, value]) => (Array.isArray(value) ? value : [value]).filter((v) => v !== void 0).map((v) => `${name}: ${v}\r
+`)
+          );
+          client.write(`HTTP/1.1 101 Switching Protocols\r
+${lines.join("")}\r
+`);
+          if (upstreamHead.length) client.write(upstreamHead);
+          if (head3.length) socket.write(head3);
+          socket.once("close", () => client.destroy());
+          client.once("close", () => socket.destroy());
+          socket.pipe(client).pipe(socket);
+          socket.resume();
+          client.resume();
+        });
+      },
+      () => client.destroy()
+    ).catch(() => client.destroy());
+  });
+  options.signal?.addEventListener("abort", dispose2, { once: true });
+  if (options.signal?.aborted) {
+    dispose2();
+    throw refused();
+  }
+  try {
+    await new Promise((resolve40, reject) => {
+      const cancelled = () => done(refused());
+      const done = (error) => {
+        options.signal?.removeEventListener("abort", cancelled);
+        server.removeListener("error", done);
+        if (error) reject(error);
+        else resolve40();
+      };
+      server.once("error", done);
+      options.signal?.addEventListener("abort", cancelled, { once: true });
+      starting = true;
+      server.listen(0, "127.0.0.1", () => {
+        starting = false;
+        done();
+      });
+    });
+    if (disposed) {
+      server.close();
+      throw refused();
+    }
+    const address = server.address();
+    if (!address || typeof address === "string") throw refused();
+    return { baseUrl: `http://127.0.0.1:${address.port}`, closed, dispose: dispose2 };
+  } catch {
+    dispose2();
+    throw refused();
+  }
+}
+var refused, IdentityMismatch, VerifiedConnectionAgent, bounded2;
+var init_ssh_daemon_relay = __esm({
+  "packages/daemon/src/lib/ssh-daemon-relay.ts"() {
+    "use strict";
+    init_src();
+    refused = () => new Error("SSH daemon relay unavailable");
+    IdentityMismatch = class extends Error {
+    };
+    VerifiedConnectionAgent = class extends Agent {
+      constructor(retain) {
+        super({ keepAlive: true, maxSockets: 1, maxFreeSockets: 1 });
+        this.retain = retain;
+      }
+      retain;
+      socket = null;
+      dialed = false;
+      createConnection(options, callback) {
+        if (this.dialed) {
+          queueMicrotask(() => callback?.(refused(), void 0));
+          return void 0;
+        }
+        this.dialed = true;
+        const socket = super.createConnection(options, callback);
+        if (socket) {
+          this.socket = socket;
+          this.retain(socket);
+        }
+        return socket;
+      }
+    };
+    bounded2 = (value, fallback, maximum) => {
+      const result = value ?? fallback;
+      if (!Number.isSafeInteger(result) || result < 1 || result > maximum) throw refused();
+      return result;
+    };
+  }
+});
+
 // packages/daemon/src/lib/ssh-daemon-transport.ts
 var ssh_daemon_transport_exports = {};
 __export(ssh_daemon_transport_exports, {
@@ -79404,7 +79785,7 @@ __export(ssh_daemon_transport_exports, {
   probeSshDaemonIdentity: () => probeSshDaemonIdentity
 });
 import { spawn as spawn9 } from "node:child_process";
-import { createServer as createServer3 } from "node:net";
+import { createServer as createServer4 } from "node:net";
 import { z as z93 } from "zod";
 function failure2(message, code = "unavailable") {
   return new SshConnectionError(message, code);
@@ -79420,7 +79801,7 @@ function stop2(child) {
   child.once("close", () => clearTimeout(timer));
 }
 async function allocatePort() {
-  const server = createServer3();
+  const server = createServer4();
   return new Promise((resolve40, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
@@ -79457,14 +79838,14 @@ async function boundedJson(response3) {
     reader.releaseLock();
   }
 }
-async function probeSshDaemonIdentity(baseUrl, daemon, signal, request = fetch) {
+async function probeSshDaemonIdentity(baseUrl, daemon, signal, request2 = fetch) {
   const matches = (actual) => actual.instanceId === daemon.instanceId && actual.startedAt === daemon.startedAt && actual.protocolVersion === daemon.protocolVersion && actual.productVersion === daemon.productVersion && actual.environmentId === daemon.environmentId;
   const identity = DaemonIdentitySchema.safeParse(
-    await boundedJson(await request(`${baseUrl}/identity`, { signal, redirect: "error" }))
+    await boundedJson(await request2(`${baseUrl}/identity`, { signal, redirect: "error" }))
   );
   if (!identity.success || identity.data.pid !== daemon.pid || !matches(identity.data))
     return false;
-  const response3 = await request(`${baseUrl}/api/v2/capabilities`, {
+  const response3 = await request2(`${baseUrl}/api/v2/capabilities`, {
     method: "POST",
     headers: { Authorization: `Bearer ${daemon.authToken}`, "Content-Type": "application/json" },
     body: "{}",
@@ -79568,6 +79949,7 @@ async function openSshDaemonTransport(options, dependencies = defaults2) {
   if (options.signal?.aborted) abort();
   const timer = setTimeout(abort, timeoutMs);
   let child;
+  let relay;
   let disposed = false;
   const dispose2 = () => {
     if (disposed) return;
@@ -79576,6 +79958,7 @@ async function openSshDaemonTransport(options, dependencies = defaults2) {
     options.signal?.removeEventListener("abort", abort);
     controller.abort();
     if (child) stop2(child);
+    relay?.dispose();
   };
   signal.addEventListener("abort", dispose2, { once: true });
   try {
@@ -79622,7 +80005,7 @@ async function openSshDaemonTransport(options, dependencies = defaults2) {
     child.stdout?.resume();
     child.stderr?.resume();
     child.once("exit", dispose2);
-    const closed = new Promise((resolve40) => {
+    const tunnelClosed = new Promise((resolve40) => {
       child.once("close", () => {
         dispose2();
         resolve40();
@@ -79632,7 +80015,16 @@ async function openSshDaemonTransport(options, dependencies = defaults2) {
         resolve40();
       });
     });
-    const baseUrl = `http://127.0.0.1:${port}`;
+    relay = await (dependencies.relay ?? createSshDaemonRelay)({
+      upstreamPort: port,
+      expected: DaemonIdentitySchema.parse({ ...daemon, ok: true }),
+      signal
+    });
+    if (disposed) relay.dispose();
+    void relay.closed.then(dispose2, dispose2);
+    const closed = Promise.all([tunnelClosed, relay.closed]).then(() => {
+    });
+    const baseUrl = relay.baseUrl;
     while (!signal.aborted) {
       try {
         if (await cancellable(dependencies.probe(baseUrl, daemon, signal), signal)) {
@@ -79657,6 +80049,7 @@ var RemoteDaemonHandshakeSchema, RemoteDaemonHandshakeFailureSchema, SshConnecti
 var init_ssh_daemon_transport = __esm({
   "packages/daemon/src/lib/ssh-daemon-transport.ts"() {
     "use strict";
+    init_ssh_daemon_relay();
     init_src();
     RemoteDaemonHandshakeSchema = z93.object({
       version: z93.literal(1),
@@ -80876,7 +81269,7 @@ var command_center_exports = {};
 __export(command_center_exports, {
   startCommandCenter: () => startCommandCenter
 });
-import { createServer as createServer4 } from "node:http";
+import { createServer as createServer5 } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 async function startCommandCenter(options = {}) {
   const port = options.port ?? 6060;
@@ -80886,7 +81279,7 @@ async function startCommandCenter(options = {}) {
   if (options.authConfig) appOpts.authConfig = options.authConfig;
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
-  const server = createServer4(listener);
+  const server = createServer5(listener);
   return new Promise((resolve40) => {
     server.listen(port, hostname4, () => {
       console.log(`Command Center API on http://${hostname4}:${port}`);
@@ -80909,7 +81302,7 @@ __export(server_exports3, {
   resolvePort: () => resolvePort,
   start: () => start
 });
-import { createServer as createServer5 } from "node:http";
+import { createServer as createServer6 } from "node:http";
 import { parse as parse2 } from "node:url";
 import { Hono as Hono2 } from "hono";
 import { getRequestListener as getRequestListener2 } from "@hono/node-server";
@@ -80930,7 +81323,7 @@ function createApp2() {
 async function start(port) {
   const resolvedPort = resolvePort(port);
   const app = createApp2();
-  const server = createServer5(getRequestListener2(app.fetch));
+  const server = createServer6(getRequestListener2(app.fetch));
   const ptyWss = new WebSocketServer5({ noServer: true });
   server.on("upgrade", (req, socket, head3) => {
     const { pathname } = parse2(req.url ?? "/", true);
