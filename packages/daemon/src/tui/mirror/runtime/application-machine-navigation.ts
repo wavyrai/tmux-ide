@@ -21,9 +21,12 @@ export function createApplicationMachineNavigation(options: {
   sessionName(): string | null;
   activePaneId?(): string | null;
   setSurface(value: "home" | "terminals"): void;
-  setNote(value: string | null): void;
+  setNote(value: string | null | ((current: string | null) => string | null)): void;
 }) {
-  const preferences = createApplicationFleetPreferences({ onError: options.setNote });
+  const preferences = createApplicationFleetPreferences({
+    onError: options.setNote,
+    onRecovered: (message) => options.setNote((current) => (current === message ? null : current)),
+  });
   const [saved, setSaved] = createSignal(preferences.getSnapshot());
   const stopPreferences = preferences.subscribe(setSaved);
   const cacheSignatures = new Map<string, string>();

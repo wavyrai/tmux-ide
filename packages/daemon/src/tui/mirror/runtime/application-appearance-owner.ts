@@ -21,7 +21,7 @@ export interface ApplicationAppearanceOwner {
   /** One publication boundary for every app-owned colour consumer. */
   readonly appearance: Accessor<ApplicationAppearanceSnapshot>;
   readonly note: Accessor<string | null>;
-  readonly setNote: (note: string | null) => void;
+  readonly setNote: (note: string | null | ((current: string | null) => string | null)) => void;
   readonly theme: Accessor<SemanticThemeSnapshot>;
   readonly palette: Accessor<TerminalPaletteProjection>;
   readonly hostPalette: Accessor<ApplicationTerminalPaletteSnapshot>;

@@ -5,6 +5,10 @@ const state = vi.hoisted(() => ({
   selected: "local",
   agentGroups: [] as readonly ApplicationMachineAgentGroup[],
   agentCurrent: true,
+  preferenceOptions: null as null | {
+    onError(message: string): void;
+    onRecovered(message: string): void;
+  },
   handles: new Map<
     string,
     {
@@ -68,12 +72,15 @@ vi.mock("../../../lib/local-fleet-request.ts", () => ({
   saveMachineProfiles: vi.fn(async () => ({ version: 1, machines: [] })),
 }));
 vi.mock("./application-fleet-preferences.ts", () => ({
-  createApplicationFleetPreferences: () => ({
-    getSnapshot: () => ({ version: 1, favorites: [], collapsed: [], recent: [], catalog: [] }),
-    subscribe: () => () => {},
-    change: vi.fn(),
-    dispose: vi.fn(),
-  }),
+  createApplicationFleetPreferences: (options: NonNullable<typeof state.preferenceOptions>) => {
+    state.preferenceOptions = options;
+    return {
+      getSnapshot: () => ({ version: 1, favorites: [], collapsed: [], recent: [], catalog: [] }),
+      subscribe: () => () => {},
+      change: vi.fn(),
+      dispose: vi.fn(),
+    };
+  },
 }));
 import { createApplicationMachineNavigation } from "./application-machine-navigation.ts";
 let dispose: () => void;
@@ -102,6 +109,17 @@ function navigation() {
   });
   return { owner, callbacks };
 }
+
+it("clears a recovered preference warning without clearing a newer unrelated note", () => {
+  const { callbacks } = navigation();
+  state.preferenceOptions!.onRecovered("preferences failed");
+  const update = callbacks.setNote.mock.calls.at(-1)![0] as (
+    current: string | null,
+  ) => string | null;
+  expect(update("preferences failed")).toBeNull();
+  expect(update("session disconnected")).toBe("session disconnected");
+  expect(update(null)).toBeNull();
+});
 function machine(id: string, ready: Promise<boolean> = Promise.resolve(true), status = "ready") {
   state.handles.set(id, {
     id,

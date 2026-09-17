@@ -13,7 +13,7 @@ import {
 
 /** Local preference writer always targets the verified LOCAL daemon, never selected SSH. */
 export function createApplicationFleetPreferences(
-  options: { onError?(message: string): void } = {},
+  options: { onError?(message: string): void; onRecovered?(message: string): void } = {},
 ) {
   let state: FleetClientState;
   let writable = true;
@@ -30,6 +30,11 @@ export function createApplicationFleetPreferences(
   let saving = false;
   let missingReported = false;
   let failureReported = false;
+  const reported = new Set<string>();
+  const report = (message: string) => {
+    reported.add(message);
+    options.onError?.(message);
+  };
   const retry = () => {
     retryTimer ??= setTimeout(() => {
       retryTimer = null;
@@ -54,9 +59,7 @@ export function createApplicationFleetPreferences(
         const daemon = readCanonicalDaemonInfo();
         if (!daemon || !daemon.authToken) {
           if (!missingReported)
-            options.onError?.(
-              "Fleet preferences are kept in memory until a local daemon is running.",
-            );
+            report("Fleet preferences are kept in memory until a local daemon is running.");
           missingReported = true;
           requeue(key, change);
           return;
@@ -89,13 +92,16 @@ export function createApplicationFleetPreferences(
             result.daemon.startedAt !== daemon.startedAt
           )
             throw new Error();
+          if (lifetime.signal.aborted) return;
           failureReported = false;
           missingReported = false;
+          for (const message of reported) options.onRecovered?.(message);
+          reported.clear();
           // Keep newer in-flight optimistic edits; the daemon's reducer already merged disk state.
         } catch {
           if (lifetime.signal.aborted) return;
           if (!failureReported)
-            options.onError?.(
+            report(
               "Fleet preferences could not be saved. Update the local daemon or check its state file.",
             );
           failureReported = true;
