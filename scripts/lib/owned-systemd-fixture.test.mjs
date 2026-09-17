@@ -161,6 +161,24 @@ test("complete inspection rejects foreign, recreated, broadened or incomplete co
     assert.throws(() => inspectSystemdContainer(raw, d, good.Id));
   }
 });
+
+test("Docker capability prefix normalization accepts only the exact single requested capability", () => {
+  const raw = inspect();
+  raw.HostConfig.CapAdd = ["CAP_SYS_ADMIN"];
+  assert.equal(inspectSystemdContainer(raw, d, raw.Id).id, raw.Id);
+  for (const capabilities of [
+    null,
+    [],
+    ["CAP_SYS_ADMIN", "CAP_NET_ADMIN"],
+    ["SYS_ADMIN", "CAP_SYS_ADMIN"],
+    ["CAP_SYS_ADMIN", "CAP_SYS_ADMIN"],
+    ["CAP_ALL"],
+    ["cap_sys_admin"],
+  ]) {
+    raw.HostConfig.CapAdd = capabilities;
+    assert.throws(() => inspectSystemdContainer(raw, d, raw.Id));
+  }
+});
 const unit = `Id=${d.unit}\nFragmentPath=/etc/systemd/system/${d.unit}\nLoadState=loaded\nMainPID=123\nUser=1000\nGroup=1000\nRestart=always\nKillMode=process\nActiveState=active\nSubState=running\n`;
 test("systemd observation rejects duplicates and changed service authority", () => {
   assert.equal(parseSystemdUnit(unit, d).pid, 123);

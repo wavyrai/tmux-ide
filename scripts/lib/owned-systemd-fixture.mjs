@@ -81,7 +81,7 @@ export function inspectSystemdContainer(raw, definition, expectedId) {
     h.Memory !== 536870912 ||
     h.PidsLimit !== 256 ||
     h.ReadonlyRootfs !== false ||
-    !equal(h.CapAdd, ["SYS_ADMIN"]) ||
+    !(equal(h.CapAdd, ["SYS_ADMIN"]) || equal(h.CapAdd, ["CAP_SYS_ADMIN"])) ||
     !equal(h.SecurityOpt, ["no-new-privileges"]) ||
     !(h.Binds === null || equal(h.Binds, [])) ||
     !(h.Devices === null || equal(h.Devices, [])) ||
