@@ -25,6 +25,7 @@ import {
 import { privatePackedInstallEnvironment } from "./lib/packed-install-environment.mjs";
 import {
   launchdDefinition,
+  inspectLaunchdLoginContext,
   ownedLaunchdJob,
   publishLaunchdEntry,
   privateRootReferences,
@@ -271,6 +272,9 @@ const logGuard = setInterval(() => {
   }
 }, 100);
 try {
+  receipt.context = await inspectLaunchdLoginContext((args) =>
+    command("/bin/launchctl", args, { timeout: 5000, maxBuffer: 1048576 }),
+  );
   for (const path of [home, state]) mkdirSync(path, { mode: 0o700 });
   tmux = execFileSync("/usr/bin/which", ["tmux"], {
     encoding: "utf8",
@@ -357,7 +361,15 @@ try {
     plistSha256: definition.sha256,
   };
   writeFileSync(join(evidence, "descriptor.json"), JSON.stringify(receipt, null, 2));
-  job = ownedLaunchdJob({ definition, run: (args) => command("/bin/launchctl", args) });
+  job = ownedLaunchdJob({
+    definition,
+    run: (args) => command("/bin/launchctl", args),
+    lint: async (path) => {
+      const result = await command("/usr/bin/plutil", ["-lint", "--", path], { timeout: 5000 });
+      receipt.plistValid = result.code === 0;
+      if (!receipt.plistValid) throw new Error("fixture-plist-invalid");
+    },
+  });
   await tm("new-session", "-d", "-s", "keep", "-x", "80", "-y", "24", "/bin/sh");
   tmuxPid = Number((await tm("display-message", "-p", "-t", "keep", "#{pid}")).trim());
   const tmuxBirth = await witness.identify(tmuxPid);
@@ -464,6 +476,7 @@ try {
       receipt.cleanup.owners = false;
     }
   }
+  if (!witness && !job && !tmuxPid && owners.size === 0) receipt.cleanup.owners = true;
   try {
     await stopTmux();
     receipt.cleanup.tmux = true;

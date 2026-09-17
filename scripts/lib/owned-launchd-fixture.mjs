@@ -39,11 +39,11 @@ export function launchdDefinition({
     .map(([k, v]) => `<key>${xml(literal(k))}</key><string>${xml(v)}</string>`)
     .join(
       "",
-    )}</dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>1</integer><key>StandardOutPath</key><string>${xml(join(root, "service.stdout"))}</string><key>StandardErrorPath</key><string>${xml(join(root, "service.stderr"))}</string></dict></plist>\n`;
+    )}</dict><key>LimitLoadToSessionType</key><string>Aqua</string><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>1</integer><key>StandardOutPath</key><string>${xml(join(root, "service.stdout"))}</string><key>StandardErrorPath</key><string>${xml(join(root, "service.stderr"))}</string></dict></plist>\n`;
   return {
     label,
-    domain: `user/${uid}`,
-    target: `user/${uid}/${label}`,
+    domain: `gui/${uid}`,
+    target: `gui/${uid}/${label}`,
     path: join(root, "service.plist"),
     node,
     args,
@@ -51,6 +51,32 @@ export function launchdDefinition({
     sha256: hash(plist),
   };
 }
+/** Refuse unrelated login/background contexts; never switch domains after failure. */
+export async function inspectLaunchdLoginContext(run, uid = process.getuid()) {
+  if (!Number.isSafeInteger(uid) || uid <= 0) throw refuse();
+  const name = await run(["managername"]);
+  const owner = await run(["manageruid"]);
+  if (
+    name.code !== 0 ||
+    name.stdout.trim() !== "Aqua" ||
+    owner.code !== 0 ||
+    owner.stdout.trim() !== String(uid)
+  )
+    throw refuse();
+  const domain = `gui/${uid}`;
+  const result = await run(["print", domain]);
+  const scalar = (key) =>
+    [...result.stdout.matchAll(new RegExp(`^\\s*${key} = ([^\\n]+)$`, "gm"))].map((m) => m[1]);
+  if (
+    result.code !== 0 ||
+    !result.stdout.startsWith(`${domain} = {`) ||
+    JSON.stringify(scalar("type")) !== '["login"]' ||
+    JSON.stringify(scalar("uid")) !== JSON.stringify([String(uid)])
+  )
+    throw refuse();
+  return { domain, type: "login", manager: "Aqua", uid };
+}
+
 export function inspectLaunchdResult(result, definition) {
   if (result.code !== 0) {
     if (result.code === 113 && result.stderr.includes("Could not find service")) return null;
@@ -92,9 +118,11 @@ export function publishLaunchdEntry(path, modulePath, environment) {
 export function ownedLaunchdJob({
   definition,
   run,
+  lint,
   now = Date.now,
   pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
+  if (typeof lint !== "function") throw refuse();
   let attempted = false;
   let plistWitness;
   const verify = () => {
@@ -118,6 +146,8 @@ export function ownedLaunchdJob({
       if (await inspect()) throw refuse();
       writeFileSync(definition.path, definition.plist, { flag: "wx", mode: 0o600 });
       plistWitness = lstatSync(definition.path);
+      verify();
+      await lint(definition.path);
       verify();
       attempted = true;
       const result = await run(["bootstrap", definition.domain, definition.path]);
@@ -189,7 +219,8 @@ export async function verifyLaunchdDaemonIdentity({ read, identify, request }) {
 }
 
 export function launchdCommandDiagnostic(operation, result) {
-  if (!["print", "bootstrap", "bootout"].includes(operation)) throw refuse();
+  if (!["print", "bootstrap", "bootout", "managername", "manageruid"].includes(operation))
+    throw refuse();
   const text = result.stderr.slice(0, 65536);
   const category = !text
     ? "none"

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   launchdDefinition,
+  inspectLaunchdLoginContext,
   inspectLaunchdResult,
   ownedLaunchdJob,
   publishLaunchdEntry,
@@ -37,7 +38,7 @@ test("exact private job plist uses explicit foreground argv and private environm
   const { definition } = setup(t);
   assert.deepEqual(definition.args.slice(2), ["--headless", "--json"]);
   assert.match(definition.plist, /<key>KeepAlive<\/key><true\/>/);
-  assert.match(definition.target, /^user\/501\/org\.tmux-ide\.qualification\./);
+  assert.match(definition.target, /^gui\/501\/org\.tmux-ide\.qualification\./);
   assert.match(definition.plist, /<key>ZDOTDIR<\/key>/);
 });
 test("job observation refuses changed definition, duplicate PID and ambiguous errors", (t) => {
@@ -58,6 +59,7 @@ test("existing exact label refuses before writing or bootstrapping", async (t) =
   const { definition, active } = setup(t);
   const calls = [];
   const job = ownedLaunchdJob({
+    lint: async () => {},
     definition,
     run: async (args) => {
       calls.push(args);
@@ -74,6 +76,7 @@ test("partial bootstrap failure still retires only the exact verified job", asyn
   const calls = [];
   let present = false;
   const job = ownedLaunchdJob({
+    lint: async () => {},
     definition,
     run: async (args) => {
       calls.push(args);
@@ -95,6 +98,7 @@ test("changed plist and job ownership refuse cleanup without bootout", async (t)
   const calls = [];
   let present = false;
   const job = ownedLaunchdJob({
+    lint: async () => {},
     definition,
     run: async (args) => {
       calls.push(args);
@@ -124,6 +128,7 @@ test("a cancelled bootstrap preserves retirement authority", async (t) => {
   let present = false;
   let bootout = false;
   const job = ownedLaunchdJob({
+    lint: async () => {},
     definition,
     run: async ([verb]) => {
       if (verb === "print") return present ? active() : absent;
@@ -209,6 +214,7 @@ test("successful bootout command is not retirement while the exact job remains",
     clock = 0,
     bootouts = 0;
   const job = ownedLaunchdJob({
+    lint: async () => {},
     definition,
     now: () => clock,
     pause: async () => {
@@ -299,4 +305,67 @@ test("launchctl failure diagnostics retain fixed classification without raw stde
     stderrCategory: "other",
   });
   assert.throws(() => launchdCommandDiagnostic("arbitrary", { code: 0, stderr: "" }));
+});
+
+test("GUI preflight requires Aqua and exact current UID before selected domain lookup", async () => {
+  for (const [name, uid] of [
+    ["Background", "501"],
+    ["Aqua", "502"],
+  ]) {
+    const calls = [];
+    await assert.rejects(
+      inspectLaunchdLoginContext(async (args) => {
+        calls.push(args);
+        return { code: 0, stdout: args[0] === "managername" ? name : uid };
+      }, 501),
+    );
+    assert.equal(
+      calls.some((args) => args[0] === "print"),
+      false,
+    );
+  }
+  const calls = [];
+  const run = async (args) => {
+    calls.push(args);
+    return {
+      code: 0,
+      stdout:
+        args[0] === "managername"
+          ? "Aqua\n"
+          : args[0] === "manageruid"
+            ? "501\n"
+            : "gui/501 = {\n type = login\n uid = 501\n}\n",
+    };
+  };
+  assert.deepEqual(await inspectLaunchdLoginContext(run, 501), {
+    domain: "gui/501",
+    type: "login",
+    manager: "Aqua",
+    uid: 501,
+  });
+  assert.deepEqual(calls.at(-1), ["print", "gui/501"]);
+  await assert.rejects(
+    inspectLaunchdLoginContext(
+      async (args) => (args[0] === "print" ? { code: 113, stdout: "" } : run(args)),
+      501,
+    ),
+  );
+});
+test("plist lint refusal prevents bootstrap and cannot trigger another domain", async (t) => {
+  const { definition } = setup(t);
+  const calls = [];
+  assert.match(definition.plist, /<key>LimitLoadToSessionType<\/key><string>Aqua<\/string>/);
+  const job = ownedLaunchdJob({
+    definition,
+    run: async (args) => {
+      calls.push(args);
+      return absent;
+    },
+    lint: async () => {
+      throw Error("invalid");
+    },
+  });
+  await assert.rejects(job.bootstrap(), /invalid/);
+  await job.retire();
+  assert.deepEqual(calls, [["print", definition.target]]);
 });
