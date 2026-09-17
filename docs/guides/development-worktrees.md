@@ -47,8 +47,7 @@ pnpm --silent dev:instance up --name demo --json
 pnpm --silent dev:instance status --name demo --json
 ```
 
-The builder exports
-that commit into private staging, applies the checked-in patch and builds a
+The native builder exports that commit into private staging, applies the checked-in patch and builds a
 bundle for the current platform. It requires a C toolchain, autoconf/automake,
 pkg-config and the platform's libevent, ncurses and utf8proc development
 dependencies. It does not modify the source checkout or replace system tmux.
@@ -113,7 +112,7 @@ pnpm --silent dev:instance reset --name demo --yes --json
 `down` stops the selected daemon and its private tmux server, including pane work,
 but retains state and builds. `down --daemon-only` preserves tmux and pane work.
 `reset --yes` requires the instance to be stopped and removes its verified state
-and artifacts. Rebuild before starting a reset instance again. Neither command
+and artifacts, retaining a small reset marker. Rebuild before starting a reset instance again. Neither command
 cleans unrelated worktrees, production sessions or an entire shared store.
 
 ## Linux over SSH and clean installs
@@ -149,3 +148,10 @@ own sessions have been stopped, then retire them with their original workflow.
 Moving a worktree changes its identity; use `list --json` and the verified stored
 `--id` to inspect or retire an orphan before removing its old checkout. Do not
 copy ownership records or delete unknown state to bypass a refusal.
+
+## CI qualification
+
+See [isolated development CI](../../scripts/development-ci.md) for the fast
+contract matrix, scoped installed-package checks, platform requirements, retained
+evidence and cancellation limits. A local walkthrough and a CI workflow file are
+separate from a successful run of that workflow.

@@ -32,6 +32,9 @@ pnpm check
 
 `npm publish` is guarded by `prepublishOnly`, so a publish attempt runs the same full check path automatically.
 
+See [isolated development CI](scripts/development-ci.md) for scoped lanes,
+resource bounds and evidence requirements.
+
 ## Testing Notes
 
 - `pnpm test` runs the selected workspace package test suites, including daemon unit/live tests.

@@ -143,7 +143,11 @@ GitHub Actions validates:
 - the docs production build
 - package contents, installed OpenTUI qualification, coverage and performance contract checks
 
-That keeps the release path close to the local `pnpm check` workflow while still exercising multiple Node versions in CI.
+The separate isolated-development workflow adds a Node 22/24 contract matrix,
+scoped Linux installed-package checks and a weekly/manual macOS SSH fixture.
+Its [CI guide](https://github.com/wavyrai/tmux-ide/blob/main/scripts/development-ci.md)
+explains resource bounds, evidence and cancellation limits. These jobs supplement
+`pnpm check`; their configuration alone is not evidence of a passing run.
 
 ## Release Workflow
 
