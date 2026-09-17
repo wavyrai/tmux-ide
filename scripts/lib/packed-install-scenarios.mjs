@@ -5,6 +5,8 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  lstatSync,
+  realpathSync,
   readFileSync,
   statSync,
   symlinkSync,
@@ -12,7 +14,11 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { privatePackedInstallEnvironment } from "./packed-install-environment.mjs";
-import { settlePackedChildren, waitForPackedSocketRemoval } from "./packed-install-cleanup.mjs";
+import {
+  settlePackedChildren,
+  capturePackedTmuxWitness,
+  retirePackedTmuxSocket,
+} from "./packed-install-cleanup.mjs";
 
 const hash = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 export function verifyPackedLaneArtifact(installedRoot, primaryCli, version) {
@@ -28,6 +34,34 @@ export function verifyPackedLaneArtifact(installedRoot, primaryCli, version) {
   );
   return { version, cliSha256: sha256 };
 }
+export function verifyPackedPostinstallLinks(installedRoot, enabled) {
+  const links = [];
+  for (const name of ["contracts", "daemon-client", "tmux-bridge"]) {
+    const path = join(installedRoot, "node_modules", "@tmux-ide", name);
+    let entry;
+    try {
+      entry = lstatSync(path);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    if (enabled) {
+      assert.ok(entry?.isSymbolicLink(), "Installed postinstall workspace link is missing");
+      assert.equal(
+        realpathSync(path),
+        realpathSync(join(installedRoot, "packages", name)),
+        "Installed postinstall link must target its shipped private package",
+      );
+    } else
+      assert.equal(
+        entry,
+        undefined,
+        "Scripts-disabled install unexpectedly has a postinstall link",
+      );
+    links.push({ package: name, present: Boolean(entry), exactPrivateTarget: enabled });
+  }
+  return { observedHookSideEffects: enabled, links };
+}
+
 export function requirePackedFailure(result, { code, includes } = {}) {
   assert.equal(
     result.error,
@@ -114,8 +148,8 @@ export async function runPackedInstallScenarios(options, receipt) {
   const children = [],
     exits = new Map();
   let failure = null;
-  let serverPid = null,
-    serverStarted = false;
+  let serverStarted = false;
+  let tmuxWitness = null;
   Object.assign(receipt, {
     install: { manager: "npm", scripts: "disabled", tarballSha256: hash(tarball) },
     scope: { cliAndHeadless: true, explicitRuntimeAcquisition: true, renderingQualified: false },
@@ -217,6 +251,7 @@ export async function runPackedInstallScenarios(options, receipt) {
       cli = join(installedRoot, "bin", "cli.js"),
       info = join(state, "daemon.json");
     receipt.artifact = verifyPackedLaneArtifact(installedRoot, primaryCli, version);
+    receipt.install.postinstall = verifyPackedPostinstallLinks(installedRoot, false);
     await caseRun("scripts-disabled-version", async () => {
       assert.equal(
         success(command(node, [cli, "--version"]))
@@ -331,11 +366,13 @@ export async function runPackedInstallScenarios(options, receipt) {
     success(
       command("tmux", ["-S", socket, "new-session", "-d", "-s", "packed-migration", "-c", project]),
     );
-    serverPid = Number(
+    const serverPid = Number(
       success(command("tmux", ["-S", socket, "display-message", "-p", "#{pid}"])).stdout.trim(),
     );
     assert.ok(Number.isSafeInteger(serverPid) && serverPid > 1);
     receipt.tmuxPid = serverPid;
+    tmuxWitness = capturePackedTmuxWitness(socket, serverPid);
+    receipt.tmuxWitness = tmuxWitness;
     let owner;
     await caseRun("proven-dead-legacy-record-replaced", async () => {
       assert.ok(dead(exited.pid));
@@ -397,16 +434,16 @@ export async function runPackedInstallScenarios(options, receipt) {
     });
     if (serverStarted) {
       command("tmux", ["-S", socket, "kill-server"]);
-      cleanup.tmuxSocketRemoved = await waitForPackedSocketRemoval(socket);
-      if (serverPid) {
-        try {
-          await wait(() => dead(serverPid), 2000);
-          cleanup.tmuxOwnerDead = true;
-        } catch {
-          cleanup.tmuxOwnerDead = false;
-        }
+      try {
+        const retired = await retirePackedTmuxSocket(tmuxWitness);
+        cleanup.tmuxSocketRemoved = retired.socketRemoved;
+        cleanup.tmuxOwnerDead = retired.ownerDead;
+        cleanup.staleSocketRemoved = retired.staleSocketRemoved;
+      } catch {
+        cleanup.tmuxOwnerDead = false;
       }
     }
+
     receipt.cleanupConfirmed =
       cleanup.children.confirmed && cleanup.tmuxSocketRemoved && cleanup.tmuxOwnerDead;
   }

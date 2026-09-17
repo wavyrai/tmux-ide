@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  capturePackedTmuxWitness,
+  retirePackedTmuxSocket,
   settlePackedChildren,
   createInstalledRuntimeCleanup,
   waitForPackedSocketRemoval,
@@ -158,5 +160,139 @@ test("tmux command completion alone is insufficient while its private socket rem
       pause: async () => {},
     }),
     false,
+  );
+});
+
+function socketFixture() {
+  const parent = { dev: 1, ino: 2, uid: 501, mode: 0o40700, isDirectory: () => true };
+  const socket = {
+    dev: 1,
+    ino: 3,
+    uid: 501,
+    mode: 0o140600,
+    birthtimeMs: 100,
+    isSocket: () => true,
+  };
+  let present = true;
+  const removed = [];
+  const stat = (path) => {
+    if (path === "/private/fixture") return parent;
+    if (!present) throw Object.assign(new Error(), { code: "ENOENT" });
+    return socket;
+  };
+  const witness = capturePackedTmuxWitness("/private/fixture/tmux.sock", 123, {
+    stat,
+    uid: 501,
+    dead: () => false,
+  });
+  const dependencies = {
+    stat,
+    dead: () => true,
+    refused: async () => true,
+    remove: (path) => {
+      removed.push(path);
+      present = false;
+    },
+    pause: async () => {},
+  };
+  return {
+    parent,
+    socket,
+    witness,
+    dependencies,
+    removed,
+    disappear: () => {
+      present = false;
+    },
+  };
+}
+test("stale tmux socket is removed only after dead owner, refusal and exact creation witness", async () => {
+  const f = socketFixture();
+  assert.deepEqual(await retirePackedTmuxSocket(f.witness, f.dependencies), {
+    ownerDead: true,
+    socketRemoved: true,
+    staleSocketRemoved: true,
+  });
+  assert.deepEqual(f.removed, [f.witness.path]);
+  assert.deepEqual(await retirePackedTmuxSocket(f.witness, f.dependencies), {
+    ownerDead: true,
+    socketRemoved: true,
+    staleSocketRemoved: false,
+  });
+});
+test("missing witness, live/reused/unknown PID and listening or unknown endpoint cannot authorize unlink", async () => {
+  for (const change of [
+    { dead: () => false },
+    {
+      dead: () => {
+        throw Object.assign(new Error(), { code: "EPERM" });
+      },
+    },
+    { refused: async () => false },
+    {
+      refused: async () => {
+        throw new Error("unknown");
+      },
+    },
+  ]) {
+    const f = socketFixture();
+    await assert.rejects(retirePackedTmuxSocket(f.witness, { ...f.dependencies, ...change }));
+    assert.deepEqual(f.removed, []);
+  }
+  const f = socketFixture();
+  await assert.rejects(retirePackedTmuxSocket(null, f.dependencies), /witness missing/);
+  assert.deepEqual(f.removed, []);
+});
+test("recreated socket/parent or PID reuse during refusal probe preserves replacement", async () => {
+  for (const mutate of [
+    (f) => f.socket.ino++,
+    (f) => f.socket.uid++,
+    (f) => f.socket.birthtimeMs++,
+    (f) => f.parent.ino++,
+    (f) => {
+      f.parent.mode = 0o40755;
+    },
+  ]) {
+    const f = socketFixture();
+    await assert.rejects(
+      retirePackedTmuxSocket(f.witness, {
+        ...f.dependencies,
+        refused: async () => {
+          mutate(f);
+          return true;
+        },
+      }),
+      /changed/,
+    );
+    assert.deepEqual(f.removed, []);
+  }
+  const f = socketFixture();
+  let probes = 0;
+  await assert.rejects(
+    retirePackedTmuxSocket(f.witness, { ...f.dependencies, dead: () => ++probes === 1 }),
+    /PID reused/,
+  );
+  assert.deepEqual(f.removed, []);
+});
+test("creation witness refuses dead PID and unsafe socket parent", () => {
+  const f = socketFixture();
+  assert.throws(
+    () =>
+      capturePackedTmuxWitness(f.witness.path, 123, {
+        stat: f.dependencies.stat,
+        uid: 501,
+        dead: () => true,
+      }),
+    /unavailable/,
+  );
+  f.parent.mode = 0o40755;
+  assert.throws(
+    () =>
+      capturePackedTmuxWitness(f.witness.path, 123, {
+        stat: f.dependencies.stat,
+        uid: 501,
+        dead: () => false,
+      }),
+    /unsafe/,
   );
 });

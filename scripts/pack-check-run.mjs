@@ -22,8 +22,13 @@ import {
   settlePackedChildren,
   createInstalledRuntimeCleanup,
   waitForPackedSocketRemoval,
+  capturePackedTmuxWitness,
+  retirePackedTmuxSocket,
 } from "./lib/packed-install-cleanup.mjs";
-import { runPackedInstallScenarios } from "./lib/packed-install-scenarios.mjs";
+import {
+  runPackedInstallScenarios,
+  verifyPackedPostinstallLinks,
+} from "./lib/packed-install-scenarios.mjs";
 import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
 import { assertCleanEvidenceSource, releaseSourceState } from "./lib/release-source-state.mjs";
 
@@ -208,6 +213,10 @@ let runtimeEvidence = null;
 let journeyObservations = null;
 let proofCompleted = false;
 let installationScenarios = null;
+let postinstallEvidence = null;
+let npmVersion = null;
+let tmuxWitness = null;
+let tmuxStarted = false;
 
 function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -1643,9 +1652,14 @@ try {
   run("pnpm", ["pack", "--pack-destination", tarballDir], { stdio: "inherit" });
 
   rootTarball = findTarball("tmux-ide-");
+  npmVersion = run("npm", ["--version"]).stdout.trim();
   run("npm", ["init", "-y"], { cwd: projectDir });
   run("npm", ["install", rootTarball], { cwd: projectDir, stdio: "inherit" });
 
+  postinstallEvidence = verifyPackedPostinstallLinks(
+    join(projectDir, "node_modules", "tmux-ide"),
+    true,
+  );
   const installedCli = join(projectDir, "node_modules", ".bin", "tmux-ide");
   installedCliPath = installedCli;
   installedVersion = run(installedCli, ["--version"], { cwd: projectDir })
@@ -1722,6 +1736,7 @@ try {
     throw new Error("Failed automatic acquisition left a runtime in the clean install HOME");
   }
 
+  tmuxStarted = true;
   const target = spawnSync(
     "tmux",
     [
@@ -1747,6 +1762,10 @@ try {
   if (target.status !== 0) {
     throw new Error(`Could not create isolated target session: ${target.stderr}`);
   }
+  const tmuxPid = Number(
+    run("tmux", ["-S", installedTmuxSocketPath, "display-message", "-p", "#{pid}"]).stdout.trim(),
+  );
+  tmuxWitness = capturePackedTmuxWitness(installedTmuxSocketPath, tmuxPid);
   const installedBundle = readFileSync(
     join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js"),
     "utf8",
@@ -1907,8 +1926,19 @@ try {
     stdio: "ignore",
     timeout: 5000,
   });
-  cleanup.tmuxSocketRemoved =
-    !tmuxStop.error && (await waitForPackedSocketRemoval(installedTmuxSocketPath));
+  if (tmuxWitness) {
+    try {
+      const retired = await retirePackedTmuxSocket(tmuxWitness);
+      cleanup.tmuxSocketRemoved = retired.socketRemoved;
+      cleanup.tmuxOwnerDead = retired.ownerDead;
+      cleanup.staleSocketRemoved = retired.staleSocketRemoved;
+    } catch {
+      cleanup.tmuxOwnerDead = false;
+    }
+  } else if (!tmuxStarted) {
+    cleanup.tmuxSocketRemoved =
+      !tmuxStop.error && (await waitForPackedSocketRemoval(installedTmuxSocketPath));
+  }
   if (!cleanup.tmuxSocketRemoved) cleanup.failures.push("tmux-retirement-unconfirmed");
   cleanup.children = await settlePackedChildren(children, childExits);
   if (!cleanup.children.confirmed) cleanup.failures.push("child-close-unconfirmed");
@@ -1953,6 +1983,8 @@ try {
       retainedRoots: cleanupConfirmed ? [] : [tmpRoot, tmuxTmpDir],
       install: {
         manager: "npm",
+        managerVersion: npmVersion,
+        postinstall: postinstallEvidence,
         scripts: "enabled",
         tarballSha256: rootTarball && existsSync(rootTarball) ? sha256File(rootTarball) : null,
       },
@@ -1965,6 +1997,7 @@ try {
       artifacts: copied,
       journey: journeyObservations,
       installationScenarios,
+      tmuxWitness,
       isolation: {
         emptyHome: true,
         emptyCwd: true,

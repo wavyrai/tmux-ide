@@ -1,10 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  chmodSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   probePackedIdentity,
+  verifyPackedPostinstallLinks,
   verifyPackedLaneArtifact,
   requirePackedFailure,
   verifyPackedRecord,
@@ -112,4 +121,22 @@ test("publication before listener readiness can retry, but a valid wrong identit
     }),
     false,
   );
+});
+
+test("postinstall side effects distinguish disabled, exact enabled and foreign link targets", (t) => {
+  const root = fixture(t),
+    scope = join(root, "node_modules", "@tmux-ide");
+  mkdirSync(scope, { recursive: true });
+  assert.equal(verifyPackedPostinstallLinks(root, false).observedHookSideEffects, false);
+  assert.throws(() => verifyPackedPostinstallLinks(root, true), /link is missing/);
+  for (const name of ["contracts", "daemon-client", "tmux-bridge"]) {
+    const target = join(root, "packages", name);
+    mkdirSync(target, { recursive: true });
+    symlinkSync(target, join(scope, name));
+  }
+  assert.equal(verifyPackedPostinstallLinks(root, true).observedHookSideEffects, true);
+  assert.throws(() => verifyPackedPostinstallLinks(root, false), /unexpectedly has/);
+  unlinkSync(join(scope, "contracts"));
+  symlinkSync(join(root, "packages", "tmux-bridge"), join(scope, "contracts"));
+  assert.throws(() => verifyPackedPostinstallLinks(root, true), /private package/);
 });
