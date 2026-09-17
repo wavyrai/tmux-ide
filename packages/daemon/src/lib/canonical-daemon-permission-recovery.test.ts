@@ -224,6 +224,7 @@ describe("bootstrap legacy daemon permissions", () => {
       if (mode === 0o600) {
         fs.renameSync(path, join(directory, "original"));
         fs.writeFileSync(path, JSON.stringify({ ...current, pid: 123 }), { mode: 0o644 });
+        fs.chmodSync(path, 0o644);
       }
       actual.fchmodSync(fd, mode);
     });
@@ -244,6 +245,7 @@ describe("bootstrap legacy daemon permissions", () => {
       if (mode === 0o700) {
         fs.renameSync(root, join(directory, "original-root"));
         fs.mkdirSync(root, { mode: 0o755 });
+        fs.chmodSync(root, 0o755);
       }
       actual.fchmodSync(fd, mode);
     });

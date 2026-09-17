@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmod,
   mkdtemp,
   open,
   readFile,
@@ -87,6 +88,7 @@ it("rejects a private FIFO without opening/blocking and closes descriptors after
 it("saves atomically through the loaded symlink target, preserving mode and cleaning failed temps", async () => {
   const { root, path } = await fixture();
   await writeFile(path, "original", { mode: 0o640 });
+  await chmod(path, 0o640);
   const alias = join(root, "alias");
   await symlink(path, alias);
   const loaded = await readEditorFile(alias, new AbortController().signal);
