@@ -233,8 +233,8 @@ loopback endpoint. Final container PID was zero, OOM counters stayed zero, and
 unrelated running container identities were unchanged.
 
 This qualifies one bounded wrapper journey, not native TUI or two-project
-acceptance. Native app and shell integration are described below; reset and rebuild
-integration are subsequent stages.
+acceptance. Native app, shell and reset integration are described below. Container rebuild
+integration remains a separate stage.
 
 First startup requires a source export from the selected canonical worktree and
 an already-built immutable image. It verifies that the image's snapshot and fixed
@@ -273,7 +273,8 @@ remain protected for diagnosis. Only a completed suspension with its retained
 proof permits retrying/finalizing the Docker stop. Cancellation may leave a
 process already launched by Docker exec; the saved phase prevents an unsafe
 automatic retry. Do not clear records, recreate resources or use Docker prune to
-bypass a refusal. This initial slice does not yet provide reset for those cases.
+bypass a refusal. Explicit reset can remove fully adopted owned resources as
+described below; unadopted partial creation remains protected.
 
 ### Native managed client
 
@@ -323,8 +324,9 @@ the same guidance prints after the TUI exits. Close its apps, then use the suppl
 native `down --id ... --store ...` arguments for scoped owner cleanup, or native
 `reset --yes --id ... --store ...` for explicit state/artifact removal. Existing
 reset refuses live or unknown app receipts. **Container down stops neither this
-host owner nor its native apps**; remote apps may become disconnected. A future
-container reset must account for these separate host resources. Container reset and the two-project interactive gate remain outstanding.
+host owner nor its native apps**; remote apps may become disconnected. Container reset
+checks and retires these separate host resources under their native locks. The
+two-project interactive gate remains outstanding.
 
 ### Linux shell
 
@@ -351,5 +353,34 @@ snapshot: edits inside it do not synchronize to the host worktree.
 Exit the Linux app before exiting Bash. Cancellation tracks and reaps the owned
 Docker client; that alone does not prove the inner shell or app exited. Container
 down retires the container's private process tree. Native host clients still
-require their separate cleanup described above. Scoped container reset and the
+require their separate cleanup described above. Live container reset and the
 combined two-project journey remain qualification gates.
+
+### Scoped container reset (source checkpoint; live qualification pending)
+
+`pnpm dev:instance reset --container --yes` destroys the selected private
+container, its project network and its three named volumes. Repeat the exact
+worktree, name and store used for startup. Shared images, source worktrees and
+other projects stay outside its deletion scope. Ordinary down preserves data.
+
+Close the native client's apps and stop its retained owner using the exact
+`nativeClient.cleanup.down` arguments from container status or reset's refusal.
+Reset checks its native ownership and app records under the existing build and
+lifecycle locks, retires its artifacts/state, and holds those locks through
+container cleanup. Live or unknown native processes are protected; container
+ownership never authorizes signalling host processes.
+
+Reset verifies complete resource ownership and foreign references before saving
+a private deletion plan. It then stops the exact container, removes resources in
+order, and deletes only unchanged known host keys/configuration after the Docker
+resources are gone. Lock directories and reset records remain for serialization
+and retry. An interrupted reset blocks other container commands and prints
+`container-reset-incomplete`; repeat reset with the same selection. Replacement
+resources, changed keys or unknown files cause refusal rather than broader cleanup.
+
+Fully adopted containers can be reset after failed initialization without a
+completed core suspension. A prepared project with no Docker resources can also
+be reset. Partial creation that was never adopted remains unsupported, as does
+container `--id` selection after the canonical worktree is removed. Retain that
+worktree until cleanup completes. These source checks are covered by focused
+regressions; live deletion and the two-project isolation journey remain pending.

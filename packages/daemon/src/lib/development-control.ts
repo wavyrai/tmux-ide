@@ -32,6 +32,7 @@ import {
   readDevelopmentIdentity,
   readDevelopmentOwner,
   readPrivateDevelopmentRecord,
+  readPrivateDevelopmentFile,
   developmentProcessIdentity,
   ownerBuildEnvironment,
   cleanManagerEnvironment,
@@ -398,33 +399,67 @@ export async function resetDevelopmentInstance(
     );
   return withDevelopmentLock(instance, "build", () =>
     withDevelopmentLock(instance, "lifecycle", async () => {
-      requireDevelopmentNotSuspended(instance);
-      const identity = await requireIdentity(instance);
-      await requireStoppedDevelopmentApps(instance);
-      if (await ownedProcess(instance))
-        throw new DevelopmentOperationError("owner-live", "Stop the managed owner before reset");
-      await inspectOwner(instance, null);
-      const tmux = readTmux(instance);
-      if (tmux && (await developmentProcessIdentity(tmux.pid)) !== null)
-        throw new DevelopmentOperationError("owner-live", "Stop the tmux server before reset");
-      // This only reclaims a dead exact socket, never implicitly stops work.
-      claimDevelopmentRuntimeOwner(instance, identity);
-      await stopTmux(instance);
-      validateDevelopmentDirectory(instance.runtimeDir, dirname(instance.runtimeDir));
-      const compiledCwd = join(instance.runtimeDir, "compiled-tui");
-      validateDevelopmentDirectory(compiledCwd, dirname(instance.runtimeDir));
-      rmSync(compiledCwd, { recursive: true, force: true });
-      releaseDevelopmentRuntimeOwner(instance, identity);
-      if (present(instance.runtimeDir)) rmdirSync(instance.runtimeDir); // Unknown runtime entries block reset.
+      return resetUnderLocks(instance);
+    }),
+  );
+}
 
-      // Keep the shared D04 lock scaffold; deleting it would let a concurrent old
-      // build/up bypass the locks and lose a newly published generation.
-      writeDevelopmentRecord(join(instance.root, "reset.json"), identity);
-      for (const name of readdirSync(instance.root)) {
-        if (name === "locks" || name === "reset.json") continue;
-        rmSync(join(instance.root, name), { recursive: true, force: true });
+async function resetUnderLocks(instance: DevelopmentInstance) {
+  requireDevelopmentNotSuspended(instance);
+  const identity = await requireIdentity(instance);
+  await requireStoppedDevelopmentApps(instance);
+  if (await ownedProcess(instance))
+    throw new DevelopmentOperationError("owner-live", "Stop the managed owner before reset");
+  await inspectOwner(instance, null);
+  const tmux = readTmux(instance);
+  if (tmux && (await developmentProcessIdentity(tmux.pid)) !== null)
+    throw new DevelopmentOperationError("owner-live", "Stop the tmux server before reset");
+  // This only reclaims a dead exact socket, never implicitly stops work.
+  claimDevelopmentRuntimeOwner(instance, identity);
+  await stopTmux(instance);
+  validateDevelopmentDirectory(instance.runtimeDir, dirname(instance.runtimeDir));
+  const compiledCwd = join(instance.runtimeDir, "compiled-tui");
+  validateDevelopmentDirectory(compiledCwd, dirname(instance.runtimeDir));
+  rmSync(compiledCwd, { recursive: true, force: true });
+  releaseDevelopmentRuntimeOwner(instance, identity);
+  if (present(instance.runtimeDir)) rmdirSync(instance.runtimeDir); // Unknown runtime entries block reset.
+
+  // Keep the shared D04 lock scaffold; deleting it would let a concurrent old
+  // build/up bypass the locks and lose a newly published generation.
+  writeDevelopmentRecord(join(instance.root, "reset.json"), identity);
+  for (const name of readdirSync(instance.root)) {
+    if (name === "locks" || name === "reset.json") continue;
+    rmSync(join(instance.root, name), { recursive: true, force: true });
+  }
+  return { instanceId: instance.id, status: "reset" as const };
+}
+
+/** Internal container reset boundary. Caller holds its project lock; no native signalling. */
+export async function withRetiredDevelopmentContainerClient<T>(
+  instance: DevelopmentInstance,
+  action: () => Promise<T>,
+): Promise<T> {
+  return withDevelopmentLock(instance, "build", () =>
+    withDevelopmentLock(instance, "lifecycle", async () => {
+      const identity = readPrivateDevelopmentFile(join(instance.root, "instance.json"));
+      if (identity) await resetUnderLocks(instance);
+      else {
+        // A never-built or already-reset tuple has no remaining native authority.
+        // Unknown entries and runtime paths stay protected, even without identity.json.
+        if (
+          readdirSync(instance.root).some((name) => !["locks", "reset.json"].includes(name)) ||
+          present(instance.runtimeDir)
+        )
+          throw new DevelopmentOperationError(
+            "owner-unverified",
+            "Native client state is not safely retired",
+          );
+        if (readPrivateDevelopmentFile(join(instance.root, "reset.json")))
+          await requireIdentity(instance);
       }
-      return { instanceId: instance.id, status: "reset" as const };
+      // Native retirement may already be complete when action rejects. Its reset
+      // tombstone is retained; retries take these same locks before continuing.
+      return action();
     }),
   );
 }

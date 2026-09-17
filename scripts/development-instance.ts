@@ -1,10 +1,18 @@
+import { resetDevelopmentContainer } from "../packages/daemon/src/lib/development-container-reset.ts";
 import {
   launchDevelopmentContainerShell,
   DevelopmentContainerTerminalRequiredError,
 } from "../packages/daemon/src/lib/development-container-shell.ts";
 import { launchDevelopmentContainerApp } from "../packages/daemon/src/lib/development-container-app.ts";
-import { developmentContainer } from "../packages/daemon/src/lib/development-container.ts";
-import { resolveDevelopmentComposeProject } from "../packages/daemon/src/lib/development-compose.ts";
+import {
+  developmentContainer,
+  developmentContainerClientInfo,
+} from "../packages/daemon/src/lib/development-container.ts";
+import {
+  resolveDevelopmentComposeProject,
+  DevelopmentComposeResetPendingError,
+  type DevelopmentComposeProject,
+} from "../packages/daemon/src/lib/development-compose.ts";
 import {
   developmentSshAuthority,
   developmentSshHandshake,
@@ -112,9 +120,9 @@ if (
   throw new Error("Lifecycle option does not apply to this command");
 if (values.container) {
   if (
-    !["up", "status", "logs", "down", "app", "shell"].includes(command!) ||
+    !["up", "status", "logs", "down", "app", "shell", "reset"].includes(command!) ||
     values.id ||
-    values.yes ||
+    (values.yes && command !== "reset") ||
     values["daemon-only"] ||
     values["apply-build"] ||
     values.previous ||
@@ -124,7 +132,7 @@ if (values.container) {
     (command !== "up" && (values.resume || values["container-image"] || values["container-source"]))
   )
     throw new Error(
-      "Container mode supports up/status/logs/down/app/shell (app/shell require a terminal and reject --json); --resume and image/source pins apply only to up",
+      "Container mode supports up/status/logs/down/app/shell/reset (app/shell require a terminal and reject --json); --resume and image/source pins apply only to up",
     );
   const cancellation = new AbortController();
   let cancelledExit = 130;
@@ -135,13 +143,19 @@ if (values.container) {
   };
   process.once("SIGINT", abort);
   process.once("SIGTERM", terminate);
+  let selectedProject: DevelopmentComposeProject | undefined;
   try {
     const project = resolveDevelopmentComposeProject({
       worktree: discoverDevelopmentWorktree(values.worktree ?? process.cwd()),
       name: values.name,
       store: values.store,
     });
-    if (command === "shell") {
+    selectedProject = project;
+    if (command === "reset") {
+      process.stdout.write(
+        `${JSON.stringify(await resetDevelopmentContainer(project, { yes: values.yes, signal: cancellation.signal }))}\n`,
+      );
+    } else if (command === "shell") {
       const admitted = await launchDevelopmentContainerShell(project, {
         signal: cancellation.signal,
       });
@@ -183,6 +197,20 @@ if (values.container) {
       process.stdout.write(`${JSON.stringify(result)}\n`);
     }
   } catch (error) {
+    const resetPending = error instanceof DevelopmentComposeResetPendingError;
+    const resetReason =
+      command === "reset" &&
+      error instanceof DevelopmentOperationError &&
+      [
+        "confirmation-required",
+        "owner-live",
+        "owner-unverified",
+        "app-live",
+        "app-unknown",
+        "app-pid-reused",
+      ].includes(error.reason)
+        ? error.reason
+        : undefined;
     const terminalRequired = error instanceof DevelopmentContainerTerminalRequiredError;
     const suspended =
       error instanceof DevelopmentOperationError && error.reason === "instance-suspended";
@@ -190,7 +218,7 @@ if (values.container) {
       error instanceof DevelopmentOperationError && error.reason === "build-failed";
     const sink = ["app", "shell"].includes(command!) ? process.stderr : process.stdout;
     sink.write(
-      `${JSON.stringify({ version: 1, mode: "container", operation: command, code: "DEVELOPMENT_CONTAINER_UNAVAILABLE", reason: terminalRequired ? "terminal-required" : suspended ? "instance-suspended" : missingBuild ? "build-failed" : "container-transition-refused", next: terminalRequired ? "Run shell --container in an interactive terminal without --json" : suspended ? "Use up --container --resume" : missingBuild ? "First native client build requires app --container --bun /absolute/pinned/bun; inspect its private build receipt on failure" : "Inspect private project transition evidence" })}\n`,
+      `${JSON.stringify({ version: 1, mode: "container", operation: command, code: "DEVELOPMENT_CONTAINER_UNAVAILABLE", reason: resetPending ? "container-reset-incomplete" : (resetReason ?? (terminalRequired ? "terminal-required" : suspended ? "instance-suspended" : missingBuild ? "build-failed" : "container-transition-refused")), nativeClient: command === "reset" && selectedProject ? developmentContainerClientInfo(selectedProject) : undefined, next: resetPending ? "Repeat reset --container --yes with the same worktree/name/store; preserve the private intent" : command === "reset" ? "Reset requires --yes. Close native apps, run nativeClient.cleanup.down if needed, then repeat reset --container --yes; preserve intent on ownership refusal" : terminalRequired ? "Run shell --container in an interactive terminal without --json" : suspended ? "Use up --container --resume" : missingBuild ? "First native client build requires app --container --bun /absolute/pinned/bun; inspect its private build receipt on failure" : "Inspect private project transition evidence" })}\n`,
     );
     process.exitCode = 1;
   }

@@ -22,6 +22,7 @@ import {
 } from "./development-state.ts";
 import {
   withDevelopmentComposeProject,
+  DevelopmentComposeResetPendingError,
   renderDevelopmentComposeConfig,
   verifyDevelopmentComposeResources,
   developmentComposeVolumesHash,
@@ -846,7 +847,11 @@ export async function developmentContainer(
       options.signal,
     );
   } catch (error) {
-    if (error instanceof DevelopmentOperationError) throw error;
+    if (
+      error instanceof DevelopmentOperationError ||
+      error instanceof DevelopmentComposeResetPendingError
+    )
+      throw error;
     refuse();
   }
 }

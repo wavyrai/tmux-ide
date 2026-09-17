@@ -34,6 +34,7 @@ import {
 import {
   downDevelopmentInstance,
   resetDevelopmentInstance,
+  withRetiredDevelopmentContainerClient,
   restartDevelopmentInstance,
 } from "../lib/development-control.ts";
 const roots: string[] = [];
@@ -598,3 +599,53 @@ it.each([
     }
   },
 );
+
+it("container reset callback failure retains native retirement proof for retry", async () => {
+  const { instance } = await fixture();
+  await expect(
+    withRetiredDevelopmentContainerClient(instance, async () => {
+      throw Error("Docker removal failed");
+    }),
+  ).rejects.toThrow("Docker removal failed");
+  expect(existsSync(join(instance.root, "instance.json"))).toBe(false);
+  expect(existsSync(join(instance.root, "reset.json"))).toBe(true);
+  await expect(
+    withRetiredDevelopmentContainerClient(instance, async () => "continued"),
+  ).resolves.toBe("continued");
+});
+it("container reset preserves unknown or live native app receipts", async () => {
+  const { instance } = await fixture();
+  mkdirSync(join(instance.root, "apps"), { mode: 0o700 });
+  writeDevelopmentRecord(join(instance.root, "apps", "pending.json"), { unknown: true });
+  let action = false;
+  await expect(
+    withRetiredDevelopmentContainerClient(instance, async () => {
+      action = true;
+    }),
+  ).rejects.toThrow();
+  expect(action).toBe(false);
+  expect(existsSync(join(instance.root, "instance.json"))).toBe(true);
+  expect(existsSync(join(instance.root, "apps", "pending.json"))).toBe(true);
+});
+
+it("container reset never signals a live native app", async () => {
+  const { instance } = await fixture();
+  const attempt = randomUUID();
+  const incarnation = await developmentProcessIdentity(process.pid);
+  mkdirSync(join(instance.root, "apps"), { mode: 0o700 });
+  writeDevelopmentRecord(join(instance.root, "apps", attempt + ".json"), {
+    version: 1,
+    attempt,
+    managerPid: process.pid,
+    managerIncarnation: incarnation,
+    pid: process.pid,
+    incarnation,
+    generation: "build-" + randomUUID(),
+  });
+  await expect(
+    withRetiredDevelopmentContainerClient(instance, async () => {
+      throw Error("must not run");
+    }),
+  ).rejects.toMatchObject({ reason: "app-live" });
+  expect(existsSync(join(instance.root, "apps", attempt + ".json"))).toBe(true);
+});

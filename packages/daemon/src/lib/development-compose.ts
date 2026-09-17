@@ -84,7 +84,7 @@ function recordPath(project: DevelopmentComposeProject): string {
   validateDevelopmentDirectory(project.controlRoot, project.instance.store);
   return join(project.controlRoot, "project.json");
 }
-function validateRecord(
+export function validateDevelopmentComposeRecord(
   project: DevelopmentComposeProject,
   value: unknown,
 ): DevelopmentComposeRecord {
@@ -133,8 +133,14 @@ export function readDevelopmentComposeRecord(
   } catch {
     refuse();
   }
-  return validateRecord(project, parsed);
+  return validateDevelopmentComposeRecord(project, parsed);
 }
+export class DevelopmentComposeResetPendingError extends Error {
+  constructor() {
+    super("Container reset is incomplete; repeat reset --container --yes");
+  }
+}
+
 /** Holds a private host project lock across a future caller's complete Docker transition.
  * Separate from native instance locks/reset. No Docker operation is provided here. */
 export async function withDevelopmentComposeProject<T>(
@@ -145,12 +151,15 @@ export async function withDevelopmentComposeProject<T>(
     adopt(inspect: DevelopmentComposeInspection): DevelopmentComposeResources;
   }) => Promise<T>,
   signal?: AbortSignal,
+  resetting = false,
 ): Promise<T> {
   recordPath(project);
   return withDevelopmentLock(
     { ...project.instance, root: project.controlRoot },
     "lifecycle",
     async () => {
+      if (!resetting && readPrivateDevelopmentFile(join(project.controlRoot, "reset-intent.json")))
+        throw new DevelopmentComposeResetPendingError();
       let active = true;
       const read = () => {
         if (!active) refuse();
@@ -166,7 +175,7 @@ export async function withDevelopmentComposeProject<T>(
               exact(previous.sourceDigest, input.sourceDigest);
               return previous;
             }
-            const record = validateRecord(project, {
+            const record = validateDevelopmentComposeRecord(project, {
               version: 1,
               project: project.name,
               tuple: tuple(project),
@@ -205,7 +214,7 @@ export function renderDevelopmentComposeConfig(
   project: DevelopmentComposeProject,
   input: DevelopmentComposeRecord,
 ) {
-  const record = validateRecord(project, input);
+  const record = validateDevelopmentComposeRecord(project, input);
   return {
     name: project.name,
     services: {
@@ -255,7 +264,7 @@ export function verifyDevelopmentComposeResources(
   input: DevelopmentComposeRecord,
   inspect: DevelopmentComposeInspection,
 ): DevelopmentComposeResources {
-  const record = validateRecord(project, input);
+  const record = validateDevelopmentComposeRecord(project, input);
   const container = object(inspect.container);
   const config = object(container.Config);
   const host = object(container.HostConfig);
