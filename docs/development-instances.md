@@ -367,8 +367,23 @@ is neither renamed nor restarted. Only a later explicit full `down`/`up` creates
 the hidden helper, and full `down` stops that instance's pane work. No keeper
 registry entries are blindly deleted by this migration. Existing authoritative
 registry reconciliation still retires names absent from a new server. Global
-missing/duplicate semantic-stamp rejection is unchanged; stale ordinary workspace
-recovery and actionable attachment errors remain separate work.
+missing/duplicate semantic-stamp checks are unchanged. The TUI now distinguishes
+an actually empty session from nonempty rejected terminal inventory and displays
+a bounded reason plus recovery guidance, including after daemon replacement.
+Missing stamps may belong to another registered session: explicitly selecting
+that recreated session invokes existing promotion, then Retry can reopen the
+original session. Selecting a different session on the same machine creates its
+own exact-incarnation route. Duplicate or unverifiable identities instead direct
+the user to copy diagnostic details; opening a session is not advertised as a
+repair for conflicts.
+
+The private Linux journey demonstrated that explicit selection restored missing
+stamps and the retained client resumed output/input without replacing its tmux
+server or pane. Full acceptance remains open: cold and warm inventory paths can
+report different attachability for the same unstamped unrelated session, and the
+separately tracked managed-down command sometimes reports failure even after all
+owned processes exit. Neither issue is hidden by the recovery UI or treated as a
+successful complete qualification.
 
 Admission checks worktree filesystem identity, private records, exact artifacts,
 process incarnation and tmux socket identity. Readiness checks canonical record
