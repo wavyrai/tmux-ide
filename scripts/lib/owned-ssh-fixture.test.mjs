@@ -1,11 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
+import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   fixturePath,
+  decodeMacProcessWitness,
+  createMacProcessIdentity,
   socketPath,
   serverConfiguration,
   clientConfiguration,
@@ -238,3 +241,71 @@ test("root identity read diagnostic preserves cleanup without raw exception text
   assert.equal(JSON.stringify(snapshot).includes("SECRET"), false);
   assert.deepEqual(snapshot.retainedRoots, [{ pid: 46, closed: true }]);
 });
+
+test("kernel witness validates exact shape, UID and birth identity", () => {
+  const value = { pid: 123, uid: 501, seconds: 1700000000, microseconds: 123456 };
+  const first = decodeMacProcessWitness(value, 123, 501);
+  assert.equal(decodeMacProcessWitness(null, 123, 501), null);
+  assert.notEqual(decodeMacProcessWitness({ ...value, microseconds: 123457 }, 123, 501), first);
+  for (const bad of [
+    false,
+    {},
+    { ...value, uid: 502 },
+    { ...value, pid: 124 },
+    { ...value, microseconds: 1000000 },
+    { ...value, command: "SECRET" },
+  ])
+    assert.throws(() => decodeMacProcessWitness(bad, 123, 501));
+});
+test(
+  "native kernel adapter keeps own child birth stable across title changes and confirms exit",
+  { skip: process.platform !== "darwin" || process.getuid() === 0 },
+  async (t) => {
+    const root = mkdtempSync(join(tmpdir(), "ssh-kernel-"));
+    let allocation, child, proof;
+    try {
+      const adapter = await createMacProcessIdentity({
+        parent: root,
+        onAllocated: (value) => {
+          allocation = value;
+        },
+      });
+      child = spawn(
+        process.execPath,
+        [
+          "-e",
+          "process.title='d11-original';process.stdout.write('ready');process.stdin.once('data',()=>{process.title='d11-changed';process.stdout.write('changed');});setInterval(()=>{},1000);",
+        ],
+        { stdio: ["pipe", "pipe", "ignore"] },
+      );
+      proof = {
+        sourceHash: adapter.sourceHash,
+        artifactHash: adapter.artifactHash,
+        artifactBytes: adapter.artifactBytes,
+      };
+      assert.ok(adapter.artifactBytes <= 262144);
+      const closed = once(child, "close", { signal: AbortSignal.timeout(2000) });
+      await once(child.stdout, "data", { signal: AbortSignal.timeout(2000) });
+      const before = await adapter.identify(child.pid);
+      assert.match(before, /^darwin-kernel:/);
+      const changed = once(child.stdout, "data", { signal: AbortSignal.timeout(2000) });
+      child.stdin.write("change");
+      await changed;
+      assert.equal(await adapter.identify(child.pid), before);
+      child.kill("SIGTERM");
+      await closed;
+      assert.equal(await adapter.identify(child.pid), null);
+      proof.birthStable = true;
+      proof.childGone = true;
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        const closed = once(child, "close", { signal: AbortSignal.timeout(2000) });
+        child.kill("SIGKILL");
+        await closed;
+      }
+      if (allocation) await allocation.disposeFiles();
+      rmSync(root, { recursive: true, force: true });
+    }
+    t.diagnostic(JSON.stringify({ ...proof, cleanup: true }));
+  },
+);

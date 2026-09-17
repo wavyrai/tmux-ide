@@ -7,7 +7,6 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { writeFileSync, realpathSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "../packages/contracts/src/index.ts";
-import { developmentProcessIdentity } from "../packages/daemon/src/lib/development-state.ts";
 import {
   openSshDaemonTransport,
   probeSshDaemonIdentity,
@@ -15,12 +14,14 @@ import {
 } from "../packages/daemon/src/lib/ssh-daemon-transport.ts";
 import {
   createOwnedSshFixture,
+  createMacProcessIdentity,
   ownedProcesses,
   unusedLoopbackPort,
   waitForPort,
   fixturePath,
   clientConfiguration,
 } from "./lib/owned-ssh-fixture.mjs";
+process.umask(0o077);
 const execute = promisify(execFile);
 const args = process.argv.slice(2);
 if (args.length !== 3 || args[0] !== "--run-owned-local" || args[1] !== "--root")
@@ -47,8 +48,9 @@ const interrupted = new AbortController();
 const interrupt = () => interrupted.abort();
 process.on("SIGINT", interrupt);
 process.on("SIGTERM", interrupt);
+let kernelIdentity!: Awaited<ReturnType<typeof createMacProcessIdentity>>;
 const tracker = ownedProcesses({
-  identify: developmentProcessIdentity,
+  identify: (pid: number) => kernelIdentity.identify(pid),
   list: async () => {
     const { stdout } = await execute("/bin/ps", ["-axo", "pid=,ppid="], {
       timeout: 3000,
@@ -226,6 +228,11 @@ async function freshMarker(baseUrl: string) {
 }
 
 try {
+  currentStage = "kernel-witness";
+  kernelIdentity = await createMacProcessIdentity({
+    parent: root,
+    onAllocated: (owner: (typeof allocations)[number]) => allocations.push(owner),
+  });
   const instance = {
     instanceId: randomUUID(),
     startedAt: new Date().toISOString(),
@@ -506,6 +513,9 @@ try {
     failureStage: overall ? null : currentStage,
     proxyChildObserved,
     processObservation: tracker.snapshot(),
+    kernelWitness: kernelIdentity
+      ? { sourceHash: kernelIdentity.sourceHash, artifactHash: kernelIdentity.artifactHash }
+      : null,
     results,
     cleanup,
     allocatedRoots: allocations.map((owner) => owner.root),

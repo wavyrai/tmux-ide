@@ -22,6 +22,7 @@ import {
   constants,
 } from "node:fs";
 import { join, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 const execute = promisify(execFile);
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 const fail = () => new Error("Owned SSH fixture refused");
@@ -642,6 +643,87 @@ export async function createOwnedSshFixture({
         mode = value;
       },
       disposeFiles,
+    };
+  } catch {
+    failureStage = stage;
+    throw fail();
+  }
+}
+
+/** Fixed kernel witness decoder: a changed birth time changes authority, command titles do not. */
+export function decodeMacProcessWitness(value, pid, uid = process.getuid()) {
+  if (value === null) return null;
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(",") !== "microseconds,pid,seconds,uid" ||
+    value.pid !== pid ||
+    value.uid !== uid ||
+    !Number.isSafeInteger(value.seconds) ||
+    value.seconds <= 0 ||
+    !Number.isSafeInteger(value.microseconds) ||
+    value.microseconds < 0 ||
+    value.microseconds >= 1000000
+  )
+    throw fail();
+  return `darwin-kernel:${pid}:${uid}:${value.seconds}:${value.microseconds}`;
+}
+/** Compiles only this fixed test helper; no production identity semantics are changed. */
+export async function createMacProcessIdentity({ parent, onAllocated }) {
+  if (process.platform !== "darwin" || process.getuid() === 0 || typeof onAllocated !== "function")
+    throw fail();
+  parent = fixturePath(realpathSync(fixturePath(parent)));
+  const root = mkdtempSync(join(parent, "pid-"));
+  chmodSync(root, 0o700);
+  const files = privateFiles(root);
+  let stage = "allocated",
+    failureStage = null;
+  onAllocated({
+    root,
+    disposeFiles: async () => files.clean(),
+    diagnostics: () => ({ stage, failureStage }),
+  });
+  try {
+    const source = readFileSync(fileURLToPath(new URL("./owned-ssh-process.c", import.meta.url)));
+    if (source.length > 16384) throw fail();
+    const path = join(root, "identity.c"),
+      binary = join(root, "identity");
+    writeFileSync(path, source, { flag: "wx", mode: 0o600 });
+    files.capture("identity.c");
+    stage = "compile-kernel-witness";
+    await execute(
+      "/usr/bin/clang",
+      ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", path, "-o", binary],
+      {
+        timeout: 15000,
+        maxBuffer: 4096,
+        env: { PATH: "/usr/bin:/bin", HOME: root, ZDOTDIR: root },
+      },
+    );
+    chmodSync(binary, 0o700);
+    files.capture("identity");
+    const artifact = lstatSync(binary),
+      artifactHash = hashPrivateFile(binary, artifact);
+    stage = "ready";
+    return {
+      sourceHash: createHash("sha256").update(source).digest("hex"),
+      artifactHash,
+      artifactBytes: artifact.size,
+      async identify(pid) {
+        if (
+          !Number.isSafeInteger(pid) ||
+          pid <= 0 ||
+          hashPrivateFile(binary, artifact) !== artifactHash
+        )
+          throw fail();
+        const { stdout } = await execute(binary, [String(pid)], {
+          timeout: 1000,
+          maxBuffer: 1024,
+          env: { PATH: "/usr/bin:/bin", HOME: root, ZDOTDIR: root },
+        });
+        return decodeMacProcessWitness(JSON.parse(stdout), pid);
+      },
     };
   } catch {
     failureStage = stage;
