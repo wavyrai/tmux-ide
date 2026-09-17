@@ -366,24 +366,32 @@ it and workspace promotion rejects it before persistence. Exact legacy
 is neither renamed nor restarted. Only a later explicit full `down`/`up` creates
 the hidden helper, and full `down` stops that instance's pane work. No keeper
 registry entries are blindly deleted by this migration. Existing authoritative
-registry reconciliation still retires names absent from a new server. Existing
-semantic identity checks are unchanged. The TUI now distinguishes
+registry reconciliation still retires names absent from a new server. The TUI distinguishes
 an actually empty session from nonempty rejected terminal inventory and displays
 a bounded reason plus recovery guidance, including after daemon replacement.
-Missing stamps may belong to another registered session: explicitly selecting
-that recreated session invokes existing promotion, then Retry can reopen the
-original session. Selecting a different session on the same machine creates its
+Missing stamps may belong to another registered session. Modern terminal discovery
+can now open a valid target through one fresh, exact-runtime qualified inventory
+read without repairing that unrelated session. This cold handoff requires complete
+target pane/window proof and rejects known invalid or duplicate bindings, including
+cross-window stamp collisions. Candidate, registry and runtime-generation checks
+still apply; the legacy global resolver is unchanged. Already-qualified reads
+remain session-scoped without global polling.
+
+Explicitly selecting a recreated session invokes existing promotion to restore its
+missing stamps. Retry can then reopen a rejected session. Selecting a different session on the same machine creates its
 own exact-incarnation route. Duplicate or unverifiable identities instead direct
 the user to copy diagnostic details; opening a session is not advertised as a
 repair for conflicts.
 
-The private Linux journey demonstrated that explicit selection restored missing
-stamps and the retained client resumed output/input without replacing its tmux
-server or pane. Full acceptance remains open: cold and warm inventory paths can
-report different attachability for the same unstamped unrelated session, and the
-separately tracked managed-down command sometimes reports failure even after all
-owned processes exit. Neither issue is hidden by the recovery UI or treated as a
-successful complete qualification.
+Private Linux journeys demonstrated explicit stamp repair and the subsequent cold
+handoff fix. After daemon replacement, a retained client resumed fresh output
+before any diagnostic REST read; a fresh client also attached, and both accepted
+real input while the unrelated recreated session remained unstamped. Target
+server/pane/socket and private sibling identities stayed unchanged. That bounded
+run completed cleanup with no OOM events. Previously observed intermittent
+managed-down failures remain a separate open issue; this passing run does not
+establish their cause or resolution. Ownership of linked physical windows across
+already-qualified sessions also remains separate qualification work.
 
 Admission checks worktree filesystem identity, private records, exact artifacts,
 process incarnation and tmux socket identity. Readiness checks canonical record
