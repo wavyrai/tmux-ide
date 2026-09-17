@@ -284,3 +284,46 @@ export async function retirePackedTmuxSocket(
   remove(witness.path);
   return { ownerDead: true, socketRemoved: true, staleSocketRemoved: true };
 }
+
+/** Called only after an explicit fixture-owned new-session succeeds, never from final cleanup. */
+export async function verifyPackedTmuxHandoff(
+  previous,
+  next,
+  {
+    dead = absentPid,
+    pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    recapture = capturePackedTmuxWitness,
+  } = {},
+) {
+  if (previous) {
+    if (
+      previous.path !== next.path ||
+      !Object.keys(previous.parent).every((key) => previous.parent[key] === next.parent[key])
+    )
+      throw new Error("Packed tmux handoff parent changed");
+    if (previous.pid === next.pid) {
+      if (!samePackedSocket(previous.socket, next.socket))
+        throw new Error("Packed tmux reused PID has a changed socket");
+    } else {
+      let retired = false;
+      for (let attempt = 0; attempt < 80; attempt++) {
+        if (dead(previous.pid)) {
+          retired = true;
+          break;
+        }
+        await pause(25);
+      }
+      if (!retired) throw new Error("Packed tmux previous generation remains live or reused");
+    }
+  }
+  const current = recapture(next.path, next.pid);
+  if (
+    !samePackedSocket(current.socket, next.socket) ||
+    !Object.keys(next.parent).every((key) => current.parent[key] === next.parent[key])
+  )
+    throw new Error("Packed tmux next generation changed during handoff");
+  return {
+    replaced: Boolean(previous && previous.pid !== next.pid),
+    retiredPid: previous && previous.pid !== next.pid ? previous.pid : null,
+  };
+}

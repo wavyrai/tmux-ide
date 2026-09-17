@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  verifyPackedTmuxHandoff,
   capturePackedTmuxWitness,
   retirePackedTmuxSocket,
   settlePackedChildren,
@@ -295,4 +296,55 @@ test("creation witness refuses dead PID and unsafe socket parent", () => {
       }),
     /unsafe/,
   );
+});
+
+test("owned new-session can hand off only from proven-dead prior generation and retain reuse identity", async () => {
+  const f = socketFixture(),
+    previous = f.witness,
+    next = { ...previous, pid: 456, socket: { ...previous.socket, ino: 10 } };
+  const deps = { dead: () => true, pause: async () => {}, recapture: () => next };
+  assert.deepEqual(await verifyPackedTmuxHandoff(previous, next, deps), {
+    replaced: true,
+    retiredPid: 123,
+  });
+  assert.deepEqual(await verifyPackedTmuxHandoff(next, next, deps), {
+    replaced: false,
+    retiredPid: null,
+  });
+  await assert.rejects(
+    verifyPackedTmuxHandoff(previous, next, { ...deps, dead: () => false }),
+    /remains live/,
+  );
+  await assert.rejects(
+    verifyPackedTmuxHandoff(previous, next, {
+      ...deps,
+      dead: () => {
+        throw new Error("unknown");
+      },
+    }),
+    /unknown/,
+  );
+});
+test("tmux handoff refuses same-PID changed socket, changed root and replacement during confirmation", async () => {
+  const f = socketFixture(),
+    previous = f.witness;
+  const deps = { dead: () => true, pause: async () => {}, recapture: () => previous };
+  await assert.rejects(
+    verifyPackedTmuxHandoff(
+      previous,
+      { ...previous, socket: { ...previous.socket, ino: 10 } },
+      deps,
+    ),
+    /changed socket/,
+  );
+  await assert.rejects(
+    verifyPackedTmuxHandoff(
+      previous,
+      { ...previous, parent: { ...previous.parent, ino: 10 } },
+      deps,
+    ),
+    /parent changed/,
+  );
+  const next = { ...previous, pid: 456, socket: { ...previous.socket, ino: 10 } };
+  await assert.rejects(verifyPackedTmuxHandoff(previous, next, deps), /changed during handoff/);
 });

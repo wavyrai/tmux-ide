@@ -24,6 +24,7 @@ import {
   waitForPackedSocketRemoval,
   capturePackedTmuxWitness,
   retirePackedTmuxSocket,
+  verifyPackedTmuxHandoff,
 } from "./lib/packed-install-cleanup.mjs";
 import {
   runPackedInstallScenarios,
@@ -217,6 +218,23 @@ let postinstallEvidence = null;
 let npmVersion = null;
 let tmuxWitness = null;
 let tmuxStarted = false;
+const tmuxGenerations = [];
+
+async function recordTmuxGeneration(stage) {
+  const pid = Number(
+    run("tmux", ["-S", installedTmuxSocketPath, "display-message", "-p", "#{pid}"]).stdout.trim(),
+  );
+  const next = capturePackedTmuxWitness(installedTmuxSocketPath, pid);
+  const transition = await verifyPackedTmuxHandoff(tmuxWitness, next);
+  if (!tmuxWitness || transition.replaced)
+    tmuxGenerations.push({
+      stage,
+      observedAt: new Date().toISOString(),
+      ...transition,
+      witness: next,
+    });
+  tmuxWitness = next;
+}
 
 function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -716,6 +734,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       launcherPath,
     ]);
     if (created.status !== 0) throw new Error(`Could not launch ${hostSession}: ${created.stderr}`);
+    await recordTmuxGeneration(`golden-app:${hostSession}`);
     if (hosted) {
       const binding = tmuxResult([
         "bind-key",
@@ -801,7 +820,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     const status = readFileSync(app.statusPath, "utf8").trim();
     if (status !== "0") throw new Error(`Packed app quit with ${status}\n${app.diagnostics()}`);
   };
-  const createSession = (name) => {
+  const createSession = async (name) => {
     const result = tmuxResult([
       "new-session",
       "-d",
@@ -815,6 +834,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       launchDir,
     ]);
     if (result.status !== 0) throw new Error(`Could not create ${name}: ${result.stderr}`);
+    await recordTmuxGeneration(`golden-session:${name}`);
   };
 
   // The preceding first-run gate killed the isolated tmux server. Its host
@@ -846,7 +866,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   );
   await cleanQuit(empty);
 
-  for (const name of ["journey-alpha", "journey-beta", "journey-gamma"]) createSession(name);
+  for (const name of ["journey-alpha", "journey-beta", "journey-gamma"]) await createSession(name);
   // The first-run gate intentionally killed and recreated the isolated tmux
   // server. Restart the installed daemon so its tmux observer is bound to the
   // new server generation before asserting catalog-driven chooser behavior.
@@ -1485,7 +1505,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
 
   // Exercise hosted put-away with a real isolated tmux client. Control mode is
   // terminal-independent but still owns a genuine client/session stack.
-  createSession("_tmux-ide-pack-return-seed");
+  await createSession("_tmux-ide-pack-return-seed");
   const hosted = await launchApp({ target: "journey-beta", hosted: true });
   const controlClient = spawn(
     "tmux",
@@ -1762,10 +1782,7 @@ try {
   if (target.status !== 0) {
     throw new Error(`Could not create isolated target session: ${target.stderr}`);
   }
-  const tmuxPid = Number(
-    run("tmux", ["-S", installedTmuxSocketPath, "display-message", "-p", "#{pid}"]).stdout.trim(),
-  );
-  tmuxWitness = capturePackedTmuxWitness(installedTmuxSocketPath, tmuxPid);
+  await recordTmuxGeneration("initial-target");
   const installedBundle = readFileSync(
     join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js"),
     "utf8",
@@ -1998,6 +2015,7 @@ try {
       journey: journeyObservations,
       installationScenarios,
       tmuxWitness,
+      tmuxGenerations,
       isolation: {
         emptyHome: true,
         emptyCwd: true,
