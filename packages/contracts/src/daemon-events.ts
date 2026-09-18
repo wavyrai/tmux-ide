@@ -268,21 +268,21 @@ export const DaemonEventFleetChangedFrameSchemaZ = z
   .strict();
 
 /**
- * RECEIPT — a pane's ground-truth agent authority (`@agent_state`) completed a
- * turn: the daemon's agent-status watcher observed `working` transition to
- * `done` or `idle`. Unlike the `agent-status.changed` invalidation (a re-fetch
- * hint), this is a typed completion event a consumer can WAIT on without
- * polling: the dock chip, the fleet sidebar, and `tmux-ide wait agent-status`
- * all want exactly "an agent finished".
+ * RECEIPT — a sampled pane-state transition: the daemon's agent-status watcher
+ * observed `@agent_state` change from `working` to `done` or `idle` while the
+ * runtime pane and durable pane stamp remained equal. This does not establish
+ * agent process continuity or success of a submitted task. Session-status
+ * waits use it as a hint to re-read aggregate status, since another agent in
+ * the session may still be working or blocked.
  *
- * `agentId` is the wire-safe durable agent identity — the same
+ * `agentId` is the wire-safe durable pane-derived agent identity — the same
  * `agent.<digest>` id the application-shell sidebar mints from the pane's
  * durable `@tmux_ide_pane_id` stamp — or `null` when the pane carries no valid
- * stamp (receipts still fire; correlation is best-effort). No raw tmux
- * runtime id or path ever crosses this frame. `at` is the daemon's
- * observation time (the watcher polls, so it trails the hook stamp by at most
- * one poll interval). One receipt per completing pane per poll tick; the poll
- * interval is a hard emission floor, so a flapping pane cannot storm clients.
+ * stamp. Anonymous receipts provide no per-agent correlation. No raw tmux
+ * runtime id or path ever crosses this frame. `at` is the daemon's observation
+ * time, not the hook or task completion time. Transitions entirely between
+ * successful polling samples may be missed; this is not a durable turn log.
+ * At most one receipt is emitted per completing pane per poll tick.
  */
 export const DaemonEventAgentTurnCompletedFrameSchemaZ = z
   .object({

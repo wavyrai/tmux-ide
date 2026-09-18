@@ -6,6 +6,8 @@
  */
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import { rollupStatus } from "./sessions.ts";
+import type { AgentStatus } from "../detect/classify.ts";
 import type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
 import {
   isReceiptCoveredStatus,
@@ -89,16 +91,120 @@ describe("waitForAgentStatusViaReceipts", () => {
   });
 
   it("resolves ok on the matching receipt and closes the socket", async () => {
-    const { socket, opts } = harness();
+    let status: AgentStatus = "working";
+    const { socket, opts } = harness({ currentStatus: () => status });
     const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
     await tick();
     socket.open();
     socket.frame({ type: "pong" }); // unrelated frame — ignored
     socket.frame(receipt("other-session", "done")); // other session — ignored
-    socket.frame(receipt("s1", "idle")); // wrong settle status — remembered, not a match
+    socket.frame(receipt("s1", "idle")); // a hint to re-read aggregate status, not an answer
+    status = "done";
     socket.frame(receipt("s1", "done"));
     expect(await wait).toEqual({ ok: true, session: "s1", want: "done", status: "done" });
     expect(socket.closed).toBe(true);
+  });
+
+  it.each(["working", "blocked"] as const)(
+    "does not settle when one agent finishes while another remains %s",
+    async (other) => {
+      const states: AgentStatus[] = ["working", other];
+      const currentStatus = vi.fn(() => rollupStatus(states));
+      const { socket, opts } = harness({ currentStatus, timeoutMs: 30 });
+      const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
+      await tick();
+      socket.open();
+      states[0] = "done";
+      socket.frame(receipt("s1", "done"));
+      socket.frame({ type: "agent-status.changed", sessionName: "s1" });
+      await tick();
+      expect(socket.closed).toBe(false);
+      expect(currentStatus).toHaveBeenCalledTimes(2); // open + coalesced hints
+      expect(await wait).toEqual({
+        ok: false,
+        session: "s1",
+        want: "done",
+        status: other,
+        timedOutAfterMs: 30,
+      });
+      expect(socket.closed).toBe(true);
+    },
+  );
+
+  it("rechecks aggregate status for invalidation without requiring a completion receipt", async () => {
+    let status: AgentStatus = "blocked";
+    const currentStatus = vi.fn(() => status);
+    const { socket, opts } = harness({ currentStatus });
+    const wait = waitForAgentStatusViaReceipts("s1", "idle", opts);
+    await tick();
+    socket.open();
+    socket.frame({ type: "agent-status.changed", sessionName: "other" });
+    await tick();
+    expect(currentStatus).toHaveBeenCalledTimes(1);
+    status = "idle";
+    socket.frame({ type: "agent-status.changed", sessionName: "s1" });
+    expect(await wait).toEqual({ ok: true, session: "s1", want: "idle", status: "idle" });
+  });
+
+  it("does not read queued hints after socket closure", async () => {
+    const currentStatus = vi.fn(() => "working" as const);
+    const { socket, opts } = harness({ currentStatus });
+    const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
+    await tick();
+    socket.open();
+    socket.frame(receipt("s1", "done"));
+    socket.emit("close");
+    expect(await wait).toBeNull();
+    await tick();
+    expect(currentStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back when aggregate status cannot be read instead of trusting a receipt", async () => {
+    const currentStatus = vi.fn(() => "working" as const);
+    const { socket, opts } = harness({ currentStatus });
+    const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
+    await tick();
+    socket.open();
+    currentStatus.mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+    socket.frame(receipt("s1", "done"));
+    expect(await wait).toBeNull();
+    expect(socket.closed).toBe(true);
+  });
+
+  it("keeps the original deadline despite repeated hints and cancels queued reads", async () => {
+    vi.useFakeTimers();
+    try {
+      const currentStatus = vi.fn(() => null);
+      const { socket, opts } = harness({ currentStatus, timeoutMs: 100 });
+      const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
+      await Promise.resolve();
+      socket.open();
+      for (let i = 0; i < 4; i++) {
+        await vi.advanceTimersByTimeAsync(20);
+        socket.frame(receipt("s1", "done"));
+      }
+      await vi.advanceTimersByTimeAsync(19);
+      expect(socket.closed).toBe(false);
+      socket.frame(receipt("s1", "done"));
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await wait).toEqual({
+        ok: false,
+        session: "s1",
+        want: "done",
+        status: null,
+        timedOutAfterMs: 100,
+      });
+      const reads = currentStatus.mock.calls.length;
+      socket.frame(receipt("s1", "done"));
+      await vi.runAllTimersAsync();
+      expect(currentStatus).toHaveBeenCalledTimes(reads);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(socket.closed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("answers immediately from the one-shot read when the turn already finished", async () => {
@@ -130,11 +236,11 @@ describe("waitForAgentStatusViaReceipts", () => {
   });
 
   it("times out honestly — a timeout is an answer, not a fallback", async () => {
-    const { socket, opts } = harness({ timeoutMs: 30 });
+    const { socket, opts } = harness({ timeoutMs: 30, currentStatus: () => "idle" });
     const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
     await tick();
     socket.open();
-    socket.frame(receipt("s1", "idle")); // observed, but never the wanted status
+    socket.frame(receipt("s1", "idle")); // aggregate read stays idle, never the wanted status
     expect(await wait).toEqual({
       ok: false,
       session: "s1",

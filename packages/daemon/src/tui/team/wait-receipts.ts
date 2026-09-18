@@ -2,12 +2,11 @@
  * Receipt-driven `wait agent-status` — the push twin of the polling loop in
  * `wait.ts`.
  *
- * When a canonical daemon is running, its agent-status watcher already
- * observes every `@agent_state` transition and emits a typed
- * `agent.turn-completed` receipt on the `/ws/events` bus. Waiting on that
- * receipt replaces the CLI's local poll (which re-scrapes the whole fleet
- * every 750 ms) with a single WebSocket that sits idle until the daemon
- * pushes the completion.
+ * Daemon completion receipts and session invalidations are wake-up hints, not
+ * proof that the whole session reached a status. Re-read the same aggregate
+ * session status as the polling path: another agent may still be working or
+ * blocked. Neither transport proves success of a submitted task. Bursts of
+ * hints share one read, with a persistent classification tracker.
  *
  * Honest degrade: this path only answers for the receipt-covered targets
  * (`done` / `idle` — the "turn finished" statuses). Every other case — no
@@ -59,10 +58,10 @@ export interface WaitReceiptsOpts {
   /** Socket factory (defaults to `ws` against the daemon's `/ws/events`). */
   openSocket?: (url: string) => ReceiptSocket;
   /**
-   * One-shot status read run AFTER the socket opens, so a turn that completed
+   * Aggregate session status read after open and on coalesced hints. A turn completed
    * before this process launched is answered immediately instead of waiting
    * for a receipt that already fired. Defaults to the same fleet read the
-   * polling loop uses (a single iteration, not a loop).
+   * polling loop uses, with a tracker retained for the entire wait.
    */
   currentStatus?: () => AgentStatus | null;
   now?: () => number;
@@ -113,9 +112,9 @@ export async function waitForAgentStatusViaReceipts(
         url,
         authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : undefined,
       ) as unknown as ReceiptSocket);
+  const tracker = createStatusTracker();
   const currentStatus =
-    opts.currentStatus ??
-    (() => findSessionStatus(listTeamSessions(createStatusTracker()), session));
+    opts.currentStatus ?? (() => findSessionStatus(listTeamSessions(tracker), session));
 
   const url = canonicalDaemonUrl("ws", info.bindHostname, info.port, "/ws/events");
   let socket: ReceiptSocket;
@@ -130,18 +129,32 @@ export async function waitForAgentStatusViaReceipts(
     let lastStatus: AgentStatus | null = null;
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let connectTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     const settle = (result: WaitAgentStatusResult | null): void => {
       if (settled) return;
       settled = true;
       if (connectTimer !== null) clearTimeout(connectTimer);
       if (deadlineTimer !== null) clearTimeout(deadlineTimer);
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
       try {
         socket.close();
       } catch {
         // already gone — nothing to release
       }
       resolve(result);
+    };
+
+    const refreshStatus = (): void => {
+      if (settled) return;
+      try {
+        lastStatus = currentStatus();
+      } catch {
+        // This transport cannot establish aggregate status; use the fallback.
+        settle(null);
+        return;
+      }
+      if (lastStatus === want) settle({ ok: true, session, want, status: want });
     };
 
     connectTimer = setTimeout(() => settle(null), connectTimeoutMs);
@@ -161,14 +174,7 @@ export async function waitForAgentStatusViaReceipts(
       // The watcher baselines when the first client connects, so a receipt can
       // only describe a transition AFTER this socket exists. Answer the
       // already-finished case with one direct read.
-      try {
-        lastStatus = currentStatus();
-      } catch {
-        lastStatus = null;
-      }
-      if (lastStatus === want) {
-        settle({ ok: true, session, want, status: want });
-      }
+      refreshStatus();
     });
 
     socket.on("message", (data) => {
@@ -182,11 +188,17 @@ export async function waitForAgentStatusViaReceipts(
       const parsed = DaemonEventServerFrameSchemaZ.safeParse(raw);
       if (!parsed.success) return;
       const frame = parsed.data;
-      if (frame.type !== "agent.turn-completed" || frame.sessionName !== session) return;
-      lastStatus = frame.toStatus;
-      if (frame.toStatus === want) {
-        settle({ ok: true, session, want, status: want });
-      }
+      if (
+        (frame.type !== "agent.turn-completed" && frame.type !== "agent-status.changed") ||
+        frame.sessionName !== session
+      )
+        return;
+      if (refreshTimer !== null) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        refreshStatus();
+      }, 0);
+      refreshTimer.unref?.();
     });
   });
 }
