@@ -1190,6 +1190,9 @@ async function startEmbeddedDaemonGeneration(
       internalReadOwnerToken: localBypassToken,
       registry: workspaceRegistry,
       tmuxAuthority,
+      // A gap cannot reconstruct historical interactions. Refresh inventory
+      // facts while authored operations retain their observation deadlines.
+      onGap: () => terminalInventoryRuntime?.invalidate(),
       onObserved: ({ workspaceName, semanticPaneId, operationKind, operationId }) => {
         if (operationKind !== "workspace.pane.read") terminalInventoryRuntime?.invalidate();
         if (operationId) {

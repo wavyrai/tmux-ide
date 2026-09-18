@@ -1137,7 +1137,8 @@ describe("flow control", () => {
       expect(command).toContain("capture-pane -p -e -J");
       expect(command).toContain("display-message -p -t %1");
       expect(command).toContain("refresh-client -A " + "'\\''" + "%1:continue" + "'\\''");
-      expect(command).toContain("set-buffer -a -b owned-buffer");
+      expect(command).toContain("set-option -gF ");
+      expect(command).toContain("@owned-buffer");
       expect(command).toContain("wait-for -S owned-ready");
       expect(command).not.toContain("run-shell");
     }

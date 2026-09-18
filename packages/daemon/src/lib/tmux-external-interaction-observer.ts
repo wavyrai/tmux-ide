@@ -3,6 +3,13 @@ import { execFile } from "node:child_process";
 import { WorkspacePaneCreationReferenceSchemaZ } from "@tmux-ide/contracts";
 import { z } from "zod";
 
+import { logger } from "./log.ts";
+import {
+  boundedTmuxInteractionAppendCommand,
+  tmuxInteractionOption,
+  TMUX_INTERACTION_GAP_RECORD,
+  TMUX_INTERACTION_MAX_DRAIN_BYTES,
+} from "./tmux-interaction-retention.ts";
 import type { WorkspacePaneTmuxAuthority } from "./workspace-pane-creation.ts";
 import { createPinnedWorkspaceTmuxAsyncRunner } from "./workspace-pane-creation.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
@@ -13,10 +20,20 @@ import {
   INTERNAL_SEND_OPERATION_OPTION,
 } from "./tmux-interaction-options.ts";
 
-const HOOK_MARKER = "tmux-ide-interaction-v2";
+const HOOK_MARKER = "tmux-ide-interaction-v3";
 const OWNED_HOOK_MARKER = "tmux-ide-interaction-v";
 const FIELD_SEPARATOR = "|tmux-ide-input-field-v1|";
 const EVENT_SEPARATOR = "|tmux-ide-input-event-v1|";
+export interface ExternalTmuxInteractionGap {
+  readonly reason:
+    | "overflow"
+    | "read-failed"
+    | "detach-failed"
+    | "projection-failed"
+    | "hook-repair-failed";
+  readonly recovery: "future-observations-only";
+}
+
 const RUNTIME_PANE = /^%[0-9]+$/u;
 const RETRY_MS = 1_000;
 /**
@@ -185,7 +202,7 @@ function hookIndexes(
 /**
  * Event-driven adapter from tmux's native send/capture hooks into the semantic
  * interaction spine. Hooks write only runtime identity, operation kind, and an
- * internal-operation marker to a tmux paste buffer, then signal a blocked
+ * internal-operation marker to bounded tmux option storage, then signal a blocked
  * `wait-for` client. No terminal input or captured output crosses this boundary.
  */
 export class TmuxExternalInteractionObserver {
@@ -201,7 +218,7 @@ export class TmuxExternalInteractionObserver {
   #loop: Promise<void> | null = null;
   #starting: Promise<void> | null = null;
   #hookHealthcheck: ReturnType<typeof setInterval> | null = null;
-  #drainSequence = 0;
+  readonly #onGap: ((gap: ExternalTmuxInteractionGap) => void) | undefined;
   #tmuxWork: Promise<unknown> = Promise.resolve();
   #reconcile: Promise<void> | null = null;
   #diagnostics: ExternalTmuxObserverDiagnostics | null;
@@ -221,10 +238,12 @@ export class TmuxExternalInteractionObserver {
      */
     onObserved: (interaction: ExternalTmuxInteraction) => boolean;
     diagnostics?: ExternalTmuxObserverDiagnostics;
+    onGap?: (gap: ExternalTmuxInteractionGap) => void;
   }) {
     this.#daemonInstanceId = options.daemonInstanceId;
     this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
     this.#onObserved = options.onObserved;
+    this.#onGap = options.onGap;
     this.#authenticatedInternalReads = new AuthenticatedInternalReadVerifier({
       daemonInstanceId: options.daemonInstanceId,
       ownerToken: options.internalReadOwnerToken,
@@ -274,7 +293,7 @@ export class TmuxExternalInteractionObserver {
     } catch (error) {
       await this.#serializeTmux(async () => {
         await this.#removeOwnedHooks();
-        await this.#deleteBuffer(this.#bufferName);
+        await this.#deleteRetention();
       });
       if (!isTmuxServerUnavailable(error)) {
         this.#active = false;
@@ -289,12 +308,16 @@ export class TmuxExternalInteractionObserver {
     if (!this.#active || this.#abort.signal.aborted) {
       await this.#serializeTmux(async () => {
         await this.#removeOwnedHooks();
-        await this.#deleteBuffer(this.#bufferName);
+        await this.#deleteRetention();
       });
       throw new Error("tmux external interaction observer was disposed during startup");
     }
     this.#loop = this.#run();
-    this.#hookHealthcheck = setInterval(() => void this.reconcileHooks(), HOOK_HEALTHCHECK_MS);
+    this.#hookHealthcheck = setInterval(() => {
+      void this.reconcileHooks().catch(() => {
+        if (!this.#abort.signal.aborted) this.#reportGap("hook-repair-failed");
+      });
+    }, HOOK_HEALTHCHECK_MS);
     this.#hookHealthcheck.unref?.();
   }
 
@@ -303,7 +326,7 @@ export class TmuxExternalInteractionObserver {
   }
 
   async dispose(): Promise<void> {
-    if (!this.#active && !this.#loop && !this.#starting) return;
+    if (!this.#active && !this.#loop && !this.#starting && !this.#installed) return;
     const starting = this.#starting;
     this.#active = false;
     this.#abort.abort();
@@ -313,7 +336,7 @@ export class TmuxExternalInteractionObserver {
     this.#loop = null;
     await this.#serializeTmux(async () => {
       await this.#removeOwnedHooks();
-      await this.#deleteBuffer(this.#bufferName);
+      await this.#deleteRetention();
     });
   }
 
@@ -326,20 +349,30 @@ export class TmuxExternalInteractionObserver {
     await this.#removeOwnedHooks(signal);
     await this.#deleteOwnedBuffers(signal);
     signal?.throwIfAborted();
+    // The small named buffer indexes retention options for crash cleanup;
+    // event data lives only in bounded options, never in this buffer.
+    await this.#io.runTmux(["set-buffer", "-b", this.#bufferName, "retention-owner"], signal);
     const hook = (
       operationKind: ExternalTmuxInteraction["operationKind"],
       markerOption: string,
       consumeMarker: boolean,
     ) => {
-      const data = `#{pane_id}${FIELD_SEPARATOR}#{q:${markerOption}}${FIELD_SEPARATOR}${operationKind}${EVENT_SEPARATOR}`;
+      // Reject arbitrary option text before expansion into a tmux command.
+      // Bound markers at the producer, including across multibyte input.
+      const validMarker = `#{&&:#{m/r:^[A-Za-z0-9:._-]*$,#{${markerOption}}},#{e|<=:#{n:${markerOption}},160}}`;
+      const marker = `#{?${validMarker},#{${markerOption}},}`;
+      const data = `#{pane_id}${FIELD_SEPARATOR}${marker}${FIELD_SEPARATOR}${operationKind}${EVENT_SEPARATOR}`;
       // Expand pane/marker identity at hook invocation, then schedule the
       // append+signal as a background tmux-native command list. No shell and
       // no second tmux client sit on the invoking command queue. The tiny
       // synchronous native cleanup runs only after the record string has been
       // captured, so a marker is single-use without racing the async drain.
-      const publish =
-        `run-shell -b -C "set-buffer -a -b '${this.#bufferName}' '${data}'` +
-        ` ; wait-for -S '${this.#signalChannel}'"`;
+      // Escape only the retention format for evaluation in the queued native
+      // command; capture pane and marker immediately, before consuming it.
+      const append = boundedTmuxInteractionAppendCommand(this.#bufferName, "RECORD")
+        .replace("#{=", "##{=")
+        .replace("RECORD", data);
+      const publish = `run-shell -b -C "${append} ; wait-for -S '${this.#signalChannel}'"`;
       // Hook commands inherit the triggering pane as their target, so cleanup
       // needs neither format expansion nor a nested command queue.
       const consume = consumeMarker ? ` ; set-option -pu '${markerOption}'` : "";
@@ -402,38 +435,57 @@ export class TmuxExternalInteractionObserver {
     return settled;
   }
 
-  /** Atomically detach and drain the current event buffer. */
+  /** Atomically detach and drain the current bounded event batch. */
   drain(): Promise<boolean> {
     return this.#serializeTmux(() => this.#drain());
   }
 
   async #drain(): Promise<boolean> {
     const finish = this.#beginDiagnostic("drain");
-    const drainName = `${this.#bufferName}-drain-${++this.#drainSequence}`;
+    const option = tmuxInteractionOption(this.#bufferName);
+    // A single reusable detached slot bounds retained storage even if deletion
+    // fails. Native synchronous commands execute consecutively in one queue.
+    const drainName = `${option}-drain`;
     try {
       await this.#io.runTmux(
-        ["set-buffer", "-b", this.#bufferName, "-n", drainName],
+        ["set-option", "-gF", drainName, `#{${option}}`, ";", "set-option", "-g", option, ""],
         this.#abort.signal,
       );
     } catch {
+      this.#reportGap("detach-failed");
       finish(false);
       return false;
     }
-    let raw: string;
-    try {
-      raw = await this.#io.runTmux(["show-buffer", "-b", drainName], this.#abort.signal);
-    } catch {
+    let raw: string | undefined;
+    // Retry the same immutable detached batch once. Never accumulate an
+    // unbounded collection of failed batches or spin until a server recovers.
+    for (let attempt = 0; attempt < 2 && !this.#abort.signal.aborted; attempt += 1) {
+      try {
+        raw = await this.#io.runTmux(["show-options", "-gv", drainName], this.#abort.signal);
+        break;
+      } catch {
+        // Exhaustion is surfaced below, without terminal content or errors.
+      }
+    }
+    await this.#deleteOption(drainName);
+    if (raw === undefined) {
+      this.#reportGap("read-failed");
       finish(false);
       return false;
-    } finally {
-      await this.#deleteBuffer(drainName);
     }
+    if (Buffer.byteLength(raw, "utf8") > TMUX_INTERACTION_MAX_DRAIN_BYTES) {
+      this.#reportGap("overflow");
+      finish(false);
+      return false;
+    }
+    if (raw.includes(TMUX_INTERACTION_GAP_RECORD)) this.#reportGap("overflow");
     let consumed = false;
     try {
       for (const record of parseTmuxInputHookRecords(raw)) {
         consumed = (await this.#project(record)) || consumed;
       }
     } catch (error) {
+      this.#reportGap("projection-failed");
       finish(false);
       throw error;
     }
@@ -539,6 +591,39 @@ export class TmuxExternalInteractionObserver {
     return true;
   }
 
+  #reportGap(reason: ExternalTmuxInteractionGap["reason"]): void {
+    if (this.#abort.signal.aborted) return;
+    const gap: ExternalTmuxInteractionGap = { reason, recovery: "future-observations-only" };
+    logger.warn(
+      "tmux-interaction-observer",
+      "Interaction observation gap; missing history cannot be replayed",
+      {
+        daemonInstanceId: this.#daemonInstanceId,
+        ...gap,
+      },
+    );
+    try {
+      this.#onGap?.(gap);
+    } catch {
+      /* Reporting cannot create operation authority. */
+    }
+  }
+
+  async #deleteOption(name: string, signal?: AbortSignal): Promise<void> {
+    try {
+      await this.#io.runTmux(["set-option", "-gu", name], signal);
+    } catch {
+      /* Best effort. */
+    }
+  }
+
+  async #deleteRetention(): Promise<void> {
+    const option = tmuxInteractionOption(this.#bufferName);
+    await this.#deleteOption(option);
+    await this.#deleteOption(`${option}-drain`);
+    await this.#deleteBuffer(this.#bufferName);
+  }
+
   async #deleteOwnedBuffers(signal?: AbortSignal): Promise<void> {
     let output: string;
     try {
@@ -547,7 +632,12 @@ export class TmuxExternalInteractionObserver {
       return;
     }
     for (const name of output.split("\n")) {
-      if (name.startsWith(OWNED_HOOK_MARKER)) await this.#deleteBuffer(name, signal);
+      if (!name.startsWith(OWNED_HOOK_MARKER) || name === this.#bufferName) continue;
+      if (/^[A-Za-z0-9._-]{1,256}$/u.test(name)) {
+        await this.#deleteOption(tmuxInteractionOption(name), signal);
+        await this.#deleteOption(`${tmuxInteractionOption(name)}-drain`, signal);
+      }
+      await this.#deleteBuffer(name, signal);
     }
   }
 

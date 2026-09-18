@@ -1,3 +1,4 @@
+import { boundedTmuxInteractionAppendCommand } from "../../lib/tmux-interaction-retention.ts";
 import {
   decodeNativeGridCapture,
   isNativeBootstrapCapture,
@@ -1853,7 +1854,7 @@ export class SessionChannel {
     const sentinel = (kind: string): string =>
       `display-message -p -l -t ${pane.runtimeId} ` + `"%tmux-ide-atomic-v1 ${nonce} ${kind}"`;
     const observerCommands =
-      ` ; set-buffer -a -b ${observer!.bufferName} ${tmuxSingleQuote(observer!.record)}` +
+      ` ; ${boundedTmuxInteractionAppendCommand(observer!.bufferName, observer!.record)}` +
       ` ; wait-for -S ${observer!.signalChannel}`;
     const body =
       `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker}` +
