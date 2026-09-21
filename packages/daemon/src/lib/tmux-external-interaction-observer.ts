@@ -30,6 +30,7 @@ export interface ExternalTmuxInteractionGap {
     | "read-failed"
     | "detach-failed"
     | "projection-failed"
+    | "hooks-replaced"
     | "hook-repair-failed";
   readonly recovery: "future-observations-only";
 }
@@ -39,9 +40,52 @@ const RETRY_MS = 1_000;
 /**
  * Hooks are shared tmux state. A config reload, another client, or a debugging
  * command can replace them without killing the daemon, so waiting forever on
- * the old signal channel is not a sufficient health check.
+ * the old signal channel is not a sufficient health check. Every check costs
+ * one tmux child process, so a check that keeps finding the hooks intact backs
+ * off (doubling from `baseMs`, capped at `maxMs`); any repair, failure, or
+ * signal-loop error returns the cadence to `baseMs`. Measured on an otherwise
+ * idle daemon the fixed one-second cadence was the daemon's only recurring
+ * spawn source (two `show-hooks` children per second).
  */
-const HOOK_HEALTHCHECK_MS = 1_000;
+export interface HookHealthcheckSchedule {
+  readonly baseMs: number;
+  readonly maxMs: number;
+}
+
+export const DEFAULT_HOOK_HEALTHCHECK_SCHEDULE: HookHealthcheckSchedule = Object.freeze({
+  baseMs: 1_000,
+  maxMs: 30_000,
+});
+
+export type HookHealthcheckOutcome = "healthy" | "repaired" | "failed";
+
+/** Pure cadence rule: healthy checks double the wait up to the cap; anything else resets it. */
+export function nextHookHealthcheckDelay(
+  previousMs: number,
+  outcome: HookHealthcheckOutcome,
+  schedule: HookHealthcheckSchedule = DEFAULT_HOOK_HEALTHCHECK_SCHEDULE,
+): number {
+  const base = Math.max(1, Math.floor(schedule.baseMs));
+  const max = Math.max(base, Math.floor(schedule.maxMs));
+  if (outcome !== "healthy") return base;
+  const previous = Number.isFinite(previousMs) ? Math.max(base, Math.floor(previousMs)) : base;
+  return Math.min(previous * 2, max);
+}
+
+/**
+ * True when `show-hooks` output lists an entry of `hookName` whose body carries
+ * this observer's buffer name. Output may hold several hook arrays at once
+ * (one combined `show-hooks -g a ; show-hooks -g b` client), so the check is
+ * per hook line rather than a substring search over the whole output.
+ */
+export function ownedHookInstalled(output: string, hookName: string, bufferName: string): boolean {
+  const row = new RegExp(`^${hookName}\\[([0-9]+)\\]\\s+(.+)$`, "u");
+  for (const line of output.split("\n")) {
+    const match = row.exec(line);
+    if (match && match[2]!.includes(bufferName)) return true;
+  }
+  return false;
+}
 
 export { INTERNAL_READ_OPERATION_OPTION, INTERNAL_SEND_OPERATION_OPTION };
 
@@ -217,7 +261,10 @@ export class TmuxExternalInteractionObserver {
   #installed = false;
   #loop: Promise<void> | null = null;
   #starting: Promise<void> | null = null;
-  #hookHealthcheck: ReturnType<typeof setInterval> | null = null;
+  #hookHealthcheck: ReturnType<typeof setTimeout> | null = null;
+  readonly #healthcheckSchedule: HookHealthcheckSchedule;
+  #healthcheckDelayMs: number;
+  #lastHealthcheckOutcome: HookHealthcheckOutcome = "failed";
   readonly #onGap: ((gap: ExternalTmuxInteractionGap) => void) | undefined;
   #tmuxWork: Promise<unknown> = Promise.resolve();
   #reconcile: Promise<void> | null = null;
@@ -239,8 +286,15 @@ export class TmuxExternalInteractionObserver {
     onObserved: (interaction: ExternalTmuxInteraction) => boolean;
     diagnostics?: ExternalTmuxObserverDiagnostics;
     onGap?: (gap: ExternalTmuxInteractionGap) => void;
+    /** Health-check cadence bounds. Tests inject small values; production uses the default. */
+    healthcheck?: Partial<HookHealthcheckSchedule>;
   }) {
     this.#daemonInstanceId = options.daemonInstanceId;
+    this.#healthcheckSchedule = Object.freeze({
+      baseMs: options.healthcheck?.baseMs ?? DEFAULT_HOOK_HEALTHCHECK_SCHEDULE.baseMs,
+      maxMs: options.healthcheck?.maxMs ?? DEFAULT_HOOK_HEALTHCHECK_SCHEDULE.maxMs,
+    });
+    this.#healthcheckDelayMs = this.#healthcheckSchedule.baseMs;
     this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
     this.#onObserved = options.onObserved;
     this.#onGap = options.onGap;
@@ -313,12 +367,53 @@ export class TmuxExternalInteractionObserver {
       throw new Error("tmux external interaction observer was disposed during startup");
     }
     this.#loop = this.#run();
-    this.#hookHealthcheck = setInterval(() => {
-      void this.reconcileHooks().catch(() => {
-        if (!this.#abort.signal.aborted) this.#reportGap("hook-repair-failed");
-      });
-    }, HOOK_HEALTHCHECK_MS);
-    this.#hookHealthcheck.unref?.();
+    this.#scheduleHealthcheck();
+  }
+
+  /** Wait before the next scheduled hook health check. Exposed for tests. */
+  get healthcheckDelayMs(): number {
+    return this.#healthcheckDelayMs;
+  }
+
+  #scheduleHealthcheck(): void {
+    if (this.#hookHealthcheck) clearTimeout(this.#hookHealthcheck);
+    this.#hookHealthcheck = null;
+    if (!this.#active || this.#abort.signal.aborted) return;
+    const timer = setTimeout(() => {
+      if (this.#hookHealthcheck === timer) this.#hookHealthcheck = null;
+      void this.#runScheduledHealthcheck();
+    }, this.#healthcheckDelayMs);
+    timer.unref?.();
+    this.#hookHealthcheck = timer;
+  }
+
+  async #runScheduledHealthcheck(): Promise<void> {
+    const delayBefore = this.#healthcheckDelayMs;
+    let outcome: HookHealthcheckOutcome;
+    try {
+      await this.reconcileHooks();
+      outcome = this.#lastHealthcheckOutcome;
+    } catch {
+      if (!this.#abort.signal.aborted) this.#reportGap("hook-repair-failed");
+      outcome = "failed";
+    }
+    // A signal-path reset that landed during this check wins over the outcome.
+    if (this.#healthcheckDelayMs === delayBefore) {
+      this.#healthcheckDelayMs = nextHookHealthcheckDelay(
+        delayBefore,
+        outcome,
+        this.#healthcheckSchedule,
+      );
+    }
+    if (this.#hookHealthcheck === null) this.#scheduleHealthcheck();
+  }
+
+  /** Something failed on the signal path: verify the hooks promptly again. */
+  #resetHealthcheckBackoff(): void {
+    const base = this.#healthcheckSchedule.baseMs;
+    if (this.#healthcheckDelayMs === base) return;
+    this.#healthcheckDelayMs = base;
+    if (this.#hookHealthcheck) this.#scheduleHealthcheck();
   }
 
   setDiagnostics(diagnostics: ExternalTmuxObserverDiagnostics | null): void {
@@ -330,7 +425,7 @@ export class TmuxExternalInteractionObserver {
     const starting = this.#starting;
     this.#active = false;
     this.#abort.abort();
-    if (this.#hookHealthcheck) clearInterval(this.#hookHealthcheck);
+    if (this.#hookHealthcheck) clearTimeout(this.#hookHealthcheck);
     this.#hookHealthcheck = null;
     await Promise.allSettled([starting, this.#loop]);
     this.#loop = null;
@@ -404,7 +499,7 @@ export class TmuxExternalInteractionObserver {
   /**
    * Restore product hooks when external tmux configuration removed them.
    * Public only so the lifecycle is hermetically testable; the production
-   * observer invokes it from a cheap one-second health check.
+   * observer invokes it from the backed-off health check.
    */
   reconcileHooks(options: { readonly allowInactive?: boolean } = {}): Promise<void> {
     if (!this.#active && options.allowInactive !== true) return Promise.resolve();
@@ -413,15 +508,20 @@ export class TmuxExternalInteractionObserver {
       const finish = this.#beginDiagnostic("healthcheck");
       try {
         if (await this.#ownedHooksPresent(this.#abort.signal)) {
+          this.#lastHealthcheckOutcome = "healthy";
           finish(true);
           return;
         }
+        // Hooks that were installed and are now gone dropped every interaction
+        // since their removal; the repair restores future observation only.
+        if (this.#installed) this.#reportGap("hooks-replaced");
         this.#installed = false;
         try {
           await this.#install(this.#abort.signal);
         } catch {
           this.#installed = false;
         }
+        this.#lastHealthcheckOutcome = this.#installed ? "repaired" : "failed";
         finish(this.#installed);
       } catch (error) {
         finish(false);
@@ -504,6 +604,7 @@ export class TmuxExternalInteractionObserver {
         await this.drain();
       } catch {
         this.#installed = false;
+        this.#resetHealthcheckBackoff();
         await this.#io.delay(RETRY_MS, this.#abort.signal);
       }
     }
@@ -579,16 +680,21 @@ export class TmuxExternalInteractionObserver {
   }
 
   async #ownedHooksPresent(signal?: AbortSignal): Promise<boolean> {
-    for (const hookName of ["after-send-keys", "after-capture-pane"] as const) {
-      let output: string;
-      try {
-        output = await this.#io.runTmux(["show-hooks", "-g", hookName], signal);
-      } catch {
-        return false;
-      }
-      if (!output.includes(this.#bufferName)) return false;
+    // One client verifies both hook arrays: tmux runs the `;`-separated list in
+    // a single command queue and prints each array's lines in order.
+    let output: string;
+    try {
+      output = await this.#io.runTmux(
+        ["show-hooks", "-g", "after-send-keys", ";", "show-hooks", "-g", "after-capture-pane"],
+        signal,
+      );
+    } catch {
+      return false;
     }
-    return true;
+    return (
+      ownedHookInstalled(output, "after-send-keys", this.#bufferName) &&
+      ownedHookInstalled(output, "after-capture-pane", this.#bufferName)
+    );
   }
 
   #reportGap(reason: ExternalTmuxInteractionGap["reason"]): void {
