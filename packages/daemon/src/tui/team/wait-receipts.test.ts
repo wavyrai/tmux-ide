@@ -28,11 +28,30 @@ const daemonInfo: CanonicalDaemonInfo = {
 
 class FakeSocket extends EventEmitter implements ReceiptSocket {
   closed = false;
+  sent: unknown[] = [];
+  send(data: string): void {
+    this.sent.push(JSON.parse(data));
+  }
   close(): void {
     this.closed = true;
   }
   open(): void {
     this.emit("open");
+    this.handshake();
+  }
+  handshake(): void {
+    const { protocolVersion, productVersion, instanceId, startedAt } = daemonInfo;
+    this.frame({
+      type: "hello",
+      daemon: { protocolVersion, productVersion, instanceId, startedAt },
+      sessions: [],
+    });
+    this.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
   }
   frame(frame: unknown): void {
     this.emit("message", JSON.stringify(frame));
@@ -88,6 +107,124 @@ describe("waitForAgentStatusViaReceipts", () => {
         probeAlive: async () => false,
       }),
     ).toBeNull();
+  });
+
+  it("waits for hello, explicitly subscribes, and reads only after the matching install barrier", async () => {
+    const currentStatus = vi.fn(() => "done" as const);
+    const { socket, opts } = harness({ currentStatus });
+    const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
+    await tick();
+    socket.emit("open");
+    socket.frame(receipt("s1", "done"));
+    expect(socket.sent).toEqual([]);
+    expect(currentStatus).not.toHaveBeenCalled();
+    const { protocolVersion, productVersion, instanceId, startedAt } = daemonInfo;
+    socket.frame({
+      type: "hello",
+      daemon: { protocolVersion, productVersion, instanceId, startedAt },
+      sessions: [],
+    });
+    expect(socket.sent).toEqual([
+      {
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: true,
+        interests: [{ resource: "fleet-catalog", workspaceName: null }],
+        interestRevision: 1,
+      },
+    ]);
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 2,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    expect(currentStatus).not.toHaveBeenCalled();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    expect(await wait).toMatchObject({ ok: true, status: "done" });
+    expect(currentStatus).toHaveBeenCalledTimes(1);
+    expect(socket.closed).toBe(true);
+  });
+
+  it.each(["incompatible", "unavailable", "protocol-error", "send-error"])(
+    "falls back and closes on %s handshake",
+    async (failure) => {
+      const { socket, opts } = harness();
+      const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
+      await tick();
+      if (failure === "send-error")
+        socket.send = () => {
+          throw new Error("closed");
+        };
+      const { protocolVersion, productVersion, instanceId, startedAt } = daemonInfo;
+      socket.frame({
+        type: "hello",
+        daemon: {
+          protocolVersion: failure === "incompatible" ? 999 : protocolVersion,
+          productVersion,
+          instanceId,
+          startedAt,
+        },
+        sessions: [],
+      });
+      if (failure === "unavailable")
+        socket.frame({
+          type: "resource.interests-ack",
+          interestRevision: 1,
+          sequence: 0,
+          unavailableInterests: [{ resource: "fleet-catalog", workspaceName: null }],
+        });
+      if (failure === "protocol-error")
+        socket.frame({ type: "protocol.error", code: "invalid-frame", message: "unsupported" });
+      expect(await wait).toBeNull();
+      expect(socket.closed).toBe(true);
+    },
+  );
+
+  it("bounds an open socket without hello or acknowledgement", async () => {
+    const { socket, opts } = harness({ connectTimeoutMs: 10 });
+    const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
+    await tick();
+    socket.emit("open");
+    expect(await wait).toBeNull();
+    expect(socket.closed).toBe(true);
+  });
+
+  it("includes probe and handshake time in the overall deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const { socket, opts } = harness({
+        timeoutMs: 100,
+        connectTimeoutMs: 200,
+        probeAlive: () => new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 30)),
+      });
+      const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
+      await vi.advanceTimersByTimeAsync(80);
+      socket.open();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await wait).toMatchObject({ ok: false, timedOutAfterMs: 100 });
+      expect(socket.closed).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds a stalled liveness probe without opening a socket", async () => {
+    const openSocket = vi.fn();
+    const result = await waitForAgentStatusViaReceipts("s1", "done", {
+      readDaemonInfo: () => daemonInfo,
+      timeoutMs: 10,
+      probeAlive: () => new Promise<boolean>(() => {}),
+      openSocket,
+    });
+    expect(result).toMatchObject({ ok: false, timedOutAfterMs: 10 });
+    expect(openSocket).not.toHaveBeenCalled();
   });
 
   it("resolves ok on the matching receipt and closes the socket", async () => {
@@ -179,7 +316,7 @@ describe("waitForAgentStatusViaReceipts", () => {
       const currentStatus = vi.fn(() => null);
       const { socket, opts } = harness({ currentStatus, timeoutMs: 100 });
       const wait = waitForAgentStatusViaReceipts("s1", "done", opts);
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
       socket.open();
       for (let i = 0; i < 4; i++) {
         await vi.advanceTimersByTimeAsync(20);
