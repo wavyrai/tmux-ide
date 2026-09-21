@@ -360,6 +360,11 @@ describe("production OpenTUI v2 data path", () => {
     // D11 adds one same-connection identity relay beneath the existing SSH
     // transport; it prevents credentials reaching a replaced forwarded endpoint.
     expect(authorityDataPathFiles).toContain("packages/daemon/src/lib/ssh-daemon-relay.ts");
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(150);
+    // The command palette reference sheet (shortcuts / latest changes) is one
+    // pure presentation component beneath the shell overlays.
+    expect(authorityDataPathFiles).toContain(
+      "packages/daemon/src/tui/mirror/runtime/application-reference-sheet.tsx",
+    );
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(151);
   });
 });

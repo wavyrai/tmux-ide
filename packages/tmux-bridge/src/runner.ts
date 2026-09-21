@@ -1,4 +1,10 @@
-import { execFileSync, spawn, type ExecFileSyncOptions } from "node:child_process";
+import {
+  execFile,
+  execFileSync,
+  spawn,
+  type ExecFileOptions,
+  type ExecFileSyncOptions,
+} from "node:child_process";
 import { TmuxError } from "./errors.ts";
 
 const DEBUG = process.env.TMUX_IDE_DEBUG === "1";
@@ -99,7 +105,40 @@ export function runTmuxBinary(
   }
 }
 
-function classifyTmuxError(error: unknown): TmuxError {
+/**
+ * Async twin of {@link runTmuxBinary}: the same pinned-executable contract and
+ * the same `TmuxError` classification, but the child runs off the event loop so
+ * a daemon mutation path never stalls other connected clients while tmux
+ * answers. The classified error keeps the raw execFile error as `cause`.
+ */
+export function runTmuxBinaryAsync(
+  executable: string,
+  args: string[],
+  options: ExecFileOptions & { readonly signal?: AbortSignal } = {},
+): Promise<string> {
+  if (DEBUG || globalThis.__tmuxIdeVerbose) {
+    console.error(`  [tmux] ${args.join(" ")}`);
+  }
+  return new Promise<string>((resolve, reject) => {
+    execFile(
+      executable,
+      args,
+      {
+        windowsHide: true,
+        ...options,
+        encoding: "utf8",
+        env: sanitizeTmuxClientEnvironment(options.env ?? process.env),
+      },
+      (error, stdout) => {
+        if (error) reject(classifyTmuxError(error));
+        else resolve(stdout);
+      },
+    );
+  });
+}
+
+/** Map a raw child-process failure to the shared `TmuxError` code taxonomy. */
+export function classifyTmuxError(error: unknown): TmuxError {
   const detail = getErrorDetail(error).toLowerCase();
 
   if (SESSION_NOT_FOUND_PATTERNS.some((pattern) => detail.includes(pattern))) {

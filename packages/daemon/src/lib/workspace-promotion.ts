@@ -26,7 +26,7 @@
 import type { WorkspaceAdmissionSnapshot } from "@tmux-ide/contracts";
 
 import { createHash } from "node:crypto";
-import { realpathSync, statSync } from "node:fs";
+import { realpath, stat } from "node:fs/promises";
 
 import {
   WorkspacePromoteMutationRequestSchemaZ,
@@ -36,10 +36,10 @@ import {
   type WorkspacePromoteMutationResult,
   type WorkspacePromotedResource,
 } from "@tmux-ide/contracts";
-import { TmuxError } from "@tmux-ide/tmux-bridge";
+import { classifyTmuxError, TmuxError } from "@tmux-ide/tmux-bridge";
 
 import {
-  createPinnedWorkspaceTmuxRunner,
+  createPinnedWorkspaceTmuxAsyncRunner,
   resolveWorkspacePaneTmuxAuthority,
   type WorkspacePaneTmuxAuthority,
 } from "./workspace-pane-creation.ts";
@@ -169,9 +169,16 @@ interface WorkspacePromotionRegistry {
   add(input: AddWorkspaceInput): Workspace;
 }
 
+/**
+ * Promotion io. `runTmux` and `canonicalProjectDir` may answer synchronously
+ * (unit fixtures) or asynchronously (the daemon default): the authority awaits
+ * both so the many tmux round-trips a multi-pane promotion performs never run
+ * on the daemon event loop synchronously, which would stall every other
+ * connected client for the whole promotion.
+ */
 export interface WorkspacePromotionIo {
-  readonly runTmux: (args: readonly string[]) => string;
-  readonly canonicalProjectDir: (path: string) => string;
+  readonly runTmux: (args: readonly string[]) => string | Promise<string>;
+  readonly canonicalProjectDir: (path: string) => string | Promise<string>;
   readonly isMissingTmuxTarget: (error: unknown) => boolean;
   readonly isTmuxUnavailable: (error: unknown) => boolean;
   readonly now: () => number;
@@ -411,10 +418,29 @@ function requestFingerprint(request: WorkspacePromoteMutationRequest): string {
   return JSON.stringify(request);
 }
 
+/**
+ * The daemon's pinned async runner keeps every promotion round-trip off the
+ * event loop; it surfaces raw child-process failures, so classify them here
+ * into the shared `TmuxError` codes the io predicates below inspect.
+ */
+function classifiedAsyncRunner(
+  tmuxAuthority: WorkspacePaneTmuxAuthority | undefined,
+): (args: readonly string[]) => Promise<string> {
+  const run = createPinnedWorkspaceTmuxAsyncRunner(
+    tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority(),
+  );
+  return (args) =>
+    run(args).catch((error: unknown) => {
+      throw error instanceof TmuxError ? error : classifyTmuxError(error);
+    });
+}
+
 const DEFAULT_IO: Omit<WorkspacePromotionIo, "runTmux"> = {
-  canonicalProjectDir: (path) => {
-    const canonical = realpathSync(path);
-    if (!statSync(canonical).isDirectory()) throw new Error("project root is not a directory");
+  canonicalProjectDir: async (path) => {
+    const canonical = await realpath(path);
+    if (!(await stat(canonical)).isDirectory()) {
+      throw new Error("project root is not a directory");
+    }
     return canonical;
   },
   isMissingTmuxTarget: (error) => error instanceof TmuxError && error.code === "SESSION_NOT_FOUND",
@@ -462,11 +488,7 @@ export class WorkspacePromotionAuthority {
     this.#io = {
       ...DEFAULT_IO,
       ...options.io,
-      runTmux:
-        options.io?.runTmux ??
-        createPinnedWorkspaceTmuxRunner(
-          options.tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority(),
-        ),
+      runTmux: options.io?.runTmux ?? classifiedAsyncRunner(options.tmuxAuthority),
     };
     this.#maxReplayOperations = boundedAuthorityLimit(options.maxOperations, MAX_OPERATIONS);
     this.#maxPendingOperations = boundedAuthorityLimit(
@@ -532,7 +554,7 @@ export class WorkspacePromotionAuthority {
     if (existing) return this.#replay(existing, request, fingerprint);
 
     try {
-      const session = this.#resolveSession(request.intent.sessionId);
+      const session = await this.#resolveSession(request.intent.sessionId);
 
       // Already a registry workspace — including an app-created (m32) session —
       // is idempotent, not an error. It is NOT automatically attachable though:
@@ -551,10 +573,10 @@ export class WorkspacePromotionAuthority {
           workspaceName: alreadyRegistered.name,
           sessionName: session.sessionName,
         };
-        this.#stampPaneInventory(request, session, registeredIdentity);
+        await this.#stampPaneInventory(request, session, registeredIdentity);
         this.#assertActive(request.operationId);
-        this.#verifyPromotedInventory(session.sessionId, registeredIdentity);
-        this.#publishFleetEnrollment(request, session, registeredIdentity);
+        await this.#verifyPromotedInventory(session.sessionId, registeredIdentity);
+        await this.#publishFleetEnrollment(request, session, registeredIdentity);
         return this.#succeed(request, fingerprint, alreadyRegistered.name, session.sessionName, {
           replayed: true,
         });
@@ -563,10 +585,10 @@ export class WorkspacePromotionAuthority {
       const identity = derivePromotionIdentity(session.sessionName);
       this.#assertConflictFreeIdentity(identity);
 
-      const canonicalRoot = this.#stampSession(request, session, identity);
+      const canonicalRoot = await this.#stampSession(request, session, identity);
       this.#assertActive(request.operationId);
-      this.#verifyPromotedInventory(session.sessionId, identity);
-      this.#publishFleetEnrollment(request, session, identity);
+      await this.#verifyPromotedInventory(session.sessionId, identity);
+      await this.#publishFleetEnrollment(request, session, identity);
 
       let registered: Workspace;
       try {
@@ -605,8 +627,8 @@ export class WorkspacePromotionAuthority {
     }
   }
 
-  #resolveSession(sessionId: string): SessionRecord {
-    const records = this.#listSessions();
+  async #resolveSession(sessionId: string): Promise<SessionRecord> {
+    const records = await this.#listSessions();
     const matches = records.filter(
       (record) => fleetSessionIdForName(record.sessionName) === sessionId,
     );
@@ -620,9 +642,9 @@ export class WorkspacePromotionAuthority {
     return match;
   }
 
-  #listSessions(): SessionRecord[] {
+  async #listSessions(): Promise<SessionRecord[]> {
     try {
-      return parseSessionRecords(this.#io.runTmux(["list-sessions", "-F", SESSION_FORMAT]));
+      return parseSessionRecords(await this.#io.runTmux(["list-sessions", "-F", SESSION_FORMAT]));
     } catch (error) {
       if (this.#io.isTmuxUnavailable(error)) return [];
       throw error;
@@ -648,14 +670,14 @@ export class WorkspacePromotionAuthority {
    * a newly published marker makes the soon-to-be registered workspace visible
    * to the shared FleetCatalog in the same mutation transaction.
    */
-  #publishFleetEnrollment(
+  async #publishFleetEnrollment(
     request: WorkspacePromoteMutationRequest,
     session: SessionRecord,
     identity: PromotionIdentity,
-  ): void {
+  ): Promise<void> {
     if (session.adopted) return;
     try {
-      this.#io.runTmux(["set-option", "-t", session.sessionId, ADOPTED_OPTION, "1"]);
+      await this.#io.runTmux(["set-option", "-t", session.sessionId, ADOPTED_OPTION, "1"]);
     } catch (error) {
       throw new WorkspacePromotionError(
         "stamp_failed",
@@ -671,19 +693,19 @@ export class WorkspacePromotionAuthority {
    * `set-option` failure maps to `stamp_failed`; the caller has not yet touched
    * the registry, so a failure here leaves the session harmless.
    */
-  #stampSession(
+  async #stampSession(
     request: WorkspacePromoteMutationRequest,
     session: SessionRecord,
     identity: PromotionIdentity,
-  ): string {
-    const scanned = this.#stampPaneInventory(request, session, identity);
+  ): Promise<string> {
+    const scanned = await this.#stampPaneInventory(request, session, identity);
     try {
       for (const [option, value] of [
         [SESSION_OPERATION_OPTION, request.operationId],
         [SESSION_WORKSPACE_OPTION, identity.workspaceName],
         [SESSION_PROMOTED_MARKER_OPTION, "1"],
       ] as const) {
-        this.#io.runTmux(["set-option", "-t", session.sessionId, option, value]);
+        await this.#io.runTmux(["set-option", "-t", session.sessionId, option, value]);
       }
     } catch (error) {
       throw new WorkspacePromotionError(
@@ -693,7 +715,7 @@ export class WorkspacePromotionAuthority {
       );
     }
 
-    return this.#resolveProjectDir(session, scanned);
+    return await this.#resolveProjectDir(session, scanned);
   }
 
   /**
@@ -703,15 +725,22 @@ export class WorkspacePromotionAuthority {
    * session, which may be an m32-open workspace whose provenance must never
    * acquire the promotion marker.
    */
-  #stampPaneInventory(
+  async #stampPaneInventory(
     request: WorkspacePromoteMutationRequest,
     session: SessionRecord,
     identity: PromotionIdentity,
-  ): ScanPane[] {
+  ): Promise<ScanPane[]> {
     let scanned: ScanPane[];
     try {
       scanned = parseScanPanes(
-        this.#io.runTmux(["list-panes", "-s", "-t", session.sessionId, "-F", PANE_SCAN_FORMAT]),
+        await this.#io.runTmux([
+          "list-panes",
+          "-s",
+          "-t",
+          session.sessionId,
+          "-F",
+          PANE_SCAN_FORMAT,
+        ]),
       );
     } catch (error) {
       if (error instanceof WorkspacePromotionError) throw error;
@@ -734,7 +763,7 @@ export class WorkspacePromotionAuthority {
       for (const pane of scanned) {
         if (!hasValidPaneStamp(pane.semanticPaneId)) {
           const paneStamp = `pane.promoted.${digest(`${session.sessionName}\0${pane.paneId}`)}`;
-          this.#io.runTmux([
+          await this.#io.runTmux([
             "set-option",
             "-p",
             "-t",
@@ -745,14 +774,14 @@ export class WorkspacePromotionAuthority {
           for (const [option, value] of this.#ideDefaults(pane, nowSec)) {
             // Additive: only fill an empty `@ide_*`, never clobber existing intent.
             if (value === null) continue;
-            this.#io.runTmux(["set-option", "-p", "-t", pane.paneId, option, value]);
+            await this.#io.runTmux(["set-option", "-p", "-t", pane.paneId, option, value]);
           }
         }
         if (!reconciledWindows.has(pane.windowId)) {
           reconciledWindows.add(pane.windowId);
           if (pane.semanticWindowId.length === 0) {
             const windowStamp = `window.promoted.${digest(`${session.sessionName}\0${pane.windowId}`)}`;
-            this.#io.runTmux([
+            await this.#io.runTmux([
               "set-option",
               "-w",
               "-t",
@@ -763,7 +792,7 @@ export class WorkspacePromotionAuthority {
             // Initialize chrome only when adopting a previously unstamped
             // window. Reopening an existing workspace must preserve native
             // border choices and PTY dimensions, even while stamping new panes.
-            this.#io.runTmux([
+            await this.#io.runTmux([
               "set-option",
               "-w",
               "-t",
@@ -771,7 +800,7 @@ export class WorkspacePromotionAuthority {
               "pane-border-status",
               "top",
             ]);
-            this.#io.runTmux([
+            await this.#io.runTmux([
               "set-option",
               "-w",
               "-t",
@@ -803,7 +832,7 @@ export class WorkspacePromotionAuthority {
    *   (b) then the active pane's cwd, then the remaining panes in scan order;
    *   (c) only when NOTHING resolves does promotion fail.
    */
-  #resolveProjectDir(session: SessionRecord, scanned: readonly ScanPane[]): string {
+  async #resolveProjectDir(session: SessionRecord, scanned: readonly ScanPane[]): Promise<string> {
     const active = scanned.find((pane) => pane.active);
     const candidates = [
       session.sessionPath,
@@ -813,7 +842,7 @@ export class WorkspacePromotionAuthority {
     for (const candidate of candidates) {
       if (candidate.length === 0) continue;
       try {
-        return this.#io.canonicalProjectDir(candidate);
+        return await this.#io.canonicalProjectDir(candidate);
       } catch {
         // A dead or non-directory cwd (a pruned worktree) is expected; try the
         // next candidate rather than failing the whole promotion.
@@ -866,12 +895,12 @@ export class WorkspacePromotionAuthority {
    * initial-Terminal-window assertion — a promoted session may have any number
    * of windows and multi-pane windows.
    */
-  #verifyPromotedInventory(sessionId: string, identity: PromotionIdentity): void {
+  async #verifyPromotedInventory(sessionId: string, identity: PromotionIdentity): Promise<void> {
     let panes: VerifyPane[];
     try {
       const args = ["list-panes", "-s", "-t", sessionId, "-F", PANE_VERIFY_FORMAT] as const;
-      const before = boundedTmuxOutput(this.#io.runTmux(args));
-      const after = boundedTmuxOutput(this.#io.runTmux(args));
+      const before = boundedTmuxOutput(await this.#io.runTmux(args));
+      const after = boundedTmuxOutput(await this.#io.runTmux(args));
       if (before !== after) {
         throw new WorkspacePromotionError("promotion_verification_failed", {
           reason: "inventory_changed_during_proof",
