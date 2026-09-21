@@ -40,8 +40,6 @@
  * socket, not the name.
  */
 
-/* global fetch, AbortController, AbortSignal, TextDecoder */
-
 import { Buffer } from "node:buffer";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import console from "node:console";
@@ -461,7 +459,7 @@ let logTailReconnects = 0;
 let logTailBookmarks = 0;
 
 function noteLogEntry(entry) {
-  const key = `${entry.ts} ${entry.component} ${entry.msg} ${JSON.stringify(entry.data ?? null)}`;
+  const key = `${entry.ts}\u0000${entry.component}\u0000${entry.msg}\u0000${JSON.stringify(entry.data ?? null)}`;
   if (seenLogKeys.has(key)) return;
   seenLogKeys.add(key);
   seenLogOrder.push(key);

@@ -231,7 +231,7 @@ const readSpawns = () => {
   const counts = {};
   for (const line of raw.split("\n")) {
     if (!line) continue;
-    const words = line.split("");
+    const words = line.split("\u0001");
     let index = 0;
     while (index < words.length && words[index].startsWith("-")) {
       index += words[index] === "-u" || words[index] === "-C" ? 1 : 2;
