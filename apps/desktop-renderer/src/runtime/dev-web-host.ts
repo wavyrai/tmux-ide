@@ -824,11 +824,12 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     command: string,
     intent: unknown,
     timeoutMs = REQUEST_TIMEOUT_MS,
+    operationId: string = crypto.randomUUID(),
   ): Promise<unknown> {
     return request(
       `/api/v2/action/${command}`,
       { method: "POST", body: intent },
-      { "X-Tmux-Ide-Operation-Id": crypto.randomUUID() },
+      { "X-Tmux-Ide-Operation-Id": operationId },
       timeoutMs,
     );
   }
@@ -1371,7 +1372,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         try {
           const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
             await request(
-              "/api/v2/capabilities",
+              "/api/v2/capabilities?windowViewport=1",
               { method: "POST", body: {} },
               {},
               REQUEST_TIMEOUT_MS,
@@ -1603,7 +1604,12 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           // The intent names its own route, so the development host needs no
           // per-verb branch either.
           const { verb, ...args } = daemonRequest.request.intent;
-          const answer = await action(verb, args);
+          const answer = await action(
+            verb,
+            args,
+            REQUEST_TIMEOUT_MS,
+            daemonRequest.request.operationId,
+          );
           /*
            * A refused verb answers 200 with `{ok:false, error}`, so without this
            * branch the refusal fell through to the envelope parse and reached

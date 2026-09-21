@@ -1,3 +1,7 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 /**
  * Terminals registry (G20-P1).
  *
@@ -16,6 +20,11 @@ const TERMINALS_FILE = ".tmux-ide/terminals.json";
 const SAFE_ID = /^[A-Za-z0-9_-]+$/u;
 
 function path(dir: string): string {
+  const namespace = resolveRuntimeNamespace();
+  if (namespace.development) {
+    const identity = createHash("sha256").update(realpathSync(dir)).digest("hex");
+    return runtimeOwnedPath(join(namespace.stateHome, "projects", identity, "terminals.json"));
+  }
   return join(dir, TERMINALS_FILE);
 }
 

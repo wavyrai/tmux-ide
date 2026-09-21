@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import {
+  DesktopIconCatalogSchemaZ,
+  DesktopEnvironmentListSchemaZ,
+  DesktopEnvironmentOpenWireResultSchemaZ,
+  type DesktopEnvironmentSummary,
+  PaneStreamIssueDescriptorSchemaZ,
+  TerminalAttachmentIssueDescriptorSchemaZ,
+  type PaneStreamIssueDescriptor,
+  type TerminalAttachmentIssueDescriptor,
+  type DesktopIconCatalog,
   AppWindowMutationHostResultSchemaZ,
   AppWindowMutationRequestSchemaZ,
   WorkspaceMultiplexerHostResultSchemaZ,
@@ -63,16 +72,44 @@ import {
   terminalAttachmentIssueError,
   workspacePromotionFailureFromUnknown,
 } from "./daemon-resource-broker.ts";
-import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
+import {
+  HOST_INVOKE_CHANNELS,
+  HOST_IPC,
+  SCOPED_HOST_CHANNELS,
+  scopedHostChannel,
+} from "./ipc-channels.ts";
 import { mintDesktopWebHostClientId } from "./web-host-client-id.ts";
+
+export interface HostStreamRelayContext {
+  readonly rendererOrigin: string;
+  readonly hostClientId: DesktopWebHostClientId;
+  readonly rendererGeneration: number;
+  isCurrent(): boolean;
+}
 
 export interface HostIpcDependencies {
   ipcMain: IpcMain;
+  /** Main-minted authority-generation UUID; omitted for the local native host. */
+  channelScope?: string;
   getWindow: () => BrowserWindow | null;
   appVersion: string;
   platform: DesktopPlatform;
   daemonResources: DaemonConnectionAuthority;
   rendererDidBootstrap?: () => void;
+  rendererDidRelease?: (hostClientId: DesktopWebHostClientId) => void;
+  relayPaneStream?: (
+    descriptor: PaneStreamIssueDescriptor,
+    context: HostStreamRelayContext,
+  ) => PaneStreamIssueDescriptor;
+  relayTerminalAttachment?: (
+    descriptor: TerminalAttachmentIssueDescriptor,
+    context: HostStreamRelayContext,
+  ) => TerminalAttachmentIssueDescriptor;
+  environments?: {
+    list(): readonly DesktopEnvironmentSummary[] | Promise<readonly DesktopEnvironmentSummary[]>;
+    open(connectionId: string): Promise<{ connectionId: string; scope: string }>;
+    disconnect(connectionId: string): void | Promise<void>;
+  };
   selectProjectDirectory: (window: BrowserWindow) => Promise<string | null>;
   /**
    * The daemon's own startup readiness ladder, or null when none was readable.
@@ -80,6 +117,7 @@ export interface HostIpcDependencies {
    * test hosts without a canonical daemon record stay valid.
    */
   readStartupReadiness?: () => Promise<StartupReadinessLadder | null>;
+  getIconCatalog?: () => DesktopIconCatalog;
   getTheme: () => DesktopThemeState;
   getUpdateStatus: () => DesktopUpdateStatus;
   readOnboardingIntroAcknowledged: () => boolean;
@@ -134,7 +172,8 @@ function sameDaemonIdentity(left: DaemonInstanceIdentity, right: DaemonInstanceI
     left.protocolVersion === right.protocolVersion &&
     left.productVersion === right.productVersion &&
     left.instanceId === right.instanceId &&
-    left.startedAt === right.startedAt
+    left.startedAt === right.startedAt &&
+    left.environmentId === right.environmentId
   );
 }
 
@@ -214,6 +253,10 @@ export interface RegisteredHostIpc {
 }
 
 export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
+  const scope = deps.channelScope ?? null;
+  // Validate before registering/removing anything, including bootstrap.
+  scopedHostChannel(scope, HOST_IPC.bootstrap);
+  const registeredChannels: string[] = [];
   interface RendererAuthority {
     readonly generation: number;
     readonly window: BrowserWindow;
@@ -249,7 +292,15 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       daemonSubscriptions.size > 0 ||
       pendingDaemonSubscriptions.size > 0 ||
       pendingDaemonRequests.size > 0;
+    const retiredHostClientId = rendererAuthority?.hostClientId;
     rendererAuthority = null;
+    if (retiredHostClientId) {
+      try {
+        deps.rendererDidRelease?.(retiredHostClientId);
+      } catch {
+        /* Freshness is already revoked. */
+      }
+    }
     for (const pending of pendingDaemonRequests.values()) pending.controller.abort();
     pendingDaemonRequests.clear();
     for (const pending of pendingDaemonSubscriptions.values()) pending.controller.abort();
@@ -316,9 +367,49 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     channel: (typeof HOST_INVOKE_CHANNELS)[number],
     handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
   ) => {
-    deps.ipcMain.removeHandler(channel);
-    deps.ipcMain.handle(channel, handler);
+    if (scope !== null && !SCOPED_HOST_CHANNELS.includes(channel)) return;
+    const routed = scopedHostChannel(scope, channel);
+    deps.ipcMain.removeHandler(routed);
+    deps.ipcMain.handle(routed, handler);
+    registeredChannels.push(routed);
   };
+
+  handle(HOST_IPC.environmentList, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 0 || !deps.environments)
+      throw new Error("Environment catalog unavailable.");
+    const result = await deps.environments.list();
+    assertRendererAuthority(event, authority.generation);
+    return DesktopEnvironmentListSchemaZ.parse(result);
+  });
+  handle(HOST_IPC.environmentOpen, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1 || !deps.environments) throw new Error("Environment open unavailable.");
+    const connectionId = DesktopDaemonRequestIdSchemaZ.parse(args[0]);
+    const result = await deps.environments.open(connectionId);
+    assertRendererAuthority(event, authority.generation);
+    const parsed = DesktopEnvironmentOpenWireResultSchemaZ.parse(result);
+    if (parsed.connectionId !== connectionId)
+      throw new Error("Environment open identity mismatch.");
+    return parsed;
+  });
+  handle(HOST_IPC.environmentDisconnect, async (event, ...args) => {
+    const authority = trustedRendererAuthority(event);
+    if (args.length !== 1 || !deps.environments)
+      throw new Error("Environment disconnect unavailable.");
+    const connectionId = DesktopDaemonRequestIdSchemaZ.parse(args[0]);
+    await deps.environments.disconnect(connectionId);
+    assertRendererAuthority(event, authority.generation);
+  });
+
+  handle(HOST_IPC.iconCatalog, (event) => {
+    trustedWindow(event, deps.getWindow, deps.trustedRendererLocation);
+    return DesktopIconCatalogSchemaZ.parse(
+      deps.platform === "darwin"
+        ? (deps.getIconCatalog?.() ?? { provider: "open" })
+        : { provider: "open" },
+    );
+  });
 
   handle(HOST_IPC.bootstrap, (event): DesktopHostBootstrap => {
     const { window } = beginRendererGeneration(event);
@@ -805,6 +896,31 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
           error: terminalAttachmentIssueError("daemon-identity-mismatch"),
         });
       }
+      if (result.status === "issued" && deps.relayTerminalAttachment) {
+        const signature = JSON.stringify({ ...result.descriptor, webSocketUrl: undefined });
+        const context: HostStreamRelayContext = {
+          rendererOrigin,
+          hostClientId: authority.hostClientId,
+          rendererGeneration: authority.generation,
+          isCurrent: () => {
+            const state = deps.daemonResources.state();
+            return (
+              currentAuthorityWindow(authority.generation) !== null &&
+              state.status === "connected" &&
+              sameDaemonIdentity(before.identity, state.identity)
+            );
+          },
+        };
+        const descriptor = TerminalAttachmentIssueDescriptorSchemaZ.parse(
+          deps.relayTerminalAttachment(result.descriptor, context),
+        );
+        if (
+          !context.isCurrent() ||
+          JSON.stringify({ ...descriptor, webSocketUrl: undefined }) !== signature
+        )
+          throw new Error("Relay changed stream authority.");
+        return { ...result, descriptor };
+      }
       return result;
     } catch {
       try {
@@ -885,6 +1001,31 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
           status: "error",
           error: paneStreamIssueError("daemon-identity-mismatch"),
         });
+      }
+      if (result.status === "issued" && deps.relayPaneStream) {
+        const signature = JSON.stringify({ ...result.descriptor, webSocketUrl: undefined });
+        const context: HostStreamRelayContext = {
+          rendererOrigin,
+          hostClientId: authority.hostClientId,
+          rendererGeneration: authority.generation,
+          isCurrent: () => {
+            const state = deps.daemonResources.state();
+            return (
+              currentAuthorityWindow(authority.generation) !== null &&
+              state.status === "connected" &&
+              sameDaemonIdentity(before.identity, state.identity)
+            );
+          },
+        };
+        const descriptor = PaneStreamIssueDescriptorSchemaZ.parse(
+          deps.relayPaneStream(result.descriptor, context),
+        );
+        if (
+          !context.isCurrent() ||
+          JSON.stringify({ ...descriptor, webSocketUrl: undefined }) !== signature
+        )
+          throw new Error("Relay changed stream authority.");
+        return { ...result, descriptor };
       }
       return result;
     } catch {
@@ -1133,7 +1274,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
           const window = currentAuthorityWindow(authority.generation);
           if (!window) return;
           window.webContents.send(
-            HOST_IPC.daemonEvent,
+            scopedHostChannel(scope, HOST_IPC.daemonEvent),
             DesktopDaemonEventWireEnvelopeSchemaZ.parse({
               subscriptionId,
               subscriptionRequestId: requestId.data,
@@ -1238,7 +1379,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       releaseRenderer();
       unbindWindow?.();
       unbindWindow = null;
-      for (const channel of HOST_INVOKE_CHANNELS) deps.ipcMain.removeHandler(channel);
+      for (const channel of registeredChannels) deps.ipcMain.removeHandler(channel);
     },
   };
 }

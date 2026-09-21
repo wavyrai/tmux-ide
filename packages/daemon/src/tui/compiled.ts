@@ -1,3 +1,9 @@
+import { readDevelopmentBuild, developmentBuildLaunch } from "../lib/development-build.ts";
+import {
+  resolveRuntimeNamespace,
+  developmentChildEnvironment,
+  runtimeOwnedPath,
+} from "../lib/runtime-namespace.ts";
 /**
  * Resolution for the TUI surfaces across BOTH distribution modes.
  *
@@ -67,6 +73,7 @@ export function hasDevelopmentTuiSource(
   scriptPath: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): boolean {
+  if (resolveRuntimeNamespace({ env: environment }).development) return false;
   if (!existsSync(scriptPath)) return false;
   if (environment.TMUX_IDE_TUI_SOURCE === "1") return true;
   // A dependency can itself be installed inside another pnpm workspace. Do
@@ -98,6 +105,28 @@ export function openTuiLaunchEnvironment(
   inherited: NodeJS.ProcessEnv,
   overlay: NodeJS.ProcessEnv = {},
 ): NodeJS.ProcessEnv {
+  const namespace = resolveRuntimeNamespace({ env: inherited });
+  if (namespace.development) {
+    const environment = developmentChildEnvironment(namespace, inherited);
+    Object.assign(environment, overlay);
+    const resolved = resolveRuntimeNamespace({ env: environment });
+    if (
+      !resolved.development ||
+      resolved.namespaceId !== namespace.namespaceId ||
+      resolved.stateHome !== namespace.stateHome ||
+      resolved.runtimeDir !== namespace.runtimeDir
+    )
+      throw new Error("Development TUI overlay changed namespace authority");
+    const build = readDevelopmentBuild(namespace.development, inherited);
+    for (const [key, value] of Object.entries(developmentBuildLaunch(build).environment)) {
+      if (overlay[key] !== undefined && overlay[key] !== value)
+        throw new Error("Development TUI overlay changed build authority");
+      environment[key] = value;
+    }
+    if (overlay.TMUX_IDE_TUI_SOURCE) throw new Error("Development source fallback is disabled");
+    delete environment.NO_COLOR;
+    return { ...environment, COLORTERM: "truecolor" };
+  }
   const environment: NodeJS.ProcessEnv = {
     ...inherited,
     ...overlay,
@@ -120,6 +149,13 @@ export async function ensureTuiLaunchAvailable(
   input: TuiResolveInput,
   options: TuiLaunchAcquisitionOptions = {},
 ): Promise<TuiLaunch> {
+  const namespace = resolveRuntimeNamespace();
+  if (namespace.development)
+    return {
+      mode: "binary",
+      bin: readDevelopmentBuild(namespace.development).tui,
+      argv: [input.surface, ...input.args],
+    };
   const current = resolveTuiLaunch(input);
   if (current.mode !== "unavailable") return current;
 
@@ -193,6 +229,8 @@ const BINARY_RELS = [
  * module-relative candidates. Returns null when none exists.
  */
 export function findCompiledTui(): string | null {
+  const namespace = resolveRuntimeNamespace();
+  if (namespace.development) return readDevelopmentBuild(namespace.development).tui;
   const override = process.env.TMUX_IDE_TUI_BIN;
   if (override) return existsSync(override) ? override : null;
 
@@ -236,7 +274,10 @@ export function isBunAvailable(): boolean {
  * deliberately config-free directory instead.
  */
 export function compiledTuiRuntimeDir(home = homedir()): string {
-  return join(home, ".tmux-ide", "runtime", "compiled-tui");
+  const namespace = resolveRuntimeNamespace();
+  return namespace.development
+    ? runtimeOwnedPath(join(namespace.runtimeDir, "compiled-tui"))
+    : join(home, ".tmux-ide", "runtime", "compiled-tui");
 }
 
 /** io — create and return the private cwd used by compiled TUI surfaces. */

@@ -1,0 +1,283 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index 518af3ff2..0f4379bbf 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1169,6 +1169,11 @@ GHOSTTY_API ghostty_surface_config_s ghostty_surface_config_new();
+ 
+ GHOSTTY_API ghostty_surface_t ghostty_surface_new(ghostty_app_t,
+                                                      const ghostty_surface_config_s*);
++/* Experimental external I/O. No child/PTY is created. Callback can run on the
++ * I/O thread; bytes are borrowed only during the callback. Caller serializes
++ * feed_output against surface_free; surface configuration remains unchanged. */
++GHOSTTY_API ghostty_surface_t tmux_ide_ghostty_surface_new_external(ghostty_app_t, const ghostty_surface_config_s*, void*, void (*)(void*, const uint8_t*, size_t));
++GHOSTTY_API void tmux_ide_ghostty_surface_feed_output(ghostty_surface_t, const uint8_t*, size_t);
+ GHOSTTY_API void ghostty_surface_free(ghostty_surface_t);
+ GHOSTTY_API void* ghostty_surface_userdata(ghostty_surface_t);
+ GHOSTTY_API ghostty_app_t ghostty_surface_app(ghostty_surface_t);
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 775292127..6d4fcdde1 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -656,7 +656,26 @@ pub fn init(
+         );
+ 
+         // Initialize our IO backend
+-        var io_exec = try termio.Exec.init(alloc, .{
++        var io_backend: termio.Backend = if (comptime @hasField(apprt.Surface, "external_io")) external: {
++            if (rt_surface.external_io) |external_io| {
++                env.deinit();
++                env = std.process.Environ.Map.init(alloc);
++                break :external .{ .external = external_io };
++            }
++            break :external .{ .exec = try termio.Exec.init(alloc, .{
++                .command = command,
++                .env = env,
++                .env_override = config.env,
++                .shell_integration = config.@"shell-integration",
++                .shell_integration_features = config.@"shell-integration-features",
++                .cursor_blink = config.@"cursor-style-blink",
++                .working_directory = if (config.@"working-directory") |wd| wd.value() else null,
++                .resources_dir = global.resourcesDir().host(),
++                .term = config.term,
++                .rt_pre_exec_info = .init(config),
++                .rt_post_fork_info = .init(config),
++            }) };
++        } else .{ .exec = try termio.Exec.init(alloc, .{
+             .command = command,
+             .env = env,
+             .env_override = config.env,
+@@ -668,8 +687,8 @@ pub fn init(
+             .term = config.term,
+             .rt_pre_exec_info = .init(config),
+             .rt_post_fork_info = .init(config),
+-        });
+-        errdefer io_exec.deinit();
++        }) };
++        errdefer io_backend.deinit();
+ 
+         // Initialize our IO mailbox
+         var io_mailbox = try termio.Mailbox.initSPSC(alloc);
+@@ -679,7 +698,7 @@ pub fn init(
+             .size = size,
+             .full_config = config,
+             .config = try termio.Termio.DerivedConfig.init(alloc, config),
+-            .backend = .{ .exec = io_exec },
++            .backend = io_backend,
+             .mailbox = io_mailbox,
+             .renderer_state = &self.renderer_state,
+             .renderer_wakeup = render_thread.wakeup,
+@@ -1338,6 +1357,7 @@ fn childExitedAbnormally(
+     // Build up our command for the error message
+     const command = try std.mem.join(alloc, " ", switch (self.io.backend) {
+         .exec => |*exec| exec.subprocess.args,
++        .external => &.{"external"},
+     });
+     const runtime_str = try std.fmt.allocPrint(alloc, "{d} ms", .{info.runtime_ms});
+ 
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 525bc856d..4a5406b08 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -453,6 +453,7 @@ pub const Surface = struct {
+     size: apprt.SurfaceSize,
+     cursor_pos: apprt.CursorPos,
+     inspector: ?*Inspector = null,
++    external_io: ?@import("../termio/backend.zig").External = null,
+ 
+     /// The current title of the surface. The embedded apprt saves this so
+     /// that getTitle works without the implementer needing to save it.
+@@ -502,10 +503,15 @@ pub const Surface = struct {
+     };
+ 
+     pub fn init(self: *Surface, app: *App, opts: Options) !void {
++        return self.initExternal(app, opts, null);
++    }
++
++    pub fn initExternal(self: *Surface, app: *App, opts: Options, external_io: ?@import("../termio/backend.zig").External) !void {
+         self.* = .{
+             .app = app,
+             .platform = try .init(opts.platform_tag, opts.platform),
+             .userdata = opts.userdata,
++            .external_io = external_io,
+             .core_surface = undefined,
+             .content_scale = .{
+                 .x = @floatCast(opts.scale_factor),
+@@ -1816,6 +1822,28 @@ pub const CAPI = struct {
+         return try app.newSurface(opts.*);
+     }
+ 
++    // Experimental embedding ABI: caller owns the source stream and must
++    // serialize feed/free. Outgoing callback bytes are borrowed for this call.
++    export fn tmux_ide_ghostty_surface_new_external(
++        app: *App,
++        opts: *const Surface.Options,
++        userdata: ?*anyopaque,
++        write: *const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void,
++    ) ?*Surface {
++        const surface = app.core_app.alloc.create(Surface) catch return null;
++        surface.initExternal(app, opts.*, .{ .userdata = userdata, .write = write }) catch |err| {
++            app.core_app.alloc.destroy(surface);
++            log.err("external surface init failed: {}", .{err});
++            return null;
++        };
++        return surface;
++    }
++
++    export fn tmux_ide_ghostty_surface_feed_output(surface: *Surface, bytes: [*]const u8, len: usize) void {
++        if (surface.external_io == null or len == 0) return;
++        surface.core_surface.io.processOutput(bytes[0..len]);
++    }
++
+     export fn ghostty_surface_free(ptr: *Surface) void {
+         ptr.app.closeSurface(ptr);
+     }
+diff --git a/src/termio/backend.zig b/src/termio/backend.zig
+index c29009acb..435593ac3 100644
+--- a/src/termio/backend.zig
++++ b/src/termio/backend.zig
+@@ -11,28 +11,36 @@ const ProcessInfo = @import("../pty.zig").ProcessInfo;
+ const WRITE_REQ_PREALLOC = std.math.pow(usize, 2, 5);
+ 
+ /// The kinds of backends.
+-pub const Kind = enum { exec };
++pub const External = struct {
++    userdata: ?*anyopaque,
++    write: *const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void,
++};
++pub const Kind = enum { exec, external };
+ 
+ /// Configuration for the various backend types.
+ pub const Config = union(Kind) {
+     /// Exec uses posix exec to run a command with a pty.
+     exec: termio.Exec.Config,
++    external: External,
+ };
+ 
+ /// Backend implementations. A backend is responsible for owning the pty
+ /// behavior and providing read/write capabilities.
+ pub const Backend = union(Kind) {
+     exec: termio.Exec,
++    external: External,
+ 
+     pub fn deinit(self: *Backend) void {
+         switch (self.*) {
+             .exec => |*exec| exec.deinit(),
++            .external => {},
+         }
+     }
+ 
+     pub fn initTerminal(self: *Backend, t: *terminal.Terminal) void {
+         switch (self.*) {
+             .exec => |*exec| exec.initTerminal(t),
++            .external => {},
+         }
+     }
+ 
+@@ -44,12 +52,14 @@ pub const Backend = union(Kind) {
+     ) !void {
+         switch (self.*) {
+             .exec => |*exec| try exec.threadEnter(alloc, io, td),
++            .external => td.backend = .{ .external = {} },
+         }
+     }
+ 
+     pub fn threadExit(self: *Backend, td: *termio.Termio.ThreadData) void {
+         switch (self.*) {
+             .exec => |*exec| exec.threadExit(td),
++            .external => {},
+         }
+     }
+ 
+@@ -60,6 +70,7 @@ pub const Backend = union(Kind) {
+     ) !void {
+         switch (self.*) {
+             .exec => |*exec| try exec.focusGained(td, focused),
++            .external => {},
+         }
+     }
+ 
+@@ -70,6 +81,7 @@ pub const Backend = union(Kind) {
+     ) !void {
+         switch (self.*) {
+             .exec => |*exec| try exec.resize(grid_size, screen_size),
++            .external => {},
+         }
+     }
+ 
+@@ -82,6 +94,24 @@ pub const Backend = union(Kind) {
+     ) !void {
+         switch (self.*) {
+             .exec => |*exec| try exec.queueWrite(alloc, td, data, linefeed),
++            .external => |external| {
++                if (!linefeed) {
++                    external.write(external.userdata, data.ptr, data.len);
++                } else {
++                    var start: usize = 0;
++                    for (data, 0..) |byte, index| {
++                        if (byte != '\r') continue;
++                        const part = data[start .. index + 1];
++                        external.write(external.userdata, part.ptr, part.len);
++                        external.write(external.userdata, "\n", 1);
++                        start = index + 1;
++                    }
++                    if (start < data.len) {
++                        const part = data[start..];
++                        external.write(external.userdata, part.ptr, part.len);
++                    }
++                }
++            },
+         }
+     }
+ 
+@@ -99,6 +129,7 @@ pub const Backend = union(Kind) {
+                 exit_code,
+                 runtime_ms,
+             ),
++            .external => {},
+         }
+     }
+ 
+@@ -108,6 +139,7 @@ pub const Backend = union(Kind) {
+     pub fn getProcessInfo(self: *Backend, comptime info: ProcessInfo) ?ProcessInfo.Type(info) {
+         return switch (self.*) {
+             .exec => |*exec| exec.getProcessInfo(info),
++            .external => null,
+         };
+     }
+ };
+@@ -115,10 +147,12 @@ pub const Backend = union(Kind) {
+ /// Termio thread data. See termio.ThreadData for docs.
+ pub const ThreadData = union(Kind) {
+     exec: termio.Exec.ThreadData,
++    external: void,
+ 
+     pub fn deinit(self: *ThreadData, alloc: Allocator) void {
+         switch (self.*) {
+             .exec => |*exec| exec.deinit(alloc),
++            .external => {},
+         }
+     }
+ 
+@@ -127,3 +161,22 @@ pub const ThreadData = union(Kind) {
+         _ = config;
+     }
+ };
++
++test "external backend emits input without a PTY and honors linefeed mode" {
++    const Collector = struct {
++        bytes: [32]u8 = undefined,
++        len: usize = 0,
++        fn write(raw: ?*anyopaque, bytes: [*]const u8, len: usize) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw.?));
++            @memcpy(self.bytes[self.len .. self.len + len], bytes[0..len]);
++            self.len += len;
++        }
++    };
++    var output: Collector = .{};
++    var backend: Backend = .{ .external = .{ .userdata = &output, .write = Collector.write } };
++    defer backend.deinit();
++    try std.testing.expect(backend.getProcessInfo(.tty_name) == null);
++    try backend.queueWrite(std.testing.allocator, undefined, "a\rb", true);
++    try backend.queueWrite(std.testing.allocator, undefined, "c\rd", false);
++    try std.testing.expectEqualStrings("a\r\nbc\rd", output.bytes[0..output.len]);
++}

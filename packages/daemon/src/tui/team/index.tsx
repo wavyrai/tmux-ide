@@ -1,3 +1,7 @@
+import { assertQualifiedDevelopmentLaunch } from "../../lib/runtime-namespace.ts";
+// Installed CLI fallbacks are not an isolated development launch.
+assertQualifiedDevelopmentLaunch();
+import { runtimeTmuxArgs } from "../../lib/runtime-namespace.ts";
 /**
  * The team TUI — a cockpit over every tmux session.
  *
@@ -359,7 +363,7 @@ render(() => {
   function attachSessionName(name: string) {
     withSuspendedTerminal(() => {
       try {
-        execFileSync("tmux", ["attach", "-t", name], { stdio: "inherit" });
+        execFileSync("tmux", runtimeTmuxArgs(["attach", "-t", name]), { stdio: "inherit" });
       } catch {
         // detached or session gone — fall through
       }

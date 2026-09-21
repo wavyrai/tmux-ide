@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport" />
+    <meta content="#edece8" name="theme-color" />
+    <style>
+      html {
+        background: #111112;
+      }
+      html[data-starting] #root {
+        visibility: hidden;
+      }
+    </style>
+    <!--workspace-bootstrap-->
+    <link
+      as="font"
+      crossorigin
+      href="/src/assets/geist-mono-latin-wght-normal.woff2"
+      rel="preload"
+      type="font/woff2"
+    />
+    <link href="/icon.svg" rel="icon" type="image/svg+xml" />
+    <title>tmux-ide · Workspace</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="/src/live-entry.ts" type="module"></script>
+  </body>
+</html>

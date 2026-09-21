@@ -90,6 +90,79 @@ describe("KnownEnvironmentCatalog", () => {
     await catalog.flush();
   });
 
+  it("persists distinct route IDs without merging aliases for the same environment", async () => {
+    const catalog = new KnownEnvironmentCatalog(catalogPath);
+    const mini = await catalog.addSsh("mini", "Office Mac");
+    const alias = await catalog.addSsh("mini-alias");
+    expect((await catalog.addSsh("mini")).id).toBe(mini.id);
+    expect(alias.id).not.toBe(mini.id);
+    expect(catalog.reconcile(mini.id, ENVIRONMENT_A)).toBe("recorded");
+    expect(catalog.reconcile(alias.id, ENVIRONMENT_A)).toBe("recorded");
+    expect(catalog.reconcile(mini.id, ENVIRONMENT_B)).toBe("replaced");
+    expect(catalog.entry(alias.id)?.environmentId).toBe(ENVIRONMENT_A);
+    expect(catalog.localCanonical().environmentId).toBeNull();
+    await catalog.flush();
+    const reloaded = new KnownEnvironmentCatalog(catalogPath);
+    await reloaded.load();
+    expect(reloaded.entries()).toEqual(catalog.entries());
+    await reloaded.flush();
+  });
+
+  it("migrates a v1 local record without losing its verified identity", async () => {
+    await writeFile(
+      catalogPath,
+      JSON.stringify({
+        version: 1,
+        environments: [
+          {
+            environmentId: ENVIRONMENT_A,
+            endpoint: { kind: "local-canonical" },
+            label: "My Mac",
+            lastConnectedAt: null,
+          },
+        ],
+      }),
+    );
+    const catalog = new KnownEnvironmentCatalog(catalogPath);
+    await catalog.load();
+    const local = catalog.localCanonical();
+    expect(local).toMatchObject({
+      environmentId: ENVIRONMENT_A,
+      label: "My Mac",
+      id: expect.any(String),
+    });
+    await catalog.flush();
+    const next = new KnownEnvironmentCatalog(catalogPath);
+    await next.load();
+    expect(next.localCanonical().id).toBe(local.id);
+    await next.flush();
+  });
+
+  it.each(["-oProxyCommand=evil", "mini;echo secret", "mini\nother", ""])(
+    "rejects invalid SSH target %j without recording it",
+    async (alias) => {
+      const catalog = new KnownEnvironmentCatalog(catalogPath);
+      await expect(catalog.addSsh(alias)).rejects.toThrow("Invalid SSH alias");
+      expect(catalog.entries()).toHaveLength(1);
+    },
+  );
+
+  it("rejects duplicate route IDs in persisted state", async () => {
+    const catalog = new KnownEnvironmentCatalog(catalogPath);
+    const ssh = await catalog.addSsh("mini");
+    await catalog.flush();
+    await writeFile(
+      catalogPath,
+      JSON.stringify({
+        version: 1,
+        environments: [catalog.localCanonical(), { ...ssh, id: catalog.localCanonical().id }],
+      }),
+    );
+    const next = new KnownEnvironmentCatalog(catalogPath);
+    await next.load();
+    expect(next.entries()).toHaveLength(1);
+  });
+
   it("survives an unwritable state path as pure bookkeeping", async () => {
     // A regular file where a parent directory is needed makes every write fail.
     await writeFile(join(stateDir, "blocker"), "");

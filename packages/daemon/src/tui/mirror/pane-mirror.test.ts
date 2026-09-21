@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { PaneMirror } from "./pane-mirror.ts";
+import { PaneMirror } from "../../../test-support/pane-mirror.ts";
 import { DARK_THEME, LIGHT_THEME, createTerminalPaletteProjection } from "./theme.ts";
 import { widgetMarkerAnnouncement } from "@tmux-ide/contracts";
 
 /** xterm parses writes on its own write-buffer flush (a timer), so poll the
- *  mirror until the content lands (the real app reads on a 16ms render tick). */
+ *  historical adapter until the content lands. */
 async function flushed(m: PaneMirror, needle: string): Promise<string[]> {
   for (let i = 0; i < 50; i++) {
     const buf = m.bufferLines();
@@ -345,5 +345,19 @@ describe("PaneMirror.extractAbsoluteText + lineTrim (M25.6)", () => {
     // buffer line 0 is now "line 7" (lines 1..6 rotated out).
     expect(small.bufferLines()[0]).toBe("line 7");
     small.dispose();
+  });
+});
+
+describe("historical parser host autowrap conformance", () => {
+  it("pins right-edge writes with DECAWM disabled and restores normal wrapping", async () => {
+    const mirror = new PaneMirror(10, 3);
+    try {
+      mirror.write("\x1b[?7l\x1b[1;10HXY");
+      expect(await flushed(mirror, "Y")).toEqual(["         Y", "", ""]);
+      mirror.write("\x1b[?7h\x1b[2;10HZW");
+      expect(await flushed(mirror, "W")).toEqual(["         Y", "         Z", "W"]);
+    } finally {
+      mirror.dispose();
+    }
   });
 });

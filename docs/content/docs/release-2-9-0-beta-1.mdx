@@ -1,12 +1,12 @@
 ---
-title: OpenTUI 2.9 beta.8
-description: The current 2.9.0-beta.8 visual tmux release with agent-aware chrome
+title: OpenTUI 2.9 beta.18
+description: The current 2.9.0-beta.18 visual tmux release with agent-aware chrome
 ---
 
-The current package is `2.9.0-beta.8`. It ships an OpenTUI client around ordinary tmux
-sessions. tmux owns PTYs, processes, topology, persistence, and SSH; the daemon
-publishes semantic workspace state and pane streams; OpenTUI owns presentation
-and input.
+The current package is `2.9.0-beta.18`. It ships an OpenTUI client around ordinary tmux
+sessions. tmux owns PTYs, processes, topology, and persistence. Each machine has
+its own daemon, which publishes workspace state and pane streams. The local TUI
+connects through SSH tunnels and owns presentation and input.
 
 ## Install
 
@@ -21,7 +21,40 @@ Pass a session name to bypass Home:
 tmux-ide app work
 ```
 
-## New in beta.8
+## Scroll improvements from beta.15
+
+Native scroll optimization now activates correctly on normal TUI launches. The
+resolved setting is passed directly to the native renderer before startup, so
+Bun's JavaScript environment cannot leave the native default disabled. Explicit
+opt-outs remain available. Ordinary and Shift-scroll preserve independent client
+history positions and canonical pane geometry.
+
+The new web/Electron workbench is still in development. This npm beta distributes
+the terminal CLI and daemon, not a packaged Electron desktop application.
+
+## Introduced in beta.11
+
+- Global installation upgrades an older running daemon without stopping tmux
+  sessions. App and headless launch repeat the check when install scripts were
+  skipped. Use `tmux-ide update --daemon` to trigger it explicitly. Fresh installs
+  leave the daemon stopped, and older clients never downgrade newer daemons.
+
+- One TUI shows Local and multiple SSH machines in a grouped sidebar. Repeat
+  `--ssh` to connect multiple hosts, or use Add machine during a run.
+- Session names are scoped to their machine. Switching hosts retires the previous
+  input route; a disconnected remote cannot redirect an action to Local.
+- Background machines supply session metadata, while only the selected workspace
+  streams terminal panes. Each remote connection reconnects independently.
+- Ctrl+G focuses the machine sidebar. Use arrows to navigate and Enter to open a
+  session. Agent rows still open the exact pane in the selected workspace.
+
+See [SSH setup and limitations](/docs/app-surfaces#connect-to-another-machine-over-ssh).
+Saved SSH profiles can be listed, exported and imported with `tmux-ide machines`.
+Remote packages must already be installed. `tmux-ide machines start <alias> --write`
+explicitly starts the installed remote daemon; it does not provision a host or
+install packages.
+
+## Earlier 2.9 beta improvements
 
 - Pane headers show recent input and pane reads, with external tmux activity
   distinguished from attributed agent activity. Failed and disconnected states

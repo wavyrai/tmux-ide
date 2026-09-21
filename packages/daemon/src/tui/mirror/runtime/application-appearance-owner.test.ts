@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { parseAppConfig } from "../../../lib/app-config.ts";
 import {
-  DARK_THEME,
   colorToPackedRgb,
   colorToThemeBytes,
   type ResolvedThemeMode,
@@ -134,10 +133,27 @@ describe("createAppearanceOwner", () => {
     const after = owner.appearance();
     expect(after.generation - before.generation).toBe(1);
     expect(after.theme.mode).toBe("light");
-    expect(after.palette.background).toBe(colorToPackedRgb(DARK_THEME.roles.surfaces.terminal));
-    expect(after.palette.foreground).toBe(colorToPackedRgb(DARK_THEME.roles.text.primary));
+    expect(after.palette.background).toBe(colorToPackedRgb(after.theme.roles.surfaces.terminal));
+    expect(after.palette.foreground).toBe(colorToPackedRgb(after.theme.roles.text.primary));
     expect(after.theme).toBe(owner.theme());
     expect(after.palette).toBe(owner.palette());
+    owner.dispose();
+  });
+
+  it("repaints system ANSI-only changes even when semantic chrome is unchanged", () => {
+    const paletteOwner = new PaletteOwner();
+    const owner = createAppearanceOwner(
+      parseAppConfig({ theme: { mode: "system" } }),
+      new ThemeRenderer(),
+      paletteOwner,
+    );
+    const before = owner.appearance();
+    const slots = Array<string | null>(16).fill(null);
+    slots[15] = "#abcdef";
+    paletteOwner.publish(paletteSnapshot("#000000", "#ffffff", "dark", slots));
+    expect(owner.theme()).toBe(before.theme);
+    expect(owner.appearance().generation).toBe(before.generation + 1);
+    expect(owner.palette().ansiForeground[15]).toBe(0xabcdef);
     owner.dispose();
   });
 
@@ -215,7 +231,7 @@ describe("createAppearanceOwner", () => {
       owner.cycleTheme();
       owner.cycleTheme();
       owner.cycleTheme();
-      expect(owner.palette().ansiForeground).toBe(initialAnsi);
+      expect(owner.palette().ansiForeground).toEqual(initialAnsi);
       expect(owner.palette().foreground).toBe(initialForeground);
       expect(owner.palette().background).toBe(initialBackground);
       expect(explicitColors.map(owner.palette().resolveForeground)).toEqual(explicitColors);
@@ -230,7 +246,7 @@ describe("createAppearanceOwner", () => {
     expect(renderer.listenerCount("theme_mode")).toBe(0);
   });
 
-  it("keeps mirrored terminal defaults stable while light chrome and overlays change", () => {
+  it("updates terminal defaults alongside light chrome and overlays", () => {
     useTemporaryConfig();
     const owner = createAppearanceOwner(
       parseAppConfig({ theme: { mode: "dark" } }),
@@ -243,8 +259,8 @@ describe("createAppearanceOwner", () => {
     const light = owner.appearance();
 
     expect(light.theme.mode).toBe("light");
-    expect(light.palette.foreground).toBe(dark.palette.foreground);
-    expect(light.palette.background).toBe(dark.palette.background);
+    expect(light.palette.foreground).not.toBe(dark.palette.foreground);
+    expect(light.palette.background).not.toBe(dark.palette.background);
     expect(light.palette.searchCurrent).not.toBe(dark.palette.searchCurrent);
     owner.dispose();
   });
@@ -272,6 +288,28 @@ describe("appearance picker", () => {
     expect(owner.pickerOpen()).toBe(false);
     owner.dispose();
   });
+  it("previews a named theme in terminal cells and restores it on cancel", () => {
+    useTemporaryConfig();
+    const owner = createAppearanceOwner(
+      parseAppConfig({ theme: { mode: "dark" } }),
+      new ThemeRenderer(),
+      new PaletteOwner(),
+    );
+    const before = owner.palette();
+    owner.openPicker();
+    owner.preview("midnight");
+    expect(owner.palette().background).toBe(0x000022);
+    expect(owner.palette().foreground).not.toBe(before.foreground);
+    expect(owner.palette().ansiForeground.slice(16)).toEqual(before.ansiForeground.slice(16));
+    expect(owner.palette().resolveForeground(0xfedcba)).toBe(0xfedcba);
+    owner.cancelPicker();
+    expect(owner.palette()).toMatchObject({
+      foreground: before.foreground,
+      background: before.background,
+    });
+    owner.dispose();
+  });
+
   it("keeps a failed save open and Escape restores the original mode", () => {
     const configPath = useTemporaryConfig();
     const owner = createAppearanceOwner(

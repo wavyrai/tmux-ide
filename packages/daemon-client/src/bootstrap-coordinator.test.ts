@@ -120,3 +120,26 @@ describe("DaemonBootstrapCoordinator", () => {
     expect(coordinator.snapshot()).toMatchObject({ phase: "failed", attempt: 2 });
   });
 });
+
+it("waits for an externally owned startup without inventing a candidate or spawning", async () => {
+  let now = 0;
+  let spawns = 0;
+  const coordinator = new DaemonBootstrapCoordinator<Candidate, never, string>({
+    probe: () =>
+      now >= 25
+        ? { status: "compatible", candidate: { generation: "supervised" } }
+        : { status: "owner-pending" },
+    spawn: () => {
+      spawns++;
+    },
+    now: () => now,
+    sleep: async (ms) => {
+      now += ms;
+    },
+    timeoutMs: 100,
+  });
+  const result = await coordinator.ensure();
+  expect(result.candidate.generation).toBe("supervised");
+  expect(result.source).toBe("existing");
+  expect(spawns).toBe(0);
+});

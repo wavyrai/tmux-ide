@@ -85,3 +85,94 @@ describe("command discovery", () => {
       dispose();
     }));
 });
+
+it("keeps route identities distinct and supports explicit normal mode without eating search letters", () =>
+  createRoot((dispose) => {
+    const commands: ApplicationPaletteCommand[] = [
+      "home",
+      ...Array.from({ length: 12 }, (_, i) => ({
+        kind: "open-session" as const,
+        sessionName: "same",
+        label: `session-${i}`,
+        fleet: {
+          machineId: `host-${i}`,
+          hostLabel: `Host ${i}`,
+          liveSessionId: "live-session.12345678901234567890",
+          daemonInstanceId: "instance",
+        },
+      })),
+    ];
+    expect(new Set(commands.map((c) => applicationCommandDescription(c).id)).size).toBe(13);
+    const owner = createApplicationPaletteSearchOwner({
+      commands: () => commands,
+      open: () => true,
+      activate: () => {},
+      close: () => {},
+      onChange: () => {},
+    });
+    owner.reset(0);
+    owner.handleKey({ ...key("space"), ctrl: true });
+    owner.handleKey(key("j"));
+    expect(owner.selection()).toBe(1);
+    expect(owner.query()).toBe("");
+    owner.handleKey({ ...key("d"), ctrl: true });
+    expect(owner.selection()).toBe(6);
+    owner.handleKey({ ...key("g"), shift: true });
+    expect(owner.selection()).toBe(12);
+    owner.handleKey(key("i"));
+    owner.handleKey(key("j"));
+    expect(owner.query()).toBe("j");
+    dispose();
+  }));
+
+it("uses the rendered viewport for page and half-page movement", () =>
+  createRoot((dispose) => {
+    const owner = createApplicationPaletteSearchOwner({
+      commands: () =>
+        applicationPaletteCommands(
+          null,
+          Array.from({ length: 40 }, (_, i) => `session-${i}`),
+        ),
+      open: () => true,
+      activate: vi.fn(),
+      close: vi.fn(),
+      onChange: vi.fn(),
+    });
+    owner.setViewport(16);
+    owner.handleKey(key("pagedown"));
+    expect(owner.selection()).toBe(16);
+    owner.handleKey({ ...key("space"), ctrl: true });
+    owner.handleKey({ ...key("u"), ctrl: true });
+    expect(owner.selection()).toBe(8);
+    dispose();
+  }));
+it("ranks fuzzy matches while keeping equal matches deterministic", () => {
+  const commands: ApplicationPaletteCommand[] = [
+    { kind: "open-session", sessionName: "backend-service", label: "backend-service" },
+    { kind: "open-session", sessionName: "build", label: "build" },
+  ];
+  expect(filterApplicationCommands(commands, "bksvc")).toEqual([commands[0]]);
+  expect(filterApplicationCommands(commands, "")).toEqual(commands);
+});
+
+it("keeps fixed commands stable before favorite and recent fleet entries when unfiltered", () => {
+  const favorite: ApplicationPaletteCommand = {
+    kind: "open-session",
+    sessionName: "favorite",
+    label: "favorite",
+    fleet: {
+      machineId: "mini",
+      hostLabel: "Mini",
+      daemonInstanceId: "instance",
+      liveSessionId: "session",
+      favorite: true,
+      recentRank: 0,
+    },
+  };
+  expect(filterApplicationCommands(["home", "terminals", "close-pane", favorite], "")).toEqual([
+    "home",
+    "terminals",
+    "close-pane",
+    favorite,
+  ]);
+});

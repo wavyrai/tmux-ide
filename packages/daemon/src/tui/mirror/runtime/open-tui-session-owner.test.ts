@@ -415,3 +415,31 @@ it("cancels pending preparation and disposes a late connection without starting 
   expect(createHost).not.toHaveBeenCalled();
   await owner.dispose();
 });
+
+it("reports safe pre-host startup failure even when observer throws", async () => {
+  const { OpenTuiStartupError } = await import("../startup-failure.ts");
+  const failure = new OpenTuiStartupError({
+    code: "operation_capacity",
+    reason: "admission_queue_full",
+    operationId: "op-1",
+    message: "secret",
+  });
+  const observer = vi.fn(() => {
+    throw new Error("observer");
+  });
+  const owner = createOpenTuiSessionOwner({
+    prepareConnection: async () => {
+      throw failure;
+    },
+    createHost: vi.fn(),
+    onSnapshot: vi.fn(),
+    onStartupFailure: observer,
+  });
+  await expect(owner.open("alpha")).rejects.toBe(failure);
+  expect(observer).toHaveBeenCalledWith("alpha", {
+    code: "operation_capacity",
+    reason: "admission_queue_full",
+    operationId: "op-1",
+  });
+  await owner.dispose();
+});

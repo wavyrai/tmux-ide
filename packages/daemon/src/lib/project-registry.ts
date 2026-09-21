@@ -1,3 +1,4 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
 /**
  * Project registry — persists the list of projects the user has registered
  * with tmux-ide via the dashboard. Stored at `~/.tmux-ide/projects.json`,
@@ -136,7 +137,7 @@ function registryDir(): string {
 }
 
 function registryPath(): string {
-  return join(registryDir(), "projects.json");
+  return runtimeOwnedPath(join(registryDir(), "projects.json"));
 }
 
 let cache: RegisteredProject[] | null = null;

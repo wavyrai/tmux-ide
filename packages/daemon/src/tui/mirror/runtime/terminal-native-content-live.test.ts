@@ -18,6 +18,7 @@ import {
 } from "../terminal-viewport.ts";
 import { MirrorControlChannel } from "../../../terminal/mirror/control-channel.ts";
 import { MirrorService } from "../../../terminal/mirror/mirror-service.ts";
+import { decodeNativeGridCapture } from "../../../terminal/mirror/native-grid-capture.ts";
 import {
   extractTerminalSelection,
   terminalSelectionCell,
@@ -222,7 +223,7 @@ describe.skipIf(!available)("native transient capture recovery", () => {
         });
         const send = io.commandListInline.bind(io);
         io.commandListInline = (command, count, index, onReply) => {
-          if (injected === 0 && command.includes("capture-pane -p -e -J")) {
+          if (injected === 0 && /capture-pane -p -(?:R|e -J)(?: |$)/u.test(command)) {
             injected++;
             onReply({ ok: false, lines: [] });
           } else send(command, count, index, onReply);
@@ -1425,11 +1426,15 @@ describe.skipIf(!available)("native history reader continuity", () => {
     "reflow",
     "height",
     "active-reflow",
+    ...(nativeCapabilities.physicalGrid ? ["active-reflow-transient"] : []),
     "active-trim-reflow",
   ])(
     "keeps two readers on retained text through native %s",
     async (scenario) => {
       const session = `history-readers-${scenario}`;
+      const injectTransientCaptureFailure = scenario === "active-reflow-transient";
+      if (injectTransientCaptureFailure) scenario = "active-reflow";
+      let injectedCaptureFailures = 0;
       const script = join(directory, `${session}.mjs`);
       writeFileSync(
         script,
@@ -1449,14 +1454,73 @@ describe.skipIf(!available)("native history reader continuity", () => {
       await vi.waitFor(() =>
         expect(tmux("capture-pane", "-p", "-t", target)).toContain("DONE-120"),
       );
+      // Bounded metadata only: preserve the exact failing capture path in CI
+      // without printing terminal contents or issuing another capture.
+      const captureAttempts: Array<Readonly<Record<string, unknown>>> = [];
       const mirror = new MirrorService({
-        createIo: (name, handlers) =>
-          new MirrorControlChannel({
+        // Production supplies this observer for every channel. Even a fixture
+        // without injected failures can require an atomic native recovery.
+        internalReadHookEmission: (pane: string, marker: string) => ({
+          bufferName: "history-recovery-observer",
+          signalChannel: "history-recovery-observer",
+          record: `${pane}|${marker}|workspace.pane.read|`,
+        }),
+        createIo: (name, handlers) => {
+          const io = new MirrorControlChannel({
             session: name,
             handlers,
             socketName: socket,
             configFile: "/dev/null",
-          }),
+          });
+          const commandList = io.commandListInline.bind(io);
+          io.commandListInline = (command, count, index, onReply) =>
+            commandList(command, count, index, (reply) => {
+              if (command.includes("capture-pane -p ")) {
+                const native = command.includes("capture-pane -p -R");
+                let header: Record<string, unknown> | null = null;
+                if (native && reply.ok) {
+                  try {
+                    header = JSON.parse(reply.lines[0] ?? "null");
+                  } catch {
+                    // A malformed header is itself useful fallback evidence.
+                  }
+                }
+                if (
+                  injectTransientCaptureFailure &&
+                  injectedCaptureFailures === 0 &&
+                  native &&
+                  reply.ok &&
+                  header?.cols === 8
+                ) {
+                  // A one-off native command failure must not poison future
+                  // captures into the lossy ANSI fallback for this connection.
+                  injectedCaptureFailures++;
+                  reply = { ok: false, lines: [] };
+                }
+                captureAttempts.push({
+                  native,
+                  ok: reply.ok,
+                  records: reply.lines.length,
+                  ...(native && reply.ok
+                    ? { decodable: decodeNativeGridCapture(reply.lines.join("\n")) !== null }
+                    : {}),
+                  ...(header
+                    ? {
+                        version: header.version,
+                        cols: header.cols,
+                        rows: header.rows,
+                        history: header.history,
+                        cursor: header.cursor,
+                        hasCurrentAttributes: Array.isArray(header.currentAttributes),
+                      }
+                    : {}),
+                });
+                if (captureAttempts.length > 16) captureAttempts.shift();
+              }
+              onReply(reply);
+            });
+          return io;
+        },
       });
       let owner: SessionRuntimeTerminalReplicaOwner | undefined;
       let disposeClient = () => {};
@@ -1623,13 +1687,64 @@ describe.skipIf(!available)("native history reader continuity", () => {
             tmux("resize-window", "-t", target, "-x", String(width), "-y", "8");
             await vi.waitFor(
               () => {
-                expect(snapshot().cols).toBe(width);
+                expect(
+                  snapshot().cols,
+                  JSON.stringify({ scenario, width, seedCount, captureAttempts }),
+                ).toBe(width);
                 if (scenario.startsWith("active-"))
                   expect(text()).toContain(`DONE-${145 + step * 5}`);
-                expect(text()).toBe(tmux("capture-pane", "-p", "-S", "-", "-t", target));
+                let physical: string | null = null;
+                if (width === 8) {
+                  try {
+                    physical = tmux("capture-pane", "-p", "-R", "-S", "-", "-t", target);
+                  } catch {
+                    // Stock tmux has no physical-grid export; retain its text oracle.
+                  }
+                }
+                if (physical !== null) {
+                  const [header, ...nativeRows] = physical
+                    .split("\n")
+                    .map((line) => JSON.parse(line));
+                  expect(header.cols).toBe(width);
+                  // Independently project physical occupancy. Native textual capture
+                  // omits orphan padding at column zero after a wide-cell reflow;
+                  // the display still has that blank column. Do not normalize it.
+                  const expected = nativeRows.map((row) => {
+                    const cells: Array<{ grapheme: string; width: number }> = [];
+                    for (let column = 0; column < width; column++) {
+                      const cell = row.cells[column];
+                      if (!cell || (cell[0] & (4 | 64 | 128)) !== 0) {
+                        cells.push({ grapheme: "", width: 1 });
+                      } else {
+                        cells.push({
+                          grapheme: Buffer.from(cell[2], "hex").toString("utf8"),
+                          width: cell[1],
+                        });
+                        if (cell[1] === 2) {
+                          cells.push({ grapheme: "", width: 0 });
+                          column++;
+                        }
+                      }
+                    }
+                    return cells;
+                  });
+                  if (scenario === "active-reflow") {
+                    expect(nativeRows.some((row) => (row.cells[0]?.[0] & 4) !== 0)).toBe(true);
+                  }
+                  expect(
+                    [...snapshot().history, ...snapshot().grid].map((row) =>
+                      row.cells.map(({ grapheme, width }) => ({ grapheme, width })),
+                    ),
+                    JSON.stringify({ scenario, width, seedCount, captureAttempts }),
+                  ).toEqual(expected);
+                } else {
+                  expect(text()).toBe(tmux("capture-pane", "-p", "-S", "-", "-t", target));
+                }
               },
               { timeout: 3000 },
             );
+            if (injectTransientCaptureFailure && width === 8)
+              expect(injectedCaptureFailures).toBe(1);
             if (scenario !== "reflow-content") {
               expect(tmux("capture-pane", "-p", "-J", "-S", "-", "-t", target)).toContain(held[1]);
               expect(logicalReadingText()).toBe(held[1]);
@@ -1822,6 +1937,10 @@ describe.skipIf(!available || !nativeCapabilities.frozenCopy)(
           tmux("kill-session", "-t", session);
         }
       },
+      // Eight widths each perform 22 cursor reads and 22 cursor moves, plus
+      // resize/capture commands (over 350 synchronous tmux invocations). Allow
+      // the aggregate fixture time; every physical/cursor assertion stays exact.
+      15000,
     );
   },
 );

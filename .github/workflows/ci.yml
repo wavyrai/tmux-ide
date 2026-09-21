@@ -45,6 +45,11 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Install tmux for installed ownership smoke
+        run: sudo apt-get update && sudo apt-get install -y tmux
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -63,6 +68,10 @@ jobs:
       - name: Run test suite
         if: matrix.node >= 22
         run: pnpm test:unit
+
+      - name: Run comparative benchmark contract tests
+        if: matrix.node >= 22
+        run: pnpm test:benchmark-comparative
 
       - name: Run canonical daemon and authentication suites
         if: matrix.node >= 22
@@ -104,6 +113,8 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
 
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux

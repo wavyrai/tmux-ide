@@ -1,3 +1,5 @@
+import { runtimeOwnedPath } from "../../lib/runtime-namespace.ts";
+import { resolveRuntimeNamespace } from "../../lib/runtime-namespace.ts";
 /**
  * Fleet snapshot — the fleet's DISASTER-RECOVERY layer.
  *
@@ -15,7 +17,6 @@
  * carries the throttle + change-detection the updater loop drives each tick.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { runTmux } from "@tmux-ide/tmux-bridge";
@@ -328,7 +329,7 @@ export function collectFleetSnapshot(io: SnapshotIo = defaultIo): FleetSnapshot 
 
 /** Absolute path to the fleet snapshot. */
 export function snapshotPath(): string {
-  return join(homedir(), ".tmux-ide", "snapshot.json");
+  return runtimeOwnedPath(join(resolveRuntimeNamespace().stateHome, "snapshot.json"));
 }
 
 /**

@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "../../lib/runtime-namespace.ts";
 /**
  * Data layer for the team TUI.
  *
@@ -236,7 +237,7 @@ export function isListableSession(name: string): boolean {
 
 function tmux(args: string[]): string {
   try {
-    return execFileSync("tmux", args, {
+    return execFileSync("tmux", runtimeTmuxArgs(args), {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();

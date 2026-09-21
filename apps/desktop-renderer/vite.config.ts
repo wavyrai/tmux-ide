@@ -52,7 +52,7 @@ function activeDevelopmentHostSession(
   return developmentHostSessions.resolve(token);
 }
 
-function developmentHostBootstrap(): Plugin {
+export function developmentHostBootstrap(): Plugin {
   const hostSessionPath = "/api/dev/host-session";
   const openProjectPath = "/api/dev/open-project-directory";
   return {

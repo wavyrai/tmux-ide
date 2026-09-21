@@ -1,0 +1,96 @@
+diff --git a/chunk-bun-8fkgaxc6.js b/chunk-bun-8fkgaxc6.js
+index 3977ea9f1a24cf7e00cadc7c6b0f419c3405c37e..3ca77c584439686c23bd5e67ed52651f63d7bdcf 100644
+--- a/chunk-bun-8fkgaxc6.js
++++ b/chunk-bun-8fkgaxc6.js
+@@ -7554,12 +7554,6 @@ Captured external output:
+     if (this.feedIdleRenderScheduled) {
+       return;
+     }
+-    if (this._isRunning) {
+-      if (!this.rendering && !this.renderTimeout && !this.ordinaryFrameWaitingForFeed) {
+-        this.scheduleRenderTimer();
+-      }
+-      return;
+-    }
+     if (this.ordinaryFrameWaitingForFeed) {
+       return;
+     }
+@@ -7567,6 +7561,16 @@ Captured external output:
+       this.immediateRerenderRequested = true;
+       return;
+     }
++    if (this._isRunning) {
++      // Demand updates must not wait for the slower animation deadline.
++      // Retain the frame-rate ceiling and the single frame/feed owner.
++      if (this.renderTimeout) {
++        this.clock.clearTimeout(this.renderTimeout);
++        this.renderTimeout = null;
++      }
++      this.scheduleRenderTimer();
++      return;
++    }
+     if (!this.updateScheduled && !this.renderTimeout) {
+       this.updateScheduled = true;
+       const now = this.normalizeClockTime(this.clock.now(), this.lastTime);
+@@ -9690,6 +9694,13 @@ Captured external output:
+       this.clock.clearTimeout(this.renderTimeout);
+       this.renderTimeout = null;
+     }
++    // Keep a committed frame owned until the destination write completes.
++    // Coalesce dirty views before composition and native baseline advancement.
++    // Split-footer capture retains its separate ordered commit contract.
++    if (this._feed?.isBackpressured() && !(this._splitHeight > 0 && this._externalOutputMode === "capture-stdout")) {
++      this.handleNativeRenderRejection(NATIVE_RENDER_STATUS_SKIPPED);
++      return;
++    }
+     this.rendering = true;
+     let renderFailed = false;
+     try {
+diff --git a/chunk-node-0yw3x5m7.js b/chunk-node-0yw3x5m7.js
+index 84a2d22b6e36c1dab68641684f66b048069634ee..2e084b6e6ee7824c4bb4e8984cd4a755e90a202f 100644
+--- a/chunk-node-0yw3x5m7.js
++++ b/chunk-node-0yw3x5m7.js
+@@ -7553,12 +7553,6 @@ Captured external output:
+     if (this.feedIdleRenderScheduled) {
+       return;
+     }
+-    if (this._isRunning) {
+-      if (!this.rendering && !this.renderTimeout && !this.ordinaryFrameWaitingForFeed) {
+-        this.scheduleRenderTimer();
+-      }
+-      return;
+-    }
+     if (this.ordinaryFrameWaitingForFeed) {
+       return;
+     }
+@@ -7566,6 +7560,16 @@ Captured external output:
+       this.immediateRerenderRequested = true;
+       return;
+     }
++    if (this._isRunning) {
++      // Demand updates must not wait for the slower animation deadline.
++      // Retain the frame-rate ceiling and the single frame/feed owner.
++      if (this.renderTimeout) {
++        this.clock.clearTimeout(this.renderTimeout);
++        this.renderTimeout = null;
++      }
++      this.scheduleRenderTimer();
++      return;
++    }
+     if (!this.updateScheduled && !this.renderTimeout) {
+       this.updateScheduled = true;
+       const now = this.normalizeClockTime(this.clock.now(), this.lastTime);
+@@ -9689,6 +9693,13 @@ Captured external output:
+       this.clock.clearTimeout(this.renderTimeout);
+       this.renderTimeout = null;
+     }
++    // Keep a committed frame owned until the destination write completes.
++    // Coalesce dirty views before composition and native baseline advancement.
++    // Split-footer capture retains its separate ordered commit contract.
++    if (this._feed?.isBackpressured() && !(this._splitHeight > 0 && this._externalOutputMode === "capture-stdout")) {
++      this.handleNativeRenderRejection(NATIVE_RENDER_STATUS_SKIPPED);
++      return;
++    }
+     this.rendering = true;
+     let renderFailed = false;
+     try {

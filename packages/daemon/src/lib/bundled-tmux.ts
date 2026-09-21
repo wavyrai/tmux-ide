@@ -1,3 +1,5 @@
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
+import { readDevelopmentBuild } from "./development-build.ts";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, chmodSync, constants, existsSync, readFileSync, realpathSync } from "node:fs";
@@ -16,7 +18,10 @@ export function validateBundledTmux(
     manifest.schemaVersion !== 1 ||
     manifest.platform !== platform ||
     manifest.arch !== arch ||
-    manifest.extension !== "tmux-ide-native-grid-v1" ||
+    // Both known distributions remain usable; the live server capture probe
+    // decides bootstrap capability, independently of the installed client.
+    (manifest.extension !== "tmux-ide-native-grid-v1" &&
+      manifest.extension !== "tmux-ide-native-grid-v2") ||
     !manifest.files ||
     typeof manifest.files !== "object" ||
     typeof manifest.files.tmux !== "string"
@@ -55,6 +60,20 @@ export function resolveBundledTmux(
   currentMacOSVersion: () => string = () =>
     execFileSync("/usr/bin/sw_vers", ["-productVersion"], { encoding: "utf8" }).trim(),
 ): string | null {
+  const namespace = resolveRuntimeNamespace();
+  if (namespace.development) {
+    const build = readDevelopmentBuild(namespace.development);
+    const bundle = join(build.assets, "tmux", `${process.platform}-${process.arch}`);
+    if (!existsSync(join(bundle, "manifest.json")))
+      throw new Error("Development build lacks bundled tmux; rebuild with qualified native assets");
+    const executable = validateBundledTmux(bundle);
+    if (process.platform === "darwin") {
+      const manifest = JSON.parse(readFileSync(join(bundle, "manifest.json"), "utf8"));
+      if (!isMacOSVersionCompatible(currentMacOSVersion(), manifest.minimumMacOS))
+        throw new Error("Development bundled tmux is incompatible with this OS");
+    }
+    return executable;
+  }
   const visited = new Set<string>();
   for (const anchor of anchors) {
     if (!isAbsolute(anchor)) continue;

@@ -1,3 +1,4 @@
+import { readApplicationDaemonInfo as readCanonicalDaemonInfo } from "./application-daemon-authority.ts";
 import {
   WorkspaceCatalogResourceV3SchemaZ,
   type CanonicalDaemonInfo,
@@ -14,7 +15,7 @@ import {
 } from "@tmux-ide/daemon-client/workspace-event-supervisor";
 import WebSocket from "ws";
 
-import { canonicalDaemonUrl, readCanonicalDaemonInfo } from "../../../lib/canonical-daemon.ts";
+import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
 
 export type ApplicationHomeCatalogResourceKey = "live-catalog";
 export type ApplicationHomeCatalogResource = {

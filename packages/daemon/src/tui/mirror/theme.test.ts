@@ -182,8 +182,8 @@ describe("semantic theme snapshots", () => {
     const terminal = createTerminalPaletteProjection(
       createSemanticThemeSnapshot({ mode: "system" }, null, derived),
     );
-    expect(terminal.ansiForeground).toBe(XTERM_PALETTE);
-    expect(terminal.ansiBackground).toBe(XTERM_PALETTE);
+    expect(terminal.ansiForeground.slice(16)).toEqual(XTERM_PALETTE.slice(16));
+    expect(terminal.ansiBackground).toBe(terminal.ansiForeground);
     expect(terminal.resolveForeground(0x12abef)).toBe(0x12abef);
     expect(terminal.resolveBackground(0xfedcba)).toBe(0xfedcba);
   });
@@ -280,7 +280,7 @@ describe("semantic theme snapshots", () => {
     expect(notifications).toBe(2);
   });
 
-  it("themes terminal defaults while preserving the complete ANSI and truecolor gamut", () => {
+  it("themes defaults and standard ANSI while preserving extended and truecolor colors", () => {
     const dark = createTerminalPaletteProjection(DARK_THEME);
     const light = createTerminalPaletteProjection(LIGHT_THEME);
 
@@ -288,15 +288,14 @@ describe("semantic theme snapshots", () => {
     expect(dark.ansiBackground).toHaveLength(256);
     expect(dark.foreground).toBe(colorToPackedRgb(DARK_THEME.roles.text.primary));
     expect(dark.background).toBe(colorToPackedRgb(DARK_THEME.roles.surfaces.terminal));
-    expect(dark.ansiForeground).toBe(XTERM_PALETTE);
-    expect(dark.ansiBackground).toBe(XTERM_PALETTE);
-    expect(light.ansiForeground).toBe(XTERM_PALETTE);
-    expect(light.ansiBackground).toBe(XTERM_PALETTE);
-    expect(dark.ansiForeground.slice(0, 16)).toEqual(XTERM_PALETTE.slice(0, 16));
+    expect(dark.ansiForeground).toBe(dark.ansiBackground);
+    expect(light.ansiForeground).toBe(light.ansiBackground);
+    expect(dark.ansiForeground.slice(0, 16)).not.toEqual(light.ansiForeground.slice(0, 16));
+    expect(dark.ansiForeground[1]).toBe(colorToPackedRgb(DARK_THEME.roles.statusTone.danger));
     expect(dark.ansiForeground.slice(16, 232)).toEqual(XTERM_PALETTE.slice(16, 232));
     expect(dark.ansiForeground.slice(232)).toEqual(XTERM_PALETTE.slice(232));
 
-    // Appearance changes update only the terminal-owned defaults/overlays.
+    // Theme changes affect defaults and basic colors, not explicit RGB.
     expect(light.foreground).not.toBe(dark.foreground);
     expect(light.background).not.toBe(dark.background);
     const source = 0x32a8e6;
@@ -304,6 +303,21 @@ describe("semantic theme snapshots", () => {
     expect(light.resolveForeground(source)).toBe(source);
     expect(dark.resolveBackground(source)).toBe(source);
     expect(light.searchCurrent).toBe(colorToPackedRgb(LIGHT_THEME.roles.selection.selection));
+  });
+
+  it("uses available host ANSI slots only for system appearance", () => {
+    const slots = Array<string | null>(16).fill(null);
+    slots[1] = "#123456";
+    slots[15] = "rgb:abcd/1234/ffff";
+    const system = createTerminalPaletteProjection(
+      createSemanticThemeSnapshot({ mode: "system" }),
+      slots,
+    );
+    const explicit = createTerminalPaletteProjection(DARK_THEME, slots);
+    expect(system.ansiForeground[1]).toBe(0x123456);
+    expect(system.ansiForeground[15]).toBe(0xab12ff);
+    expect(explicit.ansiForeground[1]).not.toBe(0x123456);
+    expect(system.ansiForeground.slice(16)).toEqual(XTERM_PALETTE.slice(16));
   });
 
   it("keeps built-in muted colours on stable extended-palette values", () => {
@@ -616,7 +630,7 @@ describe("theme library", () => {
       expect(snapshot.diagnostics, preset.id).toEqual([]);
       for (const check of semanticThemeContrastChecks(snapshot))
         expect(check.passes, `${preset.id}: ${check.id} ${check.ratio}`).toBe(true);
-      const projection = createTerminalPaletteProjection(snapshot, DARK_THEME);
+      const projection = createTerminalPaletteProjection(snapshot);
       expect(projection.resolveForeground(0x123456)).toBe(0x123456);
       expect(projection.resolveBackground(0x654321)).toBe(0x654321);
     }

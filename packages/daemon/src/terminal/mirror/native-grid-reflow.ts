@@ -37,6 +37,7 @@ export class NativeReflowLimitError extends RangeError {
 
 export interface NativeReflowRow<C extends NativeReflowCell = NativeReflowCell> {
   readonly cells: readonly C[];
+  readonly used?: number;
   /** tmux GRID_LINE_WRAPPED: this row continues onto the next row. */
   readonly continues: boolean;
   readonly extended: boolean;
@@ -45,6 +46,7 @@ export interface NativeReflowRow<C extends NativeReflowCell = NativeReflowCell> 
 
 type MutableRow<C extends NativeReflowCell> = {
   cells: C[];
+  used?: number;
   rowFlags?: number;
   continues: boolean;
   extended: boolean;
@@ -53,7 +55,8 @@ type MutableRow<C extends NativeReflowCell> = {
 
 /**
  * Physical row transformation corresponding to tmux 3.7c grid.c. The caller
- * supplies cellused cells, including padding, and handles screen/history and
+ * supplies allocated cells and an optional explicit used boundary (v1 uses the
+ * entire array), including padding, and handles screen/history and
  * cursor positioning separately. No canonical replica is mutated or produced.
  */
 export function reflowNativeRows<C extends NativeReflowCell>(
@@ -89,6 +92,14 @@ export function reflowNativeRowsWithHistory<C extends NativeReflowCell>(
     throw new RangeError("Invalid native reflow row budget");
   if (input.length > NATIVE_REFLOW_ROW_LIMIT || screenRows > maxOutputRows)
     throw new NativeReflowLimitError();
+  for (const row of input) {
+    if (
+      row.used !== undefined &&
+      (!Number.isSafeInteger(row.used) || row.used < 0 || row.used > row.cells.length)
+    )
+      throw new RangeError("Invalid native used boundary");
+  }
+  const used = (row: MutableRow<C>) => row.used ?? row.cells.length;
   const source: MutableRow<C>[] = input.map((row) => ({ ...row, cells: [...row.cells] }));
   const output: MutableRow<C>[] = [];
   const empty = (): MutableRow<C> => ({ cells: [], continues: false, extended: false });
@@ -96,9 +107,13 @@ export function reflowNativeRowsWithHistory<C extends NativeReflowCell>(
     // grid_set_cell into a fresh compact slot drops zero-width padding's
     // extended storage. The source width still governs this pass's budget;
     // the copied cell reads back as width one on the next resize.
-    row.cells.push(
-      copyCell ? copyCell(cell) : cell.padding && cell.width === 0 ? { ...cell, width: 1 } : cell,
-    );
+    const position = used(row);
+    row.cells[position] = copyCell
+      ? copyCell(cell)
+      : cell.padding && cell.width === 0
+        ? { ...cell, width: 1 }
+        : cell;
+    if (row.used !== undefined) row.used++;
     if (cell.lineFlags) row.rowFlags = (row.rowFlags ?? 0) | cell.lineFlags;
     if (
       cell.requiresExtended ||
@@ -116,13 +131,14 @@ export function reflowNativeRowsWithHistory<C extends NativeReflowCell>(
     const emptyRows: MutableRow<C>[] = [];
     for (let next = index + 1; next < source.length; next++) {
       const row = source[next]!;
-      if (row.cells.length === 0) {
+      if (used(row) === 0) {
         if (!row.continues) break;
         emptyRows.push(row);
         continue;
       }
       let consumed = 0;
-      for (const cell of row.cells) {
+      for (let column = 0; column < used(row); column++) {
+        const cell = row.cells[column]!;
         if (width + cell.width > cols) break;
         width += cell.width;
         put(target, cell);
@@ -130,8 +146,9 @@ export function reflowNativeRowsWithHistory<C extends NativeReflowCell>(
       }
       if (consumed === 0) break;
       copied = true;
-      if (consumed < row.cells.length) {
-        row.cells = row.cells.slice(consumed);
+      if (consumed < used(row)) {
+        row.cells = row.cells.slice(consumed, used(row));
+        if (row.used !== undefined) row.used = row.cells.length;
         break;
       }
       row.dead = true;
@@ -152,13 +169,14 @@ export function reflowNativeRowsWithHistory<C extends NativeReflowCell>(
     let width = 0;
     let at = 0;
     if (!row.extended) {
-      width = row.cells.length;
+      width = used(row);
       at = Math.min(cols, width);
     } else {
-      row.cells.forEach((cell, column) => {
+      for (let column = 0; column < used(row); column++) {
+        const cell = row.cells[column]!;
         if (at === 0 && width + cell.width > cols) at = column;
         width += cell.width;
-      });
+      }
     }
     if (width <= cols) {
       if (output.length === maxOutputRows) throw new NativeReflowLimitError();
@@ -168,11 +186,11 @@ export function reflowNativeRowsWithHistory<C extends NativeReflowCell>(
     }
     // Native splitting reserves rows first. Preserve even empty reserved rows
     // (notably a glyph wider than the destination), rather than flattening text.
-    let count = 1 + Math.floor((row.cells.length - 1) / cols);
+    let count = 1 + Math.floor((used(row) - 1) / cols);
     if (row.extended) {
       count = 2;
       width = 0;
-      for (const cell of row.cells.slice(at)) {
+      for (const cell of row.cells.slice(at, used(row))) {
         if (width + cell.width > cols) {
           count++;
           width = 0;
@@ -183,10 +201,15 @@ export function reflowNativeRowsWithHistory<C extends NativeReflowCell>(
     // Refuse expansion before allocating rows or invoking the cell copier.
     if (count > maxOutputRows - output.length) throw new NativeReflowLimitError();
     const split = Array.from({ length: count }, empty);
-    split[0] = { ...row, cells: row.cells.slice(0, at), continues: true };
+    split[0] = {
+      ...row,
+      ...(row.used === undefined ? {} : { used: at }),
+      cells: row.cells.slice(0, at),
+      continues: true,
+    };
     let line = 1;
     width = 0;
-    for (const cell of row.cells.slice(at)) {
+    for (const cell of row.cells.slice(at, used(row))) {
       if (width + cell.width > cols) {
         split[line]!.continues = true;
         line++;
@@ -207,6 +230,7 @@ export function reflowNativeRowsWithHistory<C extends NativeReflowCell>(
     output.map((row) =>
       Object.freeze({
         cells: Object.freeze(row.cells),
+        ...(row.used === undefined ? {} : { used: row.used }),
         continues: row.continues,
         extended: row.extended,
         ...(row.rowFlags === undefined ? {} : { rowFlags: row.rowFlags }),

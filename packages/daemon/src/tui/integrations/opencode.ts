@@ -1,3 +1,5 @@
+import { runtimeOwnedPath } from "../../lib/runtime-namespace.ts";
+import { resolveRuntimeNamespace } from "../../lib/runtime-namespace.ts";
 /**
  * opencode integration — session-id capture via a first-class opencode plugin.
  *
@@ -22,7 +24,6 @@
  * Install takes effect for NEW opencode sessions (plugins load at startup).
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 /** Marker every installed plugin contains — the ownership/removal key. */
@@ -38,11 +39,7 @@ export const PLUGIN_FILENAME = "tmux-ide.js";
  * matching `TMUX_IDE_CLAUDE_SETTINGS`.
  */
 export function opencodePluginPath(): string {
-  const override = process.env.TMUX_IDE_OPENCODE_DIR;
-  if (override) return join(override, PLUGIN_FILENAME);
-  const xdg = process.env.XDG_CONFIG_HOME;
-  const configRoot = xdg && xdg.length > 0 ? xdg : join(homedir(), ".config");
-  return join(configRoot, "opencode", "plugin", PLUGIN_FILENAME);
+  return runtimeOwnedPath(join(resolveRuntimeNamespace().opencodeDir, PLUGIN_FILENAME));
 }
 
 /**
@@ -92,6 +89,8 @@ export function isOurPlugin(content: string): boolean {
 
 /** Install: write the marker-tagged plugin file. Idempotent. */
 export function installOpencodeIntegration(): { pluginPath: string } {
+  if (resolveRuntimeNamespace().development)
+    throw new Error("Automatic integration installation is disabled in development instances");
   const pluginPath = opencodePluginPath();
   mkdirSync(dirname(pluginPath), { recursive: true });
   writeFileSync(pluginPath, PLUGIN_SOURCE, "utf8");

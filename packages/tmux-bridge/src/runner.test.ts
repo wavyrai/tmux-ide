@@ -23,6 +23,7 @@ import {
   runSessionCommand,
   runTmux,
   runTmuxBinary,
+  runTmuxBinaryAsync,
 } from "./index.ts";
 
 let mockExec;
@@ -569,5 +570,45 @@ describe("error classification", () => {
     });
     const result = getSessionState("proj");
     expect(result).toEqual({ running: false, reason: "SESSION_NOT_FOUND" });
+  });
+});
+
+// --- Async pinned runner (real child processes; no executor mock) ---
+
+describe("runTmuxBinaryAsync", () => {
+  it("resolves stdout of a pinned executable off the event loop", async () => {
+    await expect(runTmuxBinaryAsync("/bin/sh", ["-c", "printf ok"])).resolves.toBe("ok");
+  });
+
+  it("classifies a missing target exactly like the sync runner, keeping the cause", async () => {
+    let caught;
+    try {
+      await runTmuxBinaryAsync("/bin/sh", ["-c", 'echo "can\'t find session: nope" >&2; exit 1']);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(TmuxError);
+    expect(caught.code).toBe("SESSION_NOT_FOUND");
+    expect(caught.cause).toBeInstanceOf(Error);
+  });
+
+  it("classifies an unreachable server as TMUX_UNAVAILABLE", async () => {
+    let caught;
+    try {
+      await runTmuxBinaryAsync("/bin/sh", ["-c", "echo 'no server running on /x' >&2; exit 1"]);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(TmuxError);
+    expect(caught.code).toBe("TMUX_UNAVAILABLE");
+  });
+
+  it("sanitizes the client environment it hands the child", async () => {
+    const output = await runTmuxBinaryAsync(
+      "/bin/sh",
+      ["-c", 'printf "%s|%s" "$COLORTERM" "$NO_COLOR"'],
+      { env: { PATH: "/usr/bin:/bin", NO_COLOR: "1" } },
+    );
+    expect(output).toBe("truecolor|");
   });
 });

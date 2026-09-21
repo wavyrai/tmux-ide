@@ -293,11 +293,18 @@ export interface SessionRuntimePaneStreamTransportBinding {
     causalProbe?: CausalCellProbeV1,
     onCausalResult?: (result: CausalCellLedgerResult) => void,
   ): void;
-  fitViewport(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void;
+  fitViewport(
+    lease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void;
   close(): Promise<void>;
 }
 
 export interface SessionRuntimeTerminalDeliveryConnection {
+  /** Optional for legacy adapters; current delivery hubs report local sink retirement. */
+  readonly closed?: Promise<"closed" | "sink-failed">;
   readonly negotiation: TerminalDeliveryNegotiationResult;
   ack(ack: TerminalDeliveryAck): void;
   nack(nack: TerminalDeliveryNack): void;
@@ -1419,8 +1426,20 @@ export class PaneStreamLiveConnection {
       return;
     }
 
+    // Start visible sources first, preserving descriptor order within each
+    // group. All opens remain concurrent and ownership limits are unchanged.
+    const visibleAtOpen = new Set(
+      (stagedAuthority as MirrorLayoutAuthoritySnapshot | null)!.layouts.flatMap((layout) =>
+        layout.currentWindow ? layout.panes.map((pane) => pane.semanticPaneId) : [],
+      ),
+    );
+    channels.sort(
+      (left, right) =>
+        Number(visibleAtOpen.has(right.semanticPaneId)) -
+        Number(visibleAtOpen.has(left.semanticPaneId)),
+    );
     // Delivery owners are pane-scoped and independent. Open them concurrently,
-    // then publish in descriptor order only after every pane is coherent. This
+    // then publish only after every pane has a verified delivery owner. This
     // removes N x attachment latency without allowing a fast pane to make the
     // session look ready while a sibling is still missing. allSettled is
     // deliberate: partial success is always closed before the socket retires.
@@ -1514,7 +1533,20 @@ export class PaneStreamLiveConnection {
     layoutActivated = true;
     this.#recordDiagnosticLifecycle("pane-stream-delivery-open");
 
-    for (const { channel, delivery, pending, markReady } of opened) {
+    // Use the final validated topology: selection may change during source
+    // opening. Drain visible seeds before hidden scrollback on the same bounded
+    // socket, without relaxing atomic topology/negotiation validation.
+    const visibleAtDelivery = new Set(
+      authority!.layouts.flatMap((layout) =>
+        layout.currentWindow ? layout.panes.map((pane) => pane.semanticPaneId) : [],
+      ),
+    );
+    opened.sort(
+      (left, right) =>
+        Number(visibleAtDelivery.has(right.channel.semanticPaneId)) -
+        Number(visibleAtDelivery.has(left.channel.semanticPaneId)),
+    );
+    for (const { channel, delivery } of opened) {
       if (this.#closed || channel.closed) {
         await delivery.close();
         continue;
@@ -1523,6 +1555,15 @@ export class PaneStreamLiveConnection {
       // publication boundary so an invalid negotiation cannot leak a nonce.
       if (!delivery.negotiation.accepted) continue;
       channel.delivery = delivery;
+      void delivery.closed?.then((reason) => {
+        if (
+          reason === "sink-failed" &&
+          !this.#closed &&
+          !channel.closed &&
+          channel.delivery === delivery
+        )
+          this.close(1013, "output-backpressure");
+      });
       channel.deliveryAddress = {
         workspaceName: this.#descriptor.workspaceName,
         generation: delivery.negotiation.negotiated.generation,
@@ -1534,6 +1575,12 @@ export class PaneStreamLiveConnection {
         pane: channel.semanticPaneId,
         negotiation: delivery.negotiation,
       });
+    }
+    // Every observer can now subscribe without waiting behind another pane's
+    // seed/backpressure. Readiness is negotiation only; canonical seeds still
+    // gate pane input and visible activation at the consumer.
+    for (const { channel, pending, markReady } of opened) {
+      if (this.#closed || channel.closed) continue;
       markReady();
       for (const message of pending)
         await this.#sendTerminalDelivery(channel.semanticPaneId, message);
@@ -2198,7 +2245,15 @@ export class PaneStreamLiveConnection {
       if (!this.#prepareInputAuthority(true)) return;
       this.#nextViewportSeq += 1;
       try {
-        this.#sessionRuntimeBinding!.fitViewport(frame.authorityLease, frame.cols, frame.rows);
+        if (frame.semanticWindowId === undefined)
+          this.#sessionRuntimeBinding!.fitViewport(frame.authorityLease, frame.cols, frame.rows);
+        else
+          this.#sessionRuntimeBinding!.fitViewport(
+            frame.authorityLease,
+            frame.cols,
+            frame.rows,
+            frame.semanticWindowId,
+          );
         this.#sendFrame(null, {
           type: "viewport-ack",
           seq: frame.seq,

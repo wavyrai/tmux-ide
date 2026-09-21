@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "../../lib/runtime-namespace.ts";
 /**
  * The "who needs me" loop — turn fleet transitions into user-facing pings.
  *
@@ -358,6 +359,7 @@ export function readAppFocus(nowMs: number = Date.now()): AppFocus | null {
  * ≥3.2). Best-effort per toast: a gone client / failed call just drops that one.
  */
 export function sendToasts(toasts: ToastTarget[]): void {
+  if (resolveRuntimeNamespace().development) return;
   for (const { client, message } of toasts) {
     try {
       runTmux(["display-message", "-c", client, "-d", "3000", message]);
@@ -478,6 +480,7 @@ export function decideTtyWrites(
  * tick; any failure just drops that client's ping.
  */
 export function writeClientTty(write: TtyWrite): void {
+  if (resolveRuntimeNamespace().development) return;
   let fd: number | null = null;
   try {
     fd = openSync(write.tty, fsConstants.O_WRONLY | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
@@ -518,6 +521,7 @@ export function soundArgv(platform: NodeJS.Platform): string[] | null {
  * silent skip.
  */
 export function playPingSound(platform: NodeJS.Platform = process.platform): void {
+  if (resolveRuntimeNamespace().development) return;
   const argv = soundArgv(platform);
   if (!argv || !existsSync(argv[1]!)) return;
   try {
@@ -723,6 +727,7 @@ export interface SystemNotifyIo {
  * anything missing → silent skip. Other platforms: no-op.
  */
 export function sendSystemNotification(n: SystemNotification, io: SystemNotifyIo = {}): void {
+  if (resolveRuntimeNamespace().development) return;
   const platform = io.platform ?? process.platform;
   const exec =
     io.exec ?? ((cmd: string, args: string[]) => execFileSync(cmd, args, { stdio: "ignore" }));
@@ -876,5 +881,8 @@ function readRawConfig(): unknown {
  * fresh so the env kill-switch and config edits are honored each call.
  */
 export function readNotificationPrefs(): NotificationPrefs {
-  return applyKillSwitch(parseNotificationPrefs(readRawConfig()), process.env.TMUX_IDE_NOTIFY);
+  return applyKillSwitch(
+    parseNotificationPrefs(readRawConfig()),
+    resolveRuntimeNamespace().development ? "0" : process.env.TMUX_IDE_NOTIFY,
+  );
 }

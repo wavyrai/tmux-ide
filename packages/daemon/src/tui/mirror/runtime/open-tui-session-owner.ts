@@ -1,3 +1,4 @@
+import { startupFailureFromError, type StartupFailure } from "../startup-failure.ts";
 import type {
   OpenTuiGenerationHost,
   OpenTuiGenerationHostSnapshot,
@@ -6,6 +7,7 @@ import type { OpenTuiApplicationShellConnection } from "../application-shell-dae
 
 export interface OpenTuiSessionOwnerDependencies {
   readonly openTimeoutMs?: number;
+  readonly onStartupFailure?: (sessionName: string, failure: StartupFailure) => void;
   readonly prepareConnection: (
     sessionName: string,
   ) => Promise<OpenTuiApplicationShellConnection | null>;
@@ -13,7 +15,10 @@ export interface OpenTuiSessionOwnerDependencies {
     sessionName: string,
     initialConnection: OpenTuiApplicationShellConnection | null,
   ) => OpenTuiGenerationHost;
-  readonly onSnapshot: (snapshot: OpenTuiGenerationHostSnapshot | null) => void;
+  readonly onSnapshot: (
+    snapshot: OpenTuiGenerationHostSnapshot | null,
+    sessionName?: string,
+  ) => void;
 }
 
 export interface OpenTuiSessionOwner {
@@ -188,7 +193,7 @@ export function createOpenTuiSessionOwner(
             // On the first open, connecting/unavailable state is useful. During
             // A→B preparation, retain the active A snapshot until B is usable.
             if ((!previous && current === null) || current === candidate) {
-              dependencies.onSnapshot(snapshot);
+              dependencies.onSnapshot(snapshot, sessionName);
             }
           });
 
@@ -201,9 +206,18 @@ export function createOpenTuiSessionOwner(
           }
 
           current = candidate;
-          dependencies.onSnapshot(candidate.latest);
+          dependencies.onSnapshot(candidate.latest, sessionName);
           if (previous) await retire(previous);
           return true;
+        } catch (error) {
+          if (!disposed && !controller.signal.aborted) {
+            try {
+              dependencies.onStartupFailure?.(sessionName, startupFailureFromError(error));
+            } catch {
+              /* observer */
+            }
+          }
+          throw error;
         } finally {
           clearTimeout(timer);
           if (openingController === controller) openingController = null;

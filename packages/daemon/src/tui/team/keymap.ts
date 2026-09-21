@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "../../lib/runtime-namespace.ts";
 /**
  * Central, configurable keymap for the team TUI.
  *
@@ -8,7 +9,6 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 export type ActionId =
@@ -101,7 +101,7 @@ export function mergeKeymap(
  */
 export function loadKeymap(): Record<ActionId, KeyBinding> {
   try {
-    const path = join(homedir(), ".tmux-ide", "team-keys.json");
+    const path = join(resolveRuntimeNamespace().stateHome, "team-keys.json");
     if (!existsSync(path)) return mergeKeymap(undefined);
     const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw) as unknown;

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "repository": "https://github.com/ghostty-org/ghostty.git",
+  "commit": "448062571c5edf010b7490d06869b88b5ebf8f80",
+  "patch": "external-io.patch",
+  "patchSha256": "2542c2dacfe97b5697a1b4001be2574f314c3b0b499b43215a4a2d1818b6f974",
+  "zigVersion": "0.16.0",
+  "target": "aarch64-macos.13.0",
+  "xcframeworkTarget": "native",
+  "externalIoAbiVersion": 1
+}

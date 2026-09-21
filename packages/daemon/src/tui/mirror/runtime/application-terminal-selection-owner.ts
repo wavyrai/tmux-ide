@@ -1,3 +1,4 @@
+import { createEffect, createSignal, getOwner, onCleanup } from "solid-js";
 import type { OpenTuiGenerationHostSnapshot } from "./open-tui-generation-host.ts";
 import type { TerminalGestureRuntimeIdentity } from "./terminal-selection.ts";
 import type { ApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
@@ -149,10 +150,33 @@ export function applicationMousePointerIngressCapability<T>(
 }
 
 export function createApplicationTerminalSelectionOwner(options: {
-  readonly copyText: (text: string) => boolean;
+  readonly copyText: (text: string) => boolean | Promise<boolean>;
   readonly diagnosticsEnabled: boolean;
   readonly generation: () => OpenTuiGenerationHostSnapshot | null;
 }) {
+  const [feedback, setFeedback] = createSignal<Readonly<{
+    paneId: string;
+    copied: boolean;
+  }> | null>(null);
+  let copyEpoch = 0;
+  let disposed = false;
+  let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearFeedback = () => {
+    copyEpoch += 1;
+    if (feedbackTimer !== null) clearTimeout(feedbackTimer);
+    feedbackTimer = null;
+    setFeedback(null);
+  };
+  if (getOwner()) {
+    createEffect(() => {
+      options.generation();
+      clearFeedback();
+    });
+    onCleanup(() => {
+      disposed = true;
+      clearFeedback();
+    });
+  }
   let copySelection: (() => boolean) | null = null;
   let handleKey: PaneMenuKeyHandler | null = null;
   let ownsInput: (() => boolean) | undefined;
@@ -160,6 +184,8 @@ export function createApplicationTerminalSelectionOwner(options: {
   let copyOrdinal = 0;
   let pointerGestureId: string | null = null;
   return Object.freeze({
+    feedback,
+    clearFeedback,
     beginPointerIngress(input: {
       readonly action: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down";
       readonly x: number;
@@ -185,30 +211,55 @@ export function createApplicationTerminalSelectionOwner(options: {
       }
     },
     copy(text: string, evidence: TerminalSelectionCopyEvidence): boolean {
-      const copied = options.copyText(text);
-      if (!options.diagnosticsEnabled) return copied;
+      if (disposed) return false;
+      clearFeedback();
+      const epoch = copyEpoch;
+      const active = options.generation();
+      const ordinal = copyOrdinal++;
+      const complete = (copied: boolean): void => {
+        if (disposed || copyEpoch !== epoch || options.generation() !== active) return;
+        setFeedback(Object.freeze({ paneId: evidence.semanticPaneId, copied }));
+        feedbackTimer = setTimeout(clearFeedback, 1_800);
+        feedbackTimer.unref?.();
+        if (!options.diagnosticsEnabled) return;
+        try {
+          const identity = active?.adapter?.paneCanonicalIdentity(evidence.semanticPaneId);
+          tuiPerfCriticalMark(
+            `terminal-selection-copy:${active?.rendererEpoch ?? 0}:${identity?.revision ?? -1}:${ordinal}`,
+            "terminal-selection-copy",
+            {
+              ...evidence,
+              copyOrdinal: ordinal,
+              copied,
+              daemonGeneration: active?.daemonGeneration ?? null,
+              clientGeneration: active?.client?.getSnapshot().generation ?? null,
+              rendererEpoch: active?.rendererEpoch ?? null,
+              canonicalIdentity: identity,
+              writerHealth: tuiPerfDiagnostics(),
+            },
+          );
+        } catch {
+          // Clipboard diagnostics never own clipboard completion.
+        }
+      };
       try {
-        const ordinal = copyOrdinal++;
-        const active = options.generation();
-        const identity = active?.adapter?.paneCanonicalIdentity(evidence.semanticPaneId);
-        tuiPerfCriticalMark(
-          `terminal-selection-copy:${active?.rendererEpoch ?? 0}:${identity?.revision ?? -1}:${ordinal}`,
-          "terminal-selection-copy",
-          {
-            ...evidence,
-            copyOrdinal: ordinal,
-            copied,
-            daemonGeneration: active?.daemonGeneration ?? null,
-            clientGeneration: active?.client?.getSnapshot().generation ?? null,
-            rendererEpoch: active?.rendererEpoch ?? null,
-            canonicalIdentity: identity,
-            writerHealth: tuiPerfDiagnostics(),
-          },
-        );
+        const result = options.copyText(text);
+        if (typeof result === "boolean") {
+          complete(result);
+          return result;
+        }
+        void Promise.resolve(result)
+          .then(
+            (copied) => complete(copied === true),
+            () => complete(false),
+          )
+          .catch(() => undefined);
+        // The asynchronous submission owns this gesture; it must not fall through as input.
+        return true;
       } catch {
-        // Clipboard diagnostics never own a successful OSC52 write.
+        complete(false);
+        return false;
       }
-      return copied;
     },
     copyCurrent: () => copySelection?.() === true,
     handleKey: (...args: Parameters<PaneMenuKeyHandler>) => handleKey?.(...args) === true,

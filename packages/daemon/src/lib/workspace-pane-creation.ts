@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { boundedTmuxRead } from "./bounded-tmux-read.ts";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, relative, sep } from "node:path";
 
@@ -220,6 +220,7 @@ function assertEffectiveConfigProvenance(
 }
 
 function resolveTmuxExecutable(): string {
+  if (resolveRuntimeNamespace().development) return resolveBundledTmux()!;
   const configured = process.env.TMUX_IDE_TMUX_BIN;
   if (!configured) {
     const bundled = resolveBundledTmux();
@@ -278,7 +279,10 @@ function tmuxSocketFromEnvironment(): string | null {
 }
 
 export function resolveWorkspacePaneTmuxAuthority(): WorkspacePaneTmuxAuthority {
+  const namespace = resolveRuntimeNamespace();
   const executablePath = resolveTmuxExecutable();
+  if (namespace.development)
+    return Object.freeze({ executablePath, socketSelector: namespace.tmuxSocket });
   const environmentSocket = tmuxSocketFromEnvironment();
   if (environmentSocket) {
     let socket;
@@ -343,7 +347,9 @@ export function createPinnedWorkspaceTmuxRunner(
       ? ["-S", revalidateUnixSocketIdentity(socketIdentity)]
       : (namedFence?.resolve() ?? socketArgv);
     const output = String(
-      runTmuxBinary(executablePath, [...selector, ...args], {
+      // Machine-readable formats contain tabs and Unicode even under LC_ALL=C.
+      // -u controls this client's output encoding without changing pane locale.
+      runTmuxBinary(executablePath, [...selector, "-u", ...args], {
         encoding: "utf8",
         env: environment,
         maxBuffer: TMUX_OUTPUT_BYTES,
@@ -389,24 +395,11 @@ export function createPinnedWorkspaceTmuxAsyncRunner(
       ? ["-S", revalidateUnixSocketIdentity(socketIdentity)]
       : socketArgv;
     const execute = (selector: string[]) =>
-      new Promise<string>((resolve, reject) => {
-        execFile(
-          executablePath,
-          [...selector, ...args],
-          {
-            encoding: "utf8",
-            env: environment,
-            maxBuffer: TMUX_OUTPUT_BYTES,
-            timeout: 5_000,
-            ...(signal ? { signal } : {}),
-            windowsHide: true,
-          },
-          (error, stdout) => {
-            if (error) reject(error);
-            else resolve(stdout.replace(/(?:\r?\n)+$/u, ""));
-          },
-        );
-      });
+      boundedTmuxRead(executablePath, [...selector, "-u", ...args], {
+        env: environment,
+        maxBuffer: TMUX_OUTPUT_BYTES,
+        signal,
+      }).then((stdout) => stdout.replace(/(?:\r?\n)+$/u, ""));
     if (!namedFence) return execute(selector);
     return namedFence
       .resolveAsync(signal)

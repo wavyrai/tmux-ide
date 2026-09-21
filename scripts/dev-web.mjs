@@ -38,7 +38,11 @@ const gateway = await startGenerationGateway(getCanonicalDaemonInfoPath(), {
   productVersion: info.productVersion,
   ...(info.environmentId ? { environmentId: info.environmentId } : {}),
 });
-const child = spawn("pnpm", ["--filter", "@tmux-ide/desktop-renderer", "dev"], {
+const renderer =
+  process.env.TMUX_IDE_WEB_RENDERER === "workspace"
+    ? "@tmux-ide/web-workspace"
+    : "@tmux-ide/desktop-renderer";
+const child = spawn("pnpm", ["--filter", renderer, "dev"], {
   cwd: repoRoot,
   env: {
     ...process.env,

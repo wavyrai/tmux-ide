@@ -1,6 +1,7 @@
+import { runtimeOwnedPath } from "./runtime-namespace.ts";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 
 export interface AppSettings {
   remoteAccess: {
@@ -17,11 +18,11 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 function settingsDir(): string {
-  return process.env.TMUX_IDE_SETTINGS_DIR ?? join(homedir(), ".tmux-ide");
+  return resolveRuntimeNamespace().settingsDir;
 }
 
 export function appSettingsPath(): string {
-  return join(settingsDir(), "app-settings.json");
+  return runtimeOwnedPath(join(settingsDir(), "app-settings.json"));
 }
 
 function normalizeSettings(value: unknown): AppSettings {

@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "../lib/runtime-namespace.ts";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
@@ -30,7 +31,7 @@ export interface ProjectDetail {
 type TmuxRunner = (args: string[]) => string;
 
 let _tmuxRunner: TmuxRunner = (args) =>
-  execFileSync("tmux", args, {
+  execFileSync("tmux", runtimeTmuxArgs(args), {
     encoding: "utf-8",
     maxBuffer: 1024 * 1024,
     stdio: ["ignore", "pipe", "ignore"],

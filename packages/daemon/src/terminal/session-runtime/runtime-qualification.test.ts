@@ -501,6 +501,70 @@ describe("real SessionRuntime qualification", () => {
     await registry.dispose();
   });
 
+  it("retries semantic bootstrap after a transient subscription failure on the same runtime", async () => {
+    const { registry, drivers } = rig();
+    const client = registry.connect("zz-sim", "opentui", "client:bootstrap-retry");
+    const error = new Error("transient mirror subscription failure");
+    const subscribe = vi.spyOn(MirrorService.prototype, "subscribe").mockRejectedValueOnce(error);
+    const messages: TerminalDeliveryServerMessage[] = [];
+    try {
+      let firstFailure: unknown;
+      const first = client
+        .openTerminalDelivery(
+          "delivery:bootstrap-first",
+          "request:bootstrap-first",
+          "pane.alpha",
+          OFFER,
+          (message) => messages.push(message),
+        )
+        .catch((cause: unknown) => {
+          firstFailure = cause;
+        });
+      await waitForDriver(drivers);
+      const driver = drivers[0]!;
+      await driver.settleUntil(() => firstFailure !== undefined, "failed bootstrap");
+      await first;
+      expect(firstFailure).toBe(error);
+      expect(messages).toHaveLength(0);
+
+      let retrySettled = false;
+      const retry = client
+        .openTerminalDelivery(
+          "delivery:bootstrap-retry",
+          "request:bootstrap-retry",
+          "pane.alpha",
+          OFFER,
+          (message) => messages.push(message),
+        )
+        .then(
+          (connection) => {
+            retrySettled = true;
+            return { connection };
+          },
+          (cause: unknown) => {
+            retrySettled = true;
+            return { error: cause };
+          },
+        );
+      await driver.settleUntil(() => retrySettled, "retried bootstrap");
+      const result = await retry;
+      expect(result).not.toHaveProperty("error");
+      if (!("connection" in result)) throw result.error;
+      expect(subscribe).toHaveBeenCalledTimes(2);
+      expect(drivers).toHaveLength(1);
+      expect(result.connection.negotiation.accepted).toBe(true);
+      const seed = latest(messages);
+      expect(seed.incarnation).toBe(`${GENERATION}:1`);
+      expect(seed.type).toBe("terminal.delivery");
+      result.connection.ack(ack(seed));
+      await result.connection.close();
+    } finally {
+      subscribe.mockRestore();
+      await client.close();
+      await registry.dispose();
+    }
+  });
+
   it("retires a failed pane for both clients and reopens it without replacing the sibling or control channel", async () => {
     const { registry, drivers } = rig();
     const clients = [

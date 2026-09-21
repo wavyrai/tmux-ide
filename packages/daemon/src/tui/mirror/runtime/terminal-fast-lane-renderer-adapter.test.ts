@@ -1,3 +1,4 @@
+import { projectNativeGridRow } from "../../../terminal/mirror/native-grid-projection.ts";
 import { decodeNativeGridCapture } from "../../../terminal/mirror/native-grid-capture.ts";
 import { describe, expect, it, spyOn } from "bun:test";
 import type {
@@ -111,9 +112,14 @@ function paintViewport(
 }
 
 describe("TerminalFastLaneRendererAdapter", () => {
-  it.each([false, true])(
-    "fences asynchronous native backing to the retained view (released: %s)",
-    async (released) => {
+  it.each([
+    [false, 1],
+    [true, 1],
+    [false, 2],
+    [true, 2],
+  ] as const)(
+    "fences asynchronous native backing to the retained view (released: %s, version: %s)",
+    async (released, version) => {
       const source = new Source();
       const lane = createTerminalFastLane({
         address: { workspaceName, generation },
@@ -128,7 +134,7 @@ describe("TerminalFastLaneRendererAdapter", () => {
       });
       const backing = decodeNativeGridCapture(
         JSON.stringify({
-          version: 1,
+          version,
           cols: 4,
           rows: 2,
           history: 0,
@@ -190,7 +196,9 @@ describe("TerminalFastLaneRendererAdapter", () => {
         await Promise.resolve();
         expect(calls).toBe(1);
         expect(signal?.aborted).toBe(released);
-        expect(adapter.paneRetainedBackingStatus("pane.editor")).toBe(released ? null : "native");
+        expect(adapter.paneRetainedBackingStatus("pane.editor")).toBe(
+          released ? null : version === 2 ? "native" : "compatible",
+        );
         const heldSnapshot = adapter.paneSelectionSnapshot("pane.editor")!;
         expect([...heldSnapshot.history, ...heldSnapshot.grid][0]?.cells[0]?.grapheme).toBe(
           released ? "B" : "A",
@@ -202,6 +210,105 @@ describe("TerminalFastLaneRendererAdapter", () => {
         stopPeer();
         adapter.dispose();
         peer.dispose();
+        lane.dispose();
+      }
+    },
+  );
+
+  it.each(["native", "missing", "error"] as const)(
+    "preserves wheel motion while delayed %s backing resolves",
+    async (result) => {
+      const source = new Source();
+      const lane = createTerminalFastLane({
+        address: { workspaceName, generation },
+        source,
+        repair: { request: () => undefined },
+        control: {
+          owns: () => true,
+          request: async () => true,
+          write: async () => "ok",
+          resize: async () => "ok",
+        },
+      });
+      const backing = decodeNativeGridCapture(
+        [
+          JSON.stringify({
+            version: 2,
+            cols: 8,
+            rows: 2,
+            history: 12,
+            hscrolled: 0,
+            limit: 100,
+            cursor: [0, 0],
+          }),
+          ...Array.from({ length: 14 }, (_, row) =>
+            JSON.stringify({
+              row,
+              flags: 0,
+              used: 1,
+              cells: [[0, 1, (65 + row).toString(16), 0, 8, 8, 8, 0, 0]],
+            }),
+          ),
+          "",
+        ].join("\n"),
+      )!;
+      let finish!: (value: typeof backing | null) => void;
+      let fail!: (error: Error) => void;
+      let signal!: AbortSignal;
+      const pending = new Promise<typeof backing | null>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      const adapter = new TerminalFastLaneRendererAdapter(
+        lane,
+        1,
+        null,
+        null,
+        async (_pane, _expected, input) => {
+          signal = input;
+          return pending;
+        },
+      );
+      const unsubscribe = adapter.subscribePaneVersion("pane.editor", () => {});
+      const reading = createTerminalScrollback(adapter, undefined, undefined, (id) =>
+        adapter.retainPaneView(id),
+      );
+      try {
+        const blank = blankTerminalReplicaSnapshot(8, 2);
+        const rows = backing.grid.map((row) => projectNativeGridRow(row, 8)!);
+        const snapshot = { ...blank, history: rows.slice(0, 12), grid: rows.slice(12) };
+        source.emit("pane.editor", {
+          ...seed("pane.editor", "A"),
+          cols: 8,
+          snapshot,
+          stateHash: hashTerminalReplicaSnapshot(snapshot),
+        });
+        const original = adapter.paneSelectionSnapshot("pane.editor");
+        adapter.setNativePaneGeometries([{ paneId: "pane.editor", cols: 4, rows: 2 }]);
+        reading.move("pane.editor", 5);
+        expect(reading.offset("pane.editor")).toBe(5);
+        expect(adapter.paneSelectionSnapshot("pane.editor")).toBe(original);
+        for (let i = 0; i < 150; i++)
+          adapter.setNativePaneGeometries([{ paneId: "pane.editor", cols: 4, rows: 2 }]);
+        expect(signal.aborted).toBe(false);
+        expect(adapter.paneRetainedBackingStatus("pane.editor")).toBe("pending");
+        reading.move("pane.editor", 2);
+        expect(reading.offset("pane.editor")).toBe(7);
+        if (result === "error") fail(new Error("unavailable"));
+        else finish(result === "native" ? backing : null);
+        await pending.catch(() => {});
+        for (let i = 0; i < 4; i++) await Promise.resolve();
+        expect(adapter.paneRetainedBackingStatus("pane.editor")).toBe(
+          result === "native" ? "native" : "compatible",
+        );
+        expect(adapter.paneSelectionSnapshot("pane.editor")?.cols).toBe(4);
+        expect(reading.offset("pane.editor")).toBe(7);
+        reading.move("pane.editor", -2);
+        expect(reading.offset("pane.editor")).toBe(5);
+      } finally {
+        reading.dispose();
+        unsubscribe();
+        adapter.dispose();
         lane.dispose();
       }
     },
@@ -1958,4 +2065,193 @@ it("does not repaint unchanged history when a scrolled pane is invalidated", () 
   stop();
   adapter.dispose();
   lane.dispose();
+});
+
+it("reuses bounded history row projections without changing cells, styles or graphemes", async () => {
+  const { blitSemanticRow, visibleTerminalRowAt } =
+    await import("../semantic-pane-render-source.ts");
+  const { createSemanticThemeSnapshot, createTerminalPaletteProjection } =
+    await import("../theme.ts");
+  const source = new Source();
+  const lane = createTerminalFastLane({
+    address: { workspaceName, generation },
+    source,
+    repair: { request: () => undefined },
+    control: {
+      owns: () => true,
+      request: async () => true,
+      write: async () => "ok",
+      resize: async () => "ok",
+    },
+  });
+  const renderer = new TerminalFastLaneRendererAdapter(lane);
+  const stop = renderer.subscribePaneVersion("pane.editor", () => undefined);
+  const blank = blankTerminalReplicaSnapshot(200, 54);
+  const makeRow = (row: number) => ({
+    ...blank.grid[0]!,
+    cells: blank.grid[0]!.cells.map((cell, column) => ({
+      ...cell,
+      grapheme:
+        column === 7
+          ? "e\u0301"
+          : column === 8
+            ? "👩‍💻"
+            : column === 9
+              ? ""
+              : String.fromCharCode(33 + ((row + column) % 80)),
+      width: column === 8 ? 2 : column === 9 ? 0 : 1,
+      attributes: (row + column) % 4,
+      foreground:
+        column % 3 === 0 ? { kind: "indexed" as const, index: row % 16 } : cell.foreground,
+    })),
+  });
+  const snapshot = {
+    ...blank,
+    history: Array.from({ length: 320 }, (_, i) => makeRow(i)),
+    grid: blank.grid.map((_, i) => makeRow(i + 320)),
+  };
+  const initial = seed("pane.editor", "A");
+  if (initial.type !== "terminal.seed") throw new Error("seed");
+  source.emit("pane.editor", {
+    ...initial,
+    cols: 200,
+    rows: 54,
+    snapshot,
+    stateHash: hashTerminalReplicaSnapshot(snapshot),
+  });
+  const buffers = (width: number, height: number) => ({
+    char: new Uint32Array(width * height),
+    fg: new Uint16Array(width * height * 4),
+    bg: new Uint16Array(width * height * 4),
+    attributes: new Uint32Array(width * height),
+  });
+  let actual = buffers(200, 54);
+  let width = 200,
+    height = 54,
+    foreground = 0xffffff,
+    background = 0;
+  let palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
+  let consumerId = {};
+  const verify = (offset: number, origin?: { x: number; y: number }, forceRows?: number[]) => {
+    const expected = buffers(width, height);
+    const graphemes: import("../blit.ts").GraphemeOverride[] = [];
+    const expectedGraphemes: import("../blit.ts").GraphemeOverride[] = [];
+    const dirtyRows: number[] = [];
+    renderer.renderSource.blitPane(
+      "pane.editor",
+      actual,
+      width,
+      height,
+      offset,
+      foreground,
+      background,
+      {
+        full: !forceRows,
+        forceRows,
+        dirtyRows,
+        graphemes,
+        palette,
+        consumerId,
+        viewportOrigin: origin,
+      },
+    );
+    const current = renderer.paneSelectionSnapshot("pane.editor")!;
+    for (let row = 0; row < height; row++) {
+      const canonical = origin ? origin.y + row : row;
+      const sourceRow = origin
+        ? canonical < 0
+          ? current.history[current.history.length + canonical]
+          : current.grid[canonical]
+        : visibleTerminalRowAt(current, offset, row);
+      blitSemanticRow(
+        sourceRow,
+        expected,
+        row,
+        width,
+        foreground,
+        background,
+        expectedGraphemes,
+        palette,
+        origin?.x ?? 0,
+      );
+    }
+    expect(actual).toEqual(expected);
+    expect(graphemes).toEqual(
+      forceRows
+        ? expectedGraphemes.filter((item) => forceRows.includes(item.y))
+        : expectedGraphemes,
+    );
+    return renderer.rowProjectionDiagnostics("pane.editor")!;
+  };
+  try {
+    const first = verify(100);
+    expect(first.convertedRows).toBe(54);
+    const second = verify(101);
+    expect(second.convertedRows - first.convertedRows).toBe(1);
+    expect(second.reusedRows - first.reusedRows).toBe(53);
+    const third = verify(106);
+    expect(third.convertedRows - second.convertedRows).toBe(5);
+    verify(101);
+    // Post-paint selection/search highlighting must never contaminate the cache.
+    actual.attributes.fill(255, 400, 600);
+    verify(101, undefined, [2]);
+    for (let offset = 110; offset <= 310; offset += 10) {
+      const state = verify(offset);
+      expect(state.cachedRows).toBeLessThanOrEqual(108);
+      expect(state.cachedBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+    }
+    const beforeJump = renderer.rowProjectionDiagnostics("pane.editor")!;
+    const afterJump = verify(100);
+    expect(afterJump.convertedRows).toBe(beforeJump.convertedRows);
+    expect(afterJump.cachedRows).toBe(0);
+    foreground = 0x123456;
+    background = 0x654321;
+    verify(100);
+    palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "light" }));
+    verify(100);
+    consumerId = {};
+    actual = buffers(width, height);
+    verify(100);
+    width = 80;
+    height = 20;
+    actual = buffers(width, height);
+    verify(100, { x: 5, y: -100 });
+    verify(100, { x: 9, y: -100 });
+    width = 8;
+    actual = buffers(width, height);
+    verify(100, { x: 1, y: -100 });
+    width = 80;
+    actual = buffers(width, height);
+    const release = renderer.retainPaneView("pane.editor")!;
+    verify(100);
+    renderer.setNativePaneGeometries([{ paneId: "pane.editor", cols: 160, rows: 40 }]);
+    verify(100);
+    release();
+    verify(100);
+    verify(0);
+    const replacement = {
+      ...snapshot,
+      history: snapshot.history.map((row) => ({
+        ...row,
+        cells: row.cells.map((cell) => ({ ...cell, attributes: 16 })),
+      })),
+    };
+    source.emit("pane.editor", {
+      ...initial,
+      revision: 1,
+      cols: 200,
+      rows: 54,
+      snapshot: replacement,
+      stateHash: hashTerminalReplicaSnapshot(replacement),
+    });
+    verify(100);
+    width = 1024;
+    height = 64;
+    actual = buffers(width, height);
+    expect(verify(100).cachedRows).toBe(0);
+  } finally {
+    stop();
+    renderer.dispose();
+    lane.dispose();
+  }
 });

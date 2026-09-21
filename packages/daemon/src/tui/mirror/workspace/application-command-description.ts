@@ -1,5 +1,19 @@
+import { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
+export { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
 import { PANE_ACTION_MENU_ITEMS } from "./pane-action-menu-model.ts";
+export interface FleetPaletteTarget {
+  readonly machineId: string;
+  readonly liveSessionId: string;
+  readonly hostLabel: string;
+  readonly daemonInstanceId: string;
+  readonly disabled?: boolean;
+  readonly favorite?: boolean;
+  readonly recentRank?: number;
+  readonly agentActivities?: readonly { paneId: string; attention: boolean; activity: string }[];
+}
+
 export interface ApplicationAgentPaletteCommand {
+  readonly fleet?: FleetPaletteTarget;
   readonly kind: "jump-agent";
   readonly sessionName: string;
   readonly paneId: string;
@@ -7,9 +21,17 @@ export interface ApplicationAgentPaletteCommand {
 }
 
 export interface ApplicationSessionPaletteCommand {
+  readonly fleet?: FleetPaletteTarget;
   readonly kind: "open-session";
   readonly sessionName: string;
   readonly label: string;
+}
+
+export interface ApplicationMachinePaletteCommand {
+  readonly kind: "open-machine";
+  readonly sessionName: "";
+  readonly label: string;
+  readonly fleet: FleetPaletteTarget;
 }
 
 export type ApplicationPaletteCommand =
@@ -21,23 +43,41 @@ export type ApplicationPaletteCommand =
   | "split-right"
   | "split-down"
   | "close-pane"
+  | ApplicationMachinePaletteCommand
   | ApplicationAgentPaletteCommand
   | ApplicationSessionPaletteCommand;
 
 /** Presentation only: execution remains in the existing application owners. */
 export function applicationCommandDescription(command: ApplicationPaletteCommand) {
+  if (typeof command === "object" && command.kind === "open-machine")
+    return {
+      id: JSON.stringify([command.kind, command.fleet.machineId]),
+      label: `Machine · ${command.label}`,
+      detail: command.fleet.disabled ? "Unavailable" : "Browse sessions or create on this host",
+    };
   if (typeof command === "object") {
     const session = command.kind === "open-session";
     return {
       id: JSON.stringify(
-        session
-          ? [command.kind, command.sessionName]
-          : [command.kind, command.sessionName, command.paneId],
+        command.fleet
+          ? [
+              command.kind,
+              command.fleet.machineId,
+              command.fleet.liveSessionId,
+              session ? null : command.paneId,
+            ]
+          : session
+            ? [command.kind, command.sessionName]
+            : [command.kind, command.sessionName, command.paneId],
       ),
       label: session
-        ? `Open session · ${command.label}`
-        : `Jump to ${command.label} · ${command.sessionName}`,
-      detail: session ? "Session" : "Agent",
+        ? `Open session · ${command.label}${command.fleet ? ` · ${command.fleet.hostLabel}` : ""}`
+        : `Jump to ${command.label} · ${command.sessionName}${command.fleet ? ` · ${command.fleet.hostLabel}` : ""}`,
+      detail: command.fleet
+        ? `${command.fleet.hostLabel} · ${session ? "Session" : "Agent"}${command.fleet.disabled ? " · unavailable" : ""}`
+        : session
+          ? "Session"
+          : "Agent",
     };
   }
   const pane = PANE_ACTION_MENU_ITEMS.find((item) => item.id === command);
@@ -68,10 +108,29 @@ export function filterApplicationCommands(
   commands: readonly ApplicationPaletteCommand[],
   query: string,
 ) {
-  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  return commands.filter((command) => {
-    const { label, detail } = applicationCommandDescription(command);
-    const text = `${label} ${detail}`.toLocaleLowerCase();
-    return terms.every((term) => text.includes(term));
-  });
+  return commands
+    .map((command, index) => {
+      const { label, detail } = applicationCommandDescription(command);
+      const score = commandSearchMatch(`${label} ${detail}`, query)?.score;
+      const fleet = typeof command === "object" ? command.fleet : undefined;
+      return {
+        command,
+        index,
+        score,
+        favorite: Boolean(fleet?.favorite),
+        recent: fleet?.recentRank ?? 1000,
+      };
+    })
+    .filter((row) => row.score !== undefined)
+    .sort(
+      (a, b) =>
+        (!query.trim()
+          ? Number(typeof a.command !== "string") - Number(typeof b.command !== "string")
+          : 0) ||
+        b.score! - a.score! ||
+        Number(b.favorite) - Number(a.favorite) ||
+        a.recent - b.recent ||
+        a.index - b.index,
+    )
+    .map((row) => row.command);
 }

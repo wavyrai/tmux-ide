@@ -45,3 +45,21 @@ describe("component keyboard route owner", () => {
     expect(route).not.toHaveBeenCalled();
   });
 });
+
+it("routes paste only to the newest active owner and releases it on unmount", () => {
+  const owner = createKeyboardRouteOwner();
+  const underneath = vi.fn(() => true);
+  const overlay = vi.fn(() => true);
+  owner.registerPaste(underneath);
+  const stop = owner.registerPaste(overlay);
+  const bytes = Buffer.from("研究");
+  expect(owner.routePaste(bytes)).toBe(true);
+  expect(overlay).toHaveBeenCalledWith(bytes);
+  expect(underneath).not.toHaveBeenCalled();
+  stop();
+  stop();
+  expect(owner.routePaste(bytes)).toBe(true);
+  expect(underneath).toHaveBeenCalledOnce();
+  owner.dispose();
+  expect(owner.routePaste(bytes)).toBe(false);
+});

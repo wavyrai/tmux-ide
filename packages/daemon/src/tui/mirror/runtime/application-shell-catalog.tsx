@@ -1,3 +1,7 @@
+import {
+  ApplicationMachineSidebar,
+  type ApplicationMachineSidebarModel,
+} from "./application-machine-sidebar.tsx";
 import type { ApplicationConnectionFeedback } from "../workspace/connection-feedback.ts";
 import { appearanceDialogLayer } from "./application-shell-overlays.tsx";
 import type { ApplicationAppearanceOwner } from "./application-appearance-owner.ts";
@@ -26,6 +30,9 @@ import { ApplicationShellOverlayStack } from "./application-shell-overlay-stack.
 export type ApplicationCatalogSurface = "home" | "terminals";
 export type ApplicationCatalogInputSource = "keyboard" | "mouse";
 export interface ApplicationCatalogShellProps {
+  readonly machineSidebar?: ApplicationMachineSidebarModel;
+  readonly machineColor?: string;
+  readonly machineLabel?: string | null;
   readonly appearanceOwner?: ApplicationAppearanceOwner;
   readonly homeAgents?: ApplicationHomeAgentPresentation;
   readonly dimensions: Accessor<{ readonly width: number; readonly height: number }>;
@@ -40,8 +47,13 @@ export interface ApplicationCatalogShellProps {
   readonly catalogNote?: Accessor<string | null>;
   readonly paletteOpen: Accessor<boolean>;
   readonly paletteSelection?: Accessor<number>;
+  readonly palettePreviewActive?: Accessor<boolean>;
+  readonly onPaletteModalChange?: (open: boolean) => void;
+  readonly paletteKeyboardHint?: Accessor<string>;
   readonly paletteQuery?: Accessor<string>;
   readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
+  readonly onPaletteViewport?: (rows: number) => void;
+  readonly onPaletteFavorite?: (command: ApplicationPaletteCommand) => void;
   readonly onPaletteSelect?: (index: number) => void;
   readonly paletteCommands?: Accessor<readonly ApplicationPaletteCommand[]>;
   readonly paletteCloseArmed?: Accessor<boolean>;
@@ -74,9 +86,12 @@ const CATALOG_VIEWS: readonly ShellChromeView[] = [
 function CatalogTerminalSurface(props: {
   readonly phase: "loading" | "live" | "unavailable";
   readonly sessionCount: number;
+  readonly machineColor?: string;
+  readonly machineLabel?: string | null;
   readonly note: string | null;
   readonly connection?: ApplicationConnectionFeedback | null;
   readonly onCancelOpen?: () => void;
+  readonly onChooseSession?: () => void;
   readonly onRetryOpen?: () => void;
   readonly onCopyConnectionDetails?: () => void;
   readonly width: number;
@@ -85,6 +100,7 @@ function CatalogTerminalSurface(props: {
   readonly onCreateSession?: () => void;
 }): JSX.Element {
   const title = () => {
+    if (props.connection?.failed) return "Terminal connection needs attention";
     if (props.phase === "loading") return "Finding tmux sessions…";
     if (props.phase === "unavailable") return "Reconnecting to tmux-ide…";
     if (props.sessionCount === 0) return "No tmux sessions are running";
@@ -93,7 +109,9 @@ function CatalogTerminalSurface(props: {
   const detail = () => {
     if (props.note && !props.note.startsWith("Discovering live tmux sessions")) return props.note;
     if (props.phase === "live" && props.sessionCount === 0)
-      return "Start a local workspace here, or open tmux in another terminal.";
+      return props.machineLabel
+        ? `Start a tmux session on ${props.machineLabel}, then select it here.`
+        : "Start a local workspace here, or open tmux in another terminal.";
     if (props.sessionCount > 0) return "Choose a session from the sidebar to open it.";
     return null;
   };
@@ -108,19 +126,43 @@ function CatalogTerminalSurface(props: {
       overflow="hidden"
     >
       <text fg={props.theme.roles.text.primary}>
-        <strong>Terminals</strong>
+        <strong>
+          {props.connection
+            ? `${props.machineLabel ?? "Machine"} · ${props.connection.session ?? "Connecting"}`
+            : "Terminals"}
+        </strong>
       </text>
       <text fg={props.theme.roles.text.secondary}>{clipTerminal(title(), props.width - 4)}</text>
       <For each={detail() ? [detail()!] : []}>
         {(message) => (
-          <text fg={props.theme.roles.text.muted}>{clipTerminal(message, props.width - 4)}</text>
+          <text
+            width={Math.max(1, props.width - 4)}
+            wrapMode="word"
+            fg={props.theme.roles.text.muted}
+          >
+            {props.connection?.failed ? message : clipTerminal(message, props.width - 4)}
+          </text>
         )}
       </For>
+      <Show when={props.connection?.recovery}>
+        <text
+          width={Math.max(1, props.width - 4)}
+          wrapMode="word"
+          fg={props.theme.roles.text.secondary}
+        >
+          {props.connection?.recovery}
+        </text>
+      </Show>
       <Show when={props.connection}>
         <box flexDirection="column" gap={1}>
           <Show when={props.connection?.failed}>
             <Button theme={props.theme} label="Retry" onPress={() => props.onRetryOpen?.()} />
           </Show>
+          <Button
+            theme={props.theme}
+            label="Choose another session · F5"
+            onPress={() => props.onChooseSession?.()}
+          />
           <Button theme={props.theme} label="Back to Home" onPress={() => props.onCancelOpen?.()} />
           <Button
             theme={props.theme}
@@ -236,8 +278,9 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
     return sessions().length === 0 ? " ○ no sessions " : ` ● ${sessions().length} live `;
   };
   const showCatalogSidebar = () =>
-    props.surface() === "terminals" &&
-    !(props.connectionFeedback?.() && props.dimensions().width < 60);
+    Boolean(props.machineSidebar) ||
+    (props.surface() === "terminals" &&
+      !(props.connectionFeedback?.() && props.dimensions().width < 60));
   const catalogContentWidth = () =>
     showCatalogSidebar() ? chrome().main.width : props.dimensions().width;
   const overlayLayers = (): readonly OverlayLayer[] => [
@@ -251,8 +294,13 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                 height={props.dimensions().height}
                 selected={props.paletteSelection?.() ?? 0}
                 query={props.paletteQuery?.() ?? ""}
+                keyboardHint={props.paletteKeyboardHint?.()}
+                previewActive={props.palettePreviewActive?.() ?? true}
+                onModalChange={props.onPaletteModalChange}
                 disabledReason={props.paletteDisabledReason}
                 onSelect={props.onPaletteSelect}
+                onViewport={props.onPaletteViewport}
+                onFavorite={props.onPaletteFavorite}
                 closeArmed={props.paletteCloseArmed?.() ?? false}
                 commands={props.paletteCommands?.() ?? applicationPaletteCommands(null)}
                 theme={props.theme}
@@ -292,6 +340,16 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
         activeViewId={props.surface()}
         hoveredIndex={null}
         rightChips={[
+          ...(props.machineLabel
+            ? [
+                {
+                  id: "machine",
+                  label: `SSH ${props.machineLabel}`,
+                  context: true,
+                  textColor: props.machineColor,
+                },
+              ]
+            : []),
           {
             id: "catalog-status",
             label: topStatus(),
@@ -306,39 +364,53 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
       <box height={chrome().sidebar.height} flexDirection="row" overflow="hidden">
         <For each={showCatalogSidebar() ? [true] : []}>
           {() => (
-            <Surface
-              theme={props.theme}
-              variant="panel"
-              width={chrome().sidebar.width}
-              height={chrome().sidebar.height}
-              flexDirection="column"
-              paddingLeft={1}
-            >
-              <text fg={props.theme.roles.text.secondary} bg={props.theme.roles.surfaces.panel}>
-                Sessions
-              </text>
-              <For each={sessions()}>
-                {(session, index) => (
-                  <NavigationRow
-                    theme={props.theme}
-                    id={`catalog-session:${session}`}
-                    label={friendlySessionLabel(session)}
-                    width={Math.max(1, chrome().sidebar.width - 1)}
-                    marker={props.selectedSession() === index() ? "›" : "○"}
-                    selected={props.selectedSession() === index()}
-                    onActivate={(source) => props.onOpenSession(session, source)}
-                  />
-                )}
-              </For>
-              <For each={sessions().length === 0 ? [true] : []}>
-                {() => (
-                  <text fg={props.theme.roles.text.muted} bg={props.theme.roles.surfaces.panel}>
-                    {" No sessions yet"}
+            <Show
+              when={props.machineSidebar}
+              fallback={
+                <Surface
+                  theme={props.theme}
+                  variant="panel"
+                  width={chrome().sidebar.width}
+                  height={chrome().sidebar.height}
+                  flexDirection="column"
+                  paddingLeft={1}
+                >
+                  <text fg={props.theme.roles.text.secondary} bg={props.theme.roles.surfaces.panel}>
+                    Sessions
                   </text>
-                )}
-              </For>
-              <box flexGrow={1} />
-            </Surface>
+                  <For each={sessions()}>
+                    {(session, index) => (
+                      <NavigationRow
+                        theme={props.theme}
+                        id={`catalog-session:${session}`}
+                        label={friendlySessionLabel(session)}
+                        width={Math.max(1, chrome().sidebar.width - 1)}
+                        marker={props.selectedSession() === index() ? "›" : "○"}
+                        selected={props.selectedSession() === index()}
+                        onActivate={(source) => props.onOpenSession(session, source)}
+                      />
+                    )}
+                  </For>
+                  <For each={sessions().length === 0 ? [true] : []}>
+                    {() => (
+                      <text fg={props.theme.roles.text.muted} bg={props.theme.roles.surfaces.panel}>
+                        {" No sessions yet"}
+                      </text>
+                    )}
+                  </For>
+                  <box flexGrow={1} />
+                </Surface>
+              }
+            >
+              {(model) => (
+                <ApplicationMachineSidebar
+                  model={model()}
+                  width={chrome().sidebar.width}
+                  height={chrome().sidebar.height}
+                  theme={props.theme}
+                />
+              )}
+            </Show>
           )}
         </For>
         <box
@@ -349,14 +421,17 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
         >
           <box flexGrow={1} overflow="hidden">
             <Show
-              when={props.surface() === "home"}
+              when={props.surface() === "home" && !props.connectionFeedback?.()?.failed}
               fallback={
                 <CatalogTerminalSurface
                   phase={phase()}
                   sessionCount={sessions().length}
+                  machineLabel={props.machineLabel}
+                  machineColor={props.machineColor}
                   note={note()}
                   connection={props.connectionFeedback?.()}
                   onCancelOpen={props.onCancelOpen}
+                  onChooseSession={() => props.onSetPaletteOpen(true, "mouse")}
                   onRetryOpen={() => {
                     const session = props.connectionFeedback?.()?.session;
                     if (session) props.onOpenSession(session, "mouse");

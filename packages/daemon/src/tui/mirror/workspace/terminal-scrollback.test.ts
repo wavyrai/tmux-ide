@@ -1,17 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
+import { createComputed, createRoot } from "solid-js";
 import { clampTerminalViewportOrigin } from "../terminal-viewport.ts";
 import { createTerminalScrollback, createTerminalWheelGesture } from "./terminal-scrollback.ts";
 import type { PaneScopedTerminalAdapter } from "../runtime/pane-scoped-terminal-surface.tsx";
 
 describe("terminal wheel cadence", () => {
-  it("preserves single ticks and accumulates fractional movement without acceleration", () => {
+  it("matches native tmux wheel distance and accumulates fractional rows without acceleration", () => {
     const wheel = createTerminalWheelGesture();
-    expect(wheel.consume("a", 1, 1, 0).lines).toBe(1);
+    expect(wheel.consume("a", 1, 1, 0).lines).toBe(5);
     for (let index = 0; index < 3; index++)
-      expect(wheel.consume("a", 1, 0.25, index + 1).lines).toBe(0);
-    expect(wheel.consume("a", 1, 0.25, 4).lines).toBe(1);
-    expect(wheel.consume("a", -1, 0.5, 5).lines).toBe(0);
-    expect(wheel.consume("a", 1, 0.5, 6).lines).toBe(0);
+      expect(wheel.consume("a", 1, 0.05, index + 1).lines).toBe(0);
+    expect(wheel.consume("a", 1, 0.05, 4).lines).toBe(1);
+    expect(wheel.consume("a", -1, 0.1, 5).lines).toBe(0);
+    expect(wheel.consume("a", 1, 0.1, 6).lines).toBe(0);
     expect(wheel.consume("a", 1, NaN, 7).lines).toBe(0);
   });
   it("keeps momentum local at the live edge until an idle gap or explicit reset", () => {
@@ -27,15 +28,69 @@ describe("terminal wheel cadence", () => {
   });
   it("does not carry fractional movement or routing into another pane/incarnation", () => {
     const wheel = createTerminalWheelGesture();
-    wheel.consume("a:old", 1, 0.75, 0);
+    wheel.consume("a:old", 1, 0.15, 0);
     wheel.retainLocal();
-    expect(wheel.consume("b", 1, 0.25, 1)).toEqual({ lines: 0, local: false });
+    expect(wheel.consume("b", 1, 0.05, 1)).toEqual({ lines: 0, local: false });
     wheel.retainLocal();
-    expect(wheel.consume("a:new", 1, 0.25, 2)).toEqual({ lines: 0, local: false });
+    expect(wheel.consume("a:new", 1, 0.05, 2)).toEqual({ lines: 0, local: false });
   });
 });
 
 describe("local terminal scrollback", () => {
+  it("moves exactly one wheel tick when retaining the view changes its geometry", () => {
+    let depth = 100;
+    let trim = 10;
+    let origin = { x: 2, y: 3 };
+    const release = vi.fn();
+    const owner = createTerminalScrollback(
+      {
+        renderSource: {
+          scrollbackDepth: () => depth,
+          paneCanonicalIdentity: () => ({ historyTrim: trim }),
+        },
+        subscribePaneVersion: () => () => {},
+      },
+      () => origin,
+      (_id, value) => value,
+      () => {
+        depth = 200;
+        trim = 20;
+        origin = { x: 1, y: 1 };
+        return release;
+      },
+    );
+    owner.move("a", 5);
+    expect(owner.offset("a")).toBe(5);
+    expect(owner.origin("a")).toEqual({ x: 1, y: -4 });
+    owner.move("a", -5);
+    expect(owner.origin("a")).toBeNull();
+    expect(release).toHaveBeenCalledOnce();
+    owner.dispose();
+  });
+
+  it("publishes only the final viewport for one wheel movement or seek", () => {
+    createRoot((dispose) => {
+      const owner = createTerminalScrollback({
+        renderSource: {
+          scrollbackDepth: () => 100,
+          paneCanonicalIdentity: () => ({ historyTrim: 0 }),
+        },
+        subscribePaneVersion: () => () => {},
+      });
+      const positions: Array<number | null> = [];
+      createComputed(() => positions.push(owner.origin("a")?.y ?? null));
+      owner.move("a", 1);
+      positions.length = 0;
+      owner.move("a", 1);
+      expect(positions).toEqual([-2]);
+      positions.length = 0;
+      owner.seek("a", { x: 0, y: -20 });
+      expect(positions).toEqual([-20]);
+      owner.dispose();
+      dispose();
+    });
+  });
+
   it("keeps wheel movement local and anchors history during append and trim", () => {
     let depth = 100;
     let trim = 0;

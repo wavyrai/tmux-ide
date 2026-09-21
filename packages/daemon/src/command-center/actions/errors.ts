@@ -40,6 +40,7 @@ export type ActionErrorCode =
   | "webhook_not_found"
   | "webhook_test_failed"
   | "remote_access_restart_failed"
+  | "daemon_restart_unavailable"
   | "shutdown_already_in_progress"
   | "daemon_instance_mismatch"
   | "bad_request"

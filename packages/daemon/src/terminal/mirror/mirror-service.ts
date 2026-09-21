@@ -83,6 +83,7 @@ export interface MirrorServiceOptions {
 }
 
 export interface MirrorSubscribeRequest {
+  nativeBootstrap?: boolean;
   session: string;
   semanticPaneId: string;
   onEvent: (event: MirrorPaneEvent) => void;
@@ -211,6 +212,7 @@ export class MirrorService {
         request.semanticPaneId,
         request.onEvent,
         request.onLayout,
+        request.nativeBootstrap,
       );
     } catch (cause) {
       this.release(request.session, entry);
@@ -316,6 +318,17 @@ export class MirrorService {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
     entry.channel.fitViewport(cols, rows);
+  }
+
+  fitWindowViewport(session: string, semanticWindowId: string, cols: number, rows: number): void {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    entry.channel.fitWindowViewport(semanticWindowId, cols, rows);
+  }
+
+  clearWindowViewports(session: string): void {
+    const entry = this.channels.get(session);
+    if (entry && !entry.retired) entry.channel.clearWindowViewports();
   }
 
   /** Keep the retained control client passive unless the arbiter elects it. */

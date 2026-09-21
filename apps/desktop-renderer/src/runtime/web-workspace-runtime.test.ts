@@ -514,6 +514,7 @@ describe("Web WorkspaceClient runtime adapter", () => {
       return { status: "connected", session: { dispose, write, resize } };
     });
     const runtime = await connectWebWorkspaceRuntime({
+      supportsWindowViewport: async () => true,
       transport: { connect },
       inventory: {
         workspaceName: "workspace-a",
@@ -591,6 +592,8 @@ describe("Web WorkspaceClient runtime adapter", () => {
     await expect(runtime.fitViewport(100, 30)).resolves.toBe("ok");
     expect(write).toHaveBeenCalledWith(PANE, { kind: "text", data: "echo ok" });
     expect(resize).toHaveBeenCalledWith(100, 30);
+    await expect(runtime.fitViewport(101, 31, "window.one")).resolves.toBe("ok");
+    expect(resize).toHaveBeenLastCalledWith(101, 31, "window.one");
     runtime.close();
     expect(dispose).toHaveBeenCalledTimes(1);
   });
@@ -631,6 +634,9 @@ describe("Web WorkspaceClient runtime adapter", () => {
     });
     expect(listeners).not.toBeNull();
 
+    await expect(runtime.fitViewport(140, 46, "window.one")).rejects.toMatchObject({
+      code: "window-viewport-unsupported",
+    });
     await expect(runtime.fitViewport(140, 46)).resolves.toBe("geometry-authority-conflict");
     for (const [result, code] of [
       ["authority-timeout", "geometry-authority-timeout"],

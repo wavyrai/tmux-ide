@@ -34,6 +34,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { WebSocket } from "ws";
+import { selectRenderer, verifyRendererManifest } from "./renderer-artifact.mjs";
 
 import {
   attachabilityReport,
@@ -47,6 +48,7 @@ const execFileAsync = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "..", "..");
 const distDir = join(packageRoot, "dist");
+const renderer = selectRenderer(process.argv.slice(2));
 
 // Wire contract literals. Mirrored from @tmux-ide/contracts (pane-stream.ts);
 // an .mjs build script cannot import the package's TypeScript sources, and the
@@ -118,20 +120,30 @@ async function ensureBuild() {
   if (process.env.TMUX_IDE_SMOKE_REUSE_BUILD === "1") {
     const present = await Promise.all(artifacts.map(exists));
     if (present.every(Boolean)) {
+      await verifyRendererManifest(distDir, renderer);
       log("TMUX_IDE_SMOKE_REUSE_BUILD=1: reusing the existing dist/ (may be stale)");
       return;
     }
   }
   log("building the desktop app (renderer + shell)");
-  await execFileAsync("pnpm", ["--filter", "@tmux-ide/electron-shell", "build"], {
-    cwd: repoRoot,
-    maxBuffer: 32 * 1024 * 1024,
-  });
+  await execFileAsync(
+    "pnpm",
+    [
+      "--filter",
+      "@tmux-ide/electron-shell",
+      renderer === "workspace" ? "build:workspace" : "build",
+    ],
+    {
+      cwd: repoRoot,
+      maxBuffer: 32 * 1024 * 1024,
+    },
+  );
   const rebuilt = await Promise.all(artifacts.map(exists));
   const missing = artifacts.filter((_path, index) => !rebuilt[index]);
   if (missing.length > 0) {
     throw new Error(`desktop build did not produce: ${missing.join(", ")}`);
   }
+  await verifyRendererManifest(distDir, renderer);
 }
 
 async function createScratchFleet() {

@@ -84,22 +84,23 @@ export function fuzzyMatch(
     const fi = f[i]!;
     const fnext = f[i + 1]!;
     const ni = nextPos[i]!;
-    for (let j = 0; j < n; j++) {
-      if (t[j] !== ch) continue;
-      let best = NEG;
-      let bestNext = -1;
-      for (let j2 = j + 1; j2 < n; j2++) {
-        const sub = fnext[j2]!;
-        if (sub === NEG) continue;
-        const val = (j2 === j + 1 ? CONTIGUOUS_BONUS : 0) + sub;
-        if (val > best) {
-          best = val;
-          bestNext = j2;
-        }
+    // Scan backwards with the best suffix. This preserves the exact scoring
+    // and leftmost tie-break while reducing O(query * target²) to O(query * target).
+    let suffixScore = NEG;
+    let suffixIndex = -1;
+    for (let j = n - 1; j >= 0; j--) {
+      const candidate = j + 2;
+      if (candidate < n && fnext[candidate]! !== NEG && fnext[candidate]! >= suffixScore) {
+        suffixScore = fnext[candidate]!;
+        suffixIndex = candidate;
       }
-      if (best === NEG) continue; // q[i+1..] cannot be placed after j
+      if (t[j] !== ch) continue;
+      const adjacent = j + 1 < n ? fnext[j + 1]! : NEG;
+      const contiguous = adjacent === NEG ? NEG : adjacent + CONTIGUOUS_BONUS;
+      const best = Math.max(contiguous, suffixScore);
+      if (best === NEG) continue;
       fi[j] = BASE + positionBonus(j) + best;
-      ni[j] = bestNext;
+      ni[j] = contiguous >= suffixScore ? j + 1 : suffixIndex;
     }
   }
 
@@ -150,4 +151,27 @@ export function fuzzyFilter<T>(query: string, items: T[], key: (t: T) => string)
   // equal scores preserve the push (input) order.
   matches.sort((a, b) => b.score - a.score);
   return matches;
+}
+
+/** Multiple search terms can match in any order. Indices address displayed code points. */
+export function fuzzyTermsMatch(
+  text: string,
+  query: string,
+): { score: number; indices: number[] } | null {
+  let score = 0;
+  const positions = new Set<number>();
+  for (const term of query.trim().split(/\s+/u).filter(Boolean)) {
+    const match = fuzzyMatch(term, text);
+    if (!match) return null;
+    score += match.score;
+    for (const position of match.positions) positions.add(position);
+  }
+  const indices: number[] = [];
+  let offset = 0;
+  for (const [index, character] of Array.from(text).entries()) {
+    if ([...Array(character.length).keys()].some((i) => positions.has(offset + i)))
+      indices.push(index);
+    offset += character.length;
+  }
+  return { score, indices };
 }

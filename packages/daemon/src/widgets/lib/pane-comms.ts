@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "../../lib/runtime-namespace.ts";
 import { execFileSync } from "node:child_process";
 import type { PaneInfo } from "@tmux-ide/contracts";
 
@@ -18,7 +19,7 @@ export function _setExecutor(fn: TmuxExecutor): () => void {
 
 function tmux(...args: string[]): string {
   try {
-    return _executor("tmux", args, {
+    return _executor("tmux", runtimeTmuxArgs(args), {
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
   } catch (error) {
@@ -199,7 +200,7 @@ export function resolveTarget(session: string, opts: TargetOptions): string | nu
  */
 export function captureLastLine(paneId: string): string {
   try {
-    return _executor("tmux", ["capture-pane", "-t", paneId, "-p", "-S", "-1"], {
+    return _executor("tmux", runtimeTmuxArgs(["capture-pane", "-t", paneId, "-p", "-S", "-1"]), {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();

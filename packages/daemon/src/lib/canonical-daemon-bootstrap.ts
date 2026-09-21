@@ -1,3 +1,5 @@
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
+import { compareProductVersions } from "./semver.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { resolve } from "node:path";
 
@@ -12,7 +14,8 @@ import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 
 import {
   canonicalDaemonUrl,
-  inspectCanonicalDaemonInfo,
+  getCanonicalDaemonInfoPath,
+  prepareCanonicalDaemonInfoForBootstrap,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
   probeCanonicalDaemonHealth,
@@ -24,12 +27,15 @@ import {
 export type CanonicalDaemonBootstrapFailure =
   | "canonical-record-invalid"
   | "identity-mismatch"
-  | "protocol-mismatch";
+  | "protocol-mismatch"
+  | "product-version-mismatch";
 
 export interface CanonicalDaemonBootstrapOptions {
+  readonly supervisionId?: string;
   /** The shipped CLI entry which owns `runHeadlessDaemon`. */
   readonly entryPath: string;
   readonly cwd?: string;
+  readonly expectedProductVersion?: string;
   readonly timeoutMs?: number;
   readonly onPhaseChanged?: (
     snapshot: DaemonBootstrapSnapshot<CanonicalDaemonInfo, never, CanonicalDaemonBootstrapFailure>,
@@ -51,6 +57,12 @@ export interface CanonicalDaemonBootstrapDependencies {
 }
 
 function spawnOwner(entryPath: string, cwd: string): Promise<void> {
+  if (resolveRuntimeNamespace().development)
+    return Promise.reject(
+      new Error(
+        "Development owner startup requires the managed instance lifecycle; automatic detached bootstrap is disabled",
+      ),
+    );
   return new Promise((resolveSpawn, reject) => {
     let child: ChildProcess;
     try {
@@ -80,9 +92,10 @@ async function shutdownOlderOwner(info: CanonicalDaemonInfo): Promise<void> {
     canonicalDaemonUrl("http", info.bindHostname, info.port, "/api/v2/action/daemon.shutdown"),
     {
       method: "POST",
+      redirect: "error",
       headers,
       body: JSON.stringify({
-        reason: "wire-protocol-upgrade",
+        reason: "daemon-version-upgrade",
         expectedInstanceId: info.instanceId,
       }),
       signal: AbortSignal.timeout(2_000),
@@ -91,11 +104,20 @@ async function shutdownOlderOwner(info: CanonicalDaemonInfo): Promise<void> {
   const envelope = (await response.json().catch(() => null)) as {
     ok?: unknown;
     result?: { stopping?: unknown };
+    error?: { code?: unknown };
   } | null;
+  // The authenticated handler verifies expectedInstanceId before reporting this
+  // conflict. A concurrent upgrader already requested the same retirement.
+  if (
+    (response.status === 200 || response.status === 409) &&
+    envelope?.ok === false &&
+    envelope.error?.code === "shutdown_already_in_progress"
+  )
+    return;
   if (!response.ok || envelope?.ok !== true || envelope.result?.stopping !== true) {
     throw new DaemonBootstrapError(
       "incompatible",
-      `The older canonical daemon refused a wire-protocol upgrade (HTTP ${response.status}).`,
+      `The older canonical daemon refused a version upgrade (HTTP ${response.status}).`,
       { reason: "protocol-mismatch" },
     );
   }
@@ -111,7 +133,9 @@ function sameCanonicalInstance(left: CanonicalDaemonInfo, right: CanonicalDaemon
 }
 
 const defaultDependencies: CanonicalDaemonBootstrapDependencies = {
-  inspect: inspectCanonicalDaemonInfo,
+  // This adapter owns startup, so legacy permission preparation is explicit
+  // here. Injected inspectors remain isolated from real filesystem mutation.
+  inspect: prepareCanonicalDaemonInfoForBootstrap,
   ownerProvenDead: isCanonicalDaemonRecordOwnerProvenDead,
   alive: isCanonicalDaemonAlive,
   identity: probeCanonicalDaemonIdentity,
@@ -125,12 +149,23 @@ const defaultDependencies: CanonicalDaemonBootstrapDependencies = {
     }),
 };
 
+function needsReplacement(info: CanonicalDaemonInfo, expected?: string): boolean {
+  if (info.protocolVersion > DAEMON_WIRE_PROTOCOL_VERSION) return false;
+  if (expected !== undefined) {
+    const comparison = compareProductVersions(info.productVersion, expected);
+    if (comparison === null || comparison > 0) return false;
+    if (comparison < 0) return true;
+  }
+  return info.protocolVersion < DAEMON_WIRE_PROTOCOL_VERSION;
+}
+
 async function replaceOlderCanonicalDaemon(
   deps: CanonicalDaemonBootstrapDependencies,
   info: CanonicalDaemonInfo,
   timeoutMs: number,
+  expectedProductVersion?: string,
 ): Promise<void> {
-  if (info.protocolVersion >= DAEMON_WIRE_PROTOCOL_VERSION) {
+  if (!needsReplacement(info, expectedProductVersion)) {
     throw new DaemonBootstrapError(
       "incompatible",
       `Canonical daemon protocol ${info.protocolVersion} cannot be replaced by older protocol ${DAEMON_WIRE_PROTOCOL_VERSION}.`,
@@ -139,19 +174,36 @@ async function replaceOlderCanonicalDaemon(
   }
   const [identity, health] = await Promise.all([deps.identity(info), deps.health(info)]);
   if (
+    !info.authToken ||
     !identity ||
     !health ||
     identity.pid !== info.pid ||
     identity.instanceId !== info.instanceId ||
     identity.startedAt !== info.startedAt ||
     identity.protocolVersion !== info.protocolVersion ||
-    health.protocolVersion !== info.protocolVersion
+    health.protocolVersion !== info.protocolVersion ||
+    identity.productVersion !== info.productVersion ||
+    health.productVersion !== info.productVersion
   ) {
     throw new DaemonBootstrapError(
       "incompatible",
-      "The older canonical daemon changed identity before the protocol upgrade.",
+      "The older canonical daemon changed identity before the version upgrade.",
       { reason: "identity-mismatch" },
     );
+  }
+  const latest = deps.inspect();
+  if (
+    latest.status !== "valid" ||
+    !sameCanonicalInstance(latest.info, info) ||
+    latest.info.authToken !== info.authToken ||
+    latest.info.bindHostname !== info.bindHostname ||
+    latest.info.productVersion !== info.productVersion ||
+    latest.info.protocolVersion !== info.protocolVersion ||
+    latest.info.supervisionId !== info.supervisionId
+  ) {
+    throw new DaemonBootstrapError("incompatible", "Canonical daemon changed before upgrade.", {
+      reason: "identity-mismatch",
+    });
   }
   await deps.shutdownOlderOwner(info);
   const deadline = deps.now() + timeoutMs;
@@ -164,22 +216,32 @@ async function replaceOlderCanonicalDaemon(
   }
   throw new DaemonBootstrapError(
     "control-timeout",
-    "The older canonical daemon did not retire after accepting the protocol upgrade.",
+    "The older canonical daemon did not retire after accepting the version upgrade.",
     { reason: "protocol-mismatch" },
   );
 }
 
 async function probeCanonical(
   deps: CanonicalDaemonBootstrapDependencies,
+  expectedProductVersion?: string,
 ): Promise<DaemonBootstrapProbe<CanonicalDaemonInfo, CanonicalDaemonBootstrapFailure>> {
   const state = deps.inspect();
   if (state.status === "missing") return { status: "absent-or-stale" };
+  if (state.status === "reserved") return { status: "owner-pending" };
   if (state.status === "invalid") {
-    return (await deps.ownerProvenDead(state))
-      ? { status: "absent-or-stale" }
-      : { status: "incompatible", reason: "canonical-record-invalid" };
+    if (await deps.ownerProvenDead(state)) return { status: "absent-or-stale" };
+    throw new DaemonBootstrapError(
+      "incompatible",
+      `Canonical daemon record ${getCanonicalDaemonInfoPath()} is invalid (${state.reason}). ` +
+        (state.recoveryDetail ? `Permission recovery refused: ${state.recoveryDetail}. ` : "") +
+        "Automatic recovery could not establish trusted metadata with a proven-dead owner. " +
+        "Verify record and parent ownership, permissions and provenance before retrying; " +
+        "another daemon will not be started.",
+      { reason: "canonical-record-invalid" },
+    );
   }
-  if (!(await deps.alive(state.info))) return { status: "absent-or-stale" };
+  if (!(await deps.alive(state.info)))
+    return { status: state.info.supervisionId ? "owner-pending" : "absent-or-stale" };
 
   const [identity, health] = await Promise.all([
     deps.identity(state.info),
@@ -203,19 +265,77 @@ async function probeCanonical(
   ) {
     return { status: "incompatible", reason: "protocol-mismatch" };
   }
+  if (expectedProductVersion !== undefined) {
+    const comparison = compareProductVersions(state.info.productVersion, expectedProductVersion);
+    if (
+      identity.productVersion !== state.info.productVersion ||
+      health.productVersion !== state.info.productVersion
+    ) {
+      return { status: "incompatible", reason: "identity-mismatch" };
+    }
+    if (comparison === null || comparison < 0)
+      return { status: "incompatible", reason: "product-version-mismatch" };
+  }
+  if (state.info.supervisionId) {
+    const current = deps.inspect();
+    if (
+      current.status !== "valid" ||
+      !sameCanonicalInstance(current.info, state.info) ||
+      current.info.supervisionId !== state.info.supervisionId
+    )
+      return { status: "owner-pending" };
+  }
   return { status: "compatible", candidate: state.info };
+}
+
+/** Remember observed supervision through retirement and missing-record races. */
+function supervisedAdmission(
+  deps: CanonicalDaemonBootstrapDependencies,
+  declaredBinding?: string,
+): CanonicalDaemonBootstrapDependencies {
+  let binding = declaredBinding;
+  const inspect = () => {
+    const state = deps.inspect();
+    const next =
+      state.status === "reserved"
+        ? state.reservation.supervisionId
+        : state.status === "valid"
+          ? state.info.supervisionId
+          : undefined;
+    if (binding && (state.status === "valid" || state.status === "reserved") && next !== binding)
+      throw new DaemonBootstrapError(
+        "incompatible",
+        "Supervisor namespace binding changed during bootstrap",
+        { reason: "canonical-record-invalid" },
+      );
+    binding ??= next;
+    return state;
+  };
+  return {
+    ...deps,
+    inspect,
+    spawnOwner: async (entry, cwd) => {
+      inspect();
+      if (!binding) await deps.spawnOwner(entry, cwd);
+    },
+  };
 }
 
 export function createCanonicalDaemonBootstrapCoordinator(
   options: CanonicalDaemonBootstrapOptions,
   dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
 ): DaemonBootstrapCoordinator<CanonicalDaemonInfo, never, CanonicalDaemonBootstrapFailure> {
-  const deps = { ...defaultDependencies, ...dependencies };
+  const deps = supervisedAdmission(
+    { ...defaultDependencies, ...dependencies },
+    options.supervisionId,
+  );
   return new DaemonBootstrapCoordinator({
-    probe: () => probeCanonical(deps),
+    probe: () => probeCanonical(deps, options.expectedProductVersion),
     spawn: () => deps.spawnOwner(resolve(options.entryPath), resolve(options.cwd ?? process.cwd())),
     timeoutMs: options.timeoutMs,
     onPhaseChanged: options.onPhaseChanged,
+    now: deps.now,
+    sleep: deps.sleep,
   });
 }
 
@@ -223,13 +343,16 @@ export function ensureCanonicalDaemon(
   options: CanonicalDaemonBootstrapOptions,
   dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
 ): Promise<DaemonBootstrapResult<CanonicalDaemonInfo, never>> {
-  const deps = { ...defaultDependencies, ...dependencies };
+  const deps = supervisedAdmission(
+    { ...defaultDependencies, ...dependencies },
+    options.supervisionId,
+  );
   const ensure = () => createCanonicalDaemonBootstrapCoordinator(options, deps).ensure();
   return ensure().catch(async (error: unknown) => {
     if (
       !(error instanceof DaemonBootstrapError) ||
       error.code !== "incompatible" ||
-      error.reason !== "protocol-mismatch"
+      (error.reason !== "protocol-mismatch" && error.reason !== "product-version-mismatch")
     ) {
       throw error;
     }
@@ -238,7 +361,11 @@ export function ensureCanonicalDaemon(
     // probe and this recovery inspection. Converge on its missing/current
     // state instead of rethrowing the stale mismatch observed above.
     if (state.status === "missing") return ensure();
-    if (state.status === "valid" && state.info.protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION) {
+    if (
+      state.status === "valid" &&
+      state.info.protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION &&
+      !needsReplacement(state.info, options.expectedProductVersion)
+    ) {
       return ensure();
     }
     if (state.status !== "valid" || state.info.protocolVersion > DAEMON_WIRE_PROTOCOL_VERSION) {
@@ -246,7 +373,12 @@ export function ensureCanonicalDaemon(
     }
     const replacing = state.info;
     try {
-      await replaceOlderCanonicalDaemon(deps, replacing, options.timeoutMs ?? 15_000);
+      await replaceOlderCanonicalDaemon(
+        deps,
+        replacing,
+        options.timeoutMs ?? 15_000,
+        options.expectedProductVersion,
+      );
     } catch (replacementError) {
       // A duplicate upgrader can retire the exact owner while this caller is
       // proving or shutting it down. Only adopt after inspection proves that
@@ -263,4 +395,56 @@ export function ensureCanonicalDaemon(
     }
     return ensure();
   });
+}
+
+/** Retire only a verified older owner; the foreground caller retains ownership of startup. */
+export async function retireOutdatedCanonicalDaemon(
+  options: CanonicalDaemonBootstrapOptions,
+  dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
+): Promise<boolean> {
+  const deps = supervisedAdmission(
+    { ...defaultDependencies, ...dependencies },
+    options.supervisionId,
+  );
+  const state = deps.inspect();
+  if (
+    options.supervisionId &&
+    (state.status === "reserved"
+      ? state.reservation.supervisionId
+      : state.status === "valid"
+        ? state.info.supervisionId
+        : undefined) !== options.supervisionId
+  )
+    throw new DaemonBootstrapError(
+      "incompatible",
+      "Matching supervisor reservation required before retirement",
+      { reason: "canonical-record-invalid" },
+    );
+  if (
+    state.status !== "valid" ||
+    !needsReplacement(state.info, options.expectedProductVersion) ||
+    !(await deps.alive(state.info))
+  )
+    return false;
+  if (state.info.supervisionId) {
+    await ensureCanonicalDaemon(options, deps);
+    return false;
+  }
+  try {
+    await replaceOlderCanonicalDaemon(
+      deps,
+      state.info,
+      options.timeoutMs ?? 15_000,
+      options.expectedProductVersion,
+    );
+    return true;
+  } catch (error) {
+    const after = deps.inspect();
+    if (
+      after.status === "missing" ||
+      (after.status === "valid" && !sameCanonicalInstance(after.info, state.info))
+    )
+      return false;
+    throw error;
+  }
 }

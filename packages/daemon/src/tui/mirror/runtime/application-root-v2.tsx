@@ -1,10 +1,17 @@
+import { applicationRouteConnection } from "./application-route-connection.ts";
+import { ApplicationMachineOverlays } from "./application-machine-overlays.tsx";
+import { handleFleetShortcut } from "./application-machine-navigation.ts";
+import { applicationMachineAuthorityManager } from "./application-machine-authority.ts";
+import { createApplicationMachineAgentNavigator } from "./application-machine-agent-navigation.ts";
+import { createApplicationMachineNavigation } from "./application-machine-navigation.ts";
+import { disposeApplicationDaemonAuthority } from "./application-daemon-authority.ts";
+import { createTerminalLinkOpener } from "./terminal-link-opener.ts";
 import { createApplicationPaneActivityOwner } from "./application-pane-activity-owner.ts";
 import { createApplicationConnectionFeedback } from "../workspace/connection-feedback.ts";
 /* @jsxImportSource @opentui/solid */
 import { batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { useKeyboard, usePaste } from "@opentui/solid";
 import { publishTuiInputReady } from "../../readiness.ts";
-import { prepareOpenTuiApplicationShellConnection } from "../application-shell-daemon-connection.ts";
 import {
   createPaneSurfaceHostFocusTransitionOwner,
   registerPaneSurface,
@@ -24,7 +31,10 @@ import {
 import { createApplicationHomeCatalogOwner } from "./application-home-catalog-owner.ts";
 import { createApplicationHomeNavigationOwner } from "./application-home-agents-owner.ts";
 import { ApplicationShellView, applicationShellKeyAction } from "./application-shell-view.tsx";
-import { createApplicationGenerationStarter } from "./application-generation-starter.ts";
+import {
+  applicationGenerationNavigationKey,
+  createApplicationGenerationStarter,
+} from "./application-generation-starter.ts";
 import { createApplicationInputReadiness } from "./application-input-readiness.ts";
 import { applyApplicationAppearanceToRenderer } from "./application-theme-repaint.ts";
 import { createApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
@@ -35,12 +45,15 @@ import {
 import { resolveApplicationHostFocusControlCapability } from "./application-host-focus-control-capability.ts";
 import { createApplicationHostFocusControlBindingObserver } from "./application-host-focus-control-binding.ts";
 import {
+  markGenerationStatus,
   markTerminalHostFocusBinding,
   markTerminalHostFocusControlGate,
   tuiPerfCriticalMark,
   tuiPerfDiagnostics,
   tuiPerfMark,
   tuiPerfStream,
+  tuiLifecycleStream,
+  tuiPerfWheelObservation,
 } from "./application-performance-log.ts";
 import { installApplicationPostRenderRuntime } from "./application-post-render-runtime.ts";
 import { createOpenTuiHostLocalTmuxAdapter } from "./host-local-tmux-adapter.ts";
@@ -71,13 +84,13 @@ import { createAppearanceOwner } from "./application-appearance-owner.ts";
 import { createApplicationTerminalPaletteOwner } from "./application-terminal-palette-owner.ts";
 import {
   createApplicationRootReadiness,
-  createApplicationRootRenderer,
+  createApplicationRootRenderer as createRootRenderer,
 } from "./application-root-renderer.ts";
 import { createKeyboardRouteOwner, KeyboardRouteProvider } from "../ui/keyboard-router.tsx";
 export type { StartApplicationRootOptions } from "./application-root-configuration.ts";
 export async function startApplicationRoot(options: StartApplicationRootOptions = {}) {
   options.initialPreparation?.diagnosticHandoff?.attach(tuiPerfMark);
-  let renderer!: Awaited<ReturnType<typeof createApplicationRootRenderer>>;
+  let renderer!: Awaited<ReturnType<typeof createRootRenderer>>;
   let lifecycle!: TuiApplicationLifecycle;
   const { ready, resolveReady, rejectReady } = createApplicationRootReadiness();
   await startTuiApplication({
@@ -85,11 +98,16 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
     parseArgs: parseApplicationArgs,
     loadConfig: loadApplicationConfig,
     async createRenderer({ config }) {
-      renderer = await createApplicationRootRenderer(config.app.app.kittyKeys);
+      renderer = await createRootRenderer(
+        config.app.app.kittyKeys,
+        () => lifecycle?.shutdown(),
+        () => lifecycle?.shutdown("host"),
+      );
       return renderer;
     },
     createLifecycle() {
       lifecycle = new TuiApplicationLifecycle({ destroyRenderer: () => renderer.destroy() });
+      lifecycle.signal.addEventListener("abort", disposeApplicationDaemonAuthority, { once: true });
       return lifecycle;
     },
     mountRoot({ config }) {
@@ -139,6 +157,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         tuiPerfMark("solid-root-evaluate");
         registerPaneSurface();
         const componentKeyboardRoutes = createKeyboardRouteOwner();
+        const [paletteModalOpen, setPaletteModalOpen] = createSignal(false);
         const [surface, setSurface] = createSignal<"home" | "terminals">(
           config.target ? "terminals" : "home",
         );
@@ -150,58 +169,69 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const shellBinding = createApplicationShellBinding({ onDiagnostic: tuiPerfMark });
         const [shell, setShell] = createSignal(shellBinding.getSnapshot());
         const stopShell = shellBinding.subscribe(setShell);
-        sessionOwner = createOpenTuiSessionOwner({
-          prepareConnection: (sessionName) => {
-            if (initialPreparation?.sessionName !== sessionName)
-              return tuiPerfStream
-                ? prepareOpenTuiApplicationShellConnection(sessionName, {
-                    onDiagnostic: tuiPerfMark,
-                  })
-                : prepareOpenTuiApplicationShellConnection(sessionName);
-            const prepared = initialPreparation.preparedConnection;
-            initialPreparation = null;
-            return prepared;
-          },
-          createHost: (sessionName, initialConnection) =>
-            createOpenTuiGenerationHost(sessionName, presentation, {
-              initialConnection,
-              ...connectionProgress.hostOptions(sessionName, tuiPerfStream, tuiPerfMark),
-            }),
-          onSnapshot: (snapshot) => {
-            let clientGeneration: number | null = null;
-            try {
-              const value = snapshot?.client?.getSnapshot().generation;
-              clientGeneration = Number.isSafeInteger(value) ? value! : null;
-            } catch {
-              clientGeneration = null;
-            }
-            const focusGenerationKey =
-              snapshot?.status === "live" && snapshot.daemonGeneration && clientGeneration !== null
-                ? `${snapshot.daemonGeneration}:${clientGeneration}:${snapshot.rendererEpoch}`
-                : null;
-            if (
-              observedFocusGenerationKey !== null &&
-              focusGenerationKey !== observedFocusGenerationKey
-            )
-              hostFocusTransitionOwner?.cancel();
-            observedFocusGenerationKey = focusGenerationKey;
-            terminalFrameReadiness?.adopt(snapshot);
-            interaction?.adoptGeneration(snapshot);
-            setGeneration(snapshot);
-            shellBinding.adoptGeneration(snapshot);
-            sessionFocusOwner?.adopt();
-            const nextAuthorityClient =
-              snapshot?.status === "live" ? snapshot.authorityClient : null;
-            terminalHostFocus.adopt(nextAuthorityClient);
-            hostFocusBindingObserver.adopt(snapshot);
-            if (snapshot)
-              tuiPerfMark("generation-status", {
-                status: snapshot.status,
-                daemonGeneration: snapshot.daemonGeneration,
-              });
-            inputReadiness.adopt(snapshot);
-          },
-        });
+        let sessionOwnerEpoch = 0;
+        const [generationMachineId, setGenerationMachineId] = createSignal<string | null>(null);
+        const makeSessionOwner = (
+          machineId = applicationMachineAuthorityManager.snapshot().selectedMachineId,
+          expectedLiveSessionId?: string,
+        ) => {
+          const ownedEpoch = ++sessionOwnerEpoch;
+          connectionProgress.replaceOwner();
+          const route = applicationRouteConnection(
+            applicationMachineAuthorityManager.getMachine(machineId)!,
+            expectedLiveSessionId,
+            tuiLifecycleStream ? tuiPerfMark : undefined,
+          );
+          return createOpenTuiSessionOwner({
+            onStartupFailure: (sessionName, failure) => {
+              if (ownedEpoch !== sessionOwnerEpoch) return;
+              connectionProgress.progress(sessionName, "startup-failed", { ...failure });
+            },
+            prepareConnection: (sessionName) => {
+              if (initialPreparation?.sessionName !== sessionName)
+                return route.resolveConnection(sessionName);
+              const prepared = initialPreparation.preparedConnection;
+              initialPreparation = null;
+              return prepared;
+            },
+            createHost: (sessionName, initialConnection) =>
+              createOpenTuiGenerationHost(sessionName, presentation, {
+                initialConnection,
+                ...route,
+                ...connectionProgress.hostOptions(
+                  sessionName,
+                  tuiLifecycleStream,
+                  tuiPerfMark,
+                  () => ownedEpoch === sessionOwnerEpoch,
+                ),
+                performanceDiagnostics: Boolean(tuiPerfStream),
+              }),
+            onSnapshot: (snapshot, sessionName) => {
+              if (ownedEpoch !== sessionOwnerEpoch) return;
+              connectionProgress.adopt(sessionName, snapshot);
+              setGenerationMachineId(snapshot ? machineId : null);
+              const focusGenerationKey = applicationGenerationNavigationKey(snapshot);
+              if (
+                observedFocusGenerationKey !== null &&
+                focusGenerationKey !== observedFocusGenerationKey
+              )
+                hostFocusTransitionOwner?.cancel();
+              observedFocusGenerationKey = focusGenerationKey;
+              terminalFrameReadiness?.adopt(snapshot);
+              interaction?.adoptGeneration(snapshot);
+              setGeneration(snapshot);
+              shellBinding.adoptGeneration(snapshot);
+              sessionFocusOwner?.adopt();
+              const nextAuthorityClient =
+                snapshot?.status === "live" ? snapshot.authorityClient : null;
+              terminalHostFocus.adopt(nextAuthorityClient);
+              hostFocusBindingObserver.adopt(snapshot);
+              markGenerationStatus(snapshot);
+              inputReadiness.adopt(snapshot);
+            },
+          });
+        };
+        sessionOwner = makeSessionOwner();
         const [layoutSnapshot, setLayoutSnapshot] = createSignal(presentation.getWindowSnapshot());
         const [focusedPane, setFocusedPane] = createSignal<string | null>(null);
         const selectionOwner = createApplicationTerminalSelectionOwner({
@@ -223,6 +253,9 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const activeSurface = createMemo<"home" | "terminals">(
           () => shell().semantic?.workspaceCanvas.activeMode ?? surface(),
         );
+        createEffect(() => {
+          if (activeSurface() === "terminals") connectionProgress.resume();
+        });
         const { terminalRendererSource, terminalGestureRuntime, focusRendererSource } =
           createApplicationTerminalRendererSources(generation);
         const paneInteractions = createApplicationPaneActivityOwner(generation);
@@ -264,8 +297,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           binding: shellBinding,
           sessionOwner: () => sessionOwner!,
           focusOwner: () => sessionFocusOwner,
-          setNote: (note) => {
-            connectionProgress.note(note);
+          setNote: (note, outcome) => {
+            connectionProgress.note(note, outcome);
             appearance.setNote(note);
           },
           setSurface,
@@ -278,9 +311,59 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           appearance.setNote,
         );
         const startGeneration = terminalInputIngress.wrapStarter(generationStarter);
+        let machineAgentNavigator:
+          | ReturnType<typeof createApplicationMachineAgentNavigator>
+          | undefined;
+        const machines = createApplicationMachineNavigation({
+          resetWorkspace(machineId, expectedLiveSessionId) {
+            if (initialPreparation) {
+              void initialPreparation.preparedConnection
+                .then((connection) => connection?.dispose())
+                .catch(() => undefined);
+              initialPreparation = null;
+            }
+            interaction?.adoptGeneration(null);
+            setGeneration(null);
+            shellBinding.adoptGeneration(null);
+            terminalHostFocus.adopt(null);
+            void sessionOwner?.dispose().catch(() => undefined);
+            sessionOwner = makeSessionOwner(machineId, expectedLiveSessionId);
+          },
+          cancelOpen: () => {
+            machineAgentNavigator?.cancel();
+            startGeneration.cancel();
+          },
+          openAgent: (row, source) => machineAgentNavigator?.open(row.machineId, row, source),
+          openSession: (name, source) => startGeneration(name, false, source),
+          activePaneId: () =>
+            generationMachineId() ===
+            applicationMachineAuthorityManager.snapshot().selectedMachineId
+              ? focusedPane()
+              : null,
+          sessionName: () => {
+            generation();
+            return sessionOwner?.sessionName() ?? null;
+          },
+          setSurface,
+          setNote: appearance.setNote,
+        });
+        machineAgentNavigator = createApplicationMachineAgentNavigator({
+          isCurrentTarget: (machineId, row) => machines.agents.isCurrentTarget(machineId, row),
+          selectedMachineId: machines.selectedMachineId,
+          generationMachineId,
+          generation,
+          sessionName: () => sessionOwner?.sessionName() ?? null,
+          startGeneration,
+          selectPane: (paneId, source) => interaction.selectPane(paneId, source),
+          showTerminals: () => setSurface("terminals"),
+          setNote: setTransientNote,
+        });
+        onCleanup(() => machineAgentNavigator?.dispose());
         const homeCatalog = createApplicationHomeCatalogOwner({
           lifecycle,
-          automaticOpen: config.target === null,
+          automaticOpen: config.target === null && machines.automaticOpen,
+          automaticOpenAllowed: machines.automaticOpenAllowed,
+          catalog: machines.catalog.selectedCatalog,
           startGeneration,
           setNote: appearance.setNote,
         });
@@ -297,6 +380,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         });
         const { homeAgents, paneRename, paletteCommands, paletteCommandList, openAgent } =
           createApplicationHomeNavigationOwner({
+            fleetCommands: machines.paletteCommands,
+            openFleet: machines.openPalette,
             focusedPane,
             catalog: homeCatalog,
             activeSurface,
@@ -332,28 +417,64 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         useKeyboard((event) => {
           noteHostInteraction();
           const name = event.name.toLowerCase();
+          if (paletteModalOpen()) {
+            componentKeyboardRoutes.route(event);
+            return;
+          }
+          if (machines.switching()) {
+            componentKeyboardRoutes.route(event);
+            return;
+          }
+          if (machines.adding()) {
+            if (name === "escape") machines.cancelAdd();
+            return;
+          }
+          if (name === "f6" || name === "f7") paletteCommands.setOpen(false, "keyboard");
+          if (handleFleetShortcut(event, machines)) return;
+          if (name === "f5") {
+            machines.sidebar.onBlur?.();
+            paletteCommands.setOpen(true, "keyboard");
+            return;
+          }
           if (appearance.handlePickerKey(event)) return;
           if (paneRename.handleKey(event)) return;
+          if (
+            (shell().semantic?.focus.palette.open || shell().localPaletteOpen) &&
+            event.ctrl &&
+            ["left", "right", "p", "e", "n", "x", "f", "r", "k", "b"].includes(name) &&
+            componentKeyboardRoutes.route(event)
+          )
+            return;
+          if (paletteCommands.handleKey(event)) return;
+          if (event.ctrl && name === "g") {
+            machines.focus();
+            return;
+          }
+          if (machines.focused() && !(event.ctrl && name === "q")) {
+            componentKeyboardRoutes.route(event);
+            return;
+          }
           if (selectionOwner.handleKey(name, event)) return;
           if (event.ctrl && name === "q") {
             if (!hostLocal.hosted) void lifecycle.shutdown("keyboard");
             return;
           }
-          if (paletteCommands.handleKey(event)) return;
           if (connectionFeedback() && name === "escape") {
+            machineAgentNavigator?.cancel();
             startGeneration.cancel();
             setSurface("home");
             return;
           }
           const chromeAction = applicationShellKeyAction(event, false);
           if (chromeAction) {
+            machineAgentNavigator?.cancel();
             if (chromeAction === "home") startGeneration.cancel();
             if (chromeAction === "home" || chromeAction === "terminals")
               paletteCommands.openSurface(chromeAction, "keyboard");
             else paletteCommands.setOpen(chromeAction === "palette-open", "keyboard");
             return;
           }
-          if (homeAgents?.opening()) return;
+          if (homeAgents?.opening() || machineAgentNavigator?.opening()) return;
           if (
             activeSurface() === "terminals" &&
             shell().semantic === null &&
@@ -384,18 +505,27 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         });
         usePaste((event) => {
           noteHostInteraction();
-          if (appearance.pickerOpen()) return;
+          if (paletteModalOpen() || appearance.pickerOpen() || machines.adding()) return;
+          if (machines.switching()) {
+            componentKeyboardRoutes.routePaste(event.bytes);
+            return;
+          }
           if (paneRename.handlePaste(event.bytes)) return;
           if (selectionOwner.blocksInput()) return;
           if (paletteCommands.handlePaste(event.bytes)) return;
-          if (activeSurface() !== "terminals" || homeAgents?.opening()) return;
+          if (machines.focused()) return;
+          if (
+            activeSurface() !== "terminals" ||
+            homeAgents?.opening() ||
+            machineAgentNavigator?.opening()
+          )
+            return;
           selectionOwner.prepareInput();
           terminalInputIngress.routePaste(event.bytes);
         });
         onMount(() => {
           tuiPerfMark("solid-mounted");
-          homeCatalog.start();
-          if (config.target) void startGeneration(config.target);
+          machines.start(config.target);
         });
         const resizeIngress = tuiPerfStream ? interaction.beginResizePointerIngress : undefined;
         const applicationMouseIngress = applicationMousePointerIngressCapability(
@@ -406,6 +536,9 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         return (
           <KeyboardRouteProvider owner={componentKeyboardRoutes}>
             <ApplicationShellView
+              machineLabel={machines.isLocal() ? null : machines.label()}
+              machineColor={machines.color()}
+              machineSidebar={machines.sidebar}
               appearanceOwner={appearance}
               homeAgents={homeAgents.presentation}
               dimensions={dimensions}
@@ -417,6 +550,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               bootstrapNote={() => connectionProgress.text() ?? appearance.note()}
               connectionFeedback={connectionFeedback}
               onCancelOpen={() => {
+                machineAgentNavigator?.cancel();
                 startGeneration.cancel();
                 setSurface("home");
               }}
@@ -427,11 +561,19 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               paneRenameDialog={paneRename.draft}
               paletteSelection={paletteCommands.selection}
               paletteQuery={paletteCommands.query}
+              paletteKeyboardHint={paletteCommands.keyboardHint}
+              palettePreviewActive={() =>
+                rendererFocused() && !machines.switching() && !machines.adding()
+              }
+              onPaletteModalChange={setPaletteModalOpen}
               paletteDisabledReason={paletteCommands.disabledReason}
               onPaletteSelect={paletteCommands.select}
+              onPaletteViewport={paletteCommands.setViewport}
+              onPaletteFavorite={machines.togglePaletteFavorite}
               paletteCloseArmed={paletteCommands.closeArmed}
               paletteCommands={paletteCommandList}
               paneInteractions={paneInteractions}
+              recentPaneActivity={paneInteractions.activity}
               terminalRendererSource={terminalRendererSource}
               terminalGestureRuntime={terminalGestureRuntime}
               onApplicationMousePointerIngress={focusedApplicationMouseIngress}
@@ -442,14 +584,17 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               theme={theme()}
               palette={palette()}
               onOpenSurface={recoverHostFocus((surface, source) => {
+                machineAgentNavigator?.cancel();
                 if (surface === "home") startGeneration.cancel();
                 paletteCommands.openSurface(surface, source);
               })}
               onOpenSession={recoverHostFocus((sessionName, source) => {
+                machineAgentNavigator?.cancel();
                 homeAgents?.cancel();
                 void startGeneration(sessionName, false, source);
               })}
               onOpenAgent={recoverHostFocus((sessionName, paneId, source) => {
+                machineAgentNavigator?.cancel();
                 homeAgents?.cancel();
                 void openAgent(sessionName, paneId, source);
               })}
@@ -461,24 +606,40 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onCreateWindow={recoverHostFocus(() =>
                 paletteCommands.activate("new-window", "mouse"),
               )}
-              onCreateSession={recoverHostFocus(() => void homeCatalog.createLocalSession())}
+              onCreateSession={
+                machines.isLocal()
+                  ? recoverHostFocus(() => void homeCatalog.createLocalSession())
+                  : undefined
+              }
               onCycleTheme={recoverHostFocus(appearance.openPicker)}
               onBeginPaneRename={recoverHostFocus(paneRename.begin)}
               onCancelPaneRename={recoverHostFocus(paneRename.cancel)}
               onSubmitPaneRename={recoverHostFocus(paneRename.submit)}
               onDismissNotification={recoverHostFocus(() => setTransientNote(null))}
-              onSelectPane={recoverHostFocus(interaction.selectPane)}
+              onSelectPane={recoverHostFocus((paneId, source) => {
+                machineAgentNavigator?.cancel();
+                interaction.selectPane(paneId, source);
+              })}
               onResizePreview={recoverHostFocus(interaction.previewPaneResize)}
               onResizePane={recoverHostFocus(interaction.resizePane)}
               onResizePointerIngress={recoverHostFocus.optional(resizeIngress)}
+              onWheelObservation={tuiPerfWheelObservation}
               onTerminalInput={recoverHostFocus((paneId, input) =>
                 routeApplicationTerminalPointerInput(interaction, paneId, input),
               )}
+              onOpenLink={recoverHostFocus(createTerminalLinkOpener(setTransientNote))}
+              copyFeedback={selectionOwner.feedback()}
               onCopyText={selectionOwner.copy}
               onSelectionCopyOwner={selectionOwner.registerCopy}
               onSelectionKeyOwner={selectionOwner.registerKey}
               onWindowPresented={tuiPerfStream ? interaction.observeWindowPresentation : undefined}
               onInteraction={() => noteHostInteraction()}
+            />
+            <ApplicationMachineOverlays
+              machines={machines}
+              active={rendererFocused()}
+              viewport={dimensions()}
+              theme={appearance.theme()}
             />
           </KeyboardRouteProvider>
         );

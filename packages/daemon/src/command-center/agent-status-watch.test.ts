@@ -92,6 +92,57 @@ describe("diffTurnCompletions", () => {
     ] satisfies AgentTurnCompletion[]);
   });
 
+  it.each([
+    ["|pane.old", "|pane.new"],
+    ["|pane.old", ""],
+    ["", "|pane.new"],
+  ])("rejects identity replacement %s -> %s at the same runtime pane", (before, after) => {
+    const prev = reading({ s1: { "%1": `working:1${before}` } });
+    const next = reading({ s1: { "%1": `done:2${after}` } });
+    expect(diffTurnCompletions(prev, next)).toEqual([]);
+    expect(diffChangedSessions(prev, next)).toEqual(["s1"]);
+  });
+
+  it("does not claim process continuity from a durable pane stamp", () => {
+    // The pane stamp identifies a pane, not an agent process or submitted task.
+    // A command change is not an authoritative generation marker (wrappers and
+    // foreground child processes also change it). The receipt stays a sampled
+    // pane-status transition until a process/turn identity contract exists.
+    const prev = new Map([
+      [
+        "s1",
+        new Map([
+          [
+            "%1",
+            {
+              state: "working:1",
+              paneStamp: "pane.same",
+              command: "claude",
+            },
+          ],
+        ]),
+      ],
+    ]);
+    const next = new Map([
+      [
+        "s1",
+        new Map([
+          [
+            "%1",
+            {
+              state: "done:2",
+              paneStamp: "pane.same",
+              command: "codex",
+            },
+          ],
+        ]),
+      ],
+    ]);
+    expect(diffTurnCompletions(prev, next)).toEqual([
+      { sessionName: "s1", paneStamp: "pane.same", fromStatus: "working", toStatus: "done" },
+    ]);
+  });
+
   it("ignores non-completion transitions and epoch-only re-stamps", () => {
     const prev = reading({
       s1: { "%1": "working:1", "%2": "working:1", "%3": "done:1", "%4": "idle:1" },
@@ -158,6 +209,25 @@ describe("AgentStatusWatcher", () => {
     expect(completions).toEqual([
       { sessionName: "s1", paneStamp: null, fromStatus: "working", toStatus: "done" },
     ]);
+  });
+
+  it("invalidates replacement, then observes only the replacement's own working transition", () => {
+    const { watcher, emitted, completions } = harness([
+      reading({ s1: { "%1": "working:1|pane.old" } }),
+      reading({ s1: { "%1": "done:2|pane.new" } }),
+      reading({ s1: { "%1": "working:3|pane.new" } }),
+      reading({ s1: { "%1": "idle:4|pane.new" } }),
+    ]);
+    watcher.start();
+    watcher.tick();
+    expect(emitted).toEqual(["s1"]);
+    expect(completions).toEqual([]);
+    watcher.tick();
+    watcher.tick();
+    expect(completions).toEqual([
+      { sessionName: "s1", paneStamp: "pane.new", fromStatus: "working", toStatus: "idle" },
+    ]);
+    watcher.stop();
   });
 
   it("emits no receipt on baseline even when the fleet is already done", () => {

@@ -31,6 +31,21 @@ function snapshot(
 }
 
 describe("logical terminal reflow position", () => {
+  it("preserves a reader after preceding styled blank tails wrap during retained resize", () => {
+    const before = snapshot(8, 2, [
+      ["OLD", false],
+      ["READ", false],
+      ["LIVE", false],
+    ]);
+    for (const row of [...before.history, ...before.grid]) {
+      for (const cell of row.cells) cell.background = { kind: "indexed", index: 17 };
+    }
+    const after = reflowRetainedTerminalSnapshot(before, 4, 3)!;
+    expect(after.history.length).toBe(3);
+    expect(reflowTerminalPosition(before, after, { x: 0, y: -1 }, true)).toEqual({ x: 0, y: -1 });
+    expect(reflowTerminalPosition(after, before, { x: 0, y: -1 }, true)).toEqual({ x: 0, y: -1 });
+  });
+
   it("matches displayed gaps and unused tails across capture representations", () => {
     const wide = snapshot(4, 0, [
       ["a B", false],
@@ -131,6 +146,63 @@ describe("logical terminal reflow position", () => {
     expect(reflowTerminalPosition(before, after, { x: 0, y: -2 })).toBeNull();
   });
 
+  it("preserves a unique reading paragraph after native padding changes earlier text", () => {
+    const before = snapshot(8, 2, [
+      ["abc界def", false],
+      ["READ", false],
+      ["TAIL", false],
+    ]);
+    const after = snapshot(4, 3, [
+      ["abc", false],
+      ["界 d", true],
+      ["ef", true],
+      ["READ", false],
+      ["TAIL", false],
+    ]);
+    expect(reflowTerminalPosition(before, after, { x: 1, y: -1 })).toEqual({ x: 1, y: 0 });
+    const appended = {
+      ...after,
+      rows: after.rows + 1,
+      grid: [...after.grid, snapshot(4, 0, [["MORE", false]]).grid[0]!],
+    };
+    expect(reflowTerminalPosition(before, appended, { x: 1, y: -1 })).toEqual({ x: 1, y: 0 });
+    const changed = snapshot(4, 3, [
+      ["abc", false],
+      ["界 d", true],
+      ["ef", true],
+      ["READ", false],
+      ["FAIL", false],
+    ]);
+    expect(reflowTerminalPosition(before, changed, { x: 1, y: -1 })).toBeNull();
+  });
+
+  it("rejects equal-count recovery when the old or new reading paragraph repeats", () => {
+    const before = snapshot(8, 2, [
+      ["same", false],
+      ["same", false],
+      ["TAIL", false],
+    ]);
+    const after = snapshot(4, 2, [
+      ["NEW", false],
+      ["same", false],
+      ["TAIL", false],
+    ]);
+    expect(reflowTerminalPosition(before, after, { x: 0, y: -1 })).toBeNull();
+    const unique = snapshot(8, 3, [
+      ["OLD", false],
+      ["same", false],
+      ["diff", false],
+      ["TAIL", false],
+    ]);
+    const repeated = snapshot(4, 3, [
+      ["NEW", false],
+      ["same", false],
+      ["same", false],
+      ["TAIL", false],
+    ]);
+    expect(reflowTerminalPosition(unique, repeated, { x: 0, y: -2 })).toBeNull();
+  });
+
   it("preserves a complete reading line while later output changes during resize", () => {
     const before = snapshot(8, 1, [
       ["ABCDEFGH", false],
@@ -217,6 +289,28 @@ describe("retained terminal cell reflow", () => {
     expect(Object.isFrozen(tall.grid[3]?.cells)).toBe(true);
     expect(tall.cursor).toMatchObject({ x: 3, y: 2 });
     expect(original).toEqual(before);
+  });
+
+  it("does not scan retained history when mapping within the identical snapshot", () => {
+    const original = snapshot(4, 0, [["ABCD", false]]);
+    let rowReads = 0;
+    const history = new Proxy(
+      Array.from({ length: 9000 }, () => original.grid[0]!),
+      {
+        get(target, property, receiver) {
+          if (typeof property === "string" && /^\d+$/.test(property)) rowReads++;
+          return Reflect.get(target, property, receiver);
+        },
+      },
+    );
+    const retained = { ...original, history };
+    // Late native backing admission can revise the view's backing identity
+    // without replacing this immutable snapshot or moving its reading anchor.
+    expect(reflowTerminalPosition(retained, retained, { x: 2, y: -5 }, true)).toEqual({
+      x: 2,
+      y: -5,
+    });
+    expect(rowReads).toBe(0);
   });
 
   it("does not read history cell arrays when only height changes", () => {

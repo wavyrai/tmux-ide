@@ -360,6 +360,14 @@ export function createWebWorkspaceRuntimeBridgePorts(input: {
         });
       let attemptActivation = (): void => undefined;
       runtime = await connect({
+        supportsWindowViewport: async () => {
+          const result = await host.daemon.capabilities();
+          return (
+            result.status === "ok" &&
+            result.daemon.instanceId === runtimeTarget.daemon.instanceId &&
+            result.capabilities.semanticWindowViewport?.available === true
+          );
+        },
         transport: createHostPaneStreamTransport(host, runtimeTarget.daemon),
         inventory,
         signal,
@@ -395,8 +403,23 @@ export function createWebWorkspaceRuntimeBridgePorts(input: {
             )
               stagedContractInvalid = true;
             if (candidateSeed(event)) {
-              stagedSeedCounts.set(pane, (stagedSeedCounts.get(pane) ?? 0) + 1);
-              if ((stagedSeedCounts.get(pane) ?? 0) > 1) stagedContractInvalid = true;
+              const previous = stagedPanes.get(pane);
+              if (stagedSeedCounts.has(pane)) {
+                // A busy pane can advance while slower panes are still seeding.
+                // Accept only a proven newer state of the same replica; an
+                // unversioned duplicate or another incarnation still fails closed.
+                const before = previous && "canonical" in previous ? previous.canonical : null;
+                const after = "canonical" in event ? event.canonical : null;
+                if (
+                  !before ||
+                  !after ||
+                  before.generation !== after.generation ||
+                  before.incarnation !== after.incarnation ||
+                  after.revision <= before.revision
+                )
+                  stagedContractInvalid = true;
+              }
+              stagedSeedCounts.set(pane, 1);
             }
             stagedPanes.set(pane, coalesceCandidatePaneEvent(stagedPanes.get(pane), event));
             attemptActivation();
@@ -424,8 +447,17 @@ export function createWebWorkspaceRuntimeBridgePorts(input: {
             if (activeRuntime === runtime) bridge.publishLayoutSnapshot(snapshot);
           } else {
             candidateMutationEpoch += 1;
-            stagedLayoutCount += 1;
-            if (stagedLayoutCount > 1 || stagedLayout !== null) stagedContractInvalid = true;
+            // The layout snapshot is a replacement value, not a second session.
+            // Preserve the newest topology while waiting for all pane seeds.
+            if (
+              stagedLayout !== null ||
+              (stagedLayoutSnapshot &&
+                (snapshot.topologyEpoch < stagedLayoutSnapshot.topologyEpoch ||
+                  (snapshot.topologyEpoch === stagedLayoutSnapshot.topologyEpoch &&
+                    JSON.stringify(snapshot) !== JSON.stringify(stagedLayoutSnapshot))))
+            )
+              stagedContractInvalid = true;
+            stagedLayoutCount = 1;
             stagedLayoutSnapshot = snapshot;
             attemptActivation();
           }

@@ -1,3 +1,4 @@
+import type { InteractionReceipt } from "@tmux-ide/contracts";
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
 import { describe, expect, it } from "bun:test";
@@ -209,5 +210,65 @@ describe("compact production Home presentation", () => {
     expect(frame).not.toContain("Open terminals");
     expect(frame).not.toContain("working");
     setup.renderer.destroy();
+  });
+});
+
+describe("Home observed pane activity", () => {
+  const receipt: InteractionReceipt = {
+    type: "interaction.receipt",
+    sequence: 1,
+    operationId: "10000000-0000-4000-8000-000000000001",
+    origin: "external",
+    workspaceName: "research",
+    sourceSemanticPaneId: null,
+    target: { kind: "pane", semanticPaneId: "pane.tests" },
+    operationKind: "workspace.pane.read",
+    summary: { operationKind: "workspace.pane.read", observedOnly: true },
+    phase: "observed",
+    proof: { operationKind: "workspace.pane.read", observed: true, semanticPaneId: "pane.tests" },
+    at: "2026-09-08T10:00:00.000Z",
+    resourceRevision: null,
+  };
+  it("shows safe observed relationships without inventing an agent identity or rendering payloads", async () => {
+    const props = homeProps({
+      recentPaneActivity: [Object.assign({}, receipt, { content: "SECRET_PANE_CONTENT" })],
+    });
+    const setup = await renderForTest(() => <ApplicationHomeSurface {...props} />, {
+      width: 80,
+      height: 24,
+    });
+    try {
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("Recent pane activity");
+      expect(frame).toContain("09-08 10:00Z");
+      expect(frame).toContain("External reader reads pane.tests");
+      expect(frame).toContain("Activity reported through tmux-ide");
+      expect(frame).not.toContain("SECRET_PANE_CONTENT");
+      expect(frame).toContain("Open terminals");
+      expectFrameBounds(frame, 80, 24);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+  it("preserves Home controls in a short terminal by omitting the optional feed", async () => {
+    const props = homeProps({
+      width: 40,
+      height: 14,
+      recentPaneActivity: [receipt, receipt, receipt],
+    });
+    const setup = await renderForTest(() => <ApplicationHomeSurface {...props} />, {
+      width: 40,
+      height: 14,
+    });
+    try {
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).not.toContain("Recent pane activity");
+      expect(frame).toContain("Open terminals");
+      expectFrameBounds(frame, 40, 14);
+    } finally {
+      setup.renderer.destroy();
+    }
   });
 });

@@ -1,3 +1,4 @@
+import type { WorkspaceAdmissionSnapshot } from "@tmux-ide/contracts";
 import type {
   WorkspacePromoteArguments,
   WorkspacePromoteMutationRequest,
@@ -9,6 +10,7 @@ import { ActionError } from "../errors.ts";
 import type { ActionExecutionContext } from "../registry.ts";
 
 export interface WorkspacePromotionBackend {
+  admissionSnapshot?(): WorkspaceAdmissionSnapshot;
   promote(input: WorkspacePromoteMutationRequest): Promise<WorkspacePromoteMutationResult>;
 }
 

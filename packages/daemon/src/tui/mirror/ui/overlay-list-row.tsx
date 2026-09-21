@@ -1,4 +1,6 @@
 /* @jsxImportSource @opentui/solid */
+import { For, createMemo } from "solid-js";
+import { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
 import { componentPalette } from "./state.ts";
@@ -7,6 +9,7 @@ export interface OverlayListRowProps {
   readonly theme: SemanticThemeSnapshot;
   readonly id: string;
   readonly label: string;
+  readonly query?: string;
   readonly width: number;
   readonly shortcut?: string;
   readonly selected?: boolean;
@@ -42,13 +45,26 @@ export function OverlayListRow(props: OverlayListRowProps) {
     );
     return clipTerminal(`${prefix}${label}${" ".repeat(gap)}${shortcut}`, props.width);
   };
+  const segments = createMemo(() => {
+    const value = content();
+    const matches = new Set(
+      props.query ? (commandSearchMatch(value, props.query)?.indices ?? []) : [],
+    );
+    const runs: { text: string; match: boolean }[] = [];
+    for (const [index, character] of Array.from(value).entries()) {
+      const match = matches.has(index);
+      const previous = runs.at(-1);
+      if (previous?.match === match) previous.text += character;
+      else runs.push({ text: character, match });
+    }
+    return runs;
+  });
   return (
     <text
       id={`ui-overlay-row:${props.id}`}
       width={props.width}
       height={1}
       overflow="hidden"
-      content={content()}
       fg={palette().foreground}
       bg={palette().background}
       onMouseOver={() => {
@@ -63,6 +79,18 @@ export function OverlayListRow(props: OverlayListRowProps) {
         event.stopPropagation();
         props.onPress();
       }}
-    />
+    >
+      <For each={segments()}>
+        {(segment) =>
+          segment.match ? (
+            <strong>
+              <u>{segment.text}</u>
+            </strong>
+          ) : (
+            segment.text
+          )
+        }
+      </For>
+    </text>
   );
 }

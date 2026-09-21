@@ -1,0 +1,246 @@
+/**
+ * Live proof, against the CLI under test (installed artifact via
+ * `TMUX_IDE_QUALIFY_CLI`, else this checkout's bundle): a SIGKILLed daemon
+ * leaves a stale record that `daemon info` reports, does not disturb the
+ * private tmux server, does not strand its `wait agent-status` clients, and
+ * the documented `tmux-ide --headless` start brings a new instance that
+ * serves a fresh wait through a status flip.
+ */
+import { spawnSync } from "node:child_process";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  assertUnifiedSocket,
+  createPrivateFleet,
+  tmuxAvailable,
+  uniqueName,
+  type PrivateFleet,
+} from "./installed-recovery-fixture.ts";
+
+describe.skipIf(!tmuxAvailable).sequential("installed daemon SIGKILL recovery (live)", () => {
+  let fleet: PrivateFleet;
+  const agentSession = uniqueName("agent");
+  let agentPane = "";
+  let keeperPane = "";
+
+  beforeAll(async () => {
+    fleet = await createPrivateFleet("sigkill");
+    keeperPane = fleet.tmux(
+      "-f",
+      "/dev/null",
+      "new-session",
+      "-d",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-s",
+      "zz-keeper",
+      "-x",
+      "80",
+      "-y",
+      "12",
+      "sh",
+    );
+    fleet.tmux("send-keys", "-t", keeperPane, "printf 'KEEP-%s\\n' HISTORY LIVE", "Enter");
+    await fleet.until(
+      () =>
+        fleet.tmux("capture-pane", "-p", "-t", keeperPane).includes("KEEP-LIVE") ? true : null,
+      "keeper output",
+    );
+    assertUnifiedSocket(fleet);
+    agentPane = fleet.tmux(
+      "new-session",
+      "-d",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-s",
+      agentSession,
+      "-n",
+      "agent",
+      "exec sleep 300",
+    );
+    fleet.tmux(
+      "set-option",
+      "-p",
+      "-t",
+      agentPane,
+      "@tmux_ide_pane_id",
+      `pane.livetest.${uniqueName("k").replace(/-/gu, "")}`,
+    );
+    fleet.tmux("set-option", "-t", agentSession, "@tmux_ide_adopted", "1");
+    fleet.stampAgent(agentPane, "working");
+  }, 60_000);
+
+  afterAll(async () => {
+    await fleet?.cleanup();
+  }, 30_000);
+
+  it("survives SIGKILL with waiting clients and serves a new wait after restart", async () => {
+    const paneIdentity = () =>
+      fleet.tmux("display-message", "-p", "-t", keeperPane, "#{pid}|#{pane_id}|#{pane_pid}") +
+      "||" +
+      fleet.tmux("display-message", "-p", "-t", agentPane, "#{pid}|#{pane_id}|#{pane_pid}");
+    const identityBefore = paneIdentity();
+    const historyBefore = fleet.tmux("capture-pane", "-p", "-S", "-", "-t", keeperPane);
+
+    const first = await fleet.startDaemon();
+    const events = fleet.eventsClient(first.info);
+    await fleet.bounded(events.ready, "events subscription");
+
+    // A sole receipt waiter plus a short-deadline waiter for a status that
+    // never arrives: the latter proves an orphaned wait ends at its timeout.
+    const soleWaiter = fleet.cli([
+      "wait",
+      "agent-status",
+      agentSession,
+      "--status",
+      "done",
+      "--timeout",
+      "40000",
+      "--json",
+    ]);
+    const deadlineWaiter = fleet.cli([
+      "wait",
+      "agent-status",
+      agentSession,
+      "--status",
+      "idle",
+      "--timeout",
+      "9000",
+      "--json",
+    ]);
+    // Both CLIs attach through the daemon's receipt socket: the daemon port
+    // must show the events client plus both waiters as established peers.
+    const establishedPeers = () => {
+      const probe = spawnSync("lsof", ["-nP", `-iTCP:${first.info.port}`, "-sTCP:ESTABLISHED"], {
+        encoding: "utf8",
+      });
+      if (probe.status !== 0 && !probe.stdout) return null;
+      const peers = new Set(
+        probe.stdout
+          .split("\n")
+          .map((line) => /(\d+\.\d+\.\d+\.\d+:\d+)->127\.0\.0\.1:(\d+)/u.exec(line))
+          .filter(
+            (match): match is RegExpExecArray =>
+              match !== null && Number(match[2]) === first.info.port,
+          )
+          .map((match) => match[1]),
+      );
+      return peers.size;
+    };
+    const peers = await fleet.until(
+      () => {
+        const count = establishedPeers();
+        return count !== null && count >= 3 ? count : null;
+      },
+      "three receipt peers on the daemon port",
+      10000,
+    );
+    fleet.evidence({ scenario: 1, step: "peers-before-kill", establishedPeers: peers });
+    expect(soleWaiter.exitCode).toBeNull();
+    expect(deadlineWaiter.exitCode).toBeNull();
+
+    const killedAt = Date.now();
+    first.child.kill("SIGKILL");
+    const daemonExit = await fleet.bounded(fleet.exit(first.child), "daemon SIGKILL exit");
+    expect(daemonExit.signal).toBe("SIGKILL");
+    const closeCode = await fleet.bounded(events.closed, "events client close");
+    fleet.evidence({ scenario: 1, step: "sigkill", eventsCloseCode: closeCode });
+
+    // The record is stale and the report says so, credential-free.
+    const stale = fleet.info();
+    expect(stale?.instanceId).toBe(first.info.instanceId);
+    const infoCommand = await fleet.bounded(
+      fleet.exit(fleet.cli(["daemon", "info", "--json"])),
+      "daemon info",
+    );
+    expect(infoCommand.code, infoCommand.stderr).toBe(0);
+    const report = JSON.parse(infoCommand.stdout);
+    expect(report).toMatchObject({
+      status: "stale-record",
+      record: { status: "valid" },
+      daemon: { pid: first.info.pid, instanceId: first.info.instanceId, liveness: "dead" },
+    });
+    expect(infoCommand.stdout).not.toContain(first.info.authToken ?? "\u0000never");
+    fleet.evidence({
+      scenario: 1,
+      step: "daemon-info-after-kill",
+      status: report.status,
+      warnings: report.warnings,
+    });
+
+    // tmux sessions, panes and history are untouched by the daemon's death.
+    expect(paneIdentity()).toBe(identityBefore);
+    expect(fleet.tmux("capture-pane", "-p", "-S", "-", "-t", keeperPane)).toBe(historyBefore);
+
+    // The orphaned deadline waiter ends at its own timeout, exit 1, no hang.
+    const deadlineExit = await fleet.bounded(fleet.exit(deadlineWaiter), "deadline waiter", 15000);
+    expect(deadlineExit.code).toBe(1);
+    expect(deadlineExit.stderr).toMatch(/Timed out after 9000ms/u);
+    expect(Date.now() - killedAt).toBeLessThan(15000);
+    fleet.evidence({
+      scenario: 1,
+      step: "orphan-waiter-timeout",
+      code: deadlineExit.code,
+      stderr: deadlineExit.stderr.trim(),
+      msAfterKill: Date.now() - killedAt,
+    });
+    expect(soleWaiter.exitCode).toBeNull();
+
+    // Documented restart path: start the daemon again.
+    const second = await fleet.startDaemon();
+    expect(second.info.pid).not.toBe(first.info.pid);
+    expect(second.info.instanceId).not.toBe(first.info.instanceId);
+    const infoAfter = JSON.parse(
+      (await fleet.bounded(fleet.exit(fleet.cli(["daemon", "info", "--json"])), "daemon info"))
+        .stdout,
+    );
+    expect(infoAfter).toMatchObject({
+      status: "running",
+      daemon: { pid: second.info.pid, liveness: "alive" },
+    });
+    expect(paneIdentity()).toBe(identityBefore);
+
+    // A NEW wait on the new instance resolves after the status flip; the
+    // orphaned sole waiter (now polling tmux directly) resolves as well.
+    const freshWaiter = fleet.cli([
+      "wait",
+      "agent-status",
+      agentSession,
+      "--status",
+      "done",
+      "--timeout",
+      "30000",
+      "--json",
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    expect(freshWaiter.exitCode).toBeNull();
+    const flippedAt = Date.now();
+    fleet.stampAgent(agentPane, "done");
+    const freshExit = await fleet.bounded(fleet.exit(freshWaiter), "fresh waiter", 15000);
+    expect(freshExit.code, freshExit.stderr).toBe(0);
+    expect(JSON.parse(freshExit.stdout)).toEqual({
+      session: agentSession,
+      status: "done",
+      ok: true,
+    });
+    const freshLatency = Date.now() - flippedAt;
+    const soleExit = await fleet.bounded(fleet.exit(soleWaiter), "orphaned sole waiter", 15000);
+    expect(soleExit.code, soleExit.stderr).toBe(0);
+    expect(JSON.parse(soleExit.stdout)).toEqual({
+      session: agentSession,
+      status: "done",
+      ok: true,
+    });
+    fleet.evidence({
+      scenario: 1,
+      step: "waits-after-restart",
+      freshWaiterMsAfterFlip: freshLatency,
+      orphanSoleWaiterMsAfterFlip: Date.now() - flippedAt,
+      newInstanceId: second.info.instanceId,
+    });
+    expect(freshLatency).toBeLessThan(10000);
+    expect(paneIdentity()).toBe(identityBefore);
+    expect(fleet.tmux("capture-pane", "-p", "-S", "-", "-t", keeperPane)).toBe(historyBefore);
+  }, 90_000);
+});

@@ -65,6 +65,7 @@ function resizeNativeFrozenGridWithinBudget(
   const backing = reflowNativeRowsWithHistory(
     height.grid.map((row) => ({
       rowFlags: row.flags,
+      used: row.used,
       continues: (row.flags & 1) !== 0,
       extended: (row.flags & 2) !== 0,
       cells: row.cells.map((cell) => ({
@@ -111,6 +112,7 @@ function resizeNativeFrozenGridWithinBudget(
     grid: Object.freeze(
       backing.grid.map((row) =>
         Object.freeze({
+          ...(source.version === 2 ? { used: row.used ?? row.cells.length } : {}),
           flags: ((row.rowFlags ?? 0) & ~3) | (row.continues ? 1 : 0) | (row.extended ? 2 : 0),
           cells: Object.freeze(row.cells.map((cell) => cell.native)),
         }),

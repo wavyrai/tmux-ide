@@ -78,7 +78,8 @@ export interface DiscoveredAgent {
   /** How this kind's session id is captured (copied from the registry). */
   capture: CaptureMechanism;
   /**
-   * Whether session-id capture is LIVE for this kind on this machine:
+   * Whether session-id capture is configured for this kind on this machine
+   * (this does not verify hook delivery or project/managed settings overrides):
    * `"probe"` capture is automatic whenever the binary is present; hook/plugin
    * capture requires the integration to be installed; `null` capture is never
    * active.

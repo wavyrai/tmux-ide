@@ -9,6 +9,7 @@
  * fifteen ideas.
  */
 export const HOST_IPC = {
+  iconCatalog: "tmux-ide:host/icons/catalog",
   bootstrap: "tmux-ide:host/bootstrap",
   windowMinimize: "tmux-ide:host/window/minimize",
   windowToggleMaximized: "tmux-ide:host/window/toggle-maximized",
@@ -28,9 +29,14 @@ export const HOST_IPC = {
   daemonCancelSubscribe: "tmux-ide:host/daemon/cancel-subscribe",
   daemonUnsubscribe: "tmux-ide:host/daemon/unsubscribe",
   daemonEvent: "tmux-ide:host/daemon/event",
+  environmentList: "tmux-ide:host/environments/list",
+  environmentOpen: "tmux-ide:host/environments/open",
+  environmentDisconnect: "tmux-ide:host/environments/disconnect",
+  environmentChanged: "tmux-ide:host/environments/changed",
 } as const;
 
 export const HOST_INVOKE_CHANNELS = [
+  HOST_IPC.iconCatalog,
   HOST_IPC.bootstrap,
   HOST_IPC.windowMinimize,
   HOST_IPC.windowToggleMaximized,
@@ -46,4 +52,30 @@ export const HOST_INVOKE_CHANNELS = [
   HOST_IPC.daemonSubscribe,
   HOST_IPC.daemonCancelSubscribe,
   HOST_IPC.daemonUnsubscribe,
+  HOST_IPC.environmentList,
+  HOST_IPC.environmentOpen,
+  HOST_IPC.environmentDisconnect,
 ] as const;
+
+/** Only daemon authority is routable; native window/project controls stay local. */
+export const SCOPED_HOST_CHANNELS: readonly string[] = Object.freeze([
+  HOST_IPC.bootstrap,
+  HOST_IPC.daemonRequest,
+  HOST_IPC.daemonCancelRequest,
+  HOST_IPC.daemonSubscribe,
+  HOST_IPC.daemonCancelSubscribe,
+  HOST_IPC.daemonUnsubscribe,
+  HOST_IPC.daemonEvent,
+]);
+
+export function scopedHostChannel(scope: string | null, channel: string): string {
+  if (!Object.values(HOST_IPC).some((known) => known === channel))
+    throw new Error("Unknown host IPC channel");
+  if (scope === null) return channel;
+  // Authority-generation UUID minted by main; never a renderer-provided URL.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(scope))
+    throw new Error("Invalid host IPC environment scope");
+  if (!SCOPED_HOST_CHANNELS.includes(channel))
+    throw new Error("Host IPC channel cannot be environment scoped");
+  return `${channel}/environment/${scope}`;
+}

@@ -82,7 +82,11 @@ const cleanupToken = `testdrive:cleanup:${process.getuid?.() ?? process.pid}`;
 const targetSocketName = process.env.TMUX_IDE_TESTDRIVE_TARGET_SOCKET_NAME?.trim() || null;
 const targetSocketPath = process.env.TMUX_IDE_TMUX_SOCKET_PATH?.trim() || null;
 const hostSocketPath = process.env.TMUX_IDE_TESTDRIVE_HOST_SOCKET_PATH?.trim() || null;
-const compiledTui = join(repoRoot, "packages", "daemon", "dist", "tui", "tmux-ide-tui");
+// Qualify an experimental compiled renderer without replacing the local preview.
+const compiledTui = resolve(
+  process.env.TMUX_IDE_TESTDRIVE_TUI_BIN?.trim() ||
+    join(repoRoot, "packages", "daemon", "dist", "tui", "tmux-ide-tui"),
+);
 const sourceTui = join(repoRoot, "packages", "daemon", "src", "tui", "mirror", "app.tsx");
 const execFileAsync = promisify(execFile);
 
@@ -1545,6 +1549,8 @@ async function start(args) {
   const launchEpochMs = Date.now();
   const launchId = randomUUID();
   const environment = [
+    // Clipboard fixtures observe their private tmux buffer, never the user's pasteboard.
+    "TMUX_IDE_CLIPBOARD_BACKEND=osc52",
     `TMUX_IDE_CWD=${shQuote(launch.cwd)}`,
     ...(publicEnvironment
       ? Object.entries(publicEnvironment).map(([key, value]) => `${key}=${shQuote(value)}`)
@@ -1580,6 +1586,7 @@ async function start(args) {
   const publicExecEnvironment = publicEnvironment
     ? {
         ...publicEnvironment,
+        TMUX_IDE_CLIPBOARD_BACKEND: "osc52",
         TMUX_IDE_CWD: launch.cwd,
         TMUX_IDE_CLI: join(repoRoot, "bin", "cli.js"),
         TMUX_IDE_TUI_PERF_LOG: perfLogPath,

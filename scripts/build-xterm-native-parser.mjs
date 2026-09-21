@@ -53,6 +53,11 @@ try {
       tsconfig: join(scratch, "src/tsconfig-base.json"),
     });
   }
+  execFileSync(
+    process.execPath,
+    [join(destination, "verify-ed2.mjs"), join(packageRoot, "lib-headless/xterm-headless.mjs")],
+    { stdio: "inherit" },
+  );
   const types = readFileSync(join(scratch, "typings/xterm-headless.d.ts"), "utf8");
   writeFileSync(
     join(packageRoot, "typings/xterm-headless.d.ts"),
@@ -66,7 +71,8 @@ try {
       {
         name: provenance.package,
         version: provenance.version,
-        description: "tmux-ide headless parser with native one-column geometry",
+        description:
+          "tmux-ide headless parser with native one-column geometry and tmux ED2 history",
         license: "MIT",
         main: "lib-headless/xterm-headless.js",
         module: "lib-headless/xterm-headless.mjs",

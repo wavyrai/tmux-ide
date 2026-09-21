@@ -1,3 +1,4 @@
+import { readApplicationDaemonInfo as readCanonicalDaemonInfo } from "./application-daemon-authority.ts";
 import {
   ApplicationShellResourceV2SchemaZ,
   DaemonEventClientFrameSchemaZ,
@@ -8,7 +9,7 @@ import {
 } from "@tmux-ide/contracts";
 import WebSocket from "ws";
 
-import { canonicalDaemonUrl, readCanonicalDaemonInfo } from "../../../lib/canonical-daemon.ts";
+import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
 import type { ApplicationHomeAgentDependencies } from "./application-home-agent-observer.ts";
 
 export function sameHomeAgentDaemon(
@@ -71,6 +72,7 @@ export function createApplicationHomeAgentTransport(
       if (!sameHomeAgentDaemon(daemon, shell.daemon)) throw new Error("Agent daemon changed.");
       // A name may have been deleted and reused while the shell read was in
       // flight. Validate its incarnation AFTER that read, before publication.
+      // session.id is a machine/environment-scoped UI key, not a wire identity.
       const catalog = WorkspaceCatalogResourceV3SchemaZ.parse(
         await get("/api/resources/workspace-catalog?version=3"),
       );
@@ -78,8 +80,7 @@ export function createApplicationHomeAgentTransport(
         !sameHomeAgentDaemon(daemon, catalog.daemon) ||
         !catalog.liveSessions.some(
           (live) =>
-            live.sessionName === session.name &&
-            `${daemon.instanceId}:${live.liveSessionId}` === session.id,
+            live.sessionName === session.name && live.liveSessionId === session.liveSessionId,
         )
       )
         throw new Error("Agent session incarnation changed.");

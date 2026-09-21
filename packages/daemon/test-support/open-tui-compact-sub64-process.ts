@@ -393,6 +393,7 @@ const routing = {
 };
 const decodeProfiles: Readonly<Record<string, unknown>>[] = [];
 const port = await connectOpenTuiWorkspaceRuntimePort({
+  performanceDiagnostics: true,
   inventory: Object.freeze({
     workspaceName,
     workspaceId: "workspace-id",

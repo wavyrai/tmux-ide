@@ -30,6 +30,8 @@ import {
   type TerminalWindowTab,
 } from "../workspace/terminal-window-strip.tsx";
 import { orderCells } from "../selection.ts";
+import { terminalSelectionUnit, extendTerminalSelectionUnit } from "./terminal-selection-units.ts";
+import { terminalLinkAt, isTerminalLinkClick } from "./terminal-links.ts";
 import { extractTerminalCopySelection } from "./terminal-copy-selection.ts";
 import {
   createTerminalCopyCursor,
@@ -179,6 +181,8 @@ export interface ApplicationTerminalWorkspaceProps {
     readonly y: number;
     readonly gestureId: string | null;
   }) => ApplicationResizePointerIngress | null;
+  /** Optional bounded host diagnostics; contains no terminal content. */
+  readonly onWheelObservation?: (observation: Readonly<Record<string, unknown>>) => void;
   readonly onTerminalInput?: (
     paneId: string,
     input:
@@ -200,6 +204,8 @@ export interface ApplicationTerminalWorkspaceProps {
   ) => ApplicationMousePointerIngress | null;
   /** Exact live generation owner used to fence multi-event pointer/copy gestures. */
   readonly terminalGestureRuntime?: Accessor<TerminalGestureRuntimeIdentity | null>;
+  readonly copyFeedback?: Readonly<{ paneId: string; copied: boolean }> | null;
+  readonly onOpenLink?: (url: string) => void;
   readonly onCopyText?: (
     text: string,
     evidence: Readonly<{
@@ -386,6 +392,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     null,
   );
   const [resizePreview, setResizePreview] = createSignal<ApplicationPaneResizePreview | null>(null);
+  const [pointerSelecting, setPointerSelecting] = createSignal(false);
   const [selection, setSelection] = createSignal<TerminalSelectionRange | null>(null);
   const [committedSelection, setCommittedSelection] = createSignal<Readonly<{
     range: TerminalSelectionRange;
@@ -408,6 +415,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     releaseSelectionView = null;
     selectionViewLease = null;
     selecting = null;
+    setPointerSelecting(false);
+    stopSelectionScroll();
     setRetainedSelectionPane(null);
     setKeyboardCopy(null);
     setSelection(null);
@@ -470,8 +479,29 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     readonly anchor: TerminalSelectionRange["start"];
     readonly frame: OpenTuiPaneFrame;
     readonly lease: TerminalGestureLease;
+    readonly unit: "cell" | "word" | "line";
+    readonly anchorRange: Readonly<{
+      start: TerminalSelectionRange["start"];
+      end: TerminalSelectionRange["end"];
+    }>;
+    pointer: Readonly<{ x: number; y: number }>;
     moved: boolean;
   } | null = null;
+  let linkPointer = false;
+  let liveReturnPointer = false;
+  let lastSelectionClick: {
+    paneId: string;
+    row: number;
+    col: number;
+    at: number;
+    count: number;
+    lease: TerminalGestureLease;
+  } | null = null;
+  let selectionScrollTimer: ReturnType<typeof setInterval> | null = null;
+  const stopSelectionScroll = () => {
+    if (selectionScrollTimer) clearInterval(selectionScrollTimer);
+    selectionScrollTimer = null;
+  };
   let forwardedPointer: {
     readonly paneId: string;
     readonly button: number;
@@ -562,6 +592,53 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       col: Math.max(0, Math.min(cols - 1, point.x - frame.left)),
       row: Math.max(0, Math.min(rows - 1, point.y - frame.top - 1)),
     });
+  };
+  const updatePointerSelection = (point: Readonly<{ x: number; y: number }>) => {
+    const active = selecting;
+    if (!active || !gestureLeaseCurrent(active.lease)) return;
+    active.pointer = point;
+    const cell = clampedPaneCell(active.frame, active.lease.snapshot, point);
+    const head =
+      cell &&
+      terminalSelectionCell(
+        active.lease.snapshot,
+        cell.col,
+        cell.row,
+        scrollback.offset(active.paneId),
+        selectionViewport(active.paneId, active.frame),
+      );
+    if (!head) return;
+    active.moved ||= head.row !== active.anchor.row || head.col !== active.anchor.col;
+    if (active.moved) lastSelectionClick = null;
+    const range = extendTerminalSelectionUnit(
+      active.lease.snapshot,
+      active.anchorRange,
+      head,
+      active.unit,
+    );
+    if (range) setSelection({ paneId: active.paneId, ...range });
+  };
+  const scheduleSelectionScroll = () => {
+    const active = selecting;
+    if (
+      !active ||
+      (active.pointer.y > active.frame.top &&
+        active.pointer.y < active.frame.top + active.frame.contentHeight + 1)
+    ) {
+      stopSelectionScroll();
+      return;
+    }
+    if (selectionScrollTimer) return;
+    selectionScrollTimer = setInterval(() => {
+      const current = selecting;
+      if (!current || !gestureLeaseCurrent(current.lease)) {
+        stopSelectionScroll();
+        return;
+      }
+      const direction = current.pointer.y <= current.frame.top ? 1 : -1;
+      scrollback.move(current.paneId, direction * 2);
+      updatePointerSelection(current.pointer);
+    }, 40);
   };
   const captureGestureLease = (
     paneId: string,
@@ -675,6 +752,11 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       snapshot.modes.mouseEncoding,
     );
     if (!encoded) return false;
+    if ((action === "wheel-up" || action === "wheel-down") && props.focusedPane !== lease.paneId) {
+      // The input router queues this wheel behind selection acknowledgement;
+      // it still refuses input if selection or write authority is rejected.
+      props.onSelectPane(lease.paneId);
+    }
     props.onTerminalInput?.(lease.paneId, {
       kind: "application-mouse",
       data: encoded.data,
@@ -782,6 +864,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           });
         }
         selecting = null;
+        setPointerSelecting(false);
+        stopSelectionScroll();
         setSelection(null);
         setCommittedSelection(null);
       } else endSelectionView();
@@ -1041,6 +1125,18 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         : null;
     const point = terminalPoint(event);
     const isRelease = event.type === "up" || event.type === "drag-end" || event.type === "drop";
+    if ((linkPointer || liveReturnPointer) && (isRelease || event.type === "drag")) {
+      event.stopPropagation?.();
+      if (isRelease) {
+        linkPointer = false;
+        liveReturnPointer = false;
+      }
+      return;
+    }
+    if (event.type === "down") {
+      linkPointer = false;
+      liveReturnPointer = false;
+    }
     if (drag) {
       event.stopPropagation?.();
       const ingress = resizeIngress();
@@ -1105,19 +1201,61 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       return;
     }
     if (event.type === "scroll") {
-      if (event.scroll?.direction !== "up" && event.scroll?.direction !== "down") return;
-      const hit = paneContentAt(point);
+      // A held selection owns the gesture even when the pointer crosses a sibling.
+      const activeSelection = selecting;
+      const selectionCell =
+        activeSelection &&
+        clampedPaneCell(activeSelection.frame, activeSelection.lease.snapshot, point);
+      const hit =
+        activeSelection && selectionCell
+          ? { frame: activeSelection.frame, ...selectionCell }
+          : paneContentAt(point);
+      const before = props.onWheelObservation && hit ? scrollback.offset(hit.frame.paneId) : null;
+      const observe = (route: string): void => {
+        props.onWheelObservation?.({
+          paneId: hit?.frame.paneId ?? null,
+          direction: event.scroll?.direction ?? null,
+          delta: event.scroll?.delta ?? null,
+          shift: event.modifiers?.shift === true,
+          alt: event.modifiers?.alt === true,
+          ctrl: event.modifiers?.ctrl === true,
+          route,
+          offsetBefore: before,
+          offsetAfter: hit ? scrollback.offset(hit.frame.paneId) : null,
+        });
+      };
+      if (event.scroll?.direction !== "up" && event.scroll?.direction !== "down") {
+        observe("unsupported-direction");
+        return;
+      }
+      if (
+        event.scroll.delta !== undefined &&
+        (!Number.isFinite(event.scroll.delta) || event.scroll.delta === 0)
+      ) {
+        event.stopPropagation?.();
+        observe("invalid-delta");
+        return;
+      }
       const snapshot = hit ? props.adapter.paneSelectionSnapshot(hit.frame.paneId) : null;
       const lease = hit ? captureGestureLease(hit.frame.paneId, hit.frame) : null;
       const action = event.scroll?.direction === "up" ? "wheel-up" : "wheel-down";
       if (!hit || !snapshot) {
         wheelGesture.reset();
+        observe("missing-pane-or-snapshot");
         return;
       }
       const identity = props.adapter.renderSource.paneCanonicalIdentity?.(hit.frame.paneId);
+      // Applications own ordinary wheel input only when their terminal mode
+      // requests it. Shift is the explicit local-history override; Alt remains
+      // a compatible routing modifier and is not sent to the application.
+      const applicationWheel =
+        !event.modifiers?.shift && terminalMouseActionSupported(snapshot, action);
       const motion = wheelGesture.consume(
         JSON.stringify([
           hit.frame.paneId,
+          // A mode change must not turn an ongoing history gesture into app
+          // input. Only an explicit modifier change starts a different route.
+          event.modifiers?.shift ? "history" : event.modifiers?.alt ? "application" : "auto",
           identity?.generation,
           identity?.incarnation,
           identity?.sourceEpoch,
@@ -1131,16 +1269,32 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         lease &&
         !motion.local &&
         scrollback.offset(hit.frame.paneId) === 0 &&
-        !event.modifiers?.shift &&
+        applicationWheel &&
+        !activeSelection &&
         selectModePane() !== hit.frame.paneId &&
         retainedSelectionPane() !== hit.frame.paneId &&
-        forwardMouse(lease, action, hit, undefined, event.modifiers, applicationIngress())
-      )
+        forwardMouse(
+          lease,
+          action,
+          hit,
+          undefined,
+          {
+            shift: false,
+            alt: false,
+            ctrl: event.modifiers?.ctrl === true,
+          },
+          applicationIngress(),
+        )
+      ) {
         event.stopPropagation?.();
-      else if (hit && snapshot) {
+        observe("application-requested");
+      } else if (hit && snapshot) {
         wheelGesture.retainLocal();
         event.stopPropagation?.();
-        if (motion.lines === 0) return;
+        if (motion.lines === 0) {
+          observe("local-accumulating");
+          return;
+        }
         const keyboard = keyboardCopy();
         if (keyboard?.paneId === hit.frame.paneId) {
           const origin = scrollback.origin(hit.frame.paneId) ?? liveViewport(hit.frame.paneId);
@@ -1154,9 +1308,12 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           scrollback.seek(hit.frame.paneId, { ...origin, y: next.originY });
           setKeyboardCopy({ ...keyboard, cursor: next.cursor });
         } else scrollback.move(hit.frame.paneId, motion.lines);
-        selecting = null;
-        setSelection(null);
-        setCommittedSelection(null);
+        observe("local-history");
+        if (selecting?.paneId === hit.frame.paneId) updatePointerSelection(selecting.pointer);
+        else {
+          setSelection(null);
+          setCommittedSelection(null);
+        }
         event.stopPropagation?.();
       }
       return;
@@ -1198,6 +1355,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         event.stopPropagation?.();
         const active = selecting;
         selecting = null;
+        setPointerSelecting(false);
+        stopSelectionScroll();
         const snapshot = active.lease.snapshot;
         const cell = clampedPaneCell(active.frame, snapshot, point);
         const head =
@@ -1213,13 +1372,18 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         if (
           !snapshot ||
           !head ||
-          !active.moved ||
-          (head.row === active.anchor.row && head.col === active.anchor.col)
+          (active.unit === "cell" &&
+            (!active.moved || (head.row === active.anchor.row && head.col === active.anchor.col)))
         ) {
           endSelectionView();
           return;
         }
-        const completed = Object.freeze({ paneId: active.paneId, start: active.anchor, end: head });
+        const range = extendTerminalSelectionUnit(snapshot, active.anchorRange, head, active.unit);
+        if (!range) {
+          endSelectionView();
+          return;
+        }
+        const completed = Object.freeze({ paneId: active.paneId, ...range });
         const copied = extractTerminalSelection(snapshot, completed.start, completed.end);
         setSelection(completed);
         setCommittedSelection(
@@ -1254,23 +1418,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       }
       if (event.type === "drag" && selecting) {
         event.stopPropagation?.();
-        const active = selecting;
-        const snapshot = active.lease.snapshot;
-        const cell = clampedPaneCell(active.frame, snapshot, point);
-        const head =
-          gestureLeaseCurrent(active.lease) && cell
-            ? terminalSelectionCell(
-                snapshot,
-                cell.col,
-                cell.row,
-                scrollback.offset(active.paneId),
-                selectionViewport(active.paneId, active.frame),
-              )
-            : null;
-        if (head) {
-          active.moved ||= head.row !== active.anchor.row || head.col !== active.anchor.col;
-          setSelection({ paneId: active.paneId, start: active.anchor, end: head });
-        }
+        updatePointerSelection(point);
+        scheduleSelectionScroll();
         return;
       }
       const hit = paneContentAt(point);
@@ -1285,6 +1434,23 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       if (!snapshot) return;
       const lease = captureGestureLease(hit.frame.paneId, hit.frame);
       if (!lease) return;
+      if (props.onOpenLink && isTerminalLinkClick(event)) {
+        const cell = terminalSelectionCell(
+          snapshot,
+          hit.col,
+          hit.row,
+          scrollback.offset(hit.frame.paneId),
+          selectionViewport(hit.frame.paneId, hit.frame),
+        );
+        const url = cell && terminalLinkAt(snapshot, cell);
+        if (url) {
+          event.stopPropagation?.();
+          linkPointer = true;
+          lastSelectionClick = null;
+          props.onOpenLink(url);
+          return;
+        }
+      }
       const appMouse = terminalMouseActionSupported(snapshot, "down");
       if (event.button === 2 && event.type === "down") {
         event.stopPropagation?.();
@@ -1316,53 +1482,66 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           };
           return;
         }
+        setKeyboardCopy(null);
+        retainSelectionView(hit.frame.paneId);
+        // Retention may synchronously reflow to this client's viewport. Capture
+        // the gesture after that transition so its coordinates match the held view.
+        const selectionLease = captureGestureLease(hit.frame.paneId, hit.frame);
+        if (!selectionLease) {
+          endSelectionView();
+          return;
+        }
+        const selectionSnapshot = selectionLease.snapshot;
         const anchor = terminalSelectionCell(
-          snapshot,
+          selectionSnapshot,
           hit.col,
           hit.row,
           scrollback.offset(hit.frame.paneId),
           selectionViewport(hit.frame.paneId, hit.frame),
         );
-        if (!anchor) return;
-        setKeyboardCopy(null);
-        retainSelectionView(hit.frame.paneId);
+        if (!anchor) {
+          endSelectionView();
+          return;
+        }
+        const now = performance.now();
+        const previous = lastSelectionClick;
+        const count =
+          previous &&
+          previous.paneId === hit.frame.paneId &&
+          previous.row === anchor.row &&
+          previous.col === anchor.col &&
+          now - previous.at <= 400 &&
+          gestureLeaseCurrent(previous.lease)
+            ? (previous.count % 3) + 1
+            : 1;
+        lastSelectionClick = {
+          paneId: hit.frame.paneId,
+          row: anchor.row,
+          col: anchor.col,
+          at: now,
+          count,
+          lease: selectionLease,
+        };
+        const unit = count === 3 ? "line" : count === 2 ? "word" : "cell";
+        const anchorRange = terminalSelectionUnit(selectionSnapshot, anchor, unit);
+        if (!anchorRange) {
+          endSelectionView();
+          return;
+        }
         selecting = {
           paneId: hit.frame.paneId,
           anchor,
+          anchorRange,
+          unit,
+          pointer: point,
           frame: hit.frame,
-          lease,
+          lease: selectionLease,
           moved: false,
         };
+        setPointerSelecting(true);
         setCommittedSelection(null);
-        setSelection({ paneId: hit.frame.paneId, start: anchor, end: anchor });
+        setSelection({ paneId: hit.frame.paneId, ...anchorRange });
         return;
-      }
-      if (event.type === "drag" && selecting?.paneId === hit.frame.paneId) {
-        event.stopPropagation?.();
-        const head = terminalSelectionCell(
-          snapshot,
-          hit.col,
-          hit.row,
-          scrollback.offset(hit.frame.paneId),
-          selectionViewport(hit.frame.paneId, hit.frame),
-        );
-        if (head) {
-          selecting.moved ||=
-            head.row !== selecting.anchor.row || head.col !== selecting.anchor.col;
-          setSelection({ paneId: hit.frame.paneId, start: selecting.anchor, end: head });
-        }
-        return;
-      }
-      if (event.type === "drag" && forwardedPointer?.paneId === hit.frame.paneId) {
-        event.stopPropagation?.();
-        forwardMouse(
-          forwardedPointer.lease,
-          "drag",
-          hit,
-          forwardedPointer.button,
-          event.modifiers,
-          applicationIngress(),
-        );
       }
       return;
     }
@@ -1604,38 +1783,100 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         )}
       </Show>
       <For
-        each={
-          retainedSelectionPane() || selectModePane()
-            ? [retainedSelectionPane() ?? selectModePane()!]
-            : props.focusedPane && scrollback.offset(props.focusedPane) > 0
-              ? [props.focusedPane]
-              : []
-        }
+        each={[
+          ...new Set([
+            ...(retainedSelectionPane() || selectModePane()
+              ? [retainedSelectionPane() ?? selectModePane()!]
+              : []),
+            ...visibleFrames()
+              .filter((frame) => scrollback.offset(frame.paneId) > 0)
+              .map((frame) => frame.paneId),
+            ...(props.copyFeedback ? [props.copyFeedback.paneId] : []),
+          ]),
+        ]}
       >
-        {() => (
-          <text
-            position="absolute"
-            right={1}
-            top={topOffset()}
-            height={1}
-            maxWidth={Math.max(1, props.width - 2)}
-            wrapMode="none"
-            truncate
-            zIndex={20}
-            fg={props.theme.roles.text.link}
-            bg={props.theme.roles.surfaces.panel}
-          >
-            {keyboardCopy()
-              ? props.width < 75
-                ? `copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "q live" : "Esc live"}`
-                : ` ⧉ copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "Space select · Enter copy · q live" : "Ctrl+Space select · Ctrl+W copy · Esc live"} `
-              : retainedSelectionPane()
-                ? "select · Esc live"
-                : selectModePane()
-                  ? " ⧉ select "
-                  : "Scrollback · Esc live"}
-          </text>
-        )}
+        {(paneId) => {
+          const ownerFrame = createMemo(() =>
+            projectedFrames().find((frame) => frame.paneId === paneId),
+          );
+          const canReturnLive = () =>
+            scrollback.offset(paneId) > 0 ||
+            retainedSelectionPane() === paneId ||
+            selectModePane() === paneId;
+          const returnLive = () => {
+            if (selecting || !canReturnLive()) return;
+            if (
+              retainedSelectionPane() === paneId ||
+              selectModePane() === paneId ||
+              keyboardCopy()?.paneId === paneId
+            )
+              endSelectionView();
+            wheelGesture.reset();
+            scrollback.live(paneId);
+          };
+          return (
+            <text
+              onMouse={(event) => {
+                if (liveReturnPointer && event.type === "up") {
+                  liveReturnPointer = false;
+                  event.stopPropagation();
+                  return;
+                }
+                if (selecting || !canReturnLive()) return;
+                event.stopPropagation();
+                if (event.type === "down" && event.button === 0) {
+                  liveReturnPointer = true;
+                  returnLive();
+                }
+              }}
+              position="absolute"
+              right={
+                Math.max(
+                  0,
+                  props.width - ((ownerFrame()?.left ?? 0) + (ownerFrame()?.width ?? 0)),
+                ) + ((ownerFrame()?.width ?? 0) < 12 ? 0 : 1)
+              }
+              top={(ownerFrame()?.top ?? 0) + topOffset()}
+              height={1}
+              maxWidth={Math.max(
+                1,
+                (ownerFrame()?.width ?? 1) - ((ownerFrame()?.width ?? 0) < 12 ? 0 : 2),
+              )}
+              visible={ownerFrame()?.visible ?? false}
+              wrapMode="none"
+              truncate
+              zIndex={20}
+              fg={
+                props.copyFeedback?.paneId === paneId
+                  ? props.copyFeedback.copied
+                    ? props.theme.roles.statusTone.success
+                    : props.theme.roles.statusTone.danger
+                  : props.theme.roles.text.link
+              }
+              bg={props.theme.roles.surfaces.panel}
+            >
+              {props.copyFeedback?.paneId === paneId
+                ? canReturnLive() && (ownerFrame()?.width ?? 0) < 22
+                  ? `${props.copyFeedback.copied ? "✓" : "!"} · Live`
+                  : `${props.copyFeedback.copied ? "Copied" : "Copy unavailable"}${canReturnLive() ? ((ownerFrame()?.width ?? 0) < 36 ? " · Live" : " · Back to live") : ""}`
+                : keyboardCopy()?.paneId === paneId
+                  ? (ownerFrame()?.width ?? 0) >= 75
+                    ? ` ⧉ copy ${keyboardCopy()!.cursor.mode} · ${keyboardCopy()!.cursor.mode === "vi" ? "Space select · Enter copy · q live" : "Ctrl+Space select · Ctrl+W copy · Esc live"} · Back to live `
+                    : (ownerFrame()?.width ?? 0) < 14
+                      ? `copy ${keyboardCopy()!.cursor.mode}`
+                      : `copy ${keyboardCopy()!.cursor.mode} · ${(ownerFrame()?.width ?? 0) < 30 ? "Live" : "Back to live"}`
+                  : (ownerFrame()?.width ?? 0) < 14
+                    ? retainedSelectionPane() === paneId || selectModePane() === paneId
+                      ? "select"
+                      : "Live"
+                    : retainedSelectionPane() === paneId || selectModePane() === paneId
+                      ? "select · Back to live"
+                      : (ownerFrame()?.width ?? 0) < 30
+                        ? "Scrollback · Live"
+                        : "Scrollback · Back to live"}
+            </text>
+          );
+        }}
       </For>
       <box
         position="absolute"
@@ -1664,6 +1905,17 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           />
         )}
       </For>
+      <Show when={pointerSelecting()}>
+        <box
+          position="absolute"
+          left={0}
+          top={0}
+          width={props.width}
+          height={props.height + topOffset()}
+          zIndex={40}
+          onMouse={routePointer}
+        />
+      </Show>
     </>
   );
 }

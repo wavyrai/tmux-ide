@@ -9,6 +9,10 @@ import { findCompiledTui, hasDevelopmentTuiSource, isBunAvailable } from "./tui/
 import { claudeSettingsPath } from "./tui/integrations/claude.ts";
 import { readNotificationPrefs, resolveNativeMacosNotifierPath } from "./tui/chrome/notify.ts";
 import { resolveConfig } from "./lib/resolved-config.ts";
+import {
+  collectDaemonProvenanceReport,
+  type DaemonProvenanceReport,
+} from "./lib/daemon-provenance.ts";
 
 interface CheckResult {
   label: string;
@@ -108,6 +112,55 @@ export function notifierRow(present: boolean): CheckResult {
   };
 }
 
+/**
+ * PURE — the "canonical daemon" row from a provenance report. Optional: a
+ * machine without a running daemon is healthy; the row exists so triage sees
+ * identity, supervisor and the real log destination without a second command.
+ */
+export function daemonProvenanceRow(report: DaemonProvenanceReport): CheckResult {
+  const label = "canonical daemon";
+  const historical = report.logFiles.filter((f) => f.status === "historical").length;
+  const suffix = historical
+    ? ` — ${historical} historical log file${historical === 1 ? "" : "s"} (see \`tmux-ide daemon info\`)`
+    : "";
+  const d = report.daemon;
+  switch (report.status) {
+    case "running":
+      return {
+        label,
+        pass: true,
+        detail:
+          `running v${d!.productVersion} pid ${d!.pid} (${d!.supervisor ?? "unknown supervisor"}) · ` +
+          `logs → ${d!.logDestination}${suffix}`,
+        optional: true,
+      };
+    case "stale-record":
+      return {
+        label,
+        pass: false,
+        detail: `record names pid ${d!.pid} (v${d!.productVersion}) but it is not running${suffix}`,
+        optional: true,
+      };
+    case "record-invalid":
+      return {
+        label,
+        pass: false,
+        detail: `record invalid (${report.record.status === "invalid" ? report.record.reason : "unknown"})${suffix}`,
+        optional: true,
+      };
+    default:
+      return {
+        label,
+        pass: true,
+        detail:
+          report.record.status === "reserved"
+            ? `not running (reserved for supervisor ${report.record.supervisionId})${suffix}`
+            : `not running${suffix}`,
+        optional: true,
+      };
+  }
+}
+
 function check(
   label: string,
   fn: () => string,
@@ -118,6 +171,41 @@ function check(
     return { label, pass: true, detail: result, optional };
   } catch (e) {
     return { label, pass: false, detail: (e as Error).message, optional };
+  }
+}
+
+export function nodeVersionRow(version: string): CheckResult {
+  const major = Number(version.split(".")[0]);
+  const pass = Number.isInteger(major) && major >= 20;
+  return {
+    label: "Node.js ≥ 20",
+    pass,
+    detail: pass ? `v${version}` : `Node ${version} (need ≥ 20)`,
+    optional: false,
+  };
+}
+
+export async function workspaceConfigRow(projectDir: string): Promise<CheckResult> {
+  try {
+    const config = await resolveConfig(projectDir);
+    return {
+      label: "workspace config",
+      pass: true,
+      detail:
+        config.kind === "none"
+          ? "absent (optional; configless mode)"
+          : config.kind === "legacy"
+            ? "legacy ide.yml compatibility"
+            : "found",
+      optional: false,
+    };
+  } catch (error) {
+    return {
+      label: "workspace config",
+      pass: false,
+      detail: (error as Error).message,
+      optional: false,
+    };
   }
 }
 
@@ -150,13 +238,7 @@ export async function doctor({
     }),
   );
 
-  checks.push(
-    check("Node.js ≥ 18", () => {
-      const major = parseInt(process.versions.node.split(".")[0]!);
-      if (major < 18) throw new Error(`Node ${process.versions.node} (need ≥ 18)`);
-      return `v${process.versions.node}`;
-    }),
-  );
+  checks.push(nodeVersionRow(process.versions.node));
 
   checks.push(
     check(
@@ -177,27 +259,7 @@ export async function doctor({
     ),
   );
 
-  checks.push(
-    await (async (): Promise<CheckResult> => {
-      try {
-        const resolved = await resolveConfig(resolve("."));
-        if (resolved.kind === "none") throw new Error("not found in current directory");
-        return {
-          label: "workspace config exists",
-          pass: true,
-          detail: resolved.kind === "legacy" ? "legacy ide.yml compatibility" : "found",
-          optional: false,
-        };
-      } catch (e) {
-        return {
-          label: "workspace config exists",
-          pass: false,
-          detail: (e as Error).message,
-          optional: false,
-        };
-      }
-    })(),
-  );
+  checks.push(await workspaceConfigRow(resolve(".")));
 
   checks.push(
     check(
@@ -317,6 +379,23 @@ export async function doctor({
       },
       { optional: true },
     ),
+  );
+
+  // Canonical daemon identity + log provenance (credential-free), so a triage
+  // never chases a stale, manually redirected log file.
+  checks.push(
+    (() => {
+      try {
+        return daemonProvenanceRow(collectDaemonProvenanceReport());
+      } catch (e) {
+        return {
+          label: "canonical daemon",
+          pass: false,
+          detail: `provenance unavailable: ${(e as Error).message}`,
+          optional: true,
+        };
+      }
+    })(),
   );
 
   // Native branded sender: only when the macOS channel is actually on.

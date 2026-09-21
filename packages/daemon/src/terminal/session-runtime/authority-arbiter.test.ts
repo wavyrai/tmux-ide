@@ -32,6 +32,29 @@ function deterministicScheduler() {
 }
 
 describe("SessionRuntimeAuthorityArbiter", () => {
+  it("advances snapshot identity when native activity extends an already ownerless yield", () => {
+    const { scheduler, advance } = deterministicScheduler();
+    const authority = new SessionRuntimeAuthorityArbiter({
+      generation: GENERATION_A,
+      session: "alpha",
+      scheduler,
+    });
+    const before = authority.snapshot();
+    authority.noteNativeGeometryActivity();
+    const first = authority.snapshot();
+    expect(first.nativeGeometryYieldUntilMs).toBe(180);
+    expect(first.revision).toBeGreaterThan(before.revision);
+    advance(10);
+    authority.noteNativeGeometryActivity();
+    const extended = authority.snapshot();
+    expect(extended.owners.geometry).toBeNull();
+    expect(extended.nativeGeometryYieldUntilMs).toBe(190);
+    expect(extended.revision).toBeGreaterThan(first.revision);
+    authority.noteNativeGeometryActivity();
+    expect(authority.snapshot()).toEqual(extended);
+    authority.dispose();
+  });
+
   it("elects input, focus and geometry independently", () => {
     const { scheduler } = deterministicScheduler();
     const authority = new SessionRuntimeAuthorityArbiter({

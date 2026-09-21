@@ -586,6 +586,66 @@ function projectTrustedMirrorInventory(
   return Object.freeze(panes);
 }
 
+function analyzeInventoryPanes(panes: readonly NativeTerminalInventoryPaneSnapshot[]) {
+  return analyzeTrustedSemanticPaneCatalog(
+    panes.map(
+      ({
+        sessionName: _sessionName,
+        index: _index,
+        title: _title,
+        currentCommand: _currentCommand,
+        active: _active,
+        role: _role,
+        name: _name,
+        type: _type,
+        missionStamp: _missionStamp,
+        dir: _dir,
+        ...row
+      }) => row,
+    ),
+  );
+}
+
+function hasWindowStampCollision(rows: readonly TrustedSemanticPaneSnapshot[]): boolean {
+  const windows = new Map<string, string>();
+  for (const row of rows) {
+    if (row.windowStamp == null) continue;
+    const previous = windows.get(row.windowStamp);
+    if (previous !== undefined && previous !== row.windowId) return true;
+    windows.set(row.windowStamp, row.windowId);
+  }
+  return false;
+}
+
+function hasCompleteWindowIdentity(rows: readonly TrustedSemanticPaneSnapshot[]): boolean {
+  const stamps = new Map<string, string>();
+  for (const row of rows) {
+    if (row.windowStamp == null) return false;
+    const previous = stamps.get(row.windowId);
+    if (previous !== undefined && previous !== row.windowStamp) return false;
+    stamps.set(row.windowId, row.windowStamp);
+  }
+  return !hasWindowStampCollision(rows);
+}
+
+function projectQualifiedInventory(
+  trusted: TrustedMirrorSessionInventory,
+  workspaceName: string,
+  sessionName: string,
+): NativeTerminalInventorySnapshot {
+  const panes = projectTrustedMirrorInventory(trusted, workspaceName, sessionName);
+  const catalog = analyzeInventoryPanes(panes);
+  if (
+    catalog.invalidRuntimeProof ||
+    catalog.missingSemanticStamp ||
+    catalog.duplicateSemanticStamp ||
+    catalog.duplicateRuntimePaneBinding
+  ) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  return Object.freeze({ panes, catalog });
+}
+
 async function awaitInventoryUnlessAborted<T>(
   promise: Promise<T>,
   signal: AbortSignal,
@@ -1512,37 +1572,11 @@ export class WorkspaceTerminalInventoryRuntime {
       if (trustedRetry) return trustedRetry;
       if (trusted) {
         try {
-          const panes = projectTrustedMirrorInventory(
+          inventory = projectQualifiedInventory(
             trusted.inventory,
             workspace.name,
             workspace.sessionName,
           );
-          const catalog = analyzeTrustedSemanticPaneCatalog(
-            panes.map(
-              ({
-                sessionName: _sessionName,
-                index: _index,
-                title: _title,
-                currentCommand: _currentCommand,
-                active: _active,
-                role: _role,
-                name: _name,
-                type: _type,
-                missionStamp: _missionStamp,
-                dir: _dir,
-                ...row
-              }) => row,
-            ),
-          );
-          if (
-            catalog.invalidRuntimeProof ||
-            catalog.missingSemanticStamp ||
-            catalog.duplicateSemanticStamp ||
-            catalog.duplicateRuntimePaneBinding
-          ) {
-            throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
-          }
-          inventory = Object.freeze({ panes, catalog });
           trustedInventory = true;
           trustedInventoryToken = trusted.token;
         } catch {
@@ -1566,47 +1600,29 @@ export class WorkspaceTerminalInventoryRuntime {
     }
     const inventoryRetry = retryIfReplaced();
     if (inventoryRetry) return inventoryRetry;
-    const panes = inventory.panes.filter(
+    let panes: readonly NativeTerminalInventoryPaneSnapshot[] = inventory.panes.filter(
       (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName,
     );
     if (panes.length === 0) return null;
-    const active = panes.find((pane) => pane.active) ?? panes[0]!;
-    const sessionCatalog = analyzeTrustedSemanticPaneCatalog(
-      panes.map(
-        ({
-          sessionName: _sessionName,
-          index: _index,
-          title: _title,
-          currentCommand: _currentCommand,
-          active: _active,
-          role: _role,
-          name: _name,
-          type: _type,
-          missionStamp: _missionStamp,
-          dir: _dir,
-          ...row
-        }) => row,
-      ),
-    );
-    const windowStamps = new Map<string, string>();
-    let windowIdentityReady = true;
-    for (const pane of sessionCatalog.rows) {
-      const stamp = pane.windowStamp ?? null;
-      const previous = windowStamps.get(pane.windowId);
-      if (stamp === null || (previous !== undefined && previous !== stamp)) {
-        windowIdentityReady = false;
-        break;
-      }
-      windowStamps.set(pane.windowId, stamp);
-    }
-    if (new Set(windowStamps.values()).size !== windowStamps.size) windowIdentityReady = false;
+    let active = panes.find((pane) => pane.active) ?? panes[0]!;
+    const sessionCatalog = analyzeInventoryPanes(panes);
     const shouldPrewarm =
       !sessionCatalog.invalidRuntimeProof &&
       !sessionCatalog.missingSemanticStamp &&
       !sessionCatalog.duplicateSemanticStamp &&
       !sessionCatalog.duplicateRuntimePaneBinding &&
-      windowIdentityReady;
-    const catalogIssue: NativeTerminalInventoryCatalogIssue | null = inventory.catalog
+      hasCompleteWindowIdentity(sessionCatalog.rows);
+    // Missing-stamp error precedence must not hide another global ambiguity.
+    // The cross-window guard applies only to this new cold exception; it is not
+    // a claim that a retained session carries a permanent global certificate.
+    const coldAmbiguous =
+      inventory.catalog.invalidRuntimeProof ||
+      inventory.catalog.duplicateSemanticStamp ||
+      inventory.catalog.duplicateRuntimePaneBinding;
+    const missingElsewhere = !trustedInventory && inventory.catalog.missingSemanticStamp;
+    const allowColdQualification =
+      !coldAmbiguous && (!missingElsewhere || !hasWindowStampCollision(inventory.catalog.rows));
+    let catalogIssue: NativeTerminalInventoryCatalogIssue | null = inventory.catalog
       .invalidRuntimeProof
       ? "invalid-runtime-proof"
       : inventory.catalog.missingSemanticStamp
@@ -1616,17 +1632,78 @@ export class WorkspaceTerminalInventoryRuntime {
           : inventory.catalog.duplicateRuntimePaneBinding
             ? "duplicate-runtime-pane-binding"
             : null;
-    if (shouldPrewarm && this.#prewarmSessionRuntime) {
-      await awaitInventoryUnlessAborted(
-        this.#prewarmSessionRuntime(workspace.sessionName, active.sessionId, signal),
+    if (
+      shouldPrewarm &&
+      (trustedInventory || allowColdQualification) &&
+      this.#prewarmSessionRuntime
+    ) {
+      const coldRuntimeSessionId = active.sessionId;
+      const qualified = await awaitInventoryUnlessAborted(
+        this.#prewarmSessionRuntime(workspace.sessionName, coldRuntimeSessionId, signal),
         signal,
-      ).catch(() => undefined);
+      ).then(
+        () => true,
+        () => false,
+      );
       const prewarmRetry = retryIfReplaced();
       if (prewarmRetry) return prewarmRetry;
+      if (missingElsewhere && qualified && this.#discoverTrustedSessionInventory) {
+        // One handoff attempt, not another global scan or a local reinterpretation
+        // of rejected cold rows. Only the newly verified exact runtime can publish.
+        const candidate = await awaitInventoryUnlessAborted(
+          this.#discoverTrustedSessionInventory(workspace.sessionName, signal),
+          signal,
+        ).catch(() => null);
+        const handoffRetry = retryIfReplaced();
+        if (handoffRetry) return handoffRetry;
+        if (candidate) {
+          if (candidate.inventory.runtimeSessionId !== coldRuntimeSessionId) {
+            if (staleRetry < 1)
+              return this.#discoverTerminalRuntimeSession(
+                requestedSessionName,
+                signal,
+                staleRetry + 1,
+              );
+            throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+          }
+          let projected: NativeTerminalInventorySnapshot | null = null;
+          try {
+            const candidateProjection = projectQualifiedInventory(
+              candidate.inventory,
+              workspace.name,
+              workspace.sessionName,
+            );
+            if (hasCompleteWindowIdentity(candidateProjection.catalog.rows)) {
+              projected = candidateProjection;
+            }
+          } catch {
+            // Malformed candidate data cannot replace the conservative cold
+            // rejection. Cancellation and epoch checks remain outside this catch.
+          }
+          if (projected) {
+            inventory = projected;
+            panes = projected.panes;
+            active = panes.find((pane) => pane.active) ?? panes[0]!;
+            trustedInventory = true;
+            trustedInventoryToken = candidate.token;
+            catalogIssue = null;
+          }
+        }
+      }
     }
     const finalRetry = retryIfReplaced();
     if (finalRetry) return finalRetry;
     if (trustedInventory) {
+      const currentMembership = this.#registry
+        .list()
+        .filter((entry) => entry.sessionName === workspace.sessionName);
+      if (
+        currentMembership.length !== 1 ||
+        currentMembership[0]!.name !== workspace.name ||
+        currentMembership[0]!.projectDir !== workspace.projectDir
+      ) {
+        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      }
       if (
         trustedInventoryToken === null ||
         this.#trustedSessionInventoryCurrent?.(workspace.sessionName, trustedInventoryToken) !==

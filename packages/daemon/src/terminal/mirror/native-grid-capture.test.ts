@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { decodeNativeGridCapture } from "./native-grid-capture.ts";
+import {
+  decodeNativeGridCapture,
+  encodeNativeGridCapture,
+  isNativeBootstrapCapture,
+} from "./native-grid-capture.ts";
 
 function records() {
   return [
@@ -32,6 +36,17 @@ describe("decodeNativeGridCapture", () => {
     expect(decodeNativeGridCapture(encode(records()).trimEnd())).toEqual(result);
   });
 
+  it("preserves a legal offscreen cursor after an alternate-screen non-reflow shrink", () => {
+    const value = records();
+    value[0] = { ...value[0]!, version: 2, cursor: [34, 0], currentAttributes: [0, 8, 8, 8] };
+    const decoded = decodeNativeGridCapture(encode(value))!;
+    expect(decoded).not.toBeNull();
+    expect(decoded.cols).toBe(2);
+    expect(decoded.cursor).toEqual([34, 0]);
+    expect(isNativeBootstrapCapture(decoded)).toBe(true);
+    expect(decodeNativeGridCapture(encodeNativeGridCapture(decoded)!)).toEqual(decoded);
+  });
+
   it("preserves empty zero-width padding and an end-column cursor", () => {
     const value = records();
     value[0]!.cursor = [2, 0];
@@ -46,12 +61,14 @@ describe("decodeNativeGridCapture", () => {
   });
 
   it.each([
-    { version: 2 },
+    { version: 3 },
     { cols: 0 },
     { rows: 0 },
     { history: -1 },
     { hscrolled: 2 },
-    { cursor: [3, 0] },
+    { cursor: [1_000_001, 0] },
+    { cursor: [-1, 0] },
+    { cursor: [1.5, 0] },
     { cursor: [0, 1] },
     { history: 262144 },
     { limit: 1.5 },
@@ -97,4 +114,64 @@ describe("decodeNativeGridCapture", () => {
     expect(decodeNativeGridCapture(encode(records()) + "\n")).toBeNull();
     expect(decodeNativeGridCapture(" ".repeat(16 * 1024 * 1024 + 1))).toBeNull();
   });
+});
+
+describe("native v2 allocated cells", () => {
+  const fixture = (used = 1) =>
+    encode([
+      { version: 2, cols: 4, rows: 1, history: 0, hscrolled: 0, limit: 2000, cursor: [1, 0] },
+      {
+        row: 0,
+        flags: 0,
+        used,
+        cells: [
+          [0, 1, "61", 0, 8, 16777233, 8, 0, 2],
+          ...Array.from({ length: 3 }, () => [64, 1, "20", 0, 8, 16777233, 8, 0, 66]),
+        ],
+      },
+    ]);
+  it("round trips allocated colored erased tails independently of written cells", () => {
+    const source = decodeNativeGridCapture(fixture())!;
+    expect(source.version).toBe(2);
+    expect(source.grid[0]!.used).toBe(1);
+    expect(source.grid[0]!.cells).toHaveLength(4);
+    expect(source.grid[0]!.cells[3]!.background).toBe(16777233);
+    expect(decodeNativeGridCapture(encodeNativeGridCapture(source)!)).toEqual(source);
+    expect(decodeNativeGridCapture(fixture(0))!.grid[0]!.used).toBe(0);
+  });
+  it("rejects corrupt logical boundaries and preserves the v1 capability marker", () => {
+    for (const used of [-1, 1.5, 5]) expect(decodeNativeGridCapture(fixture(used))).toBeNull();
+    expect(decodeNativeGridCapture(encode(records()))!.version).toBe(1);
+  });
+});
+
+it("validates current rendition independently of backing-only v2 capability", () => {
+  const value = records();
+  value[0]!.version = 2;
+  for (const currentAttributes of [[0, 8, 8, 8], null]) {
+    const source = decodeNativeGridCapture(
+      encode([{ ...value[0], currentAttributes }, ...value.slice(1)]),
+    )!;
+    expect(source).not.toBeNull();
+    expect(source.currentAttributes).toEqual(currentAttributes ?? undefined);
+    expect(decodeNativeGridCapture(encodeNativeGridCapture(source)!)).toEqual(source);
+  }
+  for (const currentAttributes of [
+    [0, 8],
+    [-1, 8, 8, 8],
+    [0, 8, "bad", 8],
+    [0, 8, 8, 0x100000000],
+  ]) {
+    expect(
+      decodeNativeGridCapture(encode([{ ...value[0], currentAttributes }, ...value.slice(1)])),
+    ).toBeNull();
+  }
+});
+
+it("bounds sparse native bootstrap width and dense parser allocation", () => {
+  const base = decodeNativeGridCapture(encode(records()))!;
+  const source = { ...base, version: 2 as const, currentAttributes: [0, 8, 8, 8] as const };
+  expect(isNativeBootstrapCapture(source)).toBe(true);
+  expect(isNativeBootstrapCapture({ ...source, cols: 16385 })).toBe(false);
+  expect(isNativeBootstrapCapture({ ...source, cols: 16384, history: 100 })).toBe(false);
 });

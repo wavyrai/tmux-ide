@@ -1609,6 +1609,60 @@ describe("pane-stream transport demultiplexing", () => {
     await expect(pending).resolves.toBe("geometry-authority-conflict");
   });
 
+  it("carries a semantic window target while retaining geometry conflict handling", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const pending = h.result.session.resize?.(140, 46, "window.one");
+    await flushMicrotasks();
+    const request = JSON.parse(h.socket.sent.at(-1)!);
+    const lease = {
+      generation: DAEMON_INSTANCE_ID,
+      session: "workspace-a",
+      clientId: "web-client-a",
+      authority: "geometry",
+      token: globalThis.crypto.randomUUID(),
+      revision: 2,
+    } as const;
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "geometry",
+      status: "granted",
+      lease,
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        revision: 2,
+        owners: { input: null, focus: null, geometry: "web-client-a" },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await flushMicrotasks();
+    const viewport = h.socket.sent
+      .map((frame): Record<string, unknown> => JSON.parse(frame))
+      .reverse()
+      .find((frame) => frame.type === "viewport")!;
+    expect(viewport).toMatchObject({
+      type: "viewport",
+      semanticWindowId: "window.one",
+      authorityLease: lease,
+      cols: 140,
+      rows: 46,
+    });
+    h.socket.serverSends({
+      type: "viewport-ack",
+      seq: viewport.seq,
+      cols: 140,
+      rows: 46,
+      outcome: "geometry-authority-conflict",
+      authorityLease: lease,
+    });
+    await expect(pending).resolves.toBe("geometry-authority-conflict");
+  });
+
   it("rejects a viewport acknowledgement whose echoed dimensions do not match", async () => {
     const h = await liveHarness({
       viewerMode: "interactive",

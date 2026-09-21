@@ -1,4 +1,6 @@
 import test from "node:test";
+import { createHash } from "node:crypto";
+import stringWidth from "string-width";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -190,6 +192,7 @@ test(
         rows: envelope.rows,
         busyTick: Number(lines.join("\n").match(/C-BOTTOM (\d+)/)?.[1] ?? 0),
       });
+      return lines;
     }
     try {
       rigCommand("start");
@@ -265,9 +268,9 @@ test(
         "wheel-up",
         "second",
         (rows) =>
-          rows[2].includes("↑1") &&
-          rows[3].includes("HISTORY_092") &&
-          rows.at(-2).includes("HISTORY_119"),
+          rows[2].includes("Scrollback") &&
+          rows[3].includes("HISTORY_088") &&
+          rows.at(-2).includes("HISTORY_115"),
       );
       await frame("wheel-up", "first", baseline(44, "HISTORY_081"));
       assert.equal(geometry(), dimensions, "wheel scrolling mutated native geometry");
@@ -279,7 +282,7 @@ test(
         "second-reading",
         "second",
         (rows) =>
-          rows[2].includes("↑27") &&
+          rows[2].includes("Scrollback") &&
           rows[3].includes("HISTORY_066") &&
           rows.at(-2).includes("HISTORY_093"),
       );
@@ -288,7 +291,7 @@ test(
       await frame(
         "both-reading",
         "first",
-        (rows) => rows[2].includes("↑39") && rows[3].includes("HISTORY_042"),
+        (rows) => rows[2].includes("Scrollback") && rows[3].includes("HISTORY_042"),
       );
       await frame("both-reading", "second", (rows) => rows[3].includes("HISTORY_066"));
       tui("second", "resize", "90", "24");
@@ -334,6 +337,172 @@ test(
           (rows) => !rows[2].includes("Zoomed") && rows.at(-2).includes("BOTTOM_READY"),
         );
       assert.equal(geometry(), dimensions, "zoom restore changed native geometry");
+      // Retain an actual wrapped Unicode history position while its peer
+      // consumes ongoing output. Derive the anchor from the accepted frame,
+      // since physical row counts depend on native width and Unicode cells.
+      const unicodeFixture = join(root, "unicode-history.mjs");
+      const unicodeStop = join(root, "unicode-history.stop");
+      writeFileSync(
+        unicodeFixture,
+        `import {existsSync} from 'node:fs';
+const line = (kind, tick) => (kind+'_'+String(tick).padStart(5,'0')+' 界e\u0301 ').repeat(10);
+process.stdout.write(Array.from({length:120}, (_,i)=>line('WRAP',i)).join('\\r\\n')+'\\r\\n');
+process.stdin.setRawMode(true); process.stdin.resume();
+let tick=0;
+const timer=setInterval(()=>{
+  if(existsSync(${JSON.stringify(unicodeStop)})) { clearInterval(timer); process.stdout.write('UNICODE_DONE '+tick); return; }
+  process.stdout.write(line('LIVE',++tick)+'\\r\\n');
+},40);`,
+        { mode: 0o600 },
+      );
+      native(
+        "respawn-pane",
+        "-k",
+        "-t",
+        `${state.session}:one.0`,
+        `${quote(process.execPath)} ${quote(unicodeFixture)}`,
+      );
+      const unicodeTick = (rows) =>
+        Math.max(
+          0,
+          ...[...rows.join("\n").matchAll(/LIVE_(\d{5})/g)].map((match) => Number(match[1])),
+        );
+      const unicodeChrome = (rows) =>
+        rows.at(-1).includes("F5") &&
+        rows.slice(3, -1).join("\n").includes("界e\u0301") &&
+        !rows.slice(3, -1).join("\n").includes("\ufffd");
+      let firstTick = 0;
+      const firstUnicode = await frame(
+        "unicode-live-start",
+        "first",
+        (rows) => unicodeTick(rows) > 0 && unicodeChrome(rows),
+      );
+      firstTick = unicodeTick(firstUnicode);
+      await frame(
+        "unicode-live-start",
+        "second",
+        (rows) => unicodeTick(rows) > 0 && unicodeChrome(rows),
+      );
+      tui("second", "key", "S-PPage");
+      tui("second", "key", "S-PPage");
+      tui("second", "key", "S-PPage");
+      const readFrame = await frame(
+        "unicode-reading-entry",
+        "second",
+        (rows) =>
+          rows[2].includes("Scrollback") &&
+          /(?:WRAP|LIVE)_\d{5}/.test(rows.slice(3, -1).join("\n")) &&
+          unicodeChrome(rows),
+      );
+      const anchor = readFrame
+        .slice(3, -1)
+        .join("\n")
+        .match(/(?:WRAP|LIVE)_\d{5}/)[0];
+      const anchored = (rows) => {
+        const firstMarker = rows
+          .slice(3, -1)
+          .join("\n")
+          .match(/(?:WRAP|LIVE)_\d{5}/)?.[0];
+        return firstMarker === anchor && rows[2].includes("Scrollback") && unicodeChrome(rows);
+      };
+      const verifyUnicodePeer = async (stage) => {
+        await frame(stage, "second", anchored);
+        const next = await frame(
+          stage,
+          "first",
+          (rows) =>
+            unicodeTick(rows) > firstTick && !rows[2].includes("Scrollback") && unicodeChrome(rows),
+        );
+        firstTick = unicodeTick(next);
+      };
+      await verifyUnicodePeer("unicode-reading-live-peer");
+      tui("second", "resize", "72", "24");
+      await verifyUnicodePeer("unicode-reading-client-narrow");
+      assert.equal(geometry(), dimensions, "Unicode reader resize mutated native geometry");
+      native("resize-pane", "-Z", "-t", `${state.session}:one.0`);
+      assert.equal(
+        native("display-message", "-p", "-t", state.session, "#{window_zoomed_flag}"),
+        "1",
+      );
+      await verifyUnicodePeer("unicode-reading-native-zoom");
+      native("resize-pane", "-Z", "-t", `${state.session}:one.0`);
+      assert.equal(
+        native("display-message", "-p", "-t", state.session, "#{window_zoomed_flag}"),
+        "0",
+      );
+      await verifyUnicodePeer("unicode-reading-native-restore");
+      tui("second", "resize", "90", "24");
+      await verifyUnicodePeer("unicode-reading-client-wide");
+      assert.equal(geometry(), dimensions, "Unicode zoom restore changed native geometry");
+      const selectionFrame = await frame("unicode-selection-ready", "second", anchored);
+      const selectionRow = selectionFrame.findIndex(
+        (line, row) => row >= 3 && /(?:WRAP|LIVE)_\d{5} 界e\u0301/u.test(line),
+      );
+      assert.ok(selectionRow >= 3, "visible complete Unicode selection token");
+      const selected = /(?:WRAP|LIVE)_\d{5} 界e\u0301/u.exec(selectionFrame[selectionRow]);
+      const selectionX = stringWidth(selectionFrame[selectionRow].slice(0, selected.index));
+      const selectionWidth = stringWidth(selected[0]);
+      const selectionLeft = stringWidth(selectionFrame[3].match(/^ */)[0]);
+      const siblingHeader = selectionFrame[2].indexOf("○ node");
+      assert.ok(siblingHeader > selectionLeft, "observed sibling pane header boundary");
+      const selectionRight = stringWidth(selectionFrame[2].slice(0, siblingHeader)) - 1;
+      let copy;
+      try {
+        copy = JSON.parse(
+          tui(
+            "second",
+            "input",
+            JSON.stringify({
+              version: 1,
+              kind: "selection-drag",
+              timeoutMs: 5000,
+              from: { x: selectionX, y: selectionRow },
+              to: { x: selectionX + selectionWidth - 1, y: selectionRow },
+              contentRect: {
+                x: selectionLeft,
+                y: 3,
+                width: selectionRight - selectionLeft,
+                height: selectionFrame.length - 4,
+              },
+            }),
+          ),
+        );
+      } catch (error) {
+        writeFileSync(join(artifacts, "unicode-selection-failure.txt"), tui("second", "capture"));
+        throw error;
+      }
+      assert.deepEqual(
+        copy.clipboard,
+        {
+          bytes: Buffer.byteLength(selected[0]),
+          sha256: createHash("sha256").update(selected[0]).digest("hex"),
+        },
+        "Unicode selection must preserve exact UTF-8 bytes",
+      );
+      assert.equal(geometry(), dimensions, "copying Unicode must not mutate native layout");
+      report.unicodeSelection = {
+        expected: selected[0],
+        clipboard: copy.clipboard,
+        observation: copy.clipboardObservation,
+        style: copy.selectionStyle,
+      };
+      writeFileSync(unicodeStop, "stop", { mode: 0o600 });
+      const unicodeFinal = (rows) =>
+        rows.join("\n").includes("UNICODE_DONE") && unicodeChrome(rows);
+      await frame("unicode-output-stopped", "first", unicodeFinal);
+      await frame("unicode-output-stopped-reader", "second", anchored);
+      tui("second", "key", "Escape");
+      await frame(
+        "unicode-back-to-live",
+        "second",
+        (rows) => unicodeFinal(rows) && !rows[2].includes("Scrollback"),
+      );
+      report.unicodeReading = {
+        anchor,
+        intervalMs: 40,
+        lastPeerTick: firstTick,
+        secondWidths: [90, 72, 90],
+      };
       const mouseInput = join(root, "application-mouse.bin");
       const mouseFixture = join(root, "mouse.mjs");
       writeFileSync(mouseInput, "", { mode: 0o600 });
@@ -354,12 +523,49 @@ process.stdout.write('\\x1b[?1000h\\x1b[?1006h'+Array.from({length:120},(_,i)=>'
       );
       const mouseBaseline = (rows) =>
         rows[3].includes("HISTORY_101") && rows.at(-2).includes("MOUSE_READY");
-      await frame("mouse-ready", "second", mouseBaseline);
+      const mouseReady = await frame("mouse-ready", "second", mouseBaseline);
+      const contentLeft = mouseReady[3].indexOf("HISTORY_101");
+      assert.ok(
+        contentLeft >= 0 && contentLeft < 40,
+        "mouse target lies inside observed pane content",
+      );
+      const nativeRows = native("capture-pane", "-p", "-t", `${state.session}:one.0`).split("\n");
+      const nativeOriginY = nativeRows.findIndex((line) => line.startsWith("HISTORY_101"));
+      assert.ok(nativeOriginY >= 0, "live cropped row has a native coordinate");
+      const expectedMouse = `\x1b[<64;${40 - contentLeft + 1};${nativeOriginY + 5 - 3 + 1}M`;
+      const waitForMouseBytes = async (expected) => {
+        const deadline = Date.now() + 5_000;
+        while (
+          readFileSync(mouseInput).length < Buffer.byteLength(expected) &&
+          Date.now() < deadline
+        )
+          await delay(25);
+        assert.equal(readFileSync(mouseInput, "utf8"), expected);
+      };
       wheel("wheel-up");
-      const inputDeadline = Date.now() + 5_000;
-      while (readFileSync(mouseInput).length === 0 && Date.now() < inputDeadline) await delay(25);
-      // Sidebar = 20 columns, pane header ends at row 2; cropped native origin is row 20.
-      assert.equal(readFileSync(mouseInput, "utf8"), "\x1b[<64;21;23M");
+      await waitForMouseBytes(expectedMouse);
+      await frame(
+        "ordinary-wheel-application",
+        "second",
+        (rows) => mouseBaseline(rows) && !rows[2].includes("Scrollback"),
+      );
+      tui(
+        "second",
+        "input",
+        JSON.stringify({
+          version: 1,
+          kind: "application-mouse",
+          action: "wheel-up",
+          x: 40,
+          y: 5,
+          modifiers: ["alt"],
+        }),
+      );
+      // Derive terminal coordinates from the actual accepted frame/native row,
+      // including sidebar, header and cropped native viewport. Ordinary wheel
+      // reaches the mouse-enabled application automatically; compatibility Alt
+      // is consumed so the second event has the same application encoding.
+      await waitForMouseBytes(expectedMouse.repeat(2));
       await frame("mouse-forwarded", "second", mouseBaseline);
       tui(
         "second",
@@ -376,7 +582,7 @@ process.stdout.write('\\x1b[?1000h\\x1b[?1006h'+Array.from({length:120},(_,i)=>'
       await frame(
         "shift-wheel-local",
         "second",
-        (rows) => rows[2].includes("↑1") && rows[3].includes("HISTORY_100"),
+        (rows) => rows[2].includes("Scrollback") && rows[3].includes("HISTORY_096"),
       );
       await frame(
         "shift-wheel-local",
@@ -387,7 +593,7 @@ process.stdout.write('\\x1b[?1000h\\x1b[?1006h'+Array.from({length:120},(_,i)=>'
       await frame("reading-wheel-local", "second", mouseBaseline);
       assert.equal(
         readFileSync(mouseInput, "utf8"),
-        "\x1b[<64;21;23M",
+        expectedMouse.repeat(2),
         "local reading leaked wheel input to application",
       );
       assert.equal(geometry(), dimensions, "application mouse routing changed native geometry");

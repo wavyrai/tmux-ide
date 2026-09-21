@@ -1,3 +1,4 @@
+import { ApplicationShellTransportError } from "@tmux-ide/daemon-client/application-shell-session";
 import {
   WorkspaceCatalogResourceV2SchemaZ,
   WorkspaceCatalogResourceV3SchemaZ,
@@ -62,18 +63,41 @@ async function fetchCanonicalCatalog(
       break;
     } catch (error) {
       if (signal?.aborted || !isTimeout(error) || attempt === WORKSPACE_CATALOG_ATTEMPTS - 1)
-        throw error;
+        throw new ApplicationShellTransportError(
+          "network-error",
+          "Workspace catalog transport unavailable",
+        );
     }
   }
-  if (!response) throw new Error("workspace catalog did not return a response");
-  if (!response.ok) throw new Error(`workspace catalog returned HTTP ${response.status}`);
+  if (!response)
+    throw new ApplicationShellTransportError(
+      "network-error",
+      "workspace catalog did not return a response",
+    );
+  if (!response.ok)
+    throw new ApplicationShellTransportError(
+      "http-error",
+      `workspace catalog returned HTTP ${response.status}`,
+      response.status,
+    );
 
-  const catalog =
-    version === 3
-      ? WorkspaceCatalogResourceV3SchemaZ.parse(await response.json())
-      : WorkspaceCatalogResourceV2SchemaZ.parse(await response.json());
+  let catalog: WorkspaceCatalogResourceV2 | WorkspaceCatalogResourceV3;
+  try {
+    catalog =
+      version === 3
+        ? WorkspaceCatalogResourceV3SchemaZ.parse(await response.json())
+        : WorkspaceCatalogResourceV2SchemaZ.parse(await response.json());
+  } catch {
+    throw new ApplicationShellTransportError(
+      "schema-invalid",
+      "Workspace catalog response is invalid",
+    );
+  }
   if (catalog.daemon.instanceId !== daemon.instanceId) {
-    throw new Error("daemon generation changed while resolving the workspace");
+    throw new ApplicationShellTransportError(
+      "daemon-identity-mismatch",
+      "daemon generation changed while resolving the workspace",
+    );
   }
   return catalog;
 }

@@ -1005,6 +1005,45 @@ describe("SessionRuntimeRegistry", () => {
     await registry.dispose();
   });
 
+  it("clears window overrides on handoff and rejects the retired controller", async () => {
+    const { registry, sims } = controllerRig();
+    const first = registry.connect("alpha-session", "web", "client:first");
+    const second = registry.connect("alpha-session", "opentui", "client:second");
+    await first.subscribe("pane.alpha", () => {});
+    const firstLease = first.acquireController();
+    first.fitViewport(firstLease, 120, 40, "window.test.one");
+
+    const secondLease = first.handoffController(firstLease, second.clientId);
+    expect(registry.authoritySnapshot("alpha-session").owners.geometry).toBeNull();
+    expect(() => first.fitViewport(firstLease, 121, 41, "window.test.one")).toThrow();
+    second.fitViewport(secondLease, 132, 44);
+
+    expect(registry.authoritySnapshot("alpha-session").owners).toEqual({
+      input: "client:second",
+      focus: null,
+      geometry: "client:second",
+    });
+    expect(
+      sims[0]!.written.filter(
+        (command) =>
+          command.startsWith("refresh-client -f") || command.startsWith("refresh-client -C"),
+      ),
+    ).toEqual([
+      "refresh-client -f !ignore-size",
+      "refresh-client -C @1:120x40",
+      "refresh-client -C @1:",
+      "refresh-client -f ignore-size",
+      "refresh-client -f !ignore-size",
+      "refresh-client -C 132x44",
+    ]);
+    expect(
+      sims[0]!.written.filter(
+        (command) => command === "refresh-client -B 'tmux-ide-native-clients::#{session_attached}'",
+      ),
+    ).toHaveLength(1);
+    await registry.dispose();
+  });
+
   it("fits with an exact geometry lease without creating or moving input authority", async () => {
     const { registry, sims } = controllerRig();
     const consumer = registry.connect("alpha-session", "web", "client:geometry-only");

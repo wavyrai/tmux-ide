@@ -188,6 +188,8 @@ type ReplySink =
         readonly resultIndex: number;
         readonly onReply: (reply: ControlReply) => void;
         readonly lines: string[];
+        readonly leadingErrorLines: string[];
+        leadingErrorBytes: number;
         settled: boolean;
         budget?: ReplyBudget;
       };
@@ -271,7 +273,15 @@ export class ControlChannelCore {
     onReply: (reply: ControlReply) => void,
     budget?: ReplyBudget,
   ): void {
-    const state = { resultIndex, onReply, lines: budget?.lines ?? [], settled: false, budget };
+    const state = {
+      resultIndex,
+      onReply,
+      lines: budget?.lines ?? [],
+      leadingErrorLines: [] as string[],
+      leadingErrorBytes: 0,
+      settled: false,
+      budget,
+    };
     for (let index = 0; index < replyCount; index += 1)
       this.pending.push({ kind: "command-list", state, index });
   }
@@ -458,8 +468,19 @@ export class ControlChannelCore {
             } else budget.lines.push(event.line);
           }
         } else if (head?.kind === "promise" || head?.kind === "inline") head.lines.push(event.line);
-        else if (head?.kind === "command-list" && head.index === head.state.resultIndex)
-          head.state.lines.push(event.line);
+        else if (head?.kind === "command-list") {
+          if (head.index === head.state.resultIndex) head.state.lines.push(event.line);
+          else if (head.index === 0 && head.state.leadingErrorBytes <= 4096) {
+            // A whole command-list parse error occupies only the first slot,
+            // even when the selected result is later. Keep bounded diagnostics
+            // until its terminator proves whether it was an error.
+            head.state.leadingErrorBytes += event.line.length + 1;
+            if (head.state.leadingErrorBytes > 4096 || head.state.leadingErrorLines.length >= 8) {
+              head.state.leadingErrorBytes = 4097;
+              head.state.leadingErrorLines.length = 0;
+            } else head.state.leadingErrorLines.push(event.line);
+          }
+        }
         break;
       }
       case "end":
@@ -476,6 +497,7 @@ export class ControlChannelCore {
         const sink = this.pending.shift();
         if (!sink) break; // unsolicited block (greeting after a race)
         if (sink.kind === "command-list") {
+          if (event.kind === "end") sink.state.leadingErrorLines.length = 0;
           if (event.kind === "end" && sink.index < sink.state.resultIndex && sink.state.budget) {
             sink.state.lines.length = 0;
             sink.state.budget.bytes = 0;
@@ -487,7 +509,13 @@ export class ControlChannelCore {
               this.pending.shift();
             if (!sink.state.settled) {
               sink.state.settled = true;
-              sink.state.onReply({ ok: false, lines: sink.state.lines });
+              sink.state.onReply({
+                ok: false,
+                lines:
+                  sink.state.budget || sink.state.resultIndex === 0
+                    ? sink.state.lines
+                    : sink.state.leadingErrorLines,
+              });
             }
           } else if (sink.index === sink.state.resultIndex && !sink.state.settled) {
             sink.state.settled = true;

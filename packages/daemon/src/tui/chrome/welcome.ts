@@ -1,3 +1,5 @@
+import { runtimeOwnedPath } from "../../lib/runtime-namespace.ts";
+import { resolveRuntimeNamespace } from "../../lib/runtime-namespace.ts";
 /**
  * The first-run WELCOME card — shown ONCE, the moment tmux-ide first adopts a
  * session.
@@ -19,7 +21,6 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DEFAULT_KEYS, getAppConfig, type AppKeys } from "../../lib/app-config.ts";
 
@@ -44,8 +45,8 @@ function renderKey(tmuxKey: string): string {
  * dir so it never touches — or is confused by — the real user's marker.
  */
 export function welcomeMarkerPath(): string {
-  const home = process.env.TMUX_IDE_HOME ?? join(homedir(), ".tmux-ide");
-  return join(home, "welcomed");
+  const home = resolveRuntimeNamespace().stateHome;
+  return runtimeOwnedPath(join(home, "welcomed"));
 }
 
 /**

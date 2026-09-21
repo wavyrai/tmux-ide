@@ -1,3 +1,4 @@
+import { runtimeOwnedPath } from "../../lib/runtime-namespace.ts";
 /**
  * Agent-state TRANSITION event log — the fleet's history layer.
  *
@@ -88,7 +89,7 @@ export function formatEventLine(
 
 /** Absolute path to the fleet event log (under the `TMUX_IDE_HOME`-aware home). */
 export function eventsPath(): string {
-  return join(stateHome(), "events.jsonl");
+  return runtimeOwnedPath(join(stateHome(), "events.jsonl"));
 }
 
 /**

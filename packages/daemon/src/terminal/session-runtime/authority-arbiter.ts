@@ -150,10 +150,16 @@ export class SessionRuntimeAuthorityArbiter {
   noteNativeGeometryActivity(): void {
     this.#assertOpen();
     const now = this.#scheduler.nowMs();
-    this.#nativeGeometryYieldUntilMs = Math.max(
+    const yieldUntilMs = Math.max(
       this.#nativeGeometryYieldUntilMs,
       now + this.#nativeGeometryHysteresisMs,
     );
+    if (yieldUntilMs !== this.#nativeGeometryYieldUntilMs) {
+      this.#nativeGeometryYieldUntilMs = yieldUntilMs;
+      // The deadline is public snapshot state, even while geometry already
+      // has no owner. Clients require every snapshot change to advance it.
+      this.#advance();
+    }
     this.#nativeYieldEpoch += 1;
     const epoch = this.#nativeYieldEpoch;
     this.#nativeYieldTimer?.cancel();

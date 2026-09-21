@@ -1,3 +1,4 @@
+import { createBoundedControlWriter } from "./bounded-control-writer.ts";
 /**
  * Unified push channel for clients — single WebSocket carrying session,
  * workspace, project-registry, terminal, and config change signals.
@@ -19,8 +20,7 @@ import {
   AGENT_STATE_TMUX_ARGS,
   parseAgentStateFacts,
   parseSessionCompositionFacts,
-  readAgentStateFacts,
-  readSessionCompositionFacts,
+  createDefaultFleetFactsReaders,
   SESSION_COMPOSITION_TMUX_ARGS,
   type DaemonFleetFactsObserverOptions,
   type DaemonFleetFactsObserverDiagnostic,
@@ -60,7 +60,9 @@ const KEEPALIVE_INTERVAL_MS = 25_000;
 
 interface WsLike {
   readyState: number;
-  send(data: string): void;
+  readonly bufferedAmount?: number;
+  send(data: string, callback?: (error?: Error) => void): void;
+  terminate?(): void;
   close(code?: number, reason?: string): void;
   on(event: "message", listener: (data: RawData | string, isBinary: boolean) => void): this;
   on(event: "close", listener: () => void): this;
@@ -391,9 +393,11 @@ function broadcastAdoptedCompositionChanged(): void {
 }
 
 function ensureFleetFactsObserver(): DaemonFleetFactsObserver {
+  if (fleetFactsObserver) return fleetFactsObserver;
+  const defaults = createDefaultFleetFactsReaders();
   const readers = fleetFactsReaderOverride ?? {
-    readSessions: sessionCompositionReaderOverride ?? readSessionCompositionFacts,
-    readAgents: agentStateReaderOverride ?? readAgentStateFacts,
+    readSessions: sessionCompositionReaderOverride ?? defaults.readSessions,
+    readAgents: agentStateReaderOverride ?? defaults.readAgents,
   };
   fleetFactsObserver ??= new DaemonFleetFactsObserver({
     ...readers,
@@ -422,13 +426,13 @@ export function setFleetFactsObserverDiagnostics(
 
 /** Pin fleet invalidations to the same tmux authority as catalog HTTP reads. */
 export function setFleetFactsTmuxRunner(
-  runTmux: ((args: readonly string[]) => string) | null,
+  runTmux: ((args: readonly string[], signal?: AbortSignal) => string | Promise<string>) | null,
 ): void {
   stopFleetFactsObserver();
   sessionCompositionReaderOverride = runTmux
-    ? async () => {
+    ? async (signal) => {
         try {
-          return parseSessionCompositionFacts(runTmux(SESSION_COMPOSITION_TMUX_ARGS));
+          return parseSessionCompositionFacts(await runTmux(SESSION_COMPOSITION_TMUX_ARGS, signal));
         } catch (error) {
           // A daemon may legitimately precede the first tmux server. Socket
           // absence is an authoritative empty fleet baseline, not a failed
@@ -439,9 +443,9 @@ export function setFleetFactsTmuxRunner(
       }
     : null;
   agentStateReaderOverride = runTmux
-    ? async () => {
+    ? async (signal) => {
         try {
-          return parseAgentStateFacts(runTmux(AGENT_STATE_TMUX_ARGS));
+          return parseAgentStateFacts(await runTmux(AGENT_STATE_TMUX_ARGS, signal));
         } catch {
           return null;
         }
@@ -654,12 +658,30 @@ export function handleWsEventsConnection(
   let legacyDeliveryEnabled = options.mode !== "semantic";
   let interestMutation: Promise<void> | null = null;
 
+  const writer = createBoundedControlWriter(ws, () => {
+    cleanup();
+    // Cleanup cannot depend on an unresponsive peer completing the close handshake.
+    const timer = setTimeout(() => {
+      try {
+        ws.terminate?.();
+      } catch {
+        /* closed */
+      }
+    }, 250);
+    timer.unref?.();
+    ws.on("close", () => clearTimeout(timer));
+    try {
+      ws.close(1013, "Control stream pressure; reconnect and reseed");
+    } catch {
+      /* already closed */
+    }
+  });
   const send = (frame: DaemonEventServerFrame): void => {
     if (closed || ws.readyState !== WS_OPEN) return;
     try {
-      ws.send(JSON.stringify(frame));
+      writer.send(JSON.stringify(frame));
     } catch {
-      // peer went away mid-send; close path will clean up
+      /* Malformed frame must not break healthy-peer fanout. */
     }
   };
 
@@ -842,6 +864,7 @@ export function handleWsEventsConnection(
   const cleanup = (): void => {
     if (closed) return;
     closed = true;
+    writer.dispose();
     clearInterval(keepalive);
     allClients.delete(clientHandle);
     subscriptions.clear();

@@ -507,3 +507,18 @@ export function shellStatusPresentation(
     hints: variant === "compact" ? primary : [primary, exit].filter(Boolean).join(" · "),
   };
 }
+
+/** Presentation only: manager admission validates the namespace and supplies build metadata.
+ * Capture once when mounting chrome; never resolve paths or refresh Git from rendering. */
+export function developmentChromeLabel(
+  env: Readonly<Record<string, string | undefined>>,
+): string | null {
+  if (
+    env.TMUX_IDE_RUNTIME_MODE !== "development" ||
+    !/^dev-[a-f0-9]{24}$/.test(env.TMUX_IDE_DEVELOPMENT_ID ?? "")
+  )
+    return null;
+  const name = (env.TMUX_IDE_DEVELOPMENT_NAME ?? "").replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 12);
+  const id = env.TMUX_IDE_DEVELOPMENT_ID!.slice(4, 10);
+  return `DEV ${name ? `${name}:` : ""}${id}${env.TMUX_IDE_DEVELOPMENT_BUILD_DIRTY === "1" ? "*" : ""}`;
+}

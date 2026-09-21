@@ -501,8 +501,15 @@ export function rendererDaemonState(
 function daemonIdentity(
   daemon: Extract<DesktopDaemonHostState, { status: "connected" }>,
 ): DaemonInstanceIdentity {
-  const { protocolVersion, productVersion, instanceId, startedAt } = daemon.descriptor;
-  return { protocolVersion, productVersion, instanceId, startedAt };
+  const { protocolVersion, productVersion, instanceId, startedAt, environmentId } =
+    daemon.descriptor;
+  return {
+    protocolVersion,
+    productVersion,
+    instanceId,
+    startedAt,
+    ...(environmentId !== undefined ? { environmentId } : {}),
+  };
 }
 
 function sameIdentity(left: DaemonInstanceIdentity, right: DaemonInstanceIdentity): boolean {
@@ -510,7 +517,8 @@ function sameIdentity(left: DaemonInstanceIdentity, right: DaemonInstanceIdentit
     left.protocolVersion === right.protocolVersion &&
     left.productVersion === right.productVersion &&
     left.instanceId === right.instanceId &&
-    left.startedAt === right.startedAt
+    left.startedAt === right.startedAt &&
+    left.environmentId === right.environmentId
   );
 }
 
@@ -815,7 +823,7 @@ export class DaemonResourceBroker {
     }
     try {
       const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
-        await this.#mutationJson("/api/v2/capabilities", {}, {}),
+        await this.#mutationJson("/api/v2/capabilities?windowViewport=1", {}, {}),
       );
       if (result.status === "ok" && !sameIdentity(result.daemon, daemonIdentity(this.#daemon))) {
         return { status: "error", error: daemonCapabilityError("daemon-identity-mismatch") };

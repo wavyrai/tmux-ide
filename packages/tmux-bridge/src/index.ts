@@ -2,6 +2,8 @@ export { TmuxError } from "./errors.ts";
 export {
   runTmux,
   runTmuxBinary,
+  runTmuxBinaryAsync,
+  classifyTmuxError,
   sanitizeTmuxClientEnvironment,
   _setExecutor,
   _setSpawner,

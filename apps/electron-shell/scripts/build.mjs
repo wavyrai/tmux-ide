@@ -3,11 +3,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { build } from "esbuild";
+import { selectRenderer, writeRendererManifest } from "./renderer-artifact.mjs";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = join(packageRoot, "..", "..");
 const dist = join(packageRoot, "dist");
-const rendererDist = join(packageRoot, "..", "desktop-renderer", "dist");
+const renderer = selectRenderer(process.argv.slice(2));
+const rendererName = renderer === "workspace" ? "web-workspace" : "desktop-renderer";
+const rendererDist = join(packageRoot, "..", rendererName, "dist");
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
@@ -88,3 +91,4 @@ for (const asset of rendererAssets.filter((name) => name.endsWith(".js"))) {
     }
   }
 }
+await writeRendererManifest(dist, renderer);

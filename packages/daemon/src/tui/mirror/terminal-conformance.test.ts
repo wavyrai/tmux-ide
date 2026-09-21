@@ -7,7 +7,7 @@ import {
 } from "@tmux-ide/core";
 import { describe, expect, it } from "vitest";
 
-import { PaneMirror } from "./pane-mirror.ts";
+import { PaneMirror } from "../../../test-support/pane-mirror.ts";
 
 const DEFAULT_FOREGROUND = 0xdedee6;
 const DEFAULT_BACKGROUND = 0x0b0b10;

@@ -1,3 +1,4 @@
+import type { WorkspaceAdmissionSnapshot } from "@tmux-ide/contracts";
 import type {
   WorkspaceOpenCancelledResult,
   WorkspaceOpenCommittedResult,
@@ -15,6 +16,7 @@ import { ActionError } from "../errors.ts";
 import type { ActionExecutionContext } from "../registry.ts";
 
 export interface WorkspaceOpenBackend {
+  admissionSnapshot?(): WorkspaceAdmissionSnapshot;
   open(input: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
 }
 

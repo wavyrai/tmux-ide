@@ -347,7 +347,11 @@ export interface PaneStreamRuntimeClient {
   ): Promise<SessionRuntimeTerminalInputResult>;
   sendText(pane: string, text: string, performanceTraceId?: string): void;
   sendKey(pane: string, key: string, performanceTraceId?: string): void;
-  fitViewport(cols: number, rows: number): Promise<"ok" | "geometry-authority-conflict">;
+  fitViewport(
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): Promise<"ok" | "geometry-authority-conflict">;
   ack(ack: TerminalDeliveryAck): void;
   nack(nack: TerminalDeliveryNack): void;
   setVisibility(
@@ -1521,7 +1525,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
         options.onFault?.(error instanceof Error ? error : new Error(String(error))),
       );
     },
-    fitViewport: async (cols, rows) => {
+    fitViewport: async (cols, rows, semanticWindowId) => {
       let geometry = connectionAuthorityGrants.get("geometry") ?? null;
       if (!geometry) {
         geometry = await requestAuthority("geometry");
@@ -1541,7 +1545,14 @@ export async function connectIssuedPaneStreamRuntimeClient(
         }, 2_000);
         pendingViewports.set(seq, { cols, rows, lease: geometry, resolve, reject, timer });
         try {
-          send({ type: "viewport", seq, cols, rows, authorityLease: geometry });
+          send({
+            type: "viewport",
+            seq,
+            cols,
+            rows,
+            authorityLease: geometry,
+            ...(semanticWindowId === undefined ? {} : { semanticWindowId }),
+          });
         } catch (error) {
           timer.release();
           pendingViewports.delete(seq);

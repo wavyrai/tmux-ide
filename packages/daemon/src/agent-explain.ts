@@ -1,3 +1,4 @@
+import { runtimeTmuxArgs } from "./lib/runtime-namespace.ts";
 /**
  * `tmux-ide agent explain <pane>` — the detection debugger.
  *
@@ -74,7 +75,7 @@ export interface ExplainReport {
 
 function tmux(args: string[]): string {
   try {
-    return execFileSync("tmux", args, {
+    return execFileSync("tmux", runtimeTmuxArgs(args), {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();

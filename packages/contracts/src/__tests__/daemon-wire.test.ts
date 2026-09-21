@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   CanonicalDaemonInfoSchema,
   DAEMON_WIRE_PROTOCOL_VERSION,
+  DaemonProvenanceSchema,
   DaemonHealthSchema,
   DaemonHealthzSchema,
   DaemonIdentitySchema,
@@ -113,5 +114,36 @@ describe("environment identity (additive, both directions)", () => {
     // Generation identity is untouched by the additive field.
     expect(withId.daemon.instanceId).toBe(identityFields.instanceId);
     expect(withId.daemon.startedAt).toBe(identityFields.startedAt);
+  });
+});
+
+describe("daemon provenance (additive)", () => {
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
+    canonical: Record<string, unknown>;
+  };
+  const provenance = {
+    launcher: "headless",
+    supervisor: "systemd",
+    parentPid: 1,
+    stdout: { kind: "file", path: "/var/log/tmux-ide.out", dev: 1, ino: 2 },
+    stderr: { kind: "socket" },
+    warnings: ["stderr: path unresolved"],
+  };
+
+  it("parses records with and without provenance", () => {
+    expect(CanonicalDaemonInfoSchema.parse(fixture.canonical).provenance).toBeUndefined();
+    expect(
+      CanonicalDaemonInfoSchema.parse({ ...fixture.canonical, provenance }).provenance,
+    ).toEqual(provenance);
+    expect(DaemonProvenanceSchema.parse(provenance)).toEqual(provenance);
+  });
+
+  it("rejects unknown supervisors and stream kinds", () => {
+    expect(DaemonProvenanceSchema.safeParse({ ...provenance, supervisor: "cron" }).success).toBe(
+      false,
+    );
+    expect(
+      DaemonProvenanceSchema.safeParse({ ...provenance, stdout: { kind: "journal" } }).success,
+    ).toBe(false);
   });
 });

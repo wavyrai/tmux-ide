@@ -2,12 +2,11 @@
  * Receipt-driven `wait agent-status` — the push twin of the polling loop in
  * `wait.ts`.
  *
- * When a canonical daemon is running, its agent-status watcher already
- * observes every `@agent_state` transition and emits a typed
- * `agent.turn-completed` receipt on the `/ws/events` bus. Waiting on that
- * receipt replaces the CLI's local poll (which re-scrapes the whole fleet
- * every 750 ms) with a single WebSocket that sits idle until the daemon
- * pushes the completion.
+ * Daemon completion receipts and session invalidations are wake-up hints, not
+ * proof that the whole session reached a status. Re-read the same aggregate
+ * session status as the polling path: another agent may still be working or
+ * blocked. Neither transport proves success of a submitted task. Bursts of
+ * hints share one read, with a persistent classification tracker.
  *
  * Honest degrade: this path only answers for the receipt-covered targets
  * (`done` / `idle` — the "turn finished" statuses). Every other case — no
@@ -16,7 +15,7 @@
  * existing polling implementation. A timeout is a real answer, not a fallback.
  *
  * Deps are injected (daemon record reader, liveness probe, socket factory,
- * one-shot status read, clock) so the waiting logic unit-tests without a
+ * aggregate status read, clock) so the waiting logic unit-tests without a
  * daemon; the exported defaults wire the real io.
  */
 
@@ -33,7 +32,7 @@ import { findSessionStatus } from "./report.ts";
 import { listTeamSessions } from "./sessions.ts";
 import { WAIT_DEFAULT_TIMEOUT_MS, type WaitAgentStatusResult } from "./wait.ts";
 
-/** How long to give the daemon socket to open before falling back to polling. */
+/** How long to allow socket open, hello and observer-install acknowledgement before falling back to polling. */
 export const RECEIPT_CONNECT_TIMEOUT_MS = 1_500;
 
 /** The statuses a turn-completed receipt can settle; all others need the poll. */
@@ -46,6 +45,7 @@ export interface ReceiptSocket {
   on(event: "open" | "close", listener: () => void): unknown;
   on(event: "error", listener: (err: Error) => void): unknown;
   on(event: "message", listener: (data: unknown) => void): unknown;
+  send(data: string): void;
   close(): void;
 }
 
@@ -59,10 +59,10 @@ export interface WaitReceiptsOpts {
   /** Socket factory (defaults to `ws` against the daemon's `/ws/events`). */
   openSocket?: (url: string) => ReceiptSocket;
   /**
-   * One-shot status read run AFTER the socket opens, so a turn that completed
+   * Aggregate session status read after observer acknowledgement and on coalesced hints. A turn completed
    * before this process launched is answered immediately instead of waiting
    * for a receipt that already fired. Defaults to the same fleet read the
-   * polling loop uses (a single iteration, not a loop).
+   * polling loop uses, with a tracker retained for the entire wait.
    */
   currentStatus?: () => AgentStatus | null;
   now?: () => number;
@@ -89,6 +89,17 @@ export async function waitForAgentStatusViaReceipts(
 ): Promise<WaitAgentStatusResult | null> {
   if (!isReceiptCoveredStatus(want)) return null;
 
+  const timeoutMs = opts.timeoutMs ?? WAIT_DEFAULT_TIMEOUT_MS;
+  const now = opts.now ?? Date.now;
+  const started = now();
+  const timedOut = (): WaitAgentStatusResult => ({
+    ok: false,
+    session,
+    want,
+    status: null,
+    timedOutAfterMs: timeoutMs,
+  });
+  const remaining = (): number => Math.max(0, timeoutMs - (now() - started));
   const readInfo = opts.readDaemonInfo ?? readCanonicalDaemonInfo;
   let info: CanonicalDaemonInfo | null;
   try {
@@ -98,9 +109,23 @@ export async function waitForAgentStatusViaReceipts(
   }
   if (!info) return null;
   const probeAlive = opts.probeAlive ?? isCanonicalDaemonAlive;
-  if (!(await probeAlive(info))) return null;
+  let probeTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const alive = await Promise.race([
+      probeAlive(info),
+      new Promise<null>((resolve) => {
+        probeTimer = setTimeout(() => resolve(null), remaining());
+        probeTimer.unref?.();
+      }),
+    ]);
+    if (alive === null || remaining() === 0) return timedOut();
+    if (!alive) return null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(probeTimer);
+  }
 
-  const timeoutMs = opts.timeoutMs ?? WAIT_DEFAULT_TIMEOUT_MS;
   const connectTimeoutMs = opts.connectTimeoutMs ?? RECEIPT_CONNECT_TIMEOUT_MS;
   // A loopback-bound daemon admits same-machine upgrades without a token; a
   // remote-bound daemon enforces its token even locally, so present the one
@@ -113,9 +138,9 @@ export async function waitForAgentStatusViaReceipts(
         url,
         authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : undefined,
       ) as unknown as ReceiptSocket);
+  const tracker = createStatusTracker();
   const currentStatus =
-    opts.currentStatus ??
-    (() => findSessionStatus(listTeamSessions(createStatusTracker()), session));
+    opts.currentStatus ?? (() => findSessionStatus(listTeamSessions(tracker), session));
 
   const url = canonicalDaemonUrl("ws", info.bindHostname, info.port, "/ws/events");
   let socket: ReceiptSocket;
@@ -127,15 +152,19 @@ export async function waitForAgentStatusViaReceipts(
 
   return new Promise<WaitAgentStatusResult | null>((resolve) => {
     let settled = false;
+    let subscribed = false;
+    let ready = false;
     let lastStatus: AgentStatus | null = null;
     let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let connectTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     const settle = (result: WaitAgentStatusResult | null): void => {
       if (settled) return;
       settled = true;
       if (connectTimer !== null) clearTimeout(connectTimer);
       if (deadlineTimer !== null) clearTimeout(deadlineTimer);
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
       try {
         socket.close();
       } catch {
@@ -144,32 +173,25 @@ export async function waitForAgentStatusViaReceipts(
       resolve(result);
     };
 
+    const refreshStatus = (): void => {
+      if (settled) return;
+      try {
+        lastStatus = currentStatus();
+      } catch {
+        // This transport cannot establish aggregate status; use the fallback.
+        settle(null);
+        return;
+      }
+      if (lastStatus === want) settle({ ok: true, session, want, status: want });
+    };
+
+    deadlineTimer = setTimeout(() => settle({ ...timedOut(), status: lastStatus }), remaining());
+    deadlineTimer.unref?.();
     connectTimer = setTimeout(() => settle(null), connectTimeoutMs);
     connectTimer.unref?.();
 
     socket.on("error", () => settle(null));
     socket.on("close", () => settle(null));
-
-    socket.on("open", () => {
-      if (settled) return;
-      if (connectTimer !== null) clearTimeout(connectTimer);
-      deadlineTimer = setTimeout(
-        () => settle({ ok: false, session, want, status: lastStatus, timedOutAfterMs: timeoutMs }),
-        timeoutMs,
-      );
-      deadlineTimer.unref?.();
-      // The watcher baselines when the first client connects, so a receipt can
-      // only describe a transition AFTER this socket exists. Answer the
-      // already-finished case with one direct read.
-      try {
-        lastStatus = currentStatus();
-      } catch {
-        lastStatus = null;
-      }
-      if (lastStatus === want) {
-        settle({ ok: true, session, want, status: want });
-      }
-    });
 
     socket.on("message", (data) => {
       if (settled) return;
@@ -180,13 +202,66 @@ export async function waitForAgentStatusViaReceipts(
         return; // not a protocol frame — ignore
       }
       const parsed = DaemonEventServerFrameSchemaZ.safeParse(raw);
-      if (!parsed.success) return;
-      const frame = parsed.data;
-      if (frame.type !== "agent.turn-completed" || frame.sessionName !== session) return;
-      lastStatus = frame.toStatus;
-      if (frame.toStatus === want) {
-        settle({ ok: true, session, want, status: want });
+      if (!parsed.success) {
+        if (!ready) settle(null); // incompatible handshake/protocol
+        return;
       }
+      const frame = parsed.data;
+      if (frame.type === "protocol.error") {
+        settle(null);
+        return;
+      }
+      if (frame.type === "hello") {
+        if (subscribed) return;
+        if (
+          frame.daemon.protocolVersion !== info.protocolVersion ||
+          frame.daemon.instanceId !== info.instanceId
+        ) {
+          settle(null);
+          return;
+        }
+        subscribed = true;
+        try {
+          socket.send(
+            JSON.stringify({
+              type: "subscribe",
+              sessions: [],
+              legacyEvents: true,
+              interests: [{ resource: "fleet-catalog", workspaceName: null }],
+              interestRevision: 1,
+            }),
+          );
+        } catch {
+          settle(null);
+        }
+        return;
+      }
+      if (frame.type === "resource.interests-ack") {
+        if (!subscribed || ready || frame.interestRevision !== 1) return;
+        if (frame.unavailableInterests.length > 0) {
+          settle(null);
+          return;
+        }
+        ready = true;
+        if (connectTimer !== null) clearTimeout(connectTimer);
+        // Observation is installed and baselined before this read. Hints that
+        // arrived before the barrier are covered by this current snapshot.
+        refreshStatus();
+        return;
+      }
+      if (!ready) return;
+
+      if (
+        (frame.type !== "agent.turn-completed" && frame.type !== "agent-status.changed") ||
+        frame.sessionName !== session
+      )
+        return;
+      if (refreshTimer !== null) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        refreshStatus();
+      }, 0);
+      refreshTimer.unref?.();
     });
   });
 }

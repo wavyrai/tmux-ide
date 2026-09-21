@@ -26,7 +26,17 @@ import type { TuiTerminalCanonicalPaintIdentity } from "../performance-events.ts
 import type { CausalCellClientLedger } from "./causal-cell-client-ledger.ts";
 import type { OpenTuiTerminalResourceSampler } from "./workspace-terminal-fast-lane.ts";
 
+import { TerminalRowProjectionCache } from "./terminal-row-projection-cache.ts";
+
 interface PaneRendererInterest {
+  rowProjectionCache?: TerminalRowProjectionCache;
+  projectionViewport?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    consumer: object | undefined;
+  };
   readonly paneId: string;
   readonly listeners: Set<
     (
@@ -177,6 +187,8 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     for (const interest of this.#panes.values()) {
       if (!this.#resizeRetainedView(interest)) continue;
       interest.paintedRows = [];
+      interest.rowProjectionCache?.clear();
+      interest.projectionViewport = undefined;
       interest.version++;
       for (const listener of [...interest.listeners]) {
         try {
@@ -196,17 +208,23 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     const geometry = this.#nativePaneGeometries.get(interest.paneId) ?? fallback;
     if (!retained || !geometry) return false;
     const { cols, rows } = geometry;
+    if (retained.backingStatus === "pending") {
+      const last = retained.pendingSizes.at(-1) ?? retained.snapshot;
+      if (last.cols === cols && last.rows === rows) return false;
+      retained.pendingSizes.push({ cols, rows });
+      if (retained.pendingSizes.length > 128) {
+        retained.capture?.abort();
+        this.#finishRetainedBacking(interest, retained, false);
+      }
+      // Keep exact original rows until backing admission. A speculative
+      // compatible reflow cannot later be mapped to native physical padding.
+      return false;
+    }
     if (
       (retained.snapshot.cols === cols && retained.snapshot.rows === rows) ||
       (retained.rejectedResize?.cols === cols && retained.rejectedResize.rows === rows)
     )
       return false;
-    if (retained.backingStatus === "pending") {
-      if (retained.pendingSizes.length >= 128) {
-        retained.capture?.abort();
-        retained.backingStatus = "compatible";
-      } else retained.pendingSizes.push({ cols, rows });
-    }
     const resized = reflowRetainedTerminalSnapshot(retained.snapshot, cols, rows);
     if (!resized) {
       retained.rejectedResize = { cols, rows };
@@ -252,36 +270,20 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
             interest.retainedView !== retained
           )
             return;
-          retained.backingStatus = "compatible";
-          if (!backing || !retainNativeTerminalBacking(original, backing)) return;
-          let snapshot = original;
-          for (const size of retained.pendingSizes) {
-            const next = reflowRetainedTerminalSnapshot(snapshot, size.cols, size.rows);
-            if (!next) return;
-            snapshot = next;
-          }
-          retained.snapshot = snapshot;
-          retained.backingStatus = "native";
-          retained.backingRevision++;
-          retained.pendingSizes = [];
-          delete retained.rejectedResize;
-          interest.paintedRows = [];
-          interest.version++;
-          for (const listener of [...interest.listeners]) {
-            try {
-              listener(
-                interest.version,
-                this.#sourceEpoch,
-                interest.presentationVersion,
-                "content",
-              );
-            } catch {
-              /* Isolate observers. */
-            }
-          }
+          this.#finishRetainedBacking(
+            interest,
+            retained,
+            Boolean(backing && retainNativeTerminalBacking(original, backing)),
+          );
         })
         .catch(() => {
-          if (interest.retainedView === retained) retained.backingStatus = "compatible";
+          if (
+            !capture.signal.aborted &&
+            !this.#disposed &&
+            this.#panes.get(paneId) === interest &&
+            interest.retainedView === retained
+          )
+            this.#finishRetainedBacking(interest, retained, false);
         });
     }
     this.#resizeRetainedView(interest);
@@ -299,6 +301,8 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       for (let row = 0; row < (interest.state?.snapshot?.rows ?? 0); row++)
         interest.dirtyRows.add(row);
       interest.paintedRows = [];
+      interest.rowProjectionCache?.clear();
+      interest.projectionViewport = undefined;
       interest.version++;
       for (const listener of [...interest.listeners]) {
         try {
@@ -308,6 +312,38 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         }
       }
     };
+  }
+
+  #finishRetainedBacking(
+    interest: PaneRendererInterest,
+    retained: NonNullable<PaneRendererInterest["retainedView"]>,
+    native: boolean,
+  ): void {
+    let snapshot = retained.snapshot;
+    for (const size of retained.pendingSizes) {
+      const next = reflowRetainedTerminalSnapshot(snapshot, size.cols, size.rows);
+      if (!next) {
+        retained.rejectedResize = size;
+        break;
+      }
+      snapshot = next;
+      delete retained.rejectedResize;
+    }
+    retained.snapshot = snapshot;
+    retained.backingStatus = native ? "native" : "compatible";
+    retained.pendingSizes = [];
+    retained.backingRevision++;
+    interest.paintedRows = [];
+    interest.rowProjectionCache?.clear();
+    interest.projectionViewport = undefined;
+    interest.version++;
+    for (const listener of [...interest.listeners]) {
+      try {
+        listener(interest.version, this.#sourceEpoch, interest.presentationVersion, "content");
+      } catch {
+        /* Isolate observers. */
+      }
+    }
   }
 
   paneRetainedBackingStatus(paneId: string): "pending" | "native" | "compatible" | null {
@@ -414,8 +450,14 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       if (interest.listeners.size !== 0) return;
       interest.retainedView?.capture?.abort();
       interest.release?.();
+      interest.rowProjectionCache?.clear();
+      interest.projectionViewport = undefined;
       this.#panes.delete(paneId);
     };
+  }
+
+  rowProjectionDiagnostics(paneId: string) {
+    return this.#panes.get(paneId)?.rowProjectionCache?.diagnostics() ?? null;
   }
 
   dispose(): void {
@@ -424,6 +466,8 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     for (const interest of this.#panes.values()) {
       interest.retainedView?.capture?.abort();
       interest.release?.();
+      interest.rowProjectionCache?.clear();
+      interest.projectionViewport = undefined;
     }
     this.#panes.clear();
     this.#nativePaneGeometries.clear();
@@ -848,6 +892,45 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         ? new Set<number>()
         : null;
     const paintedRows = interest ? (interest.paintedRows ??= []) : [];
+    const reading = scrollOffset > 0 || Boolean(interest?.retainedView);
+    const previousViewport = interest?.projectionViewport;
+    const viewport = reading
+      ? {
+          x: options.viewportOrigin?.x ?? 0,
+          y: snapshot.history.length + (options.viewportOrigin?.y ?? -scrollOffset),
+          width,
+          height,
+          consumer: options.consumerId,
+        }
+      : undefined;
+    // A whole-page jump has no overlapping rows. Avoid caching a guaranteed
+    // miss-only frame; nearby movement can warm the bounded cache again.
+    const jumped =
+      previousViewport &&
+      viewport &&
+      previousViewport.width === width &&
+      previousViewport.height === height &&
+      previousViewport.consumer === options.consumerId &&
+      previousViewport.x === viewport.x &&
+      Math.abs(previousViewport.y - viewport.y) >= height;
+    if (interest) interest.projectionViewport = viewport;
+    const cache =
+      interest && reading && !jumped
+        ? (interest.rowProjectionCache ??= new TerminalRowProjectionCache())
+        : null;
+    if (cache)
+      cache.configure(width, height, [
+        options.consumerId,
+        options.viewportOrigin?.x ?? 0,
+        defaultFg,
+        defaultBg,
+        options.palette,
+        interest?.state?.generation,
+        interest?.state?.incarnation,
+        interest?.retainedView?.backingRevision,
+      ]);
+    else interest?.rowProjectionCache?.clear();
+    const blit = cache ? cache.blit.bind(cache) : blitSemanticRow;
     for (let row = 0; row < height; row += 1) {
       const canonicalRow = options.viewportOrigin ? options.viewportOrigin.y + row : row;
       const absoluteRow = snapshot.history.length + canonicalRow;
@@ -869,7 +952,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       if (!full && !interest?.dirtyRows.has(canonicalRow) && !forced?.has(row)) continue;
       writtenRows?.add(row);
       if (interest?.dirtyRows.has(canonicalRow)) paintedCanonicalChange = true;
-      blitSemanticRow(
+      blit(
         sourceRow,
         buffers,
         row,

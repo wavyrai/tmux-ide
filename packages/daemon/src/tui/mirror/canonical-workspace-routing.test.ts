@@ -65,7 +65,7 @@ describe("canonical workspace routing", () => {
     const request = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("connection failed"));
 
     await expect(fetchCanonicalWorkspaceRouting(daemon, request)).rejects.toThrow(
-      "connection failed",
+      "Workspace catalog transport unavailable",
     );
     expect(request).toHaveBeenCalledOnce();
   });

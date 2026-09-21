@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  realpathSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -39,7 +40,7 @@ function fixture() {
     minimumMacOS: "10.0",
     platform: process.platform,
     arch: process.arch,
-    extension: "tmux-ide-native-grid-v1",
+    extension: "tmux-ide-native-grid-v2",
     files: { tmux: createHash("sha256").update(bytes).digest("hex") },
   };
   const save = () => writeFileSync(join(bundle, "manifest.json"), JSON.stringify(manifest));
@@ -47,6 +48,26 @@ function fixture() {
   return { root, bundle, manifest, save };
 }
 describe("bundled tmux authority", () => {
+  it.each(["tmux-ide-native-grid-v1", "tmux-ide-native-grid-v2"])(
+    "accepts known extension %s while retaining integrity validation",
+    (extension) => {
+      const { bundle, manifest, save } = fixture();
+      manifest.extension = extension;
+      save();
+      expect(validateBundledTmux(bundle)).toBe(realpathSync(join(bundle, "tmux")));
+      writeFileSync(join(bundle, "tmux"), "tampered");
+      expect(() => validateBundledTmux(bundle)).toThrow("checksum mismatch");
+    },
+  );
+  it.each([undefined, null, "", "tmux-ide-native-grid-v3", "tmux-ide-native-grid-v2-extra"])(
+    "rejects unsupported extension %s",
+    (extension) => {
+      const { bundle, manifest, save } = fixture();
+      Object.assign(manifest, { extension });
+      save();
+      expect(() => validateBundledTmux(bundle)).toThrow("manifest");
+    },
+  );
   it.each([
     ["26.0", "26.0.0", true],
     ["15.7", "26.0", false],

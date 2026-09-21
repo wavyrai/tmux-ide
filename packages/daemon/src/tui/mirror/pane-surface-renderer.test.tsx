@@ -1,5 +1,5 @@
 /* @jsxImportSource @opentui/solid */
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { useTerminalDimensions } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ } from "@tmux-ide/contracts";
@@ -19,6 +19,8 @@ import {
   projectPaneFramebufferCells,
   qualifiesPaneSurfaceHostFocusFrame,
   registerPaneSurface,
+  queueNativeScrollHint,
+  registerNativeScrollHint,
   type PaneSurfaceOptions,
   type TerminalPaneRenderSource,
 } from "./pane-surface.tsx";
@@ -137,6 +139,56 @@ function semanticLane(
 }
 
 describe("PaneSurface OpenTUI renderer", () => {
+  it("offers only pane content bounds to the optional native scroll extension", async () => {
+    registerPaneSurface();
+    const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
+    const lane = semanticLane("A", 1);
+    const rectangles: number[][] = [];
+    const dispose = registerNativeScrollHint((context, x, y, width, height) => {
+      expect(typeof context.frameId).toBe("number");
+      rectangles.push([x, y, width, height]);
+    });
+    try {
+      const setup = await renderForTest(
+        () => (
+          <box width={20} height={8}>
+            <box position="absolute" left={0} top={0} width={6} height={8}>
+              <text>side</text>
+            </box>
+            <box position="absolute" left={6} top={1} width={10} height={5} flexDirection="column">
+              <text height={1}>header</text>
+              <pane_surface
+                width={10}
+                height={4}
+                mirror={lane.source}
+                paneId="pane.editor"
+                defaultFg={palette.foreground}
+                defaultBg={palette.background}
+                terminalPalette={palette}
+                searchHl={palette.searchHighlight}
+                searchCur={palette.searchCurrent}
+                contentVersion={1}
+              />
+            </box>
+          </box>
+        ),
+        { width: 20, height: 8 },
+      );
+      await setup.renderOnce();
+      expect(rectangles.length).toBeGreaterThan(0);
+      expect(rectangles.every((rect) => rect.join(",") === "6,2,10,4")).toBe(true);
+      const withExtension = setup.captureCharFrame();
+      expect(withExtension).toContain("header");
+      rectangles.length = 0;
+      dispose();
+      await setup.renderOnce();
+      expect(rectangles).toEqual([]);
+      expect(setup.captureCharFrame()).toBe(withExtension);
+    } finally {
+      dispose();
+    }
+  });
+
   it("consumes one exact root-owned focus transition and fences stale replacements", () => {
     let followupRenders = 0;
     const owner = createPaneSurfaceHostFocusTransitionOwner(() => {
@@ -903,4 +955,37 @@ it("repaints a smaller client's viewport when a cursor-only update crosses its b
   } finally {
     uninstall();
   }
+});
+
+describe("native scroll hints", () => {
+  it("is optional and forwards the renderer context and content bounds unchanged", () => {
+    const context = { rendererPtr: 12, frameId: 42 };
+    expect(() => queueNativeScrollHint(context, 4, 2, 80, 24)).not.toThrow();
+    const handler = mock();
+    const dispose = registerNativeScrollHint(handler);
+    try {
+      queueNativeScrollHint(context, 4, 2, 80, 24);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith(context, 4, 2, 80, 24);
+      expect(handler.mock.calls[0][0]).toBe(context);
+      dispose();
+      queueNativeScrollHint(context, 4, 2, 80, 24);
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not let stale disposal remove a newer registration of the same handler", () => {
+    const handler = mock();
+    const oldDispose = registerNativeScrollHint(handler);
+    const dispose = registerNativeScrollHint(handler);
+    try {
+      oldDispose();
+      queueNativeScrollHint({}, 0, 0, 1, 1);
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
 });

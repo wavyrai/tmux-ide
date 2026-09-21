@@ -16,6 +16,8 @@ export type KeyboardRoute = (event: RoutedKeyboardEvent) => boolean;
 
 export interface KeyboardRouteOwner {
   register(route: KeyboardRoute): () => void;
+  registerPaste(route: (bytes: Uint8Array) => boolean): () => void;
+  routePaste(bytes: Uint8Array): boolean;
   route(event: RoutedKeyboardEvent): boolean;
   dispose(): void;
   readonly size: number;
@@ -24,7 +26,20 @@ export interface KeyboardRouteOwner {
 /** One application keyboard ingress with component-local semantic routes. */
 export function createKeyboardRouteOwner(): KeyboardRouteOwner {
   const routes: KeyboardRoute[] = [];
+  const pasteRoutes: ((bytes: Uint8Array) => boolean)[] = [];
   return {
+    registerPaste(route) {
+      pasteRoutes.push(route);
+      return () => {
+        const index = pasteRoutes.lastIndexOf(route);
+        if (index >= 0) pasteRoutes.splice(index, 1);
+      };
+    },
+    routePaste(bytes) {
+      for (let index = pasteRoutes.length - 1; index >= 0; index--)
+        if (pasteRoutes[index]!(bytes)) return true;
+      return false;
+    },
     register(route) {
       routes.push(route);
       let active = true;
@@ -43,6 +58,7 @@ export function createKeyboardRouteOwner(): KeyboardRouteOwner {
     },
     dispose() {
       routes.length = 0;
+      pasteRoutes.length = 0;
     },
     get size() {
       return routes.length;
@@ -69,4 +85,10 @@ export function useKeyboardRoute(route: KeyboardRoute): void {
   if (!owner) return;
   const unregister = owner.register(route);
   onCleanup(unregister);
+}
+
+/** Component-local paste ownership; physical ingress remains at the application root. */
+export function usePasteRoute(route: (bytes: Uint8Array) => boolean): void {
+  const owner = useContext(KeyboardRouteContext);
+  if (owner) onCleanup(owner.registerPaste(route));
 }

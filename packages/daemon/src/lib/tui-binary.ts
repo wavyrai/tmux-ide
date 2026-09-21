@@ -1,3 +1,4 @@
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 /**
  * Per-platform TUI binary: the runtime-download fallback that lets a clean
  * `npm i -g tmux-ide` run the full OpenTUI/Solid cockpit WITHOUT `bun`.
@@ -16,20 +17,18 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   accessSync,
   chmodSync,
-  closeSync,
   constants as fsConstants,
   existsSync,
   mkdirSync,
-  openSync,
   readFileSync,
   renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { acquireTuiDownloadLock } from "./tui-download-lock.ts";
 import { getCurrentVersion } from "./update-check.ts";
 
 /** The `<os>-<arch>` tags we publish a prebuilt TUI binary for. */
@@ -47,7 +46,6 @@ export const MAX_TUI_BINARY_BYTES = 256 * 1024 * 1024;
 export const TUI_DOWNLOAD_TIMEOUT_MS = 30_000;
 
 const MAX_CHECKSUM_MANIFEST_BYTES = 4 * 1024;
-const STALE_DOWNLOAD_LOCK_MS = 5 * 60_000;
 
 const SUPPORTED: Record<string, TuiPlatformTag> = {
   "darwin-arm64": "darwin-arm64",
@@ -123,7 +121,7 @@ export function downloadedTuiPath(home: string, tag: TuiPlatformTag, version: st
  * the same resolution the update-check cache and welcome marker use.
  */
 export function tuiStateHome(): string {
-  return process.env.TMUX_IDE_HOME ?? join(homedir(), ".tmux-ide");
+  return resolveRuntimeNamespace().stateHome;
 }
 
 /**
@@ -139,6 +137,7 @@ export function findDownloadedTui(
     readonly limits?: Pick<DownloadLimits, "minBinaryBytes" | "maxBinaryBytes">;
   } = {},
 ): string | null {
+  if (resolveRuntimeNamespace().development) return null;
   const tag = options.tag === undefined ? tuiPlatformTag() : options.tag;
   if (!tag) return null;
   const path = downloadedTuiPath(options.home ?? tuiStateHome(), tag, version);
@@ -318,53 +317,6 @@ async function readBoundedResponse(
   }
 }
 
-async function acquireDownloadLock(path: string, waitMs: number): Promise<() => void> {
-  const lock = downloadLockPath(path);
-  const deadline = Date.now() + waitMs;
-  while (true) {
-    try {
-      const fd = openSync(lock, "wx", 0o600);
-      try {
-        writeFileSync(fd, `${process.pid}\n`);
-      } catch (error) {
-        closeSync(fd);
-        try {
-          unlinkSync(lock);
-        } catch {
-          // Preserve the original write failure.
-        }
-        throw error;
-      }
-      return () => {
-        try {
-          closeSync(fd);
-        } finally {
-          try {
-            unlinkSync(lock);
-          } catch {
-            // Another recovery attempt may already have removed a stale lock.
-          }
-        }
-      };
-    } catch (error) {
-      const code = error instanceof Error && "code" in error ? error.code : undefined;
-      if (code !== "EEXIST") throw error;
-      try {
-        if (Date.now() - statSync(lock).mtimeMs > STALE_DOWNLOAD_LOCK_MS) {
-          unlinkSync(lock);
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      if (Date.now() >= deadline) {
-        throw new Error("timed out waiting for another TUI download", { cause: error });
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-  }
-}
-
 /**
  * io — download, verify, and install the per-platform TUI binary for the running
  * version. Fetches a bounded gzip asset and its exact-version checksum manifest,
@@ -386,6 +338,8 @@ export async function downloadTuiBinary(
     limits?: Partial<Omit<DownloadLimits, "timeoutMs">>;
   } = {},
 ): Promise<{ path: string; bytes: number }> {
+  if (resolveRuntimeNamespace().development)
+    throw new Error("Development binary download is disabled; build exact artifacts");
   const log = opts.log ?? (() => {});
   const version = normalizeVersion(opts.version ?? getCurrentVersion());
   const tag = opts.tag === undefined ? tuiPlatformTag() : opts.tag;
@@ -406,7 +360,10 @@ export async function downloadTuiBinary(
     timeoutMs: opts.timeoutMs ?? TUI_DOWNLOAD_TIMEOUT_MS,
   };
   mkdirSync(dirname(dest), { recursive: true });
-  const releaseLock = await acquireDownloadLock(dest, limits.timeoutMs * 2 + 5_000);
+  const releaseLock = await acquireTuiDownloadLock(
+    downloadLockPath(dest),
+    limits.timeoutMs * 2 + 5_000,
+  );
   const suffix = `${process.pid}.${randomUUID()}.tmp`;
   const binaryTmp = `${dest}.${suffix}`;
   const checksumTmp = `${checksumPath(dest)}.${suffix}`;

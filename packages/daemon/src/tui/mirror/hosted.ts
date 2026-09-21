@@ -1,3 +1,7 @@
+import {
+  resolveRuntimeNamespace,
+  runtimeNamespaceEnvironment,
+} from "../../lib/runtime-namespace.ts";
 /**
  * The detachable cockpit (M23.2) — tmux keeps the app itself alive.
  *
@@ -80,7 +84,9 @@ export function hostedEnvVars(base: {
   config?: string;
   tuiBin?: string;
 }): Record<string, string> {
+  const namespace = resolveRuntimeNamespace();
   const env: Record<string, string> = {
+    ...(namespace.development ? runtimeNamespaceEnvironment(namespace) : {}),
     [HOSTED_ENV]: "1",
     TMUX_IDE_CWD: base.cwd,
     TMUX_IDE_CLI: base.cli,
@@ -90,6 +96,7 @@ export function hostedEnvVars(base: {
   if (base.home) env.TMUX_IDE_HOME = base.home;
   if (base.config) env.TMUX_IDE_CONFIG = base.config;
   if (base.tuiBin) env.TMUX_IDE_TUI_BIN = base.tuiBin;
+  if (namespace.development) resolveRuntimeNamespace({ env });
   return env;
 }
 

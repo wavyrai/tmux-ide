@@ -176,6 +176,25 @@ describe("terminal selection", () => {
     };
     const current = { runtime, identity, snapshot: state, frame };
     expect(terminalGestureLeaseMatches(lease, current)).toBe(true);
+    for (const changed of [
+      { ...runtime, client: {} },
+      { ...runtime, adapter: {} },
+      { ...runtime, clientGeneration: runtime.clientGeneration + 1 },
+      { ...runtime, rendererEpoch: runtime.rendererEpoch + 1 },
+      { ...runtime, daemonGeneration: "replacement" },
+    ])
+      expect(terminalGestureLeaseMatches(lease, { ...current, runtime: changed })).toBe(false);
+    for (const changed of [
+      { ...frame, top: 1 },
+      { ...frame, width: 12 },
+      { ...frame, height: 4 },
+      { ...frame, contentHeight: 1 },
+    ])
+      expect(terminalGestureLeaseMatches(lease, { ...current, frame: changed })).toBe(false);
+    expect(
+      terminalGestureLeaseMatches(lease, { ...current, identity: { ...identity, sourceEpoch: 6 } }),
+    ).toBe(false);
+
     expect(
       terminalGestureLeaseMatches(lease, {
         ...current,
@@ -219,6 +238,19 @@ describe("terminal selection", () => {
     expect(terminalSelectionCell(state, 6, 0)).toBeNull();
     expect(extractTerminalSelection(state, { row: -1, col: 0 }, { row: 0, col: 0 })).toBeNull();
     expect(extractTerminalSelection(state, { row: 0, col: 0 }, { row: 2, col: 3 }, 3)).toBeNull();
+  });
+
+  it("rejects non-cell endpoints without throwing or copying neighboring text", () => {
+    const state = snapshot();
+    for (const value of [NaN, Infinity, -Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      for (const point of [
+        { row: value, col: 0 },
+        { row: 0, col: value },
+      ]) {
+        expect(extractTerminalSelection(state, point, { row: 0, col: 1 })).toBeNull();
+        expect(extractTerminalSelection(state, { row: 0, col: 1 }, point)).toBeNull();
+      }
+    }
   });
 
   it("encodes legacy bytes exactly and respects native UTF-8 coordinate bounds", () => {

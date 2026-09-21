@@ -1,5 +1,5 @@
 import type { EmbeddedDaemonHandle, EmbeddedDaemonOptions } from "./daemon-embed.ts";
-import type { RemoteAccessRestartRequest } from "../command-center/actions/handlers/app-set-remote-access.ts";
+import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
 
 /** Stable caller-owned handle across standalone settings restarts. */
 export async function startOwnedEmbeddedDaemon(
@@ -11,7 +11,7 @@ export async function startOwnedEmbeddedDaemon(
   let current: EmbeddedDaemonHandle;
   let restarting: Promise<void> | null = null;
   let stopping: Promise<void> | null = null;
-  let pendingRequest: RemoteAccessRestartRequest | null = null;
+  let pendingRequest: DaemonRestartRequest | null = null;
 
   const launch = async (nextOptions: EmbeddedDaemonOptions): Promise<EmbeddedDaemonHandle> => {
     const generation: EmbeddedDaemonHandle = await start({
@@ -22,7 +22,7 @@ export async function startOwnedEmbeddedDaemon(
   };
   const restart = (
     generation: EmbeddedDaemonHandle,
-    request: RemoteAccessRestartRequest,
+    request: DaemonRestartRequest,
   ): Promise<void> => {
     if (closed || generation !== current) return Promise.resolve();
     pendingRequest = { ...request };

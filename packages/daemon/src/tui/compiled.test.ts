@@ -362,10 +362,10 @@ describe("packed-install OpenTUI gate", () => {
     expect(src).toContain("TMUX_IDE_TMUX_SOCKET_PATH: installedTmuxSocketPath");
     expect(src).toContain('["-S", installedTmuxSocketPath, "kill-server"]');
     expect(src).toContain('["show-options", "-v", "-t", targetSession, option]');
-    expect(src).toContain('process.kill(pid, "SIGTERM")');
-    expect(src).toContain('process.kill(pid, "SIGKILL")');
-    expect(src).toContain('["-p", String(pid), "-o", "lstart=", "-o", "command="]');
-    expect(src).toContain("processIdentity(pid) !== identity");
+    // Retirement behavior is exercised by packed-install-cleanup.test.mjs;
+    // this wiring contract follows the extracted ownership-aware helper.
+    expect(src).toContain("createInstalledRuntimeCleanup(downloadedTui, readyPath)");
+    expect(src).toContain("await terminateLaunchedTui()");
     expect(src).toMatch(/preload not found/);
     expect(src).toMatch(/NODE_PATH: ""/);
     expect(src).toMatch(/Automatic OpenTUI runtime acquisition failed/);

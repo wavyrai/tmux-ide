@@ -1037,6 +1037,301 @@ describe("async terminal inventory reads", () => {
     runtime.dispose();
   });
 
+  function coldHandoffFixture(
+    options: {
+      target?: Partial<Parameters<typeof applicationShellPaneWire>[1]>;
+      other?: { stamp?: string; paneId?: string; windowId?: string; windowStamp?: string };
+      otherStamps?: string[];
+      candidate?: () => Promise<{ inventory: TrustedMirrorSessionInventory; token: object } | null>;
+      prewarm?: () => Promise<void>;
+      current?: () => boolean;
+    } = {},
+  ) {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    registry.add({ name: "workspace.beta", sessionName: "other", projectDir: root });
+    let qualified = false;
+    const token = {};
+    const candidate = vi.fn(
+      options.candidate ?? (async () => ({ inventory: trustedInventory(), token })),
+    );
+    const prewarm = vi.fn(async (_name: string, _id: string, _signal?: AbortSignal) => {
+      await options.prewarm?.();
+      qualified = true;
+    });
+    const other = applicationShellPaneWire("other", {
+      stamp: options.other?.stamp ?? "",
+      paneId: options.other?.paneId ?? "%4",
+      windowStamp: options.other?.windowStamp ?? "window.other",
+    }).split(INVENTORY_SEPARATOR);
+    other[1] = "$8";
+    other[2] = options.other?.windowId ?? "@3";
+    const otherRows = options.otherStamps
+      ?.map((stamp, index, all) => {
+        const row = [...other];
+        row[2] = `@${index + 3}`;
+        row[3] = `%${index + 4}`;
+        row[5] = String(all.length);
+        row[6] = stamp;
+        row[10] = "0";
+        row[17] = `window.other${index}`;
+        return row.join(INVENTORY_SEPARATOR);
+      })
+      .join("\n");
+    const read = vi.fn(async (_exe: string, raw: readonly string[]) => {
+      const args = raw.slice(2);
+      if (args[0] === "list-sessions")
+        return (
+          [
+            ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR),
+            ["other", "$8", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR),
+          ].join("\n") + "\n"
+        );
+      if (args[0] === "list-panes")
+        return args[args.indexOf("-t") + 1] === "$7"
+          ? applicationShellPaneWire("runtime:session", {
+              windowStamp: "window.promoted.abc123",
+              ...options.target,
+            }) + "\n"
+          : (otherRows ?? other.join(INVENTORY_SEPARATOR)) + "\n";
+      return "";
+    });
+    const adopted = vi.fn();
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: read,
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => qualified,
+        prewarmProofQualifiedSession: prewarm,
+        describeTrustedSessionInventoryCandidate: () =>
+          qualified ? candidate() : Promise.resolve(null),
+        isTrustedSessionInventoryCandidateCurrent: options.current ?? (() => true),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+      onSessionInventory: adopted,
+    });
+    return { runtime, registry, root, read, prewarm, candidate, adopted, other };
+  }
+
+  it("hands unrelated missing stamps to one exact fresh proof without changing other rows or warm read counts", async () => {
+    const f = coldHandoffFixture();
+    await f.runtime.whenReady();
+    const before = [...f.other];
+    try {
+      await expect(
+        f.runtime.discoverTerminalRuntimeSession("runtime:session"),
+      ).resolves.toMatchObject({ runtimeSessionId: "$7", catalogIssue: null });
+      expect(f.read).toHaveBeenCalledTimes(5);
+      expect(f.prewarm).toHaveBeenCalledExactlyOnceWith(
+        "runtime:session",
+        "$7",
+        expect.any(AbortSignal),
+      );
+      expect(f.candidate).toHaveBeenCalledOnce();
+      expect(f.adopted).toHaveBeenCalledOnce();
+      await expect(
+        f.runtime.discoverTerminalRuntimeSession("runtime:session"),
+      ).resolves.toMatchObject({ catalogIssue: null });
+      expect(f.read).toHaveBeenCalledTimes(5);
+      expect(f.other).toEqual(before);
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it.each([
+    ["target missing", { target: { stamp: "" } }],
+    ["target window missing", { target: { windowStamp: "" } }],
+    ["masked runtime alias", { other: { paneId: "%3" } }],
+    ["cross-window stamp collision", { other: { windowStamp: "window.promoted.abc123" } }],
+  ] as const)("does not qualify %s, including on a second read", async (_name, options) => {
+    const f = coldHandoffFixture(options);
+    await f.runtime.whenReady();
+    try {
+      for (let i = 0; i < 2; i++) {
+        await expect(
+          f.runtime.discoverTerminalRuntimeSession("runtime:session"),
+        ).resolves.toMatchObject({ catalogIssue: "missing-semantic-stamp" });
+      }
+      expect(f.prewarm).not.toHaveBeenCalled();
+      expect(f.candidate).not.toHaveBeenCalled();
+      expect(f.adopted).not.toHaveBeenCalled();
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it.each(["prewarm", "absent", "malformed"])(
+    "retains the cold rejection for a %s candidate failure",
+    async (failure) => {
+      const f = coldHandoffFixture({
+        prewarm:
+          failure === "prewarm"
+            ? async () => {
+                throw new Error("not ready");
+              }
+            : undefined,
+        candidate: async () =>
+          failure === "absent"
+            ? null
+            : { inventory: { ...trustedInventory(), panes: [] }, token: {} },
+      });
+      await f.runtime.whenReady();
+      try {
+        await expect(
+          f.runtime.discoverTerminalRuntimeSession("runtime:session"),
+        ).resolves.toMatchObject({ catalogIssue: "missing-semantic-stamp" });
+        expect(f.read).toHaveBeenCalledTimes(5);
+        expect(f.prewarm).toHaveBeenCalledOnce();
+        expect(f.candidate).toHaveBeenCalledTimes(failure === "prewarm" ? 0 : 1);
+        expect(f.adopted).not.toHaveBeenCalled();
+      } finally {
+        f.runtime.dispose();
+      }
+    },
+  );
+
+  it("keeps fully clean cold discovery at its original read count without a handoff", async () => {
+    const f = coldHandoffFixture({ other: { stamp: "pane.other" } });
+    await f.runtime.whenReady();
+    try {
+      await expect(
+        f.runtime.discoverTerminalRuntimeSession("runtime:session"),
+      ).resolves.toMatchObject({ catalogIssue: null });
+      expect(f.read).toHaveBeenCalledTimes(5);
+      expect(f.prewarm).toHaveBeenCalledOnce();
+      expect(f.candidate).not.toHaveBeenCalled();
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("does not adopt a stale handoff token after the existing single retry", async () => {
+    const f = coldHandoffFixture({ current: () => false });
+    await f.runtime.whenReady();
+    try {
+      await expect(
+        f.runtime.discoverTerminalRuntimeSession("runtime:session"),
+      ).rejects.toMatchObject({ code: "discovery-failed" });
+      expect(f.candidate).toHaveBeenCalledTimes(2);
+      expect(f.adopted).not.toHaveBeenCalled();
+      expect(f.read).toHaveBeenCalledTimes(5);
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it.each(["abort", "dispose"])("discards a pending cold handoff on %s", async (action) => {
+    let release!: (value: { inventory: TrustedMirrorSessionInventory; token: object }) => void;
+    const f = coldHandoffFixture({
+      candidate: () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    });
+    const controller = new AbortController();
+    await f.runtime.whenReady();
+    const pending = f.runtime.discoverTerminalRuntimeSession("runtime:session", controller.signal);
+    const rejected = expect(pending).rejects.toMatchObject({ code: "runtime-disposed" });
+    await vi.waitFor(() => expect(f.candidate).toHaveBeenCalledOnce());
+    if (action === "abort") controller.abort();
+    else f.runtime.dispose();
+    release({ inventory: trustedInventory(), token: {} });
+    await rejected;
+    await Promise.resolve();
+    expect(f.adopted).not.toHaveBeenCalled();
+    f.runtime.dispose();
+  });
+
+  it.each([
+    ["invalidRuntimeProof", ["", "invalid stamp"]],
+    ["duplicateSemanticStamp", ["", "pane.duplicate", "pane.duplicate"]],
+  ] as const)("blocks qualification when missing stamps mask %s", async (flag, stamps) => {
+    const f = coldHandoffFixture({ otherStamps: [...stamps] });
+    await f.runtime.whenReady();
+    try {
+      const full = await f.runtime.discoverTerminalInventory();
+      expect(full.catalog.missingSemanticStamp).toBe(true);
+      expect(full.catalog[flag]).toBe(true);
+      for (let i = 0; i < 2; i++) {
+        await expect(
+          f.runtime.discoverTerminalRuntimeSession("runtime:session"),
+        ).resolves.toMatchObject({
+          catalogIssue:
+            flag === "invalidRuntimeProof" ? "invalid-runtime-proof" : "missing-semantic-stamp",
+        });
+      }
+      expect(f.prewarm).not.toHaveBeenCalled();
+      expect(f.candidate).not.toHaveBeenCalled();
+      expect(f.adopted).not.toHaveBeenCalled();
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("rejects a selected-session alias before qualification", async () => {
+    const f = coldHandoffFixture();
+    f.registry.add({ name: "workspace.alias", sessionName: "runtime:session", projectDir: f.root });
+    await f.runtime.whenReady();
+    try {
+      await expect(
+        f.runtime.discoverTerminalRuntimeSession("runtime:session"),
+      ).rejects.toMatchObject({ code: "discovery-failed" });
+      expect(f.prewarm).not.toHaveBeenCalled();
+      expect(f.candidate).not.toHaveBeenCalled();
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("discards handoff data when selected registry membership is removed while reading", async () => {
+    let release!: (value: { inventory: TrustedMirrorSessionInventory; token: object }) => void;
+    const f = coldHandoffFixture({
+      candidate: () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    });
+    await f.runtime.whenReady();
+    try {
+      const pending = f.runtime.discoverTerminalRuntimeSession("runtime:session");
+      await vi.waitFor(() => expect(f.candidate).toHaveBeenCalledOnce());
+      f.registry.remove("workspace.alpha");
+      release({ inventory: trustedInventory(), token: {} });
+      await expect(pending).resolves.toBeNull();
+      expect(f.adopted).not.toHaveBeenCalled();
+      expect(f.candidate).toHaveBeenCalledOnce();
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
+  it("retries rather than adopting a handoff for a different runtime session ID", async () => {
+    const source = trustedInventory();
+    const replacement = {
+      ...source,
+      runtimeSessionId: "$8",
+      panes: source.panes.map((pane) => ({ ...pane, runtimeSessionId: "$8" })),
+    };
+    const f = coldHandoffFixture({
+      candidate: async () => ({ inventory: replacement, token: {} }),
+    });
+    await f.runtime.whenReady();
+    try {
+      await expect(
+        f.runtime.discoverTerminalRuntimeSession("runtime:session"),
+      ).resolves.toMatchObject({ runtimeSessionId: "$8", catalogIssue: null });
+      expect(f.candidate).toHaveBeenCalledTimes(2);
+      expect(f.prewarm.mock.calls.map((call) => call[1])).toEqual(["$7", "$8"]);
+      expect(f.adopted).toHaveBeenCalledOnce();
+      expect(f.adopted.mock.calls[0]![1].panes[0].sessionId).toBe("$8");
+      expect(f.read).toHaveBeenCalledTimes(5);
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
   it("uses only proof-qualified retained inventory while preserving agent enrichment", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
     const readCommandExecutor = vi.fn(async () => {

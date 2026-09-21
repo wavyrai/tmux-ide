@@ -225,7 +225,8 @@ function sameIdentity(left: DaemonInstanceIdentity, right: DaemonInstanceIdentit
     left.protocolVersion === right.protocolVersion &&
     left.productVersion === right.productVersion &&
     left.instanceId === right.instanceId &&
-    left.startedAt === right.startedAt
+    left.startedAt === right.startedAt &&
+    left.environmentId === right.environmentId
   );
 }
 

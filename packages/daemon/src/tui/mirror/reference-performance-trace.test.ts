@@ -8,6 +8,34 @@ import {
 import { emitTuiTerminalFrameFenceFailOpen } from "./performance-events.ts";
 
 describe("reference performance trace", () => {
+  it("retains content-free terminal decode diagnostics", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      append: (record) => records.push(record),
+    });
+    const event = {
+      parseMs: 1,
+      queuePeak: 1,
+      queueCapacity: 1,
+      settledQueueDepth: 0,
+      revisionLagPeak: 0,
+      reseed: false,
+      decodeStrategy: "compact-sync" as const,
+      representationBytes: 123,
+      baselineCols: 132,
+      baselineRows: 41,
+      baselineHistoryRows: 0,
+      traceId: "probe",
+    };
+    sink.terminalDelivery(event);
+    expect(records).toContainEqual(
+      expect.objectContaining({ type: "performance.terminal-delivery", ...event }),
+    );
+  });
+
   it("input fences retain the actual pending critical count without inventing a drained writer", () => {
     const records: Readonly<Record<string, unknown>>[] = [];
     let pendingCriticalRecords = 3;

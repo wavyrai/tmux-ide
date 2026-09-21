@@ -75,6 +75,62 @@ afterEach(() => {
 });
 
 describe("/ws/events fleet composition invalidation", () => {
+  it("awaits pinned asynchronous fleet reads and preserves last good facts on failures", async () => {
+    const initial = "alpha\t0\t41\t$0\t100\t@1\t%1\t1\t1\tpane.a\twindow.a";
+    let finish: (value: string) => void = () => {};
+    let read: () => Promise<string> = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    setFleetFactsTmuxRunner(async (args) => {
+      expect(args).toEqual(SESSION_COMPOSITION_TMUX_ARGS);
+      return read();
+    });
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "workspace-catalog", workspaceName: null }],
+        legacyEvents: false,
+        interestRevision: 1,
+      }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(frames(socket).some((frame) => frame.type === "resource.interests-ack")).toBe(false);
+    finish(initial);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(frames(socket).some((frame) => frame.type === "resource.interests-ack")).toBe(true);
+    socket.sent.length = 0;
+    const changes = () =>
+      frames(socket).filter(
+        (frame) => frame.type === "resource.changed" && frame.resource === "workspace-catalog",
+      );
+    read = async () => {
+      throw new Error("temporary observer failure");
+    };
+    await _pollFleetFactsObserverForTests();
+    expect(changes()).toHaveLength(0);
+    read = async () => initial;
+    await _pollFleetFactsObserverForTests();
+    expect(changes()).toHaveLength(0);
+    read = async () => initial.replace("41", "42");
+    await _pollFleetFactsObserverForTests();
+    expect(changes()).toHaveLength(1);
+    socket.sent.length = 0;
+    read = async () => {
+      throw new Error("no server running on /tmp/tmux-501/default");
+    };
+    await _pollFleetFactsObserverForTests();
+    expect(changes().length).toBeGreaterThan(0);
+    socket.sent.length = 0;
+    read = async () => "";
+    await _pollFleetFactsObserverForTests();
+    expect(changes()).toHaveLength(0);
+    socket.disconnect();
+  });
+
   it("publishes an empty catalog baseline before the first tmux server exists", async () => {
     setFleetFactsTmuxRunner(() => {
       throw new Error("no server running on /tmp/tmux-501/default");
@@ -135,7 +191,7 @@ describe("/ws/events fleet composition invalidation", () => {
 
   it("pins application-shell agent readiness to its daemon tmux authority", async () => {
     const calls: string[][] = [];
-    setFleetFactsTmuxRunner((args) => {
+    setFleetFactsTmuxRunner(async (args) => {
       calls.push([...args]);
       return args === AGENT_STATE_TMUX_ARGS ? "alpha\t%1\tpane.a\tIDLE\tcodex" : "";
     });

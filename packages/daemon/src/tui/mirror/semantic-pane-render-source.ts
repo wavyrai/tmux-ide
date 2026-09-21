@@ -779,7 +779,7 @@ export function blitSemanticRow(
       dbG,
       dbB,
     );
-    if (String.fromCodePoint(codepoint).length !== grapheme.length) {
+    if ((codepoint > 0xffff ? 2 : 1) !== grapheme.length) {
       graphemes?.push({ x, y, chars: grapheme, fg: foreground, bg: background, attrs: attributes });
     }
   }

@@ -39,7 +39,7 @@ describe("RuntimeNamespace", () => {
     }
   });
   it("uses canonical authority only for production", () => {
-    expect(resolveRuntimeNamespace({ env: {}, userHome, cwd })).toEqual({
+    expect(resolveRuntimeNamespace({ env: {}, userHome, cwd })).toMatchObject({
       mode: "production",
       stateHome: join(userHome, ".tmux-ide"),
       registryDir: join(userHome, ".tmux-ide"),

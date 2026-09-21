@@ -460,6 +460,7 @@ export const VISUAL_THEME_PRESETS: readonly VisualThemeDocumentV1[] = Object.ent
       overrides: {
         surfaces: {
           canvas: background,
+          terminal: background,
           panel: color(p.panel),
           panelRaised: color(p.header),
           header: color(p.header),

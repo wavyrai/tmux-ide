@@ -1,3 +1,8 @@
+import { streamBoundedLogs } from "./log-stream.ts";
+import { mountWorkspaceAdmissionRoute } from "./resources/workspace-admission-route.ts";
+import { mountFleetPreviewRoute } from "./resources/fleet-preview-route.ts";
+import { mountSavedMachineRoute } from "./resources/saved-machine-route.ts";
+import { mountFleetClientStateRoute } from "./resources/fleet-client-state-route.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, readdirSync } from "node:fs";
@@ -207,6 +212,10 @@ export interface CreateAppOptions {
   }[];
   /** Injectable daemon-generation-pinned adopted fleet projection. */
   catalogFleet?: () => FleetSessionFacts[] | null;
+  fleetPreviewCapture?: (
+    liveSessionId: string,
+    signal?: AbortSignal,
+  ) => string | null | Promise<string | null>;
   applicationShellAppWindowBackend?: {
     load(
       projectDir: string,
@@ -335,6 +344,7 @@ const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">
   "project.activate": "owner",
   "project.openTerminal": "owner",
   "daemon.shutdown": "owner",
+  "daemon.restart": "owner",
 };
 
 function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
@@ -552,6 +562,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ error: err.message }, 500);
   });
 
+  mountSavedMachineRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+  });
+  mountFleetPreviewRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    capture: options.fleetPreviewCapture,
+  });
+  mountFleetClientStateRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+  });
+
   // --- Auth routes (always available, bypassed by middleware) ---
 
   app.post("/api/auth/challenge", async (c) => {
@@ -607,6 +631,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         status: "ok" as const,
         daemon: daemonInstanceIdentity,
         capabilities: {
+          // Opt-in keeps the response compatible with older strict host schemas.
+          ...(c.req.query("windowViewport") === "1"
+            ? {
+                semanticWindowViewport: options.paneStreamIssueBackend
+                  ? {
+                      available: false as const,
+                      reason: "Window fitting is awaiting isolated sizing qualification.",
+                    }
+                  : {
+                      available: false as const,
+                      reason: "This daemon has no pane-stream backend.",
+                    },
+              }
+            : {}),
           appWindowMutation:
             appWindowCommandRegistered && options.appWindowMutationBackend !== undefined
               ? { available: true as const }
@@ -1072,6 +1110,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // daemon still missing?", computed from real state on every request.
   // OWNER POLICY: owner-only when a credential exists; ownerless SERVES the
   // ladder, whose `credential-held` rung is that answer. See the route header.
+  mountWorkspaceAdmissionRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+    promotion: options.workspacePromotionBackend,
+    open: options.workspaceOpenBackend,
+  });
+
   mountStartupReadinessRoute(app, {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
@@ -1566,6 +1611,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   //   - "daemon"   → no component filter (all entries)
   //   - "hq"       → component starts with "hq" or "remote"
   //   - "watchdog" → component starts with "watchdog"
+  // The bounded stream drops old backfill with an explicit gap marker; slow
+  // live readers are disconnected and can reseed on reconnect.
   // The dashboard BottomPanel Output tab opens one EventSource per
   // selected channel. Backfill from the in-memory ring buffer is sent
   // first as `event: "backfill"` followed by a `bookmark` event so the
@@ -1578,36 +1625,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     if (!match) {
       return c.json({ error: `Unknown log channel: ${channel}` }, 404);
     }
-    return streamSSE(c, async (stream) => {
-      // 1. Backfill from the ring buffer.
-      const backfill = getLogBuffer().filter(match);
-      for (const entry of backfill) {
-        await stream.writeSSE({ event: "entry", data: JSON.stringify(entry) });
-      }
-      await stream.writeSSE({ event: "bookmark", data: String(backfill.length) });
-      // 2. Subscribe to live entries.
-      const queue: LogEntry[] = [];
-      let cancelled = false;
-      const unsub = subscribeLogs((entry) => {
-        if (cancelled) return;
-        if (match(entry)) queue.push(entry);
-      });
-      try {
-        while (!cancelled) {
-          if (queue.length === 0) {
-            await stream.sleep(500);
-            continue;
-          }
-          const drained = queue.splice(0, queue.length);
-          for (const entry of drained) {
-            await stream.writeSSE({ event: "entry", data: JSON.stringify(entry) });
-          }
-        }
-      } finally {
-        cancelled = true;
-        unsub();
-      }
-    });
+    return streamSSE(c, (stream) =>
+      streamBoundedLogs(stream, {
+        backfill: getLogBuffer,
+        subscribe: subscribeLogs,
+        match,
+      }),
+    );
   });
 
   app.get("/health", (c) => {

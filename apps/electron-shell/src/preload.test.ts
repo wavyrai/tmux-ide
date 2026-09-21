@@ -31,6 +31,21 @@ beforeAll(async () => {
 });
 
 describe("desktop preload daemon bridge", () => {
+  it("validates the finite native icon catalog without forwarding renderer arguments", async () => {
+    const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
+    electron.invoke.mockImplementationOnce(async (...args: unknown[]) => {
+      expect(args).toEqual([HOST_IPC.iconCatalog]);
+      return { provider: "sf-symbols", icons: { Home: "data:image/png;base64,YQ==" } };
+    });
+    await expect(capabilities.icons?.getCatalog()).resolves.toMatchObject({
+      provider: "sf-symbols",
+    });
+    electron.invoke.mockResolvedValueOnce({
+      provider: "sf-symbols",
+      icons: { Home: "file:///secret" },
+    });
+    await expect(capabilities.icons?.getCatalog()).rejects.toThrow();
+  });
   it("carries an exact WorkspaceClient operation id across atomic open calls", async () => {
     const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
     const operationId = "10000000-0000-4000-8000-000000000001";

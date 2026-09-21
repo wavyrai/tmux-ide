@@ -26,6 +26,10 @@ export function createApplicationPaletteCommandOwner(options: {
   readonly splitPane: (direction: "right" | "down") => Promise<string>;
   readonly closePane: () => Promise<string>;
   readonly openAgent: (sessionName: string, paneId: string, source: Source) => Promise<boolean>;
+  readonly openFleet?: (
+    command: Exclude<ApplicationPaletteCommand, string>,
+    source: Source,
+  ) => Promise<unknown> | void;
   readonly openSession?: (sessionName: string, source: Source) => Promise<unknown> | void;
   readonly onNavigationIntent?: () => void;
   readonly commands?: () => readonly ApplicationPaletteCommand[];
@@ -67,6 +71,18 @@ export function createApplicationPaletteCommandOwner(options: {
     if (unavailable) {
       setCloseArmed(false);
       options.setNote(unavailable);
+      return;
+    }
+    if (typeof command === "object" && command.fleet) {
+      if (command.fleet.disabled || !options.openFleet) {
+        options.setNote("That machine or session is unavailable.");
+        return;
+      }
+      options.onNavigationIntent?.();
+      setOpen(false, source);
+      void Promise.resolve(options.openFleet(command, source)).catch(() =>
+        options.setNote("That fleet target could not be opened."),
+      );
       return;
     }
     if (typeof command === "object" && command.kind === "open-session") {

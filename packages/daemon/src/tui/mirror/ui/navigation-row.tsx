@@ -12,6 +12,7 @@ export interface NavigationRowProps extends ComponentInteractionState {
   readonly theme: SemanticThemeSnapshot;
   readonly id: string;
   readonly label: string;
+  readonly labelColor?: string;
   readonly width: number;
   readonly marker?: string;
   readonly detail?: string;
@@ -97,7 +98,15 @@ export function NavigationRow(props: NavigationRowProps) {
       <text width={markerWidth()} fg={palette().accent} bg={palette().background}>
         {clipTerminal(`${marker()} `, markerWidth())}
       </text>
-      <text width={labelWidth()} fg={palette().foreground} bg={palette().background}>
+      <text
+        width={labelWidth()}
+        fg={
+          props.selected || props.focused || props.disabled
+            ? palette().foreground
+            : (props.labelColor ?? palette().foreground)
+        }
+        bg={palette().background}
+      >
         {props.selected || props.focused ? (
           <strong>{clipTerminal(props.label, labelWidth())}</strong>
         ) : (

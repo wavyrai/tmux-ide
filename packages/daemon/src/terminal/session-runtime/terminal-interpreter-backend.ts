@@ -1,3 +1,4 @@
+import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import type {
   TerminalReplicaCursor,
@@ -24,6 +25,9 @@ export interface TerminalInterpreterBackend {
   /** Public-parser diagnostic OSC seam; installed only for an active probe. */
   registerOscHandler(identifier: number, handler: (data: string) => boolean): () => void;
   write(data: Uint8Array | string): Promise<void>;
+  /** Exact native painted state; false means this parser cannot import it. */
+  canImportNativeGrid?(): boolean;
+  importNativeGrid?(snapshot: NativeGridCapture): boolean;
   resize(cols: number, rows: number): void;
   /** x === cols preserves native wrap-pending state; project() returns a cell position. */
   setAuthoritativeCursor(x: number, y: number): void;
@@ -65,6 +69,8 @@ export interface TerminalInterpreterBackendFactoryOptions {
   readonly cols: number;
   readonly rows: number;
   readonly scrollback: number;
+  /** Native collection policy; retained capacity can be larger after tmux reflow. */
+  readonly historyLimit?: number;
 }
 
 export type TerminalInterpreterBackendFactory = (

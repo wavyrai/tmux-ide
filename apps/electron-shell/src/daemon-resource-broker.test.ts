@@ -278,7 +278,7 @@ describe("Electron main daemon resource broker", () => {
         },
       },
     });
-    expect(requests[0]?.url).toBe("http://127.0.0.1:6060/api/v2/capabilities");
+    expect(requests[0]?.url).toBe("http://127.0.0.1:6060/api/v2/capabilities?windowViewport=1");
     expect(new Headers(requests[0]?.init?.headers).get("Authorization")).toBe(
       "Bearer owner-only-token",
     );
@@ -936,6 +936,33 @@ describe("Electron main daemon resource broker", () => {
       },
     });
     expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [undefined, undefined, true],
+    ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000001", true],
+    [undefined, "00000000-0000-4000-8000-000000000001", false],
+    ["00000000-0000-4000-8000-000000000001", undefined, false],
+    ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002", false],
+  ])("fences catalog environment identity %s → %s", async (expected, received, accepted) => {
+    const broker = new DaemonResourceBroker({
+      daemon: {
+        status: "connected",
+        descriptor: { ...CONNECTED.descriptor, ...(expected ? { environmentId: expected } : {}) },
+      },
+      fetch: async () =>
+        json({
+          ...WORKSPACE_CATALOG,
+          daemon: { ...IDENTITY, ...(received ? { environmentId: received } : {}) },
+        }),
+    });
+    const result = await broker.listWorkspaces();
+    expect(result).toMatchObject(
+      accepted
+        ? { status: "ok" }
+        : { status: "error", error: { code: "daemon-identity-mismatch" } },
+    );
+    broker.dispose();
   });
 
   it.each([

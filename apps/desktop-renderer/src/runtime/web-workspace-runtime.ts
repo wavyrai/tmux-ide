@@ -84,7 +84,8 @@ export type WebWorkspaceViewportFailureCode =
   | "geometry-viewport-timeout"
   | "pane-stream-closed"
   | "geometry-lifecycle-retired"
-  | "geometry-resize-failed";
+  | "geometry-resize-failed"
+  | "window-viewport-unsupported";
 
 export class WebWorkspaceViewportError extends Error {
   readonly code: WebWorkspaceViewportFailureCode;
@@ -98,6 +99,7 @@ export class WebWorkspaceViewportError extends Error {
 
 export interface WebWorkspaceRuntimeOptions {
   readonly transport: PaneStreamTransport;
+  readonly supportsWindowViewport?: () => Promise<boolean>;
   readonly inventory: WorkspaceClientRuntimeInventory;
   readonly signal: AbortSignal;
   readonly submitIntent?: (
@@ -166,6 +168,7 @@ export async function connectWebWorkspaceRuntime(
   options: WebWorkspaceRuntimeOptions,
 ): Promise<WebWorkspaceRuntimePort> {
   const runtimePhysicalEpoch = allocatePhysicalBindingEpoch();
+  let windowViewportSupport: Promise<boolean> | undefined;
   const recordCard5Envelope = createCard5EnvelopeEvidenceRecorder();
   const recordCard5Ack = createCard5EnvelopeAckRecorder();
   const recordCard5InputReceipt = createCard5InputReceiptRecorder();
@@ -406,7 +409,12 @@ export async function connectWebWorkspaceRuntime(
       ? { write: (pane, input) => retainedPhysicalSession.write!(pane, input) }
       : {}),
     ...(retainedPhysicalSession.resize
-      ? { resize: (cols, rows) => retainedPhysicalSession.resize!(cols, rows) }
+      ? {
+          resize: (cols, rows, semanticWindowId) =>
+            semanticWindowId === undefined
+              ? retainedPhysicalSession.resize!(cols, rows)
+              : retainedPhysicalSession.resize!(cols, rows, semanticWindowId),
+        }
       : {}),
     ...(retainedPhysicalSession.requestAuthority
       ? { requestAuthority: (kind) => retainedPhysicalSession.requestAuthority!(kind) }
@@ -505,13 +513,22 @@ export async function connectWebWorkspaceRuntime(
       receipts.add(listener);
       return () => receipts.delete(listener);
     },
-    async fitViewport(cols, rows) {
+    async fitViewport(cols, rows, semanticWindowId) {
+      if (semanticWindowId !== undefined) {
+        windowViewportSupport ??= (
+          options.supportsWindowViewport?.() ?? Promise.resolve(false)
+        ).catch(() => false);
+        if (!(await windowViewportSupport))
+          throw new WebWorkspaceViewportError("window-viewport-unsupported");
+      }
       if (closed || !session?.resize) {
         throw new WebWorkspaceViewportError("geometry-lifecycle-retired");
       }
       let result: PaneStreamResizeResult;
       try {
-        result = await session.resize(cols, rows);
+        result = await (semanticWindowId === undefined
+          ? session.resize(cols, rows)
+          : session.resize(cols, rows, semanticWindowId));
       } catch {
         throw new WebWorkspaceViewportError("geometry-resize-failed");
       }

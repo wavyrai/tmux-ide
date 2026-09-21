@@ -1,9 +1,16 @@
+import { ApplicationReferenceSheet } from "./application-reference-sheet.tsx";
+import { ApplicationFleetSessionActions } from "./application-fleet-session-actions.tsx";
+import { ApplicationPalettePreview } from "./application-palette-preview.tsx";
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "solid-js";
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createMemo, createSignal, createEffect } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, clipTerminalEnd } from "../terminal-text.ts";
+import { Badge } from "../ui/badge.tsx";
+import { KeyHint } from "../ui/key-hint.tsx";
+import { useKeyboardRoute } from "../ui/keyboard-router.tsx";
+import { applicationMachineAuthorityManager } from "./application-machine-authority.ts";
 import { Dialog } from "../ui/dialog.tsx";
 import { OverlayFrame } from "../ui/overlay-frame.tsx";
 import { overlayFrameSize } from "../ui/overlay-model.ts";
@@ -82,6 +89,12 @@ export function MinimalPalette(props: {
   readonly height: number;
   readonly selected: number;
   readonly query?: string;
+  readonly title?: string;
+  readonly onViewport?: (rows: number) => void;
+  readonly onFavorite?: (command: ApplicationPaletteCommand) => void;
+  readonly keyboardHint?: string;
+  readonly previewActive?: boolean;
+  readonly onModalChange?: (open: boolean) => void;
   readonly disabledReason?: (command: ApplicationPaletteCommand) => string | null;
   readonly onSelect?: (index: number) => void;
   readonly closeArmed: boolean;
@@ -92,9 +105,38 @@ export function MinimalPalette(props: {
   readonly active?: boolean;
   readonly zIndex?: number;
 }): JSX.Element {
+  const [expanded, setExpanded] = createSignal(false);
+  const [modal, setModal] = createSignal(false);
+  const [sheet, setSheet] = createSignal<"shortcuts" | "changes">();
+  const openSheet = (page: "shortcuts" | "changes" | undefined) => {
+    setSheet(page);
+    setModal(!!page);
+    props.onModalChange?.(!!page);
+  };
+  const [lastHost, setLastHost] = createSignal<ApplicationPaletteCommand>();
+  createEffect(() => {
+    const c = props.commands[props.selected];
+    if (typeof c === "object" && c.fleet)
+      setLastHost({
+        kind: "open-machine",
+        sessionName: "",
+        label: c.fleet.hostLabel,
+        fleet: { ...c.fleet, liveSessionId: "", favorite: undefined },
+      });
+  });
+  const selectedCommand = () =>
+    props.commands[props.selected] ?? (props.query ? lastHost() : undefined);
+  const hasPreview = () => {
+    const c = selectedCommand();
+    return typeof c === "object" && !!c.fleet && props.height >= 18;
+  };
+  createEffect(() => {
+    if (!hasPreview()) setExpanded(false);
+  });
   const horizontalInset = () => (props.width >= 8 ? 2 : 0);
   const verticalInset = () => (props.height >= 10 ? 1 : 0);
-  const width = () => Math.max(1, Math.min(58, props.width - horizontalInset() * 2));
+  const width = () =>
+    Math.max(1, Math.min(hasPreview() ? 132 : 72, props.width - horizontalInset() * 2));
   const height = () =>
     overlayFrameSize({
       viewportWidth: props.width,
@@ -102,7 +144,11 @@ export function MinimalPalette(props: {
       preferredWidth: width(),
       preferredHeight: Math.max(
         3,
-        Math.min(16, Math.max(9, props.commands.length + 6), props.height - verticalInset() * 2),
+        Math.min(
+          hasPreview() ? 36 : 20,
+          Math.max(hasPreview() ? 22 : 9, props.commands.length + 6),
+          props.height - verticalInset() * 2,
+        ),
       ),
     }).height;
   const innerWidth = () => Math.max(1, width() - 4);
@@ -111,7 +157,48 @@ export function MinimalPalette(props: {
       ? "Confirm close pane"
       : applicationCommandDescription(command).label;
   };
-  const visibleCapacity = () => Math.max(1, height() - (height() >= 9 ? 6 : 4));
+  const sideBySide = () => hasPreview() && width() >= 100 && !expanded();
+  const bodyHeight = () =>
+    Math.max(
+      1,
+      height() - (height() >= 9 ? 6 : 4) - (height() >= 12 ? 1 : 0) - (hasPreview() ? 2 : 0),
+    );
+  const listWidth = () => (sideBySide() ? Math.floor((innerWidth() - 3) * 0.48) : innerWidth());
+  const previewWidth = () => (sideBySide() ? innerWidth() - listWidth() - 3 : innerWidth());
+  const previewHeight = () =>
+    !hasPreview()
+      ? 0
+      : sideBySide() || expanded()
+        ? bodyHeight()
+        : Math.max(4, Math.floor(bodyHeight() * 0.55));
+  const visibleCapacity = () =>
+    expanded() ? 0 : sideBySide() ? bodyHeight() : Math.max(1, bodyHeight() - previewHeight());
+  createEffect(() => props.onViewport?.(Math.max(1, visibleCapacity())));
+  const favorite = () => {
+    const c = selectedCommand();
+    return typeof c === "object" && c.kind === "open-session" ? c.fleet?.favorite : undefined;
+  };
+  useKeyboardRoute((event) => {
+    if (
+      modal() ||
+      props.active === false ||
+      props.previewActive === false ||
+      !event.ctrl ||
+      event.meta
+    )
+      return false;
+    const key = event.name.toLowerCase();
+    if (!["f", "r", "k", "b"].includes(key)) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.eventType !== "press") return true;
+    if (key === "k" || key === "b") openSheet(key === "k" ? "shortcuts" : "changes");
+    const c = selectedCommand();
+    if (c && key === "f") props.onFavorite?.(c);
+    if (typeof c === "object" && c.fleet && key === "r")
+      applicationMachineAuthorityManager.retry(c.fleet.machineId);
+    return true;
+  });
   const firstVisible = createMemo((previous: number) => {
     const capacity = visibleCapacity();
     const next =
@@ -133,107 +220,203 @@ export function MinimalPalette(props: {
         };
       });
   return (
-    <Dialog
-      theme={props.theme}
-      viewportWidth={props.width}
-      viewportHeight={props.height}
-      width={width()}
-      height={height()}
-      title={innerWidth() >= 15 ? "Command palette" : "Commands"}
-      {...(height() >= 9 ? { footer: "↑↓ choose · Enter run · Esc close" } : {})}
-      active={props.active}
-      zIndex={props.zIndex}
-      onDismiss={props.onClose}
-    >
-      <text
-        height={1}
-        width={innerWidth()}
-        fg={props.theme.roles.text.link}
-        content={clipTerminal(
-          props.query
-            ? `/ ${clipTerminalEnd(`${props.query}▏`, innerWidth() - 2)}`
-            : "/ Search commands…",
-          innerWidth(),
-        )}
-      />
-      <box
-        height={visibleCapacity()}
-        flexDirection="column"
-        overflow="hidden"
-        onMouseScroll={(event) => {
-          if (props.active === false || !props.commands.length) return;
-          event.preventDefault();
-          event.stopPropagation();
-          props.onSelect?.(
-            Math.max(
-              0,
-              Math.min(
-                props.commands.length - 1,
-                props.selected + (event.scroll?.direction === "up" ? -1 : 1),
-              ),
-            ),
-          );
-        }}
+    <>
+      <Dialog
+        theme={props.theme}
+        viewportWidth={props.width}
+        viewportHeight={props.height}
+        width={width()}
+        height={height()}
+        title={props.title ?? (innerWidth() >= 15 ? "Command palette" : "Commands")}
+        {...(height() >= 9
+          ? { footer: props.keyboardHint ?? "↑↓ choose · Enter run · Esc close" }
+          : {})}
+        active={props.active !== false && !sheet()}
+        zIndex={props.zIndex}
+        onDismiss={props.onClose}
       >
-        <Show
-          when={props.commands.length > 0}
-          fallback={
-            <text
-              height={1}
-              width={innerWidth()}
-              fg={props.theme.roles.text.muted}
-              content={clipTerminal("No matches · Ctrl+U clear", innerWidth())}
-            />
-          }
-        >
-          <For each={commandRows().map((row) => applicationCommandDescription(row.command).id)}>
-            {(id) => {
-              const row = () =>
-                commandRows().find((row) => applicationCommandDescription(row.command).id === id)!;
-              return (
-                <OverlayListRow
-                  theme={props.theme}
-                  id={id}
-                  label={commandLabel(row().command)}
-                  width={innerWidth()}
-                  selected={props.selected === row().index}
-                  reserveMarker={innerWidth() >= 16}
-                  disabled={
-                    props.active === false || Boolean(props.disabledReason?.(row().command))
-                  }
-                  danger={props.closeArmed && row().command === "close-pane"}
-                  onHighlight={() => props.onSelect?.(row().index)}
-                  onPress={() => {
-                    props.onSelect?.(row().index);
-                    props.onActivate(row().command);
-                  }}
-                />
-              );
-            }}
-          </For>
-        </Show>
-      </box>
-      <Show when={height() >= 9}>
         <text
           height={1}
           width={innerWidth()}
-          fg={props.theme.roles.text.muted}
+          fg={props.theme.roles.text.link}
           content={clipTerminal(
-            (() => {
-              const command = props.commands[props.selected];
-              if (!command) return "Try an action, agent or session name";
-              return (
-                props.disabledReason?.(command) ??
-                (props.closeArmed
-                  ? "Closes the pane and its running process"
-                  : `${props.selected + 1}/${props.commands.length} · ${applicationCommandDescription(command).detail}`)
-              );
-            })(),
+            props.query
+              ? `/ ${clipTerminalEnd(`${props.query}▏`, innerWidth() - 2)}`
+              : "/ Search commands…",
             innerWidth(),
           )}
         />
+        <Show when={height() >= 12}>
+          <box height={1} flexDirection="row" gap={1} overflow="hidden">
+            <TuiButton
+              theme={props.theme}
+              label="Shortcuts ^K"
+              size="compact"
+              onPress={() => openSheet("shortcuts")}
+            />
+            <TuiButton
+              theme={props.theme}
+              label="What's new ^B"
+              size="compact"
+              onPress={() => openSheet("changes")}
+            />
+            <Badge theme={props.theme} label={`${props.commands.length} matches`} />
+            <Show when={hasPreview()}>
+              <Badge theme={props.theme} label="PASSIVE PREVIEW" tone="neutral" />
+            </Show>
+          </box>
+        </Show>
+        <box
+          height={bodyHeight()}
+          flexDirection={sideBySide() ? "row" : "column"}
+          gap={sideBySide() ? 1 : 0}
+          overflow="hidden"
+        >
+          <Show when={!expanded()}>
+            <box
+              width={listWidth()}
+              height={visibleCapacity()}
+              flexDirection="column"
+              overflow="hidden"
+              onMouseScroll={(event) => {
+                if (props.active === false || !props.commands.length) return;
+                event.preventDefault();
+                event.stopPropagation();
+                props.onSelect?.(
+                  Math.max(
+                    0,
+                    Math.min(
+                      props.commands.length - 1,
+                      props.selected + (event.scroll?.direction === "up" ? -1 : 1),
+                    ),
+                  ),
+                );
+              }}
+            >
+              <Show
+                when={props.commands.length > 0}
+                fallback={
+                  <text
+                    height={1}
+                    width={innerWidth()}
+                    fg={props.theme.roles.text.muted}
+                    content={clipTerminal("No matches · Ctrl+U clear", innerWidth())}
+                  />
+                }
+              >
+                <For
+                  each={commandRows().map((row) => applicationCommandDescription(row.command).id)}
+                >
+                  {(id) => {
+                    const row = () =>
+                      commandRows().find(
+                        (row) => applicationCommandDescription(row.command).id === id,
+                      )!;
+                    return (
+                      <OverlayListRow
+                        theme={props.theme}
+                        id={id}
+                        label={`${typeof row().command === "object" && (row().command as { fleet?: { favorite?: boolean } }).fleet?.favorite ? "★ " : ""}${commandLabel(row().command)}`}
+                        query={props.query}
+                        width={listWidth()}
+                        selected={props.selected === row().index}
+                        reserveMarker={innerWidth() >= 16}
+                        disabled={
+                          props.active === false || Boolean(props.disabledReason?.(row().command))
+                        }
+                        danger={props.closeArmed && row().command === "close-pane"}
+                        onHighlight={() => props.onSelect?.(row().index)}
+                        onPress={() => {
+                          props.onSelect?.(row().index);
+                          props.onActivate(row().command);
+                        }}
+                      />
+                    );
+                  }}
+                </For>
+              </Show>
+            </box>
+          </Show>
+          <Show when={sideBySide()}>
+            <text
+              width={1}
+              height={bodyHeight()}
+              fg={props.theme.roles.text.muted}
+              content={Array(bodyHeight()).fill("│").join("\n")}
+            />
+          </Show>
+          <Show when={hasPreview()}>
+            <ApplicationPalettePreview
+              command={selectedCommand()}
+              width={previewWidth()}
+              height={previewHeight()}
+              theme={props.theme}
+              active={!modal() && props.active !== false && props.previewActive !== false}
+              onExpandedChange={setExpanded}
+            />
+          </Show>
+        </box>
+        <Show when={hasPreview()}>
+          <box height={2} flexDirection="row" gap={1} overflow="hidden">
+            <ApplicationFleetSessionActions
+              command={selectedCommand()}
+              width={props.width}
+              height={props.height}
+              theme={props.theme}
+              initialName={props.commands.length === 0 ? props.query : undefined}
+              active={props.active !== false && props.previewActive !== false}
+              onModalChange={(open) => {
+                setModal(open);
+                props.onModalChange?.(open);
+              }}
+            />
+            <Show when={favorite() !== undefined && props.onFavorite}>
+              <KeyHint
+                theme={props.theme}
+                keys="^F"
+                label={favorite() ? "Unfavorite" : "Favorite"}
+                disabled={props.active === false || props.previewActive === false}
+                onPress={() => {
+                  const c = selectedCommand();
+                  if (c) props.onFavorite?.(c);
+                }}
+              />
+            </Show>
+          </box>
+        </Show>
+        <Show when={height() >= 9}>
+          <text
+            height={1}
+            width={innerWidth()}
+            fg={props.theme.roles.text.muted}
+            content={clipTerminal(
+              (() => {
+                const command = props.commands[props.selected];
+                if (!command) return "Try an action, agent or session name";
+                return (
+                  props.disabledReason?.(command) ??
+                  (props.closeArmed
+                    ? "Closes the pane and its running process"
+                    : `${props.selected + 1}/${props.commands.length} · ${applicationCommandDescription(command).detail}`)
+                );
+              })(),
+              innerWidth(),
+            )}
+          />
+        </Show>
+      </Dialog>
+      <Show when={sheet()}>
+        {(page) => (
+          <ApplicationReferenceSheet
+            page={page()}
+            width={props.width}
+            height={props.height}
+            theme={props.theme}
+            onClose={() => openSheet(undefined)}
+          />
+        )}
       </Show>
-    </Dialog>
+    </>
   );
 }
 

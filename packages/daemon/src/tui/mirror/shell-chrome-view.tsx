@@ -2,6 +2,7 @@
 import { For } from "solid-js";
 import {
   contextStatusPresentation,
+  developmentChromeLabel,
   shellNavigationPresentation,
   shellSurfaceTabs,
   shellVisualPalette,
@@ -33,6 +34,7 @@ export interface ShellTabBarProps {
     label: string;
     hovered?: boolean;
     context?: boolean;
+    textColor?: string;
     attention?: boolean;
   }[];
   navigationFocused?: boolean;
@@ -40,6 +42,7 @@ export interface ShellTabBarProps {
 }
 
 export function ShellTabBar(props: ShellTabBarProps) {
+  const development = developmentChromeLabel(process.env);
   const navigation = () =>
     shellNavigationPresentation(props.variant, props.navigationFocused ?? false);
   const tabs = () =>
@@ -91,6 +94,18 @@ export function ShellTabBar(props: ShellTabBarProps) {
         {...(props.onSelectView ? { onSelect: props.onSelectView } : {})}
       />
       <box flexGrow={1} />
+      <For each={development ? [development] : []}>
+        {(label) => (
+          <Badge
+            theme={props.theme}
+            label={label}
+            presentation={`${label} `}
+            width={label.length + 1}
+            surface="header"
+            tone="warning"
+          />
+        )}
+      </For>
       <For each={props.note ? [props.note] : []}>
         {(note) => (
           <Badge
@@ -111,6 +126,7 @@ export function ShellTabBar(props: ShellTabBarProps) {
           <Badge
             theme={props.theme}
             label={chip.label.trim()}
+            textColor={chip.textColor}
             width={Math.max(1, terminalDisplayWidth(chip.label) + (chip.context ? 1 : 0))}
             presentation={`${chip.label}${chip.context ? " " : ""}`}
             surface="header"

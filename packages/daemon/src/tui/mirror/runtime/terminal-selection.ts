@@ -164,34 +164,41 @@ export function extractTerminalSelection(
 ): Readonly<{ text: string; bytes: number }> | null {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_TERMINAL_SELECTION_BYTES)
     return null;
-  const rows = [...snapshot.history, ...snapshot.grid];
+  for (const point of [first, last]) {
+    if (!Number.isSafeInteger(point.row) || !Number.isSafeInteger(point.col)) return null;
+  }
+  const rowCount = snapshot.history.length + snapshot.grid.length;
+  const rowAt = (index: number) =>
+    index < snapshot.history.length
+      ? snapshot.history[index]
+      : snapshot.grid[index - snapshot.history.length];
   const ordered = orderCells(first, last);
   if (
     ordered.start.row < 0 ||
-    ordered.end.row >= rows.length ||
+    ordered.end.row >= rowCount ||
     ordered.start.col < 0 ||
     ordered.end.col < 0 ||
     ordered.start.col >= snapshot.cols ||
     ordered.end.col >= snapshot.cols
   )
     return null;
-  const startOwner = semanticOwnerColumn(rows[ordered.start.row]!, ordered.start.col);
-  const endOwner = semanticOwnerColumn(rows[ordered.end.row]!, ordered.end.col);
+  const startOwner = semanticOwnerColumn(rowAt(ordered.start.row)!, ordered.start.col);
+  const endOwner = semanticOwnerColumn(rowAt(ordered.end.row)!, ordered.end.col);
   if (startOwner === null || endOwner === null) return null;
   const start = Object.freeze({ row: ordered.start.row, col: startOwner });
   const end = Object.freeze({ row: ordered.end.row, col: endOwner });
   const selected: string[] = [];
   let bytes = 0;
   for (let index = start.row; index <= end.row; index += 1) {
-    const cells = rowCells(rows[index]!, snapshot.cols);
+    const cells = rowCells(rowAt(index)!, snapshot.cols);
     const range = rowSelectionRange(index, snapshot.cols, start, end);
     // tmux clips a hard line at its last non-space cell before selecting;
     // it preserves the full width of a wrapped line. Trimming the selected
     // substring would erase intentional separators and Unicode whitespace.
     let lineEnd = cells.length;
-    if (!rows[index + 1]?.wrapped) while (lineEnd > 0 && cells[lineEnd - 1] === " ") lineEnd--;
+    if (!rowAt(index + 1)?.wrapped) while (lineEnd > 0 && cells[lineEnd - 1] === " ") lineEnd--;
     const segment = range ? cells.slice(range.from, Math.min(range.to + 1, lineEnd)).join("") : "";
-    const joinsWrappedRow = selected.length > 0 && rows[index]!.wrapped;
+    const joinsWrappedRow = selected.length > 0 && rowAt(index)!.wrapped;
     const separatorBytes = selected.length === 0 || joinsWrappedRow ? 0 : 1;
     const segmentBytes = Buffer.byteLength(segment, "utf8");
     if (bytes + separatorBytes + segmentBytes > maxBytes) return null;

@@ -104,3 +104,87 @@ describe("native frozen backing height", () => {
       expect(resizeNativeFrozenHeight(source, rows)).toBeNull();
   });
 });
+
+it("v2 reflows written spaces but preserves erased allocation without adding rows", () => {
+  const empty = {
+    flags: 64,
+    width: 1,
+    bytesHex: "20",
+    text: " ",
+    attributes: 0,
+    foreground: 8,
+    background: 16777233,
+    underline: 8,
+    link: 0,
+    storageFlags: 66,
+  };
+  const source = {
+    ...backing(0),
+    version: 2 as const,
+    cols: 4,
+    rows: 1,
+    history: 0,
+    hscrolled: 0,
+    cursor: [0, 0] as const,
+    grid: [{ flags: 0, used: 0, cells: Array(4).fill(empty) }],
+  };
+  const erased = resizeNativeFrozenGrid(source, 2, 1)!;
+  expect(erased.history).toBe(0);
+  expect(erased.grid[0]!.used).toBe(0);
+  expect(erased.grid[0]!.cells).toEqual(source.grid[0]!.cells);
+  const written = resizeNativeFrozenGrid(
+    {
+      ...source,
+      grid: [
+        {
+          ...source.grid[0]!,
+          used: 4,
+          cells: Array(4).fill({ ...empty, flags: 0, storageFlags: 2 }),
+        },
+      ],
+    },
+    2,
+    1,
+  )!;
+  expect(written.history).toBe(1);
+  expect(written.grid.map((row) => row.used)).toEqual([2, 2]);
+  expect(written.grid.every((row) => row.cells.every((cell) => cell.background === 16777233))).toBe(
+    true,
+  );
+});
+
+it("v2 joining writes at used rather than appending after erased allocation", () => {
+  const cell = (text: string, bg = 8) => ({
+    flags: 0,
+    width: 1,
+    bytesHex: Buffer.from(text).toString("hex"),
+    text,
+    attributes: 0,
+    foreground: 8,
+    background: bg,
+    underline: 8,
+    link: 0,
+    storageFlags: 0,
+  });
+  const source = {
+    ...backing(0),
+    version: 2 as const,
+    cols: 2,
+    rows: 2,
+    history: 0,
+    hscrolled: 0,
+    cursor: [0, 0] as const,
+    grid: [
+      {
+        flags: 1,
+        used: 2,
+        cells: [cell("a"), cell("b"), cell(" ", 16777233), cell(" ", 16777233)],
+      },
+      { flags: 0, used: 2, cells: [cell("c"), cell("d")] },
+    ],
+  };
+  const joined = resizeNativeFrozenGrid(source, 4, 2)!;
+  expect(joined.grid[0]!.used).toBe(4);
+  expect(joined.grid[0]!.cells.map((cell) => cell.text).join("")).toBe("abcd");
+  expect(joined.grid[0]!.cells[3]!.background).toBe(8);
+});

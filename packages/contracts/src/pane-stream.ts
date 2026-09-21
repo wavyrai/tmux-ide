@@ -12,7 +12,10 @@ import {
   type TerminalIssueError,
   type TerminalIssueErrorCode,
 } from "./issue-error.ts";
-import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
+import {
+  TerminalAttachmentSemanticPaneIdSchemaZ,
+  TerminalAttachmentSemanticWindowIdSchemaZ,
+} from "./semantic-identity.ts";
 import { TerminalAttachmentViewerModeSchemaZ } from "./terminal-attachments.ts";
 import { WorkspaceIdSchemaZ } from "./workspace-state.ts";
 import {
@@ -280,6 +283,7 @@ export const PaneStreamSemanticIntentFrameSchemaZ = z
 export const PaneStreamViewportFrameSchemaZ = z
   .object({
     type: z.literal("viewport"),
+    semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ.optional(),
     seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
     cols: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
     rows: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),

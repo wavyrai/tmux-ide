@@ -1,3 +1,7 @@
+import type {
+  NativeBackingIdentity,
+  TerminalNativeBackingResponse,
+} from "./native-seed-backing.ts";
 import {
   SessionRuntimeClientIdSchemaZ,
   SessionRuntimeAuthorityLeaseSchemaZ,
@@ -56,7 +60,6 @@ import {
   SessionRuntimeTerminalReplicaOwner,
   type TerminalReplicaQualificationSnapshot,
   type TerminalReplicaSubscription,
-  type TerminalReplicaNativeBackingResult,
 } from "./terminal-replica-owner.ts";
 import {
   SessionRuntimeTerminalDeliveryHub,
@@ -197,8 +200,18 @@ export interface SessionRuntimeConsumer {
     traceId: string,
     reason: CausalCellFailureReasonV1,
   ): void;
-  fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void;
-  fitViewportWithAuthority(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void;
+  fitViewport(
+    lease: SessionRuntimeControllerLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void;
+  fitViewportWithAuthority(
+    lease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void;
   describe(): Promise<MirrorSessionDescription>;
   subscribe(
     semanticPaneId: string,
@@ -425,8 +438,10 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   /**
    * Mark the exact retained runtime as eligible for daemon-private inventory.
    * This is intentionally separate from ordinary renderer prewarming: only
-   * the native discovery path may call it after its parser and global catalog
-   * analyzer proved the session attachable.
+   * native discovery may call it after validating the selected session's cold
+   * pane/window proof and its qualification admission guards. This grants fresh
+   * session-scoped control-channel inventory, not a global uniqueness certificate;
+   * consumers still validate each inventory and its exact-runtime token.
    */
   async prewarmProofQualifiedSession(
     session: string,
@@ -694,10 +709,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   async captureNativeBacking(
     session: string,
     semanticPaneId: string,
-  ): Promise<TerminalReplicaNativeBackingResult> {
+    expected?: NativeBackingIdentity,
+  ): Promise<TerminalNativeBackingResponse> {
     const runtime = this.#sessions.get(session);
     if (this.#disposed || !runtime) return { status: "unavailable" };
-    const result = await runtime.captureNativeBacking(semanticPaneId);
+    const result = await runtime.captureNativeBacking(semanticPaneId, expected);
     if (this.#disposed || this.#sessions.get(session) !== runtime) return { status: "retired" };
     return result;
   }
@@ -807,7 +823,12 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     if (this.#disposed) return Promise.reject(new Error("SessionRuntimeRegistry is disposed"));
     runtime.assertController(lease);
     let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
-    const resolvedSession = this.#resolveSession?.(intent.workspaceName) ?? null;
+    const resolvedSession =
+      intent.verb === "workspace.session.kill" && intent.fleetTarget
+        ? intent.fleetTarget.daemonInstanceId === this.generation
+          ? intent.fleetTarget.sessionName
+          : null
+        : (this.#resolveSession?.(intent.workspaceName) ?? null);
     if (resolvedSession !== runtime.session) {
       return Promise.reject(
         new SessionRuntimeControllerLeaseError(
@@ -1054,8 +1075,10 @@ class SessionRuntime {
       session,
       scheduler,
       nativeGeometryHysteresisMs,
-      onGeometryAuthorityChanged: (clientId) =>
-        this.#mirror.setGeometryParticipation(this.session, clientId !== null),
+      onGeometryAuthorityChanged: (clientId) => {
+        this.#mirror.clearWindowViewports(this.session);
+        this.#mirror.setGeometryParticipation(this.session, clientId !== null);
+      },
       onNativeGeometryYieldExpired: () => this.#publishAuthority(),
     });
     this.#terminalDeliveryHub = new SessionRuntimeTerminalDeliveryHub(
@@ -1439,6 +1462,7 @@ class SessionRuntime {
     lease: SessionRuntimeControllerLease,
     cols: number,
     rows: number,
+    semanticWindowId?: string,
   ): void {
     this.assertController(lease, clientId);
     const geometryLease =
@@ -1450,7 +1474,8 @@ class SessionRuntime {
       );
     }
     this.#mirror.setGeometryParticipation(this.session, true);
-    this.#mirror.fitViewport(this.session, cols, rows);
+    if (semanticWindowId === undefined) this.#mirror.fitViewport(this.session, cols, rows);
+    else this.#mirror.fitWindowViewport(this.session, semanticWindowId, cols, rows);
   }
 
   fitViewportWithAuthority(
@@ -1458,6 +1483,7 @@ class SessionRuntime {
     lease: SessionRuntimeAuthorityLease,
     cols: number,
     rows: number,
+    semanticWindowId?: string,
   ): void {
     const parsed = SessionRuntimeAuthorityLeaseSchemaZ.parse(lease);
     let exact: SessionRuntimeAuthorityLease;
@@ -1476,7 +1502,8 @@ class SessionRuntime {
       );
     }
     this.#mirror.setGeometryParticipation(this.session, true);
-    this.#mirror.fitViewport(this.session, cols, rows);
+    if (semanticWindowId === undefined) this.#mirror.fitViewport(this.session, cols, rows);
+    else this.#mirror.fitWindowViewport(this.session, semanticWindowId, cols, rows);
   }
 
   async whenReady(): Promise<void> {
@@ -1581,10 +1608,16 @@ class SessionRuntime {
     }
   }
 
-  async captureNativeBacking(semanticPaneId: string): Promise<TerminalReplicaNativeBackingResult> {
+  async captureNativeBacking(
+    semanticPaneId: string,
+    expected?: NativeBackingIdentity,
+  ): Promise<TerminalNativeBackingResponse> {
     const owner = this.#terminalReplicas.get(semanticPaneId);
     if (!owner) return { status: "unavailable" };
-    return await owner.captureNativeBacking();
+    const retained = expected
+      ? this.#terminalDeliveryHub.retainedNativeBacking(semanticPaneId, expected)
+      : null;
+    return retained ?? (await owner.captureNativeBacking());
   }
 
   async openTerminalDelivery(
@@ -1948,14 +1981,24 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     this.#runtime.failCausalCellProbe(semanticPaneId, traceId, reason);
   }
 
-  fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void {
+  fitViewport(
+    lease: SessionRuntimeControllerLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void {
     this.#assertOpen();
-    this.#runtime.fitViewport(this.clientId, lease, cols, rows);
+    this.#runtime.fitViewport(this.clientId, lease, cols, rows, semanticWindowId);
   }
 
-  fitViewportWithAuthority(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void {
+  fitViewportWithAuthority(
+    lease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void {
     this.#assertOpen();
-    this.#runtime.fitViewportWithAuthority(this.clientId, lease, cols, rows);
+    this.#runtime.fitViewportWithAuthority(this.clientId, lease, cols, rows, semanticWindowId);
   }
 
   async describe(): Promise<MirrorSessionDescription> {
@@ -2036,6 +2079,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     let closed = false;
     const connection: TerminalDeliveryConnection = {
       negotiation: upstream.negotiation,
+      closed: upstream.closed,
       ack: (ack: TerminalDeliveryAck) => upstream.ack(ack),
       nack: (nack: TerminalDeliveryNack) => upstream.nack(nack),
       setVisibility: (visibility: TerminalDeliveryVisibility) => upstream.setVisibility(visibility),

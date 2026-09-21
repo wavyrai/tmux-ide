@@ -5,7 +5,7 @@ import type { InteractionReceipt } from "@tmux-ide/contracts";
 import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard, type JSX } from "@opentui/solid";
 import { describe, expect, it } from "bun:test";
-import { createSignal, onCleanup } from "solid-js";
+import { batch, createSignal, onCleanup } from "solid-js";
 
 import { colorToThemeBytes, createSemanticThemeSnapshot } from "../theme.ts";
 import { renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
@@ -339,6 +339,58 @@ describe("receipt presence lifetime", () => {
 });
 
 describe("pane activity labels", () => {
+  it("removes an expired interaction badge without evaluating its retired presence", async () => {
+    const [interaction, setInteraction] = createSignal<PaneTitleBarProps["interaction"]>({
+      paneId: "pane.alpha",
+      direction: "incoming",
+      sourcePaneId: null,
+      destinationPaneId: "pane.alpha",
+      operationKind: "workspace.pane.read",
+      operationId: "read",
+      phase: "observed",
+      origin: "external",
+      label: "read",
+      sequence: 1,
+      at: new Date().toISOString(),
+    });
+    const [selected, setSelected] = createSignal(false);
+    const setup = await renderForTest(
+      () => (
+        <PaneTitleBar
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          paneId="pane.alpha"
+          title="Shell"
+          width={80}
+          selected={selected()}
+          terminalFocused={false}
+          keyboardFocused={false}
+          interaction={interaction()}
+          menuAnchor={{ x: 79, y: 0 }}
+          onSelectIntent={() => {}}
+          onMenuIntent={() => {}}
+        />
+      ),
+      { width: 80, height: 1 },
+    );
+    try {
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("READ");
+      setInteraction({ ...interaction()!, phase: "accepted", sequence: 2 });
+      await setup.renderOnce();
+      expect(() =>
+        batch(() => {
+          setSelected(true);
+          setInteraction(undefined);
+        }),
+      ).not.toThrow();
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).not.toContain("READ");
+      expect(setup.captureCharFrame()).toContain("Shell");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
   it("shows receipt-backed external input alongside lifecycle and zoom without consuming body rows", async () => {
     const setup = await renderForTest(
       () => (

@@ -13,11 +13,17 @@ export interface NativeGridCaptureCell {
 }
 
 export interface NativeGridCaptureRow {
+  /** Logical reflow boundary; allocation may contain erased cells beyond it. */
+  readonly used?: number;
   readonly flags: number;
   readonly cells: readonly NativeGridCaptureCell[];
 }
 
 export interface NativeGridCapture {
+  /** v1 omits allocated erased tails and is not complete painted backing. */
+  readonly version?: 1 | 2;
+  /** Current rendition from the input parser; absent on backing-only captures. */
+  readonly currentAttributes?: readonly [number, number, number, number];
   readonly cols: number;
   readonly rows: number;
   readonly history: number;
@@ -31,11 +37,26 @@ const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_ROWS = MAX_BYTES / 64;
 const MAX_CELLS = 1_000_000;
 
+/** Dense parser import must also fit the cell budget, even for sparse exports. */
+export function isNativeBootstrapCapture(snapshot: NativeGridCapture): boolean {
+  return (
+    uint(snapshot.cols, 16384) &&
+    snapshot.cols > 0 &&
+    uint(snapshot.rows, MAX_ROWS) &&
+    snapshot.rows > 0 &&
+    uint(snapshot.history, MAX_ROWS) &&
+    snapshot.version === 2 &&
+    snapshot.currentAttributes !== undefined &&
+    snapshot.cols * (snapshot.history + snapshot.rows) <= MAX_CELLS
+  );
+}
+
 /** Compact renderer-neutral backing transport, using the same bounded native format. */
 export function encodeNativeGridCapture(source: NativeGridCapture): string | null {
   const records = [
     JSON.stringify({
-      version: 1,
+      version: source.version ?? 1,
+      ...(source.currentAttributes ? { currentAttributes: source.currentAttributes } : {}),
       cols: source.cols,
       rows: source.rows,
       history: source.history,
@@ -51,7 +72,7 @@ export function encodeNativeGridCapture(source: NativeGridCapture): string | nul
       JSON.stringify({
         row: index,
         flags: row.flags,
-        used: row.cells.length,
+        used: row.used ?? row.cells.length,
         cells: row.cells.map((cell) => [
           cell.flags,
           cell.width,
@@ -101,7 +122,7 @@ export function decodeNativeGridCapture(text: string): NativeGridCapture | null 
     const header = next();
     if (
       !object(header) ||
-      header.version !== 1 ||
+      (header.version !== 1 && header.version !== 2) ||
       !uint(header.cols, MAX_CELLS) ||
       header.cols === 0 ||
       !uint(header.rows, MAX_ROWS) ||
@@ -112,8 +133,22 @@ export function decodeNativeGridCapture(text: string): NativeGridCapture | null 
       !uint(header.limit) ||
       !Array.isArray(header.cursor) ||
       header.cursor.length !== 2 ||
-      !uint(header.cursor[0], header.cols) ||
+      // screen_resize_cursor preserves x after a non-reflow (alternate)
+      // shrink. Bound the source coordinate independently of current columns.
+      !uint(header.cursor[0], MAX_CELLS) ||
       !uint(header.cursor[1], header.rows - 1)
+    )
+      return null;
+    const attrs = header.currentAttributes;
+    if (
+      attrs != null &&
+      (header.version !== 2 ||
+        !Array.isArray(attrs) ||
+        attrs.length !== 4 ||
+        !uint(attrs[0], 0xffff) ||
+        !signed(attrs[1]) ||
+        !signed(attrs[2]) ||
+        !signed(attrs[3]))
     )
       return null;
     const grid: NativeGridCaptureRow[] = [];
@@ -126,10 +161,11 @@ export function decodeNativeGridCapture(text: string): NativeGridCapture | null 
         !uint(row.flags) ||
         !uint(row.used, MAX_CELLS - count) ||
         !Array.isArray(row.cells) ||
-        row.cells.length !== row.used
+        row.cells.length > MAX_CELLS - count ||
+        (header.version === 1 ? row.cells.length !== row.used : row.cells.length < row.used)
       )
         return null;
-      count += row.used;
+      count += row.cells.length;
       const cells: NativeGridCaptureCell[] = [];
       for (const raw of row.cells) {
         if (
@@ -164,10 +200,27 @@ export function decodeNativeGridCapture(text: string): NativeGridCapture | null 
           }),
         );
       }
-      grid.push(Object.freeze({ flags: row.flags, cells: Object.freeze(cells) }));
+      grid.push(
+        Object.freeze({
+          flags: row.flags,
+          ...(header.version === 2 ? { used: row.used } : {}),
+          cells: Object.freeze(cells),
+        }),
+      );
     }
     if (offset < text.length) return null;
     return Object.freeze({
+      version: header.version,
+      ...(Array.isArray(attrs)
+        ? {
+            currentAttributes: Object.freeze([...attrs]) as readonly [
+              number,
+              number,
+              number,
+              number,
+            ],
+          }
+        : {}),
       cols: header.cols,
       rows: header.rows,
       history: header.history,

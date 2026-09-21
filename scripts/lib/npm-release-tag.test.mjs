@@ -85,13 +85,34 @@ test("manual binary releases explicitly dispatch npm from the exact release tag"
 
   assert.match(workflow, /permissions:[\s\S]+actions: write[\s\S]+contents: write/u);
   assert.match(workflow, /dispatch_npm_release:[\s\S]+needs: \[release, binaries\]/u);
-  assert.match(workflow, /if: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}/u);
+  assert.match(
+    workflow,
+    /if: \$\{\{ github\.event_name == 'workflow_dispatch' && !inputs\.qualification_only \}\}/u,
+  );
   assert.match(workflow, /RELEASE_TAG: \$\{\{ needs\.release\.outputs\.tag \}\}/u);
   assert.match(workflow, /RELEASE_VERSION: \$\{\{ needs\.release\.outputs\.version \}\}/u);
   assert.match(
     workflow,
     /gh workflow run release\.yml[\s\S]+--ref "\$RELEASE_TAG"[\s\S]+--field "version=\$RELEASE_VERSION"/u,
   );
+});
+
+test("qualification-only builds cannot publish tags, assets, or npm", () => {
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/release-binaries.yml", import.meta.url),
+    "utf8",
+  );
+  for (const step of ["Ensure GitHub release exists", "Upload release asset"])
+    assert.ok(workflow.includes(`- name: ${step}\n        if: \${{ !inputs.qualification_only }}`));
+  assert.match(
+    workflow,
+    /dispatch_npm_release:[\s\S]+if: \$\{\{ github\.event_name == 'workflow_dispatch' && !inputs\.qualification_only \}\}/u,
+  );
+  assert.match(
+    workflow,
+    /--release-scroll-manifest "\$RUNNER_TEMP\/opentui-qualified\/release-manifest\.json"/u,
+  );
+  assert.match(workflow, /"\$bin" __release-provenance/u);
 });
 
 test("npm release uses OIDC trusted publishing instead of a repository token", () => {
@@ -105,6 +126,22 @@ test("npm release uses OIDC trusted publishing instead of a repository token", (
   assert.match(workflow, /npm install --global npm@11\.6\.2/u);
   assert.match(workflow, /run: npm publish --access public --tag/u);
   assert.doesNotMatch(workflow, /NPM_TOKEN|NODE_AUTH_TOKEN/u);
+});
+
+test("native qualification can retain failed build evidence without publishing npm", () => {
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/release.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /qualification_only:[\s\S]+type: boolean[\s\S]+default: false/u);
+  assert.match(
+    workflow,
+    /publish_npm:[\s\S]+if: \$\{\{ always\(\) && !inputs\.qualification_only && needs\.build_macos_tmux\.result == 'success'/u,
+  );
+  assert.match(
+    workflow,
+    /uses: actions\/upload-artifact@v4\n {8}if: always\(\)\n {8}with:\n {10}name: tmux-ide-native-tmux/u,
+  );
 });
 
 test("retired desktop surfaces cannot block the terminal product CI", () => {

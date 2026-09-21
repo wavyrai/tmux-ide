@@ -50,6 +50,7 @@ describe("desktop process boundaries", () => {
 
   it("exposes only the reviewed invoke vocabulary", () => {
     expect(HOST_INVOKE_CHANNELS).toEqual([
+      HOST_IPC.iconCatalog,
       HOST_IPC.bootstrap,
       HOST_IPC.windowMinimize,
       HOST_IPC.windowToggleMaximized,
@@ -65,6 +66,9 @@ describe("desktop process boundaries", () => {
       HOST_IPC.daemonSubscribe,
       HOST_IPC.daemonCancelSubscribe,
       HOST_IPC.daemonUnsubscribe,
+      HOST_IPC.environmentList,
+      HOST_IPC.environmentOpen,
+      HOST_IPC.environmentDisconnect,
     ]);
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/send");
     expect(Object.values(HOST_IPC)).not.toContain("tmux-ide:host/eval");

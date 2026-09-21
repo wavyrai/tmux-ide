@@ -668,7 +668,7 @@ describe("development gateway host sessions", () => {
 
   it("rebootstraps once on the exact stale-session code and preserves the operation id", async () => {
     const operationId = "33333333-3333-4333-8333-333333333333";
-    vi.spyOn(crypto, "randomUUID").mockReturnValue(operationId);
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("66666666-6666-4666-8666-666666666666");
     let bootstrapCount = 0;
     const actionRequests: Array<{
       operationId: string | undefined;
@@ -712,6 +712,7 @@ describe("development gateway host sessions", () => {
     const host = createDevWebHostCapabilities(CONFIG);
     await expect(
       host.daemon.invokeVerb({
+        operationId,
         verbId: "pane.select",
         intent: {
           verb: "workspace.pane.select",

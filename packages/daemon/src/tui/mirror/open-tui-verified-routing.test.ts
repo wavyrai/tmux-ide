@@ -95,3 +95,104 @@ describe("OpenTUI verified routing capability", () => {
     expect(open).not.toHaveBeenCalled();
   });
 });
+
+describe("SSH pane-stream endpoint authority", () => {
+  function fixture() {
+    const remote = { ...daemon, port: 7070 };
+    let endpoint: import("./runtime/application-daemon-authority.ts").ApplicationDaemonEndpoint = {
+      kind: "ssh",
+      label: "test",
+      remote,
+      localBaseUrl: "http://127.0.0.1:6060",
+      epoch: 4,
+      state: "ready",
+    };
+    let captured!: OpenPaneStreamClientOptions;
+    const open = vi.fn(async (options: OpenPaneStreamClientOptions) => {
+      captured = options;
+      return {} as PaneStreamRuntimeClient;
+    });
+    const context = createOpenTuiVerifiedRoutingContext(
+      daemon,
+      "workspace.alpha",
+      "alpha",
+      open,
+      () => endpoint,
+    )!;
+    const socket = vi.fn();
+    const options = {
+      origin: "tmux-ide://opentui",
+      hostClientId: "client",
+      requestId: "request",
+      stream: {
+        protocolVersion: 1,
+        workspaceName: "workspace.alpha",
+        panes: ["pane.editor"],
+        viewerMode: "interactive",
+        terminalDelivery: {
+          protocolVersions: [1],
+          encodings: ["semantic-v1"],
+          richPlacements: true,
+        },
+      },
+      createSocket: socket,
+      onNegotiated: vi.fn(),
+      onTerminalDelivery: vi.fn(),
+    } satisfies Parameters<typeof context.openPaneStream>[1];
+    const connect = (url: string) =>
+      captured.createSocket(
+        {
+          webSocketUrl: url,
+          subprotocol: "tmux-test",
+          requestId: "request",
+        } as Parameters<typeof captured.createSocket>[0],
+        { Origin: "tmux-ide://opentui" },
+      );
+    return {
+      context,
+      socket,
+      options,
+      connect,
+      retire: () => {
+        endpoint = { ...endpoint, epoch: 5 };
+      },
+    };
+  }
+
+  it("rewrites only the verified original daemon origin, preserving path, query and protocol", async () => {
+    const f = fixture();
+    await f.context.openPaneStream(f.context, f.options);
+    f.connect("ws://127.0.0.1:7070/ws/panes?ticket=a%2Fb&revision=3");
+    expect(f.socket).toHaveBeenCalledWith(
+      expect.objectContaining({
+        webSocketUrl: "ws://127.0.0.1:6060/ws/panes?ticket=a%2Fb&revision=3",
+        subprotocol: "tmux-test",
+      }),
+      { Origin: "tmux-ide://opentui" },
+    );
+  });
+
+  it.each([
+    "ws://attacker.invalid:7070/ws/panes",
+    "ws://127.0.0.1:6060/ws/panes",
+    "wss://127.0.0.1:7070/ws/panes",
+    "ws://user:secret@127.0.0.1:7070/ws/panes",
+    "ws://127.0.0.1:7070/ws/panes#fragment",
+  ])("rejects an untrusted issued endpoint before opening a socket: %s", async (url) => {
+    const f = fixture();
+    await f.context.openPaneStream(f.context, f.options);
+    expect(() => f.connect(url)).toThrow(/verified SSH daemon origin/u);
+    expect(f.socket).not.toHaveBeenCalled();
+  });
+
+  it("fences late issuance after reconnection even with the same pane and daemon IDs", async () => {
+    const f = fixture();
+    await f.context.openPaneStream(f.context, f.options);
+    f.retire();
+    expect(() => f.connect("ws://127.0.0.1:7070/ws/panes")).toThrow(/connection has been retired/u);
+    await expect(f.context.openPaneStream(f.context, f.options)).rejects.toThrow(
+      /connection has been retired/u,
+    );
+    expect(f.socket).not.toHaveBeenCalled();
+  });
+});

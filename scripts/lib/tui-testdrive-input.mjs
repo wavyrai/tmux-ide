@@ -601,15 +601,15 @@ function mouseSequence(action, x, y, button = "left", values = []) {
 }
 
 function selectionPhases(from, to) {
-  const phases = [{ bytes: mouseSequence("down", from.x, from.y), delayMs: 12 }];
+  const phases = [{ bytes: mouseSequence("down", from.x, from.y, "left", ["shift"]), delayMs: 12 }];
   const distance = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y));
   const steps = Math.max(1, Math.min(24, distance));
   for (let step = 1; step <= steps; step += 1) {
     const x = Math.round(from.x + ((to.x - from.x) * step) / steps);
     const y = Math.round(from.y + ((to.y - from.y) * step) / steps);
-    phases.push({ bytes: mouseSequence("drag", x, y), delayMs: 4 });
+    phases.push({ bytes: mouseSequence("drag", x, y, "left", ["shift"]), delayMs: 4 });
   }
-  phases.push({ bytes: mouseSequence("up", to.x, to.y), delayMs: 0 });
+  phases.push({ bytes: mouseSequence("up", to.x, to.y, "left", ["shift"]), delayMs: 0 });
   return phases;
 }
 
@@ -809,6 +809,7 @@ export function proveRendererSelectionStyleDelta(
   to,
   geometry,
   content,
+  allowTargetHeaderChange = false,
 ) {
   const before = decodeTmuxCaptureCellStyles(beforeFrame, geometry);
   const after = decodeTmuxCaptureCellStyles(afterFrame, geometry);
@@ -828,7 +829,16 @@ export function proveRendererSelectionStyleDelta(
         changed.push({ row, col });
     }
   }
-  const extra = changed.filter(({ row, col }) => !requested.has(`${row}:${col}`));
+  const extra = changed.filter(
+    ({ row, col }) =>
+      !requested.has(`${row}:${col}`) &&
+      !(
+        allowTargetHeaderChange &&
+        row === content.y - 1 &&
+        col >= content.x &&
+        col < content.x + content.width
+      ),
+  );
   if (swapped.length < 2 || swapped.length !== span.length || extra.length !== 0) {
     throw new Error(
       `OpenTUI selection style proof covered ${swapped.length}/${span.length} requested cells with ${extra.length} extra changed cells`,
@@ -1639,27 +1649,9 @@ export async function executeTestdriveInputOperation(command, port) {
     totalTransportCalls = translated.phases.length;
 
     if (command.kind === "selection-drag") {
-      totalPhases += 3;
-      totalTransportCalls = 5;
-      // Explicitly enter the product's pane-local select mode through its real
-      // context menu, then require its rendered badge/note before dragging.
-      for (const phase of [
-        { bytes: mouseSequence("down", command.from.x, command.from.y, "right"), delayMs: 12 },
-        { bytes: mouseSequence("up", command.from.x, command.from.y, "right"), delayMs: 12 },
-        { bytes: "\r", delayMs: 0 },
-      ]) {
-        failureSubstage = "select-mode-identity";
-        await port.verifyIdentity(identity, deliveryRemaining());
-        failureSubstage = "enter-select-mode";
-        await inject(phase.bytes);
-        await pause(phase.delayMs);
-      }
-      failureSubstage = "wait-select-mode";
-      await port.waitForFrame(
-        identity,
-        (frame) => frame.includes("select text: drag to copy") || frame.includes("⧉ select"),
-        deliveryRemaining(),
-      );
+      totalTransportCalls = 2;
+      // Exercise the product's Shift-pointer selection directly. Menu entry
+      // can activate keyboard copy mode and is not this gesture's contract.
       failureSubstage = "capture-before-selection";
       await port.verifyIdentity(identity, deliveryRemaining());
       const before = await port.captureAnsi(identity, deliveryRemaining());
@@ -1688,6 +1680,7 @@ export async function executeTestdriveInputOperation(command, port) {
                 rows: identity.rows,
               },
               command.contentRect,
+              true,
             ),
             frameDigest: createHash("sha256").update(selected).digest("hex"),
           };

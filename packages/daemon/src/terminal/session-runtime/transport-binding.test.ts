@@ -107,10 +107,16 @@ describe("SessionRuntimeTransportBinder", () => {
     expect(consumer.fitViewportWithAuthority).toHaveBeenLastCalledWith(GEOMETRY_LEASE, 100, 30);
     expect(consumer.acquireController).not.toHaveBeenCalled();
     expect(replacement.requestAuthority("geometry")).toEqual(GEOMETRY_LEASE);
-    expect(() => first.fitViewport(GEOMETRY_LEASE, 101, 31)).toThrowError(
+    expect(() => first.fitViewport(GEOMETRY_LEASE, 101, 31, "window.one")).toThrowError(
       expect.objectContaining({ code: "invalid-client-capability" }),
     );
-    replacement.fitViewport(GEOMETRY_LEASE, 102, 32);
+    replacement.fitViewport(GEOMETRY_LEASE, 102, 32, "window.one");
+    expect(consumer.fitViewportWithAuthority).toHaveBeenLastCalledWith(
+      GEOMETRY_LEASE,
+      102,
+      32,
+      "window.one",
+    );
     await first.close();
     expect(consumer.releaseAuthority).not.toHaveBeenCalled();
     replacement.fitViewport(GEOMETRY_LEASE, 103, 33);

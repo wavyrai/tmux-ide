@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { SavedMachineSchema } from "@tmux-ide/contracts";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -10,18 +12,19 @@ import { canonicalDaemonPreflight, type DaemonPreflight } from "./daemon-preflig
  * app's own record of the environments it can reach and how to reach them.
  * The two are deliberately decoupled: an endpoint can be recorded before the
  * environment behind it is ever contacted, and the environmentId is learned
- * (reconciled) on the first successful preflight. Today the catalog holds
- * exactly one entry — the local canonical daemon — so behavior is identical
- * to the previous hardcoded wiring; remote endpoint kinds slot in as new
- * members of the endpoint union without touching connection authority.
+ * (reconciled) on the first successful preflight. The catalog records local and
+ * SSH routes. Recording a route grants no
+ * connection authority; each route must be verified independently.
  */
 
-/** How to reach an environment. Local-canonical means daemon.json discovery. */
-export interface KnownEnvironmentEndpoint {
-  readonly kind: "local-canonical";
-}
+/** How to reach an environment. SSH credentials remain outside the catalog. */
+export type KnownEnvironmentEndpoint =
+  | { readonly kind: "local-canonical" }
+  | { readonly kind: "ssh"; readonly alias: string };
 
 export interface KnownEnvironment {
+  /** Host-owned route identity; never a daemon identity or connection capability. */
+  readonly id: string;
   /** Stable daemon-minted identity; null until the first successful connect. */
   readonly environmentId: string | null;
   readonly endpoint: KnownEnvironmentEndpoint;
@@ -35,6 +38,7 @@ const CATALOG_VERSION = 1;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 const LOCAL_CANONICAL_SEED: KnownEnvironment = {
+  id: "f6400051-e34b-4662-a56d-58e45e39a6cd",
   environmentId: null,
   endpoint: { kind: "local-canonical" },
   label: "Local daemon",
@@ -46,17 +50,42 @@ export interface KnownEnvironmentReconciler {
   reconcileLocalCanonical(environmentId: string): void;
 }
 
+function hasControlCharacters(value: string): boolean {
+  return [...value].some(
+    (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+  );
+}
+
 function parseEnvironment(value: unknown): KnownEnvironment | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const endpoint = record.endpoint as Record<string, unknown> | undefined;
-  if (!endpoint || endpoint.kind !== "local-canonical") return null;
+  if (!endpoint) return null;
+  let parsedEndpoint: KnownEnvironmentEndpoint;
+  if (endpoint.kind === "local-canonical") parsedEndpoint = { kind: "local-canonical" };
+  else if (
+    endpoint.kind === "ssh" &&
+    SavedMachineSchema.shape.sshTarget.safeParse(endpoint.alias).success
+  ) {
+    parsedEndpoint = { kind: "ssh", alias: endpoint.alias as string };
+  } else return null;
+  if (record.id !== undefined && (typeof record.id !== "string" || !UUID_PATTERN.test(record.id)))
+    return null;
+  const id =
+    typeof record.id === "string"
+      ? record.id
+      : parsedEndpoint.kind === "local-canonical"
+        ? LOCAL_CANONICAL_SEED.id
+        : randomUUID();
   const environmentId =
     typeof record.environmentId === "string" && UUID_PATTERN.test(record.environmentId)
       ? record.environmentId
       : null;
   const label =
-    typeof record.label === "string" && record.label.length > 0
+    typeof record.label === "string" &&
+    record.label.trim().length > 0 &&
+    record.label.length <= 120 &&
+    !hasControlCharacters(record.label)
       ? record.label
       : LOCAL_CANONICAL_SEED.label;
   const lastConnectedAt =
@@ -64,7 +93,7 @@ function parseEnvironment(value: unknown): KnownEnvironment | null {
     Number.isFinite(Date.parse(record.lastConnectedAt))
       ? record.lastConnectedAt
       : null;
-  return { environmentId, endpoint: { kind: "local-canonical" }, label, lastConnectedAt };
+  return { id, environmentId, endpoint: parsedEndpoint, label, lastConnectedAt };
 }
 
 function parseCatalog(value: unknown): KnownEnvironment[] | null {
@@ -77,7 +106,14 @@ function parseCatalog(value: unknown): KnownEnvironment[] | null {
     if (!parsed) return null;
     environments.push(parsed);
   }
-  return environments.length > 0 ? environments : null;
+  if (new Set(environments.map((entry) => entry.id)).size !== environments.length) return null;
+  const keys = environments.map((entry) =>
+    entry.endpoint.kind === "local-canonical" ? "local" : `ssh:${entry.endpoint.alias}`,
+  );
+  if (new Set(keys).size !== keys.length) return null;
+  if (!environments.some((entry) => entry.endpoint.kind === "local-canonical"))
+    environments.unshift(LOCAL_CANONICAL_SEED);
+  return environments;
 }
 
 /** Resolve the preflight prober for an endpoint. The only seam that maps
@@ -89,9 +125,8 @@ export function resolvePreflightForEndpoint(endpoint: KnownEnvironmentEndpoint):
 
 /**
  * A preflight that resolves its target through the catalog at probe time
- * instead of hardcoding the one local daemon. With today's single
- * local-canonical entry this delegates to the existing secure preflight
- * unchanged; a future remote entry only changes what the catalog answers.
+ * for the local supervisor. Remote routes require their own transport-owning
+ * coordinator; this adapter never silently redirects local authority.
  */
 export function createCatalogBackedPreflight(catalog: KnownEnvironmentCatalog): DaemonPreflight {
   return {
@@ -121,8 +156,16 @@ export class KnownEnvironmentCatalog implements KnownEnvironmentReconciler {
   load(): Promise<void> {
     this.#loaded ??= (async () => {
       try {
-        const parsed = parseCatalog(JSON.parse(await readFile(this.#path, "utf8")));
-        if (parsed) this.#environments = parsed;
+        const raw: unknown = JSON.parse(await readFile(this.#path, "utf8"));
+        const parsed = parseCatalog(raw);
+        if (parsed) {
+          this.#environments = parsed;
+          const stored = (raw as { environments: Array<{ id?: unknown }> }).environments;
+          // Persist an actual migration, not every read. A normal reload must
+          // not race a later catalog owner by rewriting an unchanged snapshot.
+          if (stored.length !== parsed.length || stored.some((entry) => entry.id === undefined))
+            this.#persist();
+        }
       } catch {
         // Absent or unreadable state keeps the seed; the next successful
         // reconcile persists a fresh catalog.
@@ -149,23 +192,48 @@ export class KnownEnvironmentCatalog implements KnownEnvironmentReconciler {
    * id is replaced rather than treated as a second environment.
    */
   reconcileLocalCanonical(environmentId: string): KnownEnvironmentReconcileOutcome {
-    if (!UUID_PATTERN.test(environmentId)) return "unchanged";
-    const current = this.localCanonical();
+    return this.reconcile(this.localCanonical().id, environmentId);
+  }
+
+  /** Add a route without granting connection authority or storing credentials. */
+  async addSsh(alias: string, label = alias): Promise<KnownEnvironment> {
+    await this.load();
+    const parsed = SavedMachineSchema.shape.sshTarget.safeParse(alias);
+    if (!parsed.success) throw new Error("Invalid SSH alias");
+    if (!label.trim() || label.length > 120 || hasControlCharacters(label))
+      throw new Error("Invalid environment label");
+    const existing = this.#environments.find(
+      (entry) => entry.endpoint.kind === "ssh" && entry.endpoint.alias === alias,
+    );
+    if (existing) return existing;
+    const entry: KnownEnvironment = {
+      id: randomUUID(),
+      environmentId: null,
+      endpoint: { kind: "ssh", alias },
+      label: label.trim(),
+      lastConnectedAt: null,
+    };
+    this.#environments = [...this.#environments, entry];
+    this.#persist();
+    return entry;
+  }
+
+  entry(id: string): KnownEnvironment | undefined {
+    return this.#environments.find((entry) => entry.id === id);
+  }
+
+  /** Observational only: callers must verify the daemon before reconciling. */
+  reconcile(id: string, environmentId: string): KnownEnvironmentReconcileOutcome {
+    const current = this.entry(id);
+    if (!current || !UUID_PATTERN.test(environmentId)) return "unchanged";
     const outcome: KnownEnvironmentReconcileOutcome =
       current.environmentId === environmentId
         ? "unchanged"
         : current.environmentId === null
           ? "recorded"
           : "replaced";
-    const next: KnownEnvironment = {
-      ...current,
-      environmentId,
-      lastConnectedAt: new Date().toISOString(),
-    };
-    this.#environments = [
-      next,
-      ...this.#environments.filter((candidate) => candidate.endpoint.kind !== "local-canonical"),
-    ];
+    const next = { ...current, environmentId, lastConnectedAt: new Date().toISOString() };
+    this.#environments = this.#environments.map((entry) => (entry.id === id ? next : entry));
     this.#persist();
     return outcome;
   }

@@ -78,6 +78,12 @@ export function createCanonicalDaemonPreflight(
       if (state.status === "missing") {
         return unavailable("record-missing", "No running canonical tmux-ide daemon was found.");
       }
+      if (state.status === "reserved") {
+        return unavailable(
+          "process-not-running",
+          "Waiting for the configured supervisor to start the daemon.",
+        );
+      }
       if (state.status === "invalid") {
         return degraded(
           "record-invalid",

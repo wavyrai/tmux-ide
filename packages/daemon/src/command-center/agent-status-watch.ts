@@ -105,6 +105,10 @@ export interface AgentTurnCompletion {
  * Completed turns between two readings: panes present in BOTH whose state word
  * left `working` for `done` or `idle`. A pane that vanished mid-turn completed
  * nothing; a pane that appeared already-done transitioned nothing we observed.
+ * The durable stamp must remain equal: gaining, losing or replacing it is not
+ * evidence that the replacement completed the prior turn. Two unstamped reads
+ * retain anonymous receipts for compatibility, without process/task correlation.
+ * These sampled status transitions do not prove submitted-task success.
  * Sorted (session, then pane key) for deterministic emission order.
  */
 export function diffTurnCompletions(
@@ -119,11 +123,13 @@ export function diffTurnCompletions(
     for (const paneId of [...panes.keys()].sort()) {
       const prior = before.get(paneId);
       if (prior === undefined || agentStateWord(prior.state) !== "working") continue;
-      const word = agentStateWord(panes.get(paneId)!.state);
+      const current = panes.get(paneId)!;
+      if (prior.paneStamp !== current.paneStamp) continue;
+      const word = agentStateWord(current.state);
       if (word !== "done" && word !== "idle") continue;
       completions.push({
         sessionName,
-        paneStamp: panes.get(paneId)!.paneStamp,
+        paneStamp: current.paneStamp,
         fromStatus: "working",
         toStatus: word,
       });

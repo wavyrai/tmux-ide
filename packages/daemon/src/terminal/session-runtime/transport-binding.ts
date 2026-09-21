@@ -397,7 +397,12 @@ export class SessionRuntimeTransportBinding {
     }
   }
 
-  fitViewport(expectedLease: SessionRuntimeAuthorityLease, cols: number, rows: number): void {
+  fitViewport(
+    expectedLease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): void {
     this.#assertOpen();
     if (this.#shared.geometryTransportLeaseIds.at(-1) !== this.#transportLeaseId) {
       throw new SessionRuntimeControllerLeaseError(
@@ -412,7 +417,8 @@ export class SessionRuntimeTransportBinding {
           "stale-controller-lease",
           "Geometry authority retired.",
         );
-      this.#shared.consumer.fitViewport(controller, cols, rows);
+      if (semanticWindowId === undefined) this.#shared.consumer.fitViewport(controller, cols, rows);
+      else this.#shared.consumer.fitViewport(controller, cols, rows, semanticWindowId);
       return;
     }
     const lease = this.#geometryAuthorityLease;
@@ -421,7 +427,9 @@ export class SessionRuntimeTransportBinding {
         "stale-controller-lease",
         "Geometry authority retired.",
       );
-    this.#shared.consumer.fitViewportWithAuthority(lease, cols, rows);
+    if (semanticWindowId === undefined)
+      this.#shared.consumer.fitViewportWithAuthority(lease, cols, rows);
+    else this.#shared.consumer.fitViewportWithAuthority(lease, cols, rows, semanticWindowId);
   }
 
   executionHandleForSource(semanticPaneId: string): SessionRuntimeExecutionHandle {

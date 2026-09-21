@@ -73,3 +73,23 @@ describe("Home agent row projection", () => {
     expect(homeAgentStatusLabel("idle")).toBe("IDLE");
   });
 });
+
+it("projects only authenticated available window grouping", () => {
+  const resource = structuredClone(shell);
+  resource.resource.terminalInventory = {
+    activeResourceId: null,
+    resources: [
+      {
+        id: "terminal.a",
+        title: "agent",
+        kind: "agent",
+        active: true,
+        attachability: { status: "available", semanticPaneId: "pane.a" },
+        windowResourceId: "window.work",
+      },
+    ],
+  } as never;
+  const rows = projectHomeAgentRows({ id: "one", name: "work", paneCount: 1 }, resource);
+  expect(rows[0]?.windowId).toBe("window.work");
+  expect(rows[1]?.windowId).toBeNull();
+});
