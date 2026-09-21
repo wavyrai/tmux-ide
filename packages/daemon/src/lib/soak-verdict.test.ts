@@ -285,12 +285,12 @@ describe("parseDurationMs", () => {
 describe("countSpawnsByCommand", () => {
   it("skips socket and option prefixes and attributes the command word", () => {
     const records = [
-      ["-S", "/tmp/x.sock", "show-hooks", "-g"].join(""),
-      ["-S", "/tmp/x.sock", "-u", "list-panes", "-a"].join(""),
-      ["-L", "name", "-f", "/dev/null", "list-panes"].join(""),
-      ["-C", "-S", "/tmp/x.sock", "wait-for", "x"].join(""),
+      ["-S", "/tmp/x.sock", "show-hooks", "-g"].join("\u0001"),
+      ["-S", "/tmp/x.sock", "-u", "list-panes", "-a"].join("\u0001"),
+      ["-L", "name", "-f", "/dev/null", "list-panes"].join("\u0001"),
+      ["-C", "-S", "/tmp/x.sock", "wait-for", "x"].join("\u0001"),
       "",
-      "-S/tmp/x.sock",
+      "-S\u0001/tmp/x.sock",
     ];
     expect(countSpawnsByCommand(records)).toEqual({
       "show-hooks": 1,

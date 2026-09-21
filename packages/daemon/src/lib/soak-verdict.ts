@@ -438,7 +438,7 @@ export function countSpawnsByCommand(records: readonly string[]): Record<string,
   const counts: Record<string, number> = {};
   for (const line of records) {
     if (!line) continue;
-    const words = line.split("");
+    const words = line.split("\u0001");
     let index = 0;
     while (index < words.length && words[index]!.startsWith("-")) {
       index += words[index] === "-u" || words[index] === "-C" || words[index] === "-v" ? 1 : 2;
