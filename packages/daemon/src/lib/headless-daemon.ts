@@ -348,6 +348,7 @@ async function runHeadlessDaemonGeneration(
     for (let startAttempt = 0; startAttempt < 2 && !handle; startAttempt += 1) {
       try {
         handle = await deps.startEmbeddedDaemon({
+          launcher: "headless",
           ...(options.supervisionId
             ? { supervisionId: options.supervisionId, predecessor: lifecycle.predecessor }
             : {}),

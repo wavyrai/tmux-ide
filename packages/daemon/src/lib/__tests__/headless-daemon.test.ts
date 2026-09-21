@@ -405,6 +405,7 @@ describe("runHeadlessDaemon", () => {
 
     expect(harness.startOptions).toEqual([
       {
+        launcher: "headless",
         port: 4321,
         bindHostname: "127.0.0.1",
         authToken: null,

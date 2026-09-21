@@ -221,6 +221,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide daemon reserve-supervisor <id>")} ${dim("Reserve this namespace before installing a supervisor")}
   ${cyan("tmux-ide daemon release-supervisor <id> --yes")} ${dim("Release after removing the stopped service")}
   ${cyan("tmux-ide daemon restart")}     ${dim("Reset the daemon runtime; preserve its process and tmux sessions")}
+  ${cyan("tmux-ide daemon info")} [--json] ${dim("Daemon identity, supervisor and actual log destination (credential-free)")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
   ${cyan("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
                               ${dim("Rebuild the fleet from the last snapshot after a tmux crash")}
@@ -813,6 +814,21 @@ try {
               })
             : `Supervisor namespace ${release ? "released" : "reserved"}: ${positionals[2]}`,
         );
+        break;
+      }
+      if (positionals[1] === "info") {
+        if (positionals.length !== 2)
+          throw new IdeError("Usage: tmux-ide daemon info [--json]", {
+            code: "USAGE",
+            exitCode: 2,
+          });
+        // Credential-free: the report is built from the daemon record with the
+        // auth token stripped and never reads token material from log files.
+        const { collectDaemonProvenanceReport, formatDaemonProvenanceReport } =
+          await import("../packages/daemon/src/lib/daemon-provenance.ts");
+        const report = collectDaemonProvenanceReport();
+        if (json) console.log(JSON.stringify(report, null, 2));
+        else for (const line of formatDaemonProvenanceReport(report)) console.log(line);
         break;
       }
       if (positionals[1] !== "restart" || positionals.length !== 2)

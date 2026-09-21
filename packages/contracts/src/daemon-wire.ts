@@ -67,6 +67,35 @@ export const CanonicalDaemonReservationSchema = z
   .strict();
 export type CanonicalDaemonReservation = z.infer<typeof CanonicalDaemonReservationSchema>;
 
+/**
+ * Where a daemon's stdout/stderr actually go, captured by the running process
+ * at startup. `dev`/`ino` identify a regular file even when its path could not
+ * be resolved, so a provenance report can match on-disk log files against the
+ * live destination instead of guessing from file names.
+ */
+export const DaemonLogStreamSchema = z.object({
+  kind: z.enum(["file", "tty", "pipe", "socket", "null", "unknown"]),
+  path: z.string().min(1).max(4096).optional(),
+  dev: z.number().int().nonnegative().optional(),
+  ino: z.number().int().nonnegative().optional(),
+  detail: z.string().max(256).optional(),
+});
+export type DaemonLogStream = z.infer<typeof DaemonLogStreamSchema>;
+
+export const DaemonSupervisorKindSchema = z.enum(["manual", "launchd", "systemd", "embedded"]);
+export type DaemonSupervisorKind = z.infer<typeof DaemonSupervisorKindSchema>;
+
+/** Startup provenance stamped into the daemon record; never carries credentials. */
+export const DaemonProvenanceSchema = z.object({
+  launcher: z.enum(["headless", "embedded"]),
+  supervisor: DaemonSupervisorKindSchema,
+  parentPid: z.number().int().nonnegative(),
+  stdout: DaemonLogStreamSchema,
+  stderr: DaemonLogStreamSchema,
+  warnings: z.array(z.string().max(256)).max(8).optional(),
+});
+export type DaemonProvenance = z.infer<typeof DaemonProvenanceSchema>;
+
 export const CanonicalDaemonInfoSchema = z.object({
   supervisionId: DaemonSupervisionIdSchema.optional(),
   pid: z.number().int().positive(),
@@ -78,6 +107,7 @@ export const CanonicalDaemonInfoSchema = z.object({
   environmentId: EnvironmentIdSchema.optional(),
   bindHostname: z.string().trim().min(1),
   authToken: z.string().min(1).nullable(),
+  provenance: DaemonProvenanceSchema.optional(),
 });
 export type CanonicalDaemonInfo = z.infer<typeof CanonicalDaemonInfoSchema>;
 

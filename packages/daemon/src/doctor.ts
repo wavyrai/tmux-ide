@@ -9,6 +9,10 @@ import { findCompiledTui, hasDevelopmentTuiSource, isBunAvailable } from "./tui/
 import { claudeSettingsPath } from "./tui/integrations/claude.ts";
 import { readNotificationPrefs, resolveNativeMacosNotifierPath } from "./tui/chrome/notify.ts";
 import { resolveConfig } from "./lib/resolved-config.ts";
+import {
+  collectDaemonProvenanceReport,
+  type DaemonProvenanceReport,
+} from "./lib/daemon-provenance.ts";
 
 interface CheckResult {
   label: string;
@@ -106,6 +110,55 @@ export function notifierRow(present: boolean): CheckResult {
       "native helper missing — reinstall tmux-ide; unbranded AppleScript banners remain available",
     optional: true,
   };
+}
+
+/**
+ * PURE — the "canonical daemon" row from a provenance report. Optional: a
+ * machine without a running daemon is healthy; the row exists so triage sees
+ * identity, supervisor and the real log destination without a second command.
+ */
+export function daemonProvenanceRow(report: DaemonProvenanceReport): CheckResult {
+  const label = "canonical daemon";
+  const historical = report.logFiles.filter((f) => f.status === "historical").length;
+  const suffix = historical
+    ? ` — ${historical} historical log file${historical === 1 ? "" : "s"} (see \`tmux-ide daemon info\`)`
+    : "";
+  const d = report.daemon;
+  switch (report.status) {
+    case "running":
+      return {
+        label,
+        pass: true,
+        detail:
+          `running v${d!.productVersion} pid ${d!.pid} (${d!.supervisor ?? "unknown supervisor"}) · ` +
+          `logs → ${d!.logDestination}${suffix}`,
+        optional: true,
+      };
+    case "stale-record":
+      return {
+        label,
+        pass: false,
+        detail: `record names pid ${d!.pid} (v${d!.productVersion}) but it is not running${suffix}`,
+        optional: true,
+      };
+    case "record-invalid":
+      return {
+        label,
+        pass: false,
+        detail: `record invalid (${report.record.status === "invalid" ? report.record.reason : "unknown"})${suffix}`,
+        optional: true,
+      };
+    default:
+      return {
+        label,
+        pass: true,
+        detail:
+          report.record.status === "reserved"
+            ? `not running (reserved for supervisor ${report.record.supervisionId})${suffix}`
+            : `not running${suffix}`,
+        optional: true,
+      };
+  }
 }
 
 function check(
@@ -326,6 +379,23 @@ export async function doctor({
       },
       { optional: true },
     ),
+  );
+
+  // Canonical daemon identity + log provenance (credential-free), so a triage
+  // never chases a stale, manually redirected log file.
+  checks.push(
+    (() => {
+      try {
+        return daemonProvenanceRow(collectDaemonProvenanceReport());
+      } catch (e) {
+        return {
+          label: "canonical daemon",
+          pass: false,
+          detail: `provenance unavailable: ${(e as Error).message}`,
+          optional: true,
+        };
+      }
+    })(),
   );
 
   // Native branded sender: only when the macOS channel is actually on.

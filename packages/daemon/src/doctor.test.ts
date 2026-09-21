@@ -3,8 +3,9 @@
  * text depends only on a DiscoveredAgent[], so no io is needed here.
  */
 import { describe, expect, it } from "vitest";
-import { agentIntegrationRows, hooksTargetRow } from "./doctor.ts";
+import { agentIntegrationRows, daemonProvenanceRow, hooksTargetRow } from "./doctor.ts";
 import type { DiscoveredAgent } from "./lib/agent-discovery.ts";
+import type { DaemonProvenanceReport } from "./lib/daemon-provenance.ts";
 
 const agent = (over: Partial<DiscoveredAgent>): DiscoveredAgent => ({
   id: "x",
@@ -140,5 +141,108 @@ describe("runtime prerequisites", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("daemonProvenanceRow", () => {
+  const namespace = {
+    mode: "test",
+    stateHome: "/s",
+    daemonInfoDir: "/s",
+    logsDir: "/s/logs",
+    recordPath: "/s/daemon.json",
+  };
+  const daemon: NonNullable<DaemonProvenanceReport["daemon"]> = {
+    instanceId: "11111111-1111-4111-8111-111111111111",
+    productVersion: "2.9.0",
+    protocolVersion: 2,
+    pid: 4242,
+    port: 4010,
+    bindHostname: "127.0.0.1",
+    startedAt: "2026-09-20T00:00:00.000Z",
+    supervisionId: "tmux-ide.service",
+    liveness: "alive",
+    launcher: "headless",
+    supervisor: "systemd",
+    parentPid: 1,
+    provenanceRecorded: true,
+    logs: { stdout: { kind: "socket" }, stderr: { kind: "socket" } },
+    logDestination: "systemd journal (socket; use journalctl)",
+    provenanceWarnings: [],
+  };
+  const report = (over: Partial<DaemonProvenanceReport>): DaemonProvenanceReport => ({
+    generatedAt: "2026-09-21T00:00:00.000Z",
+    status: "running",
+    namespace,
+    record: { status: "valid" },
+    daemon,
+    logFiles: [],
+    warnings: [],
+    ...over,
+  });
+
+  it("summarizes a running daemon with its real log destination and stale-log count", () => {
+    const row = daemonProvenanceRow(
+      report({
+        logFiles: [
+          {
+            path: "/s/headless.out",
+            bytes: 1,
+            lastWriteAt: "2026-09-01T00:00:00.000Z",
+            dev: 1,
+            ino: 1,
+            pid: 99,
+            status: "historical",
+            reason: "dead",
+          },
+        ],
+      }),
+    );
+    expect(row.pass).toBe(true);
+    expect(row.optional).toBe(true);
+    expect(row.detail).toBe(
+      "running v2.9.0 pid 4242 (systemd) · logs → systemd journal (socket; use journalctl) — 1 historical log file (see `tmux-ide daemon info`)",
+    );
+  });
+
+  it("flags a stale record and an invalid record as ○ rows", () => {
+    expect(daemonProvenanceRow(report({ status: "stale-record" }))).toMatchObject({
+      pass: false,
+      optional: true,
+      detail: "record names pid 4242 (v2.9.0) but it is not running",
+    });
+    expect(
+      daemonProvenanceRow(
+        report({
+          status: "record-invalid",
+          daemon: null,
+          record: { status: "invalid", reason: "symlink", detail: "x" },
+        }),
+      ).detail,
+    ).toBe("record invalid (symlink)");
+  });
+
+  it("treats no daemon as healthy", () => {
+    expect(
+      daemonProvenanceRow(
+        report({ status: "not-running", daemon: null, record: { status: "missing" } }),
+      ),
+    ).toMatchObject({
+      pass: true,
+      detail: "not running",
+    });
+    expect(
+      daemonProvenanceRow(
+        report({
+          status: "not-running",
+          daemon: null,
+          record: {
+            status: "reserved",
+            supervisionId: "svc",
+            reservedAt: "2026-09-20T00:00:00.000Z",
+          },
+        }),
+      ).detail,
+    ).toBe("not running (reserved for supervisor svc)");
   });
 });

@@ -169,6 +169,7 @@ the app.
 | `tmux-ide --headless --supervised <id>`                  | Run the foreground owner only with a matching preinstalled reservation            |
 | `tmux-ide daemon release-supervisor <id> --yes [--json]` | Release the reservation after removing the service and proving its owners stopped |
 | `tmux-ide daemon restart [--json]`                       | Reset the existing daemon runtime in its supervising process; preserve tmux panes |
+| `tmux-ide daemon info [--json]`                          | Identity, supervisor and actual log destination of the daemon; labels stale logs  |
 | `tmux-ide command-center [--port <N>]`                   | Start the command-center HTTP API (default port 4000)                             |
 | `tmux-ide server [--port <N>]`                           | Deprecated loopback-only PTY server; use `--headless`                             |
 
@@ -198,6 +199,18 @@ installed code. A missing daemon is an error.
 
 `tmux-ide restart` instead stops and relaunches a tmux session, including its pane
 commands.
+
+## Identity and log provenance
+
+`tmux-ide daemon info --json` reports the current daemon instance id, version,
+pid and liveness, how it was launched (manual, launchd, systemd or embedded in a
+host) and where its stdout/stderr actually go. The destination is stamped into
+the daemon record by the running process at startup, so the report does not
+guess from file names. Any other log-like file discovered under the state home
+is listed with its last write time and the pid it mentions, labeled
+`historical` or `unattributed`; only the live destination is `current`. The
+report never contains the auth token. `tmux-ide doctor` shows the same summary
+as one row.
 
 ## Upgrade the local daemon
 

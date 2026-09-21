@@ -646,6 +646,7 @@ export function writeCanonicalDaemonInfo(
     ...(info.environmentId !== undefined ? { environmentId: info.environmentId } : {}),
     bindHostname: info.bindHostname,
     authToken: info.authToken,
+    ...(info.provenance !== undefined ? { provenance: info.provenance } : {}),
   };
   writeFileSync(tmpPath, JSON.stringify(persisted, null, 2) + "\n", {
     encoding: "utf-8",

@@ -104,6 +104,8 @@ import {
 } from "./pane-source-credentials.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import { readOrMintEnvironmentId } from "./environment-identity.ts";
+import { captureDaemonProvenance } from "./daemon-provenance.ts";
+import { registerLogSecret, setLogIdentity } from "./log.ts";
 import {
   canonicalDaemonUrl,
   clearCanonicalDaemonInfoIfOwned,
@@ -163,6 +165,12 @@ export function resolveDaemonProductVersion(
 export interface EmbeddedDaemonOptions {
   /** @internal Headless lifecycle only; explicit reservation, never inferred from ancestry. */
   supervisionId?: string;
+  /**
+   * @internal How this process came to own the daemon: the foreground
+   * `--headless` owner or a host embedding `startEmbeddedDaemon` directly.
+   * Stamped into the daemon record for triage; defaults to "embedded".
+   */
+  launcher?: "headless" | "embedded";
   /** @internal Successful previous generation stop in this same process. */
   predecessor?: CanonicalDaemonPredecessor;
   /** @internal Let the foreground lifecycle owner serialize settings restarts. */
@@ -1561,6 +1569,24 @@ async function startEmbeddedDaemonGeneration(
         console.error("[daemon] Direct terminal startup rollback reported cleanup failures.");
       }
     };
+    // Provenance (launcher, supervisor, actual stdout/stderr destination) is
+    // derived from this process, never from file-name conventions, so a later
+    // `daemon info` reads the truth from the record. Capture never throws;
+    // whatever it could not determine is reported as a warning.
+    const provenance = captureDaemonProvenance({
+      launcher: opts.launcher ?? "embedded",
+      ...(opts.supervisionId ? { supervisionId: opts.supervisionId } : {}),
+    });
+    if (provenance.warnings?.length && !opts.silent) {
+      for (const warning of provenance.warnings) {
+        console.warn(`[daemon] log provenance degraded: ${warning}`);
+      }
+    }
+    // Every structured record now carries this generation's identity, and the
+    // local bypass / shared tokens are redacted wherever they might appear.
+    setLogIdentity({ instanceId, version: productVersion });
+    registerLogSecret(localBypassToken);
+    registerLogSecret(opts.authToken);
     try {
       writeCanonicalDaemonInfo(
         {
@@ -1574,6 +1600,7 @@ async function startEmbeddedDaemonGeneration(
           environmentId,
           bindHostname,
           authToken: localBypassToken,
+          provenance,
         },
         claim,
       );
