@@ -28,6 +28,7 @@ export default [
       "bin/**/*.{js,mjs}",
       "scripts/**/*.{js,mjs}",
       "apps/**/scripts/**/*.{js,mjs}",
+      "packages/*/scripts/**/*.{js,mjs}",
       "native/ghostty/**/*.{js,mjs,cjs}",
       "src/**/*.{js,mjs}",
       "*.{js,mjs}",
