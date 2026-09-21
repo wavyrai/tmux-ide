@@ -78,7 +78,7 @@ describe.skipIf(!hasTmux).sequential("daemon idle tmux spawn overhead", () => {
     const counts: Record<string, number> = {};
     for (const line of raw.split("\n")) {
       if (!line) continue;
-      const words = line.split("");
+      const words = line.split("\u0001");
       // Skip the socket/option prefix (-S path, -L name, -u, -f file …).
       let index = 0;
       while (index < words.length && words[index]!.startsWith("-")) {
