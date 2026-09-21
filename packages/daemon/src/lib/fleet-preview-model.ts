@@ -9,5 +9,6 @@ export interface FleetPreviewWindow {
 export interface FleetPreviewSnapshot {
   windows: FleetPreviewWindow[];
   selectedWindowId: string | null;
+  selectedPaneId?: string;
   text: string;
 }

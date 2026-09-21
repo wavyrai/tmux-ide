@@ -112,6 +112,7 @@ it("browses exact windows without selecting them and rejects foreign or removed 
   const id = discoverLiveSessionSummaries(run)[0].liveSessionId;
   const capture = createFleetPreviewCapture(run);
   expect(await capture.snapshot(id, undefined, "@2")).toEqual({
+    selectedPaneId: "%2",
     windows: [
       { id: "@1", index: 0, name: "main", active: true, paneIds: ["%1"] },
       { id: "@2", index: 1, name: "build", active: false, paneIds: ["%2"] },
@@ -164,6 +165,7 @@ it("retains legacy response text while exposing structured window metadata", asy
     "live-session.12345678901234567890",
     expect.any(AbortSignal),
     "@1",
+    undefined,
   );
   expect(capture).not.toHaveBeenCalled();
 });
@@ -205,4 +207,37 @@ it("bounds parallel metadata work to two commands while keeping capture fenced",
   expect((await createFleetPreviewCapture(run).snapshot(id))?.text).toBe("frame");
   expect(peak).toBe(2);
   expect(active).toBe(0);
+});
+
+it("previews the requested inactive pane, rejects foreign panes, and fences moved panes", async () => {
+  let moved = false;
+  const run = vi.fn((args: string[]) => {
+    if (args.includes("-a")) return "1\t$1\t123\tsession";
+    if (args[0] === "list-windows") return "@1\tmain\n@2\tother";
+    if (args[0] === "capture-pane") return args[3] === "%2" ? "agent two" : "agent one";
+    return "%1\t1\t1\t@1\t0\n%2\t1\t0\t" + (moved ? "@2" : "@1") + "\t0";
+  });
+  const id = discoverLiveSessionSummaries(run)[0].liveSessionId;
+  const capture = createFleetPreviewCapture(run);
+  expect(await capture.snapshot(id, undefined, undefined, "%2")).toMatchObject({
+    selectedPaneId: "%2",
+    selectedWindowId: "@1",
+    text: "agent two",
+  });
+  expect(await capture.snapshot(id, undefined, undefined, "%1")).toMatchObject({
+    selectedPaneId: "%1",
+    text: "agent one",
+  });
+  const captures = () => run.mock.calls.filter(([args]) => args[0] === "capture-pane").length;
+  const before = captures();
+  expect(await capture.snapshot(id, undefined, undefined, "%999")).toBeNull();
+  expect(await capture.snapshot(id, undefined, "@2", "%2")).toBeNull();
+  expect(captures()).toBe(before);
+  const original = run.getMockImplementation()!;
+  run.mockImplementation((args) => {
+    const result = original(args);
+    if (args[0] === "capture-pane") moved = true;
+    return result;
+  });
+  expect(await capture.snapshot(id, undefined, undefined, "%2")).toBeNull();
 });

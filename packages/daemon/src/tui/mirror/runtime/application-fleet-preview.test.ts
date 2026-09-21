@@ -149,6 +149,29 @@ it("validates preview metadata and never accepts a reply from a replaced route",
       windowId: "@1",
       expectedInstanceId: daemon.instanceId,
     });
+    // An old daemon or a mismatched pane response must never show another agent.
+    expect(
+      await readFleetWindowPreview(
+        handle,
+        liveSessionId,
+        new AbortController().signal,
+        undefined,
+        "%2",
+      ),
+    ).toEqual({ status: "unavailable" });
+    expect(JSON.parse(fetchMock.mock.calls.at(-1)![1]!.body as string)).toMatchObject({
+      paneId: "%2",
+    });
+    fetchMock.mockImplementation(async () => Response.json({ ...body, selectedPaneId: "%1" }));
+    expect(
+      await readFleetWindowPreview(
+        handle,
+        liveSessionId,
+        new AbortController().signal,
+        undefined,
+        "%2",
+      ),
+    ).toEqual({ status: "unavailable" });
     fetchMock.mockImplementation(async () =>
       Response.json({ ...body, windows: Array.from({ length: 65 }, () => body.windows[0]) }),
     );

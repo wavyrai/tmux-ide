@@ -45,15 +45,24 @@ export function ApplicationPalettePreview(props: {
   const owner = createAdaptiveFleetPreviewOwner(setState, { cache: fleetPreviewMemory });
   const stop = applicationMachineAuthorityManager.subscribe(() => setRevision((v) => v + 1));
   const command = () => (typeof props.command === "object" ? props.command : undefined);
+  const paneId = () => {
+    const c = command();
+    return c?.kind === "jump-agent" ? c.paneId : undefined;
+  };
   const target = () => command()?.fleet;
   const identity = () =>
-    JSON.stringify([target()?.machineId, target()?.liveSessionId, target()?.daemonInstanceId]);
+    JSON.stringify([
+      target()?.machineId,
+      target()?.liveSessionId,
+      target()?.daemonInstanceId,
+      paneId(),
+    ]);
   let previousIdentity = "";
   createEffect(() => {
     const next = identity();
     if (next !== previousIdentity) {
       previousIdentity = next;
-      setWindowId(rememberedWindows.get(next));
+      setWindowId(paneId() ? undefined : rememberedWindows.get(next));
     }
   });
   createEffect(() => {
@@ -78,6 +87,7 @@ export function ApplicationPalettePreview(props: {
               fleet.liveSessionId,
               signal,
               selected,
+              selected ? undefined : paneId(),
             );
             // A remembered window may have been closed since the last visit.
             // Fall back to the session's current window instead of retrying it forever.
@@ -135,7 +145,7 @@ export function ApplicationPalettePreview(props: {
   const heading = () => {
     const snapshot = state().snapshot;
     const window = snapshot?.windows.find((w) => w.id === snapshot.selectedWindowId);
-    return `${target()?.hostLabel ?? "Session preview"} · ${command()?.sessionName ?? "Select a session"}${window ? ` · ${window.index}: ${window.name}` : ""}`;
+    return `${paneId() ? command()?.label + " · " : ""}${target()?.hostLabel ?? "Session preview"} · ${command()?.sessionName ?? "Select a session"}${window ? ` · ${window.index}: ${window.name}` : ""}`;
   };
   const hostColor = () => {
     revision();

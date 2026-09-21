@@ -15,6 +15,7 @@ type Capture = ((
     liveSessionId: string,
     signal?: AbortSignal,
     windowId?: string,
+    paneId?: string,
   ) => Promise<FleetPreviewSnapshot | null>;
 };
 const cleanText = (value: string) => stripVTControlCharacters(value).replace(/[^\P{Cc}\n\t]/gu, "");
@@ -26,6 +27,7 @@ export function createFleetPreviewCapture(
     liveSessionId: string,
     signal?: AbortSignal,
     windowId?: string,
+    paneId?: string,
   ): Promise<FleetPreviewSnapshot | null> => {
     const readSessions = async () => {
       const raw = await run(
@@ -76,8 +78,14 @@ export function createFleetPreviewCapture(
         );
     }
     const windowRows = rows.filter((row) => /^@\d+$/u.test(row[3] ?? ""));
+    const requestedPane = paneId ? windowRows.find((row) => row[0] === paneId) : undefined;
+    if (paneId && (!requestedPane || (windowId && requestedPane[3] !== windowId))) return null;
     const selectedWindowId =
-      windowId ?? windowRows.find((row) => row[1] === "1")?.[3] ?? windowRows[0]?.[3] ?? null;
+      requestedPane?.[3] ??
+      windowId ??
+      windowRows.find((row) => row[1] === "1")?.[3] ??
+      windowRows[0]?.[3] ??
+      null;
     if (windowId && !windowRows.some((row) => row[3] === windowId)) return null;
     const toWindow = (row: string[]): FleetPreviewWindow => ({
       id: row[3]!,
@@ -116,7 +124,7 @@ export function createFleetPreviewCapture(
     }
     windows.sort((a, b) => a.index - b.index);
     const candidates = selectedWindowId ? rows.filter((r) => r[3] === selectedWindowId) : rows;
-    const pane = candidates.find((r) => r[2] === "1")?.[0] ?? candidates[0]?.[0];
+    const pane = paneId ?? candidates.find((r) => r[2] === "1")?.[0] ?? candidates[0]?.[0];
     if (!pane || !/^%\d+$/u.test(pane)) return null;
     // Passive capture never changes active windows, size, input or terminal ownership.
     const captured = await run(["capture-pane", "-p", "-t", pane, "-S", "-24"], signal);
@@ -126,6 +134,7 @@ export function createFleetPreviewCapture(
       return null;
     return {
       windows,
+      selectedPaneId: pane,
       selectedWindowId,
       text: cleanText(captured)
         .split("\n")
@@ -141,6 +150,10 @@ export function createFleetPreviewCapture(
 }
 const requestSchema = z.strictObject({
   expectedInstanceId: z.uuid(),
+  paneId: z
+    .string()
+    .regex(/^%\d+$/u)
+    .optional(),
   windowId: z
     .string()
     .regex(/^@\d+$/u)
@@ -189,10 +202,15 @@ export function mountFleetPreviewRoute(
     pending = true;
     try {
       const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(1500)]);
-      if (input.data.windowId && !options.capture.snapshot)
+      if ((input.data.windowId || input.data.paneId) && !options.capture.snapshot)
         return c.json({ error: "Window preview unavailable" }, 503);
       const snapshot = options.capture.snapshot
-        ? await options.capture.snapshot(input.data.liveSessionId, signal, input.data.windowId)
+        ? await options.capture.snapshot(
+            input.data.liveSessionId,
+            signal,
+            input.data.windowId,
+            input.data.paneId,
+          )
         : null;
       // Older capture providers remain valid for the original text-only contract.
       const legacy = !options.capture.snapshot
@@ -206,7 +224,11 @@ export function mountFleetPreviewRoute(
             liveSessionId: input.data.liveSessionId,
             text,
             ...(snapshot
-              ? { windows: snapshot.windows, selectedWindowId: snapshot.selectedWindowId }
+              ? {
+                  windows: snapshot.windows,
+                  selectedWindowId: snapshot.selectedWindowId,
+                  selectedPaneId: snapshot.selectedPaneId,
+                }
               : {}),
           });
     } catch {

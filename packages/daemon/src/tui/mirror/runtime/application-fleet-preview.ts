@@ -14,6 +14,7 @@ export async function readFleetWindowPreview(
   liveSessionId: string,
   signal: AbortSignal,
   windowId?: string,
+  paneId?: string,
 ): Promise<FleetPreviewResult> {
   const daemon = handle.read();
   const epoch = handle.endpoint().epoch;
@@ -32,6 +33,7 @@ export async function readFleetWindowPreview(
         body: JSON.stringify({
           expectedInstanceId: daemon.instanceId,
           liveSessionId,
+          ...(paneId ? { paneId } : {}),
           ...(windowId ? { windowId } : {}),
         }),
       },
@@ -63,6 +65,7 @@ export async function readFleetWindowPreview(
       body.daemon?.instanceId !== daemon.instanceId ||
       body.daemon?.startedAt !== daemon.startedAt ||
       body.liveSessionId !== liveSessionId ||
+      (paneId && body.selectedPaneId !== paneId) ||
       typeof body.text !== "string" ||
       body.text.length > 8192
     )
@@ -103,6 +106,7 @@ export async function readFleetWindowPreview(
       status: "ready",
       snapshot: {
         text: clean(body.text),
+        ...(body.selectedPaneId ? { selectedPaneId: body.selectedPaneId } : {}),
         selectedWindowId,
         windows: windows.map((w) => ({
           id: w.id,

@@ -65,3 +65,81 @@ it("shows exact unavailable host without falling back and owns only its preview 
     owner.dispose();
   }
 });
+
+it("changing agents in the same session changes the captured pane and cache identity", async () => {
+  const { spyOn } = await import("bun:test");
+  const { applicationMachineAuthorityManager: manager } =
+    await import("./application-machine-authority.ts");
+  const daemon = {
+    bindHostname: "127.0.0.1",
+    port: 4000,
+    authToken: "fixture",
+    instanceId: "11111111-1111-4111-8111-111111111111",
+    startedAt: "fixture",
+  };
+  const authority = spyOn(manager, "getMachine").mockReturnValue({
+    read: () => daemon,
+    endpoint: () => ({ state: "ready", epoch: 999 }),
+  } as any);
+  const requests: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
+    const body = JSON.parse(init.body as string);
+    requests.push(body.paneId);
+    return Response.json({
+      daemon,
+      liveSessionId: body.liveSessionId,
+      selectedPaneId: body.paneId,
+      selectedWindowId: "@1",
+      windows: [{ id: "@1", index: 0, name: "main", active: true, paneIds: ["%1", "%2"] }],
+      text: body.paneId === "%1" ? "FIRST AGENT CONTENT" : "SECOND AGENT CONTENT",
+    });
+  }) as typeof fetch;
+  const [pane, setPane] = createSignal("%1");
+  const owner = createKeyboardRouteOwner();
+  const setup = await renderForTest(
+    () => (
+      <KeyboardRouteProvider owner={owner}>
+        <ApplicationPalettePreview
+          command={{
+            kind: "jump-agent",
+            paneId: pane(),
+            label: pane(),
+            sessionName: "same session",
+            fleet: {
+              machineId: "pane-preview-fixture",
+              hostLabel: "Mini",
+              liveSessionId: "live-session.12345678901234567890",
+              daemonInstanceId: daemon.instanceId,
+            },
+          }}
+          width={60}
+          height={12}
+          active={true}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+        />
+      </KeyboardRouteProvider>
+    ),
+    { width: 60, height: 12 },
+  );
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("FIRST AGENT CONTENT");
+    setPane("%2");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toContain("FIRST AGENT CONTENT");
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("SECOND AGENT CONTENT");
+    setPane("%1");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("FIRST AGENT CONTENT");
+    expect(requests).toEqual(["%1", "%2"]);
+  } finally {
+    setup.renderer.destroy();
+    owner.dispose();
+    authority.mockRestore();
+    globalThis.fetch = originalFetch;
+  }
+});

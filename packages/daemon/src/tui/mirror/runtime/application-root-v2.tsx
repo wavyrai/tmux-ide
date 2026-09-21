@@ -441,7 +441,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           if (
             (shell().semantic?.focus.palette.open || shell().localPaletteOpen) &&
             event.ctrl &&
-            ["left", "right", "p", "e", "n", "x", "f", "r"].includes(name) &&
+            ["left", "right", "p", "e", "n", "x", "f", "r", "k", "b"].includes(name) &&
             componentKeyboardRoutes.route(event)
           )
             return;

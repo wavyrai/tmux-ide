@@ -83,7 +83,8 @@ export function ApplicationFleetSwitcher(props: {
     if (!props.open || props.active === false || modal()) return false;
     const key = event.name.toLowerCase();
     // Preview and action components own these chords, without text or terminal leakage.
-    if (event.ctrl && ["left", "right", "p", "e", "n", "x", "r"].includes(key)) return false;
+    if (event.ctrl && ["left", "right", "p", "e", "n", "x", "r", "k", "b"].includes(key))
+      return false;
     if (event.ctrl && key === "f") {
       event.preventDefault();
       event.stopPropagation();

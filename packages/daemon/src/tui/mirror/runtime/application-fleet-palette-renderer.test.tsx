@@ -111,3 +111,57 @@ it("keeps wide and narrow previews inside their surface and offers true full pre
     }
   }
 });
+
+it("opens offline reference sheets and restores palette input after dismissal", async () => {
+  const owner = createKeyboardRouteOwner();
+  const modal: boolean[] = [];
+  const setup = await renderForTest(
+    () => (
+      <KeyboardRouteProvider owner={owner}>
+        <MinimalPalette
+          width={100}
+          height={30}
+          selected={0}
+          commands={["home", "terminals"]}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          closeArmed={false}
+          onActivate={() => {}}
+          onClose={() => {}}
+          onModalChange={(open) => modal.push(open)}
+        />
+      </KeyboardRouteProvider>
+    ),
+    { width: 100, height: 30 },
+  );
+  const key = (name: string, ctrl = false) =>
+    owner.route({
+      name,
+      ctrl,
+      meta: false,
+      shift: false,
+      eventType: "press",
+      preventDefault() {},
+      stopPropagation() {},
+    });
+  try {
+    await setup.renderOnce();
+    key("k", true);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Keyboard shortcuts");
+    expect(modal.at(-1)).toBe(true);
+    expect(key("q")).toBe(true);
+    key("tab");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("2.9.0-beta.18");
+    key("escape");
+    await setup.renderOnce();
+    expect(modal.at(-1)).toBe(false);
+    expect(setup.captureCharFrame()).not.toContain("LATEST CHANGES");
+    key("b", true);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("What's new");
+  } finally {
+    setup.renderer.destroy();
+    owner.dispose();
+  }
+});
