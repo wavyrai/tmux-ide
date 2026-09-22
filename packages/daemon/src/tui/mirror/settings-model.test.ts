@@ -87,9 +87,9 @@ describe("theme", () => {
   });
   it("offers dark/light/system mode rows and persists only theme.mode", () => {
     expect(themeModeItems(CFG).map((row) => [row.id, row.current, row.detail])).toEqual([
-      ["dark", true, "dark palette"],
+      ["dark", false, "dark palette"],
       ["light", false, "light palette"],
-      ["system", false, "follow terminal theme_mode"],
+      ["system", true, "follow terminal theme_mode"],
     ]);
     const system = parseAppConfig({ theme: { mode: "system" } });
     expect(themeModeItems(system).find((row) => row.current)?.id).toBe("system");

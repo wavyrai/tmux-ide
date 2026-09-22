@@ -214,6 +214,8 @@ import {
   assessExactResizeTmuxBaseline,
   assessResizePostPromotionCommands,
   assessProductKeyboardPointerResize,
+  exactResizeFence,
+  exactFinalResizeOperation,
   inspectResizeContentContinuity,
   inspectResizeGuideFramebuffer,
 } from "./lib/product-keyboard-pointer-resize.mjs";
@@ -7635,43 +7637,6 @@ async function waitForResizeLifecycleRecord(state, predicate, baseline, timeoutM
     await new Promise((resolveWait) => setTimeout(resolveWait, 4));
   }
   throw new Error("resize lifecycle evidence did not settle before deadline");
-}
-
-function exactResizeFence(records, operationId, semanticPaneId) {
-  const phases = [
-    "pane-resize-receipt",
-    "pane-resize-layout",
-    "pane-resize-settled",
-    "pane-resize-fence",
-  ];
-  const selected = Object.fromEntries(
-    phases.map((phase) => [
-      phase,
-      records.filter(
-        (record) =>
-          record?.phase === phase &&
-          record.operationId === operationId &&
-          record.semanticPaneId === semanticPaneId,
-      ),
-    ]),
-  );
-  if (phases.some((phase) => selected[phase].length !== 1))
-    throw new Error("resize operation lifecycle cardinality was not exact");
-  const [receipt, layout, settled, fence] = phases.map((phase) => selected[phase][0]);
-  if (
-    receipt.verb !== "workspace.pane.resize" ||
-    !["applied", "unchanged"].includes(receipt.receiptOutcome) ||
-    receipt.receiptCells !== layout.layoutCells ||
-    settled.layoutCells !== receipt.receiptCells ||
-    settled.presentationChanged !== true ||
-    !/^[0-9a-f]{64}$/u.test(settled.presentationDigest ?? "") ||
-    settled.identityLineageExact !== true ||
-    fence.writerHealth?.droppedRecords !== 0 ||
-    fence.writerHealth?.failed !== false ||
-    fence.writerHealth?.pendingCriticalRecords !== 0
-  )
-    throw new Error("resize operation lifecycle fence was not exact");
-  return Object.freeze({ receipt, layout, settled, fence });
 }
 
 async function captureResizeContentContinuity(state, marker, signal) {
@@ -16989,6 +16954,14 @@ async function owner() {
           const x = 28 + left.left + left.cols;
           const y =
             2 + Math.floor(Math.max(left.top, right.top) + Math.min(left.rows, right.rows) / 2);
+          const lifecycleBefore = readJsonLines(
+            join(state.tui.runtimeDir, "performance.jsonl"),
+          ).length;
+          const watermark = windowWorkspaceEvidenceWatermark(
+            state,
+            baseline.processId,
+            baseline.daemonGeneration,
+          );
           const down = await driveExactHostedInput(
             state,
             {
@@ -17074,7 +17047,12 @@ async function owner() {
               Object.freeze({
                 ordinal,
                 traceId: record.traceId,
-                ...resizeIdentityEvidence(baseline),
+                ...resizeIdentityEvidence(record),
+                sessionName: baseline.sessionName,
+                rendererEpoch: record.rendererEpoch,
+                sourceEpoch: record.sourceEpoch,
+                generation: record.generation,
+                incarnation: record.incarnation,
                 axis: record.axis,
                 cells: record.cells,
                 durationMs: record.durationMicros / 1_000,
@@ -17102,7 +17080,14 @@ async function owner() {
               }),
             );
           }
-          activeDrag = Object.freeze({ x: lastX, y, beforeCells: left.cols });
+          activeDrag = Object.freeze({
+            x: lastX,
+            y,
+            beforeCells: left.cols,
+            lifecycleBefore,
+            watermark,
+            finalSample: samples.at(-1),
+          });
           event("resize-pointer-preview-distribution", { samples: samples.length });
           return Object.freeze(samples);
         },
@@ -17115,14 +17100,7 @@ async function owner() {
           keyboard,
         ) => {
           if (!activeDrag) throw new Error("resize pointer drag ownership was unavailable");
-          const lifecycleBefore = readJsonLines(
-            join(state.tui.runtimeDir, "performance.jsonl"),
-          ).length;
-          const watermark = windowWorkspaceEvidenceWatermark(
-            state,
-            baseline.processId,
-            baseline.daemonGeneration,
-          );
+          const { lifecycleBefore, watermark, finalSample } = activeDrag;
           const delivery = await driveExactHostedInput(
             state,
             {
@@ -17138,17 +17116,46 @@ async function owner() {
           if (delivery.requestedAction !== "up")
             throw new Error("resize pointer-up delivery receipt was invalid");
           activeDrag = null;
-          const found = await waitForResizeLifecycleRecord(
+          const released = await waitForResizeLifecycleRecord(
             state,
             (record) =>
-              record?.phase === "pane-resize-fence" &&
-              record.source === "pointer" &&
-              record.semanticPaneId === baseline.semanticPaneId,
+              record?.phase === "pane-resize-release" &&
+              record.semanticPaneId === baseline.semanticPaneId &&
+              record.pointerIngress?.gestureId === finalSample.pointerIngress.gestureId,
             lifecycleBefore,
           );
+          const releaseRecord = released.record;
+          const found = await waitForResizeLifecycleRecord(
+            state,
+            (record) => {
+              if (record?.phase !== "pane-resize-fence") return false;
+              const records = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")).slice(
+                lifecycleBefore,
+              );
+              try {
+                return (
+                  exactFinalResizeOperation(records, finalSample, releaseRecord).operationId ===
+                  record.operationId
+                );
+              } catch {
+                return false;
+              }
+            },
+            lifecycleBefore,
+          );
+          // A bounded quiet tail catches a duplicate/stale dispatch after final settlement.
+          await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+          const gestureRecords = readJsonLines(
+            join(state.tui.runtimeDir, "performance.jsonl"),
+          ).slice(lifecycleBefore);
+          const finalOperation = exactFinalResizeOperation(
+            gestureRecords,
+            finalSample,
+            releaseRecord,
+          );
           const joined = exactResizeFence(
-            found.records.slice(lifecycleBefore),
-            found.record.operationId,
+            gestureRecords,
+            finalOperation.operationId,
             baseline.semanticPaneId,
           );
           const tmux = await readExactResizeTmuxPanes(state);
@@ -17226,7 +17233,9 @@ async function owner() {
               target.cols,
             ),
             delivery,
-            pointerIngress: joined.settled.pointerIngress,
+            pointerIngress: releaseRecord.pointerIngress,
+            operationPointerIngress: joined.settled.pointerIngress,
+            releaseProof: finalOperation.releaseProof,
           });
           event("resize-pointer-release-proved", { axis: "cols" });
           return evidence;

@@ -365,6 +365,13 @@ describe("production OpenTUI v2 data path", () => {
     expect(authorityDataPathFiles).toContain(
       "packages/daemon/src/tui/mirror/runtime/application-reference-sheet.tsx",
     );
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(151);
+    // Palette capture and semantic appearance share one pure host-color parser.
+    // It adds no query, timer, transport, or runtime authority owner.
+    const hostColorPath = "packages/daemon/src/lib/terminal-host-color.ts";
+    expect(authorityDataPathFiles).toContain(hostColorPath);
+    expect(productionGraph.sourceByFile.get(hostColorPath)).not.toMatch(
+      /node:|\b(?:process|fetch|setInterval|setTimeout|createWorkspaceClient|createTerminalFastLane)\b/u,
+    );
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(152);
   });
 });

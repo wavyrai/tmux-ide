@@ -361,6 +361,21 @@ export function assessProductKeyboardPointerResize({ evidence, expected }) {
     pointerRelease.pointerIngress?.gestureId === samples[0]?.pointerIngress?.gestureId &&
     pointerRelease.delivery?.requestedPoint?.x === pointerRelease.pointerIngress?.x &&
     pointerRelease.delivery?.requestedPoint?.y === pointerRelease.pointerIngress?.y &&
+    pointerRelease.axis === samples.at(-1)?.axis &&
+    pointerRelease.requestedCells === samples.at(-1)?.cells &&
+    pointerRelease.releaseProof?.finalRequestedCells === pointerRelease.requestedCells &&
+    pointerRelease.releaseProof?.finalOperationId === pointerRelease.operationId &&
+    pointerRelease.releaseProof?.gestureId === pointerRelease.pointerIngress.gestureId &&
+    Number.isSafeInteger(pointerRelease.releaseProof?.dispatchCount) &&
+    pointerRelease.releaseProof.dispatchCount > 0 &&
+    [0, 1].includes(pointerRelease.releaseProof?.postReleaseDispatchCount) &&
+    !(
+      pointerRelease.releaseProof.releaseTransactionPhase === "idle" &&
+      pointerRelease.releaseProof.postReleaseDispatchCount !== 0
+    ) &&
+    pointerRelease.releaseProof.quietTailMs >= 250 &&
+    ["drag", "up"].includes(pointerRelease.operationPointerIngress?.action) &&
+    pointerRelease.operationPointerIngress.gestureId === pointerRelease.pointerIngress.gestureId &&
     pointerRelease?.receipt?.operationId === pointerRelease.operationId &&
     pointerRelease.receipt?.verb === "workspace.pane.resize" &&
     pointerRelease.receipt?.axis === pointerRelease.axis &&
@@ -467,5 +482,155 @@ export function assessKeyboardPointerResizeJourneyBoundaries({
     firstBrokenBoundary,
     firstUnmeasuredBoundary: null,
     boundaries: Object.freeze(boundaries),
+  });
+}
+
+export function exactResizeFence(records, operationId, semanticPaneId) {
+  const phases = [
+    "pane-resize-receipt",
+    "pane-resize-layout",
+    "pane-resize-settled",
+    "pane-resize-fence",
+  ];
+  const selected = Object.fromEntries(
+    phases.map((phase) => [
+      phase,
+      records.filter(
+        (record) =>
+          record?.phase === phase &&
+          record.operationId === operationId &&
+          record.semanticPaneId === semanticPaneId,
+      ),
+    ]),
+  );
+  if (phases.some((phase) => selected[phase].length !== 1))
+    throw new Error("resize operation lifecycle cardinality was not exact");
+  const [receipt, layout, settled, fence] = phases.map((phase) => selected[phase][0]);
+  const dispatches = records.filter(
+    (record) => record.phase === "pane-resize-dispatch" && record.operationId === operationId,
+  );
+  if (dispatches.length !== 1)
+    throw new Error("resize operation dispatch cardinality was not exact");
+  const dispatch = dispatches[0];
+  const identityKeys = [
+    "source",
+    "semanticPaneId",
+    "axis",
+    "requestedCells",
+    "beforeCells",
+    "processId",
+    "daemonGeneration",
+    "clientGeneration",
+    "rendererEpoch",
+    "sourceEpoch",
+    "generation",
+    "incarnation",
+  ];
+  if (
+    [receipt, layout, settled, fence].some((record) =>
+      identityKeys.some((key) => record[key] !== dispatch[key]),
+    ) ||
+    records.some(
+      (record) =>
+        record.phase === "pane-resize-frame-superseded" && record.operationId === operationId,
+    )
+  )
+    throw new Error("resize operation evidence crossed identity or was superseded");
+
+  if (
+    receipt.verb !== "workspace.pane.resize" ||
+    !["applied", "unchanged"].includes(receipt.receiptOutcome) ||
+    receipt.receiptCells !== layout.layoutCells ||
+    settled.layoutCells !== receipt.receiptCells ||
+    settled.presentationChanged !== true ||
+    !/^[0-9a-f]{64}$/u.test(settled.presentationDigest ?? "") ||
+    settled.identityLineageExact !== true ||
+    fence.writerHealth?.droppedRecords !== 0 ||
+    fence.writerHealth?.failed !== false ||
+    fence.writerHealth?.pendingCriticalRecords !== 0
+  )
+    throw new Error("resize operation lifecycle fence was not exact");
+  return Object.freeze({ receipt, layout, settled, fence });
+}
+
+/** Records must start before pointer-down and include the post-settlement quiet tail. */
+export function exactFinalResizeOperation(records, finalSample, release) {
+  const gestureId = finalSample?.pointerIngress?.gestureId;
+  const releaseIndex = records.indexOf(release);
+  // Parsed polling snapshots do not share object identity.
+  const releaseIndices = records.flatMap((record, index) =>
+    record.phase === "pane-resize-release" &&
+    record.pointerIngress?.traceId === release?.pointerIngress?.traceId
+      ? [index]
+      : [],
+  );
+  const index = releaseIndex >= 0 ? releaseIndex : releaseIndices[0];
+  if (
+    releaseIndices.length !== 1 ||
+    release.pointerIngress?.action !== "up" ||
+    release.pointerIngress.gestureId !== gestureId ||
+    release.axis !== finalSample.axis ||
+    release.semanticPaneId !== finalSample.semanticPaneId ||
+    release.requestedCells !== finalSample.cells ||
+    release.pointerIngress.x !== finalSample.pointerIngress.x ||
+    release.pointerIngress.y !== finalSample.pointerIngress.y
+  )
+    throw new Error("resize release did not own the final desired target");
+  const authorityKeys = [
+    "processId",
+    "daemonGeneration",
+    "clientGeneration",
+    "workspaceName",
+    "rendererEpoch",
+    "sourceEpoch",
+    "generation",
+    "incarnation",
+  ];
+  if (
+    authorityKeys.some((key) => finalSample[key] === undefined || release[key] !== finalSample[key])
+  )
+    throw new Error("resize release escaped the gesture authority");
+  const dispatches = records.filter((record) => record.phase === "pane-resize-dispatch");
+  if (
+    !dispatches.length ||
+    dispatches.some(
+      (record) =>
+        authorityKeys.some((key) => record[key] !== finalSample[key]) ||
+        record.source !== "pointer" ||
+        record.pointerIngress?.gestureId !== gestureId ||
+        record.semanticPaneId !== finalSample.semanticPaneId ||
+        record.axis !== finalSample.axis ||
+        record.processId !== finalSample.processId ||
+        record.daemonGeneration !== finalSample.daemonGeneration ||
+        record.clientGeneration !== finalSample.clientGeneration,
+    )
+  )
+    throw new Error("resize dispatch escaped the gesture authority");
+  const final = dispatches.at(-1);
+  const after = records
+    .slice(index + 1)
+    .filter((record) => record.phase === "pane-resize-dispatch");
+  if (
+    final.requestedCells !== finalSample.cells ||
+    new Set(dispatches.map((record) => record.operationId)).size !== dispatches.length ||
+    dispatches.some(
+      (record, i) => i > 0 && record.requestedCells === dispatches[i - 1].requestedCells,
+    ) ||
+    after.length > 1 ||
+    (after.length === 1 && (after[0] !== final || release.transactionPhase === "idle"))
+  )
+    throw new Error("resize release dispatched a stale or duplicate target");
+  exactResizeFence(records, final.operationId, finalSample.semanticPaneId);
+  return Object.freeze({
+    operationId: final.operationId,
+    releaseProof: Object.freeze({
+      finalRequestedCells: finalSample.cells,
+      finalOperationId: final.operationId,
+      gestureId,
+      dispatchCount: dispatches.length,
+      postReleaseDispatchCount: after.length,
+      releaseTransactionPhase: release.transactionPhase,
+      quietTailMs: 250,
+    }),
   });
 }

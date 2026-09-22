@@ -1,6 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { EventEmitter } from "node:events";
 import { createAppearanceOwner } from "./application-appearance-owner.ts";
+import type { ApplicationTerminalPaletteSnapshot } from "./application-terminal-palette-owner.ts";
 import { appearanceDialogLayer } from "./application-shell-overlays.tsx";
 import { parseAppConfig } from "../../../lib/app-config.ts";
 import { MouseButtons } from "@opentui/core/testing";
@@ -2210,6 +2211,23 @@ describe("production ApplicationShellView", () => {
   });
 });
 
+const unavailableHostPalette: ApplicationTerminalPaletteSnapshot = {
+  availability: "unavailable",
+  detectedMode: "dark",
+  palette: [],
+  defaultForeground: null,
+  defaultBackground: null,
+  cursorColor: null,
+  mouseForeground: null,
+  mouseBackground: null,
+  tekForeground: null,
+  tekBackground: null,
+  highlightBackground: null,
+  highlightForeground: null,
+  capabilities: null,
+  signature: "fixture-unavailable",
+};
+
 describe("production appearance picker", () => {
   for (const mode of ["dark", "light"] as const)
     for (const width of [80, 28]) {
@@ -2223,7 +2241,7 @@ describe("production appearance picker", () => {
               parseAppConfig({ theme: { mode } }),
               Object.assign(new EventEmitter(), { themeMode: "dark" as const }),
               {
-                getSnapshot: () => ({ availability: "unavailable" }) as never,
+                getSnapshot: () => unavailableHostPalette,
                 subscribe: () => () => {},
                 dispose: () => {},
                 refresh: async () => {},
@@ -2287,7 +2305,7 @@ describe("theme library viewport", () => {
             parseAppConfig({}),
             Object.assign(new EventEmitter(), { themeMode: "dark" as const }),
             {
-              getSnapshot: () => ({ availability: "unavailable" }) as never,
+              getSnapshot: () => unavailableHostPalette,
               subscribe: () => () => {},
               dispose: () => {},
               refresh: async () => {},

@@ -935,17 +935,19 @@ describe("ApplicationTerminalWorkspace", () => {
     setup.renderer.destroy();
   });
 
-  it("paints a local divider guide during drag and submits one semantic resize on release", async () => {
+  it("keeps pointer capture through canonical resize and always delivers the final target", async () => {
     registerPaneSurface();
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const palette = createTerminalPaletteProjection(theme);
     const previews: Array<{ semanticPaneId: string; axis: string; cells: number }> = [];
     const submissions: Array<{ semanticPaneId: string; axis: string; cells: number }> = [];
+    const [observedLayout, setObservedLayout] = createSignal(layout());
+    const source = adapter({ "pane.a": "A", "pane.b": "B", "pane.c": "C" }, []);
     const setup = await renderForTest(
       () => (
         <ApplicationTerminalWorkspace
-          layout={layout}
-          adapter={adapter({ "pane.a": "A", "pane.b": "B", "pane.c": "C" }, [])}
+          layout={observedLayout}
+          adapter={source}
           rendererEpoch={1}
           width={30}
           height={9}
@@ -971,14 +973,24 @@ describe("ApplicationTerminalWorkspace", () => {
       axis: "cols",
       cells: 12,
     });
-    await setup.mockMouse.release(12, 5, MouseButtons.LEFT);
+    const current = {
+      ...layout().current!,
+      panes: layout().current!.panes.map((pane, index) =>
+        index === 0 ? { ...pane, width: 12 } : index === 1 ? { ...pane, left: 13, width: 7 } : pane,
+      ),
+    };
+    setObservedLayout({ current, windows: [current] });
+    await setup.renderOnce();
+    await setup.mockMouse.release(10, 5, MouseButtons.LEFT);
     await setup.renderOnce();
     expect(submissions).toHaveLength(1);
     expect(submissions[0]).toMatchObject({
       semanticPaneId: "pane.a",
       axis: "cols",
-      cells: 12,
+      cells: 10,
     });
+    await setup.mockMouse.release(10, 5, MouseButtons.LEFT);
+    expect(submissions).toHaveLength(1);
     setup.renderer.destroy();
   });
 

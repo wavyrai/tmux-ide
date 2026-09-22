@@ -100,7 +100,7 @@ const suites = [
     assertions: [
       "the HUD remains demand-loaded and installs no polling loop",
       "terminal delivery metrics publish only after retained state applies",
-      "frame requests and pointer-resize floods coalesce before one durable mutation",
+      "frame requests coalesce; pane-resize floods keep one in-flight mutation and the latest target",
       "idle panes do not advance content work",
       "full ANSI, truecolor, and explicit black terminal backgrounds remain protocol-faithful",
     ],

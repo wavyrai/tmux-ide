@@ -102,6 +102,7 @@ export interface ApplicationTerminalInteractionController {
     readonly gestureId: string | null;
   }): ApplicationResizePointerIngress | null;
   resizePane(preview: ApplicationPaneResizePreview): void;
+  cancelPaneResize(): void;
   keyboardResize(axis: "cols" | "rows", direction: -1 | 1): void;
   routeWorkspaceKey(
     event: Readonly<{ name: string; meta: boolean; ctrl: boolean; shift: boolean }>,
@@ -222,6 +223,7 @@ export function createApplicationTerminalInteractionController(
     startedAtMicros: number;
     preview: ApplicationPaneResizePreview;
     guideDigest: string;
+    readonly workspaceName: string;
     readonly daemonGeneration: string;
     readonly clientGeneration: number;
     readonly rendererEpoch: number;
@@ -236,7 +238,7 @@ export function createApplicationTerminalInteractionController(
     readonly presentationBeforeDigest: string;
     pointerIngress: ApplicationResizePointerIngress | null;
   } | null = null;
-  let pendingPaneResize: {
+  type PendingPaneResize = {
     readonly source: "keyboard" | "pointer";
     readonly operationId: string;
     readonly semanticPaneId: string;
@@ -261,7 +263,35 @@ export function createApplicationTerminalInteractionController(
     receiptOutcome: "applied" | "unchanged" | null;
     layoutCells: number | null;
     frameRequested: boolean;
-  } | null = null;
+  };
+  let pendingPaneResize: PendingPaneResize | null = null;
+  let paneResizeFrame: PendingPaneResize | null = null;
+  let resizePaneIdentity: Pick<
+    PendingPaneResize,
+    "semanticPaneId" | "incarnation" | "generation" | "sourceEpoch"
+  > | null = null;
+  const captureResizePaneIdentity = (semanticPaneId: string): void => {
+    const identity = options.generation()?.adapter?.paneCanonicalIdentity(semanticPaneId);
+    resizePaneIdentity = identity
+      ? {
+          semanticPaneId,
+          incarnation: identity.incarnation,
+          generation: identity.generation,
+          sourceEpoch: identity.sourceEpoch,
+        }
+      : null;
+  };
+  const resizePaneIdentityCurrent = (): boolean => {
+    if (!resizePaneIdentity) return false;
+    const current = options
+      .generation()
+      ?.adapter?.paneCanonicalIdentity(resizePaneIdentity.semanticPaneId);
+    return (
+      current?.incarnation === resizePaneIdentity.incarnation &&
+      current?.generation === resizePaneIdentity.generation &&
+      current?.sourceEpoch === resizePaneIdentity.sourceEpoch
+    );
+  };
   let lastResizeGuidePresentationDigest: string | null = null;
   let lastWindowPresentationDigest: string | null = null;
   let diagnosticWindowFrame: DiagnosticWindowFrameContext | null = null;
@@ -398,23 +428,34 @@ export function createApplicationTerminalInteractionController(
   };
   const maybeRequestPaneResizeFrame = (): void => {
     const pending = pendingPaneResize;
-    if (
-      !pending ||
-      pending.frameRequested ||
-      pending.receiptCells === null ||
-      pending.layoutCells !== pending.receiptCells
-    )
+    if (!pending || pending.receiptCells === null || pending.layoutCells !== pending.receiptCells)
       return;
-    if (!options.diagnosticsEnabled) {
+    if (!resizePaneIdentityCurrent()) {
       pendingPaneResize = null;
+      resizeTransaction.retire();
       return;
     }
-    pending.frameRequested = true;
-    try {
-      options.requestRender?.();
-    } catch {
-      pendingPaneResize = null;
+    // Detach before settlement: it can synchronously dispatch the latest target.
+    pendingPaneResize = null;
+    if (options.diagnosticsEnabled && pending.receiptOutcome !== "unchanged") {
+      if (paneResizeFrame)
+        diagnose("pane-resize-frame-superseded", { operationId: paneResizeFrame.operationId });
+      paneResizeFrame = pending;
+      pending.frameRequested = true;
+      try {
+        options.requestRender?.();
+      } catch {
+        paneResizeFrame = null;
+      }
     }
+    resizeTransaction.observeLayout({
+      operationId: pending.operationId,
+      authorityGeneration: pending.daemonGeneration,
+      workspaceName: pending.workspaceName,
+      semanticPaneId: pending.semanticPaneId,
+      axis: pending.axis,
+      cells: pending.receiptCells,
+    });
   };
   const dispatchPaneResize = (
     preview: ApplicationPaneResizePreview,
@@ -462,6 +503,7 @@ export function createApplicationTerminalInteractionController(
       layoutCells: null,
       frameRequested: false,
     };
+    diagnose("pane-resize-dispatch", resizeDiagnosticDetails(pendingPaneResize));
     const failure: { current: PaneResizeFailure | null } = { current: null };
     void resizeTerminalPane(
       expected,
@@ -499,31 +541,13 @@ export function createApplicationTerminalInteractionController(
           ...resizeDiagnosticDetails(pending),
           verb: "workspace.pane.resize",
         });
-        if (receipt.outcome === "unchanged" && receipt.cells === pending.beforeCells) {
-          pending.layoutCells = receipt.cells;
-          resizeTransaction.observeLayout({
-            operationId,
-            authorityGeneration: pending.daemonGeneration,
-            workspaceName: pending.workspaceName,
-            semanticPaneId: pending.semanticPaneId,
-            axis: pending.axis,
-            cells: receipt.cells,
-          });
+        // A clamp/no-op still needs current canonical truth, not the guide.
+        const observed = paneCells(options.layout(), pending.semanticPaneId, pending.axis);
+        if (observed === receipt.cells) pending.layoutCells = observed;
+        if (receipt.outcome === "unchanged")
           diagnoseCritical(`pane-resize:${operationId}:unchanged`, "pane-resize-unchanged", {
             ...resizeDiagnosticDetails(pending),
             changed: false,
-          });
-          pendingPaneResize = null;
-          return;
-        }
-        if (pending.layoutCells === receipt.cells)
-          resizeTransaction.observeLayout({
-            operationId,
-            authorityGeneration: pending.daemonGeneration,
-            workspaceName: pending.workspaceName,
-            semanticPaneId: pending.semanticPaneId,
-            axis: pending.axis,
-            cells: receipt.cells,
           });
         maybeRequestPaneResizeFrame();
       })
@@ -551,7 +575,17 @@ export function createApplicationTerminalInteractionController(
     submit: ({ operationId, intent }) => {
       const state = resizeTransaction.state();
       const context = resizeCommitContext;
-      if (state.phase !== "pending" || state.operationId !== operationId || !context) return;
+      const live = liveResizeTarget();
+      if (
+        state.phase !== "pending" ||
+        state.operationId !== operationId ||
+        !context ||
+        !resizePaneIdentityCurrent() ||
+        live?.daemonGeneration !== state.authorityGeneration ||
+        live.workspaceName !== state.workspaceName ||
+        !options.layout().current?.panes.some((pane) => pane.pane === intent.semanticPaneId)
+      )
+        throw new Error("resize target retired");
       dispatchPaneResize(
         {
           semanticPaneId: intent.semanticPaneId,
@@ -566,6 +600,7 @@ export function createApplicationTerminalInteractionController(
       );
     },
     onState: (state) => {
+      if (state.phase === "idle" && state.outcome?.kind === "settled") resizeCommitContext = null;
       if (state.phase === "idle" && state.outcome?.kind === "reverted") {
         diagnose("pane-resize-transaction-reverted", {
           operationId: state.outcome.operationId,
@@ -803,6 +838,7 @@ export function createApplicationTerminalInteractionController(
         pendingWindowRename = null;
         diagnosticWindowFrame = null;
         pendingPaneResize = null;
+        paneResizeFrame = null;
         pendingResizeGuide = null;
         resizeCommitContext = null;
         resizeTransaction.retire();
@@ -874,20 +910,24 @@ export function createApplicationTerminalInteractionController(
           });
         }
       }
+      const resizeState = resizeTransaction.state();
+      if (
+        resizeState.phase !== "idle" &&
+        !snapshot.current?.panes.some((pane) => pane.pane === resizeState.semanticPaneId)
+      ) {
+        resizeTransaction.retire();
+        pendingPaneResize = null;
+        pendingResizeGuide = null;
+      }
       if (pendingPaneResize) {
         const cells = paneCells(snapshot, pendingPaneResize.semanticPaneId, pendingPaneResize.axis);
-        if (cells !== null && cells !== pendingPaneResize.beforeCells) {
+        if (
+          cells !== null &&
+          cells !== pendingPaneResize.layoutCells &&
+          cells !== pendingPaneResize.beforeCells
+        ) {
           pendingPaneResize.layoutCells = cells;
           diagnose("pane-resize-layout", resizeDiagnosticDetails(pendingPaneResize));
-          if (pendingPaneResize.receiptCells === cells)
-            resizeTransaction.observeLayout({
-              operationId: pendingPaneResize.operationId,
-              authorityGeneration: pendingPaneResize.daemonGeneration,
-              workspaceName: pendingPaneResize.workspaceName,
-              semanticPaneId: pendingPaneResize.semanticPaneId,
-              axis: pendingPaneResize.axis,
-              cells,
-            });
         }
       }
       maybeRequestWindowSwitchFrame();
@@ -928,7 +968,9 @@ export function createApplicationTerminalInteractionController(
       const live = liveResizeTarget();
       const canonicalCells = paneCells(options.layout(), preview.semanticPaneId, preview.axis);
       const state = resizeTransaction.state();
-      if (live && canonicalCells !== null && state.phase === "idle")
+      if (!resizeCommitContext && live && canonicalCells !== null && state.phase === "idle") {
+        resizeCommitContext = { source: "pointer", pointerIngress: preview.pointerIngress ?? null };
+        captureResizePaneIdentity(preview.semanticPaneId);
         resizeTransaction.begin({
           authorityGeneration: live.daemonGeneration,
           workspaceName: live.workspaceName,
@@ -936,6 +978,9 @@ export function createApplicationTerminalInteractionController(
           axis: preview.axis,
           canonicalCells,
         });
+      }
+      if (resizeCommitContext?.source === "pointer")
+        resizeCommitContext = { source: "pointer", pointerIngress: preview.pointerIngress ?? null };
       resizeTransaction.move(preview.cells);
       if (!options.diagnosticsEnabled) return;
       if (pendingResizeGuide) {
@@ -983,6 +1028,7 @@ export function createApplicationTerminalInteractionController(
           startedAtMicros,
           preview,
           guideDigest,
+          workspaceName: active.connection.workspaceName,
           daemonGeneration: active.daemonGeneration,
           clientGeneration: clientGeneration!,
           rendererEpoch: active.rendererEpoch,
@@ -1014,16 +1060,38 @@ export function createApplicationTerminalInteractionController(
     resizePane(preview) {
       pendingResizeGuide = null;
       lastResizeGuidePresentationDigest = null;
+      if (!resizeCommitContext || resizeCommitContext.source !== "pointer") return;
+      resizeCommitContext = { source: "pointer", pointerIngress: preview.pointerIngress ?? null };
       resizeTransaction.move(preview.cells);
-      resizeCommitContext = {
-        source: "pointer",
-        pointerIngress: preview.pointerIngress?.action === "up" ? preview.pointerIngress : null,
-      };
-      try {
-        resizeTransaction.release();
-      } finally {
-        resizeCommitContext = null;
-      }
+      resizeTransaction.release();
+      if (options.diagnosticsEnabled)
+        try {
+          const active = options.generation();
+          const identity = active?.adapter?.paneCanonicalIdentity(preview.semanticPaneId);
+          diagnose("pane-resize-release", {
+            semanticPaneId: preview.semanticPaneId,
+            axis: preview.axis,
+            requestedCells: preview.cells,
+            pointerIngress: preview.pointerIngress ?? null,
+            transactionPhase: resizeTransaction.state().phase,
+            workspaceName: active?.connection?.workspaceName,
+            daemonGeneration: active?.daemonGeneration,
+            clientGeneration: active?.client?.getSnapshot().generation,
+            rendererEpoch: active?.rendererEpoch,
+            sourceEpoch: identity?.sourceEpoch,
+            generation: identity?.generation,
+            incarnation: identity?.incarnation,
+          });
+        } catch {
+          /* Diagnostics never own gesture completion. */
+        }
+      // Retain context while a coalesced final target awaits dispatch.
+      if (resizeTransaction.state().phase === "idle") resizeCommitContext = null;
+    },
+    cancelPaneResize() {
+      resizeTransaction.cancelDrag();
+      pendingResizeGuide = null;
+      if (resizeTransaction.state().phase === "idle") resizeCommitContext = null;
     },
     keyboardResize(axis, direction) {
       const paneId = options.focusedPane?.() ?? null;
@@ -1042,12 +1110,13 @@ export function createApplicationTerminalInteractionController(
         })
       )
         return;
-      resizeTransaction.move(Math.max(1, beforeCells + direction));
       resizeCommitContext = { source: "keyboard", pointerIngress: null };
+      captureResizePaneIdentity(paneId);
+      resizeTransaction.move(Math.max(1, beforeCells + direction));
       try {
         resizeTransaction.release();
       } finally {
-        resizeCommitContext = null;
+        if (resizeTransaction.state().phase === "idle") resizeCommitContext = null;
       }
     },
     routeWorkspaceKey(event) {
@@ -1539,6 +1608,7 @@ export function createApplicationTerminalInteractionController(
         pendingResizeGuide = null;
         const settledAtMicros = diagnosticNowMicros();
         let identityExact: boolean;
+        let canonicalAfter = null;
         try {
           const active = options.generation();
           const identity = active?.adapter?.paneCanonicalIdentity(settled.preview.semanticPaneId);
@@ -1547,6 +1617,7 @@ export function createApplicationTerminalInteractionController(
           const layoutPane = layoutWindow?.panes.find(
             ({ pane }) => pane === settled.preview.semanticPaneId,
           );
+          canonicalAfter = identity ?? null;
           identityExact =
             active?.status === "live" &&
             active.daemonGeneration === settled.daemonGeneration &&
@@ -1556,11 +1627,8 @@ export function createApplicationTerminalInteractionController(
             identity?.sourceEpoch === settled.sourceEpoch &&
             identity.generation === settled.generation &&
             identity.incarnation === settled.incarnation &&
-            identity.revision === settled.revision &&
-            identity.stateHash === settled.stateHash &&
-            identity.cols === settled.cols &&
-            identity.rows === settled.rows &&
-            layoutPane?.width === settled.cols &&
+            identity.revision >= settled.revision &&
+            layoutPane?.width === identity.cols &&
             layoutWindow !== undefined &&
             layoutWindow !== null &&
             nativePaneResizeCells(
@@ -1568,7 +1636,7 @@ export function createApplicationTerminalInteractionController(
               "rows",
               layoutWindow.paneBorderStatus,
               layoutWindow.rows,
-            ) === settled.rows;
+            ) === identity.rows;
         } catch {
           identityExact = false;
         }
@@ -1588,6 +1656,7 @@ export function createApplicationTerminalInteractionController(
             settled.presentationBeforeDigest.length === 64 &&
             presentationDigest !== settled.presentationBeforeDigest,
           identityExact,
+          canonicalAfter,
           durationMicros:
             settledAtMicros === null ? null : settledAtMicros - settled.startedAtMicros,
         };
@@ -1605,9 +1674,8 @@ export function createApplicationTerminalInteractionController(
           writerHealth,
         });
       }
-      const pending = pendingPaneResize;
+      const pending = paneResizeFrame;
       if (!pending?.frameRequested) return;
-      pendingPaneResize = null;
       let canonicalAfter = null;
       let identityLineageExact = false;
       try {
@@ -1625,13 +1693,24 @@ export function createApplicationTerminalInteractionController(
             identity.sourceEpoch === pending.sourceEpoch &&
             identity.generation === pending.generation &&
             identity.incarnation === pending.incarnation &&
-            identity.revision >= pending.revision &&
-            layoutCells === pending.layoutCells;
+            identity.revision >= pending.revision;
+          // Layout publication can precede the canonical terminal snapshot. Keep
+          // the bounded diagnostic slot until a coherent frame consumes both.
+          // A newer operation explicitly supersedes it; diagnostics never hold
+          // the resize transaction or request a polling render loop.
+          if (
+            identityLineageExact &&
+            (identity.cols !== paneCells(options.layout(), pending.semanticPaneId, "cols") ||
+              identity.rows !== paneCells(options.layout(), pending.semanticPaneId, "rows") ||
+              layoutCells !== pending.layoutCells)
+          )
+            return;
         }
       } catch {
         canonicalAfter = null;
         identityLineageExact = false;
       }
+      paneResizeFrame = null;
       const presentationDigest = resizePresentationDigest(null);
       const details = {
         ...resizeDiagnosticDetails(pending),

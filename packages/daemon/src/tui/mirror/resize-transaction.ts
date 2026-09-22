@@ -104,6 +104,7 @@ function sameTarget(
 ): boolean {
   return (
     state.operationId === observation.operationId &&
+    state.authorityGeneration === observation.authorityGeneration &&
     state.workspaceName === observation.workspaceName &&
     state.semanticPaneId === observation.semanticPaneId &&
     state.axis === observation.axis
@@ -113,9 +114,9 @@ function sameTarget(
 /**
  * Renderer-local pane-resize transaction.
  *
- * Pointer motion only changes the preview state. Release authors exactly one
- * semantic intent and keeps that preview visible until the matching observed
- * operation settles or rejects. The controller owns no timers, transport, or
+ * Pointer motion submits the first target immediately, then retains only the
+ * latest desired size while receipt and canonical layout settle the pending
+ * operation. Release closes the gesture and flushes that latest target. The controller owns no timers, transport, or
  * rendering effects beyond the functions supplied by its caller.
  */
 export class ResizeTransactionController {
@@ -129,6 +130,8 @@ export class ResizeTransactionController {
   #projection: OptimisticProjectionState<number, number> | null = null;
   #revision = 0;
   #disposed = false;
+  #dragOpen = false;
+  #submittedCells: number | null = null;
 
   constructor(options: ResizeTransactionControllerOptions) {
     if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
@@ -150,6 +153,8 @@ export class ResizeTransactionController {
     const workspaceName = nonEmpty(input.workspaceName, "workspaceName");
     const semanticPaneId = nonEmpty(input.semanticPaneId, "semanticPaneId");
     const canonicalCells = positiveCells(input.canonicalCells, "canonicalCells");
+    this.#dragOpen = true;
+    this.#submittedCells = null;
     this.#projection = createOptimisticProjection<number, number>({
       generation: authorityGeneration,
       revision: this.#revision,
@@ -168,28 +173,31 @@ export class ResizeTransactionController {
     return true;
   }
 
-  /** Purely local preview update. It never calls submit or schedules work. */
+  /** First/latest coalescing: at most one mutation awaits canonical settlement. */
   move(previewCells: number): boolean {
-    if (this.#state.phase !== "dragging") return false;
+    if (!this.#dragOpen || this.#state.phase === "idle") return false;
     const next = positiveCells(previewCells, "previewCells");
     if (next === this.#state.previewCells) return false;
     this.#emit({ ...this.#state, previewCells: next });
+    if (this.#state.phase === "dragging") this.#submit();
     return true;
   }
 
-  /**
-   * Submit once. Duplicate physical release/up/drop events return the existing
-   * operation id without authoring another mutation.
-   */
+  /** Duplicate releases never author another mutation. */
   release(): string | null {
+    this.#dragOpen = false;
     if (this.#state.phase === "pending") return this.#state.operationId;
     if (this.#state.phase !== "dragging") return null;
-    const dragging = this.#state;
-    if (dragging.previewCells === dragging.canonicalCells) {
-      this.#emit({ phase: "idle", canonicalCells: dragging.canonicalCells, outcome: null });
-      return null;
-    }
+    const canonicalCells = this.#state.canonicalCells;
+    this.#emit({ phase: "idle", canonicalCells, outcome: null });
+    return null;
+  }
 
+  #submit(): string | null {
+    if (this.#state.phase !== "dragging") return null;
+    const dragging = this.#state;
+    if (dragging.previewCells === dragging.canonicalCells) return null;
+    this.#submittedCells = dragging.previewCells;
     const operationId = nonEmpty(this.#options.operationId(), "operationId");
     const submittedAt = this.#options.now();
     if (!this.#projection) throw new Error("resize projection is unavailable");
@@ -245,9 +253,14 @@ export class ResizeTransactionController {
     });
   }
 
-  /** Escape/cancel is only meaningful before release. */
+  /** Discard queued motion; an already dispatched mutation cannot be undone. */
   cancelDrag(): boolean {
-    if (this.#state.phase !== "dragging") return false;
+    if (!this.#dragOpen || this.#state.phase === "idle") return false;
+    this.#dragOpen = false;
+    if (this.#state.phase === "pending") {
+      this.#emit({ ...this.#state, previewCells: this.#submittedCells! });
+      return true;
+    }
     const canonicalCells = this.#state.canonicalCells;
     this.#emit({ phase: "idle", canonicalCells, outcome: null });
     return true;
@@ -260,6 +273,8 @@ export class ResizeTransactionController {
 
   /** Retire one runtime lane without permanently disposing the controller. */
   retire(): void {
+    this.#dragOpen = false;
+    this.#submittedCells = null;
     this.#clearTimeout();
     this.#projection = null;
     if (this.#state.phase !== "idle" || this.#state.canonicalCells !== null) {
@@ -277,7 +292,8 @@ export class ResizeTransactionController {
     )
       return false;
     const cells = positiveCells(observation.cells, "observed cells");
-    const operationId = this.#state.operationId;
+    const pending = this.#state;
+    const operationId = pending.operationId;
     if (!this.#projection) return false;
     this.#revision += 1;
     this.#projection = replaceCommittedProjection(
@@ -290,11 +306,18 @@ export class ResizeTransactionController {
       { observedOperationIds: [operationId], nowMs: this.#options.now() },
     );
     this.#clearTimeout();
-    this.#emit({
-      phase: "idle",
-      canonicalCells: cells,
-      outcome: { kind: "settled", operationId, source, cells },
-    });
+    const hasLatest =
+      pending.previewCells !== this.#submittedCells && pending.previewCells !== cells;
+    if (this.#dragOpen || hasLatest) {
+      this.#emit({ ...pending, phase: "dragging", canonicalCells: cells });
+      if (hasLatest) this.#submit();
+    } else {
+      this.#emit({
+        phase: "idle",
+        canonicalCells: cells,
+        outcome: { kind: "settled", operationId, source, cells },
+      });
+    }
     return true;
   }
 
@@ -321,6 +344,7 @@ export class ResizeTransactionController {
       );
     }
     const canonicalCells = this.#state.canonicalCells;
+    this.#dragOpen = false;
     this.#clearTimeout();
     this.#emit({
       phase: "idle",

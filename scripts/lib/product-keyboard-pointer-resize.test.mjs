@@ -4,6 +4,7 @@ import test from "node:test";
 import { parseLayout } from "../../packages/daemon/src/terminal/protocol/layout-parse.ts";
 
 import {
+  exactFinalResizeOperation,
   assessExactResizeTmuxBaseline,
   assessResizePostPromotionCommands,
   assessKeyboardPointerResizeJourneyBoundaries,
@@ -160,7 +161,7 @@ function evidence() {
         ordinal,
         traceId,
         axis: "cols",
-        cells: ordinal % 2 === 0 ? 66 : 65,
+        cells: ordinal % 2 === 0 ? 65 : 66,
         durationMs: 4 + ordinal / 100,
         guide: { x: 66, y: 3, width: 1, height: 40, digest: "a".repeat(64) },
         actualFrame: {
@@ -190,6 +191,16 @@ function evidence() {
     }),
     pointerRelease: {
       ...target("pointer", "323e4567-e89b-42d3-a456-426614174000"),
+      releaseProof: {
+        finalRequestedCells: 66,
+        finalOperationId: "323e4567-e89b-42d3-a456-426614174000",
+        gestureId: UUID,
+        dispatchCount: 30,
+        postReleaseDispatchCount: 0,
+        releaseTransactionPhase: "idle",
+        quietTailMs: 250,
+      },
+      operationPointerIngress: { action: "drag", gestureId: UUID },
       pointerIngress: {
         gestureId: UUID,
         traceId: "423e4567-e89b-42d3-a456-426614174000",
@@ -242,6 +253,7 @@ test("qualifies horizontal pointer guide, row receipt, layout, and tmux converge
     delivery: delivery("application-mouse", "up", { x: 40, y: 22 }),
     pointerIngress: { ...value.pointerRelease.pointerIngress, x: 40, y: 22 },
   });
+  value.pointerRelease.releaseProof.finalRequestedCells = 40;
   value.tmux = { semanticPaneId: "pane.main", rows: 40, geometryStable: true };
   assert.equal(assessProductKeyboardPointerResize({ evidence: value, expected }).qualified, true);
 });
@@ -360,4 +372,93 @@ test("requires every truthful journey boundary and causal/correlation proofs", (
     correlationComplete: true,
   });
   assert.equal(failed.firstBrokenBoundary, "resize-pointer-release-proved");
+});
+
+function lifecycleFixture(afterRelease = false) {
+  const sample = {
+    ...evidence().pointerPreviews.at(-1),
+    rendererEpoch: 1,
+    sourceEpoch: 1,
+    generation: UUID,
+    incarnation: "incarnation",
+  };
+  const dispatch = {
+    ...sample,
+    phase: "pane-resize-dispatch",
+    source: "pointer",
+    operationId: UUID,
+    axis: "cols",
+    requestedCells: sample.cells,
+    pointerIngress: sample.pointerIngress,
+  };
+  const release = {
+    ...dispatch,
+    phase: "pane-resize-release",
+    transactionPhase: afterRelease ? "pending" : "idle",
+    pointerIngress: { ...sample.pointerIngress, action: "up", traceId: "release" },
+  };
+  const phases = [
+    "pane-resize-receipt",
+    "pane-resize-layout",
+    "pane-resize-settled",
+    "pane-resize-fence",
+  ].map((phase) => ({
+    ...dispatch,
+    phase,
+    verb: "workspace.pane.resize",
+    receiptOutcome: "applied",
+    receiptCells: sample.cells,
+    layoutCells: sample.cells,
+    presentationChanged: true,
+    presentationDigest: "a".repeat(64),
+    identityLineageExact: true,
+    writerHealth: health,
+  }));
+  return {
+    sample,
+    release,
+    records: afterRelease ? [release, dispatch, ...phases] : [dispatch, ...phases, release],
+  };
+}
+test("joins an already-settled final target before up with no extra dispatch", () => {
+  const { records, sample, release } = lifecycleFixture(false);
+  assert.equal(
+    exactFinalResizeOperation(records, sample, release).releaseProof.postReleaseDispatchCount,
+    0,
+  );
+});
+test("joins the one coalesced final target dispatched after up", () => {
+  const { records, sample, release } = lifecycleFixture(true);
+  assert.equal(
+    exactFinalResizeOperation(records, sample, release).releaseProof.postReleaseDispatchCount,
+    1,
+  );
+});
+
+test("rejects stale target, duplicate dispatch, foreign gesture, missing final frame and superseded-only frame", () => {
+  for (const mutate of [
+    (f) => f.sample.cells++,
+    (f) => f.records.push({ ...f.records[0], operationId: "duplicate" }),
+    (f) => (f.records[0].pointerIngress = { ...f.sample.pointerIngress, gestureId: "foreign" }),
+    (f) => f.records.splice(3, 1),
+    (f) => (f.records[3].phase = "pane-resize-frame-superseded"),
+    (f) => (f.records[0].daemonGeneration = "foreign"),
+    (f) => (f.records[0].incarnation = "foreign"),
+    (f) => (f.release.rendererEpoch = 2),
+    (f) => (f.records[1].incarnation = "foreign receipt"),
+    (f) => (f.records[4].sourceEpoch = 9),
+  ]) {
+    const fixture = structuredClone(lifecycleFixture());
+    mutate(fixture);
+    assert.throws(() =>
+      exactFinalResizeOperation(fixture.records, fixture.sample, fixture.release),
+    );
+  }
+});
+
+test("permits an explicitly superseded intermediate frame without counting it as settled", () => {
+  const { records, sample, release } = lifecycleFixture();
+  const intermediate = { ...records[0], operationId: "earlier", requestedCells: 65 };
+  records.unshift(intermediate, { ...intermediate, phase: "pane-resize-frame-superseded" });
+  assert.equal(exactFinalResizeOperation(records, sample, release).operationId, UUID);
 });

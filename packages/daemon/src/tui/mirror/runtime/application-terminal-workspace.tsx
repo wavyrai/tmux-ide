@@ -9,6 +9,7 @@ import {
   For,
   Show,
   createMemo,
+  createEffect,
   createRenderEffect,
   createSignal,
   onCleanup,
@@ -175,6 +176,7 @@ export interface ApplicationTerminalWorkspaceProps {
   ) => void;
   readonly onResizePreview?: (preview: ApplicationPaneResizePreview) => void;
   readonly onResizePane?: (preview: ApplicationPaneResizePreview) => void;
+  readonly onCancelResize?: () => void;
   readonly onResizePointerIngress?: (input: {
     readonly action: "down" | "drag" | "up";
     readonly x: number;
@@ -510,10 +512,37 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   } | null = null;
   let drag: {
     readonly separator: ApplicationPaneSeparator;
+    readonly rendererEpoch: number;
+    readonly adapter: ApplicationTerminalWorkspaceProps["adapter"];
+    readonly windowId: string | null | undefined;
     readonly origin: number;
     preview: ApplicationPaneResizePreview;
     readonly gestureId: string | null;
   } | null = null;
+
+  const cancelResize = () => {
+    if (!drag) return;
+    drag = null;
+    setResizePreview(null);
+    setHoveredSeparator(null);
+    props.onCancelResize?.();
+  };
+  createEffect(() => {
+    const current = layout().current;
+    const epoch = props.rendererEpoch;
+    const adapter = props.adapter;
+    const interactive = props.interactive;
+    if (
+      drag &&
+      (interactive === false ||
+        epoch !== drag.rendererEpoch ||
+        adapter !== drag.adapter ||
+        (current?.semanticWindowId ?? current?.windowName) !== drag.windowId ||
+        !current?.panes.some((pane) => pane.pane === drag?.preview.semanticPaneId))
+    )
+      cancelResize();
+  });
+  onCleanup(cancelResize);
 
   const terminalPoint = (event: WorkspaceMouseEvent): { x: number; y: number } => ({
     x: event.x - (props.originX ?? 0),
@@ -1059,8 +1088,16 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     return true;
   };
   props.onSelectionKeyOwner?.(
-    handlePaneMenuKey,
-    () => props.interactive !== false && (paneMenu.ownsInput() || keyboardCopy() !== null),
+    (name, event) => {
+      if (drag && name === "escape") {
+        cancelResize();
+        return true;
+      }
+      return handlePaneMenuKey(name, event);
+    },
+    () =>
+      props.interactive !== false &&
+      (drag !== null || paneMenu.ownsInput() || keyboardCopy() !== null),
     () => {
       // Called only after global shortcuts, copy, and local navigation decline
       // the event, immediately before terminal key or paste delivery.
@@ -1155,19 +1192,17 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         }
         if (isRelease) {
           const completed = drag.preview;
-          const changed = completed.cells !== drag.separator.initialCells;
           drag = null;
           setResizePreview(null);
           setHoveredSeparator(null);
-          if (changed)
-            props.onResizePane?.(
-              globalPreview(
-                Object.freeze({
-                  ...completed,
-                  ...(ingress ? { pointerIngress: ingress } : {}),
-                }),
-              ),
-            );
+          props.onResizePane?.(
+            globalPreview(
+              Object.freeze({
+                ...completed,
+                ...(ingress ? { pointerIngress: ingress } : {}),
+              }),
+            ),
+          );
         }
       }
       return;
@@ -1336,7 +1371,16 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         const ingress = resizeIngress();
         const origin = separator.axis === "x" ? point.x : point.y;
         const preview = terminalPaneResizePreview(separator, origin, origin);
-        drag = { separator, origin, preview, gestureId: ingress?.gestureId ?? null };
+        drag = {
+          separator,
+          origin,
+          preview,
+          gestureId: ingress?.gestureId ?? null,
+          rendererEpoch: props.rendererEpoch,
+          adapter: props.adapter,
+          windowId: layout().current?.semanticWindowId ?? layout().current?.windowName,
+        };
+        props.onResizePreview?.(globalPreview(preview));
         setHoveredSeparator(null);
         setResizePreview(preview);
         return;
