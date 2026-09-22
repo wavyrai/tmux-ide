@@ -9404,7 +9404,7 @@ var init_app_config = __esm({
         panels: { explorer: "M-e", changes: "M-g", config: "M-," }
       },
       theme: {
-        automaticContrast: false,
+        automaticContrast: true,
         mode: "system",
         accent: "colour75",
         muted: "colour240",
