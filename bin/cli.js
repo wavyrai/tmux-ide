@@ -9273,7 +9273,12 @@ function parseAppConfig(input) {
       }
     },
     theme: {
-      mode: pickChoice(theme.mode, ["dark", "light", "system"], D.theme.mode),
+      automaticContrast: pickBool(theme.automaticContrast, D.theme.automaticContrast),
+      mode: pickChoice(
+        theme.mode,
+        ["dark", "light", "system"],
+        findVisualThemePreset(theme.preset)?.appearance ?? D.theme.mode
+      ),
       ...findVisualThemePreset(theme.preset) ? { preset: String(theme.preset) } : {},
       accent: pickString(theme.accent, D.theme.accent),
       muted: pickString(theme.muted, D.theme.muted),
@@ -9399,7 +9404,8 @@ var init_app_config = __esm({
         panels: { explorer: "M-e", changes: "M-g", config: "M-," }
       },
       theme: {
-        mode: "dark",
+        automaticContrast: true,
+        mode: "system",
         accent: "colour75",
         muted: "colour240",
         fg: "colour250",
@@ -11008,6 +11014,7 @@ var require_package = __commonJS({
         typecheck: 'echo "root typecheck deferred to per-package turbo run"',
         dev: "node bin/cli.js",
         "dev:instance": "node scripts/development-instance.mjs",
+        "dev:pilotty": "node scripts/pilotty-dev.mjs",
         "dev:web": "node scripts/dev-web.mjs",
         test: "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/web-workspace --filter @tmux-ide/electron-shell run test",
         "test:unit": "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/web-workspace --filter @tmux-ide/electron-shell run test",
@@ -11032,7 +11039,7 @@ var require_package = __commonJS({
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "demo:tui": "bun --preload @opentui/solid/preload docs/scripts/render-tui-demo.tsx",
-        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/native-grid-projection-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-root-error-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-flow-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-sidebar-catalog-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/ui-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-switcher-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-palette-preview-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-palette-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-session-actions-renderer.test.tsx",
+        "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/automatic-contrast-renderer.test.tsx ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/native-grid-projection-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-root-error-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-home-agent-flow-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-sidebar-catalog-renderer.test.tsx ./packages/daemon/src/tui/mirror/ui/ui-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-machine-sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-add-machine-dialog-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-switcher-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-palette-preview-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-palette-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-fleet-session-actions-renderer.test.tsx",
         "test:tui-smoke": "bun scripts/smoke-tui-missions.mjs",
         "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
         "test:tui-testdrive": "node --test scripts/lib/tui-testdrive-clipboard-hook.test.mjs scripts/lib/tui-testdrive-input.test.mjs",
@@ -68929,6 +68936,7 @@ async function streamBoundedLogs(stream, options) {
   let unsubscribe = () => {
   };
   let timer = null;
+  let heartbeatTimer = null;
   let cancelWrite = null;
   const cleanup = () => {
     if (closed) return;
@@ -68938,6 +68946,8 @@ async function streamBoundedLogs(stream, options) {
     bytes = 0;
     if (timer) clearTimeout(timer);
     timer = null;
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
     wake?.();
     wake = null;
     cancelWrite?.();
@@ -68967,6 +68977,10 @@ async function streamBoundedLogs(stream, options) {
     unsubscribe();
     return;
   }
+  heartbeatTimer = setInterval(() => {
+    if (!closed && queue.length === 0 && !push({ event: "heartbeat", data: "keep-alive" })) abort();
+  }, options.heartbeatIntervalMs ?? 15e3);
+  heartbeatTimer.unref?.();
   try {
     const retained = [];
     let retainedBytes = 0;
@@ -75929,6 +75943,79 @@ var init_workspace_missions_route = __esm({
   }
 });
 
+// packages/daemon/src/command-center/diagnostics.ts
+import { performance as performance2 } from "node:perf_hooks";
+function sampleDaemonDiagnostics(daemon) {
+  const sampledAtMs = Date.now();
+  const memory = process.memoryUsage();
+  const cpu = process.cpuUsage();
+  const eventLoop = performance2.eventLoopUtilization();
+  const activeResources = {
+    Timeout: 0,
+    Immediate: 0,
+    TCPServerWrap: 0,
+    TCPSocketWrap: 0,
+    PipeWrap: 0,
+    ProcessWrap: 0,
+    FSEventWrap: 0,
+    other: 0
+  };
+  const resourceNames = process.getActiveResourcesInfo?.();
+  for (const resource3 of resourceNames ?? []) {
+    if (Object.hasOwn(activeResources, resource3) && resource3 !== "other") {
+      activeResources[resource3]++;
+    } else {
+      activeResources.other++;
+    }
+  }
+  return {
+    daemon: {
+      protocolVersion: daemon.protocolVersion,
+      productVersion: daemon.productVersion,
+      instanceId: daemon.instanceId,
+      startedAt: daemon.startedAt,
+      ...daemon.environmentId !== void 0 ? { environmentId: daemon.environmentId } : {}
+    },
+    pid: process.pid,
+    uptimeMs: process.uptime() * 1e3,
+    sampledAtMs,
+    memory: {
+      rss: memory.rss,
+      heapTotal: memory.heapTotal,
+      heapUsed: memory.heapUsed,
+      external: memory.external,
+      arrayBuffers: memory.arrayBuffers
+    },
+    cpu: { user: cpu.user, system: cpu.system },
+    eventLoop: {
+      idle: eventLoop.idle,
+      active: eventLoop.active,
+      utilization: eventLoop.utilization
+    },
+    activeResources: resourceNames === void 0 ? null : activeResources
+  };
+}
+function mountDiagnosticsRoute(app, options) {
+  app.get(
+    "/api/diagnostics",
+    requireOwnerAuthority(options.ownerToken, {
+      whenOwnerless: "unavailable",
+      unavailableMessage: "Diagnostics unavailable",
+      mismatchMessage: "Diagnostics require owner authority"
+    }),
+    (c) => {
+      c.header("Cache-Control", "no-store");
+      return c.json(sampleDaemonDiagnostics(options.daemon));
+    }
+  );
+}
+var init_diagnostics = __esm({
+  "packages/daemon/src/command-center/diagnostics.ts"() {
+    "use strict";
+    init_owner_authority();
+  }
+});
+
 // packages/daemon/src/canonical.ts
 var init_canonical = __esm({
   "packages/daemon/src/canonical.ts"() {
@@ -76535,6 +76622,10 @@ function createApp(options = {}) {
   const healthBootedAt = Date.now();
   const app = new Hono();
   app.use("/*", cors());
+  mountDiagnosticsRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null
+  });
   mountTerminalAttachmentIssueRoute(app, {
     daemonInstanceId: daemonIdentity.instanceId,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
@@ -77716,6 +77807,7 @@ var init_server2 = __esm({
     init_fleet_resource_route();
     init_workspace_missions_route();
     init_owner_authority();
+    init_diagnostics();
     init_startup_readiness_route();
     init_widget_asset_store();
     defaultApplicationShellAppWindowBackend = {
@@ -77796,7 +77888,7 @@ import { randomBytes as randomBytes8, randomUUID as randomUUID23 } from "node:cr
 import { createWriteStream } from "node:fs";
 import { createServer as createServer2 } from "node:http";
 import { createRequire as createRequire3 } from "node:module";
-import { performance as performance2 } from "node:perf_hooks";
+import { performance as performance3 } from "node:perf_hooks";
 import { WebSocket, WebSocketServer as WebSocketServer4 } from "ws";
 function loadBundledPackage() {
   return requireFromHere2("../../package.json");
@@ -78005,13 +78097,13 @@ function createTakeoverDeadline(timeoutMs) {
     throw new TypeError("Takeover deadline must be a positive finite duration.");
   }
   const controller = new AbortController();
-  const expiresAt = performance2.now() + timeoutMs;
+  const expiresAt = performance3.now() + timeoutMs;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   timer.unref?.();
   return {
     signal: controller.signal,
     expiresAt,
-    remainingMs: () => Math.max(0, expiresAt - performance2.now()),
+    remainingMs: () => Math.max(0, expiresAt - performance3.now()),
     dispose: () => clearTimeout(timer)
   };
 }
@@ -78637,7 +78729,7 @@ async function startEmbeddedDaemonGeneration(opts) {
           }
         };
         const diagnostics = {
-          nowMicros: () => Math.floor(performance2.now() * 1e3),
+          nowMicros: () => Math.floor(performance3.now() * 1e3),
           createTraceId: randomUUID23,
           publish: publishObserverDiagnostic
         };

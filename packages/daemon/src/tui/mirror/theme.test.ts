@@ -636,3 +636,21 @@ describe("theme library", () => {
     }
   });
 });
+
+it("uses light mode defaults for partial ANSI replies without treating slots 0/7 as canvas/text", () => {
+  const defaults = deriveSystemVisualHostDefaults({
+    palette: xterm16,
+    defaultBackground: null,
+    defaultForeground: null,
+    detectedMode: "light",
+  });
+  const theme = createSemanticThemeSnapshot({ mode: "system" }, "light", defaults);
+  expect(theme.mode).toBe("light");
+  expect(colorToPackedRgb(theme.roles.surfaces.canvas)).toBe(
+    colorToPackedRgb(LIGHT_THEME.roles.surfaces.canvas),
+  );
+  expect(colorToPackedRgb(theme.roles.text.primary)).toBe(
+    colorToPackedRgb(LIGHT_THEME.roles.text.primary),
+  );
+  expect(createTerminalPaletteProjection(theme, xterm16).ansiForeground[0]).toBe(0x000000);
+});

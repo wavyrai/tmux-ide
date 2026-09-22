@@ -125,6 +125,7 @@ export interface ApplicationShellViewProps {
   readonly onSelectPane: TerminalWorkspaceProps["onSelectPane"];
   readonly onResizePreview: TerminalWorkspaceProps["onResizePreview"];
   readonly onResizePane: TerminalWorkspaceProps["onResizePane"];
+  readonly onCancelResize?: TerminalWorkspaceProps["onCancelResize"];
   readonly onResizePointerIngress?: TerminalWorkspaceProps["onResizePointerIngress"];
   readonly onWheelObservation?: TerminalWorkspaceProps["onWheelObservation"];
   readonly onTerminalInput?: TerminalWorkspaceProps["onTerminalInput"];
@@ -517,6 +518,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       }}
                       onResizePreview={props.onResizePreview}
                       onResizePane={props.onResizePane}
+                      onCancelResize={props.onCancelResize}
                       onResizePointerIngress={props.onResizePointerIngress}
                       onWheelObservation={props.onWheelObservation}
                       onTerminalInput={props.onTerminalInput}

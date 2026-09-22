@@ -1,3 +1,10 @@
+import {
+  MEMORY_KEYS,
+  RESOURCE_KEYS,
+  type DiagnosticsResult,
+  type DiagnosticsDelta,
+} from "./soak-diagnostics.ts";
+
 /**
  * Pure analysis for the daemon soak harness (`packages/daemon/scripts/soak-daemon.mjs`).
  *
@@ -8,6 +15,8 @@
  */
 
 export interface SoakSample {
+  readonly diagnostics?: DiagnosticsResult;
+  readonly diagnosticDelta?: DiagnosticsDelta | null;
   /** Milliseconds since the epoch when the sample was taken. */
   readonly at: number;
   /** Seconds since the soak started (the linear-fit abscissa). */
@@ -40,6 +49,8 @@ export interface Percentiles {
   readonly count: number;
   readonly p50: number | null;
   readonly max: number | null;
+  /** Logarithmic bucket index → count; p50 is an upper bound; ≤5% or 1ms error below overflow (which uses max). */
+  readonly buckets?: Readonly<Record<string, number>>;
 }
 
 export interface SoakThresholds {
@@ -117,12 +128,24 @@ export function percentile(values: readonly number[], fraction: number): number 
   return sorted[rank]!;
 }
 
+/** At most 228 buckets for probes capped at 60 seconds, plus an overflow bucket. */
 export function percentiles(values: readonly number[]): Percentiles {
-  return {
-    count: values.length,
-    p50: percentile(values, 0.5),
-    max: values.length === 0 ? null : Math.max(...values),
-  };
+  const buckets: Record<string, number> = {};
+  let max: number | null = null;
+  for (const value of values) {
+    if (!Number.isFinite(value) || value < 0) continue;
+    max = Math.max(max ?? 0, value);
+    const index = value <= 1 ? 0 : Math.min(227, Math.ceil(Math.log(value) / Math.log(1.05)));
+    buckets[index] = (buckets[index] ?? 0) + 1;
+  }
+  return mergePercentiles([
+    {
+      count: Object.values(buckets).reduce((a, b) => a + b, 0),
+      p50: null,
+      max,
+      buckets,
+    },
+  ]);
 }
 
 /**
@@ -151,6 +174,7 @@ export interface SoakCheck {
 }
 
 export interface SoakSummary {
+  readonly diagnostics: ReturnType<typeof summarizeDiagnostics>;
   readonly samples: number;
   readonly durationSeconds: number;
   readonly rssStartMiB: number | null;
@@ -217,22 +241,130 @@ function maxValue(
   return max;
 }
 
-/**
- * Merge per-interval percentile records into a whole-run estimate. Exact
- * per-sample series are not retained across intervals, so the p50 here is the
- * count-weighted median of interval medians and the max is the true max.
- */
+/** Merge bounded histograms, never a median of medians. Legacy p50 is unmeasured. */
 export function mergePercentiles(records: readonly Percentiles[]): Percentiles {
-  const weighted: number[] = [];
-  let max: number | null = null;
+  const buckets: Record<string, number> = {};
   let count = 0;
+  let max: number | null = null;
+  let missing = false;
   for (const record of records) {
-    if (record.p50 === null || record.count === 0) continue;
     count += record.count;
-    for (let index = 0; index < record.count; index += 1) weighted.push(record.p50);
-    if (record.max !== null && (max === null || record.max > max)) max = record.max;
+    if (record.count && !record.buckets) missing = true;
+    if (record.max !== null) max = Math.max(max ?? 0, record.max);
+    for (const [key, value] of Object.entries(record.buckets ?? {}))
+      buckets[key] = (buckets[key] ?? 0) + value;
   }
-  return { count, p50: percentile(weighted, 0.5), max };
+  let cumulative = 0;
+  let p50: number | null = null;
+  if (!missing && count) {
+    for (const key of Object.keys(buckets)
+      .map(Number)
+      .sort((a, b) => a - b)) {
+      cumulative += buckets[key]!;
+      if (cumulative >= Math.ceil(count / 2)) {
+        p50 = key === 227 ? max : Math.min(max ?? Infinity, 1.05 ** key);
+        break;
+      }
+    }
+  }
+  return { count, p50, max, buckets };
+}
+
+/** Run-level evidence must be supplied explicitly; absent evidence cannot qualify. */
+export interface SoakEvidence {
+  readonly requestedSeconds: number;
+  readonly observedSeconds: number;
+  readonly completed: boolean;
+  readonly failures: Readonly<Record<string, number>>;
+  readonly loadCompleted: boolean;
+  readonly telemetryComplete: boolean;
+  readonly logCoverageComplete: boolean;
+  readonly reconnectAttempts: number;
+  readonly reconnectAcknowledged: number;
+  readonly shutdownClean: boolean;
+  readonly recordRetired: boolean;
+  readonly cleanupComplete: boolean;
+  readonly resourceTrendPolicyComplete: boolean;
+  readonly warmupSeconds: number;
+  readonly trailingSeconds: number;
+}
+
+export function soakTrends(
+  samples: readonly SoakSample[],
+  warmupSeconds: number,
+  trailingSeconds: number,
+) {
+  const end = samples.at(-1)?.elapsedSeconds ?? 0;
+  const fit = (window: readonly SoakSample[]) => ({
+    memoryMiBPerHour: Object.fromEntries(
+      MEMORY_KEYS.map((key) => [
+        key,
+        growthPerHour(window, (s) => {
+          const value = s.diagnostics?.sample?.memory[key];
+          return value === undefined ? null : value / 1024 ** 2;
+        }),
+      ]),
+    ),
+    activeResourcesPerHour: Object.fromEntries(
+      RESOURCE_KEYS.map((key) => [
+        key,
+        growthPerHour(window, (s) => s.diagnostics?.sample?.activeResources?.[key] ?? null),
+      ]),
+    ),
+    diagnosticCpuPercentPerHour: growthPerHour(window, (s) =>
+      s.diagnosticDelta?.status === "ok" ? s.diagnosticDelta.cpuPercent : null,
+    ),
+    eventLoopUtilizationPerHour: growthPerHour(window, (s) =>
+      s.diagnosticDelta?.status === "ok" ? s.diagnosticDelta.eventLoopUtilization : null,
+    ),
+    rssMiBPerHour: growthPerHour(window, (s) => (s.rssKiB === null ? null : s.rssKiB / 1024)),
+    cpuPercentPerHour: growthPerHour(window, (s) =>
+      s.cpuDeltaSeconds === null || s.intervalSeconds <= 0
+        ? null
+        : (100 * s.cpuDeltaSeconds) / s.intervalSeconds,
+    ),
+    spawnsPerMinutePerHour: growthPerHour(window, (s) =>
+      s.intervalSeconds <= 0 ? null : (60 * s.tmuxSpawns) / s.intervalSeconds,
+    ),
+  });
+  return {
+    whole: fit(samples),
+    afterWarmup: fit(samples.filter((s) => s.elapsedSeconds >= warmupSeconds)),
+    trailing: fit(
+      samples.filter((s) => s.elapsedSeconds >= Math.max(warmupSeconds, end - trailingSeconds)),
+    ),
+  };
+}
+
+/** Descriptive only: heap changes can reflect GC and do not prove retention. */
+export function summarizeDiagnostics(samples: readonly SoakSample[]) {
+  const describe = (pick: (s: SoakSample) => number | null) => ({
+    start: firstValue(samples, pick),
+    end: lastValue(samples, pick),
+    max: maxValue(samples, pick),
+    measuredSamples: samples.filter((s) => pick(s) !== null).length,
+  });
+  return {
+    validSamples: samples.filter((s) => s.diagnostics?.status === "ok").length,
+    unsupportedResourceSamples: samples.filter(
+      (s) => s.diagnostics?.status === "ok" && s.diagnostics.sample.activeResources === null,
+    ).length,
+    memoryBytes: Object.fromEntries(
+      MEMORY_KEYS.map((key) => [key, describe((s) => s.diagnostics?.sample?.memory[key] ?? null)]),
+    ),
+    activeResources: Object.fromEntries(
+      RESOURCE_KEYS.map((key) => [
+        key,
+        describe((s) => s.diagnostics?.sample?.activeResources?.[key] ?? null),
+      ]),
+    ),
+    cpuPercent: describe((s) =>
+      s.diagnosticDelta?.status === "ok" ? s.diagnosticDelta.cpuPercent : null,
+    ),
+    eventLoopUtilization: describe((s) =>
+      s.diagnosticDelta?.status === "ok" ? s.diagnosticDelta.eventLoopUtilization : null,
+    ),
+  };
 }
 
 export function summarizeSoak(samples: readonly SoakSample[]): SoakSummary {
@@ -260,6 +392,7 @@ export function summarizeSoak(samples: readonly SoakSample[]): SoakSummary {
     disconnects += sample.unexpectedDisconnects;
   }
   return {
+    diagnostics: summarizeDiagnostics(samples),
     samples: samples.length,
     durationSeconds,
     rssStartMiB: firstValue(samples, rss),
@@ -306,9 +439,14 @@ function boundCheck(
 export function evaluateSoak(
   samples: readonly SoakSample[],
   thresholds: SoakThresholds = DEFAULT_SOAK_THRESHOLDS,
+  evidence?: SoakEvidence,
 ): SoakVerdict {
   const summary = summarizeSoak(samples);
-  const enoughForFit = samples.length >= thresholds.minSamplesForFit;
+  const enoughForFit =
+    samples.length >= thresholds.minSamplesForFit &&
+    (!evidence ||
+      samples.filter((sample) => sample.elapsedSeconds >= evidence.warmupSeconds).length >=
+        thresholds.minSamplesForFit);
   const checks: SoakCheck[] = [
     enoughForFit
       ? boundCheck(
@@ -322,7 +460,7 @@ export function evaluateSoak(
           ok: null,
           observed: summary.rssGrowthMiBPerHour,
           bound: thresholds.maxRssGrowthMiBPerHour,
-          detail: `needs ${thresholds.minSamplesForFit} samples, have ${samples.length}`,
+          detail: `needs ${thresholds.minSamplesForFit} samples and, when declared, post-warmup coverage; have ${samples.length} total`,
         },
     boundCheck(
       "fd-drift",
@@ -343,19 +481,19 @@ export function evaluateSoak(
           ok: null,
           observed: summary.fdGrowthPerHour,
           bound: thresholds.maxFdGrowthPerHour,
-          detail: `needs ${thresholds.minSamplesForFit} samples, have ${samples.length}`,
+          detail: `needs ${thresholds.minSamplesForFit} samples and, when declared, post-warmup coverage; have ${samples.length} total`,
         },
     boundCheck(
       "ping-rtt-p50",
       summary.pingRttMs.p50,
       thresholds.maxPingRttP50Ms,
-      "events-client ping round-trip p50 ms",
+      "WebSocket transport control RTT p50 upper bound ms (not semantic handler latency)",
     ),
     boundCheck(
       "receipt-latency-p50",
       summary.receiptLatencyMs.p50,
       thresholds.maxReceiptLatencyP50Ms,
-      "wait agent-status receipt latency p50 ms after the flip",
+      "wait agent-status receipt latency p50 upper bound ms after the flip",
     ),
     boundCheck(
       "observer-gaps",
@@ -382,6 +520,126 @@ export function evaluateSoak(
       "events-client drops outside scheduled reconnects",
     ),
   ];
+  const coverage = (id: string, complete: boolean | undefined, detail: string) =>
+    checks.push({
+      id,
+      ok: complete === true ? true : null,
+      observed: complete === true ? 1 : null,
+      bound: 1,
+      detail,
+    });
+  coverage(
+    "duration-complete",
+    evidence?.completed && evidence.observedSeconds >= evidence.requestedSeconds,
+    "requested duration reached without interruption",
+  );
+  coverage(
+    "telemetry-complete",
+    evidence?.telemetryComplete &&
+      samples.every((s) =>
+        [s.rssKiB, s.cpuSeconds, s.openFds].every(
+          (value) => value !== null && Number.isFinite(value),
+        ),
+      ),
+    "all required samples and metrics present",
+  );
+  coverage(
+    "diagnostics-coverage",
+    samples.length > 0 &&
+      samples.every(
+        (s) => s.diagnostics?.status === "ok" && s.diagnostics.sample.activeResources !== null,
+      ),
+    "owner diagnostics and supported resource counts required at every sample; missing/malformed/404 remain inconclusive",
+  );
+  coverage(
+    "diagnostics-deltas",
+    samples.length > 1 &&
+      samples.every((s, i) =>
+        i === 0
+          ? s.diagnosticDelta?.status === "missing-baseline"
+          : s.diagnosticDelta?.status === "ok" && s.diagnosticDelta.eventLoopUtilization !== null,
+      ),
+    "adjacent monotonic cumulative counters required after first baseline",
+  );
+  checks.push(
+    boundCheck(
+      "diagnostics-identity",
+      samples.filter(
+        (s) =>
+          s.diagnostics?.status === "identity-mismatch" ||
+          s.diagnosticDelta?.status === "identity-mismatch",
+      ).length,
+      0,
+      "diagnostics must match original daemon identity and PID",
+    ),
+  );
+  coverage(
+    "load-complete",
+    evidence?.loadCompleted,
+    "each declared workload completed at least once",
+  );
+  coverage(
+    "log-coverage",
+    evidence?.logCoverageComplete,
+    "continuous log stream, bookmark, no gap or replay ambiguity",
+  );
+  coverage("run-evidence", evidence !== undefined, "explicit run and teardown evidence supplied");
+  coverage(
+    "resource-trend-policy",
+    evidence?.resourceTrendPolicyComplete,
+    "heap/resources and CPU/spawn trend acceptance policy awaiting calibration and review",
+  );
+  if (evidence) {
+    const requiredFailures = [
+      "health",
+      "flip",
+      "promotion",
+      "send",
+      "receipt",
+      "daemonMissing",
+      "daemonExit",
+      "ack",
+      "pingDeadline",
+      "loop",
+      "sample",
+    ];
+    for (const name of new Set([...requiredFailures, ...Object.keys(evidence.failures)])) {
+      const count = evidence.failures[name];
+      checks.push(
+        boundCheck(
+          name,
+          typeof count === "number" && Number.isFinite(count) && count >= 0 ? count : null,
+          0,
+          "explicit run failure count",
+        ),
+      );
+    }
+    coverage(
+      "reconnect-coverage",
+      evidence.reconnectAttempts > 1 &&
+        evidence.reconnectAttempts === evidence.reconnectAcknowledged,
+      "initial subscription and at least one reconnect acknowledged",
+    );
+    for (const [id, ok] of [
+      ["shutdown-clean", evidence.shutdownClean],
+      ["record-retired", evidence.recordRetired],
+      ["cleanup-complete", evidence.cleanupComplete],
+    ] as const)
+      checks.push({ id, ok, observed: ok ? 0 : 1, bound: 0, detail: "observed teardown outcome" });
+    const trends = soakTrends(samples, evidence.warmupSeconds, evidence.trailingSeconds);
+    for (const [window, metrics] of Object.entries(trends)) {
+      if (window === "whole") continue;
+      const fit = metrics.rssMiBPerHour;
+      checks.push(
+        boundCheck(
+          `rss-${window}`,
+          fit && fit.points >= thresholds.minSamplesForFit ? fit.slope : null,
+          thresholds.maxRssGrowthMiBPerHour,
+          "predeclared window RSS slope MiB/h",
+        ),
+      );
+    }
+  }
   const failed = checks.some((check) => check.ok === false);
   const unmeasured = checks.some((check) => check.ok === null);
   return {
@@ -468,11 +726,23 @@ export function formatSoakReport(result: SoakVerdict): string {
     ["tmux spawns", `${summary.tmuxSpawnsTotal} total  ${num(summary.tmuxSpawnsPerMinute, 2)}/min`],
     [
       "ping rtt ms",
-      `p50 ${num(summary.pingRttMs.p50, 2)}  max ${num(summary.pingRttMs.max, 2)}  n ${summary.pingRttMs.count}`,
+      `p50 <= ${num(summary.pingRttMs.p50, 2)}  max ${num(summary.pingRttMs.max, 2)}  n ${summary.pingRttMs.count}`,
     ],
     [
       "receipt ms",
-      `p50 ${num(summary.receiptLatencyMs.p50, 0)}  max ${num(summary.receiptLatencyMs.max, 0)}  n ${summary.receiptLatencyMs.count}`,
+      `p50 <= ${num(summary.receiptLatencyMs.p50, 0)}  max ${num(summary.receiptLatencyMs.max, 0)}  n ${summary.receiptLatencyMs.count}`,
+    ],
+    [
+      "owner diagnostics",
+      `${summary.diagnostics.validSamples}/${summary.samples} valid; resources unsupported ${summary.diagnostics.unsupportedResourceSamples}`,
+    ],
+    [
+      "heap used MiB",
+      `start ${num(summary.diagnostics.memoryBytes.heapUsed?.start === null || summary.diagnostics.memoryBytes.heapUsed?.start === undefined ? null : summary.diagnostics.memoryBytes.heapUsed.start / 1024 ** 2)}  end ${num(summary.diagnostics.memoryBytes.heapUsed?.end === null || summary.diagnostics.memoryBytes.heapUsed?.end === undefined ? null : summary.diagnostics.memoryBytes.heapUsed.end / 1024 ** 2)} (descriptive; GC-sensitive)`,
+    ],
+    [
+      "diagnostic CPU",
+      `${num(summary.diagnostics.cpuPercent.start)} → ${num(summary.diagnostics.cpuPercent.end)} % interval; policy pending`,
     ],
     ["observer gaps", String(summary.observerGapWarnings)],
     ["daemon restarts", String(summary.daemonRestarts)],
@@ -491,4 +761,25 @@ export function formatSoakReport(result: SoakVerdict): string {
   lines.push("");
   lines.push(`verdict: ${result.verdict.toUpperCase()}`);
   return lines.join("\n");
+}
+
+/** A revision acknowledges exactly the interest set sent in that subscribe. */
+export function validSoakAck(frame: unknown, revision: number): boolean {
+  if (!frame || typeof frame !== "object") return false;
+  const ack = frame as Record<string, unknown>;
+  return (
+    ack.type === "resource.interests-ack" &&
+    ack.interestRevision === revision &&
+    Array.isArray(ack.unavailableInterests) &&
+    ack.unavailableInterests.length === 0
+  );
+}
+
+/** Unsolicited/stale control payloads cannot discharge the current probe. */
+export function correlatedPongRtt(
+  probe: { readonly id: string; readonly at: number },
+  payload: string,
+  now: number,
+): number | null {
+  return payload === probe.id && Number.isFinite(now) && now >= probe.at ? now - probe.at : null;
 }

@@ -77,11 +77,22 @@ describe("parseAppConfig — deep partial merge", () => {
     expect(cfg.keys.cheatsheet).toBe("M-k");
     expect(cfg.keys.menu).toBe("M-m");
     expect(cfg.keys.panels).toEqual(DEFAULT_APP_CONFIG.keys.panels);
-    expect(cfg.theme.mode).toBe("dark");
+    expect(cfg.theme.mode).toBe("system");
     expect(cfg.theme.muted).toBe("colour240");
     expect(cfg.theme.status.working).toBe("colour221");
     expect(cfg.theme.glyphs).toEqual(DEFAULT_APP_CONFIG.theme.glyphs);
     expect(cfg.updater).toEqual(DEFAULT_APP_CONFIG.updater);
+  });
+
+  it("defaults absent theme settings to system without changing persisted locks or presets", () => {
+    for (const input of [undefined, {}, { theme: {} }]) {
+      expect(parseAppConfig(input).theme.mode).toBe("system");
+    }
+    expect(parseAppConfig({ theme: { mode: "dark" } }).theme.mode).toBe("dark");
+    expect(parseAppConfig({ theme: { preset: "nord" } }).theme).toMatchObject({
+      mode: "dark",
+      preset: "nord",
+    });
   });
 
   it("persists valid theme modes and falls back for invalid values", () => {

@@ -375,7 +375,16 @@ describe("pane activity labels", () => {
     try {
       await setup.renderOnce();
       expect(setup.captureCharFrame()).toContain("READ");
-      setInteraction({ ...interaction()!, phase: "accepted", sequence: 2 });
+      const badge = setup.renderer.root.findDescendantById("ui-badge:READ · External tmux");
+      expect(badge).toBeDefined();
+      setInteraction({ ...interaction()!, sequence: 2, operationId: "next-read" });
+      await setup.renderOnce();
+      expect(setup.renderer.root.findDescendantById("ui-badge:READ · External tmux")).toBe(badge);
+      setInteraction({ ...interaction()!, operationKind: "workspace.pane.send", sequence: 3 });
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("RECEIVED · External tmux");
+      expect(setup.captureCharFrame()).not.toContain("READ");
+      setInteraction({ ...interaction()!, phase: "accepted", sequence: 4 });
       await setup.renderOnce();
       expect(() =>
         batch(() => {

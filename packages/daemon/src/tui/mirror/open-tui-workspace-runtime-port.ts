@@ -155,7 +155,11 @@ export interface OpenTuiWorkspaceRuntimePort extends WorkspaceClientRuntimePort<
   getLayout(): OpenTuiWorkspaceLayout | null;
   getLayoutSnapshot(): OpenTuiWorkspaceLayoutSnapshot;
   onLayout(listener: (layout: OpenTuiWorkspaceLayoutSnapshot) => void): () => void;
-  fitViewport(cols: number, rows: number): Promise<"ok" | "geometry-authority-conflict">;
+  fitViewport(
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): Promise<"ok" | "geometry-authority-conflict">;
 }
 
 export interface ConnectOpenTuiWorkspaceRuntimePortOptions {
@@ -1395,8 +1399,17 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       }
     }) ?? null;
   type FitResult = "ok" | "geometry-authority-conflict";
-  let pendingInitialFit: { cols: number; rows: number; result: Promise<FitResult> } | null = null;
-  const fitViewport = (cols: number, rows: number): Promise<FitResult> => {
+  let pendingInitialFit: {
+    cols: number;
+    rows: number;
+    semanticWindowId?: string;
+    result: Promise<FitResult>;
+  } | null = null;
+  const fitViewport = (
+    cols: number,
+    rows: number,
+    semanticWindowId?: string,
+  ): Promise<FitResult> => {
     if (closed) return Promise.resolve("geometry-authority-conflict");
     // Keep only the latest requested geometry while hidden seeds arrive. All
     // callers share one wait; resize storms cannot accumulate deferred work.
@@ -1404,23 +1417,31 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       if (pendingInitialFit) {
         pendingInitialFit.cols = cols;
         pendingInitialFit.rows = rows;
+        pendingInitialFit.semanticWindowId = semanticWindowId;
         return pendingInitialFit.result;
       }
       const request = {
         cols,
         rows,
+        semanticWindowId,
         result: Promise.resolve<FitResult>("geometry-authority-conflict"),
       };
       pendingInitialFit = request;
       request.result = allSeeds.then((ready) => {
         pendingInitialFit = null;
-        return ready ? fitViewport(request.cols, request.rows) : "geometry-authority-conflict";
+        return ready
+          ? fitViewport(request.cols, request.rows, request.semanticWindowId)
+          : "geometry-authority-conflict";
       });
       return request.result;
     }
     if ([...endpoints.values()].some((endpoint) => !endpoint.inputReady))
       return Promise.resolve("geometry-authority-conflict");
-    return opened.fitViewport(cols, rows).catch((error: unknown) => {
+    return (
+      semanticWindowId === undefined
+        ? opened.fitViewport(cols, rows)
+        : opened.fitViewport(cols, rows, semanticWindowId)
+    ).catch((error: unknown) => {
       if (error instanceof PaneStreamOperationError && error.code === "authority-rejected")
         return "geometry-authority-conflict" as const;
       throw error;

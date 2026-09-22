@@ -324,7 +324,7 @@ describe("ApplicationTerminalWorkspace", () => {
 
     setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
     await setup.renderOnce();
-    expect(blits).toEqual([{ paneId: "pane.a", full: true }]);
+    expect(blits).toEqual([]);
     expect(setup.captureCharFrame()).toContain("A");
     blits.length = 0;
 
@@ -335,13 +335,13 @@ describe("ApplicationTerminalWorkspace", () => {
 
     setWorkspaceLayout({ current: activeB, windows: [inactiveA, activeB] });
     await setup.renderOnce();
-    expect(blits).toEqual([{ paneId: "pane.b", full: true }]);
+    expect(blits).toEqual([{ paneId: "pane.b", full: false }]);
     expect(setup.captureCharFrame()).toContain("X");
     blits.length = 0;
 
     setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
     await setup.renderOnce();
-    expect(blits).toEqual([{ paneId: "pane.a", full: true }]);
+    expect(blits).toEqual([]);
     blits.length = 0;
     await setup.renderOnce();
     expect(blits).toEqual([]);
@@ -935,17 +935,19 @@ describe("ApplicationTerminalWorkspace", () => {
     setup.renderer.destroy();
   });
 
-  it("paints a local divider guide during drag and submits one semantic resize on release", async () => {
+  it("keeps pointer capture through canonical resize and always delivers the final target", async () => {
     registerPaneSurface();
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const palette = createTerminalPaletteProjection(theme);
     const previews: Array<{ semanticPaneId: string; axis: string; cells: number }> = [];
     const submissions: Array<{ semanticPaneId: string; axis: string; cells: number }> = [];
+    const [observedLayout, setObservedLayout] = createSignal(layout());
+    const source = adapter({ "pane.a": "A", "pane.b": "B", "pane.c": "C" }, []);
     const setup = await renderForTest(
       () => (
         <ApplicationTerminalWorkspace
-          layout={layout}
-          adapter={adapter({ "pane.a": "A", "pane.b": "B", "pane.c": "C" }, [])}
+          layout={observedLayout}
+          adapter={source}
           rendererEpoch={1}
           width={30}
           height={9}
@@ -971,14 +973,24 @@ describe("ApplicationTerminalWorkspace", () => {
       axis: "cols",
       cells: 12,
     });
-    await setup.mockMouse.release(12, 5, MouseButtons.LEFT);
+    const current = {
+      ...layout().current!,
+      panes: layout().current!.panes.map((pane, index) =>
+        index === 0 ? { ...pane, width: 12 } : index === 1 ? { ...pane, left: 13, width: 7 } : pane,
+      ),
+    };
+    setObservedLayout({ current, windows: [current] });
+    await setup.renderOnce();
+    await setup.mockMouse.release(10, 5, MouseButtons.LEFT);
     await setup.renderOnce();
     expect(submissions).toHaveLength(1);
     expect(submissions[0]).toMatchObject({
       semanticPaneId: "pane.a",
       axis: "cols",
-      cells: 12,
+      cells: 10,
     });
+    await setup.mockMouse.release(10, 5, MouseButtons.LEFT);
+    expect(submissions).toHaveLength(1);
     setup.renderer.destroy();
   });
 
@@ -1795,6 +1807,25 @@ it("routes raw mouse multi-click, wheel-drag, edge scrolling and Ctrl-link activ
     expect(copied.at(-1)).toBe("hello world https://a.test");
     await setup.mockMouse.click(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
     expect(opened).toEqual(["https://a.test/"]);
+    // Exercise the workspace fallback hit surface through real OpenTUI dispatch.
+    // Pane surfaces normally cover it; lifting its hit layer deterministically
+    // covers the same routing when the compositor selects the background.
+    const background = setup.renderer.root.getChildren()[0]!;
+    background.zIndex = 1000;
+    await setup.renderOnce();
+    await setup.mockMouse.click(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toHaveLength(2);
+    await setup.mockMouse.click(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toHaveLength(3);
+    await setup.mockMouse.release(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toHaveLength(3);
+    await setup.mockMouse.pressDown(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toHaveLength(4);
+    await setup.mockMouse.moveTo(20, 4);
+    await setup.mockMouse.release(20, 4);
+    expect(opened).toHaveLength(4);
+    background.zIndex = 0;
+    await setup.renderOnce();
     await setup.mockMouse.pressDown(2, 5);
     await setup.mockMouse.scroll(40, 5, "up");
     await setup.mockMouse.moveTo(2, 3);

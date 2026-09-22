@@ -21,14 +21,15 @@ function fixture(blocked = false) {
       if (blocked) await new Promise(() => {});
     }),
   };
+  const subscribe = vi.fn((listener: (entry: LogEntry) => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  });
   const options = {
     backfill: () => [] as LogEntry[],
-    subscribe: (listener: (entry: LogEntry) => void) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
+    subscribe,
     match: () => true,
     entries: 4,
     bytes: 1024,
@@ -39,12 +40,70 @@ function fixture(blocked = false) {
     options,
     listeners,
     frames,
+    subscribe,
     emit: (value = entry()) => {
       for (const listener of listeners) listener(value);
     },
   };
 }
 afterEach(() => vi.useRealTimers());
+it("keeps a quiet stream alive without creating log entries or extra subscriptions", async () => {
+  vi.useFakeTimers();
+  const test = fixture();
+  const done = streamBoundedLogs(test.stream, {
+    ...test.options,
+    heartbeatIntervalMs: 25,
+  });
+  await vi.advanceTimersByTimeAsync(76);
+  expect(test.frames.map((frame) => frame.event)).toEqual([
+    "bookmark",
+    "heartbeat",
+    "heartbeat",
+    "heartbeat",
+  ]);
+  expect(test.frames.filter((frame) => frame.event === "entry")).toHaveLength(0);
+  expect(test.subscribe).toHaveBeenCalledOnce();
+  expect(test.listeners.size).toBe(1);
+  expect(test.stream.abort).not.toHaveBeenCalled();
+  test.stream.abort();
+  await done;
+  expect(test.listeners.size).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("does not queue heartbeats behind active log delivery", async () => {
+  vi.useFakeTimers();
+  const test = fixture(true);
+  const done = streamBoundedLogs(test.stream, {
+    ...test.options,
+    heartbeatIntervalMs: 25,
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  test.emit();
+  await vi.advanceTimersByTimeAsync(75);
+  expect(test.frames.map((frame) => frame.event)).toEqual(["bookmark"]);
+  expect(test.listeners.size).toBe(1);
+  test.stream.abort();
+  await done;
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("applies the existing write deadline to a blocked heartbeat", async () => {
+  vi.useFakeTimers();
+  const test = fixture();
+  test.stream.writeSSE.mockImplementation(async (frame) => {
+    test.frames.push(frame);
+    if (frame.event === "heartbeat") await new Promise(() => {});
+  });
+  const done = streamBoundedLogs(test.stream, {
+    ...test.options,
+    heartbeatIntervalMs: 25,
+  });
+  await vi.advanceTimersByTimeAsync(126);
+  await done;
+  expect(test.frames.map((frame) => frame.event)).toEqual(["bookmark", "heartbeat"]);
+  expect(test.stream.abort).toHaveBeenCalledOnce();
+  expect(test.listeners.size).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
 it("closes an overflowing slow reader and unsubscribes even when its write never settles", async () => {
   vi.useFakeTimers();
   const slow = fixture(true);
@@ -95,6 +154,7 @@ it("cleans up cancellation/deadline, already aborted streams, and synchronous su
   const subscribe = vi.fn();
   await streamBoundedLogs({ ...slow.stream, aborted: true }, { ...slow.options, subscribe });
   expect(subscribe).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
   const unsub = vi.fn();
   await streamBoundedLogs(fixture().stream, {
     ...slow.options,
@@ -104,4 +164,5 @@ it("cleans up cancellation/deadline, already aborted streams, and synchronous su
     },
   });
   expect(unsub).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
 });

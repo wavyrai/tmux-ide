@@ -1222,6 +1222,9 @@ describe("application terminal interaction controller", () => {
       const resizeLayout = { current: window, windows: [window] };
       let micros = 10;
       const enabledDiagnostics = vi.fn();
+      let canonicalCols = 20;
+      let canonicalRevision = 9;
+      let canonicalIncarnation = "incarnation-a";
       const resizeGeneration = {
         status: "live",
         daemonGeneration: "generation-a",
@@ -1232,10 +1235,10 @@ describe("application terminal interaction controller", () => {
           paneCanonicalIdentity: () => ({
             sourceEpoch: 2,
             generation: "generation-a",
-            incarnation: "incarnation-a",
-            revision: 9,
-            stateHash: "0123456789abcdef",
-            cols: 20,
+            incarnation: canonicalIncarnation,
+            revision: canonicalRevision,
+            stateHash: `hash-${canonicalRevision}`,
+            cols: canonicalCols,
             rows: 8,
           }),
         },
@@ -1263,7 +1266,7 @@ describe("application terminal interaction controller", () => {
       });
       micros = 40;
       enabled.settleResizeGuideFrame();
-      expect(enabledDiagnostics).toHaveBeenCalledTimes(3);
+      expect(enabledDiagnostics).toHaveBeenCalledTimes(4);
       expect(enabledDiagnostics).toHaveBeenCalledWith(
         "resize-guide-settled",
         expect.objectContaining({
@@ -1278,6 +1281,34 @@ describe("application terminal interaction controller", () => {
           identityExact: true,
           durationMicros: 30,
         }),
+      );
+      // Continuous dispatch can advance canonical cells before guide consumption.
+      enabled.previewPaneResize(preview);
+      canonicalCols = 18;
+      canonicalRevision = 10;
+      resizeLayout.current.panes[0]!.width = 18;
+      enabled.settleResizeGuideFrame();
+      expect(enabledDiagnostics).toHaveBeenLastCalledWith(
+        "resize-guide-fence",
+        expect.objectContaining({
+          identityExact: true,
+          canonicalAfter: expect.objectContaining({ cols: 18, revision: 10 }),
+        }),
+      );
+      enabled.previewPaneResize(preview);
+      canonicalCols = 17; // Canonical cells and consumed layout must still agree exactly.
+      enabled.settleResizeGuideFrame();
+      expect(enabledDiagnostics).toHaveBeenLastCalledWith(
+        "resize-guide-fence",
+        expect.objectContaining({ identityExact: false }),
+      );
+      canonicalCols = 18;
+      enabled.previewPaneResize(preview);
+      canonicalIncarnation = "replacement";
+      enabled.settleResizeGuideFrame();
+      expect(enabledDiagnostics).toHaveBeenLastCalledWith(
+        "resize-guide-fence",
+        expect.objectContaining({ identityExact: false }),
       );
       enabled.previewPaneResize(preview);
       resizeGeneration.rendererEpoch = 8;
@@ -1380,6 +1411,7 @@ describe("application terminal interaction controller", () => {
         outcome: "applied",
       },
     }));
+    let canonicalCols = 20;
     const generation = {
       status: "live",
       daemonGeneration: "generation-a",
@@ -1398,7 +1430,7 @@ describe("application terminal interaction controller", () => {
           incarnation: "incarnation-a",
           revision: 9,
           stateHash: "0123456789abcdef",
-          cols: 20,
+          cols: canonicalCols,
           rows: 8,
         }),
       },
@@ -1435,6 +1467,15 @@ describe("application terminal interaction controller", () => {
     await Promise.resolve();
     expect(requestRender).toHaveBeenCalledOnce();
     controller.settleResizeGuideFrame();
+    expect(critical).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "pane-resize-fence",
+      expect.anything(),
+    );
+    expect(requestRender).toHaveBeenCalledOnce(); // No diagnostic polling loop.
+    canonicalCols = 21;
+    controller.settleResizeGuideFrame();
+
     expect(diagnostics).toHaveBeenCalledWith(
       "pane-resize-receipt",
       expect.objectContaining({ source: "keyboard", receiptCells: 21 }),
@@ -1444,6 +1485,9 @@ describe("application terminal interaction controller", () => {
       "pane-resize-fence",
       expect.objectContaining({ layoutCells: 21, receiptCells: 21 }),
     );
+    controller.settleResizeGuideFrame();
+    expect(critical.mock.calls.filter((call) => call[1] === "pane-resize-fence")).toHaveLength(1);
+    expect(dispatch).toHaveBeenCalledOnce();
   });
 
   it("converts Meta+Down and a horizontal pointer release to exact native rows", async () => {
@@ -1593,7 +1637,7 @@ describe("application terminal interaction controller", () => {
         layoutCells: 8,
         receiptCells: 8,
         pointerIngress: expect.objectContaining({
-          action: "up",
+          action: "drag",
           gestureId: ingress?.gestureId,
           x: 40,
           y: 10,
@@ -1613,6 +1657,156 @@ describe("application terminal interaction controller", () => {
         expect.objectContaining({ source: "keyboard", pointerIngress: null }),
       ),
     );
+  });
+
+  it.each(["receipt-first", "layout-first"])(
+    "drains live drag A→B→A with %s settlement",
+    async (order) => {
+      let snapshot = layout(0);
+      const completions: Array<() => void> = [];
+      const dispatch = vi.fn(
+        (command) =>
+          new Promise((resolve) => {
+            completions.push(() =>
+              resolve({
+                kind: "semantic-intent",
+                operationId: command.operationId,
+                result: {
+                  ...command.intent,
+                  operationId: command.operationId,
+                  daemonInstanceId: "generation-a",
+                  outcome: "applied",
+                },
+              }),
+            );
+          }),
+      );
+      let incarnation = "incarnation-a";
+      const generation = {
+        status: "live",
+        daemonGeneration: "generation-a",
+        rendererEpoch: 7,
+        connection: { workspaceName: "workspace.alpha" },
+        client: {
+          ownsRuntimeAuthority: () => true,
+          dispatch,
+          getSnapshot: () => ({ generation: 4 }),
+        },
+        adapter: {
+          paneCanonicalIdentity: () => ({
+            sourceEpoch: 2,
+            generation: "generation-a",
+            incarnation,
+            revision: 9,
+            stateHash: "0123456789abcdef",
+            cols: 20,
+            rows: 8,
+          }),
+        },
+      };
+      let id = 0;
+      const controller = createApplicationTerminalInteractionController({
+        generation: () => generation as never,
+        layout: () => snapshot,
+        setFocusedPane: () => undefined,
+        diagnosticsEnabled: false,
+        diagnose: () => undefined,
+        createOperationId: () => `operation-${++id}`,
+      });
+      const preview = (cells: number) => ({
+        semanticPaneId: "pane.main",
+        axis: "cols" as const,
+        cells,
+        guide: { x: cells, y: 0, width: 1, height: 8 },
+      });
+      const observe = (cells: number) => {
+        snapshot = {
+          ...snapshot,
+          current: {
+            ...snapshot.current!,
+            panes: [{ ...snapshot.current!.panes[0]!, width: cells }],
+          },
+          windows: snapshot.windows.map((window, index) =>
+            index === 0 ? { ...window, panes: [{ ...window.panes[0]!, width: cells }] } : window,
+          ),
+        };
+        controller.adoptLayout(snapshot);
+      };
+      controller.previewPaneResize(preview(20));
+      controller.previewPaneResize(preview(25));
+      expect(dispatch).toHaveBeenCalledTimes(1); // before mouse-up
+      for (let i = 0; i < 1000; i++) controller.previewPaneResize(preview(30 + i));
+      controller.resizePane(preview(20));
+      controller.resizePane(preview(20));
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      if (order === "receipt-first") {
+        completions[0]!();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        observe(25);
+      } else {
+        observe(25);
+        completions[0]!();
+      }
+      await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2));
+      expect(dispatch.mock.calls.map(([command]) => command.intent.cells)).toEqual([25, 20]);
+      observe(20);
+      completions[1]!();
+      await Promise.resolve();
+      await Promise.resolve();
+      controller.resizePane(preview(20));
+      expect(dispatch).toHaveBeenCalledTimes(2);
+
+      // Replacement of the pane under the same semantic id cannot drain stale motion.
+      controller.previewPaneResize(preview(25));
+      controller.previewPaneResize(preview(30));
+      incarnation = "incarnation-replaced";
+      observe(25);
+      completions[2]!();
+      await Promise.resolve();
+      await Promise.resolve();
+      controller.resizePane(preview(30));
+      expect(dispatch).toHaveBeenCalledTimes(3);
+    },
+  );
+
+  it("stops a rejected drag until release instead of retrying every move", async () => {
+    const snapshot = layout(0);
+    const dispatch = vi.fn(async () => {
+      throw new Error("rejected");
+    });
+    const generation = {
+      status: "live",
+      daemonGeneration: "generation-a",
+      rendererEpoch: 7,
+      connection: { workspaceName: "workspace.alpha" },
+      client: {
+        ownsRuntimeAuthority: () => true,
+        dispatch,
+        getSnapshot: () => ({ generation: 4 }),
+      },
+      adapter: { paneCanonicalIdentity: () => ({ sourceEpoch: 2, incarnation: "a" }) },
+    };
+    const controller = createApplicationTerminalInteractionController({
+      generation: () => generation as never,
+      layout: () => snapshot,
+      setFocusedPane: () => undefined,
+      diagnosticsEnabled: false,
+      diagnose: () => undefined,
+    });
+    const preview = (cells: number) => ({
+      semanticPaneId: "pane.main",
+      axis: "cols" as const,
+      cells,
+      guide: { x: cells, y: 0, width: 1, height: 8 },
+    });
+    controller.previewPaneResize(preview(25));
+    await Promise.resolve();
+    await Promise.resolve();
+    for (let i = 0; i < 1000; i++) controller.previewPaneResize(preview(30 + i));
+    controller.resizePane(preview(20));
+    expect(dispatch).toHaveBeenCalledOnce();
   });
 
   it("does not route Ctrl/Shift arrows or Meta non-arrows as pane resize", () => {

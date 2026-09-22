@@ -1,6 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { EventEmitter } from "node:events";
 import { createAppearanceOwner } from "./application-appearance-owner.ts";
+import type { ApplicationTerminalPaletteSnapshot } from "./application-terminal-palette-owner.ts";
 import { appearanceDialogLayer } from "./application-shell-overlays.tsx";
 import { parseAppConfig } from "../../../lib/app-config.ts";
 import { MouseButtons } from "@opentui/core/testing";
@@ -1313,6 +1314,7 @@ describe("production ApplicationShellView", () => {
     });
     await setup.renderOnce();
     expect(tracked.blits).toEqual([expect.objectContaining({ full: true })]);
+    expect(setup.captureCharFrame()).toContain("CANONICAL-CELL");
     tracked.blits.length = 0;
     await Bun.sleep(30);
     let measuredFrames = 0;
@@ -1339,7 +1341,8 @@ describe("production ApplicationShellView", () => {
     });
     await waitForMeasuredFrame(1);
     await expectQuiet(1);
-    expect(tracked.blits).toEqual([expect.objectContaining({ full: true })]);
+    expect(tracked.blits).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("CANONICAL-CELL");
     tracked.blits.length = 0;
 
     measuredStage = "warm-b";
@@ -1349,7 +1352,8 @@ describe("production ApplicationShellView", () => {
     });
     await waitForMeasuredFrame(2);
     await expectQuiet(2);
-    expect(tracked.blits).toEqual([expect.objectContaining({ full: true })]);
+    expect(tracked.blits).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("CANONICAL-CELL");
     tracked.blits.length = 0;
 
     measuredStage = "rename";
@@ -2210,6 +2214,23 @@ describe("production ApplicationShellView", () => {
   });
 });
 
+const unavailableHostPalette: ApplicationTerminalPaletteSnapshot = {
+  availability: "unavailable",
+  detectedMode: "dark",
+  palette: [],
+  defaultForeground: null,
+  defaultBackground: null,
+  cursorColor: null,
+  mouseForeground: null,
+  mouseBackground: null,
+  tekForeground: null,
+  tekBackground: null,
+  highlightBackground: null,
+  highlightForeground: null,
+  capabilities: null,
+  signature: "fixture-unavailable",
+};
+
 describe("production appearance picker", () => {
   for (const mode of ["dark", "light"] as const)
     for (const width of [80, 28]) {
@@ -2223,7 +2244,7 @@ describe("production appearance picker", () => {
               parseAppConfig({ theme: { mode } }),
               Object.assign(new EventEmitter(), { themeMode: "dark" as const }),
               {
-                getSnapshot: () => ({ availability: "unavailable" }) as never,
+                getSnapshot: () => unavailableHostPalette,
                 subscribe: () => () => {},
                 dispose: () => {},
                 refresh: async () => {},
@@ -2254,6 +2275,25 @@ describe("production appearance picker", () => {
         );
         await setup.renderOnce();
         expect(setup.captureCharFrame()).toContain("Appearance");
+        const contrastLines = setup.captureCharFrame().split("\n");
+        const contrastY = contrastLines.findIndex((line) => line.includes("Contrast:"));
+        await setup.mockMouse.click(
+          contrastLines[contrastY]!.indexOf("Contrast:"),
+          contrastY,
+          MouseButtons.LEFT,
+        );
+        await setup.renderOnce();
+        expect(owner.automaticContrast()).toBe(false);
+        setup.renderer.keyInput.emit("keypress", {
+          name: "a",
+          ctrl: true,
+          meta: false,
+          shift: false,
+        });
+        await setup.renderOnce();
+        expect(owner.automaticContrast()).toBe(true);
+        expect(owner.pickerQuery()).toBe("");
+        owner.toggleAutomaticContrast();
         const lines = setup.captureCharFrame().split("\n");
         const y = lines.findIndex((line) => line.includes("Light"));
         await setup.mockMouse.click(lines[y]!.indexOf("Light"), y, MouseButtons.LEFT);
@@ -2269,6 +2309,7 @@ describe("production appearance picker", () => {
         });
         await setup.renderOnce();
         expect(owner.theme().setting).toBe(mode);
+        expect(owner.automaticContrast()).toBe(true);
         expect(owner.pickerOpen()).toBe(false);
         expect(restored).toEqual(["pane-a"]);
         expect(leaked).toEqual([]);
@@ -2287,7 +2328,7 @@ describe("theme library viewport", () => {
             parseAppConfig({}),
             Object.assign(new EventEmitter(), { themeMode: "dark" as const }),
             {
-              getSnapshot: () => ({ availability: "unavailable" }) as never,
+              getSnapshot: () => unavailableHostPalette,
               subscribe: () => () => {},
               dispose: () => {},
               refresh: async () => {},

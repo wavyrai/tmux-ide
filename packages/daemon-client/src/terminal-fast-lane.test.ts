@@ -648,6 +648,24 @@ describe("terminal fast lane", () => {
     });
   });
 
+  it("keeps equal-sized scoped targets distinct across an in-flight resize", async () => {
+    const { lane, control } = rig();
+    control.owned.add("geometry");
+    const gate = deferred<void>();
+    control.resizeGates.push(gate.promise, Promise.resolve());
+    const first = lane.resize({ semanticWindowId: "window.a", cols: 80, rows: 24 });
+    const second = lane.resize({ semanticWindowId: "window.b", cols: 80, rows: 24 });
+    gate.resolve();
+    await settle();
+    expect(await first).toEqual({ status: "applied" });
+    expect(await second).toEqual({ status: "applied" });
+    expect(control.resizes.map(({ viewport }) => viewport.semanticWindowId)).toEqual([
+      "window.a",
+      "window.b",
+    ]);
+    lane.dispose();
+  });
+
   it("preserves an exact geometry authority conflict without treating it as applied", async () => {
     const { lane, control } = rig();
     control.owned.add("geometry");

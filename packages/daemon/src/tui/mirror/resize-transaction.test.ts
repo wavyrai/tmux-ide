@@ -57,6 +57,7 @@ const begin = {
 function observation(operationId: string, cells = 60) {
   return {
     operationId,
+    authorityGeneration: begin.authorityGeneration,
     workspaceName: begin.workspaceName,
     semanticPaneId: begin.semanticPaneId,
     axis: begin.axis,
@@ -65,35 +66,59 @@ function observation(operationId: string, cells = 60) {
 }
 
 describe("ResizeTransactionController", () => {
-  it("keeps 1000 pointer moves local and submits exactly once across duplicate releases", () => {
+  it("submits first/latest of 1000 moves and drains the release target once", () => {
     const h = harness();
     h.controller.begin(begin);
-    for (let index = 1; index <= 1_000; index += 1) {
-      expect(h.controller.move(40 + index)).toBe(true);
-    }
-    expect(h.submit).not.toHaveBeenCalled();
+    for (let index = 1; index <= 1_000; index += 1) h.controller.move(40 + index);
+    expect(h.submit).toHaveBeenCalledOnce();
+    expect(h.submissions[0]!.intent.cells).toBe(41);
+    expect(h.controller.state()).toMatchObject({
+      phase: "pending",
+      canonicalCells: 40,
+      previewCells: 1040,
+    });
+    h.controller.release();
+    h.controller.release();
+    h.controller.observeLayout(observation("operation-1", 41));
+    expect(h.submissions.map((submission) => submission.intent.cells)).toEqual([41, 1040]);
+    h.controller.release();
+    h.controller.observeLayout(observation("operation-2", 1040));
+    h.controller.release();
+    expect(h.submit).toHaveBeenCalledTimes(2);
+    expect(h.controller.state()).toMatchObject({ phase: "idle", canonicalCells: 1040 });
+  });
+
+  it("restores A after B even when release returns to the gesture origin", () => {
+    const h = harness();
+    h.controller.begin(begin);
+    h.controller.move(60);
+    h.controller.move(40);
+    h.controller.release();
+    expect(
+      h.controller.observeLayout({ ...observation("operation-1"), authorityGeneration: "retired" }),
+    ).toBe(false);
+    h.controller.observeLayout(observation("operation-1", 60));
+    expect(h.submissions.map((submission) => submission.intent.cells)).toEqual([60, 40]);
+    expect(h.controller.observeLayout(observation("operation-1", 60))).toBe(false);
+    h.controller.observeLayout(observation("operation-2", 40));
+    expect(h.controller.state()).toMatchObject({ phase: "idle", canonicalCells: 40 });
+  });
+
+  it("continues dragging after canonical settlement without retrying a clamped target", () => {
+    const h = harness();
+    h.controller.begin(begin);
+    h.controller.move(60);
+    h.controller.observeLayout(observation("operation-1", 58));
     expect(h.controller.state()).toMatchObject({
       phase: "dragging",
-      canonicalCells: 40,
-      previewCells: 1_040,
+      canonicalCells: 58,
+      previewCells: 60,
     });
-
-    expect(h.controller.release()).toBe("operation-1");
-    expect(h.controller.release()).toBe("operation-1");
-    expect(h.controller.release()).toBe("operation-1");
     expect(h.submit).toHaveBeenCalledOnce();
-    expect(h.submissions).toEqual([
-      {
-        operationId: "operation-1",
-        intent: {
-          verb: "workspace.pane.resize",
-          workspaceName: "workspace.alpha",
-          semanticPaneId: "pane.editor",
-          axis: "cols",
-          cells: 1_040,
-        },
-      },
-    ]);
+    h.controller.move(55);
+    h.controller.release();
+    h.controller.observeLayout(observation("operation-2", 55));
+    expect(h.submissions.map((submission) => submission.intent.cells)).toEqual([60, 55]);
   });
 
   it("keeps the final preview visible until a matching observed layout settles", () => {
@@ -242,16 +267,32 @@ describe("ResizeTransactionController", () => {
     h.controller.begin(begin);
     h.controller.move(52);
     expect(h.controller.cancelDrag()).toBe(true);
+    h.controller.move(70);
+    h.controller.release();
+    h.controller.observeLayout(observation("operation-1", 52));
+    expect(h.submit).toHaveBeenCalledOnce();
+    expect(h.controller.state()).toMatchObject({ phase: "idle", canonicalCells: 52 });
+  });
+
+  it("disposes a pending gesture without dispatching queued motion or accepting late settlement", () => {
+    const h = harness();
+    h.controller.begin(begin);
+    h.controller.move(60);
+    h.controller.move(70);
+    h.controller.dispose();
+    h.fireTimers();
+    expect(h.controller.observeLayout(observation("operation-1", 60))).toBe(false);
+    expect(h.controller.begin(begin)).toBe(false);
     expect(h.controller.release()).toBeNull();
-    expect(h.submit).not.toHaveBeenCalled();
-    expect(h.controller.state()).toEqual({ phase: "idle", canonicalCells: 40, outcome: null });
+    expect(h.submit).toHaveBeenCalledOnce();
   });
 
   it("turns a synchronous submit failure into one typed local revert", () => {
     const h = harness({ submitError: new Error("socket closed") });
     h.controller.begin(begin);
     h.controller.move(60);
-    const operationId = h.controller.release()!;
+    h.controller.release();
+    const operationId = h.submissions[0]!.operationId;
 
     expect(h.submit).toHaveBeenCalledOnce();
     expect(h.controller.state()).toEqual({

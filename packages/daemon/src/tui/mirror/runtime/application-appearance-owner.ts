@@ -1,3 +1,5 @@
+import type { CliRenderer } from "@opentui/core";
+import { createAutomaticContrastPass } from "../automatic-contrast.ts";
 import { VISUAL_THEME_PRESETS, findVisualThemePreset } from "@tmux-ide/contracts";
 import { batch, createSignal, type Accessor } from "solid-js";
 
@@ -26,6 +28,8 @@ export interface ApplicationAppearanceOwner {
   readonly palette: Accessor<TerminalPaletteProjection>;
   readonly hostPalette: Accessor<ApplicationTerminalPaletteSnapshot>;
   readonly setTransientNote: (note: string | null) => void;
+  readonly automaticContrast: Accessor<boolean>;
+  readonly toggleAutomaticContrast: () => void;
   readonly pickerOpen: Accessor<boolean>;
   readonly pickerError: Accessor<string | null>;
   readonly openPicker: () => void;
@@ -54,15 +58,36 @@ export interface ApplicationAppearanceSnapshot {
 }
 
 function hostDefaults(snapshot: ApplicationTerminalPaletteSnapshot) {
-  if (snapshot.availability !== "available") return null;
-  return deriveSystemVisualHostDefaults(snapshot);
+  return (
+    deriveSystemVisualHostDefaults(snapshot) ?? { appearance: snapshot.detectedMode, overrides: {} }
+  );
 }
 
 export function createAppearanceOwner(
   config: AppConfig,
-  renderer: ThemeModeSource,
+  renderer: ThemeModeSource &
+    Partial<Pick<CliRenderer, "addPostProcessFn" | "removePostProcessFn" | "requestRender">>,
   terminalPaletteOwner: ApplicationTerminalPaletteOwner,
 ): ApplicationAppearanceOwner {
+  const [automaticContrast, setAutomaticContrast] = createSignal(
+    config.theme.automaticContrast ?? true,
+  );
+  const correct = createAutomaticContrastPass();
+  const postProcess: Parameters<CliRenderer["addPostProcessFn"]>[0] = (buffer) => {
+    if (automaticContrast()) correct(buffer);
+  };
+  renderer.addPostProcessFn?.(postProcess);
+  const setContrast = (enabled: boolean) => {
+    if (enabled === automaticContrast()) return;
+    setAutomaticContrast(enabled);
+    renderer.requestRender?.();
+  };
+  const toggleAutomaticContrast = () => {
+    if (pickerOpen()) {
+      setContrast(!automaticContrast());
+      setPickerError(null);
+    }
+  };
   const initialHostPalette = terminalPaletteOwner.getSnapshot();
   const store = createSemanticThemeStore(config.theme, {
     rendererMode: renderer.themeMode,
@@ -128,10 +153,17 @@ export function createAppearanceOwner(
   const apply = (id: string) => {
     const preset = findVisualThemePreset(id);
     const mode = preset?.appearance ?? (id as ThemeModeSetting);
-    store.configure({ ...config.theme, mode, preset: preset?.id });
+    const wasSystem = theme().setting === "system";
+    store.configure({
+      ...config.theme,
+      mode,
+      preset: preset?.id,
+    });
+    if (mode === "system" && !wasSystem) void terminalPaletteOwner.refresh();
     setPickerSelection(id);
   };
   let originalSelection = pickerSelection();
+  let originalContrast = automaticContrast();
   const preview = (id: string): void => {
     if (!pickerOpen()) return;
     setPickerError(null);
@@ -139,6 +171,7 @@ export function createAppearanceOwner(
   };
   const cancelPicker = (): void => {
     if (!pickerOpen()) return;
+    setContrast(originalContrast);
     apply(originalSelection);
     setPickerOpen(false);
     setPickerError(null);
@@ -148,6 +181,7 @@ export function createAppearanceOwner(
     try {
       updateAppConfig({
         theme: {
+          automaticContrast: automaticContrast(),
           mode: theme().setting,
           preset: findVisualThemePreset(pickerSelection())?.id ?? "",
         },
@@ -165,7 +199,7 @@ export function createAppearanceOwner(
     const order: readonly ThemeModeSetting[] = ["dark", "light", "system"];
     const next = order[(order.indexOf(theme().setting) + 1) % order.length]!;
     apply(next);
-    updateAppConfig({ theme: { mode: next, preset: "" } });
+    updateAppConfig({ theme: { mode: next, preset: "", automaticContrast: automaticContrast() } });
     notice.publish(`theme → ${next}`);
   };
   return {
@@ -176,6 +210,8 @@ export function createAppearanceOwner(
     palette,
     hostPalette,
     setTransientNote: notice.publish,
+    automaticContrast,
+    toggleAutomaticContrast,
     pickerOpen,
     pickerError,
     pickerQuery,
@@ -184,6 +220,7 @@ export function createAppearanceOwner(
     openPicker() {
       if (pickerOpen()) return;
       originalSelection = pickerSelection();
+      originalContrast = automaticContrast();
       setPickerQuery("");
       setPickerError(null);
       setPickerOpen(true);
@@ -196,7 +233,8 @@ export function createAppearanceOwner(
       if (event.eventType === "release" || event.repeated) return true;
       const name = event.name.toLowerCase();
       const choices = pickerOptions();
-      if (name === "escape") cancelPicker();
+      if (event.ctrl && name === "a") toggleAutomaticContrast();
+      else if (name === "escape") cancelPicker();
       else if (name === "return" || name === "enter") savePicker();
       else if (name === "up" || name === "down" || name === "tab") {
         if (choices.length) {
@@ -219,6 +257,7 @@ export function createAppearanceOwner(
     },
     cycleTheme,
     dispose() {
+      renderer.removePostProcessFn?.(postProcess);
       stopTheme();
       stopRendererTheme();
       stopHostPalette();

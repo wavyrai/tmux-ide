@@ -12,6 +12,75 @@ import {
 } from "./application-machine-sidebar.tsx";
 
 describe("machine sidebar", () => {
+  it("retains keyed rows across fresh snapshots and reorder while actions use current data", async () => {
+    const initial: ApplicationMachineGroup[] = [
+      {
+        id: "local",
+        label: "Local",
+        state: "ready",
+        sessions: [
+          { id: "a", name: "alpha", paneCount: 1 },
+          { id: "b", name: "beta", paneCount: 2 },
+        ],
+      },
+    ];
+    const [groups, setGroups] = createSignal(initial);
+    const [collapsed, setCollapsed] = createSignal<readonly string[]>([]);
+    const calls: string[] = [];
+    const setup = await renderForTest(
+      () => (
+        <ApplicationMachineSidebar
+          width={35}
+          height={12}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          model={{
+            groups,
+            collapsed,
+            activeMachineId: () => "local",
+            activeSessionName: () => null,
+            onOpen: (_machine, session) => calls.push(session),
+            onSelectMachine: () => {},
+          }}
+        />
+      ),
+      { width: 35, height: 12 },
+    );
+    const id = (key: string) =>
+      `ui-navigation-row:machine:${JSON.stringify(["local", "session", key])}`;
+    await setup.renderOnce();
+    const original = setup.renderer.root.findDescendantById(id("a"));
+    expect(original).toBeDefined();
+    setGroups(structuredClone(initial));
+    await setup.renderOnce();
+    expect(setup.renderer.root.findDescendantById(id("a"))).toBe(original);
+    setGroups([
+      {
+        ...initial[0]!,
+        sessions: [initial[0]!.sessions[1]!, { id: "a", name: "renamed", paneCount: 3 }],
+      },
+    ]);
+    await setup.renderOnce();
+    expect(setup.renderer.root.findDescendantById(id("a"))).toBe(original);
+    expect(setup.captureCharFrame()).toContain("renamed");
+    expect(setup.captureCharFrame()).toContain("3p");
+    const y = setup
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((line) => line.includes("renamed"));
+    await setup.mockMouse.click(5, y, MouseButtons.LEFT);
+    expect(calls).toEqual(["renamed"]);
+    setCollapsed(["local"]);
+    await setup.renderOnce();
+    expect(setup.renderer.root.findDescendantById(id("a"))).toBeUndefined();
+    setCollapsed([]);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("renamed");
+    setGroups([{ ...initial[0]!, sessions: [] }]);
+    await setup.renderOnce();
+    expect(setup.renderer.root.findDescendantById(id("a"))).toBeUndefined();
+    expect(setup.captureCharFrame()).not.toContain("renamed");
+  });
+
   it("marks only the active machine/session/pane agent and follows pane focus", async () => {
     const [machine, setMachine] = createSignal("local");
     const [pane, setPane] = createSignal<string | null>("%1");

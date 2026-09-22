@@ -622,6 +622,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               })}
               onResizePreview={recoverHostFocus(interaction.previewPaneResize)}
               onResizePane={recoverHostFocus(interaction.resizePane)}
+              onCancelResize={interaction.cancelPaneResize}
               onResizePointerIngress={recoverHostFocus.optional(resizeIngress)}
               onWheelObservation={tuiPerfWheelObservation}
               onTerminalInput={recoverHostFocus((paneId, input) =>

@@ -493,7 +493,7 @@ export function AppearanceDialog(props: {
       viewportWidth={props.width}
       viewportHeight={props.height}
       width={width()}
-      height={Math.min(18, props.height)}
+      height={Math.min(19, props.height)}
       title="Appearance"
       footer={width() < 40 ? "Enter save · Esc back" : "↑↓ preview · Enter save · Esc cancel"}
       active={props.active}
@@ -505,10 +505,17 @@ export function AppearanceDialog(props: {
         fg={props.owner.theme().roles.text.primary}
         content={`Search: ${props.owner.pickerQuery() || "type to filter"}`}
       />
+      <TuiButton
+        theme={props.owner.theme()}
+        label={`^A Contrast: ${props.owner.automaticContrast() ? "On" : "Off"}`}
+        size="compact"
+        disabled={props.active === false}
+        onPress={props.owner.toggleAutomaticContrast}
+      />
       <For
         each={(() => {
           const options = props.owner.pickerOptions();
-          const count = Math.max(1, Math.min(10, props.height - 8));
+          const count = Math.max(1, Math.min(10, props.height - 9));
           const index = options.findIndex((p) => p.id === props.owner.pickerSelection());
           const start = Math.max(
             0,

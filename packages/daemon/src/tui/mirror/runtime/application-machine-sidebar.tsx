@@ -175,6 +175,7 @@ export function ApplicationMachineSidebar(props: {
         : []),
     ]),
   );
+  const rowsByKey = createMemo(() => new Map(rows().map((row) => [row.key, row])));
   const index = () =>
     Math.max(
       0,
@@ -437,83 +438,106 @@ export function ApplicationMachineSidebar(props: {
         scrollY={true}
         horizontalScrollbarOptions={{ visible: false }}
       >
-        <For each={rows()}>
-          {(row) => (
-            <box
-              width={Math.max(1, props.width - 1)}
-              height={row.agent ? (row.agentHeading ? 3 : 2) : 1}
-              flexShrink={0}
-              flexDirection="column"
-            >
-              <Show when={row.agentHeading}>
-                <text height={1} fg={props.theme.roles.text.secondary}>
-                  {" "}
-                  Agents
-                </text>
-              </Show>
-              <NavigationRow
-                theme={props.theme}
-                id={`machine:${row.key}`}
+        <For each={rows().map((row) => row.key)}>
+          {(key) => {
+            // The semantic key owns the native row; fresh snapshots update its
+            // props instead of destroying and recreating identical renderables.
+            const current = createMemo<Row>(
+              (previous) => rowsByKey().get(key) ?? previous,
+              rowsByKey().get(key)!,
+            );
+            const row: Row = {
+              key,
+              get group() {
+                return current().group;
+              },
+              get session() {
+                return current().session;
+              },
+              get agent() {
+                return current().agent;
+              },
+              get agentHeading() {
+                return current().agentHeading;
+              },
+            };
+            return (
+              <box
                 width={Math.max(1, props.width - 1)}
-                labelColor={!row.agent && !row.session ? fleetHostColor(row.group) : undefined}
-                label={
-                  row.agent
-                    ? row.agent.name
-                    : row.session
-                      ? friendlySessionLabel(row.session.name)
-                      : row.group.label
-                }
-                marker={
-                  row.agent
-                    ? active(row)
-                      ? row.agent.attention
-                        ? "›!"
-                        : "›"
-                      : row.agent.attention
-                        ? "!"
-                        : "•"
-                    : row.session
-                      ? props.model.favorites?.().includes(row.session.id)
-                        ? " ★"
-                        : active(row)
-                          ? " ›"
-                          : "  "
-                      : collapsed().has(preferenceKey(row.group))
-                        ? "▸"
-                        : "▾"
-                }
-                detail={
-                  row.agent
-                    ? row.group.state !== "ready" || row.agent.disabled
-                      ? "unavailable"
-                      : `[${terminalAgentStatusLabel(row.agent.activity)}]`
-                    : row.session
-                      ? row.group.state !== "ready" || row.session.disabled
+                height={row.agent ? (row.agentHeading ? 3 : 2) : 1}
+                flexShrink={0}
+                flexDirection="column"
+              >
+                <Show when={row.agentHeading}>
+                  <text height={1} fg={props.theme.roles.text.secondary}>
+                    {" "}
+                    Agents
+                  </text>
+                </Show>
+                <NavigationRow
+                  theme={props.theme}
+                  id={`machine:${row.key}`}
+                  width={Math.max(1, props.width - 1)}
+                  labelColor={!row.agent && !row.session ? fleetHostColor(row.group) : undefined}
+                  label={
+                    row.agent
+                      ? row.agent.name
+                      : row.session
+                        ? friendlySessionLabel(row.session.name)
+                        : row.group.label
+                  }
+                  marker={
+                    row.agent
+                      ? active(row)
+                        ? row.agent.attention
+                          ? "›!"
+                          : "›"
+                        : row.agent.attention
+                          ? "!"
+                          : "•"
+                      : row.session
+                        ? props.model.favorites?.().includes(row.session.id)
+                          ? " ★"
+                          : active(row)
+                            ? " ›"
+                            : "  "
+                        : collapsed().has(preferenceKey(row.group))
+                          ? "▸"
+                          : "▾"
+                  }
+                  detail={
+                    row.agent
+                      ? row.group.state !== "ready" || row.agent.disabled
                         ? "unavailable"
-                        : `${row.session.paneCount}p${row.group.agents?.length ? ` ${activity(row).label}` : ""}`
-                      : row.group.agents?.length && row.group.state === "ready"
-                        ? activity(row).label
-                        : `${connectionDetail(row.group)}${row.group.agents?.length ? " ?" : ""}`
-                }
-                selected={Boolean((row.session || row.agent) && active(row))}
-                focused={Boolean(focused() && row.key === selectedKey())}
-                attention={row.agent?.attention ?? activity(row).kind === "attention"}
-                onActivate={(source) => activate(row, source)}
-              />
-              <Show when={row.agent}>
-                {(agent) => (
-                  <text
-                    height={1}
-                    fg={props.theme.roles.text.muted}
-                    content={clipTerminal(
-                      `  ${friendlySessionLabel(agent().sessionName)}`,
-                      Math.max(1, props.width - 1),
-                    )}
-                  />
-                )}
-              </Show>
-            </box>
-          )}
+                        : `[${terminalAgentStatusLabel(row.agent.activity)}]`
+                      : row.session
+                        ? row.group.state !== "ready" || row.session.disabled
+                          ? "unavailable"
+                          : `${row.session.paneCount}p${row.group.agents?.length ? ` ${activity(row).label}` : ""}`
+                        : row.group.agents?.length && row.group.state === "ready"
+                          ? activity(row).label
+                          : `${connectionDetail(row.group)}${row.group.agents?.length ? " ?" : ""}`
+                  }
+                  selected={Boolean((row.session || row.agent) && active(row))}
+                  focused={Boolean(focused() && row.key === selectedKey())}
+                  attention={row.agent?.attention ?? activity(row).kind === "attention"}
+                  onActivate={(source) => activate(row, source)}
+                />
+                <Show when={row.agent}>
+                  {(agent) => (
+                    <text
+                      height={1}
+                      fg={props.theme.roles.text.muted}
+                      content={clipTerminal(
+                        `  ${friendlySessionLabel(agent().sessionName)}`,
+                        Math.max(1, props.width - 1),
+                      )}
+                    />
+                  )}
+                </Show>
+              </box>
+            );
+          }}
         </For>
       </scrollbox>
       <For each={agentHeight() > 0 ? [true] : []}>

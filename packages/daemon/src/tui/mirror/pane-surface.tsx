@@ -164,9 +164,8 @@ export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRendera
   /** Bumps when canonical presentation changed without terminal cell damage. */
   presentationVersion?: number;
   /**
-   * Renderer-owned framebuffer generation. Unlike `contentVersion`, this
-   * changes when retained canonical cells are still current but the native
-   * presentation may have been invalidated by composition or visibility.
+   * Renderer-owned composition generation. Retained framebuffer cells survive
+   * visibility and position changes; the hardware cursor must be re-presented.
    */
   presentationGeneration?: string;
   /** Retained-source generation; forces a full blit even when content version restarts equal. */
@@ -641,11 +640,11 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   set presentationGeneration(v: string) {
     if (v === this._presentationGeneration) return;
     this._presentationGeneration = v;
-    // Framebuffer validity is independent from terminal content freshness. A
-    // quiet pane must be able to repaint its retained canonical snapshot after
-    // visibility/composition changes without waiting for another terminal byte.
-    this._forceFull = true;
-    this.invalidate();
+    // Composition reuses the retained framebuffer. Geometry reallocation,
+    // source replacement and palette changes independently force a full walk.
+    // Reclaim the hardware cursor at the new absolute position on visibility.
+    this._needsCursorPresentation = true;
+    this.requestRender();
   }
   set sourceEpoch(v: number) {
     if (v === this._sourceEpoch) return;
@@ -668,6 +667,8 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
       // Detailed focus correlation never owns renderer replacement.
     }
     this._rendererEpoch = v;
+    this._forceFull = true;
+    this.invalidate();
   }
   set hostFocusTransitionOwner(v: PaneSurfaceHostFocusTransitionOwner | null | undefined) {
     if (v !== this._hostFocusTransitionOwner) this.cancelPendingFocusTransition();
