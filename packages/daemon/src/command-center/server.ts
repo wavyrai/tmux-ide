@@ -155,6 +155,7 @@ import { mountWorkspaceResourceRoutes } from "./resources/workspace-resource-rou
 import { mountFleetResourceRoute } from "./resources/fleet-resource-route.ts";
 import { mountWorkspaceMissionsRoute } from "./resources/workspace-missions-route.ts";
 import { ownerAuthorityGate, requireOwnerAuthority } from "./owner-authority.ts";
+import { mountDiagnosticsRoute } from "./diagnostics.ts";
 import {
   mountStartupReadinessRoute,
   type StartupReadinessAttachmentAuthority,
@@ -531,6 +532,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   // Allow cross-origin (Next.js dashboard, Tailscale, etc.)
   app.use("/*", cors());
+
+  // Owner-only reads use the same early routing boundary as issuance below:
+  // remote/project credentials neither authorize nor block the owner bearer.
+  mountDiagnosticsRoute(app, {
+    daemon: daemonInstanceIdentity,
+    ownerToken: options.remoteAccess?.ownerToken ?? null,
+  });
 
   // This exact route carries its own owner-only bearer and correlation gate.
   // Mount it before remote and project auth so a valid host capability is

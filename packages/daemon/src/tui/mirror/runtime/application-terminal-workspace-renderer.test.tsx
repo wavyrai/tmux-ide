@@ -1795,6 +1795,25 @@ it("routes raw mouse multi-click, wheel-drag, edge scrolling and Ctrl-link activ
     expect(copied.at(-1)).toBe("hello world https://a.test");
     await setup.mockMouse.click(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
     expect(opened).toEqual(["https://a.test/"]);
+    // Exercise the workspace fallback hit surface through real OpenTUI dispatch.
+    // Pane surfaces normally cover it; lifting its hit layer deterministically
+    // covers the same routing when the compositor selects the background.
+    const background = setup.renderer.root.getChildren()[0]!;
+    background.zIndex = 1000;
+    await setup.renderOnce();
+    await setup.mockMouse.click(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toHaveLength(2);
+    await setup.mockMouse.click(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toHaveLength(3);
+    await setup.mockMouse.release(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toHaveLength(3);
+    await setup.mockMouse.pressDown(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toHaveLength(4);
+    await setup.mockMouse.moveTo(20, 4);
+    await setup.mockMouse.release(20, 4);
+    expect(opened).toHaveLength(4);
+    background.zIndex = 0;
+    await setup.renderOnce();
     await setup.mockMouse.pressDown(2, 5);
     await setup.mockMouse.scroll(40, 5, "up");
     await setup.mockMouse.moveTo(2, 3);

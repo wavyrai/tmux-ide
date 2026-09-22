@@ -11,12 +11,52 @@ import {
   parseDurationMs,
   parsePsTime,
   percentile,
+  percentiles,
+  soakTrends,
+  validSoakAck,
+  correlatedPongRtt,
+  type SoakEvidence,
   summarizeSoak,
   type SoakSample,
 } from "./soak-verdict.ts";
 
+import { RESOURCE_KEYS, type DiagnosticsSample } from "./soak-diagnostics.ts";
+
 function sample(overrides: Partial<SoakSample> & { elapsedSeconds: number }): SoakSample {
   return {
+    diagnostics: {
+      status: "ok",
+      sample: {
+        daemon: {
+          protocolVersion: 1,
+          productVersion: "test",
+          instanceId: "test",
+          startedAt: "2026-09-22T00:00:00Z",
+        },
+        pid: 1,
+        uptimeMs: overrides.elapsedSeconds * 1000,
+        sampledAtMs: 1000,
+        memory: { rss: 100, heapTotal: 80, heapUsed: 50, external: 10, arrayBuffers: 5 },
+        cpu: { user: 100, system: 20 },
+        eventLoop: { idle: 900, active: 100, utilization: 0.1 },
+        activeResources: Object.fromEntries(
+          RESOURCE_KEYS.map((k) => [k, 1]),
+        ) as DiagnosticsSample["activeResources"],
+      },
+    },
+    diagnosticDelta:
+      overrides.elapsedSeconds === 0
+        ? { status: "missing-baseline" }
+        : {
+            status: "ok",
+            intervalMs: 60000,
+            cpuUserMicros: 100,
+            cpuSystemMicros: 20,
+            cpuPercent: 1,
+            eventLoopIdleMs: 900,
+            eventLoopActiveMs: 100,
+            eventLoopUtilization: 0.1,
+          },
     at: 1_700_000_000_000 + overrides.elapsedSeconds * 1_000,
     rssKiB: 100 * 1024,
     cpuSeconds: overrides.elapsedSeconds * 0.01,
@@ -24,8 +64,8 @@ function sample(overrides: Partial<SoakSample> & { elapsedSeconds: number }): So
     openFds: 40,
     tmuxSpawns: 30,
     intervalSeconds: 60,
-    pingRttMs: { count: 60, p50: 1.2, max: 4 },
-    receiptLatencyMs: { count: 4, p50: 900, max: 1_800 },
+    pingRttMs: percentiles([...Array(59).fill(1.2), 4]),
+    receiptLatencyMs: percentiles([900, 900, 900, 1800]),
     observerGapWarnings: 0,
     daemonRestarts: 0,
     receiptFailures: 0,
@@ -99,14 +139,19 @@ describe("percentile helpers", () => {
     expect(percentile([1, 2, 3, 4], 0)).toBe(1);
   });
 
-  it("merges interval records into a count-weighted median and the true max", () => {
-    const merged = mergePercentiles([
-      { count: 3, p50: 1, max: 2 },
-      { count: 1, p50: 100, max: 500 },
-      { count: 0, p50: null, max: null },
-    ]);
-    expect(merged).toEqual({ count: 4, p50: 1, max: 500 });
-    expect(mergePercentiles([])).toEqual({ count: 0, p50: null, max: null });
+  it("merges distributions instead of interval medians, with a bounded upper p50", () => {
+    const merged = mergePercentiles([percentiles([1, 1, 100]), percentiles([2, 2, 2, 2])]);
+    expect(merged.count).toBe(7);
+    expect(merged.p50).toBeGreaterThanOrEqual(2);
+    expect(merged.p50).toBeLessThanOrEqual(2.1);
+    expect(merged.max).toBe(100);
+    expect(mergePercentiles([{ count: 3, p50: 1, max: 100 }]).p50).toBeNull();
+    expect(mergePercentiles([]).p50).toBeNull();
+  });
+  it("bounds histogram storage and uses actual max for overflow", () => {
+    const result = percentiles(Array.from({ length: 10000 }, (_, i) => 1.1 ** i));
+    expect(Object.keys(result.buckets!).length).toBeLessThanOrEqual(228);
+    expect(percentiles([1000000]).p50).toBe(1000000);
   });
 });
 
@@ -138,7 +183,9 @@ describe("summarizeSoak", () => {
     expect(summary.cpuPercentMean).toBeCloseTo(2);
     expect(summary.fdStart).toBe(40);
     expect(summary.fdEnd).toBe(40);
-    expect(summary.pingRttMs).toEqual({ count: 180, p50: 1.2, max: 4 });
+    expect(summary.pingRttMs).toMatchObject({ count: 180, max: 4 });
+    expect(summary.pingRttMs.p50).toBeGreaterThanOrEqual(1.2);
+    expect(summary.pingRttMs.p50).toBeLessThanOrEqual(1.26);
   });
 
   it("handles an empty run without throwing", () => {
@@ -153,7 +200,7 @@ describe("summarizeSoak", () => {
 
 describe("evaluateSoak", () => {
   it("passes a flat, healthy run", () => {
-    const result = evaluateSoak(series(10, 0));
+    const result = evaluateSoak(series(10, 0), DEFAULT_SOAK_THRESHOLDS, evidence());
     expect(result.verdict).toBe("pass");
     expect(result.checks.every((check) => check.ok === true)).toBe(true);
   });
@@ -192,8 +239,8 @@ describe("evaluateSoak", () => {
     const base = series(5, 0);
     const bad = base.map((s, index) => ({
       ...s,
-      pingRttMs: { count: 60, p50: 80, max: 400 },
-      receiptLatencyMs: { count: 4, p50: 4_500, max: 9_000 },
+      pingRttMs: percentiles([...Array(59).fill(80), 400]),
+      receiptLatencyMs: percentiles([4500, 4500, 4500, 9000]),
       observerGapWarnings: index === 2 ? 1 : 0,
       daemonRestarts: index >= 3 ? 1 : 0,
       receiptFailures: index === 4 ? 2 : 0,
@@ -245,7 +292,7 @@ describe("evaluateSoak", () => {
     const text = formatSoakReport(evaluateSoak(series(5, 0)));
     expect(text).toContain("rss MiB");
     expect(text).toContain("ok   rss-growth");
-    expect(text).toContain("verdict: PASS");
+    expect(text).toContain("verdict: INCONCLUSIVE");
   });
 });
 
@@ -298,5 +345,200 @@ describe("countSpawnsByCommand", () => {
       "wait-for": 1,
       "(none)": 1,
     });
+  });
+});
+
+function evidence(overrides: Partial<SoakEvidence> = {}): SoakEvidence {
+  return {
+    requestedSeconds: 540,
+    observedSeconds: 540,
+    completed: true,
+    failures: {
+      health: 0,
+      flip: 0,
+      promotion: 0,
+      send: 0,
+      receipt: 0,
+      daemonMissing: 0,
+      daemonExit: 0,
+      ack: 0,
+      pingDeadline: 0,
+      loop: 0,
+      sample: 0,
+    },
+    loadCompleted: true,
+    telemetryComplete: true,
+    logCoverageComplete: true,
+    reconnectAttempts: 2,
+    reconnectAcknowledged: 2,
+    shutdownClean: true,
+    recordRetired: true,
+    cleanupComplete: true,
+    resourceTrendPolicyComplete: true,
+    warmupSeconds: 120,
+    trailingSeconds: 180,
+    ...overrides,
+  };
+}
+
+describe("qualification evidence", () => {
+  const healthy = () => series(10, 0);
+  it.each([
+    { resourceTrendPolicyComplete: false },
+    { completed: false },
+    { observedSeconds: 120 },
+    { telemetryComplete: false },
+    { logCoverageComplete: false },
+    { loadCompleted: false },
+    { reconnectAttempts: 1, reconnectAcknowledged: 1 },
+    { reconnectAcknowledged: 1 },
+    { warmupSeconds: 1000 },
+    { failures: {} },
+  ])("cannot pass incomplete evidence %j", (partial) => {
+    expect(evaluateSoak(healthy(), DEFAULT_SOAK_THRESHOLDS, evidence(partial)).verdict).toBe(
+      "inconclusive",
+    );
+  });
+  it("cannot pass absent run evidence or missing individual resource samples", () => {
+    expect(evaluateSoak(healthy()).verdict).toBe("inconclusive");
+    const samples = healthy();
+    samples[4] = { ...samples[4]!, rssKiB: null };
+    expect(evaluateSoak(samples, DEFAULT_SOAK_THRESHOLDS, evidence()).verdict).toBe("inconclusive");
+  });
+  it.each([
+    "health",
+    "flip",
+    "promotion",
+    "send",
+    "receipt",
+    "daemonMissing",
+    "daemonExit",
+    "ack",
+    "pingDeadline",
+    "loop",
+    "sample",
+  ])("fails explicit %s even when interrupted", (key) => {
+    const run = evidence({ completed: false });
+    expect(
+      evaluateSoak(healthy(), DEFAULT_SOAK_THRESHOLDS, {
+        ...run,
+        failures: { ...run.failures, [key]: 1 },
+      }).verdict,
+    ).toBe("fail");
+  });
+  it.each(["shutdownClean", "recordRetired", "cleanupComplete"])("fails bad teardown %s", (key) => {
+    expect(
+      evaluateSoak(healthy(), DEFAULT_SOAK_THRESHOLDS, evidence({ [key]: false })).verdict,
+    ).toBe("fail");
+  });
+  it("reports declared windows and catches a rise masked by startup decline", () => {
+    const samples = series(20, 0).map((sample, index) => ({
+      ...sample,
+      rssKiB: 1024 * (index < 5 ? 1000 - index * 180 : 100 + index * 2),
+    }));
+    const windows = soakTrends(samples, 300, 300);
+    expect(windows.whole.rssMiBPerHour!.slope).toBeLessThan(0);
+    expect(windows.trailing.rssMiBPerHour!.points).toBe(6);
+    expect(
+      evaluateSoak(
+        samples,
+        DEFAULT_SOAK_THRESHOLDS,
+        evidence({ warmupSeconds: 300, trailingSeconds: 300 }),
+      ).checks.find((c) => c.id === "rss-trailing")!.ok,
+    ).toBe(false);
+  });
+});
+
+describe("wire evidence validation", () => {
+  it("bounds histogram quantiles by the observed maximum and excludes invalid observations", () => {
+    const result = percentiles([0.5, NaN, Infinity, -1]);
+    expect(result).toMatchObject({ count: 1, p50: 0.5, max: 0.5 });
+    expect(percentiles([975, 975, 975]).p50).toBe(975);
+    expect(percentiles([NaN, Infinity, -1])).toMatchObject({ count: 0, p50: null, max: null });
+  });
+  it("requires matching acknowledgement revision and no unavailable interests", () => {
+    const ack = { type: "resource.interests-ack", interestRevision: 2, unavailableInterests: [] };
+    expect(validSoakAck(ack, 2)).toBe(true);
+    expect(validSoakAck(ack, 3)).toBe(false);
+    expect(validSoakAck({ ...ack, unavailableInterests: [{ resource: "fleet-catalog" }] }, 2)).toBe(
+      false,
+    );
+    expect(validSoakAck({ type: "resource.interests-ack", interestRevision: 2 }, 2)).toBe(false);
+    expect(validSoakAck(null, 2)).toBe(false);
+  });
+  it("ignores unsolicited and stale pong payloads without completing the probe", () => {
+    const probe = { id: "new-unique-probe", at: 100 };
+    expect(correlatedPongRtt(probe, "old-probe", 120)).toBeNull();
+    expect(correlatedPongRtt(probe, "", 125)).toBeNull();
+    expect(correlatedPongRtt(probe, probe.id, 130)).toBe(30);
+    expect(correlatedPongRtt(probe, probe.id, 99)).toBeNull();
+  });
+});
+
+it("does not turn a short startup transient into an hourly-growth failure", () => {
+  const samples = series(5, 3000).map((sample, index) => ({
+    ...sample,
+    elapsedSeconds: 5 * (index + 1),
+  }));
+  const result = evaluateSoak(
+    samples,
+    DEFAULT_SOAK_THRESHOLDS,
+    evidence({ requestedSeconds: 25, observedSeconds: 25, warmupSeconds: 300 }),
+  );
+  expect(result.verdict).toBe("inconclusive");
+  expect(result.checks.find((check) => check.id === "rss-growth")!.ok).toBeNull();
+  expect(
+    evaluateSoak(
+      samples,
+      DEFAULT_SOAK_THRESHOLDS,
+      evidence({
+        requestedSeconds: 25,
+        observedSeconds: 25,
+        warmupSeconds: 300,
+        failures: { ...evidence().failures, health: 1 },
+      }),
+    ).verdict,
+  ).toBe("fail");
+});
+
+describe("diagnostic evidence", () => {
+  const healthy = () => series(10, 0);
+  it.each([
+    "missing",
+    "malformed",
+    "unsupported-endpoint",
+    "transport-error",
+    "http-error",
+  ] as const)("keeps %s inconclusive even with a hypothetical complete policy", (status) => {
+    const samples = healthy();
+    samples[2] = { ...samples[2]!, diagnostics: { status, sample: null }, diagnosticDelta: null };
+    expect(evaluateSoak(samples, DEFAULT_SOAK_THRESHOLDS, evidence()).verdict).toBe("inconclusive");
+  });
+  it("fails a mismatched original identity independently of policy", () => {
+    const samples = healthy();
+    samples[2] = { ...samples[2]!, diagnostics: { status: "identity-mismatch", sample: null } };
+    expect(
+      evaluateSoak(
+        samples,
+        DEFAULT_SOAK_THRESHOLDS,
+        evidence({ resourceTrendPolicyComplete: false }),
+      ).verdict,
+    ).toBe("fail");
+  });
+  it("reports resource/heap trends descriptively and leaves unsupported resources unmeasured", () => {
+    const samples = healthy();
+    const trends = soakTrends(samples, 0, 300);
+    expect(trends.whole.memoryMiBPerHour.heapUsed?.slope).toBe(0);
+    expect(trends.whole.activeResourcesPerHour.Timeout?.slope).toBe(0);
+    expect(summarizeSoak(samples).diagnostics.memoryBytes.heapUsed).toEqual({
+      start: 50,
+      end: 50,
+      max: 50,
+      measuredSamples: samples.length,
+    });
+    for (const s of samples) if (s.diagnostics?.sample) s.diagnostics.sample.activeResources = null;
+    expect(soakTrends(samples, 0, 300).whole.activeResourcesPerHour.Timeout).toBeNull();
+    expect(summarizeSoak(samples).diagnostics.activeResources.Timeout.start).toBeNull();
+    expect(evaluateSoak(samples, DEFAULT_SOAK_THRESHOLDS, evidence()).verdict).toBe("inconclusive");
   });
 });

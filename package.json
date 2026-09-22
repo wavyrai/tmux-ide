@@ -39,6 +39,7 @@
     "typecheck": "echo \"root typecheck deferred to per-package turbo run\"",
     "dev": "node bin/cli.js",
     "dev:instance": "node scripts/development-instance.mjs",
+    "dev:pilotty": "node scripts/pilotty-dev.mjs",
     "dev:web": "node scripts/dev-web.mjs",
     "test": "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/web-workspace --filter @tmux-ide/electron-shell run test",
     "test:unit": "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/web-workspace --filter @tmux-ide/electron-shell run test",

@@ -19,6 +19,7 @@ export async function streamBoundedLogs(
     entries?: number;
     bytes?: number;
     writeTimeoutMs?: number;
+    heartbeatIntervalMs?: number;
   },
 ): Promise<void> {
   const maxEntries = options.entries ?? 256;
@@ -29,6 +30,7 @@ export async function streamBoundedLogs(
   let wake: (() => void) | null = null;
   let unsubscribe = () => {};
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let cancelWrite: (() => void) | null = null;
   const cleanup = () => {
     if (closed) return;
@@ -38,6 +40,8 @@ export async function streamBoundedLogs(
     bytes = 0;
     if (timer) clearTimeout(timer);
     timer = null;
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
     wake?.();
     wake = null;
     cancelWrite?.();
@@ -67,6 +71,10 @@ export async function streamBoundedLogs(
     unsubscribe();
     return;
   }
+  heartbeatTimer = setInterval(() => {
+    if (!closed && queue.length === 0 && !push({ event: "heartbeat", data: "keep-alive" })) abort();
+  }, options.heartbeatIntervalMs ?? 15_000);
+  heartbeatTimer.unref?.();
   try {
     // Keep newest bounded history, reserving room for gap/bookmark metadata.
     const retained: Frame[] = [];

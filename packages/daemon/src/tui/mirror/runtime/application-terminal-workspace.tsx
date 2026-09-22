@@ -1075,6 +1075,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     props.onSelectionCopyOwner?.(null);
     props.onSelectionKeyOwner?.(null);
   });
+  // Register this router only as onMouse. OpenTUI invokes both the general
+  // listener and the typed listener on a target, even after stopPropagation.
   const routePointer = (event: WorkspaceMouseEvent): void => {
     if (event.type === "down") wheelGesture.reset();
     if (paneMenu.ownsInput()) {
@@ -1582,8 +1584,6 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         width={props.width}
         height={props.height}
         onMouse={routePointer}
-        onMouseDown={routePointer}
-        onMouseUp={routePointer}
       />
       <box
         position="absolute"
@@ -1754,8 +1754,6 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
             height={separator.axis === "x" ? Math.max(1, separator.end - separator.start) : 1}
             backgroundColor={props.theme.colors.accentMuted}
             onMouse={routePointer}
-            onMouseDown={routePointer}
-            onMouseUp={routePointer}
           >
             <Show when={separator.axis === "y"}>
               <text fg={props.theme.roles.text.primary}>↕</text>
