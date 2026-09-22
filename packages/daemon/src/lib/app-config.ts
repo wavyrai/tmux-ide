@@ -84,6 +84,8 @@ export interface AppThemeGlyphs {
  * reads as one system.
  */
 export interface AppTheme {
+  /** Improve composed app text contrast. Default true. */
+  automaticContrast: boolean;
   /** Explicit palette mode or terminal-following mode. Defaults to following the terminal. */
   mode: ThemeModeSetting;
   preset?: string;
@@ -263,6 +265,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     panels: { explorer: "M-e", changes: "M-g", config: "M-," },
   },
   theme: {
+    automaticContrast: true,
     mode: "system",
     accent: "colour75",
     muted: "colour240",
@@ -395,6 +398,7 @@ export function parseAppConfig(input: unknown): AppConfig {
       },
     },
     theme: {
+      automaticContrast: pickBool(theme.automaticContrast, D.theme.automaticContrast),
       mode: pickChoice(
         theme.mode,
         ["dark", "light", "system"],

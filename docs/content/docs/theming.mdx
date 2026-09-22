@@ -23,9 +23,32 @@ and standard ANSI colors (slots 0–15) use the theme palette. System appearance
 uses detected host ANSI colors where available. Named themes derive basic colors
 from their semantic palette, including status and accent colors.
 
-Explicit truecolor and the extended 256-color cube/grayscale (slots 16–255) stay
-unchanged. Applications that paint their own RGB backgrounds can therefore keep
-those backgrounds when you switch themes.
+Automatic contrast correction is enabled by default for every appearance. It
+checks text against its rendered background across the TUI, including menus,
+syntax previews, and applications inside terminal panes. Low-contrast text is
+adjusted for readability; already readable color pairs stay unchanged.
+
+Correction also covers explicit RGB colors and the extended 256-color palette
+(slots 16–255). Applications keep their own backgrounds. Selecting a light theme
+does not force an application's explicitly dark background to become light.
+
+In **Appearance**, click **Contrast** or press **Ctrl+A** to turn correction
+off and preserve the original foreground colors after theme palette mapping. The setting is saved as
+`theme.automaticContrast` in the app configuration. Theme previews and contrast
+changes apply immediately; cancelling Appearance restores the previous settings.
+
+Correction targets the [4.5:1 text contrast ratio](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum)
+for opaque text color pairs. Dim text
+uses explicit subdued colors so terminal-specific dimming cannot undo the
+correction. Concealed text, blank cells, block/shade and braille graphics, and
+unresolved transparent colors are left alone. The diagnostic console overlay
+is outside the correction pass. This improves text readability; it is not a
+claim of complete accessibility compliance.
+
+Corrections are cached with a fixed size limit. Each frame uses perceptual
+lightness correction for up to 128 new low-contrast pairs; additional new pairs
+use a cheaper verified color blend. This bounds expensive work when applications
+produce thousands of different colors.
 
 Fresh sessions advertise:
 

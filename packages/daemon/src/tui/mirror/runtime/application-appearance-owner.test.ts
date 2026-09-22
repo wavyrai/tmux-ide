@@ -324,7 +324,9 @@ describe("appearance picker", () => {
     writeFileSync(configPath, "{}");
     owner.openPicker();
     owner.preview("light");
+    owner.toggleAutomaticContrast();
     owner.savePicker();
+    expect(owner.automaticContrast()).toBe(false);
     expect(owner.pickerOpen()).toBe(true);
     expect(owner.pickerError()).toContain("Could not save");
     expect(owner.handlePickerKey({ name: "x" })).toBe(true);
@@ -427,4 +429,45 @@ it("follows initial light and live hints with partial/unavailable queries throug
   owner.dispose();
   expect(renderer.listenerCount("theme_mode")).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("previews contrast, cancels, persists, cycles latest option, and disposes its postpass", () => {
+  const path = useTemporaryConfig();
+  const renderer = Object.assign(new ThemeRenderer(), {
+    addPostProcessFn: vi.fn(),
+    removePostProcessFn: vi.fn(),
+    requestRender: vi.fn(),
+  });
+  const owner = createAppearanceOwner(parseAppConfig({}), renderer, new PaletteOwner());
+  expect(owner.automaticContrast()).toBe(true);
+  owner.toggleAutomaticContrast();
+  expect(owner.automaticContrast()).toBe(true);
+  expect(renderer.addPostProcessFn).toHaveBeenCalledTimes(1);
+  owner.openPicker();
+  owner.handlePickerKey({ name: "a", ctrl: true });
+  expect(owner.automaticContrast()).toBe(false);
+  expect(owner.pickerQuery()).toBe("");
+  owner.cancelPicker();
+  expect(owner.automaticContrast()).toBe(true);
+  owner.openPicker();
+  owner.toggleAutomaticContrast();
+  owner.savePicker();
+  expect(JSON.parse(readFileSync(path, "utf8")).theme.automaticContrast).toBe(false);
+  owner.cycleTheme();
+  expect(owner.automaticContrast()).toBe(false);
+  expect(JSON.parse(readFileSync(path, "utf8")).theme.automaticContrast).toBe(false);
+  owner.dispose();
+  expect(renderer.removePostProcessFn).toHaveBeenCalledWith(
+    renderer.addPostProcessFn.mock.calls[0]![0],
+  );
+  expect(renderer.requestRender).toHaveBeenCalledTimes(3);
+});
+it("validates automatic contrast with a default-on fallback", () => {
+  expect(parseAppConfig({}).theme.automaticContrast).toBe(true);
+  expect(parseAppConfig({ theme: { automaticContrast: false } }).theme.automaticContrast).toBe(
+    false,
+  );
+  expect(parseAppConfig({ theme: { automaticContrast: "false" } }).theme.automaticContrast).toBe(
+    true,
+  );
 });

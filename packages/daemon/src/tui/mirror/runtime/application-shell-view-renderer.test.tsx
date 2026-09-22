@@ -2275,6 +2275,25 @@ describe("production appearance picker", () => {
         );
         await setup.renderOnce();
         expect(setup.captureCharFrame()).toContain("Appearance");
+        const contrastLines = setup.captureCharFrame().split("\n");
+        const contrastY = contrastLines.findIndex((line) => line.includes("Contrast:"));
+        await setup.mockMouse.click(
+          contrastLines[contrastY]!.indexOf("Contrast:"),
+          contrastY,
+          MouseButtons.LEFT,
+        );
+        await setup.renderOnce();
+        expect(owner.automaticContrast()).toBe(false);
+        setup.renderer.keyInput.emit("keypress", {
+          name: "a",
+          ctrl: true,
+          meta: false,
+          shift: false,
+        });
+        await setup.renderOnce();
+        expect(owner.automaticContrast()).toBe(true);
+        expect(owner.pickerQuery()).toBe("");
+        owner.toggleAutomaticContrast();
         const lines = setup.captureCharFrame().split("\n");
         const y = lines.findIndex((line) => line.includes("Light"));
         await setup.mockMouse.click(lines[y]!.indexOf("Light"), y, MouseButtons.LEFT);
@@ -2290,6 +2309,7 @@ describe("production appearance picker", () => {
         });
         await setup.renderOnce();
         expect(owner.theme().setting).toBe(mode);
+        expect(owner.automaticContrast()).toBe(true);
         expect(owner.pickerOpen()).toBe(false);
         expect(restored).toEqual(["pane-a"]);
         expect(leaked).toEqual([]);

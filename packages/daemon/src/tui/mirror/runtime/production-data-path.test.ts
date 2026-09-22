@@ -57,6 +57,8 @@ const RAW_RENDER_COLOR = /RGBA\.fromInts\(|#[0-9a-fA-F]{6}\b|\b0x[0-9a-fA-F]{6}\
 const DESIGN_SYSTEM_COLOR_OWNERS = [
   // User-facing semantic defaults; not a rendered surface.
   "packages/daemon/src/lib/app-config.ts",
+  // Pure final-color correction owns RGB endpoints, never per-surface styling.
+  "packages/daemon/src/tui/mirror/automatic-contrast.ts",
   // Native renderable constructor safety before semantic props arrive.
   "packages/daemon/src/tui/mirror/pane-surface.tsx",
   // The sole OpenTUI token/palette projection boundary.
@@ -372,6 +374,12 @@ describe("production OpenTUI v2 data path", () => {
     expect(productionGraph.sourceByFile.get(hostColorPath)).not.toMatch(
       /node:|\b(?:process|fetch|setInterval|setTimeout|createWorkspaceClient|createTerminalFastLane)\b/u,
     );
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(152);
+    // One pure bounded color postprocessor, with no IO or scheduling authority.
+    const contrastPath = "packages/daemon/src/tui/mirror/automatic-contrast.ts";
+    expect(authorityDataPathFiles).toContain(contrastPath);
+    expect(productionGraph.sourceByFile.get(contrastPath)).not.toMatch(
+      /node:|\b(?:process|fetch|setInterval|setTimeout|requestRender|createWorkspaceClient|createTerminalFastLane)\b/u,
+    );
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(153);
   });
 });
