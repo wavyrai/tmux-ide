@@ -73,6 +73,7 @@ export interface TerminalFastLaneControlPort {
 }
 
 export interface TerminalFastLaneViewport {
+  readonly semanticWindowId?: string;
   readonly cols: number;
   readonly rows: number;
 }
@@ -225,7 +226,11 @@ function validViewport(viewport: TerminalFastLaneViewport): boolean {
     Number.isInteger(viewport.cols) &&
     Number.isInteger(viewport.rows) &&
     viewport.cols > 0 &&
-    viewport.rows > 0
+    viewport.rows > 0 &&
+    (viewport.semanticWindowId === undefined ||
+      (typeof viewport.semanticWindowId === "string" &&
+        viewport.semanticWindowId.length > 0 &&
+        viewport.semanticWindowId.length <= 256))
   );
 }
 
@@ -744,7 +749,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
         return Promise.resolve({ status: "failed", error: new TypeError("invalid viewport") });
       }
       const retained = Object.freeze({ ...viewport });
-      const key = `${retained.cols}x${retained.rows}`;
+      const key = JSON.stringify([retained.semanticWindowId ?? null, retained.cols, retained.rows]);
       const epoch = generationEpoch;
       mutableCounters.resizeAccepted += 1;
       return new Promise((resolve) => {

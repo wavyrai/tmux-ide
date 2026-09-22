@@ -1314,6 +1314,7 @@ describe("production ApplicationShellView", () => {
     });
     await setup.renderOnce();
     expect(tracked.blits).toEqual([expect.objectContaining({ full: true })]);
+    expect(setup.captureCharFrame()).toContain("CANONICAL-CELL");
     tracked.blits.length = 0;
     await Bun.sleep(30);
     let measuredFrames = 0;
@@ -1340,7 +1341,8 @@ describe("production ApplicationShellView", () => {
     });
     await waitForMeasuredFrame(1);
     await expectQuiet(1);
-    expect(tracked.blits).toEqual([expect.objectContaining({ full: true })]);
+    expect(tracked.blits).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("CANONICAL-CELL");
     tracked.blits.length = 0;
 
     measuredStage = "warm-b";
@@ -1350,7 +1352,8 @@ describe("production ApplicationShellView", () => {
     });
     await waitForMeasuredFrame(2);
     await expectQuiet(2);
-    expect(tracked.blits).toEqual([expect.objectContaining({ full: true })]);
+    expect(tracked.blits).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("CANONICAL-CELL");
     tracked.blits.length = 0;
 
     measuredStage = "rename";

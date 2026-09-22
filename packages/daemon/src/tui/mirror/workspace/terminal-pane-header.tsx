@@ -2,7 +2,7 @@
 import { paneInteractionPresence, type PaneInteractionProjection } from "@tmux-ide/core";
 import { Badge } from "../ui/badge.tsx";
 import type { AgentActivity } from "@tmux-ide/contracts";
-import { createSignal, Show } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
@@ -104,13 +104,6 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
     if (!presence() || available < presence()!.badge.length + 2) return 0;
     return Math.min(available, terminalDisplayWidth(activityLabel()) + 2);
   };
-  // Capture one non-null presence for each badge lifetime. A retiring child's
-  // queued style effect must not dereference the parent's now-expired receipt.
-  const activityBadge = () => {
-    const current = presence();
-    const width = activityWidth();
-    return current && width > 0 ? { presence: current, width, label: activityLabel() } : null;
-  };
   // Keep the state glyph out of the first two inline cells. OpenTUI can repaint
   // those cells from the clipped parent during nested workspace composition.
   const markerGutterWidth = () => Math.min(2, safeWidth());
@@ -186,6 +179,26 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
     if (event.button === 2) activateMenu({ x: event.x, y: event.y });
     else props.onSelectIntent();
   };
+
+  // Capture one non-null presence for each badge lifetime. A retiring child's
+  // queued style effect must not dereference the parent's now-expired receipt.
+  const activityBadge = createMemo(
+    () => {
+      const current = presence();
+      const width = activityWidth();
+      return current && width > 0 ? { presence: current, width, label: activityLabel() } : null;
+    },
+    undefined,
+    {
+      equals: (previous, next) =>
+        previous === next ||
+        (previous !== null &&
+          next !== null &&
+          previous.width === next.width &&
+          previous.label === next.label &&
+          previous.presence.tone === next.presence.tone),
+    },
+  );
 
   return (
     <box

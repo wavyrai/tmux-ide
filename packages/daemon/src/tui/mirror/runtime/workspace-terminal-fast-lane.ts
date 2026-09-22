@@ -103,7 +103,9 @@ export function createOpenTuiWorkspaceTerminalFastLane(
         if (client.getSnapshot().target?.daemon.instanceId !== address.generation) {
           return Promise.resolve("authority-lost");
         }
-        return client.fitViewport(viewport.cols, viewport.rows);
+        return viewport.semanticWindowId === undefined
+          ? client.fitViewport(viewport.cols, viewport.rows)
+          : client.fitViewport(viewport.cols, viewport.rows, viewport.semanticWindowId);
       },
     },
     ...(performanceSink?.terminalTraceStage

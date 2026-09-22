@@ -324,7 +324,7 @@ describe("ApplicationTerminalWorkspace", () => {
 
     setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
     await setup.renderOnce();
-    expect(blits).toEqual([{ paneId: "pane.a", full: true }]);
+    expect(blits).toEqual([]);
     expect(setup.captureCharFrame()).toContain("A");
     blits.length = 0;
 
@@ -335,13 +335,13 @@ describe("ApplicationTerminalWorkspace", () => {
 
     setWorkspaceLayout({ current: activeB, windows: [inactiveA, activeB] });
     await setup.renderOnce();
-    expect(blits).toEqual([{ paneId: "pane.b", full: true }]);
+    expect(blits).toEqual([{ paneId: "pane.b", full: false }]);
     expect(setup.captureCharFrame()).toContain("X");
     blits.length = 0;
 
     setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
     await setup.renderOnce();
-    expect(blits).toEqual([{ paneId: "pane.a", full: true }]);
+    expect(blits).toEqual([]);
     blits.length = 0;
     await setup.renderOnce();
     expect(blits).toEqual([]);

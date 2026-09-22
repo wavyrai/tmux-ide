@@ -1,5 +1,5 @@
 /* @jsxImportSource @opentui/solid */
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import { useTerminalDimensions } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ } from "@tmux-ide/contracts";
@@ -345,6 +345,77 @@ describe("PaneSurface OpenTUI renderer", () => {
     expect(reconnectedFrame).toContain("B");
     expect(reconnectedFrame).not.toContain("A");
     expect(surfaces.size).toBe(1);
+  });
+
+  it("reuses retained cells on hide/show and move, but repairs renderer replacement", async () => {
+    registerPaneSurface();
+    const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
+    const lane = semanticLane("A", 7);
+    const blit = spyOn(lane.source, "blitPane");
+    let surface!: PaneSurfaceRenderable;
+    let setVisible!: (value: boolean) => void;
+    let setLeft!: (value: number) => void;
+    let setEpoch!: (value: number) => void;
+    const setup = await renderForTest(
+      () => {
+        const [visible, updateVisible] = createSignal(true);
+        const [left, updateLeft] = createSignal(0);
+        const [epoch, updateEpoch] = createSignal(1);
+        setVisible = updateVisible;
+        setLeft = updateLeft;
+        setEpoch = updateEpoch;
+        return (
+          <box position="absolute" left={left()} top={1} visible={visible()} width={4} height={2}>
+            <pane_surface
+              ref={(value: PaneSurfaceRenderable) => {
+                surface = value;
+              }}
+              width={4}
+              height={2}
+              mirror={lane.source}
+              paneId="pane.editor"
+              defaultFg={palette.foreground}
+              defaultBg={palette.background}
+              terminalPalette={palette}
+              searchHl={palette.searchHighlight}
+              searchCur={palette.searchCurrent}
+              paneFocused={true}
+              contentVersion={1}
+              sourceEpoch={1}
+              rendererEpoch={epoch()}
+              presentationGeneration={`${visible()}:${left()}:${epoch()}`}
+            />
+          </box>
+        );
+      },
+      { width: 10, height: 4 },
+    );
+    const cursor = spyOn(setup.renderer, "setCursorPosition");
+    try {
+      await setup.renderOnce();
+      expect(setup.captureCharFrame().split("\n")[1]![0]).toBe("A");
+      blit.mockClear();
+      setVisible(false);
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).not.toContain("A");
+      setLeft(3);
+      setVisible(true);
+      await setup.renderOnce();
+      expect(setup.captureCharFrame().split("\n")[1]![3]).toBe("A");
+      expect(blit).not.toHaveBeenCalled();
+      expect(cursor.mock.calls.at(-1)).toEqual([4, 2, true]);
+      // Replacement can invalidate the native backing store independently of
+      // unchanged canonical source/content versions.
+      surface.frameBuffer.buffers.char.fill(32);
+      setEpoch(2);
+      await setup.renderOnce();
+      expect(setup.captureCharFrame().split("\n")[1]![3]).toBe("A");
+      expect(blit).toHaveBeenCalledTimes(1);
+      expect(blit.mock.calls[0]![7]?.full).toBe(true);
+    } finally {
+      cursor.mockRestore();
+      blit.mockRestore();
+    }
   });
 
   it("repaints only the cursor-marker row when focus changes", async () => {
