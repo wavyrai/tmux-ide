@@ -9273,7 +9273,11 @@ function parseAppConfig(input) {
       }
     },
     theme: {
-      mode: pickChoice(theme.mode, ["dark", "light", "system"], D.theme.mode),
+      mode: pickChoice(
+        theme.mode,
+        ["dark", "light", "system"],
+        findVisualThemePreset(theme.preset)?.appearance ?? D.theme.mode
+      ),
       ...findVisualThemePreset(theme.preset) ? { preset: String(theme.preset) } : {},
       accent: pickString(theme.accent, D.theme.accent),
       muted: pickString(theme.muted, D.theme.muted),
@@ -9399,7 +9403,7 @@ var init_app_config = __esm({
         panels: { explorer: "M-e", changes: "M-g", config: "M-," }
       },
       theme: {
-        mode: "dark",
+        mode: "system",
         accent: "colour75",
         muted: "colour240",
         fg: "colour250",

@@ -184,3 +184,86 @@ describe("application terminal palette owner", () => {
     expect(owner.getSnapshot().availability).toBe("pending");
   });
 });
+
+it("recognizes X11 default backgrounds using the same policy as semantic colors", async () => {
+  const renderer = new Renderer();
+  renderer.getPalette.mockResolvedValueOnce(colors("rgb:ffff/ffff/ffff", "rgb:1111/1111/1111"));
+  const owner = createApplicationTerminalPaletteOwner(renderer);
+  await owner.ready;
+  expect(owner.getSnapshot().detectedMode).toBe("light");
+  owner.dispose();
+});
+
+it("follows hints immediately, fences delayed old replies, and survives unavailable new palettes", async () => {
+  vi.useFakeTimers();
+  const renderer = new Renderer();
+  const owner = createApplicationTerminalPaletteOwner(renderer);
+  await owner.ready;
+  const stale = deferred<ReturnType<typeof colors>>();
+  renderer.getPalette.mockImplementationOnce(() => stale.promise);
+  const refreshing = owner.refresh();
+  await Promise.resolve();
+  renderer.getPalette.mockRejectedValue(new Error("unsupported"));
+  renderer.themeMode = "light";
+  renderer.emit("theme_mode", "light");
+  expect(owner.getSnapshot()).toMatchObject({ detectedMode: "light", defaultBackground: null });
+  stale.resolve(colors());
+  await refreshing;
+  await vi.runAllTimersAsync();
+  expect(owner.getSnapshot()).toMatchObject({
+    availability: "unavailable",
+    detectedMode: "light",
+    defaultBackground: null,
+  });
+  renderer.getPalette.mockResolvedValue(colors("#fefefe", "#111111"));
+  await owner.refresh();
+  expect(owner.getSnapshot().defaultBackground).toBe("#fefefe");
+  renderer.themeMode = "dark";
+  renderer.emit("theme_mode", "dark");
+  expect(owner.getSnapshot()).toMatchObject({ detectedMode: "dark", defaultBackground: null });
+  renderer.themeMode = "light";
+  renderer.emit("theme_mode", "light");
+  await vi.runAllTimersAsync();
+  expect(owner.getSnapshot().defaultBackground).toBe("#fefefe");
+  owner.dispose();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("bounds burst retries and keeps same-mode palette updates and transient-failure retention", async () => {
+  vi.useFakeTimers();
+  const renderer = new Renderer();
+  const owner = createApplicationTerminalPaletteOwner(renderer);
+  await owner.ready;
+  const original = owner.getSnapshot();
+  renderer.getPalette.mockRejectedValue(new Error("temporary"));
+  const handler = [...renderer.inputHandlers][0]!;
+  for (let i = 0; i < 100; i++) handler("\x1b[?997;1n");
+  expect(vi.getTimerCount()).toBe(2);
+  await vi.runAllTimersAsync();
+  expect(owner.getSnapshot()).toBe(original);
+  renderer.getPalette.mockResolvedValue(colors("#202020"));
+  handler("\x1b[?997;1n");
+  await vi.runAllTimersAsync();
+  expect(owner.getSnapshot().defaultBackground).toBe("#202020");
+  expect(vi.getTimerCount()).toBe(0);
+  owner.dispose();
+});
+
+it("accepts measured custom backgrounds after the transition window even if luminance disagrees with the hint", async () => {
+  vi.useFakeTimers();
+  const renderer = new Renderer();
+  const owner = createApplicationTerminalPaletteOwner(renderer);
+  await owner.ready;
+  renderer.getPalette.mockResolvedValue(colors("#202020"));
+  renderer.emit("theme_mode", "light");
+  await vi.advanceTimersByTimeAsync(250);
+  expect(owner.getSnapshot()).toMatchObject({ detectedMode: "light", defaultBackground: null });
+  await vi.advanceTimersByTimeAsync(750);
+  expect(owner.getSnapshot()).toMatchObject({ detectedMode: "dark", defaultBackground: "#202020" });
+  const measured = owner.getSnapshot();
+  renderer.getPalette.mockRejectedValue(new Error("temporary"));
+  renderer.emit("theme_mode", "light");
+  await vi.runAllTimersAsync();
+  expect(owner.getSnapshot()).toBe(measured);
+  owner.dispose();
+});

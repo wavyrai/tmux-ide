@@ -54,8 +54,9 @@ export interface ApplicationAppearanceSnapshot {
 }
 
 function hostDefaults(snapshot: ApplicationTerminalPaletteSnapshot) {
-  if (snapshot.availability !== "available") return null;
-  return deriveSystemVisualHostDefaults(snapshot);
+  return (
+    deriveSystemVisualHostDefaults(snapshot) ?? { appearance: snapshot.detectedMode, overrides: {} }
+  );
 }
 
 export function createAppearanceOwner(
@@ -128,7 +129,9 @@ export function createAppearanceOwner(
   const apply = (id: string) => {
     const preset = findVisualThemePreset(id);
     const mode = preset?.appearance ?? (id as ThemeModeSetting);
+    const wasSystem = theme().setting === "system";
     store.configure({ ...config.theme, mode, preset: preset?.id });
+    if (mode === "system" && !wasSystem) void terminalPaletteOwner.refresh();
     setPickerSelection(id);
   };
   let originalSelection = pickerSelection();

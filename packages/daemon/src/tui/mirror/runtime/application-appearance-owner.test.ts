@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseAppConfig } from "../../../lib/app-config.ts";
 import {
@@ -12,9 +12,10 @@ import {
   type ThemeModeSource,
 } from "../theme.ts";
 import { createAppearanceOwner } from "./application-appearance-owner.ts";
-import type {
-  ApplicationTerminalPaletteOwner,
-  ApplicationTerminalPaletteSnapshot,
+import {
+  createApplicationTerminalPaletteOwner,
+  type ApplicationTerminalPaletteOwner,
+  type ApplicationTerminalPaletteSnapshot,
 } from "./application-terminal-palette-owner.ts";
 
 class ThemeRenderer extends EventEmitter implements ThemeModeSource {
@@ -85,6 +86,7 @@ function useTemporaryConfig(): string {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   if (previousConfig === undefined) delete process.env.TMUX_IDE_CONFIG;
   else process.env.TMUX_IDE_CONFIG = previousConfig;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -375,4 +377,54 @@ it("starts at last filtered result on Up and cycles every preset", () => {
   }
   expect(visited.size).toBe(25);
   owner.dispose();
+});
+
+it("follows initial light and live hints with partial/unavailable queries through the real owners and picker locks", async () => {
+  vi.useFakeTimers();
+  useTemporaryConfig();
+  class HostRenderer extends ThemeRenderer {
+    override themeMode: ResolvedThemeMode = "light";
+    capabilities = null;
+    clearPaletteCache() {}
+    getPalette = vi.fn(async () => ({
+      palette: ["#000000", null, null, null, null, null, null, "#ffffff"],
+    }));
+    prependInputHandler() {}
+    removeInputHandler() {}
+  }
+  const renderer = new HostRenderer();
+  let owner!: ReturnType<typeof createAppearanceOwner>;
+  const palette = createApplicationTerminalPaletteOwner(renderer, {
+    isThemeModeUnlocked: () => owner.theme().setting === "system",
+  });
+  owner = createAppearanceOwner(parseAppConfig({}), renderer, palette);
+  expect(owner.theme()).toMatchObject({ mode: "light", setting: "system" });
+  await palette.ready;
+  expect(owner.theme().mode).toBe("light");
+  const initial = owner.appearance();
+  renderer.getPalette.mockRejectedValue(new Error("unavailable"));
+  renderer.themeMode = "dark";
+  renderer.emit("theme_mode", "dark");
+  expect(owner.theme().mode).toBe("dark");
+  expect(owner.appearance().generation).toBe(initial.generation + 1);
+  await vi.runAllTimersAsync();
+  expect(owner.theme().mode).toBe("dark");
+  owner.openPicker();
+  owner.preview("nord");
+  const locked = owner.appearance();
+  const queryCount = renderer.getPalette.mock.calls.length;
+  renderer.themeMode = "light";
+  renderer.emit("theme_mode", "light");
+  await vi.runAllTimersAsync();
+  expect(renderer.getPalette.mock.calls.length).toBe(queryCount);
+  expect(owner.appearance()).toBe(locked);
+  owner.preview("system");
+  expect(owner.theme().mode).toBe("light");
+  await vi.runAllTimersAsync();
+  expect(renderer.getPalette.mock.calls.length).toBeGreaterThan(queryCount);
+  owner.cancelPicker();
+  expect(owner.theme()).toMatchObject({ mode: "light", setting: "system" });
+  owner.dispose();
+  expect(renderer.listenerCount("theme_mode")).toBe(0);
+  expect(vi.getTimerCount()).toBe(0);
 });

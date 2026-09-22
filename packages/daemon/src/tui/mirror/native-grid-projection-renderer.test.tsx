@@ -13,7 +13,11 @@ import { projectNativeGridRow } from "../../terminal/mirror/native-grid-projecti
 import { registerPaneSurface, type TerminalPaneRenderSource } from "./pane-surface.tsx";
 import { blitSemanticRow } from "./semantic-pane-render-source.ts";
 import { installTuiPerformanceEventSink } from "./performance-events.ts";
-import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "./theme.ts";
+import {
+  createSemanticThemeSnapshot,
+  createTerminalPaletteProjection,
+  colorToPackedRgb,
+} from "./theme.ts";
 import { frameLines, renderForTest } from "./testing/renderer-harness.test.ts";
 
 const cell = (text: string, width = 1, flags = 0): NativeGridCaptureCell => ({
@@ -170,5 +174,135 @@ it("paints native projection through PaneSurface without stale tails or lost cli
   } finally {
     uninstall();
     setup.renderer.destroy();
+  }
+});
+
+it("repaints retained scrollback defaults and inverse cells on host mode changes without new content", async () => {
+  const { EventEmitter } = await import("node:events");
+  const { parseAppConfig } = await import("../../lib/app-config.ts");
+  const { createApplicationTerminalPaletteOwner } =
+    await import("./runtime/application-terminal-palette-owner.ts");
+  const { createAppearanceOwner } = await import("./runtime/application-appearance-owner.ts");
+  class HostRenderer extends EventEmitter {
+    themeMode: "light" | "dark" = "light";
+    capabilities = null;
+    clearPaletteCache() {}
+    async getPalette() {
+      throw new Error("fixture has no OSC replies");
+    }
+    prependInputHandler() {}
+    removeInputHandler() {}
+  }
+  const host = new HostRenderer();
+  const paletteOwner = createApplicationTerminalPaletteOwner(host);
+  const appearance = createAppearanceOwner(parseAppConfig({}), host, paletteOwner);
+  await paletteOwner.ready;
+  const snapshot = structuredClone(blankTerminalReplicaSnapshot(4, 1));
+  snapshot.history.push(structuredClone(snapshot.grid[0]!));
+  snapshot.history[0]!.cells.forEach((value, index) => {
+    value.grapheme = String(index);
+    value.attributes = index === 1 || index === 2 ? 32 : 0;
+    if (index >= 2) value.foreground = { kind: "rgb", value: 0x123456 };
+  });
+  const original = JSON.stringify(snapshot);
+  let fullPaints = 0;
+  const source: TerminalPaneRenderSource = {
+    scrollbackDepth: () => 1,
+    cursorState: () => null,
+    paneCanonicalIdentity: () => ({
+      generation: "theme-generation",
+      incarnation: "theme-incarnation",
+      revision: 0,
+      stateHash: "unchanged",
+      cols: 4,
+      rows: 1,
+      sourceEpoch: 0,
+    }),
+    blitPane: (_id, buffers, width, _height, offset, fg, bg, options) => {
+      if (!options.full) return null;
+      fullPaints++;
+      expect(offset).toBe(1);
+      blitSemanticRow(
+        snapshot.history[0],
+        buffers,
+        0,
+        width,
+        fg,
+        bg,
+        options.graphemes,
+        options.palette,
+      );
+      options.dirtyRows.push(0);
+      return null;
+    },
+  };
+  registerPaneSurface();
+  let projection: { foreground: string; background: string; attributes: number }[] = [];
+  const uninstall = installTuiPerformanceEventSink({
+    frame: () => {},
+    terminalPaint: () => {},
+    terminalDelivery: () => {},
+    terminalFramebufferProjection: (event) => {
+      projection = JSON.parse(event.projection);
+    },
+  });
+  try {
+    const setup = await renderForTest(
+      () => (
+        <pane_surface
+          width={4}
+          height={1}
+          mirror={source}
+          paneId="pane.theme-history"
+          defaultFg={appearance.palette().foreground}
+          defaultBg={appearance.palette().background}
+          terminalPalette={appearance.palette()}
+          searchHl={appearance.palette().searchHighlight}
+          searchCur={appearance.palette().searchCurrent}
+          scrollOffset={1}
+          contentVersion={0}
+        />
+      ),
+      { width: 4, height: 1 },
+    );
+    const rgb = (value: number) => `rgb:${value.toString(16).padStart(6, "0")}`;
+    for (const mode of ["light", "dark", "light"] as const) {
+      if (host.themeMode !== mode) {
+        host.themeMode = mode;
+        host.emit("theme_mode", mode);
+      }
+      await setup.renderOnce();
+      expect(frameLines(setup.captureCharFrame())).toEqual(["0123"]);
+      expect(appearance.theme().mode).toBe(mode);
+      const { foreground: fg, background: bg } = appearance.palette();
+      expect(
+        projection.map(({ foreground, background, attributes }) => ({
+          foreground,
+          background,
+          attributes,
+        })),
+      ).toEqual([
+        { foreground: "default", background: "default", attributes: 0 },
+        { foreground: rgb(bg), background: rgb(fg), attributes: 0 },
+        { foreground: rgb(bg), background: "rgb:123456", attributes: 0 },
+        { foreground: "rgb:123456", background: "default", attributes: 0 },
+      ]);
+      const cells = setup
+        .captureSpans()
+        .lines[0]!.spans.flatMap((span) =>
+          [...span.text].map(() => [colorToPackedRgb(span.fg), colorToPackedRgb(span.bg)]),
+        );
+      expect(cells).toEqual([
+        [fg, bg],
+        [bg, fg],
+        [bg, 0x123456],
+        [0x123456, bg],
+      ]);
+    }
+    expect(fullPaints).toBe(3);
+    expect(JSON.stringify(snapshot)).toBe(original);
+  } finally {
+    uninstall();
+    appearance.dispose();
   }
 });

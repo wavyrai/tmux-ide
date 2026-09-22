@@ -779,3 +779,34 @@ it("clears clipped wide glyphs at both client viewport edges without orphan padd
   expect(row.cells[0]!.grapheme).toBe("界");
   expect(row.cells[3]!.grapheme).toBe("語");
 });
+
+it("reverses default/default and mixed explicit/default colors in both appearances", () => {
+  for (const [fg, bg] of [
+    [0xeeeeee, 0x111111],
+    [0x111111, 0xeeeeee],
+  ]) {
+    for (const [foreground, background, expectedFg, expectedBg] of [
+      [{ kind: "default" }, { kind: "default" }, bg, fg],
+      [{ kind: "rgb", value: 0x123456 }, { kind: "default" }, bg, 0x123456],
+      [{ kind: "default" }, { kind: "rgb", value: 0x123456 }, 0x123456, fg],
+    ] as const) {
+      const snapshot = structuredClone(blankTerminalReplicaSnapshot(1, 1));
+      Object.assign(snapshot.grid[0]!.cells[0]!, {
+        foreground,
+        background,
+        attributes: 32,
+        grapheme: "é",
+      });
+      const original = JSON.stringify(snapshot);
+      const output = arrays(1, 1);
+      const graphemes: Parameters<typeof blitSemanticRow>[7] = [];
+      blitSemanticRow(snapshot.grid[0], output, 0, 1, fg!, bg!, graphemes, undefined);
+      const bytes = (value: number) => [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+      expect([...output.fg.slice(0, 3)]).toEqual(bytes(expectedFg!));
+      expect([...output.bg.slice(0, 3)]).toEqual(bytes(expectedBg!));
+      expect(output.attributes[0]).toBe(0);
+      expect(graphemes[0]).toMatchObject({ fg: expectedFg, bg: expectedBg, attrs: 0 });
+      expect(JSON.stringify(snapshot)).toBe(original);
+    }
+  }
+});

@@ -758,7 +758,8 @@ export function blitSemanticRow(
     let background = resolveColor(cell.background, false, palette);
     let attributes = cell.attributes;
     if ((attributes & 32) !== 0) {
-      [foreground, background] = [background, foreground];
+      // Resolve each side before reversing: a default retains its original role.
+      [foreground, background] = [background ?? defaultBg, foreground ?? defaultFg];
       attributes &= ~32;
     }
     // Native tmux clears a partial wide glyph, retaining its background.

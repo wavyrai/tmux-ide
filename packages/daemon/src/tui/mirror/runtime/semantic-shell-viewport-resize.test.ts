@@ -22,6 +22,33 @@ function live(resize: ReturnType<typeof vi.fn>, overrides = {}) {
 }
 
 describe("semantic shell viewport resize owner", () => {
+  it("replays the applied size when a pending resize reverses back to it", async () => {
+    let settleMiddle!: (value: { status: "applied" }) => void;
+    const resize = vi
+      .fn()
+      .mockResolvedValueOnce({ status: "applied" })
+      .mockImplementationOnce(
+        () => new Promise<{ status: "applied" }>((resolve) => (settleMiddle = resolve)),
+      )
+      .mockResolvedValue({ status: "applied" });
+    const generation = live(resize);
+    const owner = createSemanticShellViewportResizeOwner();
+    const semantic = {} as never;
+    owner.adopt({ width: 160, height: 44 }, semantic, generation);
+    await Promise.resolve();
+    owner.adopt({ width: 180, height: 44 }, semantic, generation);
+    owner.adopt({ width: 160, height: 44 }, semantic, generation);
+    expect(resize).toHaveBeenCalledTimes(3);
+    expect(resize).toHaveBeenLastCalledWith({ cols: 132, rows: 41 });
+    await Promise.resolve();
+    // A late receipt for the intermediate size must not replace final truth.
+    settleMiddle({ status: "applied" });
+    await Promise.resolve();
+    owner.adopt({ width: 160, height: 44 }, semantic, generation);
+    expect(resize).toHaveBeenCalledTimes(3);
+    owner.dispose();
+  });
+
   it("reserves an outer header row only when tmux has no pane status row", async () => {
     let status: "top" | "off" | "bottom" = "off";
     const resize = vi.fn(async () => ({ status: "applied" as const }));

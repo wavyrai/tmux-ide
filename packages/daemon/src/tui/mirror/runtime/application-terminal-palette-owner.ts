@@ -1,3 +1,4 @@
+import { parseTerminalHostColor, terminalHostMode } from "../../../lib/terminal-host-color.ts";
 import type { ResolvedThemeMode } from "../../../lib/theme-mode.ts";
 
 export type ApplicationTerminalPaletteAvailability = "pending" | "available" | "unavailable";
@@ -62,6 +63,7 @@ export interface ApplicationTerminalPaletteOwner {
   readonly ready: Promise<void>;
   getSnapshot(): ApplicationTerminalPaletteSnapshot;
   subscribe(listener: () => void): () => void;
+  /** Query now with a bounded retry pair for terminals still changing theme. */
   refresh(): Promise<void>;
   dispose(): void;
 }
@@ -74,7 +76,7 @@ const EMPTY_PALETTE = Object.freeze(Array<string | null>(PALETTE_SIZE).fill(null
 function normalizeColor(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
-  return normalized.length > 0 ? normalized : null;
+  return parseTerminalHostColor(normalized) ? normalized : null;
 }
 
 function normalizePalette(values: unknown): readonly (string | null)[] {
@@ -97,19 +99,6 @@ function immutableValue(value: unknown): unknown {
 function immutableCapabilities(value: unknown): Readonly<Record<string, unknown>> | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   return immutableValue(value) as Readonly<Record<string, unknown>>;
-}
-
-function detectedMode(background: string | null, fallback: ResolvedThemeMode): ResolvedThemeMode {
-  if (!background) return fallback;
-  const match = /^#([\da-f]{3}|[\da-f]{6})$/iu.exec(background);
-  if (!match) return fallback;
-  const hex = match[1]!;
-  const expanded =
-    hex.length === 3 ? `${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}` : hex;
-  const red = Number.parseInt(expanded.slice(0, 2), 16) / 255;
-  const green = Number.parseInt(expanded.slice(2, 4), 16) / 255;
-  const blue = Number.parseInt(expanded.slice(4, 6), 16) / 255;
-  return 0.299 * red + 0.587 * green + 0.114 * blue > 0.5 ? "light" : "dark";
 }
 
 function snapshotSignature(input: Omit<ApplicationTerminalPaletteSnapshot, "signature">): string {
@@ -162,7 +151,7 @@ function availableSnapshot(
     tekBackground: normalizeColor(result.tekBackground),
     highlightBackground: normalizeColor(result.highlightBackground),
     highlightForeground: normalizeColor(result.highlightForeground),
-    detectedMode: detectedMode(defaultBackground, fallbackMode),
+    detectedMode: terminalHostMode(defaultBackground) ?? fallbackMode,
     capabilities,
   });
 }
@@ -191,6 +180,9 @@ export function createApplicationTerminalPaletteOwner(
   let lastValid: ApplicationTerminalPaletteSnapshot | null = null;
   let active: Promise<void> | null = null;
   let queued = false;
+  let modeHint: ResolvedThemeMode | null = null;
+  let modeGeneration = 0;
+  let awaitingModePalette = false;
   let disposed = false;
 
   const publish = (next: ApplicationTerminalPaletteSnapshot): void => {
@@ -206,22 +198,40 @@ export function createApplicationTerminalPaletteOwner(
       return active;
     }
     renderer.clearPaletteCache();
+    const requestedModeGeneration = modeGeneration;
+    const guardModeForQuery = awaitingModePalette;
     const generation = Promise.resolve()
       .then(() => renderer.getPalette({ size: PALETTE_SIZE, timeout: queryTimeoutMs }))
       .then((result) => {
-        if (disposed) return;
+        if (disposed || requestedModeGeneration !== modeGeneration) return;
+        const reportedMode = terminalHostMode(result.defaultBackground);
+        // A terminal can still answer with its previous palette while switching.
+        // Queries issued during the transition wait for a matching reply.
+        if (guardModeForQuery && modeHint && reportedMode && reportedMode !== modeHint) return;
         if (!hasReportedColor(result)) {
           if (!lastValid)
-            publish(fallbackSnapshot("unavailable", renderer.themeMode ?? "dark", capabilities));
+            publish(
+              fallbackSnapshot(
+                "unavailable",
+                modeHint ?? renderer.themeMode ?? "dark",
+                capabilities,
+              ),
+            );
           return;
         }
-        const next = availableSnapshot(result, renderer.themeMode ?? "dark", capabilities);
+        const next = availableSnapshot(
+          result,
+          modeHint ?? renderer.themeMode ?? "dark",
+          capabilities,
+        );
         lastValid = next;
         publish(next);
       })
       .catch(() => {
-        if (disposed || lastValid) return;
-        publish(fallbackSnapshot("unavailable", renderer.themeMode ?? "dark", capabilities));
+        if (disposed || requestedModeGeneration !== modeGeneration || lastValid) return;
+        publish(
+          fallbackSnapshot("unavailable", modeHint ?? renderer.themeMode ?? "dark", capabilities),
+        );
       })
       .finally(() => {
         if (active !== generation) return;
@@ -234,20 +244,37 @@ export function createApplicationTerminalPaletteOwner(
     return generation;
   };
 
-  const scheduleFollowUps = (): void => {
-    if (disposed) return;
-    void refresh();
+  const scheduleFollowUps = (): Promise<void> => {
+    if (disposed) return Promise.resolve();
+    const first = refresh();
+    // A burst owns only one bounded pair of retries, never one pair per event.
+    for (const timer of timers) cancelTimeout(timer);
+    timers.clear();
     for (const delay of FOLLOW_UP_DELAYS_MS) {
       const timer = scheduleTimeout(() => {
         timers.delete(timer);
+        // After the bounded transition window, a fresh measured OSC 11 color
+        // wins even when a custom theme's luminance disagrees with its hint.
+        if (delay === FOLLOW_UP_DELAYS_MS[FOLLOW_UP_DELAYS_MS.length - 1])
+          awaitingModePalette = false;
         if (!disposed) void refresh();
       }, delay);
       timers.add(timer);
     }
+    return first;
   };
 
-  const onThemeMode = (): void => {
-    if (isThemeModeUnlocked()) scheduleFollowUps();
+  const onThemeMode = (mode: ResolvedThemeMode): void => {
+    const changed = modeHint !== mode;
+    if (changed) modeGeneration += 1;
+    modeHint = mode;
+    if (changed && snapshot.detectedMode !== mode) {
+      awaitingModePalette = true;
+      // Track hints even while locked, so unlocking cannot resurrect old colors.
+      lastValid = null;
+      publish(fallbackSnapshot("unavailable", mode, capabilities));
+    }
+    if (isThemeModeUnlocked()) void scheduleFollowUps();
   };
   const onCapabilities = (next: unknown): void => {
     capabilities = immutableCapabilities(next);
@@ -261,14 +288,14 @@ export function createApplicationTerminalPaletteOwner(
     publish(
       fallbackSnapshot(
         snapshot.availability === "pending" ? "pending" : "unavailable",
-        renderer.themeMode ?? "dark",
+        modeHint ?? renderer.themeMode ?? "dark",
         capabilities,
       ),
     );
   };
   const onThemeNotification = (sequence: string): boolean => {
     if (sequence !== "\x1b[?997;1n" && sequence !== "\x1b[?997;2n") return false;
-    if (isThemeModeUnlocked()) scheduleFollowUps();
+    onThemeMode(sequence === "\x1b[?997;1n" ? "dark" : "light");
     return false;
   };
 
@@ -285,7 +312,7 @@ export function createApplicationTerminalPaletteOwner(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    refresh,
+    refresh: scheduleFollowUps,
     dispose() {
       if (disposed) return;
       disposed = true;

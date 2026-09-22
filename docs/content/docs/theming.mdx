@@ -7,6 +7,13 @@ The OpenTUI has one appearance authority. Home, application chrome, sidebars,
 tabs, pane headers, status bars, dialogs, and overlays all consume the same
 semantic token snapshot.
 
+New or unset appearance settings follow the terminal (**system**). Saved light,
+dark, and named theme choices stay selected. System mode uses the terminal's
+reported default background and foreground; ANSI black and white are palette
+colors, so partial palette replies do not decide whether the canvas is light
+or dark. If color queries are unavailable, terminal mode notifications still
+update the app using built-in defaults.
+
 Choose **light**, **dark**, or **system** from the command palette's Settings
 group. A switch publishes one new appearance generation and repaints every
 app-owned surface atomically.
@@ -30,3 +37,7 @@ COLORFGBG=15;0
 
 `NO_COLOR` is removed for newly launched shells. Programs that were already
 running retain the environment with which they started.
+
+Appearance changes repaint existing terminal content, including scrollback and
+reverse-video text. They do not restart panes or change running programs'
+environment or their own theme settings.

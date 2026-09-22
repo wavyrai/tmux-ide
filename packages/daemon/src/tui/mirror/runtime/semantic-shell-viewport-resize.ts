@@ -67,6 +67,11 @@ export function createSemanticShellViewportResizeOwner(
         rows: Math.max(2, viewport.height - (paneBorderStatus === "off" ? 1 : 0)),
       });
       if (same(applied, target) || same(pending, target)) return;
+      // The accepted size stops being a dedupe target as soon as another
+      // resize can mutate tmux. Otherwise A -> B -> A drops the final A while
+      // B is still awaiting its receipt. The fast lane owns first/latest
+      // coalescing; it must see the reversal to retain the actual final size.
+      applied = null;
       pending = target;
       void lane.lane.resize({ cols: target.cols, rows: target.rows }).then(
         (outcome) => {

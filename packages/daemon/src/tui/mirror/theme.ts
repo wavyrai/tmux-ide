@@ -37,6 +37,7 @@ import {
   type LegacyThemeOverrideProvenance,
 } from "../../lib/legacy-theme-compat.ts";
 import type { ResolvedThemeMode, ThemeModeSetting } from "../../lib/theme-mode.ts";
+import { parseTerminalHostColor, terminalHostMode } from "../../lib/terminal-host-color.ts";
 import { XTERM_PALETTE } from "./ansi-palette.ts";
 
 /** Stable categorical host accents; palette authority stays with the theme. */
@@ -379,35 +380,6 @@ function rendererNeutralFromPacked(color: number): RendererNeutralColor {
   return rendererNeutral((color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
 }
 
-function perceivedLuminance(color: RendererNeutralColor): number {
-  return 0.299 * color.red + 0.587 * color.green + 0.114 * color.blue;
-}
-
-function parseTerminalHostColor(value: string | null | undefined): RendererNeutralColor | null {
-  if (!value) return null;
-  const normalized = value.trim().toLowerCase();
-  const hex = /^#([\da-f]{3}|[\da-f]{6})$/u.exec(normalized)?.[1];
-  if (hex) {
-    const expanded =
-      hex.length === 3 ? `${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}` : hex;
-    return rendererNeutral(
-      Number.parseInt(expanded.slice(0, 2), 16),
-      Number.parseInt(expanded.slice(2, 4), 16),
-      Number.parseInt(expanded.slice(4, 6), 16),
-    );
-  }
-  // OSC palette replies may use X11's rgb:RR/GG/BB form with one to four
-  // hexadecimal digits per channel. Scale each channel to a byte rather than
-  // truncating high-fidelity replies.
-  const x11 = /^rgb:([\da-f]{1,4})\/([\da-f]{1,4})\/([\da-f]{1,4})$/u.exec(normalized);
-  if (!x11) return null;
-  const channel = (part: string): number => {
-    const maximum = 16 ** part.length - 1;
-    return Math.round((Number.parseInt(part, 16) / maximum) * 255);
-  };
-  return rendererNeutral(channel(x11[1]!), channel(x11[2]!), channel(x11[3]!));
-}
-
 function mostReadable(
   background: RendererNeutralColor,
   candidates: readonly RendererNeutralColor[],
@@ -458,10 +430,8 @@ export function deriveSystemVisualHostDefaults(
   const reportedPalette = Array.from({ length: 16 }, (_, index) =>
     parseTerminalHostColor(input.palette[index]),
   );
-  const measuredBackground =
-    parseTerminalHostColor(input.defaultBackground) ?? reportedPalette[0] ?? null;
-  const measuredForeground =
-    parseTerminalHostColor(input.defaultForeground) ?? reportedPalette[7] ?? null;
+  const measuredBackground = parseTerminalHostColor(input.defaultBackground);
+  const measuredForeground = parseTerminalHostColor(input.defaultForeground);
   if (!measuredBackground && !measuredForeground && reportedPalette.every((value) => !value))
     return null;
 
@@ -469,12 +439,7 @@ export function deriveSystemVisualHostDefaults(
   const background = measuredBackground ?? BUILTIN_VISUAL_THEMES[fallbackMode].surfaces.canvas;
   const black = rendererNeutral(0, 0, 0);
   const white = rendererNeutral(255, 255, 255);
-  const appearance =
-    measuredBackground === null
-      ? fallbackMode
-      : perceivedLuminance(background) > 127.5
-        ? "light"
-        : "dark";
+  const appearance = terminalHostMode(input.defaultBackground) ?? fallbackMode;
   const builtIn = BUILTIN_VISUAL_THEMES[appearance];
   const structuralTarget = appearance === "dark" ? white : black;
   const panel = mixSrgbColors(background, structuralTarget, appearance === "dark" ? 0.055 : 0.04);

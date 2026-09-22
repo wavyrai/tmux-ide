@@ -84,7 +84,7 @@ export interface AppThemeGlyphs {
  * reads as one system.
  */
 export interface AppTheme {
-  /** Explicit palette mode or terminal-following mode. Default keeps legacy dark visuals. */
+  /** Explicit palette mode or terminal-following mode. Defaults to following the terminal. */
   mode: ThemeModeSetting;
   preset?: string;
   /** Primary/brand accent (default `colour75`). */
@@ -263,7 +263,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     panels: { explorer: "M-e", changes: "M-g", config: "M-," },
   },
   theme: {
-    mode: "dark",
+    mode: "system",
     accent: "colour75",
     muted: "colour240",
     fg: "colour250",
@@ -395,7 +395,11 @@ export function parseAppConfig(input: unknown): AppConfig {
       },
     },
     theme: {
-      mode: pickChoice(theme.mode, ["dark", "light", "system"], D.theme.mode),
+      mode: pickChoice(
+        theme.mode,
+        ["dark", "light", "system"],
+        findVisualThemePreset(theme.preset)?.appearance ?? D.theme.mode,
+      ),
       ...(findVisualThemePreset(theme.preset) ? { preset: String(theme.preset) } : {}),
       accent: pickString(theme.accent, D.theme.accent),
       muted: pickString(theme.muted, D.theme.muted),
