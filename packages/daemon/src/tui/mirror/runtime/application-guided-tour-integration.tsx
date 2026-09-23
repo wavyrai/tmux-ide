@@ -69,6 +69,8 @@ export function createApplicationGuidedTourIntegration(options: {
       const created = await createFleetSession(
         handle,
         `tmux-ide-practice-${randomUUID().slice(0, 8)}`,
+        undefined,
+        { includeLiveSessionId: true },
       );
       if (!created || created.outcome !== "created")
         throw new Error("Could not create a fresh practice session. Try again.");

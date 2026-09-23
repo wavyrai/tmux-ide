@@ -1,3 +1,4 @@
+import { liveSessionIdForNativeIdentity } from "../terminal/protocol/live-session-identity.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { realpath, stat } from "node:fs/promises";
@@ -146,7 +147,7 @@ export class FleetLifecycleAuthority {
         "-d",
         "-P",
         "-F",
-        "#{session_id}",
+        "#{pid}\t#{session_id}\t#{session_created}",
         ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
         "-s",
         identity.sessionName,
@@ -156,7 +157,16 @@ export class FleetLifecycleAuthority {
         cwd,
         TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND,
       ]);
-      liveSessionId = /^\$[0-9]+$/u.test(createdId.trim()) ? createdId.trim() : undefined;
+      const [serverPid, sessionId, sessionCreated] = createdId.trim().split("\t");
+      if (
+        serverPid &&
+        /^\d+$/u.test(serverPid) &&
+        sessionId &&
+        /^\$\d+$/u.test(sessionId) &&
+        sessionCreated &&
+        /^\d+$/u.test(sessionCreated)
+      )
+        liveSessionId = liveSessionIdForNativeIdentity(serverPid, sessionId, sessionCreated);
       created = true;
       prepareTmuxTruecolorEnvironment(this.#runTmux, identity.sessionName);
       this.#runTmux(["set-environment", "-t", identity.sessionName, "TMUX_IDE", "1"]);
@@ -191,7 +201,7 @@ export class FleetLifecycleAuthority {
       operationId,
       daemonInstanceId: this.#daemonInstanceId,
       outcome: "created",
-      ...(liveSessionId ? { liveSessionId } : {}),
+      ...(input.includeLiveSessionId && liveSessionId ? { liveSessionId } : {}),
       fleetSessionId: fleetSessionIdForName(identity.sessionName),
       workspaceName: identity.workspaceName,
       displayName: input.displayName,

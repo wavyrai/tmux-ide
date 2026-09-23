@@ -95,6 +95,7 @@ export function createFleetSession(
   input: WorkspaceSessionCreateArguments | FleetHandle,
   name?: string,
   server?: TmuxServerScope,
+  options?: Pick<WorkspaceSessionCreateArguments, "includeLiveSessionId">,
 ): Promise<WorkspaceSessionCreateResult | null> {
   if ("read" in input) {
     const daemon = input.read();
@@ -110,6 +111,7 @@ export function createFleetSession(
       return client
         .createSession(randomUUID(), {
           displayName: name,
+          ...(options?.includeLiveSessionId ? { includeLiveSessionId: true } : {}),
           expectedDaemonInstanceId: server.generation,
         })
         .then((result) =>
@@ -121,6 +123,7 @@ export function createFleetSession(
     }
     return dispatchOnHandle(input, "workspace.session.create", {
       displayName: name,
+      ...(options?.includeLiveSessionId ? { includeLiveSessionId: true } : {}),
       expectedDaemonInstanceId: daemon.instanceId,
     });
   }

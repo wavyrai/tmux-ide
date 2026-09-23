@@ -4960,6 +4960,7 @@ var SafeDisplayNameSchemaZ, OwnerPathSchemaZ, WorkspaceSessionCreateArgumentsSch
 var init_fleet_lifecycle = __esm({
   "packages/contracts/src/fleet-lifecycle.ts"() {
     "use strict";
+    init_workspace_catalog_resource();
     init_fleet_catalog();
     init_desktop_workspace_name();
     init_semantic_identity();
@@ -4973,6 +4974,8 @@ var init_fleet_lifecycle = __esm({
     OwnerPathSchemaZ = /* @__PURE__ */ (() => z34.string().min(1).max(4096).refine((value) => !value.includes("\0")))();
     WorkspaceSessionCreateArgumentsSchemaZ = /* @__PURE__ */ (() => z34.object({
       displayName: SafeDisplayNameSchemaZ,
+      /** Opt in to an incarnation-bearing receipt; legacy clients keep their strict result shape. */
+      includeLiveSessionId: z34.boolean().optional(),
       cwd: OwnerPathSchemaZ.optional(),
       expectedDaemonInstanceId: z34.uuid().optional()
     }).strict())();
@@ -4981,7 +4984,7 @@ var init_fleet_lifecycle = __esm({
       daemonInstanceId: z34.uuid(),
       outcome: z34.enum(["created", "adopted", "replayed"]),
       /** Captured atomically by new-session; absent from older daemons and adopted routes. */
-      liveSessionId: z34.string().regex(/^\$[0-9]+$/u).optional(),
+      liveSessionId: WorkspaceCatalogLiveSessionIdSchemaZ.optional(),
       fleetSessionId: FleetSessionIdSchemaZ,
       /** Canonical registered route; displayName is presentation only. */
       workspaceName: DesktopWorkspaceNameSchemaZ,
@@ -24857,6 +24860,7 @@ var MAX_REPLAY_OPERATIONS, sleep2, FleetLifecycleAuthorityError, FleetLifecycleA
 var init_fleet_lifecycle_authority = __esm({
   "packages/daemon/src/lib/fleet-lifecycle-authority.ts"() {
     "use strict";
+    init_live_session_identity();
     init_src();
     init_discovery();
     init_fleet_catalog2();
@@ -24943,7 +24947,7 @@ var init_fleet_lifecycle_authority = __esm({
             "-d",
             "-P",
             "-F",
-            "#{session_id}",
+            "#{pid}	#{session_id}	#{session_created}",
             ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
             "-s",
             identity2.sessionName,
@@ -24953,7 +24957,9 @@ var init_fleet_lifecycle_authority = __esm({
             cwd,
             TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND
           ]);
-          liveSessionId = /^\$[0-9]+$/u.test(createdId.trim()) ? createdId.trim() : void 0;
+          const [serverPid, sessionId, sessionCreated] = createdId.trim().split("	");
+          if (serverPid && /^\d+$/u.test(serverPid) && sessionId && /^\$\d+$/u.test(sessionId) && sessionCreated && /^\d+$/u.test(sessionCreated))
+            liveSessionId = liveSessionIdForNativeIdentity(serverPid, sessionId, sessionCreated);
           created = true;
           prepareTmuxTruecolorEnvironment(this.#runTmux, identity2.sessionName);
           this.#runTmux(["set-environment", "-t", identity2.sessionName, "TMUX_IDE", "1"]);
@@ -24987,7 +24993,7 @@ var init_fleet_lifecycle_authority = __esm({
           operationId,
           daemonInstanceId: this.#daemonInstanceId,
           outcome: "created",
-          ...liveSessionId ? { liveSessionId } : {},
+          ...input.includeLiveSessionId && liveSessionId ? { liveSessionId } : {},
           fleetSessionId: fleetSessionIdForName(identity2.sessionName),
           workspaceName: identity2.workspaceName,
           displayName: input.displayName

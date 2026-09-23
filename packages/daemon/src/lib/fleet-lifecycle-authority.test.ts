@@ -1,3 +1,4 @@
+import { liveSessionIdForNativeIdentity } from "../terminal/protocol/live-session-identity.ts";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,7 +62,7 @@ function rig() {
         const sessionFlag = args.indexOf("-s");
         const sessionName = sessionFlag < 0 ? undefined : args[sessionFlag + 1];
         if (sessionName) liveSessions.add(sessionName);
-        return "$42\n";
+        return "900\t$42\t1234567890\n";
       }
       if (args[0] === "has-session") {
         const target = args[2]?.replace(/^=/u, "");
@@ -80,11 +81,12 @@ describe("FleetLifecycleAuthority", () => {
     const { authority, calls, workspaces } = rig();
     const result = await authority.createSession(OPERATION, GENERATION, {
       displayName: "Review Team",
+      includeLiveSessionId: true,
       cwd,
     });
 
     expect(result.outcome).toBe("created");
-    expect(result.liveSessionId).toBe("$42");
+    expect(result.liveSessionId).toBe(liveSessionIdForNativeIdentity("900", "$42", "1234567890"));
     expect(result.workspaceName).toMatch(/^review-team-[0-9a-f]{20}$/u);
     expect(workspaces).toEqual([
       expect.objectContaining({
@@ -98,7 +100,7 @@ describe("FleetLifecycleAuthority", () => {
       "-d",
       "-P",
       "-F",
-      "#{session_id}",
+      "#{pid}\t#{session_id}\t#{session_created}",
       "-e",
       "COLORTERM=truecolor",
       "-e",
@@ -132,6 +134,7 @@ describe("FleetLifecycleAuthority", () => {
     const { authority, calls } = rig();
     const input = { displayName: "Review Team", cwd };
     const first = await authority.createSession(OPERATION, GENERATION, input);
+    expect(first).not.toHaveProperty("liveSessionId");
     const callCount = calls.length;
     const replay = await authority.createSession(OPERATION, GENERATION, input);
     expect(replay).toEqual({ ...first, outcome: "replayed" });
