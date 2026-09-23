@@ -1,3 +1,4 @@
+import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -43,6 +44,7 @@ globalThis.fetch=async(input,options)=>{
     const info=JSON.parse(fs.readFileSync(process.env.TEST_DAEMON_RECORD,'utf8'));
     fs.appendFileSync(process.env.TEST_DAEMON_PROBES,url.pathname+'\\n');
     if(url.pathname==='/identity')return Response.json({ok:true,...info,...(process.env.TEST_LOCAL_IDENTITY_MISMATCH?{instanceId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd'}:{})});
+    if(url.pathname==='/api/v1/tmux-servers')return process.env.TEST_OLD_SERVER_API?new Response('Not Found',{status:404}):Response.json({version:1,servers:[]});
     if(url.pathname==='/health')return Response.json({ok:true,protocolVersion:info.protocolVersion,productVersion:info.productVersion,uptime:1});
     throw new Error('unexpected local daemon request');
   }
@@ -100,8 +102,10 @@ function installExistingLocalDaemon() {
     JSON.stringify({
       pid: process.pid,
       port: 43333,
-      protocolVersion: 2,
-      productVersion: "beta",
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: JSON.parse(
+        readFileSync(new URL("../../../../../package.json", import.meta.url), "utf8"),
+      ).version,
       instanceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       startedAt: "2026-09-09T10:00:00.000Z",
       bindHostname: "127.0.0.1",
@@ -157,6 +161,48 @@ describe("SSH app CLI entry", () => {
       "--ssh=alice@build",
     ]);
     expectExistingLocalDaemonVerified();
+  });
+  it("forwards an explicit server scope and rejects an ambiguous machine choice", () => {
+    installExistingLocalDaemon();
+    const serverId = `tmux-server.${"a".repeat(32)}`;
+    const result = run(["app", "main", "--server", serverId, "--ssh=build"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(launchedPath, "utf8"))).toEqual([
+      "app",
+      "--target=main",
+      `--server=${serverId}`,
+      "--ssh=build",
+    ]);
+    const ambiguous = run(["app", "--server", serverId, "--ssh=build", "--ssh=dev"]);
+    expect(ambiguous.status).toBe(2);
+    expect(ambiguous.stderr).toContain("at most one --ssh");
+    expect(existsSync(forbiddenPath)).toBe(false);
+  });
+  it("keeps a local explicit server launch in the foreground despite detachable config", () => {
+    installExistingLocalDaemon();
+    const serverId = `tmux-server.${"b".repeat(32)}`;
+    const result = run(["app", "main", "--server", serverId]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(launchedPath, "utf8"))).toEqual([
+      "app",
+      "--target=main",
+      `--server=${serverId}`,
+    ]);
+    expect(existsSync(forbiddenPath)).toBe(false);
+    expect(run(["app", "--server", serverId, "--hosted"]).status).toBe(2);
+    expect(run(["app", "--server", serverId, "--headless"]).status).toBe(2);
+  });
+  it("lists server registrations through the authenticated canonical daemon and reports old capability", () => {
+    installExistingLocalDaemon();
+    const result = run(["servers", "list", "--json"]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ version: 1, servers: [] });
+    expectExistingLocalDaemonVerified();
+    environment.TEST_OLD_SERVER_API = "1";
+    const old = run(["servers", "add", "--socket-name", "work", "--json"]);
+    expect(old.status).not.toBe(0);
+    expect(old.stderr + old.stdout).toContain("does not support tmux server selection");
+    expect(existsSync(forbiddenPath)).toBe(false);
   });
   it("forwards multiple SSH machines independently of detachable configuration", () => {
     installExistingLocalDaemon();

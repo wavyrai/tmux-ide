@@ -42,6 +42,10 @@ import {
   AppWindowMutationResultSchemaZ,
 } from "./app-window-mutation.ts";
 import {
+  WorkspaceWindowLinkSelectArgumentsSchemaZ,
+  WorkspaceWindowLinkUnlinkArgumentsSchemaZ,
+  WorkspaceWindowLinkSelectResultSchemaZ,
+  WorkspaceWindowLinkUnlinkResultSchemaZ,
   WorkspacePaneKillArgumentsSchemaZ,
   WorkspacePaneKillResultSchemaZ,
   WorkspacePaneResizeArgumentsSchemaZ,
@@ -426,6 +430,14 @@ export const ActionContractsZ = {
   "workspace.app-window.mutate": {
     input: AppWindowMutationInputZ,
     result: AppWindowMutationResultZ,
+  },
+  "workspace.window.link.select": {
+    input: WorkspaceWindowLinkSelectArgumentsSchemaZ,
+    result: WorkspaceWindowLinkSelectResultSchemaZ,
+  },
+  "workspace.window.link.unlink": {
+    input: WorkspaceWindowLinkUnlinkArgumentsSchemaZ,
+    result: WorkspaceWindowLinkUnlinkResultSchemaZ,
   },
   "workspace.window.split": {
     input: WorkspaceWindowSplitInputZ,

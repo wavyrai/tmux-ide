@@ -228,6 +228,20 @@ describe("production command discovery flow", () => {
   });
 });
 
+function windowLinksFor(windows: readonly { semanticWindowId: string; currentWindow: boolean }[]) {
+  const links = windows.map((window, displayIndex) => ({
+    linkId: `window-link.${String(displayIndex + 1).padStart(32, "0")}`,
+    semanticWindowId: window.semanticWindowId,
+    displayIndex,
+  }));
+  return {
+    liveSessionId: `live-session.${"a".repeat(20)}`,
+    linkRevision: 1,
+    activeLinkId: links[windows.findIndex((window) => window.currentWindow)]!.linkId,
+    links,
+  };
+}
+
 function terminalLayout() {
   const current = {
     type: "layout" as const,
@@ -240,7 +254,7 @@ function terminalLayout() {
     paneBorderStatus: "off" as const,
     panes: [{ pane: "pane.main", left: 0, top: 0, width: 40, height: 12, active: true }],
   };
-  return { current, windows: [current] };
+  return { current, windows: [current], windowLinks: windowLinksFor([current]) };
 }
 
 function shellChromeSnapshot(frame: string): string {
@@ -282,7 +296,7 @@ function twoWindowLayout() {
     currentWindow: false,
     panes: [{ pane: "pane.logs", left: 0, top: 0, width: 40, height: 12, active: true }],
   };
-  return { current: main, windows: [main, logs] };
+  return { current: main, windows: [main, logs], windowLinks: windowLinksFor([main, logs]) };
 }
 
 function mixedAgentLayout() {
@@ -294,7 +308,7 @@ function mixedAgentLayout() {
       { pane: "pane.secondary", left: 40, top: 0, width: 40, height: 12, active: false },
     ],
   };
-  return { current, windows: [current] };
+  return { current, windows: [current], windowLinks: windowLinksFor([current]) };
 }
 
 const focusPaneId = "pane.promoted.4d2e6ef021a27f2ffc19";
@@ -318,7 +332,7 @@ function focusLayout() {
     paneBorderStatus: "top" as const,
     panes: [{ pane: focusPaneId, left: 0, top: 0, width: 132, height: 41, active: true }],
   };
-  return { current, windows: [current] };
+  return { current, windows: [current], windowLinks: windowLinksFor([current]) };
 }
 
 function semantic() {
@@ -2137,12 +2151,12 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
-  it("routes a production window-strip click to the canonical pane selector", async () => {
+  it("routes a production window-strip click to the exact canonical link selector", async () => {
     registerPaneSurface();
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const palette = createTerminalPaletteProjection(theme);
     const canonical = semantic();
-    const selected: string[] = [];
+    const selected: unknown[] = [];
     let createdWindows = 0;
     const shell = projectApplicationShell({
       width: 120,
@@ -2174,7 +2188,10 @@ describe("production ApplicationShellView", () => {
           onCreateWindow={() => {
             createdWindows += 1;
           }}
-          onSelectPane={(paneId) => selected.push(paneId)}
+          onSelectPane={() => {
+            throw new Error("window tabs must preserve native active pane");
+          }}
+          onSelectWindowLink={(target) => selected.push(target)}
           onResizePreview={() => undefined}
           onResizePane={() => undefined}
         />
@@ -2208,7 +2225,14 @@ describe("production ApplicationShellView", () => {
       shell.content.y,
       MouseButtons.LEFT,
     );
-    expect(selected).toEqual(["pane.main", "pane.logs"]);
+    expect(selected).toEqual(
+      twoWindowLayout().windowLinks.links.map((link) => ({
+        linkId: link.linkId,
+        liveSessionId: twoWindowLayout().windowLinks.liveSessionId,
+        linkRevision: 1,
+        expectedSemanticWindowId: link.semanticWindowId,
+      })),
+    );
     expect(createdWindows).toBe(1);
     setup.renderer.destroy();
   });

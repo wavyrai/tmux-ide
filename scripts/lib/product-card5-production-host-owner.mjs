@@ -1,4 +1,7 @@
-import { PaneStreamRedeemFrameSchemaZ } from "../../packages/contracts/src/pane-stream.ts";
+import {
+  PANE_STREAM_PROTOCOL_VERSION,
+  PaneStreamRedeemFrameSchemaZ,
+} from "../../packages/contracts/src/pane-stream.ts";
 import { isAbsolute, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
@@ -5212,33 +5215,36 @@ export async function issueCard5PredecessorDescriptor(page, expected) {
   ) {
     throw new TypeError("Card5 predecessor identity is malformed");
   }
-  return page.evaluate(async (exact) => {
-    const host = globalThis.tmuxIdeHost;
-    const shell = await host.daemon.fetchApplicationShell({ workspaceName: exact.workspaceName });
-    if (shell.status !== "ok") return null;
-    const resource = shell.envelope.resource?.terminalInventory?.resources?.find(
-      (entry) =>
-        entry.attachability?.status === "available" &&
-        entry.attachability?.semanticPaneId === exact.semanticPaneId,
-    );
-    const pane = resource?.attachability?.semanticPaneId;
-    if (!pane) return null;
-    const issued = await host.daemon.issuePaneStream({
-      protocolVersion: 1,
-      workspaceName: exact.workspaceName,
-      panes: [pane],
-      viewerMode: "read-only",
-    });
-    if (
-      issued.status !== "issued" ||
-      issued.descriptor.daemonInstanceId !== exact.generation ||
-      issued.descriptor.panes.length !== 1 ||
-      issued.descriptor.panes[0] !== exact.semanticPaneId
-    ) {
-      return null;
-    }
-    return issued.descriptor;
-  }, expected);
+  return page.evaluate(
+    async (exact) => {
+      const host = globalThis.tmuxIdeHost;
+      const shell = await host.daemon.fetchApplicationShell({ workspaceName: exact.workspaceName });
+      if (shell.status !== "ok") return null;
+      const resource = shell.envelope.resource?.terminalInventory?.resources?.find(
+        (entry) =>
+          entry.attachability?.status === "available" &&
+          entry.attachability?.semanticPaneId === exact.semanticPaneId,
+      );
+      const pane = resource?.attachability?.semanticPaneId;
+      if (!pane) return null;
+      const issued = await host.daemon.issuePaneStream({
+        protocolVersion: exact.paneStreamProtocolVersion,
+        workspaceName: exact.workspaceName,
+        panes: [pane],
+        viewerMode: "read-only",
+      });
+      if (
+        issued.status !== "issued" ||
+        issued.descriptor.daemonInstanceId !== exact.generation ||
+        issued.descriptor.panes.length !== 1 ||
+        issued.descriptor.panes[0] !== exact.semanticPaneId
+      ) {
+        return null;
+      }
+      return issued.descriptor;
+    },
+    { ...expected, paneStreamProtocolVersion: PANE_STREAM_PROTOCOL_VERSION },
+  );
 }
 
 export async function rejectCard5PredecessorDescriptor(page, descriptor, replacementGeneration) {
@@ -5251,7 +5257,7 @@ export async function rejectCard5PredecessorDescriptor(page, descriptor, replace
     daemonInstanceId: descriptor.daemonInstanceId,
   });
   return page.evaluate(
-    async ({ stale, replacementGeneration, redemptionFrame }) => {
+    async ({ stale, replacementGeneration, redemptionFrame, paneStreamProtocolVersion }) => {
       // Challenge the live replacement endpoint with the unchanged predecessor
       // redemption. A dead predecessor port cannot return a typed rejection.
       const evidence = globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__?.();
@@ -5279,7 +5285,7 @@ export async function rejectCard5PredecessorDescriptor(page, descriptor, replace
       // this host origin. Reserve one but never redeem its fresh authority.
       // The bounded pending ticket is retired by normal expiry/rig teardown.
       const admission = await globalThis.tmuxIdeHost.daemon.issuePaneStream({
-        protocolVersion: 1,
+        protocolVersion: paneStreamProtocolVersion,
         workspaceName: snapshot.target.workspaceName,
         panes: binding.semanticPaneIds,
         viewerMode: "read-only",
@@ -5342,6 +5348,11 @@ export async function rejectCard5PredecessorDescriptor(page, descriptor, replace
         );
       });
     },
-    { stale: descriptor, replacementGeneration, redemptionFrame },
+    {
+      stale: descriptor,
+      replacementGeneration,
+      redemptionFrame,
+      paneStreamProtocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+    },
   );
 }

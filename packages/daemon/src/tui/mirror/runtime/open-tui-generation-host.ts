@@ -316,7 +316,7 @@ function buildProductionBundle(
       requestTerminalRuntimeInventoryRefresh: () => {
         connection.transport.refreshTerminalRuntimeInventory();
       },
-      actions: productionOwnerActions(readDaemon),
+      actions: connection.ownerActions ?? productionOwnerActions(readDaemon),
     },
   });
   fastLane = createOpenTuiWorkspaceTerminalFastLane(

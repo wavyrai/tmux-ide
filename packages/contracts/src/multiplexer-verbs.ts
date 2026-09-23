@@ -120,6 +120,29 @@ function deepFreeze<Value>(value: Value): Value {
 const ENTRIES: readonly MultiplexerVerbEntry[] = [
   {
     version: MULTIPLEXER_VERB_TABLE_VERSION,
+    id: "window.link.select",
+    label: "Select window link",
+    description: "Select this link without changing the shared window's active pane.",
+    scope: "window",
+    execution: { kind: "daemon-action", action: "workspace.window.link.select" },
+    availabilityInputs: ["workspaceConnected"],
+    destructive: false,
+    tmuxKeyHint: null,
+  },
+  {
+    version: MULTIPLEXER_VERB_TABLE_VERSION,
+    id: "window.link.unlink",
+    label: "Unlink window",
+    description:
+      "Remove this session link; preserve other links and their panes. Native last-link restrictions apply.",
+    scope: "window",
+    execution: { kind: "daemon-action", action: "workspace.window.link.unlink" },
+    availabilityInputs: ["workspaceConnected"],
+    destructive: true,
+    tmuxKeyHint: null,
+  },
+  {
+    version: MULTIPLEXER_VERB_TABLE_VERSION,
     id: "session.new",
     label: "New session",
     description: "Open a project directory as a new tmux-backed workspace session.",
@@ -179,7 +202,8 @@ const ENTRIES: readonly MultiplexerVerbEntry[] = [
     version: MULTIPLEXER_VERB_TABLE_VERSION,
     id: "window.kill",
     label: "Close window",
-    description: "Kill this tmux window and every pane in it. Refused for a session's last window.",
+    description:
+      "Kill this shared tmux window and its panes in every linked session. Refused for a session's last window.",
     scope: "window",
     execution: { kind: "daemon-action", action: "workspace.window.kill" },
     availabilityInputs: ["workspaceConnected", "sessionWindowCount"],

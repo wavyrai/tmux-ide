@@ -22,6 +22,12 @@ export function sessionRuntimeInteractionFacts(
         target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
         summary: { operationKind: intent.verb, direction: intent.direction },
       };
+    case "workspace.window.link.select":
+    case "workspace.window.link.unlink":
+      return {
+        target: { kind: "window-link", target: intent.target },
+        summary: { operationKind: intent.verb },
+      };
     case "workspace.window.kill":
       return {
         target: { kind: "window", target: intent.target },
@@ -103,6 +109,9 @@ export function sessionRuntimeObservedProof(
   if (result.verb !== intent.verb)
     throw new TypeError("Mutation result verb does not match intent");
   switch (result.verb) {
+    case "workspace.window.link.select":
+    case "workspace.window.link.unlink":
+      return { operationKind: result.verb, outcome: result.outcome, target: result.target };
     case "workspace.window.split":
       return {
         operationKind: result.verb,

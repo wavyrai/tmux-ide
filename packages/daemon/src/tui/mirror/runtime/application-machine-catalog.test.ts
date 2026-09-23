@@ -1,3 +1,4 @@
+import { FleetCachedRouteSchema } from "@tmux-ide/contracts/fleet-client-state";
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
 import { createApplicationHomeAgentTransport } from "./application-home-agent-transport.ts";
@@ -375,3 +376,28 @@ it.each(["local", REMOTE])(
     }
   },
 );
+
+it("preserves server scope in cached fleet targets and accepts historical unscoped entries", () => {
+  const server = {
+    serverId: `tmux-server.${"a".repeat(32)}`,
+    generation: "11111111-1111-4111-8111-111111111111",
+  };
+  const route = {
+    routeId: "local",
+    environmentId: null,
+    generation: "root",
+    seenAt: 123,
+    sessions: [
+      {
+        id: "scoped",
+        name: "same",
+        paneCount: 1,
+        liveSessionId: "live-session.same",
+        server,
+        serverLabel: "work",
+      },
+      { id: "legacy", name: "same", paneCount: 1 },
+    ],
+  };
+  expect(FleetCachedRouteSchema.parse(route)).toEqual(route);
+});

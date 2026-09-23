@@ -13,7 +13,7 @@ const INSTANCE = "11111111-1111-4111-8111-111111111111";
 const REQUEST = "22222222-2222-4222-8222-222222222222";
 const TRANSACTION = "33333333-3333-4333-8333-333333333333";
 const OPERATION = "44444444-4444-4444-8444-444444444444";
-const TICKET = `ps1_${"a".repeat(43)}`;
+const TICKET = `ps2_${"a".repeat(43)}`;
 
 class FakeSocket implements PaneStreamClientSocket {
   readyState = 1;
@@ -51,9 +51,9 @@ class FakeSocket implements PaneStreamClientSocket {
 
 function descriptor(viewerMode: "interactive" | "read-only" = "interactive") {
   return {
-    protocolVersion: 1,
-    webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/pane-streams/redeem",
-    subprotocol: "tmux-ide-pane-stream.v1",
+    protocolVersion: 2,
+    webSocketUrl: "ws://127.0.0.1:6060/v2/terminal/pane-streams/redeem",
+    subprotocol: "tmux-ide-pane-stream.v2",
     redemptionTicket: TICKET,
     daemonInstanceId: INSTANCE,
     requestId: REQUEST,
@@ -72,7 +72,7 @@ function options(socket: FakeSocket, overrides: Record<string, unknown> = {}) {
     hostClientId: "tui:one",
     requestId: REQUEST,
     stream: {
-      protocolVersion: 1 as const,
+      protocolVersion: 2 as const,
       workspaceName: "alpha",
       panes: ["pane.editor"],
       viewerMode: "interactive" as const,
@@ -114,7 +114,7 @@ function acceptInteractiveHandshake(socket: FakeSocket): void {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
-          protocolVersion: 1,
+          protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
           panes: ["pane.editor"],
@@ -172,6 +172,18 @@ describe("semantic pane-stream runtime client", () => {
     const frame = {
       type: "layout-snapshot",
       topologyEpoch: 4,
+      windowLinks: {
+        liveSessionId: "live-session." + "a".repeat(20),
+        linkRevision: 1,
+        activeLinkId: "window-link." + "a".repeat(32),
+        links: [
+          {
+            linkId: "window-link." + "a".repeat(32),
+            semanticWindowId: "window.one",
+            displayIndex: 0,
+          },
+        ],
+      },
       layouts: [
         {
           type: "layout",
@@ -203,6 +215,64 @@ describe("semantic pane-stream runtime client", () => {
     expect(socket.closed).toMatchObject({ code: 1008, reason: "protocol-error" });
   });
 
+  it.each(["session", "revision", "membership", "index"])(
+    "rejects %s link authority changes before publication",
+    async (change) => {
+      const socket = new FakeSocket();
+      acceptInteractiveHandshake(socket);
+      const published = mock();
+      const faults = mock();
+      const client = await openPaneStreamRuntimeClient(
+        options(socket, { onLayoutSnapshot: published, onFault: faults }),
+      );
+      const firstId = `window-link.${"a".repeat(32)}`;
+      const secondId = `window-link.${"b".repeat(32)}`;
+      const windowLinks = {
+        liveSessionId: `live-session.${"a".repeat(20)}`,
+        linkRevision: 3,
+        activeLinkId: firstId,
+        links: [
+          { linkId: firstId, semanticWindowId: "window.one", displayIndex: 0 },
+          { linkId: secondId, semanticWindowId: "window.one", displayIndex: 1 },
+        ],
+      };
+      const frame = {
+        type: "layout-snapshot",
+        topologyEpoch: 1,
+        windowLinks,
+        layouts: [
+          {
+            type: "layout",
+            semanticWindowId: "window.one",
+            windowName: "work",
+            currentWindow: true,
+            cols: 80,
+            rows: 24,
+            zoomed: false,
+            paneBorderStatus: "off",
+            panes: [{ pane: "pane.editor", left: 0, top: 0, width: 80, height: 24, active: true }],
+          },
+        ],
+      };
+      socket.message(frame);
+      socket.message({
+        ...frame,
+        topologyEpoch: 2,
+        windowLinks: { ...windowLinks, activeLinkId: secondId },
+      });
+      expect(published).toHaveBeenCalledTimes(2);
+      const changed = structuredClone(windowLinks);
+      if (change === "session") changed.liveSessionId = `live-session.${"b".repeat(20)}`;
+      if (change === "revision") changed.linkRevision = 2;
+      if (change === "membership") changed.links.pop();
+      if (change === "index") changed.links[1]!.displayIndex = 9;
+      socket.message({ ...frame, topologyEpoch: 3, windowLinks: changed });
+      expect(published).toHaveBeenCalledTimes(2);
+      expect(faults).toHaveBeenCalledTimes(1);
+      client.close();
+    },
+  );
+
   it("calibrates five bounded clock probes before readiness and never exposes raw origins", async () => {
     const socket = new FakeSocket();
     const calibrations: unknown[] = [];
@@ -213,7 +283,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             connectionClientId: "tui:one",
@@ -311,7 +381,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -367,7 +437,7 @@ describe("semantic pane-stream runtime client", () => {
           queueMicrotask(() =>
             socket.message({
               type: "ready",
-              protocolVersion: 1,
+              protocolVersion: 2,
               daemonInstanceId: INSTANCE,
               requestId: REQUEST,
               panes: ["pane.editor"],
@@ -431,7 +501,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -478,7 +548,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -527,7 +597,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -578,7 +648,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           failOpenSocket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -657,7 +727,7 @@ describe("semantic pane-stream runtime client", () => {
           queueMicrotask(() =>
             socket.message({
               type: "ready",
-              protocolVersion: 1,
+              protocolVersion: 2,
               daemonInstanceId: INSTANCE,
               requestId: REQUEST,
               panes: ["pane.editor"],
@@ -706,7 +776,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           duplicateSocket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -758,7 +828,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           clockSocket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -1152,7 +1222,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -1200,7 +1270,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             connectionClientId: "tui:one",
@@ -1278,7 +1348,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -1324,7 +1394,7 @@ describe("semantic pane-stream runtime client", () => {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
-          protocolVersion: 1,
+          protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
           panes: ["pane.editor"],
@@ -1428,7 +1498,7 @@ describe("semantic pane-stream runtime client", () => {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
-          protocolVersion: 1,
+          protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
           panes: ["pane.editor"],
@@ -1498,7 +1568,7 @@ describe("semantic pane-stream runtime client", () => {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
-          protocolVersion: 1,
+          protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
           panes: ["pane.editor"],
@@ -1587,7 +1657,7 @@ describe("semantic pane-stream runtime client", () => {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
-          protocolVersion: 1,
+          protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
           panes: ["pane.editor"],
@@ -1628,7 +1698,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -1691,7 +1761,7 @@ describe("semantic pane-stream runtime client", () => {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
-          protocolVersion: 1,
+          protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
           panes: ["pane.editor"],
@@ -1733,7 +1803,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -1961,7 +2031,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -2055,7 +2125,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -2202,7 +2272,7 @@ describe("semantic pane-stream runtime client", () => {
           queueMicrotask(() =>
             socket.message({
               type: "ready",
-              protocolVersion: 1,
+              protocolVersion: 2,
               daemonInstanceId: INSTANCE,
               requestId: REQUEST,
               panes: ["pane.editor"],
@@ -2279,7 +2349,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -2340,7 +2410,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -2420,7 +2490,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -2493,7 +2563,7 @@ describe("semantic pane-stream runtime client", () => {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
-          protocolVersion: 1,
+          protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
           panes: ["pane.editor"],
@@ -2546,7 +2616,7 @@ describe("semantic pane-stream runtime client", () => {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
-          protocolVersion: 1,
+          protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
           panes: ["pane.editor"],
@@ -2567,7 +2637,7 @@ describe("semantic pane-stream runtime client", () => {
       queueMicrotask(() =>
         socket.message({
           type: "ready",
-          protocolVersion: 1,
+          protocolVersion: 2,
           daemonInstanceId: INSTANCE,
           requestId: REQUEST,
           connectionClientId: "web:foreign",
@@ -2589,7 +2659,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],
@@ -2648,7 +2718,7 @@ describe("semantic pane-stream runtime client", () => {
 
     socket.message({
       type: "error",
-      protocolVersion: 1,
+      protocolVersion: 2,
       code: "topology-changed",
       retryable: true,
     });
@@ -2669,7 +2739,7 @@ describe("semantic pane-stream runtime client", () => {
         queueMicrotask(() =>
           socket.message({
             type: "ready",
-            protocolVersion: 1,
+            protocolVersion: 2,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
             panes: ["pane.editor"],

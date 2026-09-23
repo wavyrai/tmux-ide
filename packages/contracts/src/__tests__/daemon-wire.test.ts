@@ -13,10 +13,10 @@ import {
 } from "../daemon-wire.ts";
 import { WorkspaceCatalogResourceV1SchemaZ } from "../workspace-catalog-resource.ts";
 
-const fixturePath = fileURLToPath(new URL("./fixtures/daemon-wire-v2.json", import.meta.url));
+const fixturePath = fileURLToPath(new URL("./fixtures/daemon-wire-v3.json", import.meta.url));
 
 describe("daemon wire protocol", () => {
-  it("validates the shared desktop/TypeScript v2 fixture", () => {
+  it("validates the shared desktop/TypeScript v3 fixture", () => {
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as Record<string, unknown>;
 
     expect(CanonicalDaemonInfoSchema.parse(fixture.canonical).protocolVersion).toBe(

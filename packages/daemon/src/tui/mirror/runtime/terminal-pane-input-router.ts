@@ -44,14 +44,25 @@ export class TerminalPaneInputRouter<Input> {
     if (this.#pending?.selected === true) this.#pending = null;
   }
 
-  selectPane(paneId: string, options: { readonly presentOptimistically?: boolean } = {}): void {
-    if (this.#pending?.paneId === paneId) return;
-    if (this.#pending === null && this.#canonicalPane === paneId && this.#focusedPane === paneId)
+  selectPane(
+    paneId: string,
+    options: {
+      readonly presentOptimistically?: boolean;
+      readonly selection?: () => Promise<boolean>;
+    } = {},
+  ): void {
+    if (!options.selection && this.#pending?.paneId === paneId) return;
+    if (
+      !options.selection &&
+      this.#pending === null &&
+      this.#canonicalPane === paneId &&
+      this.#focusedPane === paneId
+    )
       return;
     const token = ++this.#selectionToken;
     const presentOptimistically = options.presentOptimistically !== false;
     if (presentOptimistically) this.#setFocusedPane(paneId);
-    const settled = this.#options.select(paneId);
+    const settled = options.selection ? options.selection() : this.#options.select(paneId);
     this.#pending = { token, paneId, presentOptimistically, settled, selected: null };
     void settled.then((selected) => {
       if (this.#pending?.token !== token) return;

@@ -1,3 +1,4 @@
+import { TmuxServerIdSchemaZ } from "@tmux-ide/contracts";
 import { parseArgs } from "node:util";
 
 import { loadAppConfig, type AppConfig } from "../../../lib/app-config.ts";
@@ -6,11 +7,13 @@ import { tuiPerfMark } from "./application-performance-log.ts";
 
 export interface ApplicationArgs {
   readonly target: string | null;
+  readonly serverId?: string | null;
 }
 
 export interface ApplicationConfig {
   readonly app: AppConfig;
   readonly target: string | null;
+  readonly serverId?: string | null;
 }
 
 export interface StartApplicationRootOptions {
@@ -31,11 +34,17 @@ export const parseApplicationArgs = (argv: readonly string[]): ApplicationArgs =
     args: [...argv],
     allowPositionals: true,
     strict: false,
-    options: { target: { type: "string" } },
+    options: { target: { type: "string" }, server: { type: "string" } },
   });
   const positional = parsed.positionals.find((value) => value !== "app") ?? null;
   const target = typeof parsed.values.target === "string" ? parsed.values.target : positional;
-  return Object.freeze({ target: target && target !== "home" ? target : null });
+  return Object.freeze({
+    target: target && target !== "home" ? target : null,
+    serverId:
+      typeof parsed.values.server === "string"
+        ? TmuxServerIdSchemaZ.parse(parsed.values.server)
+        : null,
+  });
 };
 
 export async function loadApplicationConfig(args: ApplicationArgs): Promise<ApplicationConfig> {
@@ -43,5 +52,5 @@ export async function loadApplicationConfig(args: ApplicationArgs): Promise<Appl
   // Home discovery is daemon-authoritative and remains live after mount. The
   // immutable bootstrap config only carries an explicit user target.
   tuiPerfMark("config-load-end", { target: args.target });
-  return Object.freeze({ app: loadAppConfig(), target: args.target });
+  return Object.freeze({ app: loadAppConfig(), target: args.target, serverId: args.serverId });
 }

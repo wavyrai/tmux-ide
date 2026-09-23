@@ -22,6 +22,8 @@ const verb = (id: string): MultiplexerVerbEntry => {
 describe("the multiplexer verb table", () => {
   it("carries every verb the milestone declares, and no others", () => {
     expect([...MULTIPLEXER_VERB_IDS]).toEqual([
+      "window.link.select",
+      "window.link.unlink",
       "session.new",
       "session.kill",
       "session.rename",
@@ -80,7 +82,7 @@ describe("the multiplexer verb table", () => {
     const destructive = MULTIPLEXER_VERB_TABLE.filter((entry) => entry.destructive).map(
       (entry) => entry.id,
     );
-    expect(destructive).toEqual(["session.kill", "window.kill", "pane.kill"]);
+    expect(destructive).toEqual(["window.link.unlink", "session.kill", "window.kill", "pane.kill"]);
   });
 
   it("leaves every tmux key hint unfilled until the keybinding bridge exists", () => {

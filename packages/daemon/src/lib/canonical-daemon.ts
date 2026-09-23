@@ -644,6 +644,9 @@ export function writeCanonicalDaemonInfo(
     instanceId: info.instanceId,
     startedAt: info.startedAt,
     ...(info.environmentId !== undefined ? { environmentId: info.environmentId } : {}),
+    ...(info.tmuxServerProofVersion !== undefined
+      ? { tmuxServerProofVersion: info.tmuxServerProofVersion }
+      : {}),
     bindHostname: info.bindHostname,
     authToken: info.authToken,
     ...(info.provenance !== undefined ? { provenance: info.provenance } : {}),
@@ -1051,12 +1054,21 @@ export async function probeCanonicalDaemonHealth(
 export async function probeCanonicalDaemonIdentity(
   info: CanonicalDaemonInfo,
   parentSignal?: AbortSignal,
+  includeTmuxServerProof = false,
 ): Promise<DaemonIdentity | null> {
   if (!(await isCanonicalDaemonAlive(info))) return null;
   try {
-    const res = await fetch(canonicalDaemonUrl("http", info.bindHostname, info.port, "/identity"), {
-      signal: parentSignal ?? timeoutSignal(750),
-    });
+    const res = await fetch(
+      canonicalDaemonUrl(
+        "http",
+        info.bindHostname,
+        info.port,
+        includeTmuxServerProof ? "/identity?tmuxServerProof=1" : "/identity",
+      ),
+      {
+        signal: parentSignal ?? timeoutSignal(750),
+      },
+    );
     if (!res.ok) return null;
     const parsed = DaemonIdentitySchema.safeParse(await res.json());
     return parsed.success ? parsed.data : null;

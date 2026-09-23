@@ -1,6 +1,8 @@
+import { WorkspaceWindowLinkSelectResultSchemaZ } from "@tmux-ide/contracts";
+import { windowLinkForPane, windowLinkTarget } from "./application-terminal-workspace-policy.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { Accessor, Setter } from "solid-js";
-import type { SessionRuntimeTerminalInput } from "@tmux-ide/contracts";
+import type { WindowLinkTarget, SessionRuntimeTerminalInput } from "@tmux-ide/contracts";
 import {
   currentTuiPerformanceEventSink,
   type TuiTerminalInputOrigin,
@@ -79,6 +81,8 @@ export interface ApplicationTerminalInteractionController {
   adoptGeneration(snapshot: OpenTuiGenerationHostSnapshot | null): void;
   adoptLayout(snapshot: OpenTuiWorkspaceLayoutSnapshot): void;
   selectPane(paneId: string): void;
+  selectWindowLink(target: WindowLinkTarget): Promise<void>;
+  unlinkWindowLink(target: WindowLinkTarget): Promise<string>;
   sendInput(
     input: SessionRuntimeTerminalInput,
     parserOrigin?: Omit<
@@ -628,6 +632,41 @@ export function createApplicationTerminalInteractionController(
     }
   };
 
+  let linkSelection: {
+    target: WindowLinkTarget;
+    paneId: string;
+    layout: OpenTuiWorkspaceLayoutSnapshot;
+    received: boolean;
+    resolve: (selected: boolean) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  const finishLinkSelection = (selected: boolean) => {
+    const pending = linkSelection;
+    if (!pending) return;
+    linkSelection = null;
+    clearTimeout(pending.timer);
+    pending.resolve(selected);
+  };
+  const reconcileLinkSelection = (snapshot: OpenTuiWorkspaceLayoutSnapshot) => {
+    const pending = linkSelection;
+    if (!pending) return;
+    pending.layout = snapshot;
+    const observed = windowLinkTarget(snapshot, pending.target.linkId);
+    if (
+      !observed ||
+      observed.linkRevision !== pending.target.linkRevision ||
+      observed.liveSessionId !== pending.target.liveSessionId ||
+      observed.expectedSemanticWindowId !== pending.target.expectedSemanticWindowId
+    ) {
+      finishLinkSelection(false);
+      return;
+    }
+    if (!pending.received || snapshot.windowLinks?.activeLinkId !== pending.target.linkId) return;
+    finishLinkSelection(
+      snapshot.current !== null && paneForWindow(snapshot.current) === pending.paneId,
+    );
+  };
+
   const paneInput = new TerminalPaneInputRouter<{
     readonly input: SessionRuntimeTerminalInput;
     readonly parserOrigin?: Omit<
@@ -636,6 +675,7 @@ export function createApplicationTerminalInteractionController(
     >;
   }>({
     select: async (paneId) => {
+      finishLinkSelection(false);
       const expected = liveSelectionTarget();
       const selecting = pendingWindowSwitch;
       const operationId = selecting?.traceId;
@@ -649,6 +689,7 @@ export function createApplicationTerminalInteractionController(
             (failure) => {
               selectionFailure.current = failure;
             },
+            windowLinkForPane(options.layout(), paneId) ?? undefined,
           )
         : null;
       if (selecting && pendingWindowSwitch === selecting) {
@@ -833,6 +874,7 @@ export function createApplicationTerminalInteractionController(
           next.fastLane !== inputAuthorityIdentity.fastLane ||
           next.adapter !== inputAuthorityIdentity.adapter);
       if (next === null || replaced) {
+        finishLinkSelection(false);
         paneInput.invalidateSelection();
         pendingWindowSwitch = null;
         pendingWindowRename = null;
@@ -846,6 +888,7 @@ export function createApplicationTerminalInteractionController(
       inputAuthorityIdentity = next;
     },
     adoptLayout(snapshot) {
+      reconcileLinkSelection(snapshot);
       paneInput.adoptCanonicalPane(snapshot.current ? paneForWindow(snapshot.current) : null);
       const currentWindow = snapshot.current?.semanticWindowId ?? snapshot.current?.windowName;
       const currentPane = snapshot.current ? paneForWindow(snapshot.current) : null;
@@ -933,7 +976,130 @@ export function createApplicationTerminalInteractionController(
       maybeRequestWindowSwitchFrame();
       maybeRequestPaneResizeFrame();
     },
-    selectPane: (paneId) => paneInput.selectPane(paneId),
+    selectPane: (paneId) => {
+      finishLinkSelection(false);
+      paneInput.selectPane(paneId);
+    },
+    async unlinkWindowLink(target) {
+      const expected = liveSelectionTarget();
+      const observed = windowLinkTarget(options.layout(), target.linkId);
+      if (
+        !expected ||
+        !observed ||
+        observed.liveSessionId !== target.liveSessionId ||
+        observed.linkRevision !== target.linkRevision ||
+        observed.expectedSemanticWindowId !== target.expectedSemanticWindowId
+      )
+        return "Window link changed; reopen its menu";
+      try {
+        if (
+          !expected.client.ownsRuntimeAuthority?.("input") &&
+          !(await expected.client.requestAuthority("input"))
+        )
+          return "Window unlink requires input control";
+        const current = liveSelectionTarget();
+        if (
+          current?.client !== expected.client ||
+          current.daemonGeneration !== expected.daemonGeneration
+        )
+          return "Session changed; reopen the window menu";
+        await expected.client.dispatch({
+          kind: "semantic-intent",
+          intent: {
+            verb: "workspace.window.link.unlink",
+            workspaceName: expected.workspaceName,
+            target,
+          },
+        });
+        return "Window link removed";
+      } catch {
+        return "Window link could not be removed; it may be the last link or have changed";
+      }
+    },
+    async selectWindowLink(target) {
+      const expected = liveSelectionTarget();
+      const snapshot = options.layout();
+      const observed = windowLinkTarget(snapshot, target.linkId);
+      const backing = snapshot.windows.find(
+        (window) => window.semanticWindowId === target.expectedSemanticWindowId,
+      );
+      const paneId = backing && paneForWindow(backing);
+      if (
+        !expected ||
+        !paneId ||
+        !observed ||
+        observed.liveSessionId !== target.liveSessionId ||
+        observed.linkRevision !== target.linkRevision ||
+        observed.expectedSemanticWindowId !== target.expectedSemanticWindowId
+      )
+        return;
+      finishLinkSelection(false);
+      let resolve!: (selected: boolean) => void;
+      const settled = new Promise<boolean>((done) => {
+        resolve = done;
+      });
+      const pending = {
+        target,
+        paneId,
+        layout: snapshot,
+        received: false,
+        resolve,
+        timer: setTimeout(() => {
+          if (linkSelection === pending) finishLinkSelection(false);
+        }, 5_000),
+      };
+      pending.timer.unref?.();
+      linkSelection = pending;
+      // Register input ordering synchronously, before authority or command awaits.
+      paneInput.selectPane(paneId, { presentOptimistically: false, selection: () => settled });
+      try {
+        if (
+          !expected.client.ownsRuntimeAuthority?.("input") &&
+          !(await expected.client.requestAuthority("input"))
+        ) {
+          if (linkSelection === pending) finishLinkSelection(false);
+          return;
+        }
+        const current = liveSelectionTarget();
+        if (
+          linkSelection !== pending ||
+          current?.client !== expected.client ||
+          current.daemonGeneration !== expected.daemonGeneration
+        ) {
+          if (linkSelection === pending) finishLinkSelection(false);
+          return;
+        }
+        const wrapper = (await expected.client.dispatch({
+          kind: "semantic-intent",
+          intent: {
+            verb: "workspace.window.link.select",
+            workspaceName: expected.workspaceName,
+            target,
+          },
+        })) as { kind?: string; operationId?: string; result?: unknown };
+        const result = WorkspaceWindowLinkSelectResultSchemaZ.safeParse(wrapper.result);
+        if (linkSelection !== pending) return;
+        if (
+          wrapper.kind !== "semantic-intent" ||
+          !result.success ||
+          result.data.operationId !== wrapper.operationId ||
+          result.data.daemonInstanceId !== expected.daemonGeneration ||
+          result.data.workspaceName !== expected.workspaceName ||
+          result.data.target.linkId !== target.linkId ||
+          result.data.target.liveSessionId !== target.liveSessionId ||
+          result.data.target.linkRevision !== target.linkRevision ||
+          result.data.target.expectedSemanticWindowId !== target.expectedSemanticWindowId
+        ) {
+          finishLinkSelection(false);
+          return;
+        }
+        pending.received = true;
+        reconcileLinkSelection(pending.layout);
+        await settled;
+      } catch {
+        if (linkSelection === pending) finishLinkSelection(false);
+      }
+    },
     sendInput: async (input, parserOrigin) => {
       await paneInput.sendInput({ input, parserOrigin });
     },
@@ -1152,6 +1318,15 @@ export function createApplicationTerminalInteractionController(
       if (next) paneInput.selectPane(next);
     },
     cycleWindow() {
+      const topology = options.layout().windowLinks;
+      if (topology) {
+        if (topology.links.length < 2) return;
+        const current = topology.links.findIndex((link) => link.linkId === topology.activeLinkId);
+        const next = topology.links[(current + 1) % topology.links.length]!;
+        const target = windowLinkTarget(options.layout(), next.linkId);
+        if (target) void this.selectWindowLink(target);
+        return;
+      }
       const windows = options.layout().windows;
       if (windows.length < 2) return;
       const current = windows.findIndex((window) => window.currentWindow);

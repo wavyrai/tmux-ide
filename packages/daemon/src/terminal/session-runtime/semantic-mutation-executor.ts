@@ -56,7 +56,7 @@ export interface SessionSemanticMutationExecutorOptions {
       nowMicros(): number;
       record(operation: string, startedAtMicros: number, endedAtMicros: number): void;
     }>,
-  ) => SessionRuntimeIntentResult;
+  ) => SessionRuntimeIntentResult | Promise<SessionRuntimeIntentResult>;
   /** Publishes through the daemon's existing replayable interaction journal. */
   readonly publishReceipt: (receipt: SessionRuntimeReceiptInput) => InteractionReceipt;
   /** Publishes the same replayable invalidation contract as HTTP semantic actions. */
@@ -416,7 +416,7 @@ export class SessionSemanticMutationExecutor {
       // Admission can wait behind prior work. Revalidate the opaque principal
       // at the last synchronous boundary before tmux receives any effect.
       authorizeBeforeEffect?.();
-      result = this.#options.execute(operationId, intent, timing);
+      result = await this.#options.execute(operationId, intent, timing);
     } catch (cause) {
       if (needsTmuxObservation) this.#deletePending(session, operationId);
       const error = new SessionRuntimeIntentError(

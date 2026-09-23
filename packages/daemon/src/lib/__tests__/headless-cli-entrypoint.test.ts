@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -452,3 +453,106 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     await waitUntil(() => (existsSync(daemonInfoPath()) ? null : true));
   }, 15_000);
 });
+
+it("qualifies explicit named cold-start reuse and refuses a different selector", async ({
+  skip,
+}) => {
+  const socketName = `zz-c1-${randomUUID()}`;
+  const bundled = join(
+    repoRoot,
+    "packages/daemon/dist/native/tmux",
+    `${process.platform}-${process.arch}`,
+    "tmux",
+  );
+  const binary = existsSync(bundled)
+    ? bundled
+    : spawnSync("which", ["tmux"], { encoding: "utf8" }).stdout?.trim();
+  if (!binary) {
+    skip();
+    return;
+  }
+  for (const key of Object.keys(env)) {
+    if (
+      key.startsWith("TMUX_IDE_") ||
+      key === "TMUX" ||
+      key === "TMUX_PANE" ||
+      key === "TMUX_TMPDIR"
+    )
+      delete env[key];
+  }
+  Object.assign(env, {
+    TMUX_IDE_RUNTIME_MODE: "test",
+    TMUX_IDE_HOME: join(tempDir, "state"),
+    TMUX_IDE_REGISTRY_DIR: join(tempDir, "state"),
+    TMUX_IDE_DAEMON_INFO_DIR: join(tempDir, "state"),
+    TMUX_IDE_SETTINGS_DIR: join(tempDir, "state"),
+    TMUX_IDE_CLEANUP_TOKEN: randomUUID(),
+    TMUX_IDE_TMUX_SOCKET_NAME: socketName,
+    TMUX_IDE_TMUX_BIN: binary,
+  });
+  const inspectServer = () =>
+    spawnSync(binary, ["-L", socketName, "-N", "list-sessions"], {
+      env: { TERM: "xterm-256color" },
+      stdio: "ignore",
+    }).status;
+  try {
+    expect(inspectServer()).not.toBe(0);
+    const owner = spawnCli(["--headless", "--json"]);
+    const info = await waitForDaemonInfo((candidate) => candidate.pid === owner.pid);
+    expect(info.tmuxServerProofVersion).toBe(1);
+    const identity = DaemonIdentitySchema.parse(
+      await (await fetch(`http://127.0.0.1:${info.port}/identity?tmuxServerProof=1`)).json(),
+    );
+    expect(identity.tmuxServerProof).toMatchObject({ version: 1, kind: "unbound-name" });
+    expect(inspectServer()).not.toBe(0);
+    const same = await waitForExit(spawnCli(["--headless", "--json"]));
+    expect(same.code, same.stderr).toBe(0);
+    expect(JSON.parse(same.stdout.trim())).toMatchObject({
+      status: "already-running",
+      pid: owner.pid,
+    });
+    const started = spawnSync(
+      binary,
+      ["-L", socketName, "-f", "/dev/null", "new-session", "-d", "-s", "zz-c1", "exec sleep 60"],
+      {
+        env: { TERM: "xterm-256color" },
+        encoding: "utf8",
+      },
+    );
+    expect(started.status, started.stderr).toBe(0);
+    const liveIdentity = DaemonIdentitySchema.parse(
+      await (await fetch(`http://127.0.0.1:${info.port}/identity?tmuxServerProof=1`)).json(),
+    );
+    expect(liveIdentity.tmuxServerProof).toMatchObject({ version: 1, kind: "live" });
+    const socketPath = spawnSync(
+      binary,
+      ["-L", socketName, "-N", "display-message", "-p", "#{socket_path}"],
+      {
+        env: { TERM: "xterm-256color" },
+        encoding: "utf8",
+      },
+    ).stdout.trim();
+    delete env.TMUX_IDE_TMUX_SOCKET_NAME;
+    env.TMUX_IDE_TMUX_SOCKET_PATH = socketPath;
+    const alias = await waitForExit(spawnCli(["--headless", "--json"]));
+    expect(alias.code, alias.stderr).toBe(0);
+    expect(JSON.parse(alias.stdout.trim())).toMatchObject({
+      status: "already-running",
+      pid: owner.pid,
+    });
+    delete env.TMUX_IDE_TMUX_SOCKET_PATH;
+    env.TMUX_IDE_TMUX_SOCKET_NAME = `${socketName}-other`;
+    const other = await waitForExit(spawnCli(["--headless", "--json"]));
+    expect(other.code).not.toBe(0);
+    expect(other.stderr + other.stdout).toMatch(/different tmux server|tmux-server-mismatch/u);
+    expect((await fetch(`http://127.0.0.1:${info.port}/healthz`)).ok).toBe(true);
+    expect(JSON.parse(readFileSync(daemonInfoPath(), "utf8")).pid).toBe(owner.pid);
+    expect(inspectServer()).toBe(0);
+  } finally {
+    // Only this fixture's unpredictable socket; no user's server can be selected.
+    spawnSync(binary, ["-L", socketName, "kill-server"], {
+      env: { TERM: "xterm-256color" },
+      stdio: "ignore",
+    });
+  }
+}, 20000);

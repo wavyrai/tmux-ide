@@ -4,7 +4,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resolveRuntimeNamespace, runtimeNamespaceEnvironment } from "./runtime-namespace.ts";
+import {
+  resolveRuntimeNamespace,
+  resolveTmuxServerIntent,
+  runtimeNamespaceEnvironment,
+} from "./runtime-namespace.ts";
 
 const userHome = "/Users/runtime-test";
 const cwd = "/checkout/tmux-ide";
@@ -196,4 +200,49 @@ describe("RuntimeNamespace", () => {
       TMUX_IDE_CLEANUP_TOKEN: "reference:cleanup:42",
     });
   });
+});
+
+describe("tmux server intent", () => {
+  const intent = (env: NodeJS.ProcessEnv) => resolveTmuxServerIntent({ env, userHome, cwd });
+  it("distinguishes context-free reuse from explicit default", () => {
+    expect(intent({})).toBeNull();
+    expect(intent({ TMUX_IDE_TMUX_SOCKET_NAME: "default" })).toEqual({
+      source: "explicit",
+      selector: { kind: "name", name: "default" },
+    });
+  });
+  it("honors explicit path and name over inherited tmux", () => {
+    const TMUX = "/tmp/foreign.sock,123,0";
+    expect(intent({ TMUX, TMUX_IDE_TMUX_SOCKET_NAME: "chosen" })).toEqual({
+      source: "explicit",
+      selector: { kind: "name", name: "chosen" },
+    });
+    expect(intent({ TMUX, TMUX_IDE_TMUX_SOCKET_PATH: "/tmp/chosen.sock" })).toEqual({
+      source: "explicit",
+      selector: { kind: "path", path: "/tmp/chosen.sock" },
+    });
+    expect(intent({ TMUX })).toEqual({
+      source: "current",
+      selector: { kind: "path", path: "/tmp/foreign.sock" },
+    });
+  });
+  it("rejects conflicting explicit selectors instead of ambient fallback", () => {
+    expect(() =>
+      intent({
+        TMUX: "/tmp/foreign.sock,123,0",
+        TMUX_IDE_TMUX_SOCKET_NAME: "chosen",
+        TMUX_IDE_TMUX_SOCKET_PATH: "/tmp/chosen.sock",
+      }),
+    ).toThrow("configure only one");
+  });
+});
+
+it("does not promote implicit default to explicit selection in child namespace environment", () => {
+  const namespace = resolveRuntimeNamespace({ env: {}, userHome, cwd });
+  expect(runtimeNamespaceEnvironment(namespace)).not.toHaveProperty("TMUX_IDE_TMUX_SOCKET_NAME");
+  expect(
+    runtimeNamespaceEnvironment(
+      resolveRuntimeNamespace({ env: { TMUX_IDE_TMUX_SOCKET_NAME: "default" }, userHome, cwd }),
+    ),
+  ).toHaveProperty("TMUX_IDE_TMUX_SOCKET_NAME", "default");
 });

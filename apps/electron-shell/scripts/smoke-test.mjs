@@ -53,8 +53,8 @@ const renderer = selectRenderer(process.argv.slice(2));
 // Wire contract literals. Mirrored from @tmux-ide/contracts (pane-stream.ts);
 // an .mjs build script cannot import the package's TypeScript sources, and the
 // smoke test must speak the same wire the renderer speaks.
-const PANE_STREAM_PROTOCOL_VERSION = 1;
-const PANE_STREAM_ISSUE_PATH = "/api/v1/terminal/pane-streams/issue";
+const PANE_STREAM_PROTOCOL_VERSION = 2;
+const PANE_STREAM_ISSUE_PATH = "/api/v2/terminal/pane-streams/issue";
 const RENDERER_ORIGIN = "tmux-ide://app";
 // This direct wire rung stands in for one trusted Electron document. Keep its
 // host identity stable across issue and WebSocket redemption, exactly as the

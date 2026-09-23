@@ -173,6 +173,11 @@ export class WorkspaceRegistry {
     return this.workspaces.some((w) => w.name === name);
   }
 
+  /** Whether this entry is discovered live state, never durable user intent. */
+  isVolatile(name: string): boolean {
+    return this.volatileNames.has(name);
+  }
+
   add(input: AddWorkspaceInput): Workspace {
     if (this.has(input.name)) {
       throw new WorkspaceAlreadyExistsError(input.name);

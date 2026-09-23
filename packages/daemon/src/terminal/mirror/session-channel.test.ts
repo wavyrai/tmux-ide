@@ -12,7 +12,11 @@ import {
   FIXTURE,
   type FixtureState,
 } from "./__tests__/simulated-channel.ts";
-import type { MirrorLayoutEvent, MirrorPaneEvent } from "./events.ts";
+import type {
+  MirrorLayoutAuthoritySnapshot,
+  MirrorLayoutEvent,
+  MirrorPaneEvent,
+} from "./events.ts";
 import { PaneFeed } from "./pane-feed.ts";
 import { SessionChannel } from "./session-channel.ts";
 import type { MirrorFlowRecoveryObservation } from "./session-channel.ts";
@@ -44,6 +48,7 @@ interface Rig {
 
 async function startedRig(
   options: {
+    executeWindowLinkGuard?: (args: string[]) => Promise<{ status: number | null; stdout: string }>;
     onNativeClientActivity?: () => void;
     onOutputObserved?: (
       semanticPaneId: string,
@@ -68,6 +73,7 @@ async function startedRig(
   let sim: SimulatedChannel | null = null;
   const channel = new SessionChannel({
     session: FIXTURE.session,
+    executeWindowLinkGuard: options.executeWindowLinkGuard,
     createIo: (handlers) => {
       const autoReply = fixtureAutoReply(state);
       sim = new SimulatedChannel(handlers, (command) => {
@@ -391,7 +397,7 @@ describe("identity join", () => {
         const baseReply = fixtureAutoReply(state);
         sim = new SimulatedChannel(handlers, (command) =>
           command.startsWith('display-message -p "#{qa:session_name}')
-            ? [Buffer.from(`"${session}"\t$1`, "utf8").toString("latin1")]
+            ? [Buffer.from(`"${session}"\t$1\t1234\t1700000000`, "utf8").toString("latin1")]
             : baseReply(command),
         );
         return sim;
@@ -2808,9 +2814,23 @@ describe("layout push", () => {
     paneLayouts.length = 0;
     globalLayouts.length = 0;
 
-    rig.sim.feedLines("%session-window-changed $0 @2");
+    rig.state.windowRows = rig.state.windowRows.map((row, index) => {
+      const parts = row.split("\t");
+      parts[3] = index === 1 ? "1" : "0";
+      return parts.join("\t");
+    });
+    rig.state.truthRows = rig.state.truthRows.map((row) => {
+      const parts = row.split("\t");
+      parts[3] = parts[2] === "@2" ? "1" : "0";
+      return parts.join("\t");
+    });
+    rig.sim.feedLines("%session-window-changed $1 @2");
+    rig.pendingSyncs.shift()!();
+    await vi.waitFor(() => expect(globalLayouts.length).toBeGreaterThan(0));
 
-    expect(paneLayouts.map((event) => event.semanticWindowId)).toEqual(["window.test.one"]);
+    expect(new Set(paneLayouts.map((event) => event.semanticWindowId))).toEqual(
+      new Set(["window.test.one"]),
+    );
     const byWindow = new Map(
       globalLayouts.map((event) => [event.semanticWindowId, event.currentWindow]),
     );
@@ -3123,6 +3143,156 @@ describe("native capture semantic ownership", () => {
 });
 
 describe("native bootstrap capability fallback", () => {
+  it.each(
+    (["unsupported", "transient"] as const).flatMap((capability) =>
+      (["reseed", "close", "freeze", "dispose"] as const).map((operation) => ({
+        capability,
+        operation,
+      })),
+    ),
+  )(
+    "releases a $capability replacement capture on $operation without losing FIFO replies",
+    async ({ capability, operation }) => {
+      const rig = await startedRig({ continueReply: "manual" });
+      // Keep every list acknowledgement in wire order, including marker cleanup.
+      rig.sim.commandListInline = (command, count, resultIndex, onReply) => {
+        rig.sim.core.pushCommandList(count, resultIndex, onReply);
+        rig.sim.written.push(command);
+      };
+      const captureCommands = () =>
+        rig.sim.written.filter((command) => command.includes("capture-pane"));
+      const alpha = collect();
+      const beta = collect();
+      const replyCapture = (lines: string[], ok = true) => {
+        rig.sim.reply([]);
+        rig.sim.reply(lines, ok);
+        rig.sim.reply(["0 0 100 50"]);
+      };
+      const replyCleanup = () => {
+        rig.sim.reply([]);
+        rig.sim.reply([]);
+      };
+      try {
+        const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent, undefined, true);
+        rig.channel.subscribePane("pane.beta", beta.onEvent);
+        advanceRecoveryClock(rig, 4000);
+        replyCapture(
+          [
+            capability === "unsupported"
+              ? "command capture-pane: unknown flag -R"
+              : "temporary failure",
+          ],
+          false,
+        );
+        replyCleanup();
+        expect(captureCommands()).toHaveLength(2);
+        expect(captureCommands()[1]).toContain("-t %1");
+        expect(
+          rig.pendingRecoveries.filter((task) => !task.cancelled).map((task) => task.dueAtMs),
+        ).toEqual([5000]);
+        if (operation === "dispose") await rig.channel.dispose();
+        else handle[operation]();
+        expect(captureCommands()).toHaveLength(operation === "dispose" ? 2 : 3);
+        if (operation !== "dispose") expect(captureCommands()[2]).toContain("-t %2");
+        // The retired replacement still owns its FIFO slots, but cannot publish.
+        replyCapture(capability === "unsupported" ? ["stale alpha"] : nativeBootstrapLines());
+        replyCleanup();
+        expect(bytesOf(alpha.events)).toEqual([]);
+        expect(bytesOf(beta.events)).toEqual([]);
+        if (operation !== "dispose") {
+          // The sibling receives a fresh full budget from admission, not from enqueue.
+          expect(
+            rig.pendingRecoveries.filter((task) => !task.cancelled).map((task) => task.dueAtMs),
+          ).toEqual([9000]);
+          replyCapture(["quiet sibling"]);
+          expect(bytesOf(beta.events)).toEqual(["quiet sibling"]);
+        }
+        if (operation === "reseed") {
+          expect(captureCommands()).toHaveLength(4);
+          replyCapture(capability === "unsupported" ? ["fresh alpha"] : nativeBootstrapLines());
+          expect(alpha.events.filter((event) => event.type === "seed")).toHaveLength(1);
+          if (capability === "unsupported") expect(bytesOf(alpha.events)).toEqual(["fresh alpha"]);
+          else
+            expect(alpha.events.find((event) => event.type === "seed")).toHaveProperty(
+              "native.version",
+              2,
+            );
+        } else if (operation === "freeze") {
+          rig.sim.reply([]); // requested pause, ordered after the sibling recipe
+        }
+        expect(rig.sim.core.pendingCount).toBe(0);
+        advanceRecoveryClock(rig, 20000);
+        expect([...alpha.events, ...beta.events].filter((event) => event.type === "fault")).toEqual(
+          [],
+        );
+        expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it.each(["unsupported", "transient"] as const)(
+    "keeps the newest same-pane capture when repeatedly cancelling a %s replacement",
+    async (capability) => {
+      const rig = await startedRig();
+      rig.sim.commandListInline = (command, count, resultIndex, onReply) => {
+        rig.sim.core.pushCommandList(count, resultIndex, onReply);
+        rig.sim.written.push(command);
+      };
+      const alpha = collect();
+      const replyCapture = (lines: string[], ok = true) => {
+        rig.sim.reply([]);
+        rig.sim.reply(lines, ok);
+        rig.sim.reply(["0 0 100 50"]);
+      };
+      const replyCleanup = () => {
+        rig.sim.reply([]);
+        rig.sim.reply([]);
+      };
+      try {
+        const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent, undefined, true);
+        replyCapture(
+          [
+            capability === "unsupported"
+              ? "command capture-pane: unknown flag -R"
+              : "temporary failure",
+          ],
+          false,
+        );
+        replyCleanup();
+        handle.reseed();
+        handle.reseed();
+        expect(rig.sim.written.filter((command) => command.includes("capture-pane"))).toHaveLength(
+          4,
+        );
+        // Simulate callbacks already queued when their timers were cancelled.
+        for (const timer of rig.pendingRecoveries.filter((task) => task.cancelled))
+          timer.callback();
+        for (let retired = 0; retired < 2; retired++) {
+          replyCapture(capability === "unsupported" ? ["retired"] : nativeBootstrapLines());
+          replyCleanup();
+          expect(alpha.events).toEqual([]);
+        }
+        replyCapture(capability === "unsupported" ? ["newest"] : nativeBootstrapLines());
+        expect(alpha.events.filter((event) => event.type === "seed")).toHaveLength(1);
+        if (capability === "unsupported") expect(bytesOf(alpha.events)).toEqual(["newest"]);
+        else
+          expect(alpha.events.find((event) => event.type === "seed")).toHaveProperty(
+            "native.version",
+            2,
+          );
+        expect(rig.sim.written.filter((command) => command.startsWith("if-shell -t"))).toHaveLength(
+          3,
+        );
+        expect(rig.sim.core.pendingCount).toBe(0);
+        expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
   it("reserves both cleanup replies before the next native capture and cursor", async () => {
     const rig = await startedRig();
     try {
@@ -3459,3 +3629,115 @@ function nativeBootstrapLines(): string[] {
     ),
   ];
 }
+
+describe("native window link projection", () => {
+  it("shares backing layouts and panes across duplicate links and observes same-backing activation", async () => {
+    const rig = await startedRig();
+    try {
+      rig.state.descriptorRows[2] = rig.state.descriptorRows[2]!.replace(
+        "%3\t\t",
+        "%3\tpane.mirror.gen1\t",
+      ).replace("\t\tzz-sim\t1\t2", "\twindow.test.two\tzz-sim\t1\t2");
+      const first = rig.state.windowRows[0]!.split("\t");
+      first[3] = "0";
+      rig.state.windowRows.push(first.join("\t"));
+      rig.state.descriptorRows = rig.state.descriptorRows.map((row) => row.replace(/\t2$/, "\t3"));
+      rig.state.descriptorRows.push(
+        ...rig.state.descriptorRows.slice(0, 2).map((row) => {
+          const p = row.split("\t");
+          p[15] = "0";
+          p[6] = "2";
+          return p.join("\t");
+        }),
+      );
+      const snapshots: MirrorLayoutAuthoritySnapshot[] = [];
+      const handle = await rig.channel.subscribeAuthoritativeLayout(
+        () => {},
+        undefined,
+        (snapshot) => snapshots.push(snapshot),
+      );
+      const initial = snapshots.at(-1)!;
+      expect(initial.layouts).toHaveLength(2);
+      expect(initial.windowLinks.links).toHaveLength(3);
+      expect(rig.channel.describe().panes).toHaveLength(3);
+      const stamps = rig.sim.written.filter((command) =>
+        command.startsWith("set-option -w"),
+      ).length;
+      const linked = initial.windowLinks.links.filter(
+        (link) => link.semanticWindowId === "window.test.one",
+      );
+      expect(linked).toHaveLength(2);
+      await expect(
+        rig.channel.executeWindowLinkAction({ action: "select", paneId: "pane.alpha" }),
+      ).rejects.toMatchObject({ reason: "window_link_ambiguous" });
+      rig.state.windowRows = rig.state.windowRows.map((row, index) => {
+        const p = row.split("\t");
+        p[3] = index === 2 ? "1" : "0";
+        return p.join("\t");
+      });
+      rig.sim.feedLines("%session-window-changed $1 @1");
+      rig.pendingSyncs.shift()!();
+      await vi.waitFor(() =>
+        expect(snapshots.at(-1)!.windowLinks.activeLinkId).toBe(linked[1]!.linkId),
+      );
+      expect(snapshots.at(-1)!.windowLinks.linkRevision).toBe(initial.windowLinks.linkRevision);
+      expect(snapshots.at(-1)!.layouts).toHaveLength(2);
+      expect(rig.sim.written.filter((command) => command.startsWith("set-option -w"))).toHaveLength(
+        stamps,
+      );
+      handle.close();
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+});
+
+it("bounds stalled post-mutation reconciliation and never revives revoked link handles", async () => {
+  const execute = vi.fn(async () => ({ status: 0, stdout: "link-guard.ok" }));
+  const rig = await startedRig({ executeWindowLinkGuard: execute });
+  try {
+    rig.state.descriptorRows[2] = rig.state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.mirror.gen1\t",
+    ).replace("\t\tzz-sim\t1\t2", "\twindow.test.two\tzz-sim\t1\t2");
+    const snapshots: MirrorLayoutAuthoritySnapshot[] = [];
+    await rig.channel.subscribeAuthoritativeLayout(
+      () => {},
+      undefined,
+      (snapshot) => snapshots.push(snapshot),
+    );
+    const initial = snapshots.at(-1)!.windowLinks;
+    const link = initial.links[0]!;
+    const target = {
+      liveSessionId: initial.liveSessionId,
+      linkRevision: initial.linkRevision,
+      linkId: link.linkId,
+      expectedSemanticWindowId: link.semanticWindowId,
+    };
+    let release!: (lines: string[]) => void;
+    vi.spyOn(rig.sim, "request").mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    vi.useFakeTimers();
+    const result = rig.channel.executeWindowLinkAction({ action: "select", target });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await result).toEqual({ outcome: "applied", windowLinks: null });
+    expect(execute).toHaveBeenCalledTimes(1);
+    await expect(
+      rig.channel.executeWindowLinkAction({ action: "select", target }),
+    ).rejects.toMatchObject({ reason: "window_link_stale" });
+    release(rig.state.truthRows);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(snapshots.at(-1)!.windowLinks.links[0]!.linkId).not.toBe(link.linkId);
+    await expect(
+      rig.channel.executeWindowLinkAction({ action: "select", target }),
+    ).rejects.toMatchObject({ reason: "window_link_stale" });
+    expect(execute).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+    await rig.channel.dispose();
+  }
+});

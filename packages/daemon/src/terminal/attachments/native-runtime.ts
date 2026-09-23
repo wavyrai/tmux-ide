@@ -1,3 +1,7 @@
+import {
+  fenceNativeTmuxCommand,
+  type NativeTmuxServerIdentity,
+} from "../../lib/tmux-server-generation-runner.ts";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { execFile } from "node:child_process";
 import type { createNamedSocketFence } from "../../lib/tmux-named-socket-fence.ts";
@@ -119,6 +123,7 @@ export function getNativeTerminalAttachmentRuntimeConstructionCount(): number {
 }
 
 export interface NativeTerminalAttachmentTmuxAuthority {
+  readonly nativeServerIdentity?: NativeTmuxServerIdentity;
   /** Shared with the canonical daemon's named command runners. */
   readonly namedSocketFence?: ReturnType<typeof createNamedSocketFence>;
   readonly executablePath: string;
@@ -163,6 +168,7 @@ export interface NativeTerminalInventoryReadRunner {
 }
 
 interface CanonicalTmuxAuthority {
+  readonly nativeServerIdentity?: NativeTmuxServerIdentity;
   readonly namedSocketFence: ReturnType<typeof createNamedSocketFence> | null;
   readonly executablePath: string;
   readonly socketSelector: DaemonTmuxSocketSelector;
@@ -208,6 +214,7 @@ function canonicalAuthority(input: NativeTerminalAttachmentTmuxAuthority): Canon
       socketArgv = ["-L", input.socketSelector.name];
     }
     return Object.freeze({
+      nativeServerIdentity: input.nativeServerIdentity,
       namedSocketFence: socketSelector.kind === "name" ? (input.namedSocketFence ?? null) : null,
       executablePath,
       socketSelector: Object.freeze(socketSelector),
@@ -288,9 +295,12 @@ function pinnedRunner(
     run(command: TmuxArgvPlan): TmuxAttachmentCommandResult {
       if (command.executable !== "tmux") return { status: "failed" };
       try {
+        const guarded = authority.nativeServerIdentity
+          ? fenceNativeTmuxCommand(command.argv, authority.nativeServerIdentity)
+          : null;
         const stdout = execute(
           authority.executablePath,
-          [...currentSocketArgv(authority), ...command.argv],
+          [...currentSocketArgv(authority), ...(guarded?.argv ?? command.argv)],
           {
             cwd: authority.trustedCwd,
             env: authority.environment,
@@ -298,7 +308,7 @@ function pinnedRunner(
             timeoutMs: TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS,
           },
         );
-        const value = String(stdout);
+        const value = guarded ? guarded.verify(String(stdout)) : String(stdout);
         if (authority.namedSocketFence && !authority.namedSocketFence.isPinned())
           authority.namedSocketFence.resolve();
         if (value.includes("\0") || Buffer.byteLength(value, "utf8") > MAX_TMUX_OUTPUT_BYTES) {
@@ -368,13 +378,16 @@ function pinnedReadRunner(
     async run(command: TmuxArgvPlan, signal?: AbortSignal): Promise<TmuxAttachmentCommandResult> {
       if (command.executable !== "tmux" || signal?.aborted) return { status: "failed" };
       try {
+        const guarded = authority.nativeServerIdentity
+          ? fenceNativeTmuxCommand(command.argv, authority.nativeServerIdentity)
+          : null;
         const stdout = await execute(
           authority.executablePath,
           [
             ...(authority.namedSocketFence
               ? await authority.namedSocketFence.resolveAsync(signal)
               : currentSocketArgv(authority)),
-            ...command.argv,
+            ...(guarded?.argv ?? command.argv),
           ],
           {
             cwd: authority.trustedCwd,
@@ -384,7 +397,7 @@ function pinnedReadRunner(
             ...(signal ? { signal } : {}),
           },
         );
-        const value = String(stdout);
+        const value = guarded ? guarded.verify(String(stdout)) : String(stdout);
         if (authority.namedSocketFence && !authority.namedSocketFence.isPinned())
           await authority.namedSocketFence.resolveAsync(signal);
         if (value.includes("\0") || Buffer.byteLength(value, "utf8") > MAX_TMUX_OUTPUT_BYTES)
@@ -690,6 +703,7 @@ const PANE_FORMAT = [
   // window reports the same value; the catalog requires it before a multi-pane
   // window is attachable.
   "#{@tmux_ide_window_id}",
+  "#{window_index}",
   PANE_WIRE_SENTINEL,
 ].join(WIRE_SEPARATOR);
 
@@ -742,12 +756,13 @@ type LivePaneFacts = Omit<NativeTerminalInventoryPaneSnapshot, "workspaceName">;
 function parsePaneSnapshot(
   stdout: string,
   expected: LiveSessionIdentity,
-): readonly LivePaneFacts[] {
+): { panes: readonly LivePaneFacts[]; linksProof: string } {
   const panes: LivePaneFacts[] = [];
-  const runtimeIds = new Set<string>();
+  const runtimeIds = new Map<string, { facts: LivePaneFacts; proof: string }>();
+  const links = new Map<number, { windowId: string; active: boolean; panes: Set<string> }>();
   for (const line of strictLines(stdout, MAX_DISCOVERED_PANES)) {
     const fields = line.split(WIRE_SEPARATOR);
-    if (fields.length !== 19 || fields[18] !== PANE_WIRE_SENTINEL) {
+    if (fields.length !== 20 || fields[19] !== PANE_WIRE_SENTINEL) {
       throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
     }
     const [
@@ -769,7 +784,9 @@ function parsePaneSnapshot(
       missionStamp,
       dir,
       windowStampValue,
+      windowIndexValue,
     ] = fields as [
+      string,
       string,
       string,
       string,
@@ -795,16 +812,14 @@ function parsePaneSnapshot(
       sessionId !== expected.id ||
       !RUNTIME_WINDOW_ID.test(windowId) ||
       !RUNTIME_PANE_ID.test(runtimePaneId) ||
-      runtimeIds.has(runtimePaneId) ||
       !["0", "1"].includes(windowActive) ||
       !["0", "1"].includes(paneActive)
     ) {
       throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
     }
-    runtimeIds.add(runtimePaneId);
     const nullable = (value: string): string | null =>
       boundedWireValue(value, 256).length === 0 ? null : value;
-    panes.push({
+    const facts: LivePaneFacts = {
       sessionName,
       sessionId,
       windowId,
@@ -826,22 +841,58 @@ function parsePaneSnapshot(
       // registered workspace remains the trusted application-shell root, so
       // keep discovery available and carry the empty presentation value.
       dir: boundedWireValue(dir, 4_096),
-    });
+    };
+    const windowIndex = nonnegativeInteger(windowIndexValue);
+    const link = links.get(windowIndex) ?? {
+      windowId,
+      active: windowActive === "1",
+      panes: new Set<string>(),
+    };
+    if (
+      link.windowId !== windowId ||
+      link.active !== (windowActive === "1") ||
+      link.panes.has(runtimePaneId)
+    ) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    link.panes.add(runtimePaneId);
+    links.set(windowIndex, link);
+    // Only link index and current-link state may differ for a shared backing.
+    const proof = JSON.stringify(fields.filter((_value, index) => index !== 10 && index !== 18));
+    const previous = runtimeIds.get(runtimePaneId);
+    if (previous) {
+      if (previous.proof !== proof)
+        throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+      if (facts.active && !previous.facts.active) {
+        const merged = { ...previous.facts, active: true };
+        panes[panes.indexOf(previous.facts)] = merged;
+        previous.facts = merged;
+      }
+    } else {
+      runtimeIds.set(runtimePaneId, { facts, proof });
+      panes.push(facts);
+    }
   }
   const counts = new Map<string, number>();
   for (const pane of panes) counts.set(pane.windowId, (counts.get(pane.windowId) ?? 0) + 1);
-  const windows = new Set(panes.map((pane) => pane.windowId));
   if (
     panes.some(
       (pane) =>
         counts.get(pane.windowId) !== pane.windowPaneCount ||
-        windows.size !== pane.sessionWindowCount,
+        links.size !== pane.sessionWindowCount,
     ) ||
+    [...links.values()].some((link) => link.panes.size !== counts.get(link.windowId)) ||
+    [...links.values()].filter((link) => link.active).length > 1 ||
     panes.filter((pane) => pane.active).length > 1
   ) {
     throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
   }
-  return panes;
+  return {
+    panes,
+    linksProof: JSON.stringify(
+      [...links].map(([index, link]) => [index, link.windowId, [...link.panes]]),
+    ),
+  };
 }
 
 /**
@@ -872,10 +923,12 @@ export async function discoverWorkspaceRegistryTerminalInventory(
     const argv = ["list-panes", "-s", "-t", identity.id, "-F", PANE_FORMAT] as const;
     const before = await requiredTmuxResult(runner, argv, signal);
     if (before === null) continue;
-    const panes = parsePaneSnapshot(before, identity);
+    const first = parsePaneSnapshot(before, identity);
+    const panes = first.panes;
     const after = await requiredTmuxResult(runner, argv, signal);
     if (after === null) throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
-    const latest = parsePaneSnapshot(after, identity);
+    const second = parsePaneSnapshot(after, identity);
+    const latest = second.panes;
     // Foreground commands, titles, focus and paths can change while the same
     // pane remains valid. Fence binding/topology only, then publish one complete
     // latest snapshot rather than mixing presentation values across reads.
@@ -891,6 +944,7 @@ export async function discoverWorkspaceRegistryTerminalInventory(
       "index",
     ] as const;
     if (
+      first.linksProof !== second.linksProof ||
       panes.length !== latest.length ||
       panes.some((pane, index) => proofKeys.some((key) => pane[key] !== latest[index]![key]))
     ) {

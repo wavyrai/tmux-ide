@@ -220,6 +220,19 @@ function compactHistoryPatchDelivery(
   return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes), next };
 }
 
+function topology(windows: string[], active = 0) {
+  return {
+    liveSessionId: "live-session." + "a".repeat(20),
+    linkRevision: 1,
+    activeLinkId: "window-link." + String(active + 1).padStart(32, "0"),
+    links: windows.map((semanticWindowId, displayIndex) => ({
+      semanticWindowId,
+      displayIndex,
+      linkId: "window-link." + String(displayIndex + 1).padStart(32, "0"),
+    })),
+  };
+}
+
 function rig(
   coherent = true,
   corruptBeforeCoherent = false,
@@ -269,23 +282,30 @@ function rig(
       });
     }
     if (coherent) {
-      options.onLayout?.({
-        type: "layout",
-        semanticWindowId: "window.main",
-        windowName: "main",
-        currentWindow: true,
-        cols: 120,
-        rows: 40,
-        zoomed: false,
-        paneBorderStatus: "off",
-        panes: options.stream.panes.map((pane, index) => ({
-          pane,
-          left: index * 60,
-          top: 0,
-          width: 60,
-          height: 40,
-          active: index === 0,
-        })),
+      options.onLayoutSnapshot?.({
+        type: "layout-snapshot",
+        topologyEpoch: 1,
+        windowLinks: topology(["window.main"]),
+        layouts: [
+          {
+            type: "layout",
+            semanticWindowId: "window.main",
+            windowName: "main",
+            currentWindow: true,
+            cols: 120,
+            rows: 40,
+            zoomed: false,
+            paneBorderStatus: "off",
+            panes: options.stream.panes.map((pane, index) => ({
+              pane,
+              left: index * 60,
+              top: 0,
+              width: 60,
+              height: 40,
+              active: index === 0,
+            })),
+          },
+        ],
       });
       for (const [index, pane] of options.stream.panes.entries()) {
         const seed = seedDelivery(
@@ -321,6 +341,38 @@ function rig(
 }
 
 describe("OpenTUI WorkspaceClient runtime port", () => {
+  it("publishes a same-backing link switch without replacing retained layout or subscriptions", async () => {
+    const test = rig();
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const original = port.getLayout()!;
+    const links = topology(["window.main", "window.main"]);
+    const listener = vi.fn();
+    port.onLayout(listener);
+    test.options().onLayoutSnapshot?.({
+      type: "layout-snapshot",
+      topologyEpoch: 2,
+      layouts: [original],
+      windowLinks: links,
+    });
+    const first = port.getLayout();
+    test.options().onLayoutSnapshot?.({
+      type: "layout-snapshot",
+      topologyEpoch: 3,
+      layouts: [{ ...original }],
+      windowLinks: { ...links, activeLinkId: links.links[1]!.linkId },
+    });
+    expect(port.getLayout()).toBe(first);
+    expect(port.getLayoutSnapshot().windows).toHaveLength(1);
+    expect(port.getLayoutSnapshot().windowLinks?.activeLinkId).toBe(links.links[1]!.linkId);
+    expect(listener).toHaveBeenCalledTimes(3);
+    expect(test.client.close).not.toHaveBeenCalled();
+    expect(test.openPaneStream).toHaveBeenCalledTimes(1);
+    await port.close();
+  });
+
   it.each([false, true])(
     "keeps lifecycle progress independent from compact profiling (detail: %s)",
     async (performanceDiagnostics) => {
@@ -383,6 +435,16 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       windowName: "next",
       currentWindow: true,
       panes: [main.panes[1]!],
+    });
+    expect(seen.at(-1)).toEqual({ current: "window.main", currentCount: 1 });
+    test.options().onLayoutSnapshot?.({
+      type: "layout-snapshot",
+      topologyEpoch: 2,
+      windowLinks: topology(["window.main", "window.next"], 1),
+      layouts: [
+        { ...main, currentWindow: false, panes: [main.panes[0]!] },
+        { ...main, semanticWindowId: "window.next", currentWindow: true, panes: [main.panes[1]!] },
+      ],
     });
     expect(seen.at(-1)).toEqual({ current: "window.next", currentCount: 1 });
     expect(seen.every(({ current, currentCount }) => current !== null && currentCount === 1)).toBe(
@@ -483,6 +545,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
         test.options().onLayoutSnapshot?.({
           type: "layout-snapshot",
           topologyEpoch: 1,
+          windowLinks: topology(["window.visible", "window.hidden"]),
           layouts: [layout(paneIds.slice(0, 7), true), layout(paneIds.slice(7), false)],
         });
         const deliverSeed = (index: number) => {
@@ -555,6 +618,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
         test.options().onLayoutSnapshot?.({
           type: "layout-snapshot",
           topologyEpoch: 1,
+          windowLinks: topology(["window.0", "window.1"]),
           layouts: [PANE_A, PANE_B].map((pane, index) => ({
             type: "layout" as const,
             semanticWindowId: `window.${index}`,
@@ -804,10 +868,23 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       paneBorderStatus: "top",
       panes: [{ pane: PANE_B, left: 0, top: 0, width: 80, height: 24, active: true }],
     });
+    // Unknown backing deltas cannot add tabs; membership arrives atomically.
+    expect(port.getLayoutSnapshot().windows).toHaveLength(1);
+    const main = port.getLayout()!;
+    test.options().onLayoutSnapshot?.({
+      type: "layout-snapshot",
+      topologyEpoch: 2,
+      windowLinks: topology(["window.main", "window.logs"]),
+      layouts: [
+        { ...main, panes: [main.panes[0]!] },
+        { ...main, semanticWindowId: "window.logs", currentWindow: false, panes: [main.panes[1]!] },
+      ],
+    });
     expect(port.getLayoutSnapshot()).toMatchObject({
       current: { semanticWindowId: "window.main" },
       windows: [{ semanticWindowId: "window.main" }, { semanticWindowId: "window.logs" }],
     });
+    await port.close();
   });
 
   it("maps only an exact pane-stream geometry rejection to the shared conflict result", async () => {
@@ -903,18 +980,34 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     expect(layoutDiagnostics).toHaveLength(3);
 
     const resized = port.getLayoutSnapshot().current!;
-    test.options().onLayout?.({ ...resized, currentWindow: false, panes: [resized.panes[0]!] });
-    expect(published).toHaveLength(3);
-    test.options().onLayout?.({
+    const next = {
       ...resized,
       semanticWindowId: "window.next",
       windowName: "next",
       currentWindow: true,
       panes: [resized.panes[1]!],
+    };
+    const previous = { ...resized, currentWindow: false, panes: [resized.panes[0]!] };
+    test.options().onLayout?.(previous);
+    test.options().onLayout?.(next);
+    expect(published).toHaveLength(3);
+    test.options().onLayoutSnapshot?.({
+      type: "layout-snapshot",
+      topologyEpoch: 2,
+      windowLinks: topology(["window.main", "window.next"], 1),
+      layouts: [previous, next],
     });
     expect(published).toHaveLength(4);
     expect(published.at(-1)?.current?.semanticWindowId).toBe("window.next");
-    test.options().onLayout?.({ ...resized, currentWindow: true, panes: [resized.panes[0]!] });
+    test.options().onLayoutSnapshot?.({
+      type: "layout-snapshot",
+      topologyEpoch: 3,
+      windowLinks: topology(["window.main", "window.next"], 0),
+      layouts: [
+        { ...previous, currentWindow: true },
+        { ...next, currentWindow: false },
+      ],
+    });
     expect(published).toHaveLength(5);
     expect(layoutDiagnostics).toHaveLength(5);
     expect(published.at(-1)?.current?.semanticWindowId).toBe("window.main");
@@ -1458,11 +1551,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       const retainedMemory = lane === "retained-memory";
       const result = spawnSync(
         tsx,
-        [
-          ...(retainedMemory ? ["--expose-gc"] : []),
-          fixture,
-          retainedMemory ? "workload-memory" : "workload",
-        ],
+        ["--expose-gc", fixture, retainedMemory ? "workload-memory" : "workload"],
         {
           encoding: "utf8",
           timeout: 90_000,
@@ -1474,6 +1563,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
         workloadMaxBytes: number;
         workloadCycles: number;
         explicitGcAvailable: boolean;
+        explicitCollectionsDuringWorkload: number;
         maxHeartbeatDelayMs: number;
         peakRssBytes: number;
         peakHeapBytes: number;
@@ -1503,7 +1593,8 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
         }[];
       };
       expect(measurement.workloadCycles).toBe(24);
-      expect(measurement.explicitGcAvailable).toBe(retainedMemory);
+      expect(measurement.explicitGcAvailable).toBe(true);
+      expect(measurement.explicitCollectionsDuringWorkload).toBe(retainedMemory ? 24 : 0);
       expect(measurement.workloadMinBytes).toBeGreaterThan(512 * 1_024);
       expect(measurement.workloadMaxBytes).toBeLessThan(1_024 * 1_024);
       // Keep the same narrow host-scheduling allowance as the compact delivery
@@ -1514,7 +1605,8 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       // Natural-GC heapUsed includes dead nursery allocations, so its short
       // slope measures collection timing rather than retained objects. Keep the
       // original slope budgets in an identical isolated post-GC workload; the
-      // natural-GC lane still proves latency, peak memory and bounded growth.
+      // natural-GC lane still proves latency and peak memory. Both lanes
+      // compare post-GC endpoints outside the latency window for bounded growth.
       if (retainedMemory) {
         expect(measurement.rssSlopeBytesPerSample).toBeLessThanOrEqual(262_144);
         expect(measurement.heapSlopeBytesPerSample).toBeLessThanOrEqual(131_072);
@@ -2267,4 +2359,17 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     ).rejects.toThrow("does not match");
     expect(test.openPaneStream).not.toHaveBeenCalled();
   });
+});
+
+it("rejects a replacement session before granting the selected terminal input", async () => {
+  const test = rig();
+  await expect(
+    connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: { ...test.routing, liveSessionId: `live-session.${"b".repeat(20)}` },
+    }),
+  ).rejects.toThrow("Selected live session was replaced");
+  expect(test.client.requestAuthority).not.toHaveBeenCalled();
+  expect(test.client.sendTerminalInput).not.toHaveBeenCalled();
+  expect(test.client.close).toHaveBeenCalled();
 });

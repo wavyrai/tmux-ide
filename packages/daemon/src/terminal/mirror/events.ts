@@ -1,3 +1,4 @@
+import type { WindowLinkTopology } from "@tmux-ide/contracts";
 import type { NativeGridCapture } from "./native-grid-capture.ts";
 /**
  * Public event contract of the daemon MirrorService (m43 card 1).
@@ -131,6 +132,7 @@ export interface MirrorLayoutAuthoritySnapshot {
   readonly session: string;
   readonly runtimeSessionId: string;
   readonly topologyEpoch: number;
+  readonly windowLinks: WindowLinkTopology;
   readonly layouts: readonly MirrorLayoutEvent[];
 }
 

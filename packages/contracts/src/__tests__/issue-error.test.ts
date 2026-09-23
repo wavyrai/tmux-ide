@@ -65,7 +65,7 @@ describe("the shared issue-error vocabulary", () => {
     for (const reason of [
       "Authorization was Bearer owner-secret",
       `The redemptionTicket was ta1_${"A".repeat(43)}`,
-      `The redemptionTicket was ps1_${"A".repeat(43)}`,
+      `The redemptionTicket was ps2_${"A".repeat(43)}`,
       "ownerToken=secret",
     ]) {
       for (const schema of [TerminalAttachmentIssueErrorSchemaZ, PaneStreamIssueErrorSchemaZ]) {

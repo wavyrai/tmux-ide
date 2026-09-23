@@ -9,6 +9,7 @@ import {
   PaneStreamLeaseRequestSchemaZ,
   PaneStreamServerFrameSchemaZ,
   type PaneStreamIssueDescriptor,
+  type WindowLinkTopology,
   type PaneStreamLeaseRequest,
   type PaneStreamServerFrame,
   type TerminalDeliveryAck,
@@ -45,7 +46,7 @@ import type { GuiPerformanceTelemetrySink } from "../runtime/gui-performance-tel
  * the pane-stream wire contract:
  *  - the injected issue call is the only privileged seam (Electron main owns
  *    credentials); its result stays untrusted until validated here;
- *  - the `ps1_` ticket bounds credential DELIVERY only — once the redemption
+ *  - the `ps2_` ticket bounds credential DELIVERY only — once the redemption
  *    frame is on the wire the daemon owns expiry, and a bounded local ceiling
  *    merely catches a daemon that never answers;
  *  - every inbound frame is bounded then schema-parsed; any violation retires
@@ -243,6 +244,7 @@ export interface PaneStreamLayoutEvent {
 }
 
 export interface PaneStreamLayoutSnapshotEvent {
+  readonly windowLinks: WindowLinkTopology;
   readonly topologyEpoch: number;
   readonly layouts: readonly PaneStreamLayoutEvent[];
 }
@@ -1327,6 +1329,7 @@ class PaneStreamSession {
       try {
         this.#listeners.onLayoutSnapshot?.({
           topologyEpoch: frame.topologyEpoch,
+          windowLinks: frame.windowLinks,
           layouts: frame.layouts,
         });
       } catch {

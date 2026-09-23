@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { ControlModeOwnershipRegistry } from "../packages/daemon/src/terminal/mirror/control-mode-ownership.ts";
 import { ScriptedChannelDriver } from "../packages/daemon/src/terminal/mirror/__tests__/scripted-channel.ts";
+import { FIXTURE } from "../packages/daemon/src/terminal/mirror/__tests__/simulated-channel.ts";
 import { SessionRuntimeRegistry } from "../packages/daemon/src/terminal/session-runtime/registry.ts";
 
 const generation = "77777777-7777-4777-8777-777777777777";
@@ -40,13 +41,14 @@ const registry = new SessionRuntimeRegistry({
 });
 
 const clients = Array.from({ length: clientCount }, (_, index) =>
-  registry.connect("reference-memory", "opentui", `reference:${index}`),
+  registry.connect(FIXTURE.session, "opentui", `reference:${index}`),
 );
 const latestEnvelopes: Array<TerminalDeliveryEnvelope | null> = clients.map(() => null);
 const messageCounts = clients.map(() => 0);
 const openings = clients.map((client, index) =>
   client.openTerminalDelivery(
     `delivery:${index}`,
+    `request:${index}`,
     "pane.alpha",
     { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
     (message) => {
@@ -105,10 +107,22 @@ try {
     connections.forEach((connection, index) =>
       connection.ack(ack(requiredEnvelope(latestEnvelopes[index]))),
     );
-    await drivers[0]!.settleUntil(
-      () => registry.qualificationSnapshot().sessions[0]?.delivery.inFlight === 0,
-      `reference memory ack ${cycle}`,
-    );
+    await drivers[0]!.settleUntil(() => {
+      const session = registry.qualificationSnapshot().sessions[0];
+      const canonical = session?.convergence.panes[0];
+      return (
+        session?.delivery.inFlight === 0 &&
+        canonical !== undefined &&
+        session.convergence.clients.length === clientCount &&
+        session.convergence.clients.every(
+          (client) =>
+            client.baselineRevision === canonical.revision &&
+            client.baselineHash === canonical.stateHash &&
+            client.inFlightRevision === null &&
+            client.queueDepth === 0,
+        )
+      );
+    }, `reference memory ack ${cycle}`);
     if (cycle < warmupCycles) continue;
     globalThis.gc();
     await new Promise<void>((resolve) => setImmediate(resolve));

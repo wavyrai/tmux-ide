@@ -17,7 +17,7 @@ export function ApplicationMachineOverlays(props: {
           open={true}
           attentionOnly={props.machines.attentionOnly()}
           rows={[]}
-          commands={props.machines.paletteCommands()}
+          commands={props.machines.paletteCommands().filter(props.machines.switcherFilter)}
           onActivate={(c) => {
             if (typeof c === "object") void props.machines.openPalette(c, "keyboard");
           }}

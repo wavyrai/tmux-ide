@@ -558,7 +558,30 @@ describe("Web WorkspaceClient compositor bridge", () => {
     });
     bridge.publishLayoutSnapshot({
       topologyEpoch: 1,
-      layouts: [],
+      windowLinks: {
+        liveSessionId: "live-session.0123456789abcdefabcd",
+        linkRevision: 1,
+        activeLinkId: `window-link.${"a".repeat(32)}`,
+        links: [
+          {
+            linkId: `window-link.${"a".repeat(32)}`,
+            semanticWindowId: "window.b",
+            displayIndex: 0,
+          },
+        ],
+      },
+      layouts: [
+        {
+          semanticWindowId: "window.b",
+          windowName: "window-b",
+          currentWindow: true,
+          cols: 140,
+          rows: 46,
+          zoomed: false,
+          paneBorderStatus: "top",
+          panes: [{ pane: "pane.a", left: 0, top: 0, width: 140, height: 46, active: true }],
+        },
+      ],
     });
     await Promise.resolve();
     expect(firstPane).not.toHaveBeenCalled();

@@ -246,12 +246,12 @@ describe("production OpenTUI v2 data path", () => {
     );
     expect(applicationRootSource).toContain("createApplicationMachineNavigation({");
     const reset = applicationRootSource.slice(
-      applicationRootSource.indexOf("resetWorkspace(machineId, expectedLiveSessionId) {"),
+      applicationRootSource.indexOf("resetWorkspace(machineId, expectedLiveSessionId, server) {"),
       applicationRootSource.indexOf("cancelOpen: () => {"),
     );
     expect(reset.indexOf("sessionOwner?.dispose()")).toBeGreaterThanOrEqual(0);
     expect(reset.indexOf("sessionOwner?.dispose()")).toBeLessThan(
-      reset.indexOf("sessionOwner = makeSessionOwner(machineId, expectedLiveSessionId)"),
+      reset.indexOf("sessionOwner = makeSessionOwner(machineId, expectedLiveSessionId, server)"),
     );
     expect(applicationRootSource).toContain("if (ownedEpoch !== sessionOwnerEpoch) return;");
   });
@@ -380,6 +380,14 @@ describe("production OpenTUI v2 data path", () => {
     expect(productionGraph.sourceByFile.get(contrastPath)).not.toMatch(
       /node:|\b(?:process|fetch|setInterval|setTimeout|requestRender|createWorkspaceClient|createTerminalFastLane)\b/u,
     );
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(153);
+    // Explicit server startup adds one routing adapter. It reuses the existing
+    // WorkspaceClient and renderer authority; no additional terminal lane is created.
+    const serverConnectionPath =
+      "packages/daemon/src/tui/mirror/application-shell-server-connection.ts";
+    expect(authorityDataPathFiles).toContain(serverConnectionPath);
+    expect(productionGraph.sourceByFile.get(serverConnectionPath)).not.toMatch(
+      /\b(?:createWorkspaceClient|createTerminalFastLane|setInterval|requestRender)\s*\(/u,
+    );
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(154);
   });
 });

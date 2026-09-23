@@ -15,6 +15,8 @@ export type ReadNativeBacking = (
 /** One bounded read on entering scrollback. No captures are issued by wheel movement. */
 export async function readNativeBacking(options: {
   baseUrl: string;
+  /** Trusted host-selected owner route; credentials and proof remain unchanged. */
+  resourcePath?: string;
   ownerToken: string;
   workspaceName: string;
   paneId: string;
@@ -22,7 +24,8 @@ export async function readNativeBacking(options: {
   signal: AbortSignal;
 }): Promise<NativeGridCapture | null> {
   const url = new URL(
-    `/api/project/${encodeURIComponent(options.workspaceName)}/terminal-native-backing/${encodeURIComponent(options.paneId)}`,
+    options.resourcePath ??
+      `/api/project/${encodeURIComponent(options.workspaceName)}/terminal-native-backing/${encodeURIComponent(options.paneId)}`,
     options.baseUrl,
   );
   for (const [key, value] of Object.entries(options.expected))

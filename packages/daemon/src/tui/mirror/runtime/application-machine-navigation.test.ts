@@ -85,6 +85,13 @@ vi.mock("./application-fleet-preferences.ts", () => ({
 import { createApplicationMachineNavigation } from "./application-machine-navigation.ts";
 let dispose: () => void;
 const options = () => ({
+  attachedTarget: vi.fn(
+    (): {
+      liveSessionId: string;
+      daemonGeneration: string;
+      server?: import("@tmux-ide/contracts").TmuxServerScope;
+    } | null => null,
+  ),
   resetWorkspace: vi.fn(() => {
     state.trace.push("reset");
   }),
@@ -101,12 +108,30 @@ const options = () => ({
   setSurface: vi.fn(),
   setNote: vi.fn(),
 });
+function publishSessions(rows = ["same"]) {
+  state.listener?.({
+    selectedMachineId: state.selected,
+    groups: [...state.handles.values()].map((handle) => ({
+      id: handle.id,
+      label: handle.id,
+      state: handle.endpoint().state,
+      sessions: rows.map((name) => ({
+        id: `${handle.id}:${name}`,
+        name,
+        paneCount: 1,
+        disabled: false,
+      })),
+      note: null,
+    })),
+  });
+}
 function navigation() {
   const callbacks = options();
   const owner = createRoot((cleanup) => {
     dispose = cleanup;
     return createApplicationMachineNavigation(callbacks);
   });
+  publishSessions();
   return { owner, callbacks };
 }
 
@@ -199,6 +224,7 @@ describe("machine navigation ownership", () => {
     expect(callbacks.openSession).not.toHaveBeenCalled();
     expect(state.catalogStart).toHaveBeenCalledOnce();
     ready(true);
+    publishSessions(["remote-target"]);
     await Promise.resolve();
     await Promise.resolve();
     expect(callbacks.openSession).toHaveBeenCalledExactlyOnceWith("remote-target", "keyboard");
@@ -395,4 +421,139 @@ it("reselects exact same-machine incarnation when sidebar leaves a pinned tab fo
   callbacks.resetWorkspace.mockClear();
   owner.sidebar.onOpen("local", "recreated", "mouse");
   expect(callbacks.resetWorkspace).not.toHaveBeenCalled();
+});
+
+it("routes duplicate names by exact server session and rejects replaced tabs/history/palette", async () => {
+  const { owner, callbacks } = navigation();
+  const serverA = {
+    serverId: `tmux-server.${"a".repeat(32)}`,
+    generation: "11111111-1111-4111-8111-111111111111",
+  };
+  const serverB = {
+    serverId: `tmux-server.${"b".repeat(32)}`,
+    generation: "22222222-2222-4222-8222-222222222222",
+  };
+  const row = (server: typeof serverA) => ({
+    id: JSON.stringify([server, "live-session.same"]),
+    server,
+    serverLabel: "same label",
+    liveSessionId: "live-session.same",
+    name: "same",
+    paneCount: 1,
+    disabled: false,
+  });
+  const a = row(serverA),
+    b = row(serverB);
+  const publish = (rows: (typeof a)[]) =>
+    state.listener?.({
+      selectedMachineId: "local",
+      groups: [{ id: "local", label: "Local", state: "ready", sessions: rows, note: null }],
+    });
+  publish([a, b]);
+  owner.sidebar.onOpen("local", "same", "mouse");
+  expect(callbacks.openSession).not.toHaveBeenCalled();
+  owner.sidebar.onOpen("local", "same", "mouse", b.id);
+  await Promise.resolve();
+  expect(callbacks.resetWorkspace).toHaveBeenLastCalledWith("local", "live-session.same", serverB);
+  expect(callbacks.openSession).toHaveBeenCalledOnce();
+  const staleTab = owner.sidebar.tabs!()[0]!;
+  const stalePalette = owner
+    .paletteCommands()
+    .find(
+      (entry) =>
+        typeof entry === "object" &&
+        entry.kind === "open-session" &&
+        entry.fleet?.server?.serverId === serverB.serverId,
+    )!;
+  publish([a, row({ ...serverB, generation: "33333333-3333-4333-8333-333333333333" })]);
+  callbacks.openSession.mockClear();
+  owner.sidebar.onOpenTab!(staleTab.key);
+  expect(owner.sidebar.tabs!()[0]!.available).toBe(false);
+  if (typeof stalePalette === "object") await owner.openPalette(stalePalette, "keyboard");
+  expect(callbacks.openSession).not.toHaveBeenCalled();
+  expect(callbacks.setNote).toHaveBeenLastCalledWith("That fleet target changed. Select it again.");
+});
+
+it("offers empty registered servers as scoped creation targets and filters the selected server", () => {
+  const { owner } = navigation();
+  const server = {
+    serverId: `tmux-server.${"b".repeat(32)}`,
+    generation: "22222222-2222-4222-8222-222222222222",
+  };
+  state.listener?.({
+    selectedMachineId: "local",
+    groups: [
+      {
+        id: "local",
+        label: "Local",
+        state: "ready",
+        sessions: [],
+        servers: [{ ...server, state: "online", label: "empty server" }],
+        note: null,
+      },
+    ],
+  });
+  owner.sidebar.onSelectServer?.("local", server);
+  expect(owner.switching()).toBe(true);
+  const commands = owner.paletteCommands().filter(owner.switcherFilter);
+  expect(commands).toHaveLength(1);
+  expect(commands[0]).toMatchObject({
+    kind: "open-machine",
+    fleet: { server, liveSessionId: "", disabled: false },
+  });
+});
+
+it("retains the exact attached default session for agent jumps but resets a different owner with colliding live IDs", () => {
+  const daemonGeneration = state.handles.get("local")!.read().instanceId;
+  const server = { serverId: `tmux-server.${"a".repeat(32)}`, generation: daemonGeneration };
+  const row = {
+    id: "agent",
+    machineId: "local",
+    disabled: false,
+    key: "key",
+    sessionKey: "session",
+    sessionName: "same",
+    liveSessionId: "live-session.same",
+    daemonInstanceId: daemonGeneration,
+    agentId: "agent",
+    paneId: "pane",
+    name: "Codex",
+    harness: "codex",
+    activity: "running" as const,
+    attention: false,
+    projectName: "project",
+  };
+  state.agentGroups = [{ machineId: "local", agents: [row] }];
+  const { owner, callbacks } = navigation();
+  const session = {
+    id: "exact",
+    name: "same",
+    liveSessionId: row.liveSessionId,
+    server,
+    paneCount: 1,
+    disabled: false,
+  };
+  state.listener?.({
+    selectedMachineId: "local",
+    groups: [{ id: "local", label: "Local", state: "ready", sessions: [session] }],
+  });
+  callbacks.attachedTarget.mockReturnValue({ liveSessionId: row.liveSessionId, daemonGeneration });
+  owner.sidebar.onOpenAgent?.("local", "same", "pane", "mouse");
+  expect(callbacks.resetWorkspace).not.toHaveBeenCalled();
+  expect(callbacks.openAgent).toHaveBeenCalledWith(row, "mouse");
+  callbacks.attachedTarget.mockReturnValue({
+    liveSessionId: row.liveSessionId,
+    daemonGeneration,
+    server: { ...server, serverId: `tmux-server.${"b".repeat(32)}` },
+  });
+  owner.sidebar.onOpenAgent?.("local", "same", "pane", "mouse");
+  expect(callbacks.resetWorkspace).toHaveBeenCalledWith("local", row.liveSessionId, server);
+  callbacks.resetWorkspace.mockClear();
+  callbacks.attachedTarget.mockReturnValue({
+    liveSessionId: "live-session.replacement",
+    daemonGeneration,
+    server,
+  });
+  owner.sidebar.onOpenAgent?.("local", "same", "pane", "mouse");
+  expect(callbacks.resetWorkspace).toHaveBeenCalledOnce();
 });

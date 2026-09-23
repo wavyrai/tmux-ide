@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  WindowLinkTopology,
   CanonicalTerminalReplicaUpdate,
   InteractionReceipt,
   PaneStreamServerFrame,
@@ -142,6 +143,8 @@ export const OPEN_TUI_HOST_CLIENT_ID = `opentui:${process.pid}`;
 export type OpenTuiWorkspaceLayout = Extract<PaneStreamServerFrame, { type: "layout" }>;
 
 export interface OpenTuiWorkspaceLayoutSnapshot {
+  /** Live link authority; absent until an atomic stream snapshot arrives. */
+  readonly windowLinks?: WindowLinkTopology | null;
   readonly current: OpenTuiWorkspaceLayout | null;
   readonly windows: readonly OpenTuiWorkspaceLayout[];
 }
@@ -233,6 +236,7 @@ function layoutKey(frame: OpenTuiWorkspaceLayout): string | null {
 function layoutSnapshot(
   windows: ReadonlyMap<string, OpenTuiWorkspaceLayout>,
   currentWindowKey: string | null = null,
+  windowLinks: WindowLinkTopology | null = null,
 ): OpenTuiWorkspaceLayoutSnapshot {
   const selectedKey =
     currentWindowKey ??
@@ -245,7 +249,10 @@ function layoutSnapshot(
         : freezeLayout({ ...frame, currentWindow: key === selectedKey }),
     ),
   );
+  const links = windowLinks?.links.map((link) => Object.freeze({ ...link }));
+  if (links) Object.freeze(links);
   return Object.freeze({
+    windowLinks: windowLinks && links ? Object.freeze({ ...windowLinks, links }) : null,
     current: frames.find((frame) => frame.currentWindow) ?? null,
     windows: frames,
   });
@@ -286,6 +293,7 @@ function layoutSnapshotsSemanticallyEqual(
   right: OpenTuiWorkspaceLayoutSnapshot,
 ): boolean {
   return (
+    JSON.stringify(left.windowLinks ?? null) === JSON.stringify(right.windowLinks ?? null) &&
     left.windows.length === right.windows.length &&
     left.windows.every((window, index) => {
       const candidate = right.windows[index];
@@ -972,6 +980,8 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       coherentSettled ||
       closed ||
       !physicalReady ||
+      (routing.liveSessionId !== undefined &&
+        latestLayoutSnapshot.windowLinks?.liveSessionId !== routing.liveSessionId) ||
       !layoutExactlyCoversPanes(latestLayoutSnapshot, panes) ||
       !latestLayoutSnapshot.current?.panes.every(
         ({ pane }) => typeof pane === "string" && canonicalSeedPanes.has(pane),
@@ -1147,7 +1157,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
         : {}),
       signal: options.signal,
       stream: {
-        protocolVersion: 1,
+        protocolVersion: 2,
         workspaceName: inventory.workspaceName,
         panes: [...panes],
         viewerMode: "interactive",
@@ -1268,12 +1278,23 @@ export async function connectOpenTuiWorkspaceRuntimePort(
           });
           return;
         }
+        if (
+          latestLayoutSnapshot.windowLinks &&
+          !latestLayoutSnapshot.windowLinks.links.some(
+            (link) => link.semanticWindowId === retained.semanticWindowId,
+          )
+        )
+          return;
         layoutsByWindow.set(key, retained);
         // tmux reports a switch as incumbent=false followed by target=true.
         // Retain the incumbent through that pair and publish one unique current
         // window only when the positive target frame arrives.
-        if (retained.currentWindow) currentWindowKey = key;
-        const candidate = layoutSnapshot(layoutsByWindow, currentWindowKey);
+        if (!latestLayoutSnapshot.windowLinks && retained.currentWindow) currentWindowKey = key;
+        const candidate = layoutSnapshot(
+          layoutsByWindow,
+          currentWindowKey,
+          latestLayoutSnapshot.windowLinks ?? null,
+        );
         if (!layoutExactlyCoversPanes(candidate, panes)) {
           if (
             lastRejectedLayoutSnapshot &&
@@ -1308,6 +1329,13 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       },
       onLayoutSnapshot: (snapshot) => {
         if (closed) return;
+        if (
+          routing.liveSessionId !== undefined &&
+          snapshot.windowLinks.liveSessionId !== routing.liveSessionId
+        )
+          return failConnection(
+            new Error("Selected live session was replaced before terminal activation"),
+          );
         const replacement = new Map<string, ReturnType<typeof freezeLayout>>();
         let replacementCurrent: string | null = null;
         for (const frame of snapshot.layouts) {
@@ -1315,14 +1343,18 @@ export async function connectOpenTuiWorkspaceRuntimePort(
           const key = layoutKey(retained);
           if (key === null || replacement.has(key))
             return failConnection(new Error("invalid layout snapshot"));
-          replacement.set(key, retained);
+          const previous = layoutsByWindow.get(key);
+          replacement.set(
+            key,
+            previous && layoutFrameSemanticallyEqual(previous, retained) ? previous : retained,
+          );
           if (retained.currentWindow) {
             if (replacementCurrent !== null)
               return failConnection(new Error("invalid layout snapshot current window"));
             replacementCurrent = key;
           }
         }
-        const candidate = layoutSnapshot(replacement, replacementCurrent);
+        const candidate = layoutSnapshot(replacement, replacementCurrent, snapshot.windowLinks);
         if (!layoutExactlyCoversPanes(candidate, panes))
           return failConnection(new Error("layout snapshot does not cover terminal inventory"));
         layoutsByWindow.clear();
@@ -1331,6 +1363,11 @@ export async function connectOpenTuiWorkspaceRuntimePort(
         lastRejectedLayoutSnapshot = null;
         if (layoutSnapshotsSemanticallyEqual(candidate, latestLayoutSnapshot)) return;
         latestLayoutSnapshot = candidate;
+        options.onDiagnostic?.("layout", {
+          windows: candidate.windows.length,
+          current: candidate.current !== null,
+          links: candidate.windowLinks?.links.length ?? 0,
+        });
         settleCoherent();
         for (const listener of [...layoutListeners]) {
           try {
@@ -1485,7 +1522,11 @@ export async function connectOpenTuiWorkspaceRuntimePort(
     submitIntent: async (operationId, intent) => {
       // Structural commands can affect hidden panes. Do not defer user intent
       // until a different topology may be current; fail closed during seeding.
-      if (closed || [...endpoints.values()].some((endpoint) => !endpoint.inputReady))
+      if (
+        closed ||
+        !latestLayoutSnapshot.windowLinks ||
+        [...endpoints.values()].some((endpoint) => !endpoint.inputReady)
+      )
         throw new Error("Terminal inventory is still receiving canonical state");
       return (await opened.submitIntent(operationId, intent)) ?? undefined;
     },

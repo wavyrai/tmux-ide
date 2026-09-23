@@ -1,3 +1,4 @@
+import { PANE_STREAM_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +35,7 @@ const client = await openPaneStreamRuntimeClient({
   hostClientId: `reference-bun:${process.pid}`,
   requestId: randomUUID(),
   stream: {
-    protocolVersion: 1,
+    protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
     workspaceName,
     panes: [semanticPaneId],
     viewerMode: "read-only",

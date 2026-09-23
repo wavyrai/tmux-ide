@@ -1,9 +1,12 @@
-import type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
+import type { CanonicalDaemonInfo, TmuxServerScope } from "@tmux-ide/contracts";
 import {
   openPaneStreamRuntimeClient,
+  connectIssuedPaneStreamRuntimeClient,
   type OpenPaneStreamClientOptions,
   type PaneStreamRuntimeClient,
 } from "@tmux-ide/daemon-client/pane-stream-client";
+
+import { createTmuxServerClient } from "@tmux-ide/daemon-client/tmux-server-client";
 
 import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
 import {
@@ -34,6 +37,7 @@ export type OpenTuiVerifiedPaneStreamOptions = Omit<
  * downstream render/runtime code can use the route but cannot inspect its token.
  */
 export interface OpenTuiVerifiedRoutingContext extends OpenTuiVerifiedRoutingIdentity {
+  readonly liveSessionId?: string;
   readNativeBacking?: ReadNativeBacking;
   assertCurrent(expected: OpenTuiVerifiedRoutingIdentity): void;
   openPaneStream(
@@ -49,6 +53,8 @@ export function createOpenTuiVerifiedRoutingContext(
   sessionName: string,
   openClient: typeof openPaneStreamRuntimeClient = openPaneStreamRuntimeClient,
   readEndpoint: () => ApplicationDaemonEndpoint = applicationDaemonEndpoint,
+  server?: TmuxServerScope,
+  liveSessionId?: string,
 ): OpenTuiVerifiedRoutingContext | null {
   if (!daemon.authToken) return null;
   const ownerToken = daemon.authToken;
@@ -69,7 +75,7 @@ export function createOpenTuiVerifiedRoutingContext(
   const localSocketOrigin = new URL(baseUrl);
   localSocketOrigin.protocol = "ws:";
   const identity = Object.freeze({
-    daemonInstanceId: daemon.instanceId,
+    daemonInstanceId: server?.generation ?? daemon.instanceId,
     workspaceName,
     sessionName,
   });
@@ -96,6 +102,7 @@ export function createOpenTuiVerifiedRoutingContext(
   };
   return Object.freeze({
     ...identity,
+    ...(liveSessionId ? { liveSessionId } : {}),
     assertCurrent,
     readNativeBacking: async (
       paneId: string,
@@ -105,6 +112,11 @@ export function createOpenTuiVerifiedRoutingContext(
       assertCurrent({ ...identity, daemonInstanceId: expected.generation });
       const result = await readNativeBacking({
         baseUrl,
+        ...(server
+          ? {
+              resourcePath: `/api/v1/tmux-servers/${server.serverId}/${server.generation}/native-backing/${encodeURIComponent(workspaceName)}/${encodeURIComponent(paneId)}`,
+            }
+          : {}),
         ownerToken,
         workspaceName,
         paneId,
@@ -122,7 +134,33 @@ export function createOpenTuiVerifiedRoutingContext(
       if (options.stream.workspaceName !== identity.workspaceName) {
         throw new Error("Pane-stream request escaped its verified workspace route");
       }
-      return await openClient({
+      const openScoped: typeof openClient = async (scopedOptions) => {
+        const client = createTmuxServerClient(
+          {
+            baseUrl,
+            ownerToken,
+            hostClientId: scopedOptions.hostClientId,
+            origin: scopedOptions.origin,
+            fetch: scopedOptions.fetch,
+          },
+          server!,
+        );
+        try {
+          if (scopedOptions.signal?.aborted) throw scopedOptions.signal.reason;
+          const issued = await client.issuePaneStream(
+            scopedOptions.requestId,
+            scopedOptions.stream,
+            liveSessionId,
+          );
+          assertCurrent(expected);
+          if (scopedOptions.signal?.aborted) throw scopedOptions.signal.reason;
+          if (issued.status === "error") throw new Error(issued.error.reason);
+          return await connectIssuedPaneStreamRuntimeClient(scopedOptions, issued.descriptor);
+        } finally {
+          client.dispose();
+        }
+      };
+      return await (server ? openScoped : openClient)({
         ...options,
         baseUrl,
         ownerToken,

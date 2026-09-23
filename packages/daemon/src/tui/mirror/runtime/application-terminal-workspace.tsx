@@ -1,3 +1,6 @@
+import { Menu } from "../ui/index.ts";
+import type { WindowLinkTarget } from "@tmux-ide/contracts";
+import { windowLinkTarget } from "./application-terminal-workspace-policy.ts";
 import type { PaneInteractionProjection } from "@tmux-ide/core";
 /* @jsxImportSource @opentui/solid */
 import {
@@ -61,7 +64,6 @@ import {
   type TerminalSelectionRange,
 } from "./terminal-selection.ts";
 import {
-  retainedTerminalWindowKey,
   terminalAgentStatusLabel,
   terminalPaneDisplayTitle,
   terminalPaneResizePreview,
@@ -168,6 +170,8 @@ export interface ApplicationTerminalWorkspaceProps {
   /** Daemon-authored semantic agent state, keyed by durable pane identity. */
   readonly agentIndicators?: Accessor<ReadonlyMap<string, ApplicationTerminalAgentIndicator>>;
   readonly onSelectPane: (paneId: string) => void;
+  readonly onSelectWindowLink?: (target: WindowLinkTarget) => void;
+  readonly onUnlinkWindowLink?: (target: WindowLinkTarget) => void;
   readonly onCreateWindow?: () => void;
   readonly onPaneContextAction?: (
     paneId: string,
@@ -332,37 +336,56 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     ),
   );
   const visibleFrames = createMemo(() => projectedFrames().filter((frame) => frame.visible));
-  const retainedWindowIds = createMemo(
-    () =>
-      Object.freeze(
-        layout()
-          .windows.map(retainedTerminalWindowKey)
-          .filter((id): id is string => id !== null),
-      ),
-    undefined,
-    {
-      equals: (previous, next) =>
-        previous.length === next.length && previous.every((id, index) => id === next[index]),
-    },
-  );
-  const terminalWindowTabs = createMemo<readonly TerminalWindowTab[]>(() =>
-    retainedWindowIds().map((windowId, index) => {
-      const window = layout().windows.find(
-        (candidate) => retainedTerminalWindowKey(candidate) === windowId,
-      )!;
-      const indicator = terminalWindowAgentIndicator(window, agentIndicators());
-      return {
+  const [windowLinkMenu, setWindowLinkMenu] = createSignal<WindowLinkTarget | null>(null);
+  const unlinkWindowTab = () => {
+    const target = windowLinkMenu();
+    setWindowLinkMenu(null);
+    if (target) props.onUnlinkWindowLink?.(target);
+  };
+  createEffect(() => {
+    const target = windowLinkMenu();
+    const observed = target && windowLinkTarget(layout(), target.linkId);
+    if (
+      target &&
+      (!observed ||
+        observed.liveSessionId !== target.liveSessionId ||
+        observed.linkRevision !== target.linkRevision)
+    )
+      setWindowLinkMenu(null);
+  });
+  const terminalWindowTabs = createMemo<readonly TerminalWindowTab[]>(() => {
+    const snapshot = layout();
+    if (!snapshot.windowLinks)
+      return snapshot.windows.map((window, index) => ({
         index,
         name: terminalWindowTitle(window),
         active: window.currentWindow,
         sync: false,
         semanticWindowId: window.semanticWindowId,
         activePaneId: terminalWindowPane(window),
-        status: indicator ? terminalAgentStatusLabel(indicator.activity) : undefined,
-        attention: indicator?.attention,
-      };
-    }),
-  );
+        disabled: true,
+      }));
+    return snapshot.windowLinks.links.flatMap((link) => {
+      const window = snapshot.windows.find(
+        (candidate) => candidate.semanticWindowId === link.semanticWindowId,
+      );
+      if (!window) return [];
+      const indicator = terminalWindowAgentIndicator(window, agentIndicators());
+      return [
+        {
+          linkId: link.linkId,
+          index: link.displayIndex,
+          name: terminalWindowTitle(window),
+          active: snapshot.windowLinks?.activeLinkId === link.linkId,
+          sync: false,
+          semanticWindowId: window.semanticWindowId,
+          activePaneId: terminalWindowPane(window),
+          status: indicator ? terminalAgentStatusLabel(indicator.activity) : undefined,
+          attention: indicator?.attention,
+        },
+      ];
+    });
+  });
   if (props.onWindowPresented)
     createRenderEffect(() => {
       const current = layout().current;
@@ -911,6 +934,12 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   props.onSelectionCopyOwner?.(copySelection);
   const handlePaneMenuKey: PaneMenuKeyHandler = (name, event) => {
     if (props.interactive === false) return false;
+    if (windowLinkMenu()) {
+      if (event?.eventType === "release") return true;
+      if (name === "escape") setWindowLinkMenu(null);
+      else if (name === "return" || name === "enter" || name === "u") unlinkWindowTab();
+      return true;
+    }
     if (paneMenu.handleKey(name, event)) return true;
     const focused = props.focusedPane;
     const keyboard = keyboardCopy();
@@ -1097,7 +1126,10 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     },
     () =>
       props.interactive !== false &&
-      (drag !== null || paneMenu.ownsInput() || keyboardCopy() !== null),
+      (drag !== null ||
+        windowLinkMenu() !== null ||
+        paneMenu.ownsInput() ||
+        keyboardCopy() !== null),
     () => {
       // Called only after global shortcuts, copy, and local navigation decline
       // the event, immediately before terminal key or paste delivery.
@@ -1116,7 +1148,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   // listener and the typed listener on a target, even after stopPropagation.
   const routePointer = (event: WorkspaceMouseEvent): void => {
     if (event.type === "down") wheelGesture.reset();
-    if (paneMenu.ownsInput()) {
+    if (windowLinkMenu() || paneMenu.ownsInput()) {
       event.stopPropagation?.();
       return;
     }
@@ -1649,9 +1681,18 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
             tabs={terminalWindowTabs}
             hoveredIndex={null}
             onActivate={(index) => {
-              const pane = terminalWindowTabs()[index]?.activePaneId;
-              if (pane) props.onSelectPane(pane);
+              const tab = terminalWindowTabs().find((candidate) => candidate.index === index);
+              const target = tab?.linkId ? windowLinkTarget(layout(), tab.linkId) : null;
+              if (target) props.onSelectWindowLink?.(target);
             }}
+            onWindowActions={
+              props.onUnlinkWindowLink
+                ? (index) => {
+                    const tab = terminalWindowTabs().find((candidate) => candidate.index === index);
+                    if (tab?.linkId) setWindowLinkMenu(windowLinkTarget(layout(), tab.linkId));
+                  }
+                : undefined
+            }
             onNewWindow={() => props.onCreateWindow?.()}
           />
         </Show>
@@ -1805,6 +1846,22 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           </box>
         )}
       </For>
+      <Show when={windowLinkMenu()}>
+        <Menu
+          theme={props.theme}
+          title="Window link"
+          left={0}
+          top={1}
+          width={Math.min(36, props.width)}
+          viewportWidth={props.width}
+          viewportHeight={props.height}
+          selectedId="unlink"
+          items={[{ id: "unlink", label: "Unlink this tab", shortcut: "U" }]}
+          footer="Other links keep their panes"
+          onDismiss={() => setWindowLinkMenu(null)}
+          onSelect={unlinkWindowTab}
+        />
+      </Show>
       <Show when={paneContextMenu()}>
         {(menu) => (
           <PaneActionMenu

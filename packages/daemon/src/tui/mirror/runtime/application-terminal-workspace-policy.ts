@@ -1,3 +1,4 @@
+import type { WindowLinkTarget } from "@tmux-ide/contracts";
 import type { AgentActivity } from "@tmux-ide/contracts";
 
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
@@ -308,4 +309,65 @@ export function terminalPaneResizePreview(
             height: 1,
           }),
   });
+}
+
+/** Resolve only live opaque observations; native indexes are display metadata. */
+export function windowLinkTarget(
+  snapshot: OpenTuiWorkspaceLayoutSnapshot,
+  linkId: string,
+): WindowLinkTarget | null {
+  const topology = snapshot.windowLinks;
+  const link = topology?.links.find((candidate) => candidate.linkId === linkId);
+  if (!topology || !link) return null;
+  return {
+    liveSessionId: topology.liveSessionId,
+    linkRevision: topology.linkRevision,
+    linkId: link.linkId,
+    expectedSemanticWindowId: link.semanticWindowId,
+  };
+}
+
+/** Pane navigation within the active link must not silently choose a sibling link. */
+export function windowLinkForPane(
+  snapshot: OpenTuiWorkspaceLayoutSnapshot,
+  paneId: string,
+): WindowLinkTarget | null {
+  const backing = snapshot.windows.find((window) =>
+    window.panes.some((pane) => pane.pane === paneId),
+  );
+  const topology = snapshot.windowLinks;
+  if (!backing || !topology) return null;
+  const links = topology.links.filter((link) => link.semanticWindowId === backing.semanticWindowId);
+  const link =
+    links.find((candidate) => candidate.linkId === topology.activeLinkId) ??
+    (links.length === 1 ? links[0] : undefined);
+  return link ? windowLinkTarget(snapshot, link.linkId) : null;
+}
+
+/** Root composition for backing zoom and link actions, all restoring host focus. */
+export function terminalWindowActionCallbacks(
+  controller: Pick<
+    import("./application-terminal-interaction-controller.ts").ApplicationTerminalInteractionController,
+    "selectWindowLink" | "unlinkWindowLink" | "zoomPane" | "selectPane"
+  >,
+  notify: (message: string) => void,
+  recover: import("./application-host-focus-presentation.ts").ApplicationHostFocusRecovery,
+  cancelNavigation: () => void,
+) {
+  return {
+    onSelectPane: recover((paneId: string) => {
+      cancelNavigation();
+      controller.selectPane(paneId);
+    }),
+    onZoomPane: recover((paneId?: string) => {
+      void controller.zoomPane(paneId).then(notify);
+    }),
+    onSelectWindowLink: recover((target: WindowLinkTarget) => {
+      cancelNavigation();
+      void controller.selectWindowLink(target);
+    }),
+    onUnlinkWindowLink: recover((target: WindowLinkTarget) => {
+      void controller.unlinkWindowLink(target).then(notify);
+    }),
+  };
 }

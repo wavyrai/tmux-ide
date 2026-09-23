@@ -54,6 +54,9 @@ function resultFor(
         semanticPaneId: "pane.created",
         displayTitle: intent.displayTitle ?? "Terminal",
       };
+    case "workspace.window.link.select":
+    case "workspace.window.link.unlink":
+      return { ...base, verb: intent.verb, target: intent.target };
     case "workspace.window.kill":
       return { ...base, verb: intent.verb, remainingWindowCount: 1 };
     case "workspace.pane.kill":
@@ -139,6 +142,83 @@ function submit(
 }
 
 describe("SessionSemanticMutationExecutor", () => {
+  it("holds the existing session lane until asynchronous link proof completes", async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const calls: string[] = [];
+    const { executor, receipts } = rig({
+      execute: async (id, intent) => {
+        calls.push(id);
+        if (id === OP_A) await pending;
+        return resultFor(id, intent);
+      },
+    });
+    const intent = {
+      verb: "workspace.window.link.select" as const,
+      workspaceName: "alpha",
+      target: {
+        liveSessionId: `live-session.${"a".repeat(20)}`,
+        linkId: `window-link.${"b".repeat(32)}`,
+        expectedSemanticWindowId: "window.alpha",
+        linkRevision: 2,
+      },
+    };
+    const first = submit(executor, OP_A, intent);
+    const next = submit(executor, OP_B, intent);
+    await vi.waitFor(() => expect(calls).toEqual([OP_A]));
+    expect(receipts.filter((receipt) => receipt.phase === "observed")).toEqual([]);
+    finish();
+    await Promise.all([first, next]);
+    expect(calls).toEqual([OP_A, OP_B]);
+    expect(receipts.filter((receipt) => receipt.phase === "observed")).toHaveLength(2);
+  });
+
+  it("retains an indeterminate link operation rejection without re-executing", async () => {
+    const execute = vi.fn(async () => {
+      throw new Error("indeterminate native outcome");
+    });
+    const { executor, receipts } = rig({ execute });
+    const intent = {
+      verb: "workspace.window.link.unlink" as const,
+      workspaceName: "alpha",
+      target: {
+        liveSessionId: `live-session.${"a".repeat(20)}`,
+        linkId: `window-link.${"b".repeat(32)}`,
+        expectedSemanticWindowId: "window.alpha",
+        linkRevision: 2,
+      },
+    };
+    await expect(submit(executor, OP_B, intent)).rejects.toMatchObject({ outcome: "rejected" });
+    await expect(submit(executor, OP_B, intent)).rejects.toMatchObject({ outcome: "rejected" });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(receipts.map((receipt) => receipt.phase)).toEqual(["accepted", "rejected"]);
+  });
+
+  it("replays the original unlink receipt without repeating the mutation", async () => {
+    const execute = vi.fn(resultFor);
+    const { executor, receipts } = rig({ execute });
+    const intent = {
+      verb: "workspace.window.link.unlink" as const,
+      workspaceName: "alpha",
+      target: {
+        liveSessionId: `live-session.${"a".repeat(20)}`,
+        linkId: `window-link.${"b".repeat(32)}`,
+        expectedSemanticWindowId: "window.alpha",
+        linkRevision: 2,
+      },
+    };
+    const first = await submit(executor, OP_B, intent);
+    expect(await submit(executor, OP_B, intent)).toEqual({ ...first, outcome: "replayed" });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(receipts).toHaveLength(2);
+    expect(receipts[1]).toMatchObject({
+      target: { kind: "window-link", target: intent.target },
+      proof: { operationKind: intent.verb, target: intent.target },
+    });
+  });
+
   it("threads one operation-fenced detailed timing port and keeps a throwing span sink fail-open", async () => {
     let micros = 0;
     const observed: SessionRuntimeStageSpan[] = [];
@@ -279,8 +359,20 @@ describe("SessionSemanticMutationExecutor", () => {
     }
   });
 
-  it("publishes result-derived accepted and observed receipts for all eleven intents", async () => {
+  it("publishes result-derived accepted and observed receipts for all supported intents", async () => {
     const intents: SessionRuntimeSemanticIntent[] = [
+      ...(["workspace.window.link.select", "workspace.window.link.unlink"] as const).map(
+        (verb) => ({
+          verb,
+          workspaceName: "alpha",
+          target: {
+            liveSessionId: `live-session.${"a".repeat(20)}`,
+            linkId: `window-link.${"b".repeat(32)}`,
+            expectedSemanticWindowId: "window.alpha",
+            linkRevision: 2,
+          },
+        }),
+      ),
       {
         verb: "workspace.window.split",
         workspaceName: "alpha",
@@ -355,7 +447,7 @@ describe("SessionSemanticMutationExecutor", () => {
       });
       expect(observed).toMatchObject({ operationKind: intent.verb, phase: "observed" });
       expect(observed!.proof).toMatchObject({ operationKind: intent.verb });
-      expect(observed!.target.kind).toMatch(/^(session|window|pane)$/u);
+      expect(observed!.target.kind).toMatch(/^(session|window|window-link|pane)$/u);
     }
     expect(
       built.receipts.find(
@@ -384,6 +476,7 @@ describe("SessionSemanticMutationExecutor", () => {
           [
             "workspace.window.split",
             "workspace.window.kill",
+            "workspace.window.link.unlink",
             "workspace.pane.kill",
             "workspace.session.kill",
           ].includes(result.verb)

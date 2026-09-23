@@ -360,8 +360,8 @@ describe("Card5 envelope evidence", () => {
     recordDescriptor?.({
       daemonInstanceId: "g1",
       requestId: "20000000-0000-4000-8000-000000000001",
-      webSocketUrl: "ws://127.0.0.1:3000/v1/pane-stream/redeem",
-      subprotocol: "tmux-ide-pane-stream-v1",
+      webSocketUrl: "ws://127.0.0.1:3000/v2/terminal/pane-streams/redeem",
+      subprotocol: "tmux-ide-pane-stream.v2",
     });
     const read = globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ as () => {
       descriptorEventCount: number;
@@ -373,8 +373,8 @@ describe("Card5 envelope evidence", () => {
         {
           generation: "g1",
           requestId: "20000000-0000-4000-8000-000000000001",
-          socketUrl: "ws://127.0.0.1:3000/v1/pane-stream/redeem",
-          subprotocol: "tmux-ide-pane-stream-v1",
+          socketUrl: "ws://127.0.0.1:3000/v2/terminal/pane-streams/redeem",
+          subprotocol: "tmux-ide-pane-stream.v2",
           ordinal: 0,
         },
       ],

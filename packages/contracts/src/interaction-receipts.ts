@@ -1,3 +1,4 @@
+import { WindowLinkTargetSchemaZ } from "./window-links.ts";
 import { z } from "zod";
 
 import { DesktopWorkspaceNameSchemaZ } from "./desktop-workspace-name.ts";
@@ -14,6 +15,8 @@ export type AuthoredInteractionOrigin = z.infer<typeof AuthoredInteractionOrigin
 
 /** Every semantic session-runtime verb; raw tmux addresses never enter this vocabulary. */
 export const InteractionOperationKindSchemaZ = z.enum([
+  "workspace.window.link.select",
+  "workspace.window.link.unlink",
   "workspace.window.split",
   "workspace.window.kill",
   "workspace.pane.kill",
@@ -46,6 +49,7 @@ const InteractionWindowReferenceSchemaZ = z.discriminatedUnion("by", [
 
 /** Stable semantic target retained even when the operation removes or renames it. */
 export const InteractionTargetSchemaZ = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("window-link"), target: WindowLinkTargetSchemaZ }).strict(),
   z.object({ kind: z.literal("session") }).strict(),
   z.object({ kind: z.literal("window"), target: InteractionWindowReferenceSchemaZ }).strict(),
   z
@@ -63,6 +67,8 @@ const MutationOutcomeSchemaZ = z.enum(["applied", "unchanged", "replayed"]);
  * different verb.
  */
 export const InteractionSafeSummarySchemaZ = z.union([
+  z.object({ operationKind: z.literal("workspace.window.link.unlink") }).strict(),
+  z.object({ operationKind: z.literal("workspace.window.link.select") }).strict(),
   z
     .object({
       operationKind: z.literal("workspace.window.split"),
@@ -129,6 +135,20 @@ export type PaneReadSafeSummary = Extract<
  * terminal bytes never enter the replay journal.
  */
 export const InteractionProofSchemaZ = z.discriminatedUnion("operationKind", [
+  z
+    .object({
+      operationKind: z.literal("workspace.window.link.unlink"),
+      outcome: MutationOutcomeSchemaZ,
+      target: WindowLinkTargetSchemaZ,
+    })
+    .strict(),
+  z
+    .object({
+      operationKind: z.literal("workspace.window.link.select"),
+      outcome: MutationOutcomeSchemaZ,
+      target: WindowLinkTargetSchemaZ,
+    })
+    .strict(),
   z
     .object({
       operationKind: z.literal("workspace.window.split"),
@@ -279,6 +299,25 @@ export const InteractionReceiptSchemaZ = z
         path: ["summary"],
         message: "external observations require a presence-only summary",
       });
+    }
+    if (receipt.operationKind.startsWith("workspace.window.link.")) {
+      if (receipt.target.kind !== "window-link") {
+        context.addIssue({
+          code: "custom",
+          path: ["target"],
+          message: "Window link verbs require a link target",
+        });
+      } else if (
+        receipt.proof &&
+        "target" in receipt.proof &&
+        JSON.stringify(receipt.proof.target) !== JSON.stringify(receipt.target.target)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["proof"],
+          message: "Window link proof must match its target",
+        });
+      }
     }
     const paneVerb = receipt.operationKind.startsWith("workspace.pane.");
     if (paneVerb && receipt.target.kind !== "pane") {

@@ -33,6 +33,29 @@ function target(
 }
 
 describe("selectTerminalPane", () => {
+  it("forwards the exact link observation with pane selection", async () => {
+    const active = target(
+      async () => ({}),
+      () => true,
+    );
+    const windowLink = {
+      liveSessionId: `live-session.${"a".repeat(20)}`,
+      linkId: `window-link.${"b".repeat(32)}`,
+      expectedSemanticWindowId: "window.main",
+      linkRevision: 4,
+    };
+    await selectTerminalPane(active, () => active, "pane.editor", undefined, undefined, windowLink);
+    expect(active.client.dispatch).toHaveBeenCalledWith({
+      kind: "semantic-intent",
+      intent: {
+        verb: "workspace.pane.select",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.editor",
+        windowLink,
+      },
+    });
+  });
+
   it("waits for input authority before dispatching selection", async () => {
     let grant!: (lease: unknown) => void;
     const active = target(() => new Promise((resolve) => (grant = resolve)));

@@ -286,3 +286,69 @@ describe("application Home catalog", () => {
     expect(selectedHomeCatalogIndex(sessions, "retired")).toBe(0);
   });
 });
+
+it("discovers scoped same-name sessions and never falls back when an old daemon lacks server discovery", async () => {
+  const original = globalThis.fetch;
+  const server = (id: string, generation: string) => ({
+    serverId: `tmux-server.${id.repeat(32)}`,
+    generation,
+    state: "online",
+    label: "work",
+  });
+  const a = server("a", "11111111-1111-4111-8111-111111111111"),
+    b = server("b", "22222222-2222-4222-8222-222222222222");
+  const calls: string[] = [];
+  let failSecond = false;
+  globalThis.fetch = vi.fn(async (input) => {
+    const path = new URL(String(input)).pathname;
+    calls.push(path);
+    if (path === "/api/v1/tmux-servers") return Response.json({ version: 1, servers: [a, b] });
+    const selected = path.includes(a.serverId) ? a : b;
+    if (failSecond && selected === b) return new Response("replaced", { status: 409 });
+    return Response.json({
+      version: 1,
+      server: { serverId: selected.serverId, generation: selected.generation },
+      sessions: [
+        {
+          liveSessionId: `live-session.${"a".repeat(20)}`,
+          sessionName: "same",
+          workspaceName: null,
+          paneCount: 1,
+        },
+      ],
+    });
+  }) as typeof fetch;
+  const owner = createApplicationHomeCatalog({ readCanonicalDaemonInfo: () => DAEMON_A });
+  try {
+    owner.start();
+    await vi.waitFor(() => expect(owner.getSnapshot().phase).toBe("live"));
+    const rows = owner.getSnapshot().sessions;
+    expect(rows.map((row) => row.name)).toEqual(["same", "same"]);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(2);
+    expect(rows[1]!.server).toEqual({ serverId: b.serverId, generation: b.generation });
+    expect(calls.every((path) => path.startsWith("/api/v1/tmux-servers"))).toBe(true);
+    failSecond = true;
+    owner.retry();
+    await vi.waitFor(() => expect(owner.getSnapshot().phase).toBe("live"));
+    expect(owner.getSnapshot().sessions.map((row) => row.server?.serverId)).toEqual([a.serverId]);
+    expect(owner.getSnapshot().servers?.[1]?.state).toBe("offline");
+  } finally {
+    owner.dispose();
+    globalThis.fetch = original;
+  }
+  const paths: string[] = [];
+  globalThis.fetch = vi.fn(async (input) => {
+    paths.push(new URL(String(input)).pathname);
+    return new Response("old daemon", { status: 404 });
+  }) as typeof fetch;
+  const old = createApplicationHomeCatalog({ readCanonicalDaemonInfo: () => DAEMON_A });
+  try {
+    old.start();
+    await vi.waitFor(() => expect(old.getSnapshot().phase).toBe("unavailable"));
+    expect(paths).toEqual(["/api/v1/tmux-servers"]);
+    expect(old.getSnapshot().sessions).toEqual([]);
+  } finally {
+    old.dispose();
+    globalThis.fetch = original;
+  }
+});

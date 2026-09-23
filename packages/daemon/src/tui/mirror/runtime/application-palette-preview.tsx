@@ -53,6 +53,8 @@ export function ApplicationPalettePreview(props: {
   const identity = () =>
     JSON.stringify([
       target()?.machineId,
+      target()?.server?.serverId,
+      target()?.server?.generation,
       target()?.liveSessionId,
       target()?.daemonInstanceId,
       paneId(),
@@ -77,6 +79,7 @@ export function ApplicationPalettePreview(props: {
       fleet &&
       Boolean(fleet.liveSessionId) &&
       !fleet.disabled &&
+      (!fleet.server || fleet.server.generation === fleet.daemonInstanceId) &&
       handle?.endpoint().state === "ready" &&
       handle.read()?.instanceId === fleet.daemonInstanceId;
     owner.select(

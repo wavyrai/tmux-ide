@@ -44,6 +44,7 @@ export interface RuntimeNamespace {
   readonly daemonInfoDir: string;
   readonly controlSocketPath: string;
   readonly eventLogPath: string;
+  readonly tmuxSocketExplicit?: boolean;
   readonly tmuxSocket:
     | { readonly kind: "name"; readonly name: string }
     | { readonly kind: "path"; readonly path: string };
@@ -287,6 +288,7 @@ export function resolveRuntimeNamespace(
     controlSocketPath: join(runtimeDir, "control.sock"),
     eventLogPath: join(stateHome, "events.jsonl"),
     tmuxSocket,
+    tmuxSocketExplicit: Boolean(tmuxSocketName || tmuxSocketPath),
     cleanupToken,
     namespaceId: development?.id ?? (isolated ? cleanupToken! : "canonical"),
     persistence: isolated && !development ? "ephemeral" : "durable",
@@ -316,9 +318,11 @@ export function runtimeNamespaceEnvironment(
     [STATE_HOME_ENV]: namespace.stateHome,
     [REGISTRY_DIR_ENV]: namespace.registryDir,
     [DAEMON_INFO_DIR_ENV]: namespace.daemonInfoDir,
-    ...(namespace.tmuxSocket.kind === "name"
-      ? { [TMUX_SOCKET_NAME_ENV]: namespace.tmuxSocket.name }
-      : { [TMUX_SOCKET_PATH_ENV]: namespace.tmuxSocket.path }),
+    ...(namespace.tmuxSocketExplicit === false
+      ? {}
+      : namespace.tmuxSocket.kind === "name"
+        ? { [TMUX_SOCKET_NAME_ENV]: namespace.tmuxSocket.name }
+        : { [TMUX_SOCKET_PATH_ENV]: namespace.tmuxSocket.path }),
     ...(namespace.cleanupToken ? { [CLEANUP_TOKEN_ENV]: namespace.cleanupToken } : {}),
   });
 }
@@ -387,4 +391,21 @@ export function assertQualifiedDevelopmentLaunch(): void {
     throw new Error(
       "Development launch requires exact build artifacts (D03); installed CLI fallback is disabled",
     );
+}
+
+/** Caller intent differs from the default used when starting a new owner. */
+export function resolveTmuxServerIntent(options: RuntimeNamespaceResolutionOptions = {}): {
+  readonly source: "explicit" | "current";
+  readonly selector: RuntimeNamespace["tmuxSocket"];
+} | null {
+  const env = options.env ?? process.env;
+  const namespace = resolveRuntimeNamespace(options);
+  if (
+    namespace.isolated ||
+    nonEmpty(env, TMUX_SOCKET_NAME_ENV) ||
+    nonEmpty(env, TMUX_SOCKET_PATH_ENV)
+  )
+    return { source: "explicit", selector: namespace.tmuxSocket };
+  const current = /^(.*),[0-9]+,[0-9]+$/u.exec(env.TMUX ?? "")?.[1];
+  return current ? { source: "current", selector: { kind: "path", path: current } } : null;
 }

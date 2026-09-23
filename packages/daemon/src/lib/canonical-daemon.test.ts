@@ -177,7 +177,10 @@ describe("canonical daemon info", () => {
   it("persists and reads back the optional stable environment id", async () => {
     const port = await listen();
     const environmentId = "0f4e9a7c-2f4a-4d55-9d2e-1f6cf3a3b210";
-    writeCanonicalDaemonInfo({ ...info(port), environmentId }, acquireClaim());
+    writeCanonicalDaemonInfo(
+      { ...info(port), environmentId, tmuxServerProofVersion: 1 },
+      acquireClaim(),
+    );
 
     expect(readCanonicalDaemonInfo()?.environmentId).toBe(environmentId);
     const raw = JSON.parse(readFileSync(getCanonicalDaemonInfoPath(), "utf-8")) as Record<
@@ -185,6 +188,8 @@ describe("canonical daemon info", () => {
       unknown
     >;
     expect(raw.environmentId).toBe(environmentId);
+    expect(raw.tmuxServerProofVersion).toBe(1);
+    expect(readCanonicalDaemonInfo()?.tmuxServerProofVersion).toBe(1);
   });
 
   it("reads a pre-environment daemon record unchanged", async () => {

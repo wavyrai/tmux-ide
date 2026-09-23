@@ -35,10 +35,13 @@ import {
 import { createHash, randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import {
+  WINDOW_LINK_MAX_LINKS,
   WORKSPACE_SEMANTIC_PANE_OPTION,
   WORKSPACE_SEMANTIC_WINDOW_OPTION,
   WorkspaceIdSchemaZ,
   type WorkspacePaneRect,
+  type WindowLinkTarget,
+  type WindowLinkTopology,
 } from "@tmux-ide/contracts";
 import { textToHexKeys } from "../protocol/control.ts";
 import { InputCoalescer } from "../protocol/input-coalescer.ts";
@@ -81,6 +84,13 @@ import type {
   MirrorPaneEvent,
   MirrorSessionDescription,
 } from "./events.ts";
+import { liveSessionIdForNativeIdentity } from "../protocol/live-session-identity.ts";
+import { WindowLinkAuthority, WindowLinkResolutionError } from "./window-link-authority.ts";
+import {
+  buildNativeWindowLinkGuard,
+  buildNativeWindowLinkPaneSelectGuard,
+  classifyNativeWindowLinkGuardResult,
+} from "../../lib/tmux-window-link-guard.ts";
 import { FlowLedger } from "./flow-ledger.ts";
 import { PaneFeed } from "./pane-feed.ts";
 import type {
@@ -217,6 +227,7 @@ export interface MirrorFlowRecoveryObservation {
 }
 
 export interface SessionChannelOptions {
+  executeWindowLinkGuard?: (args: string[]) => Promise<{ status: number | null; stdout: string }>;
   session: string;
   createIo: (handlers: MirrorChannelHandlers) => MirrorChannelIo;
   /** Explicit capture tail override. Omitted captures all retained native history. */
@@ -277,6 +288,11 @@ interface SubRecord {
   pane: PaneRecord;
   frozen: boolean;
   closed: boolean;
+}
+
+interface PlainReseedLease {
+  readonly sub: SubRecord;
+  cancelRecipe: (() => void) | null;
 }
 
 interface PaneRecord {
@@ -395,6 +411,12 @@ interface WindowSyncStage {
   readonly layouts: Map<string, ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }>;
   readonly currentWindow: string;
   readonly repairedIdentity: boolean;
+  readonly links: readonly {
+    index: number;
+    runtimeWindowId: string;
+    semanticWindowId: string;
+    active: boolean;
+  }[];
 }
 
 export function defaultMirrorPaneId(): string {
@@ -429,6 +451,9 @@ export class SessionChannel {
   private readonly truthActive = new Map<string, boolean>();
   private readonly truthWindow = new Map<string, string>();
   private currentWindow = "";
+  private windowLinkAuthority: WindowLinkAuthority | null = null;
+  private latestWindowStage: WindowSyncStage | null = null;
+  private attachedServerGeneration: { serverPid: string; sessionCreated: string } | null = null;
   private diagnostics: MirrorDiagnostic[] = [];
   private degraded = false;
   private readonly ageByRuntime = new Map<string, number>();
@@ -443,7 +468,7 @@ export class SessionChannel {
   private windowAuthorityOrdinal = 0;
   private paneIncarnation = 0;
   private recoveryOrdinal = 0;
-  private plainReseedActive: SubRecord | null = null;
+  private plainReseedActive: PlainReseedLease | null = null;
   private readonly plainReseedQueue = new Map<SubRecord, "requested" | null>();
   private readonly outputOrdinals = new Map<string, number>();
   private readonly pendingLayoutOutput = new Map<
@@ -629,12 +654,18 @@ export class SessionChannel {
         ? this.trustedInventoryFlight
         : Promise.reject(new Error(`trusted inventory identity changed for ${this.opts.session}`));
     }
-    const flight = this.refreshTrustedInventory(expectedRuntimeSessionId).finally(() => {
-      if (this.trustedInventoryFlight === flight) {
-        this.trustedInventoryFlight = null;
-        this.trustedInventoryFlightSessionId = null;
-      }
-    });
+    const flight = this.refreshTrustedInventory(expectedRuntimeSessionId)
+      .catch((error) => {
+        this.windowLinkAuthority?.invalidate();
+        this.latestWindowStage = null;
+        throw error;
+      })
+      .finally(() => {
+        if (this.trustedInventoryFlight === flight) {
+          this.trustedInventoryFlight = null;
+          this.trustedInventoryFlightSessionId = null;
+        }
+      });
     this.trustedInventoryFlight = flight;
     this.trustedInventoryFlightSessionId = expectedRuntimeSessionId;
     return flight;
@@ -649,23 +680,103 @@ export class SessionChannel {
   }
 
   private async captureAttachedSessionIdentity(): Promise<void> {
-    const lines = await this.io.request(`display-message -p "#{qa:session_name}\t#{session_id}"`);
+    const lines = await this.io.request(
+      `display-message -p "#{qa:session_name}\t#{session_id}\t#{pid}\t#{session_created}"`,
+    );
     if (lines.length !== 1)
       throw new Error(`mirror session ${this.opts.session} identity is absent`);
     const decodedLine = decodeControlReplyUtf8(lines[0]!);
     if (decodedLine === null)
       throw new Error(`mirror session ${this.opts.session} identity is malformed`);
-    const [encodedName = "", runtimeSessionId = ""] = decodedLine.split("\t");
+    const [encodedName = "", runtimeSessionId = "", serverPid = "", sessionCreated = ""] =
+      decodedLine.split("\t");
     const sessionName = decodeTmuxArgument(encodedName);
     if (
       sessionName.length === 0 ||
       sessionName.length > 160 ||
       !/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) ||
-      runtimeSessionId.length > 32
+      runtimeSessionId.length > 32 ||
+      !/^[1-9][0-9]*$/u.test(serverPid) ||
+      !/^[0-9]+$/u.test(sessionCreated)
     ) {
       throw new Error(`mirror session ${this.opts.session} identity is malformed`);
     }
     this.attachedIdentity = Object.freeze({ sessionName, runtimeSessionId });
+    this.attachedServerGeneration = { serverPid, sessionCreated };
+    if (this.disposed) return;
+    this.bindWindowLinkAuthority(
+      liveSessionIdForNativeIdentity(serverPid, runtimeSessionId, sessionCreated),
+    );
+  }
+
+  private bindWindowLinkAuthority(liveSessionId: string): void {
+    const identity = this.attachedIdentity;
+    if (!identity || this.disposed) throw new WindowLinkResolutionError("window_link_stale");
+    if (this.windowLinkAuthority?.liveSessionId === liveSessionId) return;
+    this.windowLinkAuthority?.dispose();
+    this.windowLinkAuthority = new WindowLinkAuthority(liveSessionId, identity.runtimeSessionId);
+    if (this.latestWindowStage) this.windowLinkAuthority.reconcile(this.latestWindowStage.links);
+  }
+
+  async executeWindowLinkAction(request: {
+    action: "select" | "unlink";
+    target?: WindowLinkTarget;
+    paneId?: string;
+  }): Promise<{
+    outcome: "applied" | "stale" | "native-refused" | "indeterminate";
+    windowLinks: WindowLinkTopology | null;
+  }> {
+    const authority = this.windowLinkAuthority;
+    if (!authority || this.disposed) throw new WindowLinkResolutionError("window_link_stale");
+    const pane = request.paneId ? this.panesBySemantic.get(request.paneId) : undefined;
+    if (request.paneId && !pane)
+      throw new WindowLinkResolutionError("window_link_backing_mismatch");
+    const semanticWindow = pane?.windowRuntimeId
+      ? this.windowsByRuntime.get(pane.windowRuntimeId)?.semanticId
+      : null;
+    const target =
+      request.target ?? (semanticWindow ? authority.uniqueTargetForBacking(semanticWindow) : null);
+    if (!target) throw new WindowLinkResolutionError("window_link_stale");
+    const resolved = authority.resolve(target);
+    if (pane && (pane.windowRuntimeId !== resolved.runtimeWindowId || request.action !== "select"))
+      throw new WindowLinkResolutionError("window_link_backing_mismatch");
+    const address = {
+      sessionId: resolved.runtimeSessionId,
+      windowIndex: resolved.index,
+      expectedWindowId: resolved.runtimeWindowId,
+      expectedServerPid: this.attachedServerGeneration!.serverPid,
+      expectedSessionCreated: this.attachedServerGeneration!.sessionCreated,
+    };
+    const args = pane
+      ? buildNativeWindowLinkPaneSelectGuard(address, pane.runtimeId)
+      : buildNativeWindowLinkGuard(address, request.action);
+    let outcome: "applied" | "stale" | "native-refused" | "indeterminate";
+    try {
+      if (!this.opts.executeWindowLinkGuard) throw new Error("Window link executor unavailable");
+      const result = await this.opts.executeWindowLinkGuard(args);
+      outcome = classifyNativeWindowLinkGuardResult(result.status, result.stdout);
+    } catch {
+      // A lost command boundary can follow a mutation; never retry automatically.
+      outcome = "indeterminate";
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const reconciled = await Promise.race([
+      this.syncNow().then(
+        () => true,
+        () => false,
+      ),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), 2000);
+      }),
+    ]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
+    if (!reconciled) {
+      authority.invalidate();
+      this.latestWindowStage = null;
+      return { outcome, windowLinks: null };
+    }
+    return { outcome, windowLinks: authority.snapshot() };
   }
 
   /** Optional native backing, addressed through the verified semantic binding. */
@@ -829,7 +940,7 @@ export class SessionChannel {
       }
     }
     if (
-      expectedByWindow.size !== inventory.panes[0]!.sessionWindowCount ||
+      this.latestWindowStage?.links.length !== inventory.panes[0]!.sessionWindowCount ||
       expectedByWindow.size !== this.windowsByRuntime.size
     ) {
       throw new Error(`authoritative layout for ${this.opts.session} has incomplete windows`);
@@ -981,6 +1092,7 @@ export class SessionChannel {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.windowLinkAuthority?.dispose();
     this.nativeGrid.dispose();
     this.settleFirstJoin();
     this.cancelSync?.();
@@ -1052,16 +1164,17 @@ export class SessionChannel {
   // ── Seed / reseed (the atomic recipe) ────────────────────────────────────
 
   private reseed(
-    sub: SubRecord,
+    lease: PlainReseedLease,
     onSettled?: (result: ReseedResult) => void,
     deferPublish = false,
     deadlineAt = this.recoveryNowMs() + RECOVERY_ABSOLUTE_DEADLINE_MS,
   ): void {
+    const { sub } = lease;
     if (sub.closed || sub.frozen || this.disposed) {
       onSettled?.(FAILED_RESEED_RESULT);
       return;
     }
-    sub.cancelCapture?.();
+    lease.cancelRecipe?.();
     const runtime = sub.pane.runtimeId;
     const epoch = sub.feed.beginReseed();
     let settled = false;
@@ -1073,7 +1186,7 @@ export class SessionChannel {
       if (settled) return;
       settled = true;
       cancelDeadline?.();
-      sub.cancelCapture = null;
+      lease.cancelRecipe = null;
       onSettled?.(result);
     };
     // Keystroke ordering: pending coalesced input leaves before the probes.
@@ -1085,11 +1198,11 @@ export class SessionChannel {
       markerRetired = true;
       this.retireInternalReadMarker(runtime, internalReadMarker);
     };
-    sub.cancelCapture = () => {
+    lease.cancelRecipe = () => {
       if (settled) return;
       settled = true;
       cancelDeadline?.();
-      sub.cancelCapture = null;
+      lease.cancelRecipe = null;
       sub.feed.abort(epoch);
       if (!captureSucceeded) retireMarker();
     };
@@ -1130,9 +1243,9 @@ export class SessionChannel {
             settled = true;
             sub.feed.abort(epoch);
             cancelDeadline?.();
-            sub.cancelCapture = null;
+            lease.cancelRecipe = null;
             retireMarker();
-            this.reseed(sub, onSettled, deferPublish, deadlineAt);
+            this.reseed(lease, onSettled, deferPublish, deadlineAt);
             return;
           }
           sub.feed.abort(epoch);
@@ -1147,10 +1260,10 @@ export class SessionChannel {
           retireMarker();
           sub.feed.abort(epoch);
           cancelDeadline?.();
-          sub.cancelCapture = null;
+          lease.cancelRecipe = null;
           sub.nativeBootstrap = false;
           this.nativeBootstrapUnavailable = true;
-          this.reseed(sub, onSettled, deferPublish, deadlineAt);
+          this.reseed(lease, onSettled, deferPublish, deadlineAt);
           return;
         }
         if (!reply.ok) {
@@ -1219,13 +1332,13 @@ export class SessionChannel {
 
   private reseedPlain(sub: SubRecord, resumeReason: "requested" | null = null): void {
     if (sub.closed || sub.frozen || this.disposed) return;
-    if (this.plainReseedActive === sub) sub.cancelCapture?.();
+    if (this.plainReseedActive?.sub === sub) sub.cancelCapture?.();
     if (!this.plainReseedQueue.has(sub) && this.plainReseedQueue.size >= MAX_QUEUED_PLAIN_RESEEDS) {
       this.failPlainReseed(sub);
       return;
     }
     this.plainReseedQueue.set(sub, resumeReason);
-    if (this.plainReseedActive !== sub) {
+    if (this.plainReseedActive?.sub !== sub) {
       // Output before this queued recipe starts is already in its future
       // capture. Do not publish it using the prior geometry in the meantime.
       sub.feed.beginReseed();
@@ -1260,14 +1373,26 @@ export class SessionChannel {
       this.drainPlainReseeds();
       return;
     }
-    this.plainReseedActive = sub;
+    sub.cancelCapture?.();
+    const lease: PlainReseedLease = { sub, cancelRecipe: null };
+    this.plainReseedActive = lease;
+    // The queue lease outlives individual native capability probes. Retrying
+    // or falling back replaces only cancelRecipe, never this queue owner.
+    sub.cancelCapture = () => {
+      if (this.plainReseedActive !== lease) return;
+      lease.cancelRecipe?.();
+      sub.cancelCapture = null;
+      this.plainReseedActive = null;
+      this.drainPlainReseeds();
+    };
     // Only the recipe actually submitted to the control FIFO owns a five
     // second deadline. A large sibling projection cannot consume the waiting
     // panes' entire capture budgets before their commands have been written.
     this.reseed(
-      sub,
+      lease,
       (result) => {
-        if (this.plainReseedActive !== sub) return;
+        if (this.plainReseedActive !== lease) return;
+        sub.cancelCapture = null;
         this.plainReseedActive = null;
         if (!result.ok) {
           // A stalled FIFO cannot make progress for queued recipes either. Retire
@@ -1287,15 +1412,6 @@ export class SessionChannel {
       },
       true,
     );
-    if (this.plainReseedActive === sub) {
-      const cancel = sub.cancelCapture;
-      sub.cancelCapture = () => {
-        cancel?.();
-        this.plainReseedQueue.delete(sub);
-        if (this.plainReseedActive === sub) this.plainReseedActive = null;
-        this.drainPlainReseeds();
-      };
-    }
   }
 
   private retireInternalReadMarker(runtime: string, marker: string): void {
@@ -2492,6 +2608,11 @@ export class SessionChannel {
       return;
     }
     if (name === "session-window-changed") {
+      // The notification carries backing identity only; duplicate links require an index read.
+      if (this.windowLinkAuthority) {
+        this.scheduleSync();
+        return;
+      }
       const change = parseSessionWindowChanged(rest);
       if (!change) return;
       const previous = this.currentWindow;
@@ -2574,6 +2695,8 @@ export class SessionChannel {
     subscriber: (snapshot: MirrorLayoutAuthoritySnapshot) => void,
     runtimeSessionId: string,
   ): void {
+    const windowLinks = this.windowLinkAuthority?.snapshot();
+    if (!windowLinks) return;
     const layouts = [...this.layoutByWindow.keys()]
       .map((runtimeId) => this.layoutEventFor(runtimeId))
       .filter((event): event is MirrorLayoutEvent => event !== null);
@@ -2581,6 +2704,7 @@ export class SessionChannel {
       session: this.opts.session,
       runtimeSessionId,
       topologyEpoch: this.layoutTopologyEpoch,
+      windowLinks,
       layouts,
     });
   }
@@ -2694,8 +2818,9 @@ export class SessionChannel {
         windowActive: windowActive === "1",
       });
     }
+    const previousCurrentWindow = this.currentWindow;
     const { listed, movedWindowRuntimeIds } = this.applyPaneTruth(truth);
-    await this.syncWindows(this.opts.session, movedWindowRuntimeIds);
+    await this.syncWindows(this.opts.session, movedWindowRuntimeIds, previousCurrentWindow);
     this.discovery.discover(listed);
   }
 
@@ -2766,7 +2891,18 @@ export class SessionChannel {
     ) {
       throw new Error(`trusted inventory for ${this.opts.session} is malformed`);
     }
-    const descriptors = parsed.descriptors;
+    const descriptorByPane = new Map<string, SessionPaneDescriptor>();
+    for (const row of parsed.descriptors) {
+      const previous = descriptorByPane.get(row.runtimePaneId);
+      if (previous) {
+        const comparable = (value: SessionPaneDescriptor) =>
+          JSON.stringify({ ...value, windowActive: false, windowIndex: null });
+        if (comparable(previous) !== comparable(row))
+          throw new Error("Inconsistent linked pane observation");
+        if (row.windowActive) descriptorByPane.set(row.runtimePaneId, row);
+      } else descriptorByPane.set(row.runtimePaneId, row);
+    }
+    const descriptors = [...descriptorByPane.values()];
     const runtimePaneIds = new Set(descriptors.map((pane) => pane.runtimePaneId));
     const runtimeSessionIds = new Set(descriptors.map((pane) => pane.runtimeSessionId));
     const activeWindowIds = new Set(
@@ -2796,12 +2932,32 @@ export class SessionChannel {
       descriptors.some(
         (pane) =>
           pane.windowPaneCount !== computedWindowCounts.get(pane.windowId!) ||
-          pane.sessionWindowCount !== computedWindowCounts.size,
+          pane.sessionWindowCount !== descriptors[0]!.sessionWindowCount,
       )
     ) {
       throw new Error(`trusted inventory for ${this.opts.session} has incomplete counts`);
     }
     const windowStage = await this.stageWindows(expectedRuntimeSessionId);
+    const descriptorKeys = new Set<string>();
+    for (const row of parsed.descriptors) {
+      const link = windowStage.links.find((link) => link.index === row.windowIndex);
+      const key = `${row.windowIndex}:${row.runtimePaneId}`;
+      if (
+        !link ||
+        link.runtimeWindowId !== row.windowId ||
+        link.active !== row.windowActive ||
+        descriptorKeys.has(key)
+      )
+        throw new Error(
+          `trusted inventory for ${this.opts.session} lacks verified identity: inconsistent linked pane membership`,
+        );
+      descriptorKeys.add(key);
+    }
+    for (const link of windowStage.links) {
+      const count = computedWindowCounts.get(link.runtimeWindowId)!;
+      if (parsed.descriptors.filter((row) => row.windowIndex === link.index).length !== count)
+        throw new Error("Incomplete linked pane membership");
+    }
     const repairedPanes = await this.repairTrustedPaneIdentity(descriptors, windowStage.layouts);
     const afterLines = await this.io.request(
       `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
@@ -2848,6 +3004,7 @@ export class SessionChannel {
     }
     if (
       confirmedWindowStage.currentWindow !== activeWindowId ||
+      confirmedWindowStage.links.length !== descriptors[0]!.sessionWindowCount ||
       confirmedWindowStage.windows.size !== computedWindowCounts.size ||
       !stagedPaneMembershipExact ||
       stagedPaneCount !== descriptors.length ||
@@ -2896,7 +3053,7 @@ export class SessionChannel {
       throw new Error(`trusted inventory for ${this.opts.session} is degraded`);
     }
     const windowCounts = computedWindowCounts;
-    const sessionWindowCount = computedWindowCounts.size;
+    const sessionWindowCount = confirmedWindowStage.links.length;
     const panes: TrustedMirrorPaneInventory[] = descriptors.map((descriptor) => {
       const record = this.panesByRuntime.get(descriptor.runtimePaneId);
       const runtimeWindowId = descriptor.windowId!;
@@ -2941,9 +3098,14 @@ export class SessionChannel {
   private async syncWindows(
     target = this.opts.session,
     requiredLayoutEmits: ReadonlySet<string> = new Set(),
+    previousCurrentWindow = this.currentWindow,
   ): Promise<boolean> {
-    const stage = await this.stageWindows(target);
-    this.commitWindowStage(stage, requiredLayoutEmits);
+    const stage = await this.stageWindows(target).catch((error) => {
+      this.windowLinkAuthority?.invalidate();
+      this.latestWindowStage = null;
+      throw error;
+    });
+    this.commitWindowStage(stage, requiredLayoutEmits, previousCurrentWindow);
     return stage.repairedIdentity;
   }
 
@@ -2952,6 +3114,8 @@ export class SessionChannel {
     requiredLayoutEmits: ReadonlySet<string> = new Set(),
     previousCurrentWindow = this.currentWindow,
   ): void {
+    this.windowLinkAuthority?.reconcile(stage.links);
+    this.latestWindowStage = stage;
     const changedWindows = new Set<string>();
     for (const [runtimeId, record] of stage.windows) {
       const previous = this.windowsByRuntime.get(runtimeId);
@@ -3011,6 +3175,7 @@ export class SessionChannel {
 
   private windowStagesEqual(left: WindowSyncStage, right: WindowSyncStage): boolean {
     if (
+      JSON.stringify(left.links) !== JSON.stringify(right.links) ||
       left.currentWindow !== right.currentWindow ||
       left.windows.size !== right.windows.size ||
       left.layouts.size !== right.layouts.size
@@ -3054,9 +3219,12 @@ export class SessionChannel {
 
   private async stageWindows(target = this.opts.session): Promise<WindowSyncStage> {
     const lines = await this.io.request(
-      `list-windows -t "${target}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}\t#{window_layout}\t#{mode-keys}"`,
+      `list-windows -t "${target}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}\t#{window_layout}\t#{mode-keys}\t#{window_index}"`,
     );
+    if (lines.length > WINDOW_LINK_MAX_LINKS)
+      throw new Error("Window link observation exceeds bound");
     interface Row {
+      index: number;
       runtimeId: string;
       stamp: string | null;
       name: string | null;
@@ -3068,12 +3236,12 @@ export class SessionChannel {
       modeKeys?: "emacs" | "vi";
     }
     const rows: Row[] = [];
-    const seenRuntimeIds = new Set<string>();
+    const seenIndexes = new Set<number>();
     for (const raw of lines) {
       // Replies are latin1 byte strings; recover UTF-8 window names first.
       const line = Buffer.from(raw, "latin1").toString("utf8");
       const parts = line.split("\t");
-      if (parts.length !== 7 && parts.length !== 8 && parts.length !== 9) {
+      if (parts.length !== 10) {
         throw new Error(`window layout truth for ${this.opts.session} is malformed`);
       }
       const [
@@ -3086,10 +3254,14 @@ export class SessionChannel {
         borderStatus = "off",
         full = visible,
         modeKeys,
+        indexRaw = "",
       ] = parts;
+      const index = Number(indexRaw);
       if (
         !/^@[0-9]+$/u.test(runtimeId) ||
-        seenRuntimeIds.has(runtimeId) ||
+        !/^(?:0|[1-9][0-9]*)$/u.test(indexRaw) ||
+        !Number.isSafeInteger(index) ||
+        seenIndexes.has(index) ||
         (active !== "0" && active !== "1") ||
         (zoomed !== "0" && zoomed !== "1") ||
         (borderStatus !== "top" && borderStatus !== "bottom" && borderStatus !== "off") ||
@@ -3097,10 +3269,11 @@ export class SessionChannel {
       ) {
         throw new Error(`window layout truth for ${this.opts.session} is malformed`);
       }
-      seenRuntimeIds.add(runtimeId);
+      seenIndexes.add(index);
       const stamp = decodeTmuxArgument(stampRaw);
       const name = decodeTmuxArgument(nameRaw);
       rows.push({
+        index,
         runtimeId,
         stamp: stamp.length > 0 ? stamp : null,
         name: name.length > 0 ? name : null,
@@ -3121,11 +3294,27 @@ export class SessionChannel {
         `window layout truth for ${this.opts.session} has inconsistent active window`,
       );
     }
+    const backingRows = new Map<string, Row>();
+    for (const row of rows) {
+      const previous = backingRows.get(row.runtimeId);
+      if (
+        previous &&
+        (previous.stamp !== row.stamp ||
+          previous.name !== row.name ||
+          previous.visible !== row.visible ||
+          previous.full !== row.full ||
+          previous.zoomed !== row.zoomed ||
+          previous.paneBorderStatus !== row.paneBorderStatus ||
+          previous.modeKeys !== row.modeKeys)
+      )
+        throw new Error("Inconsistent linked backing observation");
+      backingRows.set(row.runtimeId, row);
+    }
     const nextLayoutByWindow = new Map<
       string,
       ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }
     >();
-    for (const row of rows) {
+    for (const row of backingRows.values()) {
       const parsed = parseLayout(row.visible);
       if (!parsed) {
         throw new Error(`window layout truth for ${this.opts.session} is malformed`);
@@ -3137,7 +3326,7 @@ export class SessionChannel {
     // Valid unique stamps are identity; missing/invalid/duplicated stamps are
     // ALL regenerated and stamped back (the pane policy, applied to windows).
     const stampCounts = new Map<string, number>();
-    for (const row of rows) {
+    for (const row of backingRows.values()) {
       if (row.stamp && WorkspaceIdSchemaZ.safeParse(row.stamp).success) {
         stampCounts.set(row.stamp, (stampCounts.get(row.stamp) ?? 0) + 1);
       }
@@ -3146,9 +3335,8 @@ export class SessionChannel {
     const generateWindowId = this.opts.generateWindowId ?? defaultMirrorWindowId;
     let repairedIdentity = false;
     const next = new Map<string, WindowRecord>();
-    let nextCurrentWindow = "";
-    for (const row of rows) {
-      if (row.active) nextCurrentWindow = row.runtimeId;
+    const nextCurrentWindow = activeRows[0]!.runtimeId;
+    for (const row of backingRows.values()) {
       let semanticId: string | null = null;
       if (row.stamp && stampCounts.get(row.stamp) === 1) {
         semanticId = row.stamp;
@@ -3194,6 +3382,12 @@ export class SessionChannel {
       layouts: nextLayoutByWindow,
       currentWindow: nextCurrentWindow,
       repairedIdentity,
+      links: rows.map((row) => ({
+        index: row.index,
+        runtimeWindowId: row.runtimeId,
+        semanticWindowId: next.get(row.runtimeId)!.semanticId ?? "",
+        active: row.active,
+      })),
     };
   }
 
@@ -3410,6 +3604,7 @@ export class SessionChannel {
 
   private onChannelExit(): void {
     if (this.disposed) return;
+    this.windowLinkAuthority?.dispose();
     this.nativeGrid.dispose();
     this.settleFirstJoin();
     for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);

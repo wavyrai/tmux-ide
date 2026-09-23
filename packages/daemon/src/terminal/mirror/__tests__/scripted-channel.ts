@@ -40,6 +40,9 @@ export class ScriptedChannelDriver {
       if (command.startsWith('display-message -p "#{qa:session_name}')) {
         return basic(command) ?? [];
       }
+      // This scalar observation is not a deferred cursor probe. Answer it
+      // before an automatic inventory reply can consume its pending FIFO slot.
+      if (isHistorySizeProbe(command)) return ["0"];
       if (command.includes("capture-pane") || command.startsWith("display-message")) return null;
       return basic(command) ?? [];
     });
@@ -49,7 +52,11 @@ export class ScriptedChannelDriver {
   pump(): void {
     for (let index = this.#handledWrites; index < this.channel.written.length; index += 1) {
       const command = this.channel.written[index]!;
-      if (command.startsWith('display-message -p "#{qa:session_name}')) continue;
+      if (
+        command.startsWith('display-message -p "#{qa:session_name}') ||
+        isHistorySizeProbe(command)
+      )
+        continue;
       if (command.includes("capture-pane") || command.startsWith("display-message")) {
         this.deferredCommands.push(command);
       }
@@ -110,4 +117,8 @@ export function standardScriptedChannel(
     },
     ...options,
   });
+}
+
+function isHistorySizeProbe(command: string): boolean {
+  return /^display-message -p -t %\d+ "#\{history_size\}"$/u.test(command);
 }

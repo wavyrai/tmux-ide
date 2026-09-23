@@ -4,6 +4,8 @@ import { join } from "node:path";
 
 import {
   PANE_STREAM_ISSUE_PATH,
+  PANE_STREAM_PROTOCOL_VERSION,
+  DAEMON_WIRE_PROTOCOL_VERSION,
   PANE_STREAM_REDEEM_PATH,
   PaneStreamIssueResultSchemaZ,
   type PaneStreamIssueMutationRequest,
@@ -16,7 +18,7 @@ import { PaneStreamAdmissionError } from "../terminal/pane-stream/pane-stream-we
 import { createApp } from "./server.ts";
 
 const IDENTITY = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.8.0",
   instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
   startedAt: "2026-07-21T00:00:00.000Z",
@@ -46,7 +48,7 @@ function mutation(
     requestId: REQUEST_ID,
     expectedDaemonInstanceId: IDENTITY.instanceId,
     stream: {
-      protocolVersion: 1,
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
       workspaceName: "product",
       panes: ["pane.worker", "pane.logs"],
       viewerMode: "interactive",
@@ -98,9 +100,9 @@ async function parsed(response: Response) {
 
 function descriptor() {
   return {
-    protocolVersion: 1 as const,
+    protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
     webSocketUrl: `ws://127.0.0.1:6060${PANE_STREAM_REDEEM_PATH}`,
-    redemptionTicket: `ps1_${"A".repeat(43)}`,
+    redemptionTicket: `ps2_${"A".repeat(43)}`,
     daemonInstanceId: IDENTITY.instanceId,
     requestId: REQUEST_ID,
     expiresAt: 1_784_662_830_000,
@@ -116,7 +118,7 @@ describe("owner pane-stream issue route", () => {
     const result = await parsed(await post(app, mutation()));
     expect(result.status).toBe("issued");
     if (result.status === "issued") {
-      expect(result.descriptor.subprotocol).toBe("tmux-ide-pane-stream.v1");
+      expect(result.descriptor.subprotocol).toBe("tmux-ide-pane-stream.v2");
       expect(result.descriptor.panes).toEqual(["pane.worker", "pane.logs"]);
     }
     expect(issue).toHaveBeenCalledWith(

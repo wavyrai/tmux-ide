@@ -1,4 +1,13 @@
-import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
+import {
+  captureTmuxServerProof,
+  captureUnboundTmuxSelectorProof,
+  type TmuxServerProof,
+} from "./tmux-server-proof.ts";
+import {
+  createPinnedWorkspaceTmuxRunner,
+  resolveWorkspacePaneTmuxAuthority,
+} from "./workspace-pane-creation.ts";
+import { resolveRuntimeNamespace, resolveTmuxServerIntent } from "./runtime-namespace.ts";
 import { compareProductVersions } from "./semver.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { resolve } from "node:path";
@@ -25,12 +34,15 @@ import {
 } from "./canonical-daemon.ts";
 
 export type CanonicalDaemonBootstrapFailure =
+  | "tmux-server-mismatch"
+  | "tmux-server-unproven"
   | "canonical-record-invalid"
   | "identity-mismatch"
   | "protocol-mismatch"
   | "product-version-mismatch";
 
 export interface CanonicalDaemonBootstrapOptions {
+  readonly tmuxServerIntent?: ReturnType<typeof resolveTmuxServerIntent>;
   readonly supervisionId?: string;
   /** The shipped CLI entry which owns `runHeadlessDaemon`. */
   readonly entryPath: string;
@@ -43,6 +55,9 @@ export interface CanonicalDaemonBootstrapOptions {
 }
 
 export interface CanonicalDaemonBootstrapDependencies {
+  readonly serverProof: (
+    intent: NonNullable<ReturnType<typeof resolveTmuxServerIntent>>,
+  ) => TmuxServerProof | null;
   readonly inspect: () => CanonicalDaemonInfoState;
   readonly ownerProvenDead: (
     state: Exclude<CanonicalDaemonInfoState, { status: "missing" }>,
@@ -135,6 +150,17 @@ function sameCanonicalInstance(left: CanonicalDaemonInfo, right: CanonicalDaemon
 const defaultDependencies: CanonicalDaemonBootstrapDependencies = {
   // This adapter owns startup, so legacy permission preparation is explicit
   // here. Injected inspectors remain isolated from real filesystem mutation.
+  serverProof: (intent) => {
+    try {
+      const authority = { ...resolveWorkspacePaneTmuxAuthority(), socketSelector: intent.selector };
+      return (
+        captureTmuxServerProof(createPinnedWorkspaceTmuxRunner(authority, { timeoutMs: 1000 })) ??
+        captureUnboundTmuxSelectorProof(authority)
+      );
+    } catch {
+      return null;
+    }
+  },
   inspect: prepareCanonicalDaemonInfoForBootstrap,
   ownerProvenDead: isCanonicalDaemonRecordOwnerProvenDead,
   alive: isCanonicalDaemonAlive,
@@ -164,6 +190,7 @@ async function replaceOlderCanonicalDaemon(
   info: CanonicalDaemonInfo,
   timeoutMs: number,
   expectedProductVersion?: string,
+  intent: ReturnType<typeof resolveTmuxServerIntent> = null,
 ): Promise<void> {
   if (!needsReplacement(info, expectedProductVersion)) {
     throw new DaemonBootstrapError(
@@ -172,7 +199,10 @@ async function replaceOlderCanonicalDaemon(
       { reason: "protocol-mismatch" },
     );
   }
-  const [identity, health] = await Promise.all([deps.identity(info), deps.health(info)]);
+  const [identity, health] = await Promise.all([
+    deps.identity(info, undefined, Boolean(intent)),
+    deps.health(info),
+  ]);
   if (
     !info.authToken ||
     !identity ||
@@ -191,6 +221,7 @@ async function replaceOlderCanonicalDaemon(
       { reason: "identity-mismatch" },
     );
   }
+  assertServerIntent(deps, info, identity, intent);
   const latest = deps.inspect();
   if (
     latest.status !== "valid" ||
@@ -221,9 +252,35 @@ async function replaceOlderCanonicalDaemon(
   );
 }
 
+function assertServerIntent(
+  deps: CanonicalDaemonBootstrapDependencies,
+  info: CanonicalDaemonInfo,
+  identity: NonNullable<Awaited<ReturnType<typeof probeCanonicalDaemonIdentity>>>,
+  intent: ReturnType<typeof resolveTmuxServerIntent>,
+): void {
+  if (!intent) return;
+  const proof = deps.serverProof(intent);
+  if (info.tmuxServerProofVersion !== 1 || !identity.tmuxServerProof || !proof)
+    throw new DaemonBootstrapError(
+      "incompatible",
+      "Cannot prove the requested tmux server for this daemon. Its server identity is unavailable or unsupported; the existing daemon was left running.",
+      { reason: "tmux-server-unproven" },
+    );
+  if (
+    identity.tmuxServerProof.kind !== proof.kind ||
+    identity.tmuxServerProof.digest !== proof.digest
+  )
+    throw new DaemonBootstrapError(
+      "incompatible",
+      "The existing daemon manages a different tmux server. It was left running; select its server or use a separate daemon namespace.",
+      { reason: "tmux-server-mismatch" },
+    );
+}
+
 async function probeCanonical(
   deps: CanonicalDaemonBootstrapDependencies,
   expectedProductVersion?: string,
+  intent: ReturnType<typeof resolveTmuxServerIntent> = null,
 ): Promise<DaemonBootstrapProbe<CanonicalDaemonInfo, CanonicalDaemonBootstrapFailure>> {
   const state = deps.inspect();
   if (state.status === "missing") return { status: "absent-or-stale" };
@@ -244,7 +301,7 @@ async function probeCanonical(
     return { status: state.info.supervisionId ? "owner-pending" : "absent-or-stale" };
 
   const [identity, health] = await Promise.all([
-    deps.identity(state.info),
+    deps.identity(state.info, undefined, Boolean(intent)),
     deps.health(state.info),
   ]);
   // A living elected generation may publish before its accept loop. Preserve
@@ -258,6 +315,7 @@ async function probeCanonical(
   ) {
     return { status: "incompatible", reason: "identity-mismatch" };
   }
+  assertServerIntent(deps, state.info, identity, intent);
   if (
     state.info.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION ||
     identity.protocolVersion !== state.info.protocolVersion ||
@@ -325,12 +383,24 @@ export function createCanonicalDaemonBootstrapCoordinator(
   options: CanonicalDaemonBootstrapOptions,
   dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
 ): DaemonBootstrapCoordinator<CanonicalDaemonInfo, never, CanonicalDaemonBootstrapFailure> {
+  options = {
+    ...options,
+    tmuxServerIntent:
+      options.tmuxServerIntent === undefined ? resolveTmuxServerIntent() : options.tmuxServerIntent,
+  };
   const deps = supervisedAdmission(
     { ...defaultDependencies, ...dependencies },
     options.supervisionId,
   );
   return new DaemonBootstrapCoordinator({
-    probe: () => probeCanonical(deps, options.expectedProductVersion),
+    probe: () =>
+      probeCanonical(
+        deps,
+        options.expectedProductVersion,
+        options.tmuxServerIntent === undefined
+          ? resolveTmuxServerIntent()
+          : options.tmuxServerIntent,
+      ),
     spawn: () => deps.spawnOwner(resolve(options.entryPath), resolve(options.cwd ?? process.cwd())),
     timeoutMs: options.timeoutMs,
     onPhaseChanged: options.onPhaseChanged,
@@ -343,6 +413,11 @@ export function ensureCanonicalDaemon(
   options: CanonicalDaemonBootstrapOptions,
   dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
 ): Promise<DaemonBootstrapResult<CanonicalDaemonInfo, never>> {
+  options = {
+    ...options,
+    tmuxServerIntent:
+      options.tmuxServerIntent === undefined ? resolveTmuxServerIntent() : options.tmuxServerIntent,
+  };
   const deps = supervisedAdmission(
     { ...defaultDependencies, ...dependencies },
     options.supervisionId,
@@ -378,6 +453,9 @@ export function ensureCanonicalDaemon(
         replacing,
         options.timeoutMs ?? 15_000,
         options.expectedProductVersion,
+        options.tmuxServerIntent === undefined
+          ? resolveTmuxServerIntent()
+          : options.tmuxServerIntent,
       );
     } catch (replacementError) {
       // A duplicate upgrader can retire the exact owner while this caller is
@@ -402,6 +480,11 @@ export async function retireOutdatedCanonicalDaemon(
   options: CanonicalDaemonBootstrapOptions,
   dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
 ): Promise<boolean> {
+  options = {
+    ...options,
+    tmuxServerIntent:
+      options.tmuxServerIntent === undefined ? resolveTmuxServerIntent() : options.tmuxServerIntent,
+  };
   const deps = supervisedAdmission(
     { ...defaultDependencies, ...dependencies },
     options.supervisionId,
@@ -436,6 +519,7 @@ export async function retireOutdatedCanonicalDaemon(
       state.info,
       options.timeoutMs ?? 15_000,
       options.expectedProductVersion,
+      options.tmuxServerIntent === undefined ? resolveTmuxServerIntent() : options.tmuxServerIntent,
     );
     return true;
   } catch (error) {
@@ -447,4 +531,27 @@ export async function retireOutdatedCanonicalDaemon(
       return false;
     throw error;
   }
+}
+
+/** Admission for foreground election winners and explicit takeover paths. */
+export async function assertCanonicalDaemonServerIntent(
+  info: CanonicalDaemonInfo,
+  intent: ReturnType<typeof resolveTmuxServerIntent> = resolveTmuxServerIntent(),
+  dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
+): Promise<void> {
+  if (!intent) return;
+  const deps = { ...defaultDependencies, ...dependencies };
+  const identity = await deps.identity(info, undefined, true);
+  if (
+    !identity ||
+    identity.pid !== info.pid ||
+    identity.instanceId !== info.instanceId ||
+    identity.startedAt !== info.startedAt
+  )
+    throw new DaemonBootstrapError(
+      "incompatible",
+      "Canonical daemon identity could not be verified for the requested tmux server.",
+      { reason: "identity-mismatch" },
+    );
+  assertServerIntent(deps, info, identity, intent);
 }

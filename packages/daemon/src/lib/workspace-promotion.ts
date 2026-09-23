@@ -122,6 +122,7 @@ const PANE_VERIFY_FORMAT = [
   "#{pane_id}",
   `#{${SEMANTIC_PANE_OPTION}}`,
   `#{${SEMANTIC_WINDOW_OPTION}}`,
+  "#{window_index}",
   SENTINEL,
 ].join(FIELD);
 
@@ -209,6 +210,7 @@ interface ScanPane {
 }
 
 interface VerifyPane {
+  readonly windowIndex: number;
   readonly sessionId: string;
   readonly windowId: string;
   readonly windowName: string;
@@ -384,8 +386,10 @@ function parseVerifyPanes(output: string): VerifyPane[] {
     const windowPaneCount = positiveInteger(fields[3] ?? "");
     const sessionWindowCount = positiveInteger(fields[4] ?? "");
     if (
-      fields.length !== 9 ||
-      fields[8] !== SENTINEL ||
+      fields.length !== 10 ||
+      fields[9] !== SENTINEL ||
+      !/^(0|[1-9][0-9]*)$/u.test(fields[8]!) ||
+      !Number.isSafeInteger(Number(fields[8])) ||
       !/^\$[0-9]+$/u.test(fields[0]!) ||
       !/^@[0-9]+$/u.test(fields[1]!) ||
       !/^%[0-9]+$/u.test(fields[5]!) ||
@@ -405,6 +409,7 @@ function parseVerifyPanes(output: string): VerifyPane[] {
       paneId: fields[5]!,
       semanticPaneId: fields[6]!,
       semanticWindowId: fields[7]!,
+      windowIndex: Number(fields[8]),
     });
   }
   return panes;
@@ -565,9 +570,7 @@ export class WorkspacePromotionAuthority {
       // promotion is the app's only repair verb — so reconcile the stamps here
       // before resolving to a `replayed` outcome. Stamping is additive and never
       // overwrites a valid stamp, so a healthy session is untouched.
-      const alreadyRegistered = this.#registry
-        .list()
-        .find((workspace) => workspace.sessionName === session.sessionName);
+      const alreadyRegistered = this.#registeredSession(session.sessionName);
       if (alreadyRegistered) {
         const registeredIdentity: PromotionIdentity = {
           workspaceName: alreadyRegistered.name,
@@ -590,6 +593,42 @@ export class WorkspacePromotionAuthority {
       await this.#verifyPromotedInventory(session.sessionId, identity);
       await this.#publishFleetEnrollment(request, session, identity);
 
+      // Catalog discovery can admit this session while the native stamping
+      // and verification awaits run. Reuse that exact registry identity instead
+      // of publishing a second name for the same session at the commit point.
+      const discovered = this.#registeredSession(session.sessionName);
+      if (discovered) {
+        if (discovered.name !== identity.workspaceName) {
+          try {
+            await this.#io.runTmux([
+              "set-option",
+              "-t",
+              session.sessionId,
+              SESSION_WORKSPACE_OPTION,
+              discovered.name,
+            ]);
+          } catch (error) {
+            throw new WorkspacePromotionError(
+              "stamp_failed",
+              {
+                operationId: request.operationId,
+                workspaceName: discovered.name,
+              },
+              error,
+            );
+          }
+        }
+        this.#assertActive(request.operationId);
+        if (this.#registeredSession(session.sessionName)?.name !== discovered.name) {
+          throw new WorkspacePromotionError("workspace_conflict", {
+            operationId: request.operationId,
+            workspaceName: discovered.name,
+          });
+        }
+        return this.#succeed(request, fingerprint, discovered.name, session.sessionName, {
+          replayed: true,
+        });
+      }
       let registered: Workspace;
       try {
         registered = this.#registry.add({
@@ -649,6 +688,16 @@ export class WorkspacePromotionAuthority {
       if (this.#io.isTmuxUnavailable(error)) return [];
       throw error;
     }
+  }
+
+  #registeredSession(sessionName: string): Workspace | undefined {
+    const candidates = this.#registry
+      .list()
+      .filter((workspace) => workspace.sessionName === sessionName);
+    if (candidates.length > 1) {
+      throw new WorkspacePromotionError("workspace_conflict", { sessionName });
+    }
+    return candidates[0];
   }
 
   #assertConflictFreeIdentity(identity: PromotionIdentity): void {
@@ -757,6 +806,19 @@ export class WorkspacePromotionAuthority {
       });
     }
 
+    // list-panes -s repeats each backing pane once per window link. Stamp the
+    // backing only once, and reject contradictory observations before writes.
+    const uniqueScan = new Map<string, ScanPane>();
+    for (const pane of scanned) {
+      const previous = uniqueScan.get(pane.paneId);
+      if (previous && JSON.stringify(previous) !== JSON.stringify(pane)) {
+        throw new WorkspacePromotionError("promotion_verification_failed", {
+          reason: "inconsistent_tmux_topology",
+        });
+      }
+      uniqueScan.set(pane.paneId, pane);
+    }
+    scanned = [...uniqueScan.values()];
     const nowSec = Math.floor(this.#io.now() / 1000);
     const reconciledWindows = new Set<string>();
     try {
@@ -928,8 +990,32 @@ export class WorkspacePromotionAuthority {
       });
     }
 
+    // Validate links independently from their shared backing. Repeated native
+    // panes are legal only across distinct links with identical backing facts.
+    const links = new Map<number, VerifyPane[]>();
+    const backingPanes = new Map<string, Omit<VerifyPane, "windowIndex">>();
+    const semanticWindows = new Map<string, string>();
+    for (const pane of panes) {
+      const { windowIndex, ...backing } = pane;
+      const previous = backingPanes.get(pane.paneId);
+      const semanticOwner = semanticWindows.get(pane.semanticWindowId);
+      const rows = links.get(windowIndex) ?? [];
+      if (
+        (previous && JSON.stringify(previous) !== JSON.stringify(backing)) ||
+        (semanticOwner && semanticOwner !== pane.windowId) ||
+        rows.some((row) => row.paneId === pane.paneId || row.windowId !== pane.windowId)
+      ) {
+        throw new WorkspacePromotionError("promotion_verification_failed", {
+          reason: "inconsistent_tmux_topology",
+        });
+      }
+      backingPanes.set(pane.paneId, backing);
+      semanticWindows.set(pane.semanticWindowId, pane.windowId);
+      rows.push(pane);
+      links.set(windowIndex, rows);
+    }
     const catalog = analyzeTrustedSemanticPaneCatalog(
-      panes.map((pane) => ({
+      [...backingPanes.values()].map((pane) => ({
         workspaceName: identity.workspaceName,
         semanticPaneId: pane.semanticPaneId === "" ? null : pane.semanticPaneId,
         sessionId: pane.sessionId,
@@ -950,17 +1036,17 @@ export class WorkspacePromotionAuthority {
       });
     }
 
-    const windows = new Map<string, VerifyPane[]>();
-    for (const pane of panes) {
-      const rows = windows.get(pane.windowId) ?? [];
+    const backings = new Map<string, Omit<VerifyPane, "windowIndex">[]>();
+    for (const pane of backingPanes.values()) {
+      const rows = backings.get(pane.windowId) ?? [];
       rows.push(pane);
-      windows.set(pane.windowId, rows);
+      backings.set(pane.windowId, rows);
     }
     const sessionWindowCount = panes[0]!.sessionWindowCount;
     if (
-      windows.size !== sessionWindowCount ||
+      links.size !== sessionWindowCount ||
       panes.some((pane) => pane.sessionWindowCount !== sessionWindowCount) ||
-      [...windows.values()].some(
+      [...links.values(), ...backings.values()].some(
         (rows) =>
           rows.length !== rows[0]!.windowPaneCount ||
           rows.some(

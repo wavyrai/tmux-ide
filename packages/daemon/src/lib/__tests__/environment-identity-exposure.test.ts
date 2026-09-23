@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DaemonIdentitySchema } from "@tmux-ide/contracts";
 
 import { createApp } from "../../command-center/server.ts";
@@ -52,5 +52,61 @@ describe("environment identity exposure", () => {
     };
     expect(body.daemon.environmentId).toBe(ENVIRONMENT_ID);
     expect(body.daemon.instanceId).toBe("9bcf33b0-c837-4a94-b5e8-c0977f54464f");
+  });
+});
+
+describe("tmux server identity proof exposure", () => {
+  it("coalesces concurrent probes and refreshes the next request", async () => {
+    const first = { version: 1 as const, kind: "live" as const, digest: "a".repeat(64) };
+    const next = { version: 1 as const, kind: "live" as const, digest: "b".repeat(64) };
+    let complete!: (proof: typeof first) => void;
+    const capture = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<typeof first>((resolve) => {
+            complete = resolve;
+          }),
+      )
+      .mockResolvedValue(next);
+    const app = createApp({ tmuxServerProof: capture });
+    const plain = await app.request("/identity");
+    expect(await plain.json()).not.toHaveProperty("tmuxServerProof");
+    expect(capture).not.toHaveBeenCalled();
+    const one = app.request("/identity?tmuxServerProof=1");
+    const two = app.request("/identity?tmuxServerProof=1");
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
+    // Plain identity remains available even while a tmux proof is stalled.
+    const duringProof = await app.request("/identity");
+    expect(duringProof.status).toBe(200);
+    expect(await duringProof.json()).not.toHaveProperty("tmuxServerProof");
+    complete(first);
+    for (const response of await Promise.all([one, two])) {
+      expect(DaemonIdentitySchema.parse(await response.json()).tmuxServerProof).toEqual(first);
+    }
+    const fresh = await app.request("/identity?tmuxServerProof=1");
+    expect(DaemonIdentitySchema.parse(await fresh.json()).tmuxServerProof).toEqual(next);
+    expect(capture).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports an unprovable server without breaking daemon liveness or caching failure", async () => {
+    const capture = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("retired authority"))
+      .mockResolvedValue(null);
+    const app = createApp({ tmuxServerProof: capture });
+    for (let index = 0; index < 2; index++) {
+      const response = await app.request("/identity?tmuxServerProof=1");
+      expect(response.status).toBe(200);
+      expect(DaemonIdentitySchema.parse(await response.json()).tmuxServerProof).toBeNull();
+    }
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect((await app.request("/healthz")).status).toBe(200);
+    expect(capture).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves old identity shape when proof capability is absent", async () => {
+    const response = await makeApp().request("/identity");
+    expect(await response.json()).not.toHaveProperty("tmuxServerProof");
   });
 });

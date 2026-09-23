@@ -209,6 +209,26 @@ class FakeSub implements MirrorSubscription {
   }
 }
 
+function fixtureWindowLinks(layouts: readonly MirrorLayoutEvent[], revision = 1) {
+  const links = layouts.map((layout, index) => ({
+    linkId: `window-link.${String(index + 1).padStart(32, "0")}`,
+    semanticWindowId: layout.semanticWindowId ?? "window.invalid",
+    displayIndex: index,
+  }));
+  return {
+    liveSessionId: `live-session.${"a".repeat(20)}`,
+    linkRevision: revision,
+    activeLinkId:
+      links[
+        Math.max(
+          0,
+          layouts.findIndex((layout) => layout.currentWindow),
+        )
+      ]?.linkId ?? `window-link.${"0".repeat(32)}`,
+    links,
+  };
+}
+
 class FakeMirror implements PaneStreamMirror {
   panes: string[];
   readonly subs: FakeSub[] = [];
@@ -218,6 +238,7 @@ class FakeMirror implements PaneStreamMirror {
       session: string;
       runtimeSessionId: string;
       topologyEpoch: number;
+      windowLinks?: ReturnType<typeof fixtureWindowLinks>;
       layouts: readonly MirrorLayoutEvent[];
     }) => void
   > = [];
@@ -316,8 +337,17 @@ class FakeMirror implements PaneStreamMirror {
         runtimeSessionId: this.layoutRuntimeSessionId,
         topologyEpoch,
         layouts: [...current.values()],
+        windowLinks: fixtureWindowLinks([...current.values()], topologyEpoch + 1),
       });
-      if (authority.onAuthority) this.authorityHandlers.push(authority.onAuthority);
+      if (authority.onAuthority)
+        this.authorityHandlers.push((snapshot) =>
+          authority.onAuthority?.({
+            ...snapshot,
+            windowLinks:
+              snapshot.windowLinks ??
+              fixtureWindowLinks(snapshot.layouts, snapshot.topologyEpoch + 1),
+          }),
+        );
       this.layoutHandlers.push((event) => {
         onLayout(event);
         if (event.semanticWindowId) current.set(event.semanticWindowId, event);
@@ -327,6 +357,7 @@ class FakeMirror implements PaneStreamMirror {
           runtimeSessionId: this.layoutRuntimeSessionId,
           topologyEpoch,
           layouts: [...current.values()],
+          windowLinks: fixtureWindowLinks([...current.values()], topologyEpoch + 1),
         });
       });
     } else {
@@ -2112,6 +2143,55 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(socket.framesOfType("layout-snapshot")).toHaveLength(1);
     expect(socket.framesOfType("error").at(-1)?.code).toBe("topology-changed");
     expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+  });
+
+  it("publishes same-backing link selection without reopening delivery and rejects unfenced changes", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two"] });
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    const initial = socket.framesOfType("layout-snapshot")[0]!;
+    const first = initial.windowLinks.links[0]!;
+    const duplicate = { ...first, linkId: `window-link.${"f".repeat(32)}`, displayIndex: 7 };
+    const layouts = [
+      authoritativeLayout(["pane.one", "pane.two"], { window: first.semanticWindowId }),
+    ];
+    const topology = {
+      ...initial.windowLinks,
+      linkRevision: initial.windowLinks.linkRevision + 1,
+      links: [first, duplicate],
+    };
+    h.mirror.authorityHandlers[0]?.({
+      session: SESSION,
+      runtimeSessionId: "$1",
+      topologyEpoch: 1,
+      layouts,
+      windowLinks: topology,
+    });
+    h.mirror.authorityHandlers[0]?.({
+      session: SESSION,
+      runtimeSessionId: "$1",
+      topologyEpoch: 2,
+      layouts,
+      windowLinks: { ...topology, activeLinkId: duplicate.linkId },
+    });
+    expect(socket.framesOfType("layout-snapshot").at(-1)?.windowLinks.activeLinkId).toBe(
+      duplicate.linkId,
+    );
+    expect(socket.framesOfType("layout-snapshot")).toHaveLength(3);
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2);
+    expect(socket.closed).toBeNull();
+    h.mirror.authorityHandlers[0]?.({
+      session: SESSION,
+      runtimeSessionId: "$1",
+      topologyEpoch: 3,
+      layouts,
+      windowLinks: { ...topology, links: [first, { ...duplicate, displayIndex: 8 }] },
+    });
+    expect(socket.framesOfType("layout-snapshot")).toHaveLength(3);
+    expect(socket.closed).not.toBeNull();
   });
 
   it("preserves an atomic two-callback current-window switch with exact pane identity", async () => {

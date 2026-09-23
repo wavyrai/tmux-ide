@@ -26,7 +26,9 @@
     "./runtime-resource-ledger": "./src/runtime-resource-ledger.ts",
     "./fleet-dial-scheduler": "./src/fleet-dial-scheduler.ts",
     "./fleet-connection-status": "./src/fleet-connection-status.ts",
-    "./fleet-environments": "./src/fleet-environments.ts"
+    "./fleet-environments": "./src/fleet-environments.ts",
+    "./tmux-server-client": "./src/tmux-server-client.ts",
+    "./scoped-tmux-server-transport": "./src/scoped-tmux-server-transport.ts"
   },
   "main": "src/index.ts",
   "scripts": {

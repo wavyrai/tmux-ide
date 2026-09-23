@@ -65,6 +65,7 @@ export * from "./workspace-open.ts";
 export * from "./workspace-open-handoff.ts";
 export * from "./workspace-promotion.ts";
 export * from "./workspace-multiplexer.ts";
+export * from "./window-links.ts";
 export * from "./interaction-receipts.ts";
 export * from "./multiplexer-verbs.ts";
 export * from "./visual-tokens.ts";
@@ -97,3 +98,4 @@ export * from "./saved-machines.ts";
 export * from "./semantic-icons.ts";
 
 export * from "./workspace-admission.ts";
+export * from "./tmux-server-scope.ts";

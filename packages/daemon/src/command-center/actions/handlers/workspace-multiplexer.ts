@@ -84,6 +84,8 @@ function verbHandler<V extends WorkspaceMultiplexerVerb>(verb: V) {
   ): Promise<ActionResult<V>> => (await runVerb(verb, input, context, deps)) as ActionResult<V>;
 }
 
+export const workspaceWindowLinkSelectHandler = verbHandler("workspace.window.link.select");
+export const workspaceWindowLinkUnlinkHandler = verbHandler("workspace.window.link.unlink");
 export const workspaceWindowSplitHandler = verbHandler("workspace.window.split");
 export const workspaceWindowKillHandler = verbHandler("workspace.window.kill");
 export const workspacePaneKillHandler = verbHandler("workspace.pane.kill");

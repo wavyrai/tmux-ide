@@ -1,3 +1,4 @@
+import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -17,7 +18,7 @@ import {
 const daemon = {
   pid: 99999999,
   port: 7331,
-  protocolVersion: 2,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.9.0-beta.8",
   instanceId: "12345678-1234-4234-8234-123456789abc",
   startedAt: "2026-09-09T10:00:00.000Z",

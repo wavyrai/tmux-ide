@@ -198,7 +198,7 @@ describe("MirrorService refcounting", () => {
     const retention = await service.retainSession(FIXTURE.session);
     state.windowRows = mutate(state);
     await expect(service.subscribeLayout(FIXTURE.session, () => undefined)).rejects.toThrow(
-      /window layout truth.*(?:malformed|missing)/u,
+      /window layout truth.*(?:malformed|missing|inconsistent active window)/u,
     );
     await retention.close();
   });
@@ -314,7 +314,10 @@ describe("MirrorService refcounting", () => {
           }
           if (transactional && command.startsWith("list-windows")) {
             windowReads += 1;
-            return windowReads === 1 ? intermediateWindows : finalWindows;
+            return fixtureAutoReply({
+              ...state,
+              windowRows: windowReads === 1 ? intermediateWindows : finalWindows,
+            })(command);
           }
           return fixtureAutoReply(state)(command);
         }),
@@ -353,10 +356,13 @@ describe("MirrorService refcounting", () => {
         new SimulatedChannel(handlers, (command) => {
           if (transactional && command.startsWith("list-windows")) {
             windowReads += 1;
-            return FIXTURE.windowRows(
-              FIXTURE.layoutW1,
-              windowReads % 2 === 1 ? "cccc,180x40,0,0,3" : "dddd,170x35,0,0,3",
-            );
+            return fixtureAutoReply({
+              ...state,
+              windowRows: FIXTURE.windowRows(
+                FIXTURE.layoutW1,
+                windowReads % 2 === 1 ? "cccc,180x40,0,0,3" : "dddd,170x35,0,0,3",
+              ),
+            })(command);
           }
           return fixtureAutoReply(state)(command);
         }),

@@ -5,11 +5,8 @@ import { z } from "zod";
  * health responses, REST resources, and WebSocket transports. This is
  * intentionally independent from npm/package marketing versions.
  */
-// v2 makes the daemon-minted fleet session identity mandatory on workspace
-// catalog v2 rows. A v1 daemon can otherwise pass the bootstrap handshake and
-// then fail a current client at the first catalog parse, so this is a real wire
-// boundary rather than an additive package-version change.
-export const DAEMON_WIRE_PROTOCOL_VERSION = 2 as const;
+// v3 requires link-aware terminal topology and actions; v2 peers must upgrade.
+export const DAEMON_WIRE_PROTOCOL_VERSION = 3 as const;
 
 /**
  * Discovery must retain unknown positive versions so a client can report an
@@ -96,7 +93,14 @@ export const DaemonProvenanceSchema = z.object({
 });
 export type DaemonProvenance = z.infer<typeof DaemonProvenanceSchema>;
 
+export const TmuxServerProofSchema = z.object({
+  version: z.literal(1),
+  kind: z.enum(["live", "unbound-name"]),
+  digest: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+
 export const CanonicalDaemonInfoSchema = z.object({
+  tmuxServerProofVersion: z.literal(1).optional(),
   supervisionId: DaemonSupervisionIdSchema.optional(),
   pid: z.number().int().positive(),
   port: z.number().int().min(1).max(65_535),
@@ -133,6 +137,7 @@ export type DaemonHealthz = z.infer<typeof DaemonHealthzSchema>;
  * daemon.json record is the process instance which published that record.
  */
 export const DaemonIdentitySchema = z.object({
+  tmuxServerProof: TmuxServerProofSchema.nullable().optional(),
   ok: z.literal(true),
   pid: z.number().int().positive(),
   protocolVersion: DaemonWireProtocolVersionSchema,

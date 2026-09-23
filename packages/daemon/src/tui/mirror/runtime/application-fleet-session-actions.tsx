@@ -43,6 +43,8 @@ export function ApplicationFleetSessionActions(props: {
     return command
       ? JSON.stringify([
           command.fleet!.machineId,
+          command.fleet!.server?.serverId,
+          command.fleet!.server?.generation,
           command.fleet!.daemonInstanceId,
           command.fleet!.liveSessionId,
           command.sessionName,
@@ -117,12 +119,13 @@ export function ApplicationFleetSessionActions(props: {
       )
         throw new Error("The selected host is unavailable or has restarted.");
       const epoch = handle.endpoint().epoch;
-      const routing = await ports().routing(daemon, undefined, signal);
+      const routing = target.server ? null : await ports().routing(daemon, undefined, signal);
       if (!current()) return;
       if (
         handle.endpoint().epoch !== epoch ||
         handle.read()?.instanceId !== target.daemonInstanceId ||
-        (target.liveSessionId !== "" &&
+        (routing &&
+          target.liveSessionId !== "" &&
           !routing.liveSessions.some(
             (session) =>
               session.liveSessionId === target.liveSessionId &&
@@ -132,11 +135,14 @@ export function ApplicationFleetSessionActions(props: {
         throw new Error("The selected session has changed. Select it again.");
       const result =
         action === "create"
-          ? await ports().create(handle, text)
+          ? target.server
+            ? await ports().create(handle, text, target.server)
+            : await ports().create(handle, text)
           : await ports().close(handle, {
               daemonInstanceId: target.daemonInstanceId,
               liveSessionId: target.liveSessionId,
               sessionName: command.sessionName,
+              ...(target.server ? { server: target.server } : {}),
             });
       if (!current()) return;
       if (!result)
@@ -180,7 +186,7 @@ export function ApplicationFleetSessionActions(props: {
           <TuiButton
             theme={props.theme}
             size="compact"
-            label="New on host ^N"
+            label={selected()?.fleet?.server ? "New on server ^N" : "New on host ^N"}
             disabled={!props.active || selected()?.fleet?.disabled || busy()}
             onPress={() => begin("create")}
           />

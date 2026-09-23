@@ -84,7 +84,7 @@ const REQUESTS: readonly DaemonResourceRequest[] = [
   {
     resource: "issuePaneStream",
     request: {
-      protocolVersion: 1,
+      protocolVersion: 2,
       workspaceName: WORKSPACE,
       panes: ["pane.worker"],
       viewerMode: "read-only",

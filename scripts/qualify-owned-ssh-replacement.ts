@@ -697,9 +697,9 @@ if (args[0] === "--client") {
             ? "witness"
             : path === "/ws/events"
               ? "semantic-events"
-              : path === "/api/v1/terminal/pane-streams/issue"
+              : path === "/api/v2/terminal/pane-streams/issue"
                 ? "pane-stream-issue"
-                : path === "/v1/terminal/pane-streams/redeem"
+                : path === "/v2/terminal/pane-streams/redeem"
                   ? "pane-stream-redeem"
                   : path.startsWith("/api/v2/action/")
                     ? "owner-action"

@@ -27,6 +27,7 @@ import {
   WorkspacePaneDisplayTitleSchemaZ,
 } from "./workspace-pane-creation.ts";
 import { AuthoredInteractionOriginSchemaZ } from "./interaction-receipts.ts";
+import { WindowLinkTargetSchemaZ } from "./window-links.ts";
 
 /**
  * A tmux window named either by its own durable stamp or by a pane inside it.
@@ -130,9 +131,39 @@ export type WorkspacePaneZoomToggleArguments = z.infer<
 >;
 
 export const WorkspacePaneSelectArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+  windowLink: WindowLinkTargetSchemaZ.optional(),
   semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
 }).strict();
 export type WorkspacePaneSelectArguments = z.infer<typeof WorkspacePaneSelectArgumentsSchemaZ>;
+
+/**
+ * Link-aware arguments use opaque observed authority.
+ * Execution requires daemon/session generation fencing and
+ * execution-time native link guards. These shapes carry no executable target.
+ */
+export const WorkspaceWindowLinkSelectArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+  target: WindowLinkTargetSchemaZ,
+}).strict();
+export type WorkspaceWindowLinkSelectArguments = z.infer<
+  typeof WorkspaceWindowLinkSelectArgumentsSchemaZ
+>;
+
+/** Ordinary unlink semantics; no forced unlink or implicit backing destruction. */
+export const WorkspaceWindowLinkUnlinkArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
+  target: WindowLinkTargetSchemaZ,
+}).strict();
+export type WorkspaceWindowLinkUnlinkArguments = z.infer<
+  typeof WorkspaceWindowLinkUnlinkArgumentsSchemaZ
+>;
+
+/** Future explicit-link pane selection; runtime must verify pane/backing membership. */
+export const WorkspacePaneSelectWithWindowLinkArgumentsSchemaZ =
+  WorkspacePaneSelectArgumentsSchemaZ.extend({
+    windowLink: WindowLinkTargetSchemaZ,
+  }).strict();
+export type WorkspacePaneSelectWithWindowLinkArguments = z.infer<
+  typeof WorkspacePaneSelectWithWindowLinkArgumentsSchemaZ
+>;
 
 /**
  * Deliver literal terminal input through daemon authority. The text exists only
@@ -197,6 +228,12 @@ export type WorkspacePaneResizeArguments = z.infer<typeof WorkspacePaneResizeArg
 
 /** Every multiplexer intent, discriminated by the route that carries it. */
 export const WorkspaceMultiplexerIntentSchemaZ = z.discriminatedUnion("verb", [
+  WorkspaceWindowLinkSelectArgumentsSchemaZ.extend({
+    verb: z.literal("workspace.window.link.select"),
+  }).strict(),
+  WorkspaceWindowLinkUnlinkArgumentsSchemaZ.extend({
+    verb: z.literal("workspace.window.link.unlink"),
+  }).strict(),
   WorkspaceWindowSplitArgumentsSchemaZ.extend({
     verb: z.literal("workspace.window.split"),
   }).strict(),
@@ -272,6 +309,21 @@ const MutationEnvelopeSchemaZ = z.object({
   outcome: z.enum(["applied", "unchanged", "replayed"]),
   workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ,
 });
+
+export const WorkspaceWindowLinkSelectResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+  verb: z.literal("workspace.window.link.select"),
+  target: WindowLinkTargetSchemaZ,
+}).strict();
+export type WorkspaceWindowLinkSelectResult = z.infer<
+  typeof WorkspaceWindowLinkSelectResultSchemaZ
+>;
+export const WorkspaceWindowLinkUnlinkResultSchemaZ = MutationEnvelopeSchemaZ.extend({
+  verb: z.literal("workspace.window.link.unlink"),
+  target: WindowLinkTargetSchemaZ,
+}).strict();
+export type WorkspaceWindowLinkUnlinkResult = z.infer<
+  typeof WorkspaceWindowLinkUnlinkResultSchemaZ
+>;
 
 export const WorkspaceWindowSplitResultSchemaZ = MutationEnvelopeSchemaZ.extend({
   verb: z.literal("workspace.window.split"),
@@ -355,6 +407,8 @@ export const WorkspacePaneResizeResultSchemaZ = MutationEnvelopeSchemaZ.extend({
 export type WorkspacePaneResizeResult = z.infer<typeof WorkspacePaneResizeResultSchemaZ>;
 
 export const WorkspaceMultiplexerMutationResultSchemaZ = z.discriminatedUnion("verb", [
+  WorkspaceWindowLinkSelectResultSchemaZ,
+  WorkspaceWindowLinkUnlinkResultSchemaZ,
   WorkspaceWindowSplitResultSchemaZ,
   WorkspaceWindowKillResultSchemaZ,
   WorkspacePaneKillResultSchemaZ,

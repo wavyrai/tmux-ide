@@ -698,6 +698,27 @@ describe("WorkspacePaneCreationAuthority", () => {
     expect(fake.creations).toBe(0);
   });
 
+  it("pins explicit named authority despite inherited foreign TMUX", () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-selector-"));
+    roots.push(root);
+    const executable = join(root, "tmux");
+    writeFileSync(executable, "#!/bin/sh\nexit 0\n");
+    chmodSync(executable, 0o755);
+    vi.stubEnv("TMUX_IDE_RUNTIME_MODE", "production");
+    vi.stubEnv("TMUX_IDE_TMUX_BIN", executable);
+    vi.stubEnv("TMUX_IDE_TMUX_SOCKET_NAME", "chosen");
+    vi.stubEnv("TMUX_IDE_TMUX_SOCKET_PATH", "");
+    vi.stubEnv("TMUX", "/does-not-exist/foreign.sock,123,0");
+    try {
+      expect(resolveWorkspacePaneTmuxAuthority().socketSelector).toEqual({
+        kind: "name",
+        name: "chosen",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("rejects project-relative and empty PATH authority even when ./tmux is executable", () => {
     const root = mkdtempSync(join(tmpdir(), "tmux-ide-relative-tmux-"));
     roots.push(root);

@@ -453,7 +453,7 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
       }
       const paneId = pane.attachability.semanticPaneId ?? pane.id;
       const issued = await host.daemon.issuePaneStream({
-        protocolVersion: 1,
+        protocolVersion: 2,
         workspaceName,
         panes: [paneId],
         viewerMode: "read-only",
@@ -486,7 +486,7 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
           socket.send(
             JSON.stringify({
               type: "redeem",
-              protocolVersion: 1,
+              protocolVersion: 2,
               ticket: descriptor.redemptionTicket,
               requestId: descriptor.requestId,
               daemonInstanceId: descriptor.daemonInstanceId,
@@ -536,7 +536,7 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
       if (!pane) return null;
       const paneId = pane.attachability.semanticPaneId ?? pane.id;
       const issued = await host.daemon.issuePaneStream({
-        protocolVersion: 1,
+        protocolVersion: 2,
         workspaceName,
         panes: [paneId],
         viewerMode: "read-only",
@@ -569,7 +569,7 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
       if (!pane) return { ok: false, reason: "second document found no pane" };
       const paneId = pane.attachability.semanticPaneId ?? pane.id;
       const own = await host.daemon.issuePaneStream({
-        protocolVersion: 1,
+        protocolVersion: 2,
         workspaceName,
         panes: [paneId],
         viewerMode: "read-only",
@@ -599,7 +599,7 @@ async function proveInBrowser({ pageUrl, daemonUrl }, workspaceName, root) {
           socket.send(
             JSON.stringify({
               type: "redeem",
-              protocolVersion: 1,
+              protocolVersion: 2,
               ticket: foreignDescriptor.redemptionTicket,
               requestId: foreignDescriptor.requestId,
               daemonInstanceId: foreignDescriptor.daemonInstanceId,

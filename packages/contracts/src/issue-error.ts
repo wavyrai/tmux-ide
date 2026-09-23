@@ -84,7 +84,7 @@ export const RendererSafeIssueReasonSchemaZ = z
   .max(240)
   .refine(
     (reason) =>
-      !/(?:authorization|bearer\s+|owner.?token|redemptionticket|ps1_|ta1_)/iu.test(reason),
+      !/(?:authorization|bearer\s+|owner.?token|redemptionticket|ps[12]_|ta1_)/iu.test(reason),
     "issue error reason must be credential-redacted",
   );
 

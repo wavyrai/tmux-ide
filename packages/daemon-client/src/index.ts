@@ -27,3 +27,5 @@ export * from "./first-latest-coordinator.ts";
 export * from "./fleet-dial-scheduler.ts";
 export * from "./fleet-connection-status.ts";
 export * from "./fleet-environments.ts";
+export * from "./tmux-server-client.ts";
+export * from "./scoped-tmux-server-transport.ts";

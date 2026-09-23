@@ -193,3 +193,115 @@ it("creates on an empty host without attaching and disables session close", asyn
   setup.renderer.destroy();
   owner.dispose();
 });
+
+it("requires confirmation before closing a nondefault server session", async () => {
+  const keyboard = createKeyboardRouteOwner();
+  const modes: boolean[] = [];
+  const selected = {
+    ...session,
+    fleet: {
+      ...session.fleet!,
+      server: {
+        serverId: `tmux-server.${"b".repeat(32)}`,
+        generation: "22222222-2222-4222-8222-222222222222",
+      },
+    },
+  } as ApplicationPaletteCommand;
+  const setup = await renderForTest(
+    () => (
+      <KeyboardRouteProvider owner={keyboard}>
+        <ApplicationFleetSessionActions
+          command={selected}
+          width={80}
+          height={24}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          active={true}
+          onModalChange={(value) => modes.push(value)}
+        />
+      </KeyboardRouteProvider>
+    ),
+    { width: 80, height: 24 },
+  );
+  await setup.renderOnce();
+  for (const name of ["x"])
+    keyboard.route({
+      name,
+      eventType: "press",
+      ctrl: true,
+      meta: false,
+      shift: false,
+      preventDefault() {},
+      stopPropagation() {},
+    });
+  await setup.renderOnce();
+  expect(modes).toContain(true);
+});
+
+it("creates on the explicitly selected server without querying the default catalog", async () => {
+  const keyboard = createKeyboardRouteOwner();
+  const calls: unknown[][] = [];
+  const server = {
+    serverId: `tmux-server.${"b".repeat(32)}`,
+    generation: "22222222-2222-4222-8222-222222222222",
+  };
+  const selected = {
+    ...session,
+    fleet: { ...session.fleet!, server },
+  } as ApplicationPaletteCommand;
+  const handle = {
+    read: () => ({ instanceId: daemonInstanceId }),
+    endpoint: () => ({ state: "ready", epoch: 1 }),
+  };
+  const ports = {
+    getMachine: () => handle,
+    routing: async () => {
+      throw Error("Default catalog must not be consulted");
+    },
+    create: async (...args: unknown[]) => {
+      calls.push(args);
+      return { outcome: "created" };
+    },
+    close: async () => null,
+  } as unknown as FleetSessionActionPorts;
+  const setup = await renderForTest(
+    () => (
+      <KeyboardRouteProvider owner={keyboard}>
+        <ApplicationFleetSessionActions
+          command={selected}
+          initialName="scratch"
+          width={80}
+          height={24}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          active={true}
+          onModalChange={() => {}}
+          ports={ports}
+        />
+      </KeyboardRouteProvider>
+    ),
+    { width: 80, height: 24 },
+  );
+  await setup.renderOnce();
+  keyboard.route({
+    name: "n",
+    eventType: "press",
+    ctrl: true,
+    meta: false,
+    shift: false,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await setup.renderOnce();
+  keyboard.route({
+    name: "return",
+    eventType: "press",
+    ctrl: false,
+    meta: false,
+    shift: false,
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await setup.renderOnce();
+  expect(calls).toEqual([[handle, "scratch", server]]);
+  expect(setup.captureCharFrame()).toContain("Created on Mini");
+});

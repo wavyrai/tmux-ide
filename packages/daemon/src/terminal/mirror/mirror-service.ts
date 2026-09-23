@@ -1,3 +1,12 @@
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { isAbsolute } from "node:path";
+import { resolveTmuxExecutable, tmuxClientEnvironment } from "../../lib/tmux-client-execution.ts";
+import {
+  captureUnixSocketIdentity,
+  revalidateUnixSocketIdentity,
+} from "../../lib/unix-socket-authority.ts";
+import { execFile } from "node:child_process";
+import type { WindowLinkTarget } from "@tmux-ide/contracts";
 /**
  * MirrorService — the daemon-side shared mirror layer (m43 card 1).
  *
@@ -37,6 +46,7 @@ import {
 } from "./control-mode-ownership.ts";
 
 export interface MirrorServiceOptions {
+  nativeServerIdentity?: import("../../lib/tmux-server-generation-runner.ts").NativeTmuxServerIdentity;
   resolveSocketPath?: () => string;
   /** `tmux -L <name>` for every channel — isolated servers in tests. */
   socketName?: string;
@@ -284,6 +294,15 @@ export class MirrorService {
     };
   }
 
+  async executeWindowLinkAction(
+    session: string,
+    request: { action: "select" | "unlink"; target?: WindowLinkTarget; paneId?: string },
+  ) {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    return entry.channel.executeWindowLinkAction(request);
+  }
+
   /** Synchronous hot input on an already-retained SessionRuntime channel. */
   sendText(
     session: string,
@@ -413,6 +432,21 @@ export class MirrorService {
       );
       let channel: SessionChannel;
       try {
+        const initialSocket = this.opts.resolveSocketPath
+          ? this.opts.resolveSocketPath()
+          : this.opts.socketPath;
+        const mutationSocketIdentity = initialSocket
+          ? captureUnixSocketIdentity(initialSocket)
+          : null;
+        const executable = mutationSocketIdentity
+          ? realpathSync(this.opts.executable ?? resolveTmuxExecutable())
+          : null;
+        if (executable) {
+          accessSync(executable, constants.X_OK);
+          if (!isAbsolute(executable) || !statSync(executable).isFile())
+            throw new Error("Invalid pinned tmux executable");
+        }
+        const environment = Object.freeze(tmuxClientEnvironment(process.env));
         const channelOptions: SessionChannelOptions = {
           session,
           createIo: (handlers) =>
@@ -424,10 +458,32 @@ export class MirrorService {
               socketPath: this.opts.socketPath,
               resolveSocketPath: this.opts.resolveSocketPath,
               executable: this.opts.executable,
+              nativeServerIdentity: this.opts.nativeServerIdentity,
               configFile: this.opts.configFile,
               pauseAfterSeconds: this.opts.pauseAfterSeconds,
               nowMicros: this.opts.nowMicros,
             }),
+          executeWindowLinkGuard: (args) => {
+            if (!mutationSocketIdentity || !executable)
+              throw new Error("Window link mutation requires a pinned socket authority");
+            if (this.opts.resolveSocketPath) this.opts.resolveSocketPath();
+            const socket = revalidateUnixSocketIdentity(mutationSocketIdentity);
+            return new Promise((resolve) => {
+              execFile(
+                executable,
+                ["-N", "-u", "-S", socket, ...args],
+                { timeout: 5000, maxBuffer: 65536, encoding: "utf8", env: environment },
+                (error, stdout) => {
+                  const status = !error
+                    ? 0
+                    : typeof error.code === "number" && !error.killed
+                      ? error.code
+                      : null;
+                  resolve({ status, stdout });
+                },
+              );
+            });
+          },
           historyLines: this.opts.historyLines,
           internalReadHookEmission: this.opts.internalReadHookEmission,
           generatePaneId: this.opts.generatePaneId,

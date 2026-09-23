@@ -305,3 +305,14 @@ describe("SSH entry argument ownership", () => {
       expect(() => consumeApplicationSshTarget(argv)).toThrow("Expected one SSH alias");
   });
 });
+
+it("does not prewarm an unscoped connection for an explicit server", () => {
+  const prepare = vi.fn(async () => null);
+  expect(
+    prepareExplicitApplicationTarget(
+      ["--server=tmux-server." + "a".repeat(32), "--target=same"],
+      prepare,
+    ),
+  ).toBeNull();
+  expect(prepare).not.toHaveBeenCalled();
+});

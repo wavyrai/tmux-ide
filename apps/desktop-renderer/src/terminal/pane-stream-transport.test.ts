@@ -27,8 +27,8 @@ import {
 
 const DAEMON_INSTANCE_ID = "0b0e2a86-04ee-4f5f-9f0c-1d1b3c67f100";
 const REQUEST_ID = "10000000-0000-4000-8000-000000000001";
-const TICKET = `ps1_${"A".repeat(43)}`;
-const WS_URL = "ws://127.0.0.1:6060/v1/terminal/pane-streams/redeem";
+const TICKET = `ps2_${"A".repeat(43)}`;
+const WS_URL = "ws://127.0.0.1:6060/v2/terminal/pane-streams/redeem";
 const PANE_A = "pane.workspace.a1";
 const PANE_B = "pane.workspace.b2";
 
@@ -163,7 +163,7 @@ class FakeSocket implements PaneStreamWebSocket {
 
 function descriptor(clock: Clock, overrides: Record<string, unknown> = {}) {
   return {
-    protocolVersion: 1,
+    protocolVersion: 2,
     webSocketUrl: WS_URL,
     subprotocol: PANE_STREAM_TRANSPORT_PROTOCOL,
     redemptionTicket: TICKET,
@@ -243,7 +243,7 @@ async function liveHarness(
   h.socket.open();
   h.socket.serverSends({
     type: "ready",
-    protocolVersion: 1,
+    protocolVersion: 2,
     daemonInstanceId: DAEMON_INSTANCE_ID,
     requestId: REQUEST_ID,
     connectionClientId: "client-a",
@@ -263,6 +263,18 @@ describe("pane-stream transport admission", () => {
     });
     peer.socket.serverSends({
       type: "layout-snapshot",
+      windowLinks: {
+        liveSessionId: "live-session.0123456789abcdefabcd",
+        linkRevision: 1,
+        activeLinkId: `window-link.${"a".repeat(32)}`,
+        links: [
+          {
+            linkId: `window-link.${"a".repeat(32)}`,
+            semanticWindowId: "window.workspace.one",
+            displayIndex: 0,
+          },
+        ],
+      },
       topologyEpoch: 1,
       layouts: [
         {
@@ -300,7 +312,7 @@ describe("pane-stream transport admission", () => {
     const peerCount = peerEvents.length;
     peer.socket.serverSends({
       type: "error",
-      protocolVersion: 1,
+      protocolVersion: 2,
       code: "stream-unavailable",
       retryable: true,
     });
@@ -325,7 +337,7 @@ describe("pane-stream transport admission", () => {
     });
     typed.socket.serverSends({
       type: "error",
-      protocolVersion: 1,
+      protocolVersion: 2,
       code: "topology-changed",
       retryable: true,
     });
@@ -411,7 +423,7 @@ describe("pane-stream transport admission", () => {
     ],
     ["viewer-mode drift", { effectiveViewerMode: "interactive" }],
     ["pane-set drift", { panes: [PANE_A] }],
-    ["non-loopback url", { webSocketUrl: "ws://example.com:6060/v1/terminal/pane-streams/redeem" }],
+    ["non-loopback url", { webSocketUrl: "ws://example.com:6060/v2/terminal/pane-streams/redeem" }],
   ])("rejects a descriptor with %s", async (_label, overrides) => {
     const h = harness({ descriptorOverrides: overrides });
     expect(await h.connect).toMatchObject({
@@ -425,7 +437,7 @@ describe("pane-stream transport admission", () => {
     expect(h.socket.sent).toHaveLength(1);
     expect(JSON.parse(h.socket.sent[0]!)).toEqual({
       type: "redeem",
-      protocolVersion: 1,
+      protocolVersion: 2,
       ticket: TICKET,
       requestId: REQUEST_ID,
       daemonInstanceId: DAEMON_INSTANCE_ID,
@@ -439,7 +451,7 @@ describe("pane-stream transport admission", () => {
     expect(issued).toHaveBeenCalledWith({
       daemonInstanceId: DAEMON_INSTANCE_ID,
       requestId: REQUEST_ID,
-      webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/pane-streams/redeem",
+      webSocketUrl: "ws://127.0.0.1:6060/v2/terminal/pane-streams/redeem",
       subprotocol: PANE_STREAM_TRANSPORT_PROTOCOL,
     });
     h.result.session.dispose();
@@ -449,7 +461,7 @@ describe("pane-stream transport admission", () => {
     const h = await liveHarness({ terminalDelivery: null });
     expect(JSON.parse(h.socket.sent[0]!)).toEqual({
       type: "redeem",
-      protocolVersion: 1,
+      protocolVersion: 2,
       ticket: TICKET,
       requestId: REQUEST_ID,
       daemonInstanceId: DAEMON_INSTANCE_ID,
@@ -488,7 +500,7 @@ describe("pane-stream transport admission", () => {
     h.socket.open();
     h.socket.serverSends({
       type: "ready",
-      protocolVersion: 1,
+      protocolVersion: 2,
       daemonInstanceId: DAEMON_INSTANCE_ID,
       requestId: REQUEST_ID,
       panes: [PANE_B, PANE_A],
@@ -506,7 +518,7 @@ describe("pane-stream transport admission", () => {
     h.socket.open();
     h.socket.serverSends({
       type: "error",
-      protocolVersion: 1,
+      protocolVersion: 2,
       code: "ticket-expired",
       retryable: true,
     });
@@ -821,7 +833,7 @@ describe("pane-stream transport demultiplexing", () => {
     const h = await liveHarness();
     h.socket.serverSends({
       type: "error",
-      protocolVersion: 1,
+      protocolVersion: 2,
       code: "stream-unavailable",
       retryable: false,
     });
@@ -869,6 +881,18 @@ describe("pane-stream transport demultiplexing", () => {
     });
     const frame = {
       type: "layout-snapshot",
+      windowLinks: {
+        liveSessionId: "live-session.0123456789abcdefabcd",
+        linkRevision: 1,
+        activeLinkId: `window-link.${"a".repeat(32)}`,
+        links: [
+          {
+            linkId: `window-link.${"a".repeat(32)}`,
+            semanticWindowId: "window.workspace.one",
+            displayIndex: 0,
+          },
+        ],
+      },
       topologyEpoch: 3,
       layouts: [
         {
@@ -888,7 +912,13 @@ describe("pane-stream transport demultiplexing", () => {
       ],
     };
     h.socket.serverSends(frame);
-    expect(snapshots).toHaveLength(1);
+    expect(snapshots).toEqual([
+      {
+        topologyEpoch: frame.topologyEpoch,
+        windowLinks: frame.windowLinks,
+        layouts: frame.layouts,
+      },
+    ]);
     h.socket.serverSends(frame);
     await flushMicrotasks();
     expect(snapshots).toHaveLength(1);

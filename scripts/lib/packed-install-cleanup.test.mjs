@@ -503,3 +503,36 @@ test("ESRCH confirmation still requires the final runtime inventory to be empty"
   });
   await assert.rejects(cleanup(), /inventory remains live/);
 });
+
+test("a signalled runtime can pass through a short zombie state before positive disappearance", async () => {
+  let signalled = false;
+  let absent = false;
+  let livenessReads = 0;
+  const signals = [];
+  const cleanup = createInstalledRuntimeCleanup("/private/fixture/tui", undefined, {
+    inspect(args) {
+      if (args[0] === "-axo")
+        return { status: 0, stdout: absent ? "" : "101 /private/fixture/tui" };
+      return {
+        status: 0,
+        stdout: signalled ? "birth [tui] <defunct>" : "birth /private/fixture/tui",
+      };
+    },
+    kill(_pid, signal) {
+      if (signal === 0) {
+        if (++livenessReads >= 3) {
+          absent = true;
+          throw Object.assign(new Error(), { code: "ESRCH" });
+        }
+        return;
+      }
+      signals.push(signal);
+      signalled = true;
+    },
+    pause: async () => {},
+  });
+  await cleanup();
+  assert.equal(absent, true);
+  assert.deepEqual(signals, ["SIGTERM"]);
+  assert.equal(livenessReads, 3);
+});

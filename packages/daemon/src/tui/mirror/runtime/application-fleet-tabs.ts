@@ -1,7 +1,9 @@
+import type { TmuxServerScope } from "@tmux-ide/contracts";
 export interface FleetTabTarget {
   readonly key: string;
   readonly machineId: string;
   readonly liveSessionId: string;
+  readonly server?: TmuxServerScope;
   readonly label: string;
   readonly hostLabel: string;
 }

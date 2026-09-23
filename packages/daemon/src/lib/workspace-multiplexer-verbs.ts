@@ -28,6 +28,8 @@ import {
   type WorkspaceMultiplexerWindowTarget,
   type SessionRuntimePaneReadIntent,
   type Workspace,
+  type WindowLinkTarget,
+  type WindowLinkTopology,
 } from "@tmux-ide/contracts";
 import { TmuxError } from "@tmux-ide/tmux-bridge";
 
@@ -45,6 +47,8 @@ import {
   INTERNAL_SEND_OPERATION_OPTION,
 } from "./tmux-interaction-options.ts";
 import { memorablePaneName } from "../terminal/protocol/pane-display-name.ts";
+
+import { WindowLinkResolutionError } from "../terminal/mirror/window-link-authority.ts";
 
 const CREATION_OPTION = "@tmux_ide_creation_id";
 const SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id";
@@ -68,6 +72,10 @@ export type WorkspaceMultiplexerErrorCode =
   | "pane_not_found"
   | "window_not_found"
   | "ambiguous_target"
+  | "window_link_stale"
+  | "window_link_ambiguous"
+  | "window_link_session_mismatch"
+  | "window_link_backing_mismatch"
   /** Refused: killing it would take the whole session with it. */
   | "last_window_refused"
   /** Refused: killing it would take the whole session with it. */
@@ -88,6 +96,10 @@ const ERROR_MESSAGES: Readonly<Record<WorkspaceMultiplexerErrorCode, string>> = 
   workspace_unavailable: "The requested workspace is not available for multiplexer verbs.",
   pane_not_found: "No pane in this workspace carries the requested semantic identity.",
   window_not_found: "No window in this workspace carries the requested identity.",
+  window_link_stale: "The window link observation is no longer current.",
+  window_link_ambiguous: "Select an explicit window link for this pane.",
+  window_link_session_mismatch: "The window link belongs to another session generation.",
+  window_link_backing_mismatch: "The window link no longer names the expected window.",
   ambiguous_target: "The requested identity names more than one live tmux object.",
   last_window_refused:
     "This is the session's last window. Close the session instead if that is what you mean.",
@@ -201,7 +213,19 @@ export function parseMultiplexerPaneRows(output: string): readonly MultiplexerPa
       creationId: creationId === "" ? null : creationId,
     });
   }
-  return rows;
+  // list-panes -s repeats each backing for its session links. Identical native
+  // rows are one pane; conflicting observations fail closed.
+  const unique = new Map<string, MultiplexerPaneRow>();
+  for (const row of rows) {
+    const previous = unique.get(row.paneId);
+    if (previous && JSON.stringify(previous) !== JSON.stringify(row)) {
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "conflicting_linked_pane_observation",
+      });
+    }
+    unique.set(row.paneId, row);
+  }
+  return [...unique.values()];
 }
 
 /** Distinct windows in a pane listing, in first-seen order. */
@@ -288,6 +312,17 @@ const DEFAULT_IO: Omit<WorkspaceMultiplexerIo, "runTmux"> = {
 
 const MAX_CACHED_SESSIONS = 512;
 
+export interface AuthoritativeWindowLinkAction {
+  readonly action: "select" | "unlink";
+  readonly target?: WindowLinkTarget;
+  /** Semantic pane identity, resolved by the retained mirror authority. */
+  readonly paneId?: string;
+}
+export interface AuthoritativeWindowLinkActionResult {
+  readonly outcome: "applied" | "stale" | "native-refused" | "indeterminate";
+  readonly windowLinks: WindowLinkTopology | null;
+}
+
 export class WorkspaceMultiplexerAuthority {
   readonly #daemonInstanceId: string;
   readonly #registry: WorkspaceRegistry;
@@ -327,6 +362,82 @@ export class WorkspaceMultiplexerAuthority {
     timing?: WorkspaceMultiplexerOperationTiming,
   ): WorkspaceMultiplexerMutationResult {
     return this.#mutate(raw, timing);
+  }
+
+  /** Runs only inside the existing semantic mutation lane; never rediscovers a stale link. */
+  async mutateWindowLink(
+    raw: WorkspaceMultiplexerMutationRequest,
+    execute: (
+      session: string,
+      action: AuthoritativeWindowLinkAction,
+    ) => Promise<AuthoritativeWindowLinkActionResult>,
+  ): Promise<WorkspaceMultiplexerMutationResult> {
+    if (this.#disposed) throw new WorkspaceMultiplexerError("workspace_unavailable");
+    const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
+    if (request.expectedDaemonInstanceId !== this.#daemonInstanceId)
+      throw new WorkspaceMultiplexerError("daemon_instance_mismatch");
+    const intent = request.intent;
+    if (
+      intent.verb !== "workspace.window.link.select" &&
+      intent.verb !== "workspace.window.link.unlink" &&
+      intent.verb !== "workspace.pane.select"
+    )
+      throw new TypeError("Expected a window-link selection or unlink intent");
+    const workspace = this.#registry.get(intent.workspaceName);
+    if (!workspace) throw new WorkspaceMultiplexerError("workspace_not_found");
+    const envelope = {
+      operationId: request.operationId,
+      daemonInstanceId: this.#daemonInstanceId,
+      workspaceName: intent.workspaceName,
+    };
+    try {
+      const result = await execute(
+        workspace.sessionName,
+        intent.verb === "workspace.pane.select"
+          ? {
+              action: "select",
+              ...(intent.windowLink ? { target: intent.windowLink } : {}),
+              paneId: intent.semanticPaneId,
+            }
+          : {
+              action: intent.verb === "workspace.window.link.unlink" ? "unlink" : "select",
+              target: intent.target,
+            },
+      );
+      if (result.outcome !== "applied") {
+        throw new WorkspaceMultiplexerError(
+          result.outcome === "stale"
+            ? "window_link_stale"
+            : result.outcome === "native-refused"
+              ? "mutation_failed"
+              : "mutation_unverified",
+          { reason: result.outcome },
+        );
+      }
+      return WorkspaceMultiplexerMutationResultSchemaZ.parse(
+        intent.verb === "workspace.pane.select"
+          ? {
+              ...envelope,
+              verb: intent.verb,
+              outcome: "applied",
+              semanticPaneId: intent.semanticPaneId,
+            }
+          : { ...envelope, verb: intent.verb, outcome: "applied", target: intent.target },
+      );
+    } catch (error) {
+      if (error instanceof WorkspaceMultiplexerError) throw error;
+      if (error instanceof WindowLinkResolutionError)
+        throw new WorkspaceMultiplexerError(
+          error.reason,
+          { operationId: request.operationId },
+          error,
+        );
+      throw new WorkspaceMultiplexerError(
+        "mutation_unverified",
+        { operationId: request.operationId },
+        error,
+      );
+    }
   }
 
   /**
@@ -608,6 +719,11 @@ export class WorkspaceMultiplexerAuthority {
     } as const;
 
     switch (intent.verb) {
+      case "workspace.window.link.select":
+      case "workspace.window.link.unlink":
+        throw new WorkspaceMultiplexerError("workspace_unavailable", {
+          reason: "window_link_authority_required",
+        });
       case "workspace.window.split":
         return this.#split(request, workspace, envelope);
       case "workspace.window.kill":
@@ -1039,6 +1155,10 @@ export class WorkspaceMultiplexerAuthority {
     envelope: { operationId: string; daemonInstanceId: string; workspaceName: string },
     timing?: WorkspaceMultiplexerOperationTiming,
   ): WorkspaceMultiplexerMutationResult {
+    if (intent.windowLink)
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "window_link_authority_required",
+      });
     const timed = <T>(operation: string, run: () => T): T => {
       if (!timing) return run();
       let startedAtMicros: number;

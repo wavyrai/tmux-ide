@@ -201,7 +201,22 @@ describe("pane-stream terminal input decoder", () => {
       });
       events.length = 0;
       listeners.onLayout?.(layout);
-      listeners.onLayoutSnapshot?.({ topologyEpoch: 2, layouts: [layout] });
+      listeners.onLayoutSnapshot?.({
+        topologyEpoch: 2,
+        windowLinks: {
+          liveSessionId: "live-session.0123456789abcdefabcd",
+          linkRevision: 1,
+          activeLinkId: `window-link.${"a".repeat(32)}`,
+          links: [
+            {
+              linkId: `window-link.${"a".repeat(32)}`,
+              semanticWindowId: "window-a",
+              displayIndex: 0,
+            },
+          ],
+        },
+        layouts: [layout],
+      });
       expect(events).toEqual([]);
       // A real content resize still reaches the renderer before its bytes.
       await listeners.onPaneEvent("pane.workspace.a", {
@@ -223,7 +238,22 @@ describe("pane-stream terminal input decoder", () => {
         canonical: { ...canonical, revision: 3, sourceEpoch: 2, cols: 90, rows: 20 },
       });
       expect(events[0]?.sourceGrid).toEqual({ cols: 90, rows: 20 });
-      listeners.onLayoutSnapshot?.({ topologyEpoch: 3, layouts: [layout] });
+      listeners.onLayoutSnapshot?.({
+        topologyEpoch: 3,
+        windowLinks: {
+          liveSessionId: "live-session.0123456789abcdefabcd",
+          linkRevision: 1,
+          activeLinkId: `window-link.${"a".repeat(32)}`,
+          links: [
+            {
+              linkId: `window-link.${"a".repeat(32)}`,
+              semanticWindowId: "window-a",
+              displayIndex: 0,
+            },
+          ],
+        },
+        layouts: [layout],
+      });
       expect(events.map((event) => event.type)).toEqual(["geometry", "output"]);
       connected.attachment.dispose();
     },

@@ -181,7 +181,7 @@ describe("Web WorkspaceClient runtime adapter", () => {
             daemonInstanceId: GENERATION,
             requestId,
             webSocketUrl: "ws://127.0.0.1/physical",
-            subprotocol: "tmux-ide-pane-stream.v1",
+            subprotocol: "tmux-ide-pane-stream.v2",
           });
           next.onDiagnosticLifecycle?.({
             generation: GENERATION,

@@ -12,8 +12,10 @@ import {
 describe("daemon action command definitions", () => {
   it("registers every existing action id exactly once in contract order", () => {
     expect(daemonActionCommandRegistry.descriptors().map((item) => item.id)).toEqual(ACTION_NAMES);
-    // Existing actions plus explicit, owner-fenced daemon runtime restart.
-    expect(new Set(ACTION_NAMES).size).toBe(36);
+    // Action names must be unique, including both exact window-link intents.
+    expect(new Set(ACTION_NAMES).size).toBe(ACTION_NAMES.length);
+    expect(ACTION_NAMES).toContain("workspace.window.link.select");
+    expect(ACTION_NAMES).toContain("workspace.window.link.unlink");
   });
 
   it("reuses the exact action input/result schemas", () => {

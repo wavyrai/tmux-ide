@@ -123,9 +123,9 @@ class MockTmux {
       if (!session) throw new TmuxError("no session", "SESSION_NOT_FOUND");
       const format = this.#format(args);
       const lines: string[] = [];
-      for (const window of session.windows) {
+      for (const [windowIndex, window] of session.windows.entries()) {
         for (const pane of window.panes) {
-          lines.push(this.#render(format, { session, window, pane }));
+          lines.push(this.#render(format, { session, window, pane, windowIndex }));
         }
       }
       return lines.join("\n");
@@ -170,14 +170,14 @@ class MockTmux {
 
   #render(
     format: string,
-    ctx: { session: MockSession; window?: MockWindow; pane?: MockPane },
+    ctx: { session: MockSession; window?: MockWindow; pane?: MockPane; windowIndex?: number },
   ): string {
     return format.replace(/#\{([^}]+)\}/gu, (_match, token: string) => this.#token(token, ctx));
   }
 
   #token(
     token: string,
-    ctx: { session: MockSession; window?: MockWindow; pane?: MockPane },
+    ctx: { session: MockSession; window?: MockWindow; pane?: MockPane; windowIndex?: number },
   ): string {
     const { session, window, pane } = ctx;
     switch (token) {
@@ -189,6 +189,8 @@ class MockTmux {
         return session.path;
       case "session_windows":
         return String(session.windows.length);
+      case "window_index":
+        return String(ctx.windowIndex ?? 0);
       case "window_id":
         return window?.id ?? "";
       case "window_name":
@@ -745,6 +747,142 @@ describe("WorkspacePromotionAuthority", () => {
     );
     expect(mock.paneOption("%2")!.options.get("@ide_type")).toBe("shell");
     expect(mock.paneOption("%2")!.options.get("@ide_name")).toBe("Terminal");
+  });
+
+  it.each([false, true])(
+    "reconciles catalog admission racing promotion, stamp failure=%s",
+    async (failReconciliation) => {
+      const mock = new MockTmux();
+      const session = mock.session("fleet-race", "$1", { "@tmux_ide_adopted": "1" });
+      const window = mock.window(session, "@1", "shared");
+      mock.pane(window, "%1", { active: true });
+      const registry = new FakeRegistry();
+      let discovered: Workspace | undefined;
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock, {
+          runTmux: async (args) => {
+            if (
+              failReconciliation &&
+              args.includes("@tmux_ide_workspace_name") &&
+              args.at(-1) === session.name
+            ) {
+              throw new Error("injected stamp failure");
+            }
+            const result = mock.run(args);
+            if (
+              !discovered &&
+              args[0] === "set-option" &&
+              args.includes("@tmux_ide_workspace_promoted_v1")
+            ) {
+              discovered = registry.add({
+                name: session.name,
+                sessionName: session.name,
+                projectDir: "/tmp/promote-project",
+                persistence: "volatile",
+              });
+            }
+            return result;
+          },
+        }),
+      });
+      if (failReconciliation) {
+        await expect(
+          authority.promote(request(fleetSessionIdForName(session.name))),
+        ).rejects.toMatchObject({ code: "stamp_failed" });
+        expect(registry.list()).toEqual([discovered]);
+        return;
+      }
+      const result = await authority.promote(request(fleetSessionIdForName(session.name)));
+      expect(result).toMatchObject({
+        outcome: "replayed",
+        resource: { workspaceName: session.name },
+      });
+      expect(registry.list()).toEqual([discovered]);
+      expect(session.options.get("@tmux_ide_workspace_name")).toBe(session.name);
+      await expect(
+        authority.promote(request(fleetSessionIdForName(session.name))),
+      ).resolves.toMatchObject({ resource: { workspaceName: session.name } });
+      expect(registry.list()).toHaveLength(1);
+    },
+  );
+
+  it("admits duplicate window links while stamping each shared backing pane only once", async () => {
+    const mock = new MockTmux();
+    const session = mock.session("fleet-linked", "$1", { "@tmux_ide_adopted": "1" });
+    const window = mock.window(session, "@1", "shared");
+    mock.pane(window, "%1", { active: true });
+    mock.pane(window, "%2");
+    session.windows.push(window);
+    const registry = new FakeRegistry();
+    const commands: string[][] = [];
+    const authority = new WorkspacePromotionAuthority({
+      daemonInstanceId: DAEMON,
+      registry,
+      io: io(mock, {
+        runTmux: (args) => {
+          commands.push([...args]);
+          return mock.run(args);
+        },
+      }),
+    });
+    await expect(
+      authority.promote(request(fleetSessionIdForName(session.name))),
+    ).resolves.toMatchObject({ outcome: "promoted" });
+    expect(registry.list()).toHaveLength(1);
+    expect(
+      commands.filter((args) => args[0] === "set-option" && args.includes("@tmux_ide_pane_id")),
+    ).toHaveLength(2);
+    const stamps = window.panes.map((pane) => pane.options.get("@tmux_ide_pane_id"));
+    await expect(
+      authority.promote(request(fleetSessionIdForName(session.name))),
+    ).resolves.toMatchObject({ outcome: "replayed" });
+    expect(window.panes.map((pane) => pane.options.get("@tmux_ide_pane_id"))).toEqual(stamps);
+  });
+
+  it.each([
+    "same-index",
+    "different-backing",
+    "different-semantic-window",
+    "different-pane-membership",
+  ])("rejects conflicting linked inventory: %s", async (conflict) => {
+    const mock = new MockTmux();
+    const session = mock.session("fleet-conflict", "$1", { "@tmux_ide_adopted": "1" });
+    const window = mock.window(session, "@1", "shared");
+    mock.pane(window, "%1", { active: true });
+    session.windows.push(window);
+    const registry = new FakeRegistry();
+    const authority = new WorkspacePromotionAuthority({
+      daemonInstanceId: DAEMON,
+      registry,
+      io: io(mock, {
+        runTmux: (args) => {
+          const output = mock.run(args);
+          const format = args[args.indexOf("-F") + 1] ?? "";
+          if (args[0] !== "list-panes" || !format.includes("#{window_index}")) return output;
+          const rows = output.split("\n");
+          const field = format.slice("#{session_id}".length, format.indexOf("#{window_id}"));
+          const second = rows[1]!.split(field);
+          if (conflict === "same-index") second[8] = "0";
+          if (conflict === "different-backing") second[1] = "@99";
+          if (conflict === "different-semantic-window") second[7] = "window.other";
+          if (conflict === "different-pane-membership") {
+            second[5] = "%99";
+            second[6] = "pane.other";
+          }
+          rows[1] = second.join(field);
+          return rows.join("\n");
+        },
+      }),
+    });
+    await expect(
+      authority.promote(request(fleetSessionIdForName(session.name))),
+    ).rejects.toMatchObject({
+      code: "promotion_verification_failed",
+      context: { reason: "inconsistent_tmux_topology" },
+    });
+    expect(registry.list()).toHaveLength(0);
   });
 
   it("promotes a multi-pane window (attachability is left to the attach-time catalog)", async () => {

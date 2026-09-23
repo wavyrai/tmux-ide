@@ -40,6 +40,141 @@ function splitLayout(): OpenTuiWorkspaceLayoutSnapshot {
 }
 
 describe("application terminal interaction controller", () => {
+  it("selects and unlinks exact duplicate links without pane selection or stale retries", async () => {
+    const backing = layout().windows[0]!;
+    const ids = ["a", "b"].map((letter) => `window-link.${letter.repeat(32)}`);
+    const topology = {
+      liveSessionId: `live-session.${"a".repeat(20)}`,
+      linkRevision: 4,
+      activeLinkId: ids[0]!,
+      links: ids.map((linkId, displayIndex) => ({
+        linkId,
+        displayIndex,
+        semanticWindowId: backing.semanticWindowId,
+      })),
+    };
+    let snapshot: OpenTuiWorkspaceLayoutSnapshot = {
+      current: backing,
+      windows: [backing],
+      windowLinks: topology,
+    };
+    const dispatch = vi.fn(async () => ({ kind: "semantic-intent" }));
+    const focus = vi.fn();
+    const generation = {
+      status: "live",
+      daemonGeneration: "generation-a",
+      connection: { workspaceName: "workspace.alpha" },
+      client: { ownsRuntimeAuthority: () => true, requestAuthority: vi.fn(), dispatch },
+    };
+    const controller = createApplicationTerminalInteractionController({
+      generation: () => generation as never,
+      layout: () => snapshot,
+      setFocusedPane: focus,
+      diagnosticsEnabled: false,
+      diagnose: () => undefined,
+    });
+    const target = {
+      liveSessionId: topology.liveSessionId,
+      linkRevision: 4,
+      linkId: ids[1]!,
+      expectedSemanticWindowId: backing.semanticWindowId,
+    };
+    await controller.selectWindowLink(target);
+    expect(dispatch).toHaveBeenLastCalledWith({
+      kind: "semantic-intent",
+      intent: { verb: "workspace.window.link.select", workspaceName: "workspace.alpha", target },
+    });
+    expect(focus).not.toHaveBeenCalled();
+    expect(await controller.unlinkWindowLink(target)).toBe("Window link removed");
+    expect(dispatch).toHaveBeenLastCalledWith({
+      kind: "semantic-intent",
+      intent: { verb: "workspace.window.link.unlink", workspaceName: "workspace.alpha", target },
+    });
+    snapshot = { ...snapshot, windowLinks: { ...topology, linkRevision: 5 } };
+    await controller.selectWindowLink(target);
+    expect(await controller.unlinkWindowLink(target)).toContain("changed");
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["applied", "stale"] as const)(
+    "fences immediate input behind a held link selection (%s)",
+    async (outcome) => {
+      const windows = layout().windows;
+      const ids = ["a", "b"].map((letter) => `window-link.${letter.repeat(32)}`);
+      const topology = {
+        liveSessionId: `live-session.${"a".repeat(20)}`,
+        linkRevision: 1,
+        activeLinkId: ids[0]!,
+        links: windows.map((window, index) => ({
+          linkId: ids[index]!,
+          displayIndex: index,
+          semanticWindowId: window.semanticWindowId,
+        })),
+      };
+      let snapshot: OpenTuiWorkspaceLayoutSnapshot = { ...layout(), windowLinks: topology };
+      let resolve!: (value: unknown) => void;
+      let reject!: (error: Error) => void;
+      const dispatch = vi.fn(
+        () =>
+          new Promise((done, fail) => {
+            resolve = done;
+            reject = fail;
+          }),
+      );
+      const sendInput = vi.fn(async () => ({ status: "sent" }));
+      const daemonGeneration = "11111111-1111-4111-8111-111111111111";
+      const operationId = "22222222-2222-4222-8222-222222222222";
+      const generation = {
+        status: "live",
+        daemonGeneration,
+        connection: { workspaceName: "workspace.alpha" },
+        client: { ownsRuntimeAuthority: () => true, requestAuthority: vi.fn(), dispatch },
+        fastLane: { lane: { sendInput } },
+      };
+      const controller = createApplicationTerminalInteractionController({
+        generation: () => generation as never,
+        layout: () => snapshot,
+        setFocusedPane: () => undefined,
+        diagnosticsEnabled: false,
+        diagnose: () => undefined,
+      });
+      controller.adoptLayout(snapshot);
+      const target = {
+        liveSessionId: topology.liveSessionId,
+        linkRevision: 1,
+        linkId: ids[1]!,
+        expectedSemanticWindowId: "window.logs",
+      };
+      const selecting = controller.selectWindowLink(target);
+      const typing = controller.sendInput({ kind: "text", data: "safe" });
+      expect(sendInput).not.toHaveBeenCalled();
+      if (outcome === "stale") reject(new Error("window_link_stale"));
+      else {
+        resolve({
+          kind: "semantic-intent",
+          operationId,
+          result: {
+            verb: "workspace.window.link.select",
+            operationId,
+            daemonInstanceId: daemonGeneration,
+            workspaceName: "workspace.alpha",
+            outcome: "applied",
+            target,
+          },
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(sendInput).not.toHaveBeenCalled();
+        snapshot = { ...layout(1), windowLinks: { ...topology, activeLinkId: ids[1]! } };
+        controller.adoptLayout(snapshot);
+      }
+      await selecting;
+      await typing;
+      expect(sendInput).toHaveBeenCalledTimes(outcome === "applied" ? 1 : 0);
+      if (outcome === "applied") expect(sendInput.mock.calls[0]?.[0]).toBe("pane.logs");
+    },
+  );
+
   it.each(["sent", "read-only", "disconnected"])(
     "reports the actual %s transport outcome for pane-targeted input",
     async (status) => {

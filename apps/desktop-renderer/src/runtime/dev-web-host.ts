@@ -33,6 +33,7 @@ import {
   DesktopDaemonEventSubscriptionRequestSchemaZ,
   FleetCatalogResourceV1SchemaZ,
   PANE_STREAM_ISSUE_PATH,
+  PANE_STREAM_REDEEM_PATH,
   PANE_STREAM_PROTOCOL_VERSION,
   PaneStreamIssueResultSchemaZ,
   PaneStreamLeaseRequestSchemaZ,
@@ -358,7 +359,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       parsed.origin === config.daemonWebSocketOrigin &&
       (parsed.pathname.startsWith("/ws/") ||
         parsed.pathname === "/v1/terminal/attachments/redeem" ||
-        parsed.pathname === "/v1/terminal/pane-streams/redeem");
+        parsed.pathname === PANE_STREAM_REDEEM_PATH);
     if (!privileged) return rawUrl;
     if (!resolvedDevHostSession) throw new DevHostFailure(REQUEST_FAILED);
     return developmentWebSocketUrl(rawUrl, resolvedDevHostSession.token);

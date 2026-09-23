@@ -1,3 +1,7 @@
+import {
+  PANE_STREAM_PROTOCOL_VERSION,
+  PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
+} from "@tmux-ide/contracts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -97,10 +101,10 @@ it("keeps one CSP stream origin across upstream replacement and revokes old tick
   const { runtime, relay, changeOrigin } = await fixture(() => ({ version: 1, machines: [] }));
   const csp = packagedRendererContentSecurityPolicy(relay.origin.replace("ws:", "http:"));
   const descriptor: PaneStreamIssueDescriptor = {
-    protocolVersion: 1,
-    webSocketUrl: "ws://127.0.0.1:9999/v1/terminal/pane-streams/redeem",
-    subprotocol: "tmux-ide-pane-stream.v1",
-    redemptionTicket: `ps1_${"A".repeat(43)}`,
+    protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+    webSocketUrl: "ws://127.0.0.1:9999/v2/terminal/pane-streams/redeem",
+    subprotocol: PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
+    redemptionTicket: `ps2_${"A".repeat(43)}`,
     daemonInstanceId: instanceId,
     requestId: "40000000-0000-4000-8000-000000000002",
     expiresAt: Date.now() + 15000,
@@ -114,13 +118,13 @@ it("keeps one CSP stream origin across upstream replacement and revokes old tick
     isCurrent: () => true,
   } as HostStreamRelayContext;
   const first = runtime.localHooks.relayPaneStream(descriptor, context);
-  expect(first.webSocketUrl).toBe(`${relay.origin}/v1/terminal/pane-streams/redeem`);
+  expect(first.webSocketUrl).toBe(`${relay.origin}/v2/terminal/pane-streams/redeem`);
   expect(relay.diagnostics().tickets).toBe(1);
   changeOrigin("ws://127.0.0.1:6200");
   runtime.localChanged();
   expect(relay.diagnostics().tickets).toBe(0);
   const second = runtime.localHooks.relayPaneStream(
-    { ...descriptor, redemptionTicket: `ps1_${"B".repeat(43)}` },
+    { ...descriptor, redemptionTicket: `ps2_${"B".repeat(43)}` },
     context,
   );
   expect(second.webSocketUrl).toBe(first.webSocketUrl);

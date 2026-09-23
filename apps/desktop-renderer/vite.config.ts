@@ -235,7 +235,7 @@ function developmentDaemonProxy(): Record<string, ProxyOptions> | undefined {
     "/api": options(false),
     "/ws": options(true),
     "/v1/terminal/attachments/redeem": options(true),
-    "/v1/terminal/pane-streams/redeem": options(true),
+    "/v2/terminal/pane-streams/redeem": options(true),
   };
 }
 

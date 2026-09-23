@@ -1,3 +1,6 @@
+// Consumers outside the daemon tsconfig need the bundled declaration as well.
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference
+/// <reference path="../js-yaml.d.ts" />
 /**
  * Side-effect-free loader for repository-scoped WorkspaceConfigV1 files.
  *

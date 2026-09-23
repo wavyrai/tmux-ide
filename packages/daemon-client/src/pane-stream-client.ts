@@ -32,6 +32,7 @@ import {
   type TerminalDeliveryServerMessage,
   type TerminalDeliveryVisibility,
   type WorkspaceMultiplexerMutationResult,
+  type WindowLinkTopology,
 } from "@tmux-ide/contracts";
 import {
   calibratePaneStreamClocks,
@@ -449,6 +450,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
   let closed = false;
   let verified = false;
   let layoutTopologyEpoch = -1;
+  let windowLinks: WindowLinkTopology | null = null;
   let resolveReady!: (client: PaneStreamRuntimeClient) => void;
   let rejectReady!: (error: Error) => void;
   const ready = new Promise<PaneStreamRuntimeClient>((resolve, reject) => {
@@ -1446,6 +1448,30 @@ export async function connectIssuedPaneStreamRuntimeClient(
     if (frame.type === "layout-snapshot") {
       if (frame.topologyEpoch <= layoutTopologyEpoch)
         return fail("Pane-stream layout topology epoch did not advance");
+      const incoming = frame.windowLinks;
+      if (windowLinks) {
+        if (
+          incoming.liveSessionId !== windowLinks.liveSessionId ||
+          incoming.linkRevision < windowLinks.linkRevision
+        )
+          return fail("Pane-stream window link authority regressed or changed session");
+        if (incoming.linkRevision === windowLinks.linkRevision) {
+          const previous = new Map(windowLinks.links.map((link) => [link.linkId, link]));
+          if (
+            incoming.links.length !== previous.size ||
+            incoming.links.some((link) => {
+              const observed = previous.get(link.linkId);
+              return (
+                !observed ||
+                observed.semanticWindowId !== link.semanticWindowId ||
+                observed.displayIndex !== link.displayIndex
+              );
+            })
+          )
+            return fail("Pane-stream link membership changed without a revision advance");
+        }
+      }
+      windowLinks = incoming;
       layoutTopologyEpoch = frame.topologyEpoch;
     }
     routeFrame(options, frame, fail);

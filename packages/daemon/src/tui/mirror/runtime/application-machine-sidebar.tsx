@@ -1,3 +1,4 @@
+import type { TmuxServerDescriptor, TmuxServerScope } from "@tmux-ide/contracts";
 import { fleetHostColor, summarizeFleetActivity } from "./fleet-presentation.ts";
 import { TuiButton } from "../ui/button.tsx";
 /* @jsxImportSource @opentui/solid */
@@ -24,6 +25,7 @@ import { Surface } from "../ui/surface.tsx";
 import { useKeyboardRoute } from "../ui/keyboard-router.tsx";
 
 export interface ApplicationMachineAgent {
+  readonly server?: TmuxServerScope;
   readonly id: string;
   readonly name: string;
   readonly sessionName: string;
@@ -41,8 +43,11 @@ export interface ApplicationMachineGroup {
   readonly id: string;
   readonly label: string;
   readonly state: "ready" | "connecting" | "disconnected";
+  readonly servers?: readonly TmuxServerDescriptor[];
   readonly sessions: readonly {
     readonly id: string;
+    readonly server?: TmuxServerScope;
+    readonly serverLabel?: string;
     readonly name: string;
     readonly paneCount: number;
     readonly disabled?: boolean;
@@ -56,8 +61,15 @@ export interface ApplicationMachineSidebarModel {
   readonly onCollapse?: (key: string, enabled: boolean) => void;
   readonly activeMachineId: Accessor<string | null>;
   readonly activeSessionName: Accessor<string | null>;
+  readonly activeSessionKey?: Accessor<string | null>;
   readonly activePaneId?: Accessor<string | null>;
-  readonly onOpen: (machineId: string, sessionName: string, source: "keyboard" | "mouse") => void;
+  readonly onOpen: (
+    machineId: string,
+    sessionName: string,
+    source: "keyboard" | "mouse",
+    sessionKey?: string,
+  ) => void;
+  readonly onSelectServer?: (machineId: string, server: TmuxServerScope) => void;
   readonly onSelectMachine: (machineId: string, source: "keyboard" | "mouse") => void;
   readonly onOpenAgent?: (
     machineId: string,
@@ -92,6 +104,8 @@ type Row = {
   session?: ApplicationMachineGroup["sessions"][number];
   agent?: ApplicationMachineAgent;
   agentHeading?: boolean;
+  serverHeading?: string;
+  server?: TmuxServerDescriptor;
 };
 /** Pure machine navigation. All connection and session authority stays with the caller. */
 export function ApplicationMachineSidebar(props: {
@@ -145,9 +159,18 @@ export function ApplicationMachineSidebar(props: {
       ? row.group.state === "ready" &&
         !row.agent.disabled &&
         row.agent.sessionName === props.model.activeSessionName() &&
+        (!props.model.activeSessionKey ||
+          row.group.sessions.some(
+            (session) =>
+              session.id === props.model.activeSessionKey?.() &&
+              session.server?.serverId === row.agent?.server?.serverId &&
+              session.server?.generation === row.agent?.server?.generation,
+          )) &&
         row.agent.paneId !== null &&
         row.agent.paneId === props.model.activePaneId?.()
-      : row.session?.name === props.model.activeSessionName());
+      : props.model.activeSessionKey
+        ? row.session?.id === props.model.activeSessionKey()
+        : row.session?.name === props.model.activeSessionName());
   const preferenceKey = (group: ApplicationMachineGroup) => group.environmentId ?? group.id;
   const rows = createMemo<readonly Row[]>(() =>
     props.model.groups().flatMap((group) => [
@@ -158,13 +181,34 @@ export function ApplicationMachineSidebar(props: {
             !collapsed().has(preferenceKey(group)) ||
             props.model.favorites?.().includes(session.id) ||
             (group.id === props.model.activeMachineId() &&
-              session.name === props.model.activeSessionName()),
+              (props.model.activeSessionKey
+                ? session.id === props.model.activeSessionKey()
+                : session.name === props.model.activeSessionName())),
         )
-        .map((session) => ({
+        .map((session, index, sessions) => ({
+          serverHeading:
+            (group.servers?.length ??
+              new Set(group.sessions.map((row) => row.server?.serverId)).size) > 1 &&
+            session.server &&
+            (index === 0 || sessions[index - 1]?.server?.serverId !== session.server.serverId)
+              ? `${session.serverLabel ?? "Server"} · ${session.server.serverId.slice(-6)}`
+              : undefined,
           key: JSON.stringify([group.id, "session", session.id]),
           group,
           session,
         })),
+      ...(collapsed().has(preferenceKey(group))
+        ? []
+        : (group.servers ?? [])
+            .filter(
+              (server) =>
+                !group.sessions.some((session) => session.server?.serverId === server.serverId),
+            )
+            .map((server) => ({
+              key: JSON.stringify([group.id, "server", server.serverId]),
+              group,
+              server,
+            }))),
       ...(!collapsed().has(preferenceKey(group))
         ? (group.agents ?? []).map((agent, index) => ({
             key: JSON.stringify([group.id, "agent", agent.id]),
@@ -193,7 +237,11 @@ export function ApplicationMachineSidebar(props: {
   const activity = (row: Row) =>
     summarizeFleetActivity(
       (row.group.agents ?? []).filter(
-        (agent) => !row.session || agent.sessionName === row.session.name,
+        (agent) =>
+          !row.session ||
+          (agent.sessionName === row.session.name &&
+            agent.server?.serverId === row.session.server?.serverId &&
+            agent.server?.generation === row.session.server?.generation),
       ),
       row.group.state === "ready" && row.group.agentsAvailable !== false && !row.session?.disabled,
     );
@@ -229,6 +277,14 @@ export function ApplicationMachineSidebar(props: {
     setSelectedKey(row.key);
     setLocalFocused(true);
     props.model.onFocus?.();
+    if (row.server) {
+      if (row.server.state === "online")
+        props.model.onSelectServer?.(row.group.id, {
+          serverId: row.server.serverId,
+          generation: row.server.generation,
+        });
+      return;
+    }
     if (row.agent) {
       if (
         row.group.state === "ready" &&
@@ -242,7 +298,7 @@ export function ApplicationMachineSidebar(props: {
       }
     } else if (row.session) {
       if (row.group.state === "ready" && !row.session.disabled)
-        props.model.onOpen(row.group.id, row.session.name, source);
+        props.model.onOpen(row.group.id, row.session.name, source, row.session.id);
     } else if (
       row.group.state !== "ready" ||
       (row.group.sessions.length === 0 && !row.group.agents?.length)
@@ -252,7 +308,8 @@ export function ApplicationMachineSidebar(props: {
   };
   const revealFocusedRow = () => {
     if (!focused() || !scroll) return;
-    const rowHeight = (row: Row) => (row.agent ? (row.agentHeading ? 3 : 2) : 1);
+    const rowHeight = (row: Row) =>
+      row.agent ? (row.agentHeading ? 3 : 2) : row.serverHeading ? 2 : 1;
     const y = rows()
       .slice(0, index())
       .reduce((sum, row) => sum + rowHeight(row), 0);
@@ -457,6 +514,12 @@ export function ApplicationMachineSidebar(props: {
               get agent() {
                 return current().agent;
               },
+              get server() {
+                return current().server;
+              },
+              get serverHeading() {
+                return current().serverHeading;
+              },
               get agentHeading() {
                 return current().agentHeading;
               },
@@ -464,10 +527,23 @@ export function ApplicationMachineSidebar(props: {
             return (
               <box
                 width={Math.max(1, props.width - 1)}
-                height={row.agent ? (row.agentHeading ? 3 : 2) : 1}
+                height={row.agent ? (row.agentHeading ? 3 : 2) : row.serverHeading ? 2 : 1}
                 flexShrink={0}
                 flexDirection="column"
               >
+                <Show when={row.serverHeading}>
+                  <NavigationRow
+                    theme={props.theme}
+                    width={Math.max(1, props.width - 1)}
+                    id={`server:${row.group.id}:${row.session?.server?.serverId}`}
+                    label={row.serverHeading ?? "Server"}
+                    marker=" ▾"
+                    onActivate={() => {
+                      if (row.session?.server)
+                        props.model.onSelectServer?.(row.group.id, row.session.server);
+                    }}
+                  />
+                </Show>
                 <Show when={row.agentHeading}>
                   <text height={1} fg={props.theme.roles.text.secondary}>
                     {" "}
@@ -480,43 +556,51 @@ export function ApplicationMachineSidebar(props: {
                   width={Math.max(1, props.width - 1)}
                   labelColor={!row.agent && !row.session ? fleetHostColor(row.group) : undefined}
                   label={
-                    row.agent
-                      ? row.agent.name
-                      : row.session
-                        ? friendlySessionLabel(row.session.name)
-                        : row.group.label
+                    row.server
+                      ? `  ${row.server.label} · ${row.server.serverId.slice(-6)}`
+                      : row.agent
+                        ? row.agent.name
+                        : row.session
+                          ? friendlySessionLabel(row.session.name)
+                          : row.group.label
                   }
                   marker={
-                    row.agent
-                      ? active(row)
-                        ? row.agent.attention
-                          ? "›!"
-                          : "›"
-                        : row.agent.attention
-                          ? "!"
-                          : "•"
-                      : row.session
-                        ? props.model.favorites?.().includes(row.session.id)
-                          ? " ★"
-                          : active(row)
-                            ? " ›"
-                            : "  "
-                        : collapsed().has(preferenceKey(row.group))
-                          ? "▸"
-                          : "▾"
+                    row.server
+                      ? "  "
+                      : row.agent
+                        ? active(row)
+                          ? row.agent.attention
+                            ? "›!"
+                            : "›"
+                          : row.agent.attention
+                            ? "!"
+                            : "•"
+                        : row.session
+                          ? props.model.favorites?.().includes(row.session.id)
+                            ? " ★"
+                            : active(row)
+                              ? " ›"
+                              : "  "
+                          : collapsed().has(preferenceKey(row.group))
+                            ? "▸"
+                            : "▾"
                   }
                   detail={
-                    row.agent
-                      ? row.group.state !== "ready" || row.agent.disabled
-                        ? "unavailable"
-                        : `[${terminalAgentStatusLabel(row.agent.activity)}]`
-                      : row.session
-                        ? row.group.state !== "ready" || row.session.disabled
+                    row.server
+                      ? row.server.state === "offline"
+                        ? "offline"
+                        : "empty"
+                      : row.agent
+                        ? row.group.state !== "ready" || row.agent.disabled
                           ? "unavailable"
-                          : `${row.session.paneCount}p${row.group.agents?.length ? ` ${activity(row).label}` : ""}`
-                        : row.group.agents?.length && row.group.state === "ready"
-                          ? activity(row).label
-                          : `${connectionDetail(row.group)}${row.group.agents?.length ? " ?" : ""}`
+                          : `[${terminalAgentStatusLabel(row.agent.activity)}]`
+                        : row.session
+                          ? row.group.state !== "ready" || row.session.disabled
+                            ? "unavailable"
+                            : `${row.session.paneCount}p${row.group.agents?.length ? ` ${activity(row).label}` : ""}`
+                          : row.group.agents?.length && row.group.state === "ready"
+                            ? activity(row).label
+                            : `${connectionDetail(row.group)}${row.group.agents?.length ? " ?" : ""}`
                   }
                   selected={Boolean((row.session || row.agent) && active(row))}
                   focused={Boolean(focused() && row.key === selectedKey())}

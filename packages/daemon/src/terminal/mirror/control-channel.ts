@@ -20,6 +20,8 @@
  * chance to detach us — killing the reader first can wedge the server.
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import { shellEscape } from "../../lib/shell.ts";
+import type { NativeTmuxServerIdentity } from "../../lib/tmux-server-generation-runner.ts";
 import { parseControlLine } from "../protocol/control.ts";
 
 export interface ControlReply {
@@ -752,6 +754,7 @@ export class ControlChannelCore {
 export interface MirrorControlChannelOptions {
   /** Resolve through the owning daemon's generation fence before each spawn. */
   resolveSocketPath?: () => string;
+  nativeServerIdentity?: NativeTmuxServerIdentity;
   session: string;
   handlers: MirrorChannelHandlers;
   /** `tmux -L <name>` — isolated servers in tests; omit for the default. */
@@ -772,10 +775,23 @@ export interface MirrorControlChannelOptions {
 export function mirrorControlAttachArgs(
   options: Pick<
     MirrorControlChannelOptions,
-    "session" | "socketName" | "socketPath" | "configFile"
+    "session" | "socketName" | "socketPath" | "configFile" | "nativeServerIdentity"
   >,
   pauseAfterSeconds = DEFAULT_PAUSE_AFTER_SECONDS,
 ): string[] {
+  const attach = [
+    "attach",
+    "-t",
+    options.session,
+    "-f",
+    `ignore-size,pause-after=${pauseAfterSeconds},active-pane`,
+  ];
+  const expected = options.nativeServerIdentity;
+  if (
+    expected &&
+    (!/^[1-9][0-9]*$/u.test(expected.pid) || !/^[1-9][0-9]*$/u.test(expected.startTime))
+  )
+    throw new Error("Invalid expected native server identity");
   return [
     ...(options.socketPath
       ? ["-S", options.socketPath]
@@ -784,11 +800,15 @@ export function mirrorControlAttachArgs(
         : []),
     ...(options.configFile ? ["-f", options.configFile] : []),
     "-C",
-    "attach",
-    "-t",
-    options.session,
-    "-f",
-    `ignore-size,pause-after=${pauseAfterSeconds},active-pane`,
+    ...(expected
+      ? [
+          "if-shell",
+          "-F",
+          `#{&&:#{==:#{pid},${expected.pid}},#{==:#{start_time},${expected.startTime}}}`,
+          attach.map(shellEscape).join(" "),
+          "display-message -p 'tmux-server-generation-refused'",
+        ]
+      : attach),
   ];
 }
 
@@ -801,6 +821,8 @@ export class MirrorControlChannel implements MirrorChannelIo {
   private readonly core: ControlChannelCore;
   private readonly opts: MirrorControlChannelOptions;
   private exited = false;
+  private verifiedAttach = false;
+  private guardedStart: { resolve: () => void; reject: (error: Error) => void } | null = null;
   private atomicCollectorTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: MirrorControlChannelOptions) {
@@ -808,6 +830,16 @@ export class MirrorControlChannel implements MirrorChannelIo {
     this.core = new ControlChannelCore(
       {
         ...opts.handlers,
+        onOutput: (...args) => {
+          if (!opts.nativeServerIdentity || this.verifiedAttach) opts.handlers.onOutput(...args);
+        },
+        onNotify: (name, rest) => {
+          if (opts.nativeServerIdentity && name === "session-changed") {
+            this.verifiedAttach = true;
+            this.guardedStart?.resolve();
+          }
+          if (!opts.nativeServerIdentity || this.verifiedAttach) opts.handlers.onNotify(name, rest);
+        },
         onExit: (reason) => this.noteExit(reason),
       },
       opts.nowMicros,
@@ -851,7 +883,31 @@ export class MirrorControlChannel implements MirrorChannelIo {
     // tmux opens with an unsolicited %begin/%end greeting block; a queued
     // resolver makes start() settle when the protocol is actually live.
     return new Promise((resolve, reject) => {
-      this.core.push({ kind: "promise", resolve: () => resolve(), reject, lines: [] });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const settle = (error?: Error) => {
+        if (timer) clearTimeout(timer);
+        this.guardedStart = null;
+        if (error) reject(error);
+        else resolve();
+      };
+      if (this.opts.nativeServerIdentity) {
+        this.guardedStart = { resolve: () => settle(), reject: (error) => settle(error) };
+        timer = setTimeout(() => {
+          settle(new Error("Tmux generation-guarded attach timed out"));
+          void this.dispose();
+        }, 5_000);
+        timer.unref?.();
+      }
+      // The outer if-shell greeting precedes its attach branch. Only native
+      // session-changed proves that the guarded attach actually succeeded.
+      this.core.push({
+        kind: "promise",
+        resolve: () => {
+          if (!this.opts.nativeServerIdentity) settle();
+        },
+        reject: (error) => settle(error),
+        lines: [],
+      });
       proc.on("error", (err) => {
         this.core.fail(String(err));
         reject(err);
@@ -1010,6 +1066,7 @@ export class MirrorControlChannel implements MirrorChannelIo {
   private noteExit(reason: string | null): void {
     if (this.exited) return;
     this.exited = true;
+    this.guardedStart?.reject(new Error(reason ?? "Control channel exited before guarded attach"));
     this.opts.handlers.onExit(reason);
   }
 }

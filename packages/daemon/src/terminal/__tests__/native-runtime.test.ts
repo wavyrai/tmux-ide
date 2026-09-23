@@ -184,6 +184,7 @@ function applicationShellPaneWire(
     options.mission ?? "",
     options.cwd ?? "/repo",
     options.windowStamp ?? "",
+    "0",
     "tmux-ide-pane-v2",
   ].join(INVENTORY_SEPARATOR);
 }
@@ -248,6 +249,9 @@ describe("workspace-registry semantic pane discovery", () => {
       windows?: number;
       panes?: number;
       windowStamp?: string;
+      windowIndex?: number;
+      windowActive?: boolean;
+      paneActive?: boolean;
       active?: boolean;
     } = {},
   ): string {
@@ -262,14 +266,15 @@ describe("workspace-registry semantic pane discovery", () => {
       "0",
       "Agent",
       "codex",
-      options.active === false ? "0" : "1",
-      options.active === false ? "0" : "1",
+      (options.windowActive ?? options.active) === false ? "0" : "1",
+      (options.paneActive ?? options.active) === false ? "0" : "1",
       "teammate",
       "Codex",
       "agent",
       "",
       "/repo",
       options.windowStamp ?? "",
+      String(options.windowIndex ?? Number((options.windowId ?? "@2").slice(1))),
       "tmux-ide-pane-v2",
     ].join(INVENTORY_SEPARATOR);
   }
@@ -326,6 +331,7 @@ describe("workspace-registry semantic pane discovery", () => {
         paneId: "%4",
         stamp: "pane.worker",
         windowStamp: "window.workspace.alpha",
+        windowActive: true,
         active: false,
       }),
     ].join("\n");
@@ -349,7 +355,13 @@ describe("workspace-registry semantic pane discovery", () => {
     const { registry } = createRegistry("workspace.alpha", sessionName);
     const rows = [
       paneWire(sessionName, { panes: 2, paneId: "%3", stamp: "pane.agent" }),
-      paneWire(sessionName, { panes: 2, paneId: "%4", stamp: "pane.worker", active: false }),
+      paneWire(sessionName, {
+        panes: 2,
+        paneId: "%4",
+        stamp: "pane.worker",
+        active: false,
+        windowActive: true,
+      }),
     ].join("\n");
     const { runner } = inventoryRunner(sessionName, `${rows}\n`);
     const catalog = new SemanticPaneCatalog({
@@ -410,6 +422,68 @@ describe("workspace-registry semantic pane discovery", () => {
     await expect(discoverWorkspaceRegistrySemanticPanes(registry, runner)).rejects.toMatchObject({
       code: "discovery-failed",
     });
+  });
+
+  it("deduplicates consistent backing panes across distinct window links and retains active-link focus", async () => {
+    const { registry } = createRegistry("workspace.alpha", "session-a");
+    const rows = [
+      paneWire("session-a", { windows: 2, windowIndex: 0, active: false, paneActive: true }),
+      paneWire("session-a", { windows: 2, windowIndex: 3, active: true }),
+    ];
+    const { runner, calls } = inventoryRunner("session-a", rows.join("\n"));
+    const inventory = await discoverWorkspaceRegistryTerminalInventory(registry, runner);
+    expect(inventory.panes).toHaveLength(1);
+    expect(inventory.panes[0]).toMatchObject({
+      runtimePaneId: "%3",
+      active: true,
+      sessionWindowCount: 2,
+    });
+    expect(inventory.catalog.duplicateRuntimePaneBinding).toBe(false);
+    expect(inventory.catalog.duplicateSemanticStamp).toBe(false);
+    expect(calls).toHaveLength(3);
+  });
+
+  it.each(["same-index", "different-backing", "different-stamp", "different-pane-set"])(
+    "rejects conflicting window-link inventory: %s",
+    async (conflict) => {
+      const { registry } = createRegistry("workspace.alpha", "session-a");
+      const first = paneWire("session-a", {
+        windows: 2,
+        windowIndex: 0,
+        active: false,
+        paneActive: true,
+      });
+      const second = paneWire("session-a", {
+        windows: 2,
+        windowIndex: conflict === "same-index" ? 0 : 3,
+        ...(conflict === "different-backing" ? { windowId: "@99" } : {}),
+        ...(conflict === "different-stamp" ? { stamp: "pane.other" } : {}),
+        ...(conflict === "different-pane-set" ? { paneId: "%99", stamp: "pane.other" } : {}),
+      });
+      const { runner } = inventoryRunner("session-a", `${first}\n${second}`);
+      await expect(
+        discoverWorkspaceRegistryTerminalInventory(registry, runner),
+      ).rejects.toMatchObject({ code: "invalid-tmux-output" });
+    },
+  );
+
+  it("fences link-index replacement between inventory snapshots", async () => {
+    const { registry } = createRegistry("workspace.alpha", "session-a");
+    let reads = 0;
+    const base = inventoryRunner("session-a", "").runner;
+    const runner: TmuxAttachmentCommandRunner = {
+      run(command) {
+        if (command.argv[0] !== "list-panes") return base.run(command);
+        reads++;
+        return {
+          status: "ok",
+          stdout: paneWire("session-a", { windowIndex: reads === 1 ? 0 : 3 }),
+        };
+      },
+    };
+    await expect(
+      discoverWorkspaceRegistryTerminalInventory(registry, runner),
+    ).rejects.toMatchObject({ code: "discovery-failed" });
   });
 
   it("applies unstamped and duplicate faults globally to the inventory analyzer", async () => {
@@ -1074,6 +1148,7 @@ describe("async terminal inventory reads", () => {
         row[6] = stamp;
         row[10] = "0";
         row[17] = `window.other${index}`;
+        row[18] = String(index);
         return row.join(INVENTORY_SEPARATOR);
       })
       .join("\n");

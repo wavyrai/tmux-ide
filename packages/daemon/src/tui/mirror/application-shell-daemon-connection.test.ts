@@ -816,3 +816,84 @@ it("propagates typed promotion refusal before routing and ignores diagnostic sin
   });
   expect(read).not.toHaveBeenCalled();
 });
+
+describe("explicit server bootstrap", () => {
+  const server = { serverId: `tmux-server.${"a".repeat(32)}`, generation: daemon.instanceId };
+  const liveSessionId = `live-session.${"a".repeat(20)}`;
+  const scopedCatalog = {
+    version: 1,
+    server,
+    sessions: [
+      { sessionName: "alpha", liveSessionId, paneCount: 1, workspaceName: "workspace.alpha" },
+    ],
+  };
+  it("refuses a replaced saved session before default promotion", async () => {
+    const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(scopedCatalog));
+    const promote = vi.fn(async () => true);
+    try {
+      await expect(
+        prepareOpenTuiApplicationShellConnection("alpha", {
+          server,
+          expectedLiveSessionId: `live-session.${"b".repeat(20)}`,
+          readCanonicalDaemonInfo: () => daemon,
+          isCanonicalDaemonAlive: async () => true,
+          ensureSessionWorkspace: promote,
+        }),
+      ).rejects.toThrow("session-unavailable");
+      expect(promote).not.toHaveBeenCalled();
+      expect(String(fetcher.mock.calls[0]![0])).toContain(
+        `/tmux-servers/${server.serverId}/${server.generation}/sessions`,
+      );
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+  it("preserves the default transport after proving the exact scoped live session", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => Response.json(scopedCatalog));
+    const base = transport();
+    const createTransport = vi.fn(() => base);
+    try {
+      const connection = await prepareOpenTuiApplicationShellConnection("alpha", {
+        server,
+        expectedLiveSessionId: liveSessionId,
+        readCanonicalDaemonInfo: () => daemon,
+        isCanonicalDaemonAlive: async () => true,
+        ensureSessionWorkspace: async () => true,
+        createTransport,
+        fetchCanonicalWorkspaceRouting: async () => ({
+          ...catalog,
+          version: 3,
+          liveSessions: catalog.liveSessions.map((session) => ({ ...session, liveSessionId })),
+        }),
+      });
+      expect(connection?.server).toEqual(server);
+      expect(connection?.liveSessionId).toBe(liveSessionId);
+      expect(createTransport).toHaveBeenCalledOnce();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      connection?.dispose();
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+  it("does not use legacy promotion when the scoped API is unsupported", async () => {
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("missing", { status: 404 }));
+    const promote = vi.fn(async () => true);
+    try {
+      await expect(
+        prepareOpenTuiApplicationShellConnection("alpha", {
+          server,
+          readCanonicalDaemonInfo: () => daemon,
+          isCanonicalDaemonAlive: async () => true,
+          ensureSessionWorkspace: promote,
+        }),
+      ).rejects.toThrow();
+      expect(promote).not.toHaveBeenCalled();
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+});

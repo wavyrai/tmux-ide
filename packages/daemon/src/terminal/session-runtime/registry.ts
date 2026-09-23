@@ -550,6 +550,15 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     );
   }
 
+  /** Called by the serialized semantic mutation executor, never by a transport directly. */
+  executeWindowLinkAction(
+    session: string,
+    request: Parameters<MirrorService["executeWindowLinkAction"]>[1],
+  ): ReturnType<MirrorService["executeWindowLinkAction"]> {
+    if (this.#disposed) return Promise.reject(new Error("Session runtime disposed"));
+    return this.#mirror.executeWindowLinkAction(session, request);
+  }
+
   /** Retire one no-longer-registered session without disturbing siblings. */
   async retireSession(session: string): Promise<void> {
     const runtime = this.#sessions.get(session);

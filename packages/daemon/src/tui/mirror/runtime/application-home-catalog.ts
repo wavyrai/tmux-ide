@@ -1,6 +1,14 @@
+import WebSocket from "ws";
+import {
+  createWorkspaceEventSupervisor,
+  type WorkspaceEventSocket,
+} from "@tmux-ide/daemon-client/workspace-event-supervisor";
 import { readApplicationDaemonInfo as readCanonicalDaemonInfo } from "./application-daemon-authority.ts";
 import {
-  WorkspaceCatalogResourceV3SchemaZ,
+  TmuxServersResourceSchemaZ,
+  TmuxServerSessionsResourceSchemaZ,
+  type TmuxServerScope,
+  type TmuxServerDescriptor,
   type CanonicalDaemonInfo,
   type WorkspaceCatalogResourceV3,
 } from "@tmux-ide/contracts";
@@ -9,18 +17,16 @@ import {
   type PushResourceSessionAdapter,
   type PushResourceSessionOptions,
 } from "@tmux-ide/daemon-client/push-resource-session";
-import {
-  createWorkspaceEventSupervisor,
-  type WorkspaceEventSocket,
-} from "@tmux-ide/daemon-client/workspace-event-supervisor";
-import WebSocket from "ws";
 
 import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
 
 export type ApplicationHomeCatalogResourceKey = "live-catalog";
 export type ApplicationHomeCatalogResource = {
   readonly kind: "live-catalog";
-  readonly value: WorkspaceCatalogResourceV3;
+  readonly value?: WorkspaceCatalogResourceV3;
+  readonly daemonInstanceId?: string;
+  readonly servers?: readonly TmuxServerDescriptor[];
+  readonly scopedSessions?: readonly ApplicationHomeCatalogSession[];
 };
 export interface ApplicationHomeCatalogTarget {
   readonly daemon: CanonicalDaemonInfo;
@@ -35,6 +41,8 @@ export interface ApplicationHomeCatalogFailure {
 
 export interface ApplicationHomeCatalogSession {
   readonly id: string;
+  readonly server?: TmuxServerScope;
+  readonly serverLabel?: string;
   readonly liveSessionId?: string;
   readonly workspaceName?: string;
   readonly name: string;
@@ -45,6 +53,7 @@ export interface ApplicationHomeCatalogSnapshot {
   readonly phase: "loading" | "live" | "unavailable";
   readonly daemonInstanceId: string | null;
   readonly sessions: readonly ApplicationHomeCatalogSession[];
+  readonly servers?: readonly TmuxServerDescriptor[];
   readonly note: string | null;
 }
 
@@ -117,7 +126,7 @@ export function closeApplicationHomeCatalogTransport(
   supervisor.dispose();
 }
 
-function createApplicationHomeCatalogAdapter(onTransportRetired: () => void): HomeCatalogAdapter {
+function createApplicationHomeCatalogAdapter(_onTransportRetired: () => void): HomeCatalogAdapter {
   return {
     validateTarget(value) {
       if (
@@ -139,15 +148,9 @@ function createApplicationHomeCatalogAdapter(onTransportRetired: () => void): Ho
       };
     },
     async fetch(target, _key, signal) {
-      const url = canonicalDaemonUrl(
-        "http",
-        target.daemon.bindHostname,
-        target.daemon.port,
-        "/api/resources/workspace-catalog?version=3",
-      );
-      let response: Response;
-      try {
-        response = await fetch(url, {
+      const base = canonicalDaemonUrl("http", target.daemon.bindHostname, target.daemon.port);
+      const read = async (path: string) => {
+        const response = await fetch(base + path, {
           headers: {
             accept: "application/json",
             ...(target.daemon.authToken
@@ -157,88 +160,139 @@ function createApplicationHomeCatalogAdapter(onTransportRetired: () => void): Ho
           credentials: "omit",
           cache: "no-store",
           redirect: "error",
-          signal,
+          signal: AbortSignal.any([signal, AbortSignal.timeout(3_000)]),
         });
-      } catch {
-        return {
-          status: "failed",
-          failure: catalogFailure("network", "Live session discovery failed.", true),
-        };
-      }
-      if (!response.ok)
-        return {
-          status: "failed",
-          failure: catalogFailure(
-            "http",
-            `Live session discovery returned HTTP ${response.status}.`,
-            response.status >= 500,
-          ),
-        };
-      let body: unknown;
+        if (!response.ok) throw new Error(`Discovery returned HTTP ${response.status}`);
+        return response.json();
+      };
       try {
-        body = await response.json();
+        const inventory = TmuxServersResourceSchemaZ.parse(await read("/api/v1/tmux-servers"));
+        const sessions = await Promise.allSettled(
+          inventory.servers.map(async (descriptor) => {
+            if (descriptor.state !== "online") return [];
+            const server = { serverId: descriptor.serverId, generation: descriptor.generation };
+            const result = TmuxServerSessionsResourceSchemaZ.parse(
+              await read(`/api/v1/tmux-servers/${server.serverId}/${server.generation}/sessions`),
+            );
+            if (
+              result.server.serverId !== server.serverId ||
+              result.server.generation !== server.generation
+            )
+              throw new Error("Server discovery identity changed");
+            return result.sessions.map((session) => ({
+              id: JSON.stringify([server.serverId, server.generation, session.liveSessionId]),
+              server,
+              serverLabel: descriptor.label,
+              liveSessionId: session.liveSessionId,
+              name: session.sessionName,
+              ...(session.workspaceName ? { workspaceName: session.workspaceName } : {}),
+              paneCount: session.paneCount,
+            }));
+          }),
+        );
+        return {
+          status: "ok",
+          resource: {
+            kind: "live-catalog",
+            daemonInstanceId: target.daemon.instanceId,
+            servers: inventory.servers.map((server, index) =>
+              sessions[index]?.status === "rejected"
+                ? {
+                    serverId: server.serverId,
+                    label: server.label,
+                    state: "offline" as const,
+                    generation: null,
+                  }
+                : server,
+            ),
+            scopedSessions: sessions.flatMap((result) =>
+              result.status === "fulfilled" ? result.value : [],
+            ),
+          },
+        };
       } catch {
         return {
           status: "failed",
-          failure: catalogFailure("schema", "Live session discovery returned invalid JSON.", false),
+          failure: catalogFailure("network", "Server session discovery failed.", true),
         };
       }
-      const parsed = WorkspaceCatalogResourceV3SchemaZ.safeParse(body);
-      if (!parsed.success || !sameDaemon(target.daemon, parsed.data.daemon))
-        return {
-          status: "failed",
-          failure: catalogFailure(
-            "schema",
-            "Live session discovery failed daemon identity validation.",
-            false,
-          ),
-        };
-      return { status: "ok", resource: { kind: "live-catalog", value: parsed.data } };
     },
     async connect(target, _interests, handlers, signal) {
-      const socketUrl = canonicalDaemonUrl(
-        "ws",
-        target.daemon.bindHostname,
-        target.daemon.port,
-        "/ws/events?mode=semantic",
-      );
-      const socket = new WebSocket(socketUrl, {
-        headers: target.daemon.authToken
-          ? { Authorization: `Bearer ${target.daemon.authToken}` }
-          : undefined,
-      }) as unknown as WorkspaceEventSocket;
-      const supervisor = createWorkspaceEventSupervisor({
-        socket,
-        daemon: target.daemon,
-        workspaceName: target.workspaceName,
-        sessionName: target.workspaceName,
-        fetchTerminalRuntimeInventory: () =>
-          Promise.reject(new Error("Home catalog owns no terminal inventory.")),
-        onRetired: onTransportRetired,
-      });
-      const subscription = supervisor.connectWorkspaceCatalog(
-        () => handlers.invalidate(["live-catalog"]),
-        { terminalFirst: false },
-      );
+      // Root push is an advisory invalidation only: every refresh still resolves
+      // the full scoped inventory. The timer discovers changes on other owners.
       let closed = false;
-      const close = (): void => {
-        if (closed) return;
+      let pending = false;
+      let closePush: (() => void) | null = null;
+      const invalidate = () => {
+        if (!closed) handlers.invalidate(["live-catalog"]);
+      };
+      const startPush = async () => {
+        if (closed || pending || closePush) return;
+        pending = true;
+        const socket = new WebSocket(
+          canonicalDaemonUrl(
+            "ws",
+            target.daemon.bindHostname,
+            target.daemon.port,
+            "/ws/events?mode=semantic",
+          ),
+          {
+            headers: target.daemon.authToken
+              ? { Authorization: `Bearer ${target.daemon.authToken}` }
+              : undefined,
+          },
+        ) as unknown as WorkspaceEventSocket;
+        const supervisor = createWorkspaceEventSupervisor({
+          socket,
+          daemon: target.daemon,
+          workspaceName: target.workspaceName,
+          sessionName: target.workspaceName,
+          fetchTerminalRuntimeInventory: () =>
+            Promise.reject(new Error("Home catalog owns no terminal inventory.")),
+          onRetired: () => {
+            const cleanup = closePush;
+            closePush = null;
+            cleanup?.();
+          },
+        });
+        const subscription = supervisor.connectWorkspaceCatalog(invalidate, {
+          terminalFirst: false,
+        });
+        const cleanup = () => closeApplicationHomeCatalogTransport(subscription, supervisor);
+        closePush = cleanup;
+        try {
+          await subscription.ready;
+        } catch {
+          if (closePush === cleanup) closePush = null;
+          cleanup();
+        } finally {
+          pending = false;
+          if (closed) {
+            cleanup();
+            closePush = null;
+          }
+        }
+      };
+      const timer = setInterval(() => {
+        invalidate();
+        void startPush().catch(() => {
+          pending = false;
+        });
+      }, 5_000);
+      const close = () => {
         closed = true;
+        clearInterval(timer);
         signal.removeEventListener("abort", close);
-        // Release the logical observer before retiring its physical transport.
-        closeApplicationHomeCatalogTransport(subscription, supervisor);
+        const cleanup = closePush;
+        closePush = null;
+        cleanup?.();
       };
       signal.addEventListener("abort", close, { once: true });
-      try {
-        await subscription.ready;
-      } catch (error) {
-        close();
-        throw error;
-      }
-      if (signal.aborted) {
-        close();
-        throw signal.reason;
-      }
+      if (signal.aborted) close();
+      else
+        void startPush().catch(() => {
+          pending = false;
+        });
       return { status: "connected", close };
     },
     rejectionFailure: () =>
@@ -264,31 +318,37 @@ const initialSnapshot = (): ApplicationHomeCatalogSnapshot => ({
   note: "Discovering live tmux sessions…",
 });
 
-function projectCatalog(resource: WorkspaceCatalogResourceV3): ApplicationHomeCatalogSnapshot {
+function projectCatalog(
+  resource: WorkspaceCatalogResourceV3,
+  scopedSessions?: readonly ApplicationHomeCatalogSession[],
+): ApplicationHomeCatalogSnapshot {
   return {
     phase: "live",
     daemonInstanceId: resource.daemon.instanceId,
-    sessions: resource.liveSessions
-      .map(({ liveSessionId, sessionName, paneCount }) => ({
-        id: `${resource.daemon.instanceId}:${liveSessionId}`,
-        liveSessionId,
-        workspaceName: resource.intents.find((intent) => intent.sessionName === sessionName)
-          ?.workspaceName,
-        name: sessionName,
-        paneCount,
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name)),
+    sessions:
+      scopedSessions ??
+      resource.liveSessions
+        .map(({ liveSessionId, sessionName, paneCount }) => ({
+          id: `${resource.daemon.instanceId}:${liveSessionId}`,
+          liveSessionId,
+          workspaceName: resource.intents.find((intent) => intent.sessionName === sessionName)
+            ?.workspaceName,
+          name: sessionName,
+          paneCount,
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
     note:
-      resource.liveSessions.length === 0
+      (scopedSessions?.length ?? resource.liveSessions.length) === 0
         ? "No live tmux sessions yet. This list updates automatically."
         : null,
   };
 }
 
 /**
- * Daemon-authoritative Home catalog. Reads are push-invalidated while the
- * daemon generation is healthy; the only timer is a bounded failure-recovery
- * probe used when no canonical daemon or event transport is available.
+ * Daemon-authoritative fleet metadata. Root push preserves immediate updates,
+ * while a five-second refresh discovers independent
+ * server owners without opening pane streams. Failed reads use bounded backoff;
+ * each failed server is excluded without suppressing healthy siblings.
  */
 export function createApplicationHomeCatalog(
   overrides: Partial<ApplicationHomeCatalogDependencies> = {},
@@ -373,7 +433,19 @@ export function createApplicationHomeCatalog(
     if (slot?.status === "loaded" && !slot.refreshing && slot.resource.kind === "live-catalog") {
       clearRetry();
       retryAttempt = 0;
-      publish(projectCatalog(slot.resource.value));
+      publish(
+        slot.resource.value
+          ? projectCatalog(slot.resource.value)
+          : {
+              phase: "live",
+              daemonInstanceId: slot.resource.daemonInstanceId ?? null,
+              sessions: slot.resource.scopedSessions ?? [],
+              servers: slot.resource.servers,
+              note: slot.resource.scopedSessions?.length
+                ? null
+                : "No live tmux sessions yet. This list updates automatically.",
+            },
+      );
       return;
     }
     if (slot?.status === "error") {

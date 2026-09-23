@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FIXTURE } from "./simulated-channel.ts";
 import { standardScriptedChannel } from "./scripted-channel.ts";
 
 describe("ScriptedChannelDriver", () => {
@@ -23,6 +24,27 @@ describe("ScriptedChannelDriver", () => {
     expect(cursor).toEqual(["0 0 100 50"]);
     driver.output("%1", "hello\\015");
     expect(output).toEqual(["hello\r"]);
+    await driver.channel.dispose();
+  });
+
+  it("keeps a scalar history probe ahead of a periodic inventory reply", async () => {
+    const driver = standardScriptedChannel({
+      onOutput: () => undefined,
+      onNotify: () => undefined,
+      onExit: () => undefined,
+    });
+    await driver.channel.start();
+    const replies: string[][] = [];
+    driver.channel.commandInline('display-message -p -t %1 "#{history_size}"', (reply) =>
+      replies.push(reply.lines),
+    );
+    driver.channel.commandInline('list-panes -s -t "zz-sim" -F "#{pane_id}"', (reply) =>
+      replies.push(reply.lines),
+    );
+    driver.pump();
+    expect(replies).toEqual([["0"], FIXTURE.truthRows]);
+    expect(driver.channel.core.pendingCount).toBe(0);
+    expect(driver.deferredCommands).toHaveLength(0);
     await driver.channel.dispose();
   });
 

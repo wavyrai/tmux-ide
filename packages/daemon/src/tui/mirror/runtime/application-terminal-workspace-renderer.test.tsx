@@ -67,6 +67,85 @@ function adapter(
 }
 
 describe("ApplicationTerminalWorkspace", () => {
+  it("retains one framebuffer and subscription when selecting another link to the same backing", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const base = layout();
+    const links = ["a", "b"].map((letter, index) => ({
+      linkId: `window-link.${letter.repeat(32)}`,
+      semanticWindowId: "window.main",
+      displayIndex: index * 9,
+    }));
+    const topology = {
+      liveSessionId: `live-session.${"a".repeat(20)}`,
+      linkRevision: 1,
+      activeLinkId: links[0]!.linkId,
+      links,
+    };
+    const [snapshot, setSnapshot] = createSignal({ ...base, windowLinks: topology });
+    const blits: string[] = [];
+    let subscriptions = 0;
+    let unsubscriptions = 0;
+    const source = adapter({ "pane.a": "A", "pane.b": "B", "pane.c": "C" }, blits);
+    source.subscribePaneVersion = () => {
+      subscriptions++;
+      return () => {
+        unsubscriptions++;
+      };
+    };
+    const selected: unknown[] = [];
+    const unlinked: unknown[] = [];
+    let keyHandler: PaneMenuKeyHandler | null = null;
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={snapshot}
+          adapter={source}
+          rendererEpoch={1}
+          width={50}
+          height={10}
+          focusedPane="pane.a"
+          theme={theme}
+          palette={createTerminalPaletteProjection(theme)}
+          onSelectPane={() => undefined}
+          onSelectWindowLink={(target) => selected.push(target)}
+          onUnlinkWindowLink={(target) => unlinked.push(target)}
+          onSelectionKeyOwner={(handler) => {
+            keyHandler = handler;
+          }}
+        />
+      ),
+      { width: 50, height: 12 },
+    );
+    await setup.renderOnce();
+    expect(subscriptions).toBe(3);
+    blits.length = 0;
+    setSnapshot({ ...base, windowLinks: { ...topology, activeLinkId: links[1]!.linkId } });
+    await setup.renderOnce();
+    expect(blits).toEqual([]);
+    expect(subscriptions).toBe(3);
+    expect(unsubscriptions).toBe(0);
+    expect(snapshot().windows).toHaveLength(1);
+    expect(setup.captureCharFrame()).toContain("main");
+    const secondTab = setup.renderer.root.findDescendantById(`window-tab:${links[1]!.linkId}`)!;
+    await setup.mockMouse.click(secondTab.x + 2, secondTab.y, MouseButtons.LEFT);
+    expect(selected).toEqual([
+      {
+        liveSessionId: topology.liveSessionId,
+        linkRevision: 1,
+        linkId: links[1]!.linkId,
+        expectedSemanticWindowId: "window.main",
+      },
+    ]);
+    // The trailing tab action opens a captured-link menu, never a backing kill.
+    await setup.mockMouse.click(secondTab.x + secondTab.width - 2, secondTab.y, MouseButtons.LEFT);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Unlink this tab");
+    keyHandler?.("u");
+    expect(unlinked).toEqual(selected);
+    setup.renderer.destroy();
+  });
+
   it("follows local focus in compact view and restores the tiled view when enlarged", async () => {
     registerPaneSurface();
     const theme = createSemanticThemeSnapshot({ mode: "dark" });

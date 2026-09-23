@@ -1,3 +1,4 @@
+import { PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL } from "@tmux-ide/contracts";
 import { createServer } from "node:http";
 import { Socket } from "node:net";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
@@ -79,15 +80,13 @@ export async function startEnvironmentStreamRelay(options: {
   server.on("upgrade", (request, socket, head) => {
     const path = request.url;
     const expectedProtocol =
-      path === "/v1/terminal/pane-streams/redeem"
-        ? "tmux-ide-pane-stream.v1"
-        : "tmux-ide-terminal.v1";
+      path === PANE_STREAM_REDEEM_PATH ? PANE_STREAM_WEBSOCKET_SUBPROTOCOL : "tmux-ide-terminal.v1";
     if (
       disposed ||
       pairs.size >= maxSockets ||
       request.headers.origin !== options.trustedOrigin ||
       request.headers["sec-websocket-protocol"] !== expectedProtocol ||
-      !["/v1/terminal/pane-streams/redeem", "/v1/terminal/attachments/redeem"].includes(path ?? "")
+      ![PANE_STREAM_REDEEM_PATH, "/v1/terminal/attachments/redeem"].includes(path ?? "")
     ) {
       socket.destroy();
       return;
@@ -136,9 +135,7 @@ export async function startEnvironmentStreamRelay(options: {
           let frame;
           try {
             frame = (
-              path === "/v1/terminal/pane-streams/redeem"
-                ? PaneStreamRedeemFrameSchemaZ
-                : attachmentRedeem
+              path === PANE_STREAM_REDEEM_PATH ? PaneStreamRedeemFrameSchemaZ : attachmentRedeem
             ).parse(JSON.parse(data.toString()));
           } catch {
             pair.close();

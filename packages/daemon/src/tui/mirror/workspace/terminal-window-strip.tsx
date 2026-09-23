@@ -14,6 +14,8 @@ import {
 } from "../ui/index.ts";
 
 export interface TerminalWindowTab {
+  linkId?: string;
+  disabled?: boolean;
   index: number;
   name: string;
   active: boolean;
@@ -414,10 +416,12 @@ function agentStatus(status: string | undefined): AgentBadgeStatus | undefined {
  */
 export function TerminalWindowStrip(props: TerminalWindowStripProps) {
   const tabs = () => (typeof props.tabs === "function" ? props.tabs() : props.tabs);
-  const tabId = (tab: TerminalWindowTab) => tab.semanticWindowId ?? `window:${tab.index}`;
+  const tabId = (tab: TerminalWindowTab) =>
+    tab.linkId ?? tab.semanticWindowId ?? `window:${tab.index}`;
   const items = createMemo<readonly WindowTabItem[]>(() =>
     tabs().map((tab) => ({
       id: tabId(tab),
+      disabled: tab.disabled,
       windowIndex: tab.index,
       title: tab.name,
       agentStatus: agentStatus(tab.status),

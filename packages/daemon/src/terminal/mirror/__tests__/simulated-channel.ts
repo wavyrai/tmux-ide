@@ -157,10 +157,18 @@ export interface FixtureState {
  *  commands, leaves capture/cursor probes (and anything unrecognized) manual. */
 export function fixtureAutoReply(state: FixtureState): AutoReply {
   return (cmd) => {
-    if (cmd.startsWith('display-message -p "#{qa:session_name}')) return ["zz-sim\t$1"];
+    if (cmd.startsWith('display-message -p "#{qa:session_name}'))
+      return ["zz-sim\t$1\t1234\t1700000000"];
     if (cmd.includes("qa:@tmux_ide_pane_id")) return state.descriptorRows;
     if (cmd.startsWith("list-panes -s")) return state.truthRows;
-    if (cmd.startsWith("list-windows")) return state.windowRows;
+    if (cmd.startsWith("list-windows"))
+      return state.windowRows.map((row, index) => {
+        const parts = row.split("\t");
+        if (parts.length === 7) parts.push(parts[4]!);
+        if (parts.length === 8) parts.push("emacs");
+        if (parts.length === 9) parts.push(String(index));
+        return parts.join("\t");
+      });
     // Product-owned seeds are one atomic `set-option ; capture-pane` command
     // list. The capture reply remains manual just like a bare capture probe.
     if (cmd.includes("capture-pane")) return null;

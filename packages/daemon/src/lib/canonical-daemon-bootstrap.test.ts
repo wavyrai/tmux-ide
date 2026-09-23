@@ -634,3 +634,131 @@ describe("supervised bootstrap admission", () => {
     expect(f.spawnOwner).not.toHaveBeenCalled();
   });
 });
+
+describe("canonical server intent admission", () => {
+  const digest = "a".repeat(64);
+  const intent = { source: "explicit", selector: { kind: "name", name: "default" } } as const;
+  function dependencies(
+    options: {
+      capability?: boolean;
+      digest?: string | null;
+      old?: boolean;
+      unbound?: boolean;
+    } = {},
+  ) {
+    const candidate = {
+      ...info,
+      productVersion: options.old ? "2.7.0" : info.productVersion,
+      ...(options.capability === false ? {} : { tmuxServerProofVersion: 1 as const }),
+    };
+    return {
+      inspect: () => ({
+        status: "valid" as const,
+        info: candidate,
+        observation: { path: "/tmp/daemon.json" },
+      }),
+      alive: async () => true,
+      identity: async () => ({
+        ...candidate,
+        ok: true as const,
+        tmuxServerProof:
+          options.digest === null
+            ? null
+            : {
+                version: 1 as const,
+                kind: options.unbound ? ("unbound-name" as const) : ("live" as const),
+                digest: options.digest ?? digest,
+              },
+      }),
+      health: async () => ({
+        ok: true as const,
+        protocolVersion: candidate.protocolVersion,
+        productVersion: candidate.productVersion,
+        uptime: 1,
+      }),
+      serverProof: vi.fn(() => ({
+        version: 1 as const,
+        kind: options.unbound ? ("unbound-name" as const) : ("live" as const),
+        digest,
+      })),
+      spawnOwner: vi.fn(async () => undefined),
+      shutdownOlderOwner: vi.fn(async () => undefined),
+    };
+  }
+  it("admits the exact same unbound named selector for a sessionless owner", async () => {
+    const deps = dependencies({ unbound: true });
+    await expect(
+      ensureCanonicalDaemon({ entryPath: "/tmp/cli.js", tmuxServerIntent: intent }, deps),
+    ).resolves.toMatchObject({ source: "existing" });
+    expect(deps.shutdownOlderOwner).not.toHaveBeenCalled();
+  });
+  it("does not substitute a selector commitment for a live server proof", async () => {
+    const deps = dependencies({ unbound: true });
+    const originalIdentity = deps.identity;
+    deps.identity = async () => ({
+      ...(await originalIdentity()),
+      tmuxServerProof: { version: 1, kind: "live", digest },
+    });
+    await expect(
+      ensureCanonicalDaemon({ entryPath: "/tmp/cli.js", tmuxServerIntent: intent }, deps),
+    ).rejects.toMatchObject({ reason: "tmux-server-mismatch" });
+    expect(deps.shutdownOlderOwner).not.toHaveBeenCalled();
+  });
+  it("reuses the same proven server", async () => {
+    const deps = dependencies();
+    await expect(
+      ensureCanonicalDaemon({ entryPath: "/tmp/cli.js", tmuxServerIntent: intent }, deps),
+    ).resolves.toMatchObject({ source: "existing" });
+    expect(deps.spawnOwner).not.toHaveBeenCalled();
+  });
+  it.each([false, true])(
+    "refuses a different server before replacement (older=%s)",
+    async (old) => {
+      const deps = dependencies({ digest: "b".repeat(64), old });
+      await expect(
+        ensureCanonicalDaemon(
+          {
+            entryPath: "/tmp/cli.js",
+            expectedProductVersion: info.productVersion,
+            tmuxServerIntent: intent,
+          },
+          deps,
+        ),
+      ).rejects.toMatchObject({ reason: "tmux-server-mismatch" });
+      expect(deps.spawnOwner).not.toHaveBeenCalled();
+      expect(deps.shutdownOlderOwner).not.toHaveBeenCalled();
+    },
+  );
+  it.each([{ capability: false }, { digest: null }])(
+    "refuses unsupported or unavailable proof",
+    async (options) => {
+      const deps = dependencies(options);
+      await expect(
+        ensureCanonicalDaemon({ entryPath: "/tmp/cli.js", tmuxServerIntent: intent }, deps),
+      ).rejects.toMatchObject({ reason: "tmux-server-unproven" });
+      expect(deps.shutdownOlderOwner).not.toHaveBeenCalled();
+      expect(deps.spawnOwner).not.toHaveBeenCalled();
+    },
+  );
+  it("keeps context-free reuse compatible with older metadata", async () => {
+    const deps = dependencies({ capability: false, digest: null });
+    await expect(
+      ensureCanonicalDaemon({ entryPath: "/tmp/cli.js", tmuxServerIntent: null }, deps),
+    ).resolves.toMatchObject({ source: "existing" });
+    expect(deps.serverProof).not.toHaveBeenCalled();
+  });
+  it("refuses foreground version retirement across server intent", async () => {
+    const deps = dependencies({ old: true, digest: "b".repeat(64) });
+    await expect(
+      retireOutdatedCanonicalDaemon(
+        {
+          entryPath: "/tmp/cli.js",
+          expectedProductVersion: info.productVersion,
+          tmuxServerIntent: intent,
+        },
+        deps,
+      ),
+    ).rejects.toMatchObject({ reason: "tmux-server-mismatch" });
+    expect(deps.shutdownOlderOwner).not.toHaveBeenCalled();
+  });
+});

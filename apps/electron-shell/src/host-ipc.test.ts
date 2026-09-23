@@ -1,3 +1,7 @@
+import {
+  PANE_STREAM_PROTOCOL_VERSION,
+  PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
+} from "@tmux-ide/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import type {
@@ -1064,10 +1068,10 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
 
   function streamDescriptor(request: PaneStreamIssueMutationRequest, instanceId: string) {
     return {
-      protocolVersion: 1 as const,
-      webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/pane-streams/redeem",
-      subprotocol: "tmux-ide-pane-stream.v1" as const,
-      redemptionTicket: `ps1_${"A".repeat(43)}`,
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      webSocketUrl: "ws://127.0.0.1:6060/v2/terminal/pane-streams/redeem",
+      subprotocol: PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
+      redemptionTicket: `ps2_${"A".repeat(43)}`,
       daemonInstanceId: instanceId,
       requestId: request.requestId,
       expiresAt: Date.now() + 15_000,
@@ -1096,7 +1100,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       issuePaneStream,
     });
     const stream = {
-      protocolVersion: 1,
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
       workspaceName: "product",
       panes: PANES,
       viewerMode: "read-only",
@@ -1165,7 +1169,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
         h.handlers.get(HOST_IPC.daemonRequest)?.(h.event, {
           resource: "issuePaneStream",
           request: {
-            protocolVersion: 1,
+            protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
             workspaceName: "product",
             panes: PANES,
             viewerMode: "read-only",
@@ -1192,7 +1196,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
           if (mode === "retired") h.registration.releaseRenderer();
           return {
             ...descriptor,
-            webSocketUrl: "ws://127.0.0.1:7444/v1/terminal/pane-streams/redeem",
+            webSocketUrl: "ws://127.0.0.1:7444/v2/terminal/pane-streams/redeem",
             ...(mode === "tampered"
               ? { daemonInstanceId: "00000000-0000-4000-8000-000000000099" }
               : {}),
@@ -1214,7 +1218,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       const result = await h.handlers.get(HOST_IPC.daemonRequest)?.(h.event, {
         resource: "issuePaneStream",
         request: {
-          protocolVersion: 1,
+          protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
           workspaceName: "product",
           panes: PANES,
           viewerMode: "read-only",
@@ -1225,7 +1229,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
         mode === "valid"
           ? {
               status: "issued",
-              descriptor: { webSocketUrl: "ws://127.0.0.1:7444/v1/terminal/pane-streams/redeem" },
+              descriptor: { webSocketUrl: "ws://127.0.0.1:7444/v2/terminal/pane-streams/redeem" },
             }
           : { status: "error" },
       );
@@ -1262,7 +1266,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       issuePaneStream,
     });
     const request = {
-      protocolVersion: 1,
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
       workspaceName: "product",
       panes: PANES,
       viewerMode: "read-only",
@@ -1353,7 +1357,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       await h.handlers.get(HOST_IPC.daemonRequest)?.(h.event, {
         resource: "issuePaneStream",
         request: {
-          protocolVersion: 1,
+          protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
           workspaceName: "product",
           panes: PANES,
           viewerMode: "read-only",
@@ -1375,7 +1379,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       await h.handlers.get(HOST_IPC.daemonRequest)?.(h.event, {
         resource: "issuePaneStream",
         request: {
-          protocolVersion: 1,
+          protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
           workspaceName: "product",
           panes: PANES,
           viewerMode: "read-only",
@@ -1393,7 +1397,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
         {
           resource: "issuePaneStream",
           request: {
-            protocolVersion: 1,
+            protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
             workspaceName: "product",
             panes: PANES,
             viewerMode: "read-only",
@@ -1423,7 +1427,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
     const pending = h.handlers.get(HOST_IPC.daemonRequest)?.(h.event, {
       resource: "issuePaneStream",
       request: {
-        protocolVersion: 1,
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         workspaceName: "product",
         panes: PANES,
         viewerMode: "read-only",
@@ -1436,12 +1440,12 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       status: "issued",
       descriptor: {
         ...streamDescriptor(request, h.identity.instanceId),
-        redemptionTicket: `ps1_${"C".repeat(43)}`,
+        redemptionTicket: `ps2_${"C".repeat(43)}`,
       },
     });
     const retired = await pending;
     expect(retired).toMatchObject({ status: "error", error: { code: "disposed" } });
-    expect(JSON.stringify(retired)).not.toContain(`ps1_${"C".repeat(43)}`);
+    expect(JSON.stringify(retired)).not.toContain(`ps2_${"C".repeat(43)}`);
     h.registration.dispose();
   });
 });

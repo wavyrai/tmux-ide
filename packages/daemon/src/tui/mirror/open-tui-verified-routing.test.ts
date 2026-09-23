@@ -196,3 +196,65 @@ describe("SSH pane-stream endpoint authority", () => {
     expect(f.socket).not.toHaveBeenCalled();
   });
 });
+
+it("routes scoped issuance to the selected owner and never the default issue route", async () => {
+  const server = {
+    serverId: `tmux-server.${"a".repeat(32)}`,
+    generation: "22222222-2222-4222-8222-222222222222",
+  };
+  const request = vi.fn<typeof fetch>(async () => new Response("unavailable", { status: 409 }));
+  const defaultOpen =
+    vi.fn<
+      typeof import("@tmux-ide/daemon-client/pane-stream-client").openPaneStreamRuntimeClient
+    >();
+  const context = createOpenTuiVerifiedRoutingContext(
+    daemon,
+    "workspace.alpha",
+    "alpha",
+    defaultOpen,
+    undefined,
+    server,
+  )!;
+  expect(context.daemonInstanceId).toBe(server.generation);
+  expect(() =>
+    context.assertCurrent({
+      daemonInstanceId: daemon.instanceId,
+      workspaceName: "workspace.alpha",
+      sessionName: "alpha",
+    }),
+  ).toThrow("another daemon instance");
+  await expect(
+    context.openPaneStream(
+      {
+        daemonInstanceId: server.generation,
+        workspaceName: "workspace.alpha",
+        sessionName: "alpha",
+      },
+      {
+        origin: "tmux-ide://opentui",
+        hostClientId: "opentui:test",
+        requestId: "33333333-3333-4333-8333-333333333333",
+        stream: {
+          protocolVersion: 2,
+          workspaceName: "workspace.alpha",
+          panes: ["pane.editor"],
+          viewerMode: "interactive",
+          terminalDelivery: {
+            protocolVersions: [1],
+            encodings: ["semantic-v1"],
+            richPlacements: true,
+          },
+        },
+        fetch: request,
+        createSocket: vi.fn(),
+        onNegotiated: vi.fn(),
+        onTerminalDelivery: vi.fn(),
+      },
+    ),
+  ).rejects.toThrow();
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(String(request.mock.calls[0]![0])).toContain(
+    `/api/v1/tmux-servers/${server.serverId}/${server.generation}/pane-streams/issue`,
+  );
+  expect(defaultOpen).not.toHaveBeenCalled();
+});

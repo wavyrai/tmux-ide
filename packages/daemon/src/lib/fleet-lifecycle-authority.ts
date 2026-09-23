@@ -56,6 +56,7 @@ export class FleetLifecycleAuthority {
   readonly #startedAt: string;
   readonly #registry: Pick<WorkspaceRegistry, "list" | "add">;
   readonly #runTmux: (args: readonly string[]) => string;
+  readonly #ensureChromeUpdater: boolean;
   readonly #readFleet: () => FleetSessionFacts[] | null;
   readonly #operations = new Map<string, { fingerprint: string; result: unknown }>();
   #tail: Promise<void> = Promise.resolve();
@@ -67,11 +68,14 @@ export class FleetLifecycleAuthority {
     registry: Pick<WorkspaceRegistry, "list" | "add">;
     runTmux: (args: readonly string[]) => string;
     readFleet?: () => FleetSessionFacts[] | null;
+    /** Independent visual owners do not need an additional chrome updater process. */
+    ensureChromeUpdater?: boolean;
   }) {
     this.#daemonInstanceId = options.daemonInstanceId;
     this.#productVersion = options.productVersion;
     this.#startedAt = options.startedAt;
     this.#registry = options.registry;
+    this.#ensureChromeUpdater = options.ensureChromeUpdater ?? true;
     this.#runTmux = options.runTmux;
     this.#readFleet = options.readFleet ?? (() => readAdoptedFleet(this.#registry));
   }
@@ -152,10 +156,12 @@ export class FleetLifecycleAuthority {
       prepareTmuxTruecolorEnvironment(this.#runTmux, identity.sessionName);
       this.#runTmux(["set-environment", "-t", identity.sessionName, "TMUX_IDE", "1"]);
       this.#runTmux(adoptMarkArgv(identity.sessionName));
-      try {
-        this.#runTmux(updaterProbeArgv());
-      } catch {
-        this.#runTmux(updaterSpawnArgv());
+      if (this.#ensureChromeUpdater) {
+        try {
+          this.#runTmux(updaterProbeArgv());
+        } catch {
+          this.#runTmux(updaterSpawnArgv());
+        }
       }
       if (!existing)
         this.#registry.add({
@@ -368,10 +374,12 @@ export class FleetLifecycleAuthority {
       this.#runTmux(["set-option", "-p", "-t", paneId, "@agent_launch", input.command]);
       this.#runTmux(["set-option", "-p", "-t", paneId, "@agent_hint", input.harness]);
       this.#runTmux(["select-pane", "-t", paneId, "-T", input.displayTitle]);
-      try {
-        this.#runTmux(updaterProbeArgv());
-      } catch {
-        this.#runTmux(updaterSpawnArgv());
+      if (this.#ensureChromeUpdater) {
+        try {
+          this.#runTmux(updaterProbeArgv());
+        } catch {
+          this.#runTmux(updaterSpawnArgv());
+        }
       }
     } catch (error) {
       if (createdSession) this.#tryTmux(["kill-session", "-t", sessionName]);

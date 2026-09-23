@@ -121,6 +121,10 @@ export function interactionSummaryLabel(
 ): string {
   const observed = phase === "observed";
   switch (operationKind) {
+    case "workspace.window.link.select":
+      return observed ? "window link selected" : "select window link";
+    case "workspace.window.link.unlink":
+      return observed ? "window unlinked" : "unlink window";
     case "workspace.window.split":
       return `split ${summary.operationKind === operationKind ? summary.direction : "window"}`;
     case "workspace.window.kill":

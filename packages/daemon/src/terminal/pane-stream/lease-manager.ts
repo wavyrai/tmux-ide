@@ -11,7 +11,7 @@ import {
  * PaneStreamLeaseManager — in-memory authority for pane-stream leases (m43
  * card 2), following the terminal-attachment lease discipline:
  *
- *  - a one-time `ps1_` bearer ticket whose SHA-256 digest is all the manager
+ *  - a one-time `ps2_` bearer ticket whose SHA-256 digest is all the manager
  *    retains, burned before activation so no concurrent caller can replay it;
  *  - the ticket TTL bounds credential DELIVERY (the authenticated redemption
  *    frame must arrive in time); execution after delivery gets its own bounded
@@ -36,7 +36,7 @@ const SessionNameSchemaZ = z
   .min(1)
   .max(256)
   .refine((value) => !/[\0\r\n]/u.test(value));
-const TicketPattern = /^ps1_[A-Za-z0-9_-]{43}$/u;
+const TicketPattern = /^ps2_[A-Za-z0-9_-]{43}$/u;
 
 export interface PaneStreamLeaseBinding {
   readonly daemonInstanceId: string;
@@ -197,7 +197,7 @@ export class PaneStreamLeaseManager {
           "The secure random source returned an invalid ticket.",
         );
       }
-      const redemptionTicket = `ps1_${Buffer.from(ticketBytes).toString("base64url")}`;
+      const redemptionTicket = `ps2_${Buffer.from(ticketBytes).toString("base64url")}`;
       const state: LeaseState = {
         leaseId,
         requestId,

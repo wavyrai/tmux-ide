@@ -70,6 +70,8 @@ import {
   workspaceRenameHandler,
   workspaceSessionKillHandler,
   workspaceWindowKillHandler,
+  workspaceWindowLinkSelectHandler,
+  workspaceWindowLinkUnlinkHandler,
   workspaceWindowSplitHandler,
 } from "./handlers/workspace-multiplexer.ts";
 
@@ -300,6 +302,18 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["workspace.pane.zoom.toggle"].result,
     handler: (input) => workspacePaneZoomToggleHandler(input),
     handlerWithContext: workspacePaneZoomToggleHandler,
+  },
+  "workspace.window.link.select": {
+    inputSchema: ActionContractsZ["workspace.window.link.select"].input,
+    resultSchema: ActionContractsZ["workspace.window.link.select"].result,
+    handler: (input) => workspaceWindowLinkSelectHandler(input),
+    handlerWithContext: workspaceWindowLinkSelectHandler,
+  },
+  "workspace.window.link.unlink": {
+    inputSchema: ActionContractsZ["workspace.window.link.unlink"].input,
+    resultSchema: ActionContractsZ["workspace.window.link.unlink"].result,
+    handler: (input) => workspaceWindowLinkUnlinkHandler(input),
+    handlerWithContext: workspaceWindowLinkUnlinkHandler,
   },
   "workspace.pane.select": {
     inputSchema: ActionContractsZ["workspace.pane.select"].input,

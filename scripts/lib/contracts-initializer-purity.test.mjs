@@ -87,6 +87,7 @@ test("real daemon and stream bundles preserve validation and public schema ident
 export {
   DaemonInstanceIdentitySchemaZ,
   CanonicalDaemonInfoSchema,
+  PANE_STREAM_PROTOCOL_VERSION,
   PaneStreamLeaseRequestSchemaZ,
   PaneStreamLoopbackWebSocketUrlSchemaZ,
   DesktopDaemonEventSubscriptionRequestSchemaZ,
@@ -126,7 +127,7 @@ export { PaneStreamLeaseRequestSchemaZ as leafLease } from "./packages/contracts
     authToken: "fixture-token",
   };
   const lease = {
-    protocolVersion: 1,
+    protocolVersion: modules[0].PANE_STREAM_PROTOCOL_VERSION,
     workspaceName: "workspace.alpha",
     panes: ["pane.editor"],
     viewerMode: "read-only",
@@ -145,17 +146,17 @@ export { PaneStreamLeaseRequestSchemaZ as leafLease } from "./packages/contracts
     ["PaneStreamLeaseRequestSchemaZ", { ...lease, viewport: { cols: 80, rows: 24 } }, false],
     [
       "PaneStreamLoopbackWebSocketUrlSchemaZ",
-      "ws://127.0.0.1:6070/v1/terminal/pane-streams/redeem",
+      "ws://127.0.0.1:6070/v2/terminal/pane-streams/redeem",
       true,
     ],
     [
       "PaneStreamLoopbackWebSocketUrlSchemaZ",
-      "ws://example.com:6070/v1/terminal/pane-streams/redeem",
+      "ws://example.com:6070/v2/terminal/pane-streams/redeem",
       false,
     ],
     [
       "PaneStreamLoopbackWebSocketUrlSchemaZ",
-      "ws://user:pass@127.0.0.1:6070/v1/terminal/pane-streams/redeem",
+      "ws://user:pass@127.0.0.1:6070/v2/terminal/pane-streams/redeem",
       false,
     ],
     ["DesktopDaemonEventSubscriptionRequestSchemaZ", { workspaceNames: ["workspace.alpha"] }, true],

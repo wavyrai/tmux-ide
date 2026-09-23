@@ -500,6 +500,10 @@ async function runInstalledTuiGate(installedCli) {
       `pane: ${pane.status === 0 ? pane.stdout.trim() : pane.stderr.trim()}`,
       `frame:\n${frame.status === 0 ? frame.stdout : frame.stderr}`,
       `stderr:\n${stderr || "(empty)"}`,
+      `daemon stderr tails:\n${[...childOutput.values()]
+        .map((output) => output.stderr.split("\n").slice(-80).join("\n"))
+        .filter(Boolean)
+        .join("\n")}`,
     ].join("\n");
   };
   const terminateLaunchedTui = createInstalledRuntimeCleanup(downloadedTui, readyPath);
@@ -932,14 +936,11 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     await recordTmuxGeneration(`golden-session:${name}`);
   };
 
-  // The preceding first-run gate killed the isolated tmux server. Its host
-  // sessions were deliberately `_tmux-ide-*`, so the catalog starts truly empty.
-  const empty = await launchApp();
-  // `launchApp` recreates the isolated tmux server in order to host the TUI.
-  // The elected daemon is intentionally pinned to the server generation that
-  // existed before that launch, so restart it before asserting the empty
-  // catalog. This models the product's daemon-generation recovery instead of
-  // weakening socket-authority validation in production code.
+  // The preceding gate killed the private server. Recreate it with a hidden
+  // fixture session, then rebind our owned daemon before launching the app.
+  // Explicit socket intent correctly refuses the old daemon's dead generation;
+  // waiting for app readiness before that restart would never reach the chooser.
+  await createSession("_tmux-ide-pack-empty-seed");
   initialOwner.kill("SIGTERM");
   await waitForChild(initialOwner);
   const emptyCatalogOwner = spawnInstalledCli(installedCli);
@@ -951,8 +952,9 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       if (!existsSync(infoPath)) return false;
       return JSON.parse(readFileSync(infoPath, "utf8")).pid === emptyCatalogOwner.pid;
     },
-    empty.diagnostics,
+    () => `sessions: ${sessionNames().join(", ")}; daemon pid: ${emptyCatalogOwner.pid}`,
   );
+  const empty = await launchApp();
   try {
     await observe(
       "no-session chooser",

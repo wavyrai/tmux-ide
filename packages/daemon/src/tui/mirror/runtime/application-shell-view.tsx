@@ -123,6 +123,8 @@ export interface ApplicationShellViewProps {
   readonly onDismissNotification?: () => void;
   readonly paletteCloseArmed?: Accessor<boolean>;
   readonly onSelectPane: TerminalWorkspaceProps["onSelectPane"];
+  readonly onSelectWindowLink?: TerminalWorkspaceProps["onSelectWindowLink"];
+  readonly onUnlinkWindowLink?: TerminalWorkspaceProps["onUnlinkWindowLink"];
   readonly onResizePreview: TerminalWorkspaceProps["onResizePreview"];
   readonly onResizePane: TerminalWorkspaceProps["onResizePane"];
   readonly onCancelResize?: TerminalWorkspaceProps["onCancelResize"];
@@ -509,6 +511,8 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       agentIndicators={agentIndicators}
                       paneInteractions={props.paneInteractions}
                       onSelectPane={props.onSelectPane}
+                      onSelectWindowLink={props.onSelectWindowLink}
+                      onUnlinkWindowLink={props.onUnlinkWindowLink}
                       onCreateWindow={props.onCreateWindow}
                       onPaneContextAction={(paneId, action, currentName) => {
                         if (action === "rename-pane")

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isTmuxServerPaneStreamPath } from "./tmux-server-scope.ts";
 import {
   CausalCellCapabilitySchemaZ,
   CausalCellFailureV1SchemaZ,
@@ -41,6 +42,7 @@ import {
   SessionRuntimeTerminalTextInputSchemaZ,
 } from "./session-runtime.ts";
 import { WorkspaceMultiplexerMutationResultSchemaZ } from "./workspace-multiplexer.ts";
+import { WindowLinkTopologySchemaZ } from "./window-links.ts";
 
 export const PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1 = "clock-bounds-v1" as const;
 export const PaneStreamDiagnosticCapabilitySchemaZ = z.union([
@@ -55,7 +57,7 @@ export type PaneStreamDiagnosticCapability = z.infer<typeof PaneStreamDiagnostic
  *
  * The discipline is the terminal-attachment one, applied to mirror streams:
  * semantic identity only (runtime `%N`/`@N`/`$N` addresses never cross this
- * boundary), a one-time `ps1_` redemption ticket bound to one daemon
+ * boundary), a one-time `ps2_` redemption ticket bound to one daemon
  * generation, and bounded shapes everywhere. Two deliberate differences,
  * both recorded product decisions:
  *
@@ -65,11 +67,11 @@ export type PaneStreamDiagnosticCapability = z.infer<typeof PaneStreamDiagnostic
  *    (the control client casts no size vote), so a renderer has no geometry
  *    to declare.
  */
-export const PANE_STREAM_PROTOCOL_VERSION = 1 as const;
+export const PANE_STREAM_PROTOCOL_VERSION = 2 as const;
 
-export const PANE_STREAM_ISSUE_PATH = "/api/v1/terminal/pane-streams/issue" as const;
-export const PANE_STREAM_REDEEM_PATH = "/v1/terminal/pane-streams/redeem" as const;
-export const PANE_STREAM_WEBSOCKET_SUBPROTOCOL = "tmux-ide-pane-stream.v1" as const;
+export const PANE_STREAM_ISSUE_PATH = "/api/v2/terminal/pane-streams/issue" as const;
+export const PANE_STREAM_REDEEM_PATH = "/v2/terminal/pane-streams/redeem" as const;
+export const PANE_STREAM_WEBSOCKET_SUBPROTOCOL = "tmux-ide-pane-stream.v2" as const;
 
 /** Perf-plan ceiling (~16-24 live nodes) with headroom; enforced at issue. */
 export const PANE_STREAM_MAX_PANES = 24;
@@ -115,7 +117,7 @@ export const PaneStreamLeaseRequestSchemaZ = z
   .strict();
 export type PaneStreamLeaseRequest = z.infer<typeof PaneStreamLeaseRequestSchemaZ>;
 
-export const PaneStreamRedemptionTicketSchemaZ = z.string().regex(/^ps1_[A-Za-z0-9_-]{43}$/u);
+export const PaneStreamRedemptionTicketSchemaZ = z.string().regex(/^ps2_[A-Za-z0-9_-]{43}$/u);
 
 /** Same canonical loopback discipline as the terminal-attachment endpoint. */
 export const PaneStreamLoopbackWebSocketUrlSchemaZ = z
@@ -129,7 +131,7 @@ export const PaneStreamLoopbackWebSocketUrlSchemaZ = z
       url.port.length > 0 &&
       url.username.length === 0 &&
       url.password.length === 0 &&
-      url.pathname === PANE_STREAM_REDEEM_PATH &&
+      (url.pathname === PANE_STREAM_REDEEM_PATH || isTmuxServerPaneStreamPath(url.pathname)) &&
       url.search.length === 0 &&
       url.hash.length === 0 &&
       url.toString() === value
@@ -471,7 +473,7 @@ export const PaneStreamLayoutFrameSchemaZ = z
   })
   .strict();
 
-export const PaneStreamLayoutSnapshotFrameSchemaZ = z
+export const PaneStreamLayoutSnapshotV1FrameSchemaZ = z
   .object({
     type: z.literal("layout-snapshot"),
     topologyEpoch: z.number().int().nonnegative(),
@@ -525,6 +527,47 @@ export const PaneStreamLayoutSnapshotFrameSchemaZ = z
       });
     }
   });
+
+/**
+ * Atomic v2 grammar: backing layouts and session links share one snapshot.
+ */
+export const PaneStreamLayoutSnapshotV2FrameSchemaZ =
+  PaneStreamLayoutSnapshotV1FrameSchemaZ.safeExtend({
+    windowLinks: WindowLinkTopologySchemaZ,
+  }).superRefine((snapshot, context) => {
+    const backings = new Map(snapshot.layouts.map((layout) => [layout.semanticWindowId, layout]));
+    const linkedBackings = new Set<string>();
+    for (const [index, link] of snapshot.windowLinks.links.entries()) {
+      linkedBackings.add(link.semanticWindowId);
+      const backing = backings.get(link.semanticWindowId);
+      if (!backing) {
+        context.addIssue({
+          code: "custom",
+          message: "Window links require a known backing layout",
+          path: ["windowLinks", "links", index, "semanticWindowId"],
+        });
+      } else if (link.linkId === snapshot.windowLinks.activeLinkId && !backing.currentWindow) {
+        context.addIssue({
+          code: "custom",
+          message: "The current backing must own the active window link",
+          path: ["windowLinks", "activeLinkId"],
+        });
+      }
+    }
+    for (const [index, layout] of snapshot.layouts.entries()) {
+      if (layout.semanticWindowId !== null && !linkedBackings.has(layout.semanticWindowId)) {
+        context.addIssue({
+          code: "custom",
+          message: "Every backing layout requires a window link",
+          path: ["layouts", index, "semanticWindowId"],
+        });
+      }
+    }
+  });
+export const PaneStreamLayoutSnapshotFrameSchemaZ = PaneStreamLayoutSnapshotV2FrameSchemaZ;
+export type PaneStreamLayoutSnapshotV2Frame = z.infer<
+  typeof PaneStreamLayoutSnapshotV2FrameSchemaZ
+>;
 
 export const PaneStreamFlowFrameSchemaZ = z
   .object({

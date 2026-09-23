@@ -72,7 +72,7 @@ export const MENU_ITEMS: Record<MenuRegion, MenuItem[]> = {
   window: [
     { id: "new", label: "New window" },
     { id: "rename", label: "Rename window", input: "rename to" },
-    { id: "kill", label: "Kill window", danger: true },
+    { id: "kill", label: "Kill window and panes in all links", danger: true },
   ],
 };
 

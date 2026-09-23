@@ -33,9 +33,11 @@ function rejectUpgrade(socket: Socket, status: number): void {
       ? "Forbidden"
       : status === 404
         ? "Not Found"
-        : status === 426
-          ? "Upgrade Required"
-          : "Service Unavailable";
+        : status === 410
+          ? "Gone"
+          : status === 426
+            ? "Upgrade Required"
+            : "Service Unavailable";
   try {
     socket.end(`HTTP/1.1 ${status} ${phrase}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
   } catch {
@@ -56,6 +58,8 @@ export interface PaneStreamWebSocketBoundary {
 export function attachPaneStreamWebSocket(
   server: Server,
   coordinator: PaneStreamAdmissionCoordinator,
+  redemptionPath: string = PANE_STREAM_REDEEM_PATH,
+  isCurrent: () => boolean = () => true,
 ): PaneStreamWebSocketBoundary {
   const wss = new WebSocketServer({
     noServer: true,
@@ -77,8 +81,20 @@ export function attachPaneStreamWebSocket(
   ): void => {
     const rawPath = request.url ?? "";
     const pathname = rawPath.split("?", 1)[0] ?? "";
-    if (!pathname.startsWith("/v1/terminal/pane-streams/")) return;
-    if (pathname !== PANE_STREAM_REDEEM_PATH) {
+    if (
+      redemptionPath === PANE_STREAM_REDEEM_PATH &&
+      pathname.startsWith("/v1/terminal/pane-streams/")
+    ) {
+      rejectUpgrade(socket, 426);
+      return;
+    }
+    if (redemptionPath !== PANE_STREAM_REDEEM_PATH && pathname !== redemptionPath) return;
+    if (
+      redemptionPath === PANE_STREAM_REDEEM_PATH &&
+      !pathname.startsWith("/v2/terminal/pane-streams/")
+    )
+      return;
+    if (pathname !== redemptionPath) {
       rejectUpgrade(socket, 404);
       return;
     }
@@ -100,6 +116,10 @@ export function attachPaneStreamWebSocket(
     const requestIdHeaders = rawHeaderValues(request, "x-tmux-ide-request-id");
     if (requestIdHeaders.length > 1) {
       rejectUpgrade(socket, 403);
+      return;
+    }
+    if (!isCurrent()) {
+      rejectUpgrade(socket, 410);
       return;
     }
     const decision = coordinator.reserveUpgrade({

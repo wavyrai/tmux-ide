@@ -41,11 +41,11 @@ describe("PaneStreamLeaseManager", () => {
     let now = 1_000;
     const lease = manager(() => now);
     const issued = await lease.issue(request(), context());
-    expect(issued.redemptionTicket).toMatch(/^ps1_[A-Za-z0-9_-]{43}$/u);
+    expect(issued.redemptionTicket).toMatch(/^ps2_[A-Za-z0-9_-]{43}$/u);
     expect(issued.descriptor.status).toBe("awaiting-redemption");
     expect(issued.descriptor.panes).toEqual(["pane.editor", "pane.shell"]);
     expect(issued.descriptor.sessionName).toBe("alpha");
-    expect(JSON.stringify(issued.descriptor)).not.toContain("ps1_");
+    expect(JSON.stringify(issued.descriptor)).not.toContain("ps2_");
 
     now = 2_000;
     const redeemed = await lease.redeem(issued.redemptionTicket, binding());
@@ -151,7 +151,7 @@ describe("PaneStreamLeaseManager", () => {
 
   it("is a PaneStreamLeaseError for every failure", async () => {
     const lease = manager(() => 1_000);
-    await expect(lease.redeem("ps1_not-a-ticket", binding())).rejects.toBeInstanceOf(
+    await expect(lease.redeem("ps2_not-a-ticket", binding())).rejects.toBeInstanceOf(
       PaneStreamLeaseError,
     );
     await expect(lease.release("not-a-lease", binding())).resolves.toEqual({ released: false });

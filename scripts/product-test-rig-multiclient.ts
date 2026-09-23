@@ -1,3 +1,4 @@
+import { PANE_STREAM_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -66,7 +67,7 @@ async function connect(name: "web-a" | "web-b" | "opentui") {
     hostClientId: `product-rig:${name}`,
     requestId: randomUUID(),
     stream: {
-      protocolVersion: 1,
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
       workspaceName,
       panes,
       viewerMode: "interactive",
@@ -103,7 +104,7 @@ async function proveGenerationFence(): Promise<void> {
       hostClientId: "product-rig:stale-generation",
       requestId: randomUUID(),
       stream: {
-        protocolVersion: 1,
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         workspaceName,
         panes: [pane],
         viewerMode: "interactive",

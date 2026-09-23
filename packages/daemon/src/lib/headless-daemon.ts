@@ -1,3 +1,5 @@
+import { assertCanonicalDaemonServerIntent } from "./canonical-daemon-bootstrap.ts";
+import { resolveTmuxServerIntent } from "./runtime-namespace.ts";
 import {
   canonicalDaemonUrl,
   matchesCanonicalDaemonPredecessor,
@@ -28,6 +30,7 @@ import { generateAuthToken } from "./auth-token.ts";
 import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
 
 export interface HeadlessDaemonOptions {
+  readonly tmuxServerIntent?: ReturnType<typeof resolveTmuxServerIntent>;
   readonly supervisionId?: string;
   /** Managed launch receipt, only after this process wins election and is attachable. */
   readonly onOwnedReady?: (info: CanonicalDaemonInfo) => void;
@@ -48,6 +51,8 @@ export interface HeadlessDaemonDependencies {
   readonly probeCanonicalDaemonHealth: (info: CanonicalDaemonInfo) => Promise<DaemonHealth | null>;
   readonly probeCanonicalDaemonIdentity: (
     info: CanonicalDaemonInfo,
+    signal?: AbortSignal,
+    includeTmuxServerProof?: boolean,
   ) => Promise<DaemonIdentity | null>;
   readonly startEmbeddedDaemon: (opts: EmbeddedDaemonOptions) => Promise<EmbeddedDaemonHandle>;
   readonly writeStdout: (line: string) => void;
@@ -140,7 +145,11 @@ async function assertAttachableDaemon(
   info: CanonicalDaemonInfo,
   options: HeadlessDaemonOptions,
 ): Promise<void> {
-  const identity = await deps.probeCanonicalDaemonIdentity(info);
+  const identity = await deps.probeCanonicalDaemonIdentity(
+    info,
+    undefined,
+    Boolean(options.tmuxServerIntent),
+  );
   if (!identity) {
     throw new IdeError(
       `Canonical daemon PID ${info.pid} is alive but its identity endpoint is unavailable. ` +
@@ -149,6 +158,9 @@ async function assertAttachableDaemon(
     );
   }
   assertIdentityMatches(info, identity);
+  await assertCanonicalDaemonServerIntent(info, options.tmuxServerIntent ?? null, {
+    identity: async () => identity,
+  });
   const health = await deps.probeCanonicalDaemonHealth(info);
   if (!health) {
     throw new IdeError(
@@ -288,6 +300,11 @@ export async function runHeadlessDaemon(
   options: HeadlessDaemonOptions = {},
   deps: HeadlessDaemonDependencies = defaultDependencies,
 ): Promise<"stopped" | "already-running"> {
+  options = {
+    ...options,
+    tmuxServerIntent:
+      options.tmuxServerIntent === undefined ? resolveTmuxServerIntent() : options.tmuxServerIntent,
+  };
   let restoreTmuxWorkspaces = false;
   const lifecycle: { restart?: DaemonRestartRequest; predecessor?: CanonicalDaemonPredecessor } =
     {};

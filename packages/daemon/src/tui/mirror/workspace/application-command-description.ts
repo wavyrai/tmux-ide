@@ -1,7 +1,9 @@
+import type { TmuxServerScope } from "@tmux-ide/contracts";
 import { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
 export { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
 import { PANE_ACTION_MENU_ITEMS } from "./pane-action-menu-model.ts";
 export interface FleetPaletteTarget {
+  readonly server?: TmuxServerScope;
   readonly machineId: string;
   readonly liveSessionId: string;
   readonly hostLabel: string;
@@ -51,8 +53,14 @@ export type ApplicationPaletteCommand =
 export function applicationCommandDescription(command: ApplicationPaletteCommand) {
   if (typeof command === "object" && command.kind === "open-machine")
     return {
-      id: JSON.stringify([command.kind, command.fleet.machineId]),
-      label: `Machine · ${command.label}`,
+      id: JSON.stringify([
+        command.kind,
+        command.fleet.machineId,
+        ...(command.fleet.server
+          ? [command.fleet.server.serverId, command.fleet.server.generation]
+          : []),
+      ]),
+      label: `${command.fleet.server ? "Server" : "Machine"} · ${command.label}`,
       detail: command.fleet.disabled ? "Unavailable" : "Browse sessions or create on this host",
     };
   if (typeof command === "object") {
@@ -63,6 +71,9 @@ export function applicationCommandDescription(command: ApplicationPaletteCommand
           ? [
               command.kind,
               command.fleet.machineId,
+              ...(command.fleet.server
+                ? [command.fleet.server.serverId, command.fleet.server.generation]
+                : []),
               command.fleet.liveSessionId,
               session ? null : command.paneId,
             ]

@@ -1,3 +1,4 @@
+import type { WindowLinkTarget } from "@tmux-ide/contracts";
 import type { WorkspaceClientDispatch } from "@tmux-ide/daemon-client/workspace-client-types";
 
 interface PaneSelectionClient {
@@ -40,6 +41,7 @@ export async function selectTerminalPane(
   semanticPaneId: string,
   operationId?: string,
   onFailure?: (failure: PaneSelectionFailure) => void,
+  windowLink?: WindowLinkTarget,
 ): Promise<PaneSelectionReceipt | null> {
   const fail = (failure: PaneSelectionFailure): null => {
     try {
@@ -95,6 +97,7 @@ export async function selectTerminalPane(
           verb: "workspace.pane.select",
           workspaceName: expected.workspaceName,
           semanticPaneId,
+          ...(windowLink ? { windowLink } : {}),
         },
       });
     } catch (error) {

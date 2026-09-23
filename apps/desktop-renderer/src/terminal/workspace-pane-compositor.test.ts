@@ -133,6 +133,23 @@ describe("Workspace pane compositor", () => {
     });
     stream.latest().layoutSnapshot({
       topologyEpoch: 1,
+      windowLinks: {
+        liveSessionId: "live-session.0123456789abcdefabcd",
+        linkRevision: 1,
+        activeLinkId: `window-link.${"a".repeat(32)}`,
+        links: [
+          {
+            linkId: `window-link.${"a".repeat(32)}`,
+            semanticWindowId: "window-a",
+            displayIndex: 0,
+          },
+          {
+            linkId: `window-link.${"b".repeat(32)}`,
+            semanticWindowId: "window-b",
+            displayIndex: 1,
+          },
+        ],
+      },
       layouts: [layout("window-a", PANE_A, true), layout("window-b", PANE_B, false)],
     });
     expect(compositor.state().layouts.map(({ semanticWindowId }) => semanticWindowId)).toEqual([
@@ -141,6 +158,18 @@ describe("Workspace pane compositor", () => {
     ]);
     stream.latest().layoutSnapshot({
       topologyEpoch: 2,
+      windowLinks: {
+        liveSessionId: "live-session.0123456789abcdefabcd",
+        linkRevision: 1,
+        activeLinkId: `window-link.${"a".repeat(32)}`,
+        links: [
+          {
+            linkId: `window-link.${"a".repeat(32)}`,
+            semanticWindowId: "window-a",
+            displayIndex: 0,
+          },
+        ],
+      },
       layouts: [
         {
           ...layout("window-a", PANE_A, true),

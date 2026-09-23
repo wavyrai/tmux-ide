@@ -1,12 +1,16 @@
+import { prepareScopedOpenTuiConnection } from "./application-shell-server-connection.ts";
 import { OpenTuiStartupError, startupFailureFromError } from "./startup-failure.ts";
 import type { OpenTuiSessionWorkspaceEnsureResult } from "./configless-session-bootstrap.ts";
 import {
+  applicationDaemonEndpoint,
+  type ApplicationDaemonEndpoint,
   readApplicationDaemonInfo as readCanonicalDaemonInfo,
   isApplicationDaemonAlive as isCanonicalDaemonAlive,
 } from "./runtime/application-daemon-authority.ts";
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   type CanonicalDaemonInfo,
+  type TmuxServerScope,
   type DesktopApplicationShellTarget,
   type DesktopDaemonHostDescriptor,
   type WorkspaceCatalogResourceV2,
@@ -18,7 +22,10 @@ import {
   type TerminalFirstDaemonTransport,
 } from "@tmux-ide/daemon-client/direct-application-shell-transport";
 import type { PreparedTerminalRuntimeInventory } from "@tmux-ide/daemon-client/workspace-event-supervisor";
-import type { WorkspaceClientCatalogPort } from "@tmux-ide/daemon-client/workspace-client-types";
+import type {
+  WorkspaceClientCatalogPort,
+  WorkspaceClientOwnerActionPort,
+} from "@tmux-ide/daemon-client/workspace-client-types";
 import { WebSocket } from "ws";
 
 import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
@@ -41,6 +48,8 @@ import {
  */
 export interface OpenTuiApplicationShellConnection {
   readonly workspaceName: string;
+  readonly server?: TmuxServerScope;
+  readonly ownerActions?: WorkspaceClientOwnerActionPort;
   /** Incarnation captured by the connection's routing read, never copied from a later catalog. */
   readonly liveSessionId?: string | null;
   readonly target: DesktopApplicationShellTarget;
@@ -53,6 +62,9 @@ export interface OpenTuiApplicationShellConnection {
 }
 
 export interface OpenTuiApplicationShellConnectionDependencies {
+  readonly server?: TmuxServerScope;
+  readonly readDaemonEndpoint?: () => ApplicationDaemonEndpoint;
+  readonly expectedLiveSessionId?: string;
   readonly readCanonicalDaemonInfo: () => CanonicalDaemonInfo | null;
   readonly isCanonicalDaemonAlive: (daemon: CanonicalDaemonInfo) => Promise<boolean>;
   readonly fetchCanonicalWorkspaceRouting: (
@@ -171,7 +183,15 @@ export async function resolveOpenTuiApplicationShellConnection(
     applicationShellResourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
     ...(diagnose ? { terminalRuntimeDiagnostic: diagnose } : {}),
   });
-  const routing = createOpenTuiVerifiedRoutingContext(daemon, workspaceName, sessionName);
+  const routing = createOpenTuiVerifiedRoutingContext(
+    daemon,
+    workspaceName,
+    sessionName,
+    undefined,
+    dependencies.readDaemonEndpoint ?? applicationDaemonEndpoint,
+    undefined,
+    liveSessionId ?? undefined,
+  );
   let disposed = false;
   let diagnosticClientFetchOrdinal = 0;
   let diagnosticPrewarmOrdinal = 0;
@@ -368,6 +388,12 @@ export async function prepareOpenTuiApplicationShellConnection(
 ): Promise<OpenTuiApplicationShellConnection | null> {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
   try {
+    if (dependencies.server) {
+      const unscoped = { ...dependencies, server: undefined };
+      return await prepareScopedOpenTuiConnection(sessionName, dependencies, () =>
+        prepareOpenTuiApplicationShellConnection(sessionName, unscoped),
+      );
+    }
     const result = await dependencies.ensureSessionWorkspace(sessionName);
     if (result === false) return null;
     if (typeof result !== "boolean" && result.status === "unavailable") {

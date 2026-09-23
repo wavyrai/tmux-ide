@@ -48,6 +48,12 @@ const ACTION_COMMAND_METADATA: Record<ActionName, ActionCommandMetadata> = {
   "workspace.open.cancel": { label: "Cancel workspace handoff", category: "workspace" },
   "workspace.promote": { label: "Promote live session to workspace", category: "workspace" },
   "workspace.app-window.mutate": { label: "Mutate application window", category: "workspace" },
+  "workspace.window.link.select": { label: "Focus window link", category: "workspace" },
+  "workspace.window.link.unlink": {
+    label: "Unlink window",
+    category: "workspace",
+    dangerous: true,
+  },
   "workspace.window.split": { label: "Split pane", category: "workspace" },
   "workspace.window.kill": { label: "Close window", category: "workspace", dangerous: true },
   "workspace.pane.kill": { label: "Close pane", category: "workspace", dangerous: true },

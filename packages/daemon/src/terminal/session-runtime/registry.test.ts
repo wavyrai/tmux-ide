@@ -393,7 +393,7 @@ describe("SessionRuntimeRegistry", () => {
           const baseReply = fixtureAutoReply(state);
           const sim = new SimulatedChannel(handlers, (command) =>
             command.startsWith('display-message -p "#{qa:session_name}')
-              ? [`zz-sim\t$${index + 1}`]
+              ? [`zz-sim\t$${index + 1}\t999\t1700000000`]
               : baseReply(command),
           );
           sims.push(sim);

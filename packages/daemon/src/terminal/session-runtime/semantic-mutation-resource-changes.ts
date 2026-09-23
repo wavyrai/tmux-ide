@@ -32,6 +32,7 @@ export function semanticMutationResourceChanges(
   if (
     result.verb === "workspace.window.split" ||
     result.verb === "workspace.window.kill" ||
+    result.verb === "workspace.window.link.unlink" ||
     result.verb === "workspace.pane.kill" ||
     result.verb === "workspace.session.kill"
   ) {

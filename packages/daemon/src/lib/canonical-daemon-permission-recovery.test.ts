@@ -1,3 +1,4 @@
+import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,7 +21,7 @@ let previous: string | undefined;
 const current = {
   pid: process.pid,
   port: 4321,
-  protocolVersion: 2,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.9.0-beta.18",
   instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
   startedAt: "2026-09-16T00:00:00.000Z",
@@ -128,7 +129,7 @@ describe("bootstrap legacy daemon permissions", () => {
         identity: async () => ({ ok: true, ...current }),
         health: async () => ({
           ok: true,
-          protocolVersion: 2,
+          protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
           productVersion: current.productVersion,
           uptime: 1,
         }),
@@ -267,7 +268,7 @@ describe("bootstrap legacy daemon permissions", () => {
         identity: async () => ({ ok: true, ...current }),
         health: async () => ({
           ok: true,
-          protocolVersion: 2,
+          protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
           productVersion: current.productVersion,
           uptime: 1,
         }),

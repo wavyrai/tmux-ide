@@ -25,7 +25,7 @@ import {
   PaneStreamServerFrameSchemaZ,
 } from "../pane-stream.ts";
 
-const TICKET = `ps1_${"A".repeat(43)}`;
+const TICKET = `ps2_${"A".repeat(43)}`;
 const REQUEST_ID = "7f0f9a7e-9be0-4b6e-a3a3-0a15c9a7e0d1";
 const INSTANCE_ID = "3d3f8a52-77aa-4b3e-9a44-2f2f7b1c9d10";
 const WS_URL = `ws://127.0.0.1:6070${PANE_STREAM_REDEEM_PATH}`;
@@ -55,9 +55,9 @@ function descriptor() {
 
 describe("pane-stream lease contracts", () => {
   it("publishes one shared issue and redemption endpoint authority", () => {
-    expect(PANE_STREAM_ISSUE_PATH).toBe("/api/v1/terminal/pane-streams/issue");
-    expect(PANE_STREAM_REDEEM_PATH).toBe("/v1/terminal/pane-streams/redeem");
-    expect(PANE_STREAM_WEBSOCKET_SUBPROTOCOL).toBe("tmux-ide-pane-stream.v1");
+    expect(PANE_STREAM_ISSUE_PATH).toBe("/api/v2/terminal/pane-streams/issue");
+    expect(PANE_STREAM_REDEEM_PATH).toBe("/v2/terminal/pane-streams/redeem");
+    expect(PANE_STREAM_WEBSOCKET_SUBPROTOCOL).toBe("tmux-ide-pane-stream.v2");
   });
 
   it("accepts a viewport-free enumerated pane set", () => {
@@ -115,7 +115,7 @@ describe("pane-stream lease contracts", () => {
 
   it("accepts only ps1 tickets", () => {
     expect(PaneStreamRedemptionTicketSchemaZ.safeParse(TICKET).success).toBe(true);
-    for (const invalid of [`ta1_${"A".repeat(43)}`, `ps1_${"A".repeat(42)}`, "ps1_", "ps1"]) {
+    for (const invalid of [`ta1_${"A".repeat(43)}`, `ps2_${"A".repeat(42)}`, "ps2_", "ps1"]) {
       expect(PaneStreamRedemptionTicketSchemaZ.safeParse(invalid).success).toBe(false);
     }
   });
@@ -184,6 +184,18 @@ describe("pane-stream lease contracts", () => {
       type: "layout-snapshot" as const,
       topologyEpoch: 1,
       layouts: [layout("window.one", "pane.editor", true)],
+      windowLinks: {
+        liveSessionId: `live-session.${"a".repeat(20)}`,
+        linkRevision: 1,
+        activeLinkId: `window-link.${"a".repeat(32)}`,
+        links: [
+          {
+            linkId: `window-link.${"a".repeat(32)}`,
+            semanticWindowId: "window.one",
+            displayIndex: 0,
+          },
+        ],
+      },
     };
     expect(PaneStreamServerFrameSchemaZ.safeParse(snapshot).success).toBe(true);
     for (const layouts of [

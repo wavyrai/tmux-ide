@@ -1,6 +1,6 @@
+import { liveSessionIdForNativeIdentity } from "../terminal/protocol/live-session-identity.ts";
 import { runtimeTmuxArgs } from "../lib/runtime-namespace.ts";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
 import type { PaneInfo } from "@tmux-ide/contracts";
 import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
@@ -80,14 +80,6 @@ export interface LiveSessionSummary {
   readonly paneCount: number;
 }
 
-function liveSessionId(serverPid: string, sessionId: string, sessionCreated: string) {
-  const digest = createHash("sha256")
-    .update(`${serverPid}\0${sessionId}\0${sessionCreated}`)
-    .digest("hex")
-    .slice(0, 20);
-  return `live-session.${digest}` as const;
-}
-
 /**
  * Enumerate observed tmux truth without consulting the workspace registry.
  *
@@ -120,7 +112,7 @@ export function discoverLiveSessionSummaries(
     if (!/^\d+$/u.test(serverPid) || !/^\$\d+$/u.test(sessionId) || !/^\d+$/u.test(sessionCreated))
       continue;
     if (!sessionName || !isVisibleFleetSession(sessionName)) continue;
-    const identity = liveSessionId(serverPid, sessionId, sessionCreated);
+    const identity = liveSessionIdForNativeIdentity(serverPid, sessionId, sessionCreated);
     const previous = sessions.get(identity);
     sessions.set(identity, {
       liveSessionId: identity,

@@ -22,6 +22,33 @@ list it below; interactive commands do not emit JSON.
 
 `app.detachable` in `~/.tmux-ide/config.json` makes detachable mode the default.
 
+## Multiple tmux servers (development)
+
+The development build can register multiple tmux servers on one machine. List
+registrations to get the opaque server ID, then use it to select a server:
+
+```bash
+tmux-ide servers list --json
+tmux-ide servers add --socket-name work --name Work --json
+tmux-ide servers add --socket-path /absolute/path/to/socket --name Custom --json
+tmux-ide servers sessions <server-id> --json
+tmux-ide servers create <server-id> --session-name Work --dir /project/path --json
+tmux-ide app --server <server-id> [session]
+tmux-ide servers remove <server-id> --json
+```
+
+Add `--ssh HOST` to manage a remote machine's registrations or open its app.
+Socket names and paths are resolved on that remote machine. Registration does
+not create a native tmux server, and removing a registration does not kill its
+sessions. An offline server remains visible until removed.
+
+The app groups sessions by machine and server. A single server uses a compact
+view. Saved tabs retain the exact server and session incarnation; a replacement
+session requires selecting it again. Explicit `--server` opens in foreground
+mode and cannot be combined with hosted or headless mode. An older daemon
+without the server API reports an unsupported capability instead of selecting
+its default server.
+
 ## Sessions and recovery
 
 | Command                                                                    | What it does                                                                         |

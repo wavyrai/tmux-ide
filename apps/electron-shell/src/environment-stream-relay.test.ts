@@ -1,3 +1,7 @@
+import {
+  PANE_STREAM_PROTOCOL_VERSION,
+  PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
+} from "@tmux-ide/contracts";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { afterEach, expect, it } from "vitest";
@@ -8,7 +12,7 @@ import type {
 } from "@tmux-ide/contracts";
 import { startEnvironmentStreamRelay } from "./environment-stream-relay.ts";
 const trustedOrigin = "tmux-ide://app";
-const path = "/v1/terminal/pane-streams/redeem";
+const path = "/v2/terminal/pane-streams/redeem";
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
@@ -38,10 +42,10 @@ async function relay(options: Partial<Parameters<typeof startEnvironmentStreamRe
 }
 function descriptor(url: string, letter = "A"): PaneStreamIssueDescriptor {
   return {
-    protocolVersion: 1,
+    protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
     webSocketUrl: url,
-    subprotocol: "tmux-ide-pane-stream.v1",
-    redemptionTicket: `ps1_${letter.repeat(43)}`,
+    subprotocol: PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
+    redemptionTicket: `ps2_${letter.repeat(43)}`,
     daemonInstanceId: "10000000-0000-4000-8000-000000000002",
     requestId: randomUUID(),
     expiresAt: Date.now() + 15000,
@@ -52,7 +56,7 @@ function descriptor(url: string, letter = "A"): PaneStreamIssueDescriptor {
 function redeem(value: PaneStreamIssueDescriptor) {
   return JSON.stringify({
     type: "redeem",
-    protocolVersion: 1,
+    protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
     ticket: value.redemptionTicket,
     requestId: value.requestId,
     daemonInstanceId: value.daemonInstanceId,
@@ -202,7 +206,7 @@ it("rejects tickets which expire or lose authority after registration", async ()
 it("forwards the actual terminal-attachment redeem and binary lane", async () => {
   const target = await upstream("attachment");
   const proxy = await relay();
-  const url = target.url.replace("pane-streams", "attachments");
+  const url = target.url.replace("/v2/terminal/pane-streams/", "/v1/terminal/attachments/");
   const value = proxy.register<TerminalAttachmentIssueDescriptor>(
     {
       protocolVersion: 1,

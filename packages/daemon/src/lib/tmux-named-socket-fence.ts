@@ -68,3 +68,8 @@ export function createNamedSocketFence(
     isPinned: () => shared.identity !== null,
   };
 }
+
+/** True only before this exact authority has observed any live socket. */
+export function isNamedSocketAuthorityUnbound(authority: WorkspacePaneTmuxAuthority): boolean {
+  return authority.socketSelector.kind === "name" && !states.get(authority)?.identity;
+}

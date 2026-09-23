@@ -68,7 +68,7 @@ export function explicitApplicationTarget(argv: readonly string[]): string | nul
     args: [...argv],
     allowPositionals: true,
     strict: false,
-    options: { target: { type: "string" } },
+    options: { target: { type: "string" }, server: { type: "string" } },
   });
   const positional = parsed.positionals.find((value) => value !== "app") ?? null;
   const target = typeof parsed.values.target === "string" ? parsed.values.target : positional;
@@ -79,6 +79,7 @@ export function prepareExplicitApplicationTarget<Value>(
   argv: readonly string[],
   prepare: (sessionName: string) => Promise<Value>,
 ): { readonly sessionName: string; readonly prepared: Promise<Value> } | null {
+  if (argv.some((arg) => arg === "--server" || arg.startsWith("--server="))) return null;
   const sessionName = explicitApplicationTarget(argv);
   if (!sessionName) return null;
   const prepared = prepare(sessionName);

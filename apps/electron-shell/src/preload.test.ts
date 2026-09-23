@@ -1,3 +1,4 @@
+import { PANE_STREAM_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { DesktopDaemonEvent, HostCapabilities } from "@tmux-ide/contracts";
@@ -154,7 +155,7 @@ describe("desktop preload daemon bridge", () => {
     });
 
     const stream = {
-      protocolVersion: 1 as const,
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
       workspaceName: "product",
       panes: ["pane.worker", "pane.dev"],
       viewerMode: "read-only" as const,

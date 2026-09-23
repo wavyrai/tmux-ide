@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   parseMultiplexerPaneRows,
@@ -13,6 +13,7 @@ import {
   WorkspaceMultiplexerError,
   type WorkspaceMultiplexerErrorCode,
 } from "./workspace-multiplexer-verbs.ts";
+import { WindowLinkResolutionError } from "../terminal/mirror/window-link-authority.ts";
 import { WorkspaceRegistry } from "./workspace-registry.ts";
 import { INTERNAL_SEND_OPERATION_OPTION } from "./tmux-external-interaction-observer.ts";
 
@@ -474,6 +475,20 @@ describe("semantic target resolution", () => {
   });
 });
 
+describe("linked backing pane observations", () => {
+  const line = "%0\t0\t@0\tpane.one\twindow.one\t1\t0\t1\t";
+  it("collapses identical native panes repeated by session links", () => {
+    const rows = parseMultiplexerPaneRows(`${line}\n${line}`);
+    expect(rows).toHaveLength(1);
+    expect(resolvePaneRow(rows, "pane.one").paneId).toBe("%0");
+  });
+  it("refuses conflicting repeated native observations", () => {
+    expect(() =>
+      parseMultiplexerPaneRows(`${line}\n${line.replace("pane.one", "pane.other")}`),
+    ).toThrow(WorkspaceMultiplexerError);
+  });
+});
+
 describe("the multiplexer authority", () => {
   let dir: string;
   let registry: WorkspaceRegistry;
@@ -519,6 +534,79 @@ describe("the multiplexer authority", () => {
     operationId,
     expectedDaemonInstanceId: DAEMON_ID,
     intent: { workspaceName: "work", ...intent } as never,
+  });
+
+  describe("authoritative link routing", () => {
+    const target = {
+      liveSessionId: `live-session.${"a".repeat(20)}`,
+      linkId: `window-link.${"b".repeat(32)}`,
+      expectedSemanticWindowId: "window.editor",
+      linkRevision: 2,
+    };
+    it.each(["select", "unlink"] as const)("routes %s without native rediscovery", async (verb) => {
+      const execute = vi.fn(async () => ({ outcome: "applied" as const, windowLinks: null }));
+      const result = await authority.mutateWindowLink(
+        request({ verb: `workspace.window.link.${verb}`, target }),
+        execute,
+      );
+      expect(execute).toHaveBeenCalledExactlyOnceWith("work", { action: verb, target });
+      expect(result).toMatchObject({
+        verb: `workspace.window.link.${verb}`,
+        target,
+        outcome: "applied",
+      });
+      expect(tmux.calls).toEqual([]);
+    });
+    it("forwards explicit pane context and leaves legacy ambiguity to the link authority", async () => {
+      const execute = vi.fn(async () => ({ outcome: "applied" as const, windowLinks: null }));
+      await authority.mutateWindowLink(
+        request({ verb: "workspace.pane.select", semanticPaneId: "pane.one", windowLink: target }),
+        execute,
+      );
+      expect(execute).toHaveBeenCalledExactlyOnceWith("work", {
+        action: "select",
+        target,
+        paneId: "pane.one",
+      });
+      execute.mockImplementationOnce(async () => {
+        throw new WindowLinkResolutionError("window_link_ambiguous");
+      });
+      await expect(
+        authority.mutateWindowLink(
+          request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" }),
+          execute,
+        ),
+      ).rejects.toMatchObject({ code: "window_link_ambiguous" });
+      expect(tmux.calls).toEqual([]);
+    });
+    it.each([
+      ["stale", "window_link_stale"],
+      ["native-refused", "mutation_failed"],
+      ["indeterminate", "mutation_unverified"],
+    ] as const)("does not retry %s", async (outcome, code) => {
+      const execute = vi.fn(async () => ({ outcome, windowLinks: null }));
+      await expect(
+        authority.mutateWindowLink(
+          request({ verb: "workspace.window.link.unlink", target }),
+          execute,
+        ),
+      ).rejects.toMatchObject({ code });
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(tmux.calls).toEqual([]);
+    });
+    it("rejects a different daemon generation before consulting link authority", async () => {
+      const execute = vi.fn(async () => ({ outcome: "applied" as const, windowLinks: null }));
+      await expect(
+        authority.mutateWindowLink(
+          {
+            ...request({ verb: "workspace.window.link.unlink", target }),
+            expectedDaemonInstanceId: randomUUID(),
+          },
+          execute,
+        ),
+      ).rejects.toMatchObject({ code: "daemon_instance_mismatch" });
+      expect(execute).not.toHaveBeenCalled();
+    });
   });
 
   it("refuses a request from a different daemon generation", async () => {

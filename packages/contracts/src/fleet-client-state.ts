@@ -1,3 +1,4 @@
+import { TmuxServerScopeSchemaZ } from "./tmux-server-scope.ts";
 import { z } from "zod";
 import { SavedMachineIdSchema } from "./saved-machines.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
@@ -16,6 +17,8 @@ export const FleetCacheRouteIdSchema = z.union([z.literal("local"), SavedMachine
 export const FleetCachedSessionSchema = z.strictObject({
   id: key,
   liveSessionId: key.optional(),
+  server: TmuxServerScopeSchemaZ.optional(),
+  serverLabel: label.optional(),
   name: label,
   paneCount: z.number().int().min(0).max(4096),
 });

@@ -576,3 +576,62 @@ it("keeps collapsed activity visible, handles vim/page navigation and scopes hel
   setup.renderer.destroy();
   owner.dispose();
 });
+
+it("shows duplicate server labels separately and clicks the exact session row", async () => {
+  const a = {
+    serverId: `tmux-server.${"a".repeat(32)}`,
+    generation: "11111111-1111-4111-8111-111111111111",
+  };
+  const b = {
+    serverId: `tmux-server.${"b".repeat(32)}`,
+    generation: "22222222-2222-4222-8222-222222222222",
+  };
+  const calls: (string | undefined)[] = [];
+  const servers: string[] = [];
+  const [groups, setGroups] = createSignal<ApplicationMachineGroup[]>([
+    {
+      id: "local",
+      label: "Local",
+      state: "ready",
+      sessions: [
+        { id: "a", name: "same", paneCount: 1, server: a, serverLabel: "work" },
+        { id: "b", name: "same", paneCount: 1, server: b, serverLabel: "work" },
+      ],
+    },
+  ]);
+  const setup = await renderForTest(
+    () => (
+      <ApplicationMachineSidebar
+        width={42}
+        height={12}
+        theme={createSemanticThemeSnapshot({ mode: "light" })}
+        model={{
+          groups,
+          activeMachineId: () => "local",
+          activeSessionName: () => "same",
+          activeSessionKey: () => "b",
+          onOpen: (_machine, _name, _source, key) => calls.push(key),
+          onSelectMachine: () => {},
+          onSelectServer: (_machine, server) => servers.push(server.serverId),
+        }}
+      />
+    ),
+    { width: 42, height: 12 },
+  );
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("work · aaaaaa");
+  expect(setup.captureCharFrame()).toContain("work · bbbbbb");
+  const row = setup.renderer.root.findDescendantById(
+    `ui-navigation-row:machine:${JSON.stringify(["local", "session", "b"])}`,
+  )!;
+  await setup.mockMouse.click(row.x + 6, row.y, MouseButtons.LEFT);
+  expect(calls).toEqual(["b"]);
+  const heading = setup.renderer.root.findDescendantById(
+    `ui-navigation-row:server:local:${b.serverId}`,
+  )!;
+  await setup.mockMouse.click(heading.x + 6, heading.y, MouseButtons.LEFT);
+  expect(servers).toEqual([b.serverId]);
+  setGroups([{ ...groups()[0]!, sessions: [groups()[0]!.sessions[0]!] }]);
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).not.toContain("work ·");
+});

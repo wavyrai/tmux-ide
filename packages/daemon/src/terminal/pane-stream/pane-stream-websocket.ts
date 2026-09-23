@@ -1,3 +1,4 @@
+import { PaneStreamLayoutSnapshotFrameSchemaZ, type WindowLinkTopology } from "@tmux-ide/contracts";
 import { z } from "zod";
 import {
   PANE_STREAM_MAX_HELD_DELTAS,
@@ -72,7 +73,7 @@ import {
 } from "./wire-ledger.ts";
 
 /**
- * The pane-stream WebSocket endpoint (m43 card 2): redeems a one-time `ps1_`
+ * The pane-stream WebSocket endpoint (m43 card 2): redeems a one-time `ps2_`
  * ticket and bridges MirrorService subscriptions to wire frames. Admission is
  * the direct-websocket discipline verbatim — Origin-gated upgrade reservation,
  * digest-only pending tickets, one text redemption frame, delivery-bound TTL —
@@ -126,7 +127,7 @@ function hasCanonicalInputFramePrefix(raw: Buffer): boolean {
     startsWithBuffer(raw, TYPE_FIRST_INPUT_FRAME_PREFIX)
   );
 }
-const TicketPattern = /^ps1_[A-Za-z0-9_-]{43}$/u;
+const TicketPattern = /^ps2_[A-Za-z0-9_-]{43}$/u;
 const BindingIdSchemaZ = z
   .string()
   .min(1)
@@ -593,7 +594,7 @@ export class PaneStreamAdmissionCoordinator {
     if (this.#shuttingDown) {
       return { accepted: false, code: "daemon-shutting-down", httpStatus: 503 };
     }
-    if (input.path !== PANE_STREAM_REDEEM_PATH) {
+    if (input.path !== new URL(this.#webSocketUrl).pathname) {
       return { accepted: false, code: "invalid-path", httpStatus: 404 };
     }
     if (input.protocols.length !== 1 || input.protocols[0] !== PANE_STREAM_WEBSOCKET_SUBPROTOCOL) {
@@ -1069,6 +1070,7 @@ export class PaneStreamLiveConnection {
   readonly #semanticLayouts = new Map<string, MirrorLayoutEvent>();
   #semanticExpectedPaneIds: readonly string[] | null = null;
   #semanticRuntimeSessionId: string | null = null;
+  #semanticWindowLinks: WindowLinkTopology | null = null;
   #semanticTopologyEpoch = -1;
   readonly #sendQueue: QueuedSend[] = [];
   readonly #semanticDrainWaiters = new Map<string, Array<() => void>>();
@@ -1411,7 +1413,15 @@ export class PaneStreamLiveConnection {
         authority.topologyEpoch < 0
           ? null
           : this.#validateInitialLayout(authority.layouts, expectedPaneIds);
-      if (!stagedInitialFrames) {
+      if (
+        !stagedInitialFrames ||
+        !PaneStreamLayoutSnapshotFrameSchemaZ.safeParse({
+          type: "layout-snapshot",
+          topologyEpoch: authority?.topologyEpoch,
+          layouts: stagedInitialFrames,
+          windowLinks: authority?.windowLinks,
+        }).success
+      ) {
         await subscription.close().catch(() => undefined);
         this.#failTopologyChanged();
         return;
@@ -1513,7 +1523,15 @@ export class PaneStreamLiveConnection {
       authority.topologyEpoch < 0
         ? null
         : this.#validateInitialLayout(authority.layouts, expectedPaneIds);
-    if (!initialFrames) {
+    if (
+      !initialFrames ||
+      !PaneStreamLayoutSnapshotFrameSchemaZ.safeParse({
+        type: "layout-snapshot",
+        topologyEpoch: authority?.topologyEpoch,
+        layouts: initialFrames,
+        windowLinks: authority?.windowLinks,
+      }).success
+    ) {
       await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
       this.#failTopologyChanged();
       return;
@@ -1521,6 +1539,7 @@ export class PaneStreamLiveConnection {
     this.#recordDiagnosticLifecycle("pane-stream-layout-validated");
     this.#semanticExpectedPaneIds = expectedPaneIds;
     this.#semanticRuntimeSessionId = authority!.runtimeSessionId;
+    this.#semanticWindowLinks = authority!.windowLinks;
     this.#semanticTopologyEpoch = authority!.topologyEpoch;
     this.#semanticLayouts.clear();
     for (const event of authority!.layouts)
@@ -1529,6 +1548,7 @@ export class PaneStreamLiveConnection {
       type: "layout-snapshot",
       topologyEpoch: authority!.topologyEpoch,
       layouts: initialFrames,
+      windowLinks: authority!.windowLinks,
     });
     layoutActivated = true;
     this.#recordDiagnosticLifecycle("pane-stream-delivery-open");
@@ -1854,10 +1874,33 @@ export class PaneStreamLiveConnection {
       return;
     }
     const frames = this.#validateInitialLayout(snapshot.layouts, this.#semanticExpectedPaneIds);
-    if (!frames) {
+    if (
+      !frames ||
+      !PaneStreamLayoutSnapshotFrameSchemaZ.safeParse({
+        type: "layout-snapshot",
+        topologyEpoch: snapshot.topologyEpoch,
+        layouts: frames,
+        windowLinks: snapshot.windowLinks,
+      }).success
+    ) {
       this.#failTopologyChanged();
       return;
     }
+    const previousLinks = this.#semanticWindowLinks;
+    if (
+      !previousLinks ||
+      snapshot.windowLinks.liveSessionId !== previousLinks.liveSessionId ||
+      snapshot.windowLinks.linkRevision < previousLinks.linkRevision ||
+      (snapshot.windowLinks.linkRevision === previousLinks.linkRevision &&
+        JSON.stringify(
+          [...snapshot.windowLinks.links].sort((a, b) => a.linkId.localeCompare(b.linkId)),
+        ) !==
+          JSON.stringify([...previousLinks.links].sort((a, b) => a.linkId.localeCompare(b.linkId))))
+    ) {
+      this.#failTopologyChanged();
+      return;
+    }
+    this.#semanticWindowLinks = snapshot.windowLinks;
     this.#semanticTopologyEpoch = snapshot.topologyEpoch;
     this.#semanticLayouts.clear();
     for (const event of snapshot.layouts)
@@ -1866,6 +1909,7 @@ export class PaneStreamLiveConnection {
       type: "layout-snapshot",
       topologyEpoch: snapshot.topologyEpoch,
       layouts: frames,
+      windowLinks: snapshot.windowLinks,
     });
   }
 

@@ -26,8 +26,8 @@ const semanticPaneId = "pane.a";
 const incarnation = `${generation}:1`;
 const retainedMemoryMode = process.argv[2] === "workload-memory";
 const workloadMode = process.argv[2] === "workload" || retainedMemoryMode;
-if (retainedMemoryMode && typeof globalThis.gc !== "function")
-  throw new Error("Retained memory qualification requires --expose-gc");
+if (workloadMode && typeof globalThis.gc !== "function")
+  throw new Error("Workload memory qualification requires --expose-gc");
 
 function compactSeed(
   snapshot: TerminalReplicaSnapshot,
@@ -543,6 +543,7 @@ if (workloadMode) {
   const measuredHeapTotalBytes: number[] = [];
   const measuredExternalBytes: number[] = [];
   const measuredArrayBufferBytes: number[] = [];
+  let explicitCollectionsDuringWorkload = 0;
   const postFenceLowWater = async (): Promise<NodeJS.MemoryUsage> => {
     // Latency qualification uses the separate natural-GC workload. Retained
     // heap qualification must collect unreachable decode temporaries first;
@@ -550,6 +551,7 @@ if (workloadMode) {
     if (retainedMemoryMode) {
       await new Promise<void>((resolve) => setImmediate(resolve));
       globalThis.gc!();
+      explicitCollectionsDuringWorkload += 1;
     }
     let lowWater: NodeJS.MemoryUsage | null = null;
     for (let sampleOrdinal = 1; sampleOrdinal <= 8; sampleOrdinal += 1) {
@@ -566,6 +568,14 @@ if (workloadMode) {
     }
     return lowWater!;
   };
+  // Compare live objects at both endpoints. A natural-GC heapUsed delta can
+  // compare opposite ends of V8's nursery sawtooth and report phantom growth.
+  // Collections bracket the responsiveness window; none run inside that lane.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  eventLoopDelay.disable();
+  globalThis.gc!();
+  const retainedMemoryBefore = process.memoryUsage();
+  eventLoopDelay.enable();
   for (let cycle = 1; cycle <= 24; cycle += 1) {
     let workload: ReturnType<typeof retargetCompactHistoryPatchInPlace> | null =
       retargetCompactHistoryPatchInPlace(
@@ -598,6 +608,9 @@ if (workloadMode) {
   }
   eventLoopDelay.disable();
   const maxHeartbeatDelayMs = Number(eventLoopDelay.max) / 1_000_000;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  globalThis.gc!();
+  const retainedMemoryAfter = process.memoryUsage();
   if (nacks.length !== 0) throw new Error("compact workload child received a NACK");
   if (state?.hash !== workloadTargetHash)
     throw new Error("compact workload child canonical hash mismatch");
@@ -617,13 +630,17 @@ if (workloadMode) {
       workloadMaxBytes,
       workloadCycles: 24,
       explicitGcAvailable: typeof globalThis.gc === "function",
+      explicitCollectionsDuringWorkload,
+      retainedHeapBeforeBytes: retainedMemoryBefore.heapUsed,
+      retainedHeapAfterBytes: retainedMemoryAfter.heapUsed,
+      naturalHeapGrowthBytes: Math.max(0, measuredHeapBytes.at(-1)! - measuredHeapBytes[0]!),
       maxHeartbeatDelayMs,
       peakRssBytes,
       peakHeapBytes,
       rssSlopeBytesPerSample: theilSen(measuredRssBytes),
       heapSlopeBytesPerSample: theilSen(measuredHeapBytes),
       rssGrowthBytes: Math.max(0, measuredRssBytes.at(-1)! - measuredRssBytes[0]!),
-      heapGrowthBytes: Math.max(0, measuredHeapBytes.at(-1)! - measuredHeapBytes[0]!),
+      heapGrowthBytes: Math.max(0, retainedMemoryAfter.heapUsed - retainedMemoryBefore.heapUsed),
       measuredRssBytes,
       measuredHeapBytes,
       measuredHeapTotalBytes,

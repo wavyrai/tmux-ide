@@ -1,3 +1,4 @@
+import type { TmuxServerDescriptor } from "@tmux-ide/contracts";
 import type { FleetCachedRoute } from "@tmux-ide/contracts/fleet-client-state";
 import { groupFleetEnvironments } from "@tmux-ide/daemon-client/fleet-environments";
 import {
@@ -27,6 +28,7 @@ export interface ApplicationMachineCatalogGroup {
   readonly label: string;
   readonly state: "ready" | "connecting" | "disconnected";
   readonly sessions: readonly ApplicationMachineCatalogSession[];
+  readonly servers?: readonly TmuxServerDescriptor[];
   readonly note: string | null;
   readonly diagnostic?: FleetConnectionStatus;
   readonly environmentId?: string | null;
@@ -114,6 +116,7 @@ export function createApplicationMachineCatalog(
             diagnostic && diagnostic.phase !== "ready"
               ? fleetConnectionMessage(diagnostic)
               : (entry?.snapshot.note ?? null),
+          servers: entry?.snapshot.servers,
           sessions: (entry?.lastSessions ?? []).map((session) => ({
             ...session,
             sourceId: session.id,
@@ -152,7 +155,13 @@ export function createApplicationMachineCatalog(
             ...session,
             id:
               session.liveSessionId && joined.environmentId && !joined.conflict
-                ? JSON.stringify([joined.environmentId, "session", session.liveSessionId])
+                ? JSON.stringify([
+                    joined.environmentId,
+                    "session",
+                    session.server?.serverId,
+                    session.server?.generation,
+                    session.liveSessionId,
+                  ])
                 : session.id,
           })),
         };
@@ -214,12 +223,15 @@ export function createApplicationMachineCatalog(
             environmentId: entry.environmentId,
             generation: entry.generation,
             seenAt: entry.seenAt,
-            sessions: value.sessions.slice(0, 64).map(({ id, liveSessionId, name, paneCount }) => ({
-              id,
-              ...(liveSessionId ? { liveSessionId } : {}),
-              name,
-              paneCount,
-            })),
+            sessions: value.sessions
+              .slice(0, 64)
+              .map(({ id, liveSessionId, name, paneCount, server, serverLabel }) => ({
+                id,
+                ...(liveSessionId ? { liveSessionId } : {}),
+                name,
+                paneCount,
+                ...(server ? { server, serverLabel } : {}),
+              })),
           });
         } catch {
           /* Cache failure must never prevent live catalog publication. */

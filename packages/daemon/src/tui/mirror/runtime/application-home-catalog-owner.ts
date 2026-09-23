@@ -6,6 +6,7 @@ import {
   moveHomeCatalogSelection,
   selectedHomeCatalogIndex,
   type ApplicationHomeCatalog,
+  type ApplicationHomeCatalogSession,
   type ApplicationHomeCatalogSnapshot,
 } from "./application-home-catalog.ts";
 import { createFleetSession } from "./fleet-lifecycle-client.ts";
@@ -26,6 +27,7 @@ export interface ApplicationHomeCatalogOwnerOptions {
   readonly lifecycle: Pick<TuiApplicationLifecycle, "registerCloser">;
   readonly automaticOpen: boolean;
   readonly automaticOpenAllowed?: () => boolean;
+  readonly openCatalogSession?: (session: ApplicationHomeCatalogSession) => Promise<unknown> | void;
   readonly startGeneration: (sessionName: string) => Promise<unknown> | void;
   readonly setNote?: (note: string | null) => void;
   readonly catalog?: ApplicationHomeCatalog;
@@ -85,7 +87,12 @@ export function createApplicationHomeCatalogOwner(
     const currentSessions = next.sessions;
     if (automaticOpen && next.phase === "live") {
       automaticOpen = false;
-      if (currentSessions.length === 1) void options.startGeneration(currentSessions[0]!.name);
+      if (currentSessions.length === 1) {
+        const session = currentSessions[0]!;
+        void (options.openCatalogSession
+          ? options.openCatalogSession(session)
+          : options.startGeneration(session.name));
+      }
     }
     if (currentSessions.length === 0) {
       if (current !== null) setSelectedSessionId(null);
@@ -120,8 +127,11 @@ export function createApplicationHomeCatalogOwner(
         return true;
       }
       if (name === "return" || name === "enter") {
-        const sessionName = sessions()[selectedSessionIndex()]?.name;
-        if (sessionName) void options.startGeneration(sessionName);
+        const session = sessions()[selectedSessionIndex()];
+        if (session)
+          void (options.openCatalogSession
+            ? options.openCatalogSession(session)
+            : options.startGeneration(session.name));
         return true;
       }
       return false;
