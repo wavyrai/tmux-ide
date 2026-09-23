@@ -1290,8 +1290,8 @@ describe("production ApplicationShellView", () => {
         semanticPaneId: "pane.main",
         axis: "cols",
         cells: 67,
-        guide: { x: 67, y: 0, width: 1, height: 41 },
-        globalGuide: { x: 95, y: 2, width: 1, height: 41 },
+        guide: { x: 65, y: 0, width: 1, height: 41 },
+        globalGuide: { x: 93, y: 2, width: 1, height: 41 },
       },
     );
     await run(
@@ -1304,8 +1304,8 @@ describe("production ApplicationShellView", () => {
         semanticPaneId: "pane.main",
         axis: "rows",
         cells: 21,
-        guide: { x: 0, y: 22, width: 132, height: 1 },
-        globalGuide: { x: 28, y: 24, width: 132, height: 1 },
+        guide: { x: 0, y: 20, width: 132, height: 1 },
+        globalGuide: { x: 28, y: 22, width: 132, height: 1 },
       },
     );
   });

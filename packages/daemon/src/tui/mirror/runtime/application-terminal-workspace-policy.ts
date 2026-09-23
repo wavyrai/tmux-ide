@@ -278,6 +278,22 @@ export function terminalPaneSeparators(
   return Object.freeze(separators);
 }
 
+/** Highlight the observed divider, never the pointer's unconfirmed target. */
+export function terminalPaneObservedResizeGuide(
+  frames: readonly OpenTuiPaneFrame[],
+  paneBorderStatus: "top" | "bottom" | "off",
+  preview: ApplicationPaneResizePreview,
+): ResizeGuideRect | null {
+  const separator = terminalPaneSeparators(frames, paneBorderStatus).find(
+    (candidate) =>
+      candidate.paneId === preview.semanticPaneId &&
+      candidate.axis === (preview.axis === "cols" ? "x" : "y"),
+  );
+  return separator
+    ? terminalPaneResizePreview(separator, separator.position, separator.position).guide
+    : null;
+}
+
 export function terminalPaneResizePreview(
   separator: ApplicationPaneSeparator,
   pointer: number,

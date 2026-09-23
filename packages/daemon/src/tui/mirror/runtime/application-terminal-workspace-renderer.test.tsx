@@ -1052,6 +1052,9 @@ describe("ApplicationTerminalWorkspace", () => {
       axis: "cols",
       cells: 12,
     });
+    // The pointer is ahead of tmux: highlight stays on the rendered pane edge.
+    expect(setup.captureCharFrame().split("\n")[5]?.[10]).toBe("╎");
+    expect(setup.captureCharFrame().split("\n")[5]?.[12]).not.toBe("╎");
     const current = {
       ...layout().current!,
       panes: layout().current!.panes.map((pane, index) =>
@@ -1060,6 +1063,14 @@ describe("ApplicationTerminalWorkspace", () => {
     };
     setObservedLayout({ current, windows: [current] });
     await setup.renderOnce();
+    expect(setup.captureCharFrame().split("\n")[5]?.[12]).toBe("╎");
+    expect(setup.captureCharFrame().split("\n")[5]?.[10]).not.toBe("╎");
+    // Reversing direction must not pull the highlight away from the pane either.
+    await setup.mockMouse.moveTo(8, 5);
+    await setup.renderOnce();
+    expect(previews.at(-1)).toMatchObject({ cells: 8 });
+    expect(setup.captureCharFrame().split("\n")[5]?.[12]).toBe("╎");
+    expect(setup.captureCharFrame().split("\n")[5]?.[8]).not.toBe("╎");
     await setup.mockMouse.release(10, 5, MouseButtons.LEFT);
     await setup.renderOnce();
     expect(submissions).toHaveLength(1);

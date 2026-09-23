@@ -67,6 +67,7 @@ import {
   terminalAgentStatusLabel,
   terminalPaneDisplayTitle,
   terminalPaneResizePreview,
+  terminalPaneObservedResizeGuide,
   terminalPaneSeparatorAt,
   terminalPaneSeparators,
   terminalWindowAgentIndicator,
@@ -593,15 +594,24 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       top: localY + 1 + height <= bottom ? localY + 1 : Math.max(topOffset(), localY - height),
     });
   };
-  const globalPreview = (preview: ApplicationPaneResizePreview): ApplicationPaneResizePreview =>
-    Object.freeze({
+  const observedGuide = (preview: ApplicationPaneResizePreview) =>
+    terminalPaneObservedResizeGuide(
+      visibleFrames(),
+      layout().current?.paneBorderStatus ?? "off",
+      preview,
+    );
+  const globalPreview = (preview: ApplicationPaneResizePreview): ApplicationPaneResizePreview => {
+    const guide = observedGuide(preview) ?? preview.guide;
+    return Object.freeze({
       ...preview,
+      guide,
       globalGuide: Object.freeze({
-        ...preview.guide,
-        x: preview.guide.x + (props.originX ?? 0),
-        y: preview.guide.y + (props.originY ?? 0) + topOffset(),
+        ...guide,
+        x: guide.x + (props.originX ?? 0),
+        y: guide.y + (props.originY ?? 0) + topOffset(),
       }),
     });
+  };
   // tmux retains one active pane per window even while that window is hidden.
   // Keep those native terminal surfaces presentation-ready while the host has
   // focus; switching the visible window then changes only composition, not
@@ -1626,7 +1636,10 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   };
   const guide = createMemo(() => {
     const active = resizePreview();
-    if (active) return { rect: active.guide, active: true };
+    if (active) {
+      const rect = observedGuide(active);
+      return rect ? { rect, active: true } : null;
+    }
     const hovered = hoveredSeparator();
     return hovered
       ? {
