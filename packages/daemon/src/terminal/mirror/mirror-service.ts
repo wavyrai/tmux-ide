@@ -294,6 +294,17 @@ export class MirrorService {
     };
   }
 
+  paneResizeTransport(session: string) {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    const run = entry.channel.paneResizeTransport();
+    return (args: readonly string[]) => {
+      if (entry.retired || this.channels.get(session) !== entry)
+        return Promise.reject(new Error("Resize mirror session retired"));
+      return run(args);
+    };
+  }
+
   async executeWindowLinkAction(
     session: string,
     request: { action: "select" | "unlink"; target?: WindowLinkTarget; paneId?: string },

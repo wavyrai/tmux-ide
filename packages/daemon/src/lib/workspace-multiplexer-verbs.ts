@@ -146,6 +146,8 @@ export interface MultiplexerPaneRow {
   readonly windowZoomed: boolean;
   readonly paneActive: boolean;
   readonly creationId: string | null;
+  readonly width?: number;
+  readonly height?: number;
 }
 
 const PANE_FIELDS = [
@@ -173,7 +175,7 @@ export function parseMultiplexerPaneRows(output: string): readonly MultiplexerPa
   const rows: MultiplexerPaneRow[] = [];
   for (const line of output.split("\n")) {
     const fields = line.split("\t");
-    if (fields.length !== 9) {
+    if (fields.length !== 9 && fields.length !== 11) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "pane_listing_shape",
       });
@@ -196,6 +198,18 @@ export function parseMultiplexerPaneRows(output: string): readonly MultiplexerPa
     }
     const count = Number(paneCount);
     const index = Number(paneIndex);
+    const geometry =
+      fields.length === 11 ? { width: Number(fields[9]), height: Number(fields[10]) } : {};
+    if (
+      fields.length === 11 &&
+      (!Number.isSafeInteger(geometry.width) ||
+        geometry.width! < 1 ||
+        !Number.isSafeInteger(geometry.height) ||
+        geometry.height! < 1)
+    )
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "pane_listing_geometry",
+      });
     if (!Number.isInteger(count) || count < 1 || !Number.isInteger(index) || index < 0) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "pane_listing_shape",
@@ -211,6 +225,7 @@ export function parseMultiplexerPaneRows(output: string): readonly MultiplexerPa
       windowZoomed: zoomed === "1",
       paneActive: active === "1",
       creationId: creationId === "" ? null : creationId,
+      ...geometry,
     });
   }
   // list-panes -s repeats each backing for its session links. Identical native
@@ -362,6 +377,46 @@ export class WorkspaceMultiplexerAuthority {
     timing?: WorkspaceMultiplexerOperationTiming,
   ): WorkspaceMultiplexerMutationResult {
     return this.#mutate(raw, timing);
+  }
+
+  /** Retained control transport; owned by the same serialized semantic lane. */
+  async mutateResize(
+    raw: WorkspaceMultiplexerMutationRequest,
+    transport: (session: string) => (args: readonly string[]) => Promise<string>,
+  ): Promise<WorkspaceMultiplexerMutationResult> {
+    if (this.#disposed) throw new WorkspaceMultiplexerError("workspace_unavailable");
+    const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
+    if (request.expectedDaemonInstanceId !== this.#daemonInstanceId)
+      throw new WorkspaceMultiplexerError("daemon_instance_mismatch");
+    const intent = request.intent;
+    if (intent.verb !== "workspace.pane.resize") throw new TypeError("Expected pane resize");
+    const workspace = this.#registry.get(intent.workspaceName);
+    if (!workspace) throw new WorkspaceMultiplexerError("workspace_not_found");
+    const envelope = {
+      operationId: request.operationId,
+      daemonInstanceId: this.#daemonInstanceId,
+      workspaceName: intent.workspaceName,
+    };
+    try {
+      const run = transport(workspace.sessionName);
+      const steps = this.#resizeSteps(intent, workspace.sessionName, envelope);
+      let next = steps.next();
+      while (!next.done) {
+        if (this.#disposed) throw new WorkspaceMultiplexerError("workspace_unavailable");
+        const observed = await run(next.value);
+        if (this.#disposed) throw new WorkspaceMultiplexerError("workspace_unavailable");
+        next = steps.next(observed);
+      }
+      return WorkspaceMultiplexerMutationResultSchemaZ.parse(next.value);
+    } catch (cause) {
+      if (cause instanceof WorkspaceMultiplexerError) throw cause;
+      // A missing reply may follow an effect. Never fall back or replay.
+      throw new WorkspaceMultiplexerError(
+        "mutation_unverified",
+        { operationId: request.operationId },
+        cause,
+      );
+    }
   }
 
   /** Runs only inside the existing semantic mutation lane; never rediscovers a stale link. */
@@ -1445,14 +1500,7 @@ export class WorkspaceMultiplexerAuthority {
   // -------------------------------------------------------------------------
 
   /** The pane's own size on one axis, in cells, read straight from tmux. */
-  #paneCells(paneId: string, axis: "cols" | "rows"): number {
-    const observed = this.#io.runTmux([
-      "display-message",
-      "-p",
-      "-t",
-      paneId,
-      axis === "cols" ? "#{pane_width}" : "#{pane_height}",
-    ]);
+  #paneCells(observed: string | number | undefined): number {
     const cells = Number(observed);
     if (!Number.isInteger(cells) || cells < 1) {
       throw new WorkspaceMultiplexerError("mutation_unverified", { reason: "pane_size_shape" });
@@ -1475,7 +1523,26 @@ export class WorkspaceMultiplexerAuthority {
     sessionName: string,
     envelope: { operationId: string; daemonInstanceId: string; workspaceName: string },
   ): WorkspaceMultiplexerMutationResult {
-    const rows = this.#panes(sessionName);
+    const steps = this.#resizeSteps(intent, sessionName, envelope);
+    let next = steps.next();
+    while (!next.done) next = steps.next(this.#io.runTmux(next.value));
+    return next.value;
+  }
+
+  *#resizeSteps(
+    intent: Extract<WorkspaceMultiplexerIntent, { verb: "workspace.pane.resize" }>,
+    sessionName: string,
+    envelope: { operationId: string; daemonInstanceId: string; workspaceName: string },
+  ): Generator<readonly string[], WorkspaceMultiplexerMutationResult, string> {
+    const output = yield [
+      "list-panes",
+      "-s",
+      "-t",
+      `=${sessionName}`,
+      "-F",
+      `${PANE_FIELDS}\t#{pane_width}\t#{pane_height}`,
+    ];
+    const rows = parseMultiplexerPaneRows(output);
     const pane = resolvePaneRow(rows, intent.semanticPaneId);
     if (pane.windowPaneCount < 2) {
       throw new WorkspaceMultiplexerError("single_pane_window", {
@@ -1489,7 +1556,7 @@ export class WorkspaceMultiplexerAuthority {
         semanticPaneId: intent.semanticPaneId,
       });
     }
-    const before = this.#paneCells(pane.paneId, intent.axis);
+    const before = this.#paneCells(intent.axis === "cols" ? pane.width : pane.height);
     if (before === intent.cells) {
       return {
         ...envelope,
@@ -1500,14 +1567,22 @@ export class WorkspaceMultiplexerAuthority {
         cells: before,
       };
     }
-    this.#io.runTmux([
+    // Keep mutation and authoritative readback in one tmux command queue.
+    // Avoid two extra synchronous client processes on every pointer update.
+    const observed = yield [
       "resize-pane",
       "-t",
       pane.paneId,
       intent.axis === "cols" ? "-x" : "-y",
       String(intent.cells),
-    ]);
-    const after = this.#paneCells(pane.paneId, intent.axis);
+      ";",
+      "display-message",
+      "-p",
+      "-t",
+      pane.paneId,
+      intent.axis === "cols" ? "#{pane_width}" : "#{pane_height}",
+    ];
+    const after = this.#paneCells(observed);
     return {
       ...envelope,
       verb: "workspace.pane.resize",

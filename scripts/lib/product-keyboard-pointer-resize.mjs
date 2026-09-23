@@ -4,7 +4,9 @@ import stringWidth from "string-width";
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const MAX_SAMPLES = 512;
 const GUIDE_MARKER = Object.freeze({ cols: "╎", rows: "╌" });
-export const RESIZE_PREVIEW_P95_BUDGET_MS = 16.67;
+// Two 60 Hz frames for pointer -> mutation -> authoritative layout -> paint.
+// This replaces the former one-frame budget for an optimistic guide alone.
+export const RESIZE_CANONICAL_FRAME_P95_BUDGET_MS = 33.34;
 
 /** Exact marker proof for a decoded ProductRig framebuffer after a resize fence. */
 export function inspectResizeContentContinuity({ plain, cols, rows, marker }) {
@@ -273,6 +275,7 @@ function qualifyPreviewSample(sample, expected, ordinal, deliveryAnchor) {
         ingress.x < sample.guide.x + sample.guide.width);
   return (
     sample?.ordinal === ordinal &&
+    sample.measurement === "pointer-to-canonical-frame" &&
     UUID_V4.test(sample?.traceId ?? "") &&
     exactIdentity(sample, expected) &&
     sample.semanticPaneId === expected.semanticPaneId &&
@@ -419,8 +422,8 @@ export function assessProductKeyboardPointerResize({ evidence, expected }) {
       actual: samples.length,
     }),
     Object.freeze({
-      id: "resize-preview-p95-budget",
-      passed: p95Ms !== null && p95Ms <= RESIZE_PREVIEW_P95_BUDGET_MS,
+      id: "resize-canonical-frame-p95-budget",
+      passed: p95Ms !== null && p95Ms <= RESIZE_CANONICAL_FRAME_P95_BUDGET_MS,
       actual: p95Ms,
     }),
     Object.freeze({ id: "resize-pointer-release-causal", passed: pointerReleaseExact }),
@@ -434,7 +437,7 @@ export function assessProductKeyboardPointerResize({ evidence, expected }) {
     qualified: firstFailedPredicate === null,
     firstFailedPredicate,
     predicates,
-    metrics: Object.freeze({ sampleCount: samples.length, previewP95Ms: p95Ms }),
+    metrics: Object.freeze({ sampleCount: samples.length, canonicalFrameP95Ms: p95Ms }),
   });
 }
 

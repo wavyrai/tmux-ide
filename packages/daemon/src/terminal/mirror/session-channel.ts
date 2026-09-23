@@ -718,6 +718,69 @@ export class SessionChannel {
     if (this.latestWindowStage) this.windowLinkAuthority.reconcile(this.latestWindowStage.links);
   }
 
+  /** Capture this attached connection once; never resolve a replacement mid-operation. */
+  paneResizeTransport(): (args: readonly string[]) => Promise<string> {
+    const identity = this.attachedIdentity;
+    const generation = this.attachedServerGeneration;
+    const assertCurrent = () => {
+      if (
+        this.disposed ||
+        !identity ||
+        !generation ||
+        this.attachedIdentity !== identity ||
+        this.attachedServerGeneration !== generation
+      )
+        throw new Error("Resize control connection retired");
+    };
+    assertCurrent();
+    return async (args) => {
+      assertCurrent();
+      const listing =
+        args.length === 6 &&
+        args[0] === "list-panes" &&
+        args[1] === "-s" &&
+        args[2] === "-t" &&
+        args[3] === `=${identity!.sessionName}` &&
+        args[4] === "-F";
+      const resize =
+        args.length === 11 &&
+        args[0] === "resize-pane" &&
+        args[1] === "-t" &&
+        /^%[0-9]+$/u.test(args[2]!) &&
+        (args[3] === "-x" || args[3] === "-y") &&
+        /^[1-9][0-9]*$/u.test(args[4]!) &&
+        args[5] === ";" &&
+        args[6] === "display-message" &&
+        args[7] === "-p" &&
+        args[8] === "-t" &&
+        args[9] === args[2] &&
+        args[10] === (args[3] === "-x" ? "#{pane_width}" : "#{pane_height}");
+      if (!listing && !resize) throw new Error("Invalid resize control command");
+      // A runtime session ID prevents a rename/replacement from redirecting the lookup.
+      const pinned = listing
+        ? [...args.slice(0, 3), identity!.runtimeSessionId, ...args.slice(4)]
+        : args;
+      const command = pinned
+        .map((arg, index) => (resize && index === 5 ? ";" : tmuxSingleQuote(arg)))
+        .join(" ");
+      const lines = listing
+        ? await this.io.request(command)
+        : await new Promise<string[]>((resolve, reject) => {
+            this.io.commandListInline(command, 2, 1, (reply) =>
+              reply.ok ? resolve(reply.lines) : reject(new Error("Resize control command failed")),
+            );
+          });
+      assertCurrent();
+      return lines
+        .map((line) => {
+          const decoded = decodeControlReplyUtf8(line);
+          if (decoded === null) throw new Error("Invalid resize control reply");
+          return decoded;
+        })
+        .join("\n");
+    };
+  }
+
   async executeWindowLinkAction(request: {
     action: "select" | "unlink";
     target?: WindowLinkTarget;

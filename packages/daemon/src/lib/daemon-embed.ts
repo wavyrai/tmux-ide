@@ -1343,6 +1343,15 @@ async function startEmbeddedDaemonGeneration(
             },
           );
         }
+        if (intent.verb === "workspace.pane.resize") {
+          return workspaceMultiplexer.mutateResize(
+            { operationId, expectedDaemonInstanceId: instanceId, intent },
+            (session) => {
+              if (!sessionRuntimeRegistry) throw new Error("Session runtime unavailable");
+              return sessionRuntimeRegistry.paneResizeTransport(session);
+            },
+          );
+        }
         return workspaceMultiplexer.mutate(
           { operationId, expectedDaemonInstanceId: instanceId, intent },
           timing,

@@ -11279,7 +11279,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.27",
+      version: "2.9.0-beta.28",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
@@ -29081,6 +29081,38 @@ var init_session_channel = __esm({
         this.windowLinkAuthority = new WindowLinkAuthority(liveSessionId, identity2.runtimeSessionId);
         if (this.latestWindowStage) this.windowLinkAuthority.reconcile(this.latestWindowStage.links);
       }
+      /** Capture this attached connection once; never resolve a replacement mid-operation. */
+      paneResizeTransport() {
+        const identity2 = this.attachedIdentity;
+        const generation = this.attachedServerGeneration;
+        const assertCurrent = () => {
+          if (this.disposed || !identity2 || !generation || this.attachedIdentity !== identity2 || this.attachedServerGeneration !== generation)
+            throw new Error("Resize control connection retired");
+        };
+        assertCurrent();
+        return async (args) => {
+          assertCurrent();
+          const listing = args.length === 6 && args[0] === "list-panes" && args[1] === "-s" && args[2] === "-t" && args[3] === `=${identity2.sessionName}` && args[4] === "-F";
+          const resize = args.length === 11 && args[0] === "resize-pane" && args[1] === "-t" && /^%[0-9]+$/u.test(args[2]) && (args[3] === "-x" || args[3] === "-y") && /^[1-9][0-9]*$/u.test(args[4]) && args[5] === ";" && args[6] === "display-message" && args[7] === "-p" && args[8] === "-t" && args[9] === args[2] && args[10] === (args[3] === "-x" ? "#{pane_width}" : "#{pane_height}");
+          if (!listing && !resize) throw new Error("Invalid resize control command");
+          const pinned = listing ? [...args.slice(0, 3), identity2.runtimeSessionId, ...args.slice(4)] : args;
+          const command2 = pinned.map((arg, index) => resize && index === 5 ? ";" : tmuxSingleQuote(arg)).join(" ");
+          const lines = listing ? await this.io.request(command2) : await new Promise((resolve41, reject) => {
+            this.io.commandListInline(
+              command2,
+              2,
+              1,
+              (reply) => reply.ok ? resolve41(reply.lines) : reject(new Error("Resize control command failed"))
+            );
+          });
+          assertCurrent();
+          return lines.map((line) => {
+            const decoded = decodeControlReplyUtf8(line);
+            if (decoded === null) throw new Error("Invalid resize control reply");
+            return decoded;
+          }).join("\n");
+        };
+      }
       async executeWindowLinkAction(request3) {
         const authority = this.windowLinkAuthority;
         if (!authority || this.disposed) throw new WindowLinkResolutionError("window_link_stale");
@@ -31550,6 +31582,16 @@ var init_mirror_service = __esm({
             this.release(session, entry);
             await Promise.allSettled([...this.pendingDisposals]);
           }
+        };
+      }
+      paneResizeTransport(session) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+        const run = entry.channel.paneResizeTransport();
+        return (args) => {
+          if (entry.retired || this.channels.get(session) !== entry)
+            return Promise.reject(new Error("Resize mirror session retired"));
+          return run(args);
         };
       }
       async executeWindowLinkAction(session, request3) {
@@ -51699,6 +51741,10 @@ var init_registry2 = __esm({
         return (this.#sessions.get(session)?.trustedInventoryQualified() ?? false) && this.#mirror.hasRetainedSession(session);
       }
       /** Called by the serialized semantic mutation executor, never by a transport directly. */
+      paneResizeTransport(session) {
+        if (this.#disposed) throw new Error("Session runtime disposed");
+        return this.#mirror.paneResizeTransport(session);
+      }
       executeWindowLinkAction(session, request3) {
         if (this.#disposed) return Promise.reject(new Error("Session runtime disposed"));
         return this.#mirror.executeWindowLinkAction(session, request3);
@@ -62112,7 +62158,7 @@ function parseMultiplexerPaneRows(output) {
   const rows = [];
   for (const line of output.split("\n")) {
     const fields = line.split("	");
-    if (fields.length !== 9) {
+    if (fields.length !== 9 && fields.length !== 11) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "pane_listing_shape"
       });
@@ -62135,6 +62181,11 @@ function parseMultiplexerPaneRows(output) {
     }
     const count = Number(paneCount);
     const index = Number(paneIndex);
+    const geometry = fields.length === 11 ? { width: Number(fields[9]), height: Number(fields[10]) } : {};
+    if (fields.length === 11 && (!Number.isSafeInteger(geometry.width) || geometry.width < 1 || !Number.isSafeInteger(geometry.height) || geometry.height < 1))
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "pane_listing_geometry"
+      });
     if (!Number.isInteger(count) || count < 1 || !Number.isInteger(index) || index < 0) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "pane_listing_shape"
@@ -62149,7 +62200,8 @@ function parseMultiplexerPaneRows(output) {
       windowPaneCount: count,
       windowZoomed: zoomed === "1",
       paneActive: active2 === "1",
-      creationId: creationId === "" ? null : creationId
+      creationId: creationId === "" ? null : creationId,
+      ...geometry
     });
   }
   const unique = /* @__PURE__ */ new Map();
@@ -62295,6 +62347,41 @@ var init_workspace_multiplexer_verbs = __esm({
        */
       mutate(raw, timing) {
         return this.#mutate(raw, timing);
+      }
+      /** Retained control transport; owned by the same serialized semantic lane. */
+      async mutateResize(raw, transport) {
+        if (this.#disposed) throw new WorkspaceMultiplexerError("workspace_unavailable");
+        const request3 = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
+        if (request3.expectedDaemonInstanceId !== this.#daemonInstanceId)
+          throw new WorkspaceMultiplexerError("daemon_instance_mismatch");
+        const intent = request3.intent;
+        if (intent.verb !== "workspace.pane.resize") throw new TypeError("Expected pane resize");
+        const workspace = this.#registry.get(intent.workspaceName);
+        if (!workspace) throw new WorkspaceMultiplexerError("workspace_not_found");
+        const envelope = {
+          operationId: request3.operationId,
+          daemonInstanceId: this.#daemonInstanceId,
+          workspaceName: intent.workspaceName
+        };
+        try {
+          const run = transport(workspace.sessionName);
+          const steps = this.#resizeSteps(intent, workspace.sessionName, envelope);
+          let next = steps.next();
+          while (!next.done) {
+            if (this.#disposed) throw new WorkspaceMultiplexerError("workspace_unavailable");
+            const observed = await run(next.value);
+            if (this.#disposed) throw new WorkspaceMultiplexerError("workspace_unavailable");
+            next = steps.next(observed);
+          }
+          return WorkspaceMultiplexerMutationResultSchemaZ.parse(next.value);
+        } catch (cause) {
+          if (cause instanceof WorkspaceMultiplexerError) throw cause;
+          throw new WorkspaceMultiplexerError(
+            "mutation_unverified",
+            { operationId: request3.operationId },
+            cause
+          );
+        }
       }
       /** Runs only inside the existing semantic mutation lane; never rediscovers a stale link. */
       async mutateWindowLink(raw, execute2) {
@@ -63201,14 +63288,7 @@ var init_workspace_multiplexer_verbs = __esm({
       // resize
       // -------------------------------------------------------------------------
       /** The pane's own size on one axis, in cells, read straight from tmux. */
-      #paneCells(paneId, axis) {
-        const observed = this.#io.runTmux([
-          "display-message",
-          "-p",
-          "-t",
-          paneId,
-          axis === "cols" ? "#{pane_width}" : "#{pane_height}"
-        ]);
+      #paneCells(observed) {
         const cells = Number(observed);
         if (!Number.isInteger(cells) || cells < 1) {
           throw new WorkspaceMultiplexerError("mutation_unverified", { reason: "pane_size_shape" });
@@ -63226,7 +63306,21 @@ var init_workspace_multiplexer_verbs = __esm({
        * whole view exists to remove.
        */
       #resize(intent, sessionName, envelope) {
-        const rows = this.#panes(sessionName);
+        const steps = this.#resizeSteps(intent, sessionName, envelope);
+        let next = steps.next();
+        while (!next.done) next = steps.next(this.#io.runTmux(next.value));
+        return next.value;
+      }
+      *#resizeSteps(intent, sessionName, envelope) {
+        const output = yield [
+          "list-panes",
+          "-s",
+          "-t",
+          `=${sessionName}`,
+          "-F",
+          `${PANE_FIELDS}	#{pane_width}	#{pane_height}`
+        ];
+        const rows = parseMultiplexerPaneRows(output);
         const pane = resolvePaneRow(rows, intent.semanticPaneId);
         if (pane.windowPaneCount < 2) {
           throw new WorkspaceMultiplexerError("single_pane_window", {
@@ -63238,7 +63332,7 @@ var init_workspace_multiplexer_verbs = __esm({
             semanticPaneId: intent.semanticPaneId
           });
         }
-        const before = this.#paneCells(pane.paneId, intent.axis);
+        const before = this.#paneCells(intent.axis === "cols" ? pane.width : pane.height);
         if (before === intent.cells) {
           return {
             ...envelope,
@@ -63249,14 +63343,20 @@ var init_workspace_multiplexer_verbs = __esm({
             cells: before
           };
         }
-        this.#io.runTmux([
+        const observed = yield [
           "resize-pane",
           "-t",
           pane.paneId,
           intent.axis === "cols" ? "-x" : "-y",
-          String(intent.cells)
-        ]);
-        const after = this.#paneCells(pane.paneId, intent.axis);
+          String(intent.cells),
+          ";",
+          "display-message",
+          "-p",
+          "-t",
+          pane.paneId,
+          intent.axis === "cols" ? "#{pane_width}" : "#{pane_height}"
+        ];
+        const after = this.#paneCells(observed);
         return {
           ...envelope,
           verb: "workspace.pane.resize",
@@ -63520,6 +63620,15 @@ async function createNativeTmuxServerOwner(options) {
           return multiplexer.mutateWindowLink(
             { operationId, expectedDaemonInstanceId: generation, intent },
             (session, action) => sessionRuntimeRegistry.executeWindowLinkAction(session, action)
+          );
+        }
+        if (intent.verb === "workspace.pane.resize") {
+          return multiplexer.mutateResize(
+            { operationId, expectedDaemonInstanceId: generation, intent },
+            (session) => {
+              if (!sessionRuntimeRegistry) throw new Error("Session runtime unavailable");
+              return sessionRuntimeRegistry.paneResizeTransport(session);
+            }
           );
         }
         return multiplexer.mutate(
@@ -81349,6 +81458,15 @@ async function startEmbeddedDaemonGeneration(opts) {
             (session, action) => {
               if (!sessionRuntimeRegistry) throw new Error("Session runtime unavailable");
               return sessionRuntimeRegistry.executeWindowLinkAction(session, action);
+            }
+          );
+        }
+        if (intent.verb === "workspace.pane.resize") {
+          return workspaceMultiplexer.mutateResize(
+            { operationId, expectedDaemonInstanceId: instanceId, intent },
+            (session) => {
+              if (!sessionRuntimeRegistry) throw new Error("Session runtime unavailable");
+              return sessionRuntimeRegistry.paneResizeTransport(session);
             }
           );
         }

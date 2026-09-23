@@ -162,6 +162,7 @@ function evidence() {
         traceId,
         axis: "cols",
         cells: ordinal % 2 === 0 ? 65 : 66,
+        measurement: "pointer-to-canonical-frame",
         durationMs: 4 + ordinal / 100,
         guide: { x: 66, y: 3, width: 1, height: 40, digest: "a".repeat(64) },
         actualFrame: {
@@ -225,7 +226,7 @@ test("qualifies exact keyboard and 30-sample pointer resize evidence", () => {
   const assessment = assessProductKeyboardPointerResize({ evidence: evidence(), expected });
   assert.equal(assessment.qualified, true);
   assert.equal(assessment.metrics.sampleCount, 30);
-  assert.equal(assessment.metrics.previewP95Ms, 4.28);
+  assert.equal(assessment.metrics.canonicalFrameP95Ms, 4.28);
 });
 
 test("qualifies horizontal pointer guide, row receipt, layout, and tmux convergence", () => {
@@ -308,10 +309,11 @@ test("content continuity inspector rejects blank, missing, duplicate, and non-re
 test("fails closed on missing, duplicate, slow, stale, or unhealthy preview evidence", () => {
   for (const mutate of [
     (value) => value.pointerPreviews.pop(),
+    (value) => (value.pointerPreviews[0].measurement = "guide-only"),
     (value) => (value.pointerPreviews[1].traceId = value.pointerPreviews[0].traceId),
     (value) => {
-      value.pointerPreviews[28].durationMs = 17;
-      value.pointerPreviews[29].durationMs = 17;
+      value.pointerPreviews[28].durationMs = 34;
+      value.pointerPreviews[29].durationMs = 34;
     },
     (value) => (value.pointerPreviews[0].actualFrame.guideDigest = "b".repeat(64)),
     (value) => (value.pointerPreviews[0].actualFrame.contentContinuity.markerCount = 0),

@@ -551,6 +551,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   }
 
   /** Called by the serialized semantic mutation executor, never by a transport directly. */
+  paneResizeTransport(session: string) {
+    if (this.#disposed) throw new Error("Session runtime disposed");
+    return this.#mirror.paneResizeTransport(session);
+  }
+
   executeWindowLinkAction(
     session: string,
     request: Parameters<MirrorService["executeWindowLinkAction"]>[1],

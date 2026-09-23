@@ -1,3 +1,4 @@
+import { MirrorService } from "../../terminal/mirror/mirror-service.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -286,34 +287,141 @@ describe.skipIf(!hasTmux)("multiplexer verbs against live tmux", () => {
     ).toBe(`${name}\tmanual\t${name}`);
   });
 
-  it("resizes a live split and reports the geometry tmux actually settled on", async () => {
-    await mutate({
-      verb: "workspace.window.split",
-      semanticPaneId: "pane.editor",
-      direction: "right",
-    });
-    const before = Number(
-      tmux(["display-message", "-p", "-t", `=${sessionName}:editor.0`, "#{pane_width}"]),
-    );
-    const requested = before + 3;
-    const result = await mutate({
-      verb: "workspace.pane.resize",
-      semanticPaneId: "pane.editor",
-      axis: "cols",
-      cells: requested,
-    });
-    const settled = Number(
-      tmux(["display-message", "-p", "-t", `=${sessionName}:editor.0`, "#{pane_width}"]),
-    );
+  it.each(["cols", "rows"] as const)(
+    "resizes live %s with clamped readback and a no-op",
+    async (axis) => {
+      await mutate({
+        verb: "workspace.window.split",
+        semanticPaneId: "pane.editor",
+        direction: axis === "cols" ? "right" : "down",
+      });
+      const before = Number(
+        tmux([
+          "display-message",
+          "-p",
+          "-t",
+          `=${sessionName}:editor.0`,
+          axis === "cols" ? "#{pane_width}" : "#{pane_height}",
+        ]),
+      );
+      const requested = before + 3;
+      const result = await mutate({
+        verb: "workspace.pane.resize",
+        semanticPaneId: "pane.editor",
+        axis,
+        cells: requested,
+      });
+      const settled = Number(
+        tmux([
+          "display-message",
+          "-p",
+          "-t",
+          `=${sessionName}:editor.0`,
+          axis === "cols" ? "#{pane_width}" : "#{pane_height}",
+        ]),
+      );
 
-    expect(result).toMatchObject({
-      verb: "workspace.pane.resize",
-      outcome: "applied",
-      axis: "cols",
-      cells: settled,
-    });
-    expect(settled).toBe(requested);
-  });
+      expect(result).toMatchObject({
+        verb: "workspace.pane.resize",
+        outcome: "applied",
+        axis,
+        cells: settled,
+      });
+      expect(settled).toBe(requested);
+      const clamped = await mutate({
+        verb: "workspace.pane.resize",
+        semanticPaneId: "pane.editor",
+        axis,
+        cells: 4096,
+      });
+      const actual = Number(
+        tmux([
+          "display-message",
+          "-p",
+          "-t",
+          `=${sessionName}:editor.0`,
+          axis === "cols" ? "#{pane_width}" : "#{pane_height}",
+        ]),
+      );
+      expect(clamped).toMatchObject({ cells: actual });
+      expect(actual).toBeLessThan(4096);
+      expect(
+        await mutate({
+          verb: "workspace.pane.resize",
+          semanticPaneId: "pane.editor",
+          axis,
+          cells: actual,
+        }),
+      ).toMatchObject({ outcome: "unchanged", cells: actual });
+    },
+  );
+
+  it.each(["cols", "rows"] as const)(
+    "resizes %s through a retained control connection",
+    async (axis) => {
+      await mutate({
+        verb: "workspace.window.split",
+        semanticPaneId: "pane.editor",
+        direction: axis === "cols" ? "right" : "down",
+      });
+      const mirror = new MirrorService({ socketName, configFile: "/dev/null" });
+      try {
+        await mirror.retainSession(sessionName);
+        const run = mirror.paneResizeTransport(sessionName);
+        const transport = vi.fn(() => run);
+        const resize = (cells: number) =>
+          authority.mutateResize(
+            {
+              operationId: randomUUID(),
+              expectedDaemonInstanceId: DAEMON_ID,
+              intent: {
+                verb: "workspace.pane.resize",
+                workspaceName: "live",
+                semanticPaneId: "pane.editor",
+                axis,
+                cells,
+              },
+            },
+            transport,
+          );
+        for (const cells of [15, 20, 15, 4096]) {
+          const result = await resize(cells);
+          const actual = Number(
+            tmux([
+              "display-message",
+              "-p",
+              "-t",
+              `=${sessionName}:editor.0`,
+              axis === "cols" ? "#{pane_width}" : "#{pane_height}",
+            ]),
+          );
+          expect(result).toMatchObject({ cells: actual });
+          expect(await resize(actual)).toMatchObject({ outcome: "unchanged", cells: actual });
+        }
+        // A failed command list must not consume the next command's reply.
+        await expect(
+          run([
+            "resize-pane",
+            "-t",
+            "%999999",
+            "-x",
+            "20",
+            ";",
+            "display-message",
+            "-p",
+            "-t",
+            "%999999",
+            "#{pane_width}",
+          ]),
+        ).rejects.toThrow();
+        expect(await resize(16)).toMatchObject({ cells: 16 });
+        await mirror.dispose();
+        await expect(resize(17)).rejects.toMatchObject({ code: "mutation_unverified" });
+      } finally {
+        await mirror.dispose();
+      }
+    },
+  );
 
   it("zooms and unzooms a split window through tmux's own flag", async () => {
     await mutate({

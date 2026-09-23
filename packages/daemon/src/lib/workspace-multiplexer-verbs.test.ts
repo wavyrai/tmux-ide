@@ -339,6 +339,19 @@ class FakeTmux {
         const given = pane[axis] - settled;
         pane[axis] = settled;
         for (const sibling of siblings) sibling[axis] += Math.trunc(given / siblings.length);
+        if (args.length > 5) {
+          if (
+            args.length !== 11 ||
+            args[5] !== ";" ||
+            args[6] !== "display-message" ||
+            args[7] !== "-p" ||
+            args[8] !== "-t" ||
+            args[9] !== pane.id ||
+            args[10] !== (axis === "width" ? "#{pane_width}" : "#{pane_height}")
+          )
+            throw new Error("invalid resize readback");
+          return this.#format(args[10]!, pane);
+        }
         return "";
       }
       case "swap-pane": {
@@ -398,6 +411,14 @@ function expectRefusal(
 }
 
 describe("pane listing parsing", () => {
+  it("reads resize dimensions in the same observation and refuses malformed geometry", () => {
+    const row = "%1\t0\t@2\tpane.abc\twin.def\t2\t0\t1\t";
+    expect(parseMultiplexerPaneRows(`${row}\t40\t20`)[0]).toMatchObject({ width: 40, height: 20 });
+    for (const dimensions of ["0\t20", "40\t-1", "NaN\t20", "40\t1.5", "40\t"])
+      expect(() => parseMultiplexerPaneRows(`${row}\t${dimensions}`)).toThrow(
+        WorkspaceMultiplexerError,
+      );
+  });
   it("reads one well-formed row", () => {
     const rows = parseMultiplexerPaneRows("%1\t2\t@2\tpane.abc\twin.def\t3\t1\t0\top-1");
     expect(rows).toEqual([
@@ -1034,7 +1055,64 @@ describe("the multiplexer authority", () => {
       expect(tmux.panes.find((pane) => pane.id === "%0")!.width).toBe(140);
       // The argv is the one-axis form, never the zoom form.
       const resize = tmux.calls.find((args) => args[0] === "resize-pane")!;
-      expect(resize).toEqual(["resize-pane", "-t", "%0", "-x", "140"]);
+      expect(resize).toEqual([
+        "resize-pane",
+        "-t",
+        "%0",
+        "-x",
+        "140",
+        ";",
+        "display-message",
+        "-p",
+        "-t",
+        "%0",
+        "#{pane_width}",
+      ]);
+      expect(tmux.calls).toHaveLength(2);
+    });
+
+    it("refuses a retained resize when retired during its identity read", async () => {
+      tmux.addPane("@0");
+      const run = vi.fn(async (args: readonly string[]) => {
+        const result = tmux.run(args);
+        await authority.dispose();
+        return result;
+      });
+      await expect(
+        authority.mutateResize(
+          request({
+            verb: "workspace.pane.resize",
+            semanticPaneId: "pane.one",
+            axis: "cols",
+            cells: 140,
+          }),
+          () => run,
+        ),
+      ).rejects.toMatchObject({ code: "workspace_unavailable" });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(tmux.calls.some((args) => args[0] === "resize-pane")).toBe(false);
+    });
+
+    it("does not retry a retained resize after an uncertain effect", async () => {
+      tmux.addPane("@0");
+      const run = vi.fn(async (args: readonly string[]) => {
+        const result = tmux.run(args);
+        if (args[0] === "resize-pane") throw new Error("lost receipt");
+        return result;
+      });
+      await expect(
+        authority.mutateResize(
+          request({
+            verb: "workspace.pane.resize",
+            semanticPaneId: "pane.one",
+            axis: "cols",
+            cells: 140,
+          }),
+          () => run,
+        ),
+      ).rejects.toMatchObject({ code: "mutation_unverified" });
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(tmux.calls.filter((args) => args[0] === "resize-pane")).toHaveLength(1);
     });
 
     it("reports the CLAMPED size rather than the one that was asked for", async () => {
@@ -1065,6 +1143,7 @@ describe("the multiplexer authority", () => {
       );
       expect(result).toMatchObject({ outcome: "unchanged", cells: 100 });
       expect(tmux.calls.some((args) => args[0] === "resize-pane")).toBe(false);
+      expect(tmux.calls).toHaveLength(1);
     });
 
     it("resizes the row axis with -y", async () => {
@@ -1083,6 +1162,12 @@ describe("the multiplexer authority", () => {
         "%0",
         "-y",
         "20",
+        ";",
+        "display-message",
+        "-p",
+        "-t",
+        "%0",
+        "#{pane_height}",
       ]);
     });
 

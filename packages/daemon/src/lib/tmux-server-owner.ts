@@ -165,6 +165,15 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
             (session, action) => sessionRuntimeRegistry.executeWindowLinkAction(session, action),
           );
         }
+        if (intent.verb === "workspace.pane.resize") {
+          return multiplexer.mutateResize(
+            { operationId, expectedDaemonInstanceId: generation, intent },
+            (session) => {
+              if (!sessionRuntimeRegistry) throw new Error("Session runtime unavailable");
+              return sessionRuntimeRegistry.paneResizeTransport(session);
+            },
+          );
+        }
         return multiplexer.mutate(
           { operationId, expectedDaemonInstanceId: generation, intent },
           timing,
