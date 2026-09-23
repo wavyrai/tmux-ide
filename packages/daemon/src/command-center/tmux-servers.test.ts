@@ -1,3 +1,4 @@
+import * as shellProjection from "./resources/application-shell.ts";
 import { PANE_STREAM_PROTOCOL_VERSION, tmuxServerPaneStreamPath } from "@tmux-ide/contracts";
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
@@ -11,6 +12,7 @@ const token = "private-owner-token";
 async function fixture() {
   const ownersCreated: {
     catalog: ReturnType<typeof vi.fn>;
+    discover: ReturnType<typeof vi.fn>;
     mutate: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
     issue: ReturnType<typeof vi.fn>;
@@ -44,9 +46,11 @@ async function fixture() {
         panes: request.panes,
         effectiveViewerMode: request.viewerMode,
       }));
-      ownersCreated.push({ catalog, mutate, dispose, issue });
+      const discover = vi.fn(async () => null);
+      ownersCreated.push({ catalog, mutate, dispose, issue, discover });
       return {
         catalog,
+        terminalInventoryRuntime: { discoverTerminalRuntimeSession: discover },
         multiplexerBackend: { mutate },
         dispose,
         workspaceRegistry: {
@@ -226,4 +230,29 @@ describe("owner-only scoped tmux server routes", () => {
     expect((await f.request(stale + "/pane-streams/issue", "POST", {})).status).toBe(409);
     expect(f.ownersCreated[0]!.catalog).not.toHaveBeenCalled();
   });
+});
+
+it("rejects a session replaced during scoped agent-shell discovery before projecting its data", async () => {
+  const f = await fixture();
+  const owner = f.ownersCreated[0]!;
+  const project = vi
+    .spyOn(shellProjection, "projectApplicationShellResource")
+    .mockReturnValue({ replacement: true } as never);
+  owner.discover.mockImplementationOnce(async () => {
+    owner.catalog.mockResolvedValue([
+      { sessionName: "same", liveSessionId: `live-session.${"b".repeat(20)}`, paneCount: 1 },
+    ]);
+    return {};
+  });
+  try {
+    const response = await f.request(
+      f.scope(f.a) + `/application-shell/same?liveSessionId=live-session.${"a".repeat(20)}`,
+    );
+    expect(response.status).toBe(409);
+    expect(project).not.toHaveBeenCalled();
+    expect(owner.catalog).toHaveBeenCalledTimes(2);
+  } finally {
+    project.mockRestore();
+    await f.manager.dispose();
+  }
 });

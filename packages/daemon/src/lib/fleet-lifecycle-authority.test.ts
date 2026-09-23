@@ -61,6 +61,7 @@ function rig() {
         const sessionFlag = args.indexOf("-s");
         const sessionName = sessionFlag < 0 ? undefined : args[sessionFlag + 1];
         if (sessionName) liveSessions.add(sessionName);
+        return "$42\n";
       }
       if (args[0] === "has-session") {
         const target = args[2]?.replace(/^=/u, "");
@@ -83,6 +84,7 @@ describe("FleetLifecycleAuthority", () => {
     });
 
     expect(result.outcome).toBe("created");
+    expect(result.liveSessionId).toBe("$42");
     expect(result.workspaceName).toMatch(/^review-team-[0-9a-f]{20}$/u);
     expect(workspaces).toEqual([
       expect.objectContaining({
@@ -94,6 +96,9 @@ describe("FleetLifecycleAuthority", () => {
     expect(calls[0]).toEqual([
       "new-session",
       "-d",
+      "-P",
+      "-F",
+      "#{session_id}",
       "-e",
       "COLORTERM=truecolor",
       "-e",

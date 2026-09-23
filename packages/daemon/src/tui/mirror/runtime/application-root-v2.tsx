@@ -31,14 +31,14 @@ import {
   type StartApplicationRootOptions,
 } from "./application-root-configuration.ts";
 import { createApplicationHomeCatalogOwner } from "./application-home-catalog-owner.ts";
-import { createApplicationHomeNavigationOwner } from "./application-home-agents-owner.ts";
+import { createApplicationHomeExperience } from "./application-home-experience.ts";
 import { ApplicationShellView, applicationShellKeyAction } from "./application-shell-view.tsx";
 import {
   applicationGenerationNavigationKey,
   createApplicationGenerationStarter,
 } from "./application-generation-starter.ts";
 import { createApplicationInputReadiness } from "./application-input-readiness.ts";
-import { applyApplicationAppearanceToRenderer } from "./application-theme-repaint.ts";
+import { createApplicationAppearanceRendererBinding } from "./application-theme-repaint.ts";
 import { createApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
 import {
   createApplicationHostFocusRecovery,
@@ -383,10 +383,16 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           componentKeyboardRoutes.dispose();
           sessionFocusOwner?.dispose();
         });
-        const { homeAgents, paneRename, paletteCommands, paletteCommandList, openAgent } =
-          createApplicationHomeNavigationOwner({
-            fleetCommands: machines.paletteCommands,
-            openFleet: machines.openPalette,
+        const { homeAgents, paneRename, paletteCommands, paletteCommandList, openAgent, tour } =
+          createApplicationHomeExperience({
+            machines,
+            lifecycle,
+            generation,
+            generationMachineId,
+            layoutSnapshot,
+            appearance,
+            dimensions,
+            paletteModalOpen,
             focusedPane,
             catalog: homeCatalog,
             activeSurface,
@@ -403,16 +409,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             setSurface,
             setNote: setTransientNote,
           });
-        let paintedAppearanceGeneration: number | null = null;
-        createEffect(() => {
-          const nextAppearance = appearance.appearance();
-          paintedAppearanceGeneration = applyApplicationAppearanceToRenderer(
-            renderer,
-            nextAppearance.theme,
-            nextAppearance.generation,
-            paintedAppearanceGeneration,
-          );
-        });
+        createApplicationAppearanceRendererBinding(renderer, appearance);
         createEffect(() => {
           const currentShell = shell();
           semanticViewportResize.adopt(dimensions(), currentShell.semantic, generation());
@@ -542,6 +539,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               machineSidebar={machines.sidebar}
               appearanceOwner={appearance}
               homeAgents={homeAgents.presentation}
+              onOpenTutorial={tour.open}
+              tutorialLabel={tour.label()}
               dimensions={dimensions}
               surface={activeSurface}
               semantic={() => shell().semantic}
@@ -636,6 +635,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               onWindowPresented={tuiPerfStream ? interaction.observeWindowPresentation : undefined}
               onInteraction={() => noteHostInteraction()}
             />
+            <tour.Coach />
             <ApplicationMachineOverlays
               machines={machines}
               active={rendererFocused()}

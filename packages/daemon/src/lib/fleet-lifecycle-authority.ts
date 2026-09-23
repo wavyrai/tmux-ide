@@ -139,10 +139,14 @@ export class FleetLifecycleAuthority {
       }
     }
     let created = false;
+    let liveSessionId: string | undefined;
     try {
-      this.#runTmux([
+      const createdId = this.#runTmux([
         "new-session",
         "-d",
+        "-P",
+        "-F",
+        "#{session_id}",
         ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
         "-s",
         identity.sessionName,
@@ -152,6 +156,7 @@ export class FleetLifecycleAuthority {
         cwd,
         TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND,
       ]);
+      liveSessionId = /^\$[0-9]+$/u.test(createdId.trim()) ? createdId.trim() : undefined;
       created = true;
       prepareTmuxTruecolorEnvironment(this.#runTmux, identity.sessionName);
       this.#runTmux(["set-environment", "-t", identity.sessionName, "TMUX_IDE", "1"]);
@@ -186,6 +191,7 @@ export class FleetLifecycleAuthority {
       operationId,
       daemonInstanceId: this.#daemonInstanceId,
       outcome: "created",
+      ...(liveSessionId ? { liveSessionId } : {}),
       fleetSessionId: fleetSessionIdForName(identity.sessionName),
       workspaceName: identity.workspaceName,
       displayName: input.displayName,

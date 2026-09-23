@@ -1,5 +1,5 @@
 import type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { projectApplicationShellResource } from "../../../command-center/resources/application-shell.ts";
 import {
@@ -237,4 +237,95 @@ describe("Home agent production transport", () => {
     expect(results).toEqual([[session.id]]);
     connection.close();
   });
+});
+
+it("reads scoped agents only from their exact server generation and live session", async () => {
+  const server = {
+    serverId: "tmux-server.11111111111111111111111111111111",
+    generation: "22222222-2222-4222-8222-222222222222",
+  };
+  const paths: string[] = [];
+  const transport = createApplicationHomeAgentTransport({
+    fetch: (async (input: RequestInfo | URL) => {
+      paths.push(String(input));
+      return new Response(JSON.stringify({ version: 1, server, resource: shell.resource }));
+    }) as typeof fetch,
+  });
+  const value = await transport.fetchShell(
+    daemon,
+    { ...session, server },
+    new AbortController().signal,
+  );
+  expect(value.resource).toEqual(shell.resource);
+  expect(paths).toEqual([
+    `http://127.0.0.1:4000/api/v1/tmux-servers/${server.serverId}/${server.generation}/application-shell/workspace-one?liveSessionId=${liveSessionId}`,
+  ]);
+});
+
+it("rejects a different scoped generation rather than falling back to the default server", async () => {
+  const server = {
+    serverId: "tmux-server.11111111111111111111111111111111",
+    generation: "22222222-2222-4222-8222-222222222222",
+  };
+  const transport = createApplicationHomeAgentTransport({
+    fetch: (async () =>
+      new Response(
+        JSON.stringify({
+          version: 1,
+          server: { ...server, generation: daemon.instanceId },
+          resource: shell.resource,
+        }),
+      )) as typeof fetch,
+  });
+  await expect(
+    transport.fetchShell(daemon, { ...session, server }, new AbortController().signal),
+  ).rejects.toThrow("incarnation changed");
+});
+
+it("keeps default push fast, polls only independent scopes while healthy, and cancels cadence", async () => {
+  vi.useFakeTimers();
+  const socket = new Socket();
+  const invalidations: (string | undefined)[] = [];
+  const root = {
+    ...session,
+    server: { serverId: `tmux-server.${"1".repeat(32)}`, generation: daemon.instanceId },
+  };
+  const other = {
+    ...session,
+    id: "other",
+    server: { serverId: `tmux-server.${"2".repeat(32)}`, generation: "other" },
+  };
+  const connection = createApplicationHomeAgentTransport({ createSocket: () => socket }).connect(
+    daemon,
+    [root, other],
+    { ready: () => {}, invalidate: (key) => invalidations.push(key), unavailable: () => {} },
+  );
+  try {
+    await Promise.resolve();
+    socket.emit({ type: "hello", daemon: peer, sessions: [], eventSequence: 0 });
+    socket.emit({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    invalidations.length = 0;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(invalidations).toEqual(["other"]);
+    socket.emit({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: "workspace-one",
+      resource: "application-shell",
+      revision: 1,
+    });
+    expect(invalidations).toEqual(["other", session.id]);
+    connection.close();
+    invalidations.length = 0;
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(invalidations).toEqual([]);
+  } finally {
+    connection.close();
+    vi.useRealTimers();
+  }
 });

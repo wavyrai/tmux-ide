@@ -75,6 +75,9 @@ export async function resizeTerminalPane(
     });
   };
   try {
+    // Geometry acquisition is itself a mutation of the ownership lease. A stale
+    // gesture must not take it from another client even when resize is refused.
+    if (!isCurrent()) return fail({ stage: "pre-dispatch", reason: "generation-replaced" });
     if (expected.client.ownsRuntimeAuthority?.("geometry") !== true) {
       let lease;
       try {

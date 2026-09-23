@@ -14,6 +14,9 @@ import {
 import type { HomeAgentSelectionSnapshot } from "./application-home-agent-selection.ts";
 
 export interface HomeAgentRosterProps {
+  readonly filterLabel?: string;
+  readonly onCycleMachine?: () => void;
+  readonly onToggleAttention?: () => void;
   readonly theme: SemanticThemeSnapshot;
   readonly width: number;
   readonly height: number;
@@ -46,6 +49,7 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
   const width = () => Math.max(0, Math.floor(props.width));
   const height = () => Math.max(0, Math.floor(props.height));
   const stale = (row: HomeAgentRow) =>
+    row.disabled ||
     (props.snapshot.refreshingSessionKeys ?? []).includes(row.sessionKey) ||
     (props.snapshot.unavailableSessionKeys ?? []).includes(row.sessionKey);
   const showRecovery = () =>
@@ -83,9 +87,12 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
       return "No agents reported";
     const count = props.snapshot.rows.length;
     const attention = props.snapshot.rows.filter(
-      (row) => row.attention || row.activity === "waiting" || row.activity === "failed",
+      (row) =>
+        !stale(row) && (row.attention || row.activity === "waiting" || row.activity === "failed"),
     ).length;
-    const working = props.snapshot.rows.filter((row) => row.activity === "running").length;
+    const working = props.snapshot.rows.filter(
+      (row) => !stale(row) && row.activity === "running",
+    ).length;
     return `${count} observed ${count === 1 ? "agent" : "agents"} · ${attention} ${attention === 1 ? "needs" : "need"} attention · ${working} working`;
   };
   const coverage = () =>
@@ -102,13 +109,22 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
     if (visibleCount() === 0) return "Enlarge the terminal to view agents.";
     const selected = props.snapshot.rows.find((row) => row.key === props.selection.selectedKey);
     if (selected && stale(selected))
-      return `${selected.sessionName} · last observed; waiting for fresh signals`;
-    if (width() < 44 && selected) return `${selected.sessionName} · Enter open`;
+      return `${[selected.machineLabel, selected.serverLabel, selected.sessionName].filter(Boolean).join(" / ")} · last observed; waiting for fresh signals`;
+    if (selected?.machineLabel || (width() < 44 && selected))
+      return `${[selected?.machineLabel, selected?.serverLabel, selected?.sessionName].filter(Boolean).join(" / ")} · Enter open`;
     return `${offset() + 1}–${Math.min(props.snapshot.rows.length, offset() + visibleCount())} of ${props.snapshot.rows.length} · ↑↓ select · Enter open`;
   };
   useKeyboardRoute((event) => {
     if (!props.inputActive || event.eventType !== "press" || event.ctrl || event.meta) return false;
     const key = event.name.toLowerCase();
+    const filter =
+      key === "f" ? props.onCycleMachine : key === "a" ? props.onToggleAttention : undefined;
+    if (filter) {
+      event.preventDefault();
+      event.stopPropagation();
+      filter();
+      return true;
+    }
     const retry =
       key === "r" &&
       (props.snapshot.phase === "unavailable" || props.snapshot.unavailableSessions > 0) &&
@@ -160,14 +176,19 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
       <text width={width()} height={1} flexShrink={0} fg={props.theme.roles.text.muted}>
         {clipTerminal(coverage(), width())}
       </text>
-      <box height={1} flexShrink={0} />
+      <text width={width()} height={1} flexShrink={0} fg={props.theme.roles.text.secondary}>
+        {clipTerminal(
+          props.filterLabel ? `${props.filterLabel} · f machine · a attention` : "",
+          width(),
+        )}
+      </text>
       <Show
         when={props.snapshot.rows.length > 0}
         fallback={<box height={Math.max(0, visibleCount() + 1)} flexShrink={0} />}
       >
         <text width={width()} height={1} flexShrink={0} fg={props.theme.roles.text.muted}>
           {clipTerminal(
-            `  ${padCells("AGENT", columns().agent)}${padCells("SESSION", columns().session)} ${padCells("STATUS", columns().status)}`,
+            `  ${padCells("AGENT", columns().agent)}${padCells(props.filterLabel ? "MACHINE / SERVER / SESSION" : "SESSION", columns().session)} ${padCells("STATUS", columns().status)}`,
             width(),
           )}
         </text>
@@ -195,10 +216,15 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
                     width={width()}
                     label={
                       padCells(row().name, columns().agent) +
-                      padCells(row().sessionName, columns().session)
+                      padCells(
+                        [row().machineLabel, row().serverLabel, row().sessionName]
+                          .filter(Boolean)
+                          .join(" / "),
+                        columns().session,
+                      )
                     }
                     detail={padCells(
-                      `${row().attention ? "! " : ""}${homeAgentStatusLabel(row().activity)}${stale(row()) ? "*" : ""}`,
+                      `${!stale(row()) && row().attention ? "! " : ""}${stale(row()) ? "last seen" : homeAgentStatusLabel(row().activity)}`,
                       columns().status,
                     )}
                     detailAlign="end"
@@ -206,8 +232,8 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
                     selected={props.selection.selectedKey === key}
                     focused={props.inputActive && props.selection.selectedKey === key}
                     hovered={hovered() === key}
-                    attention={row().attention}
-                    status={statusTone(row())}
+                    attention={!stale(row()) && row().attention}
+                    status={stale(row()) ? "unknown" : statusTone(row())}
                     disabled={row().paneId === null || stale(row())}
                     onActivate={(source) => {
                       if (!props.inputActive || row().paneId === null || stale(row())) return;

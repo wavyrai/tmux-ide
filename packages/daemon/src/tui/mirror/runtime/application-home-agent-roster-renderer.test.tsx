@@ -269,7 +269,8 @@ describe("flat Home agent roster", () => {
     );
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("WORKING*");
+    expect(frame).toContain("last seen");
+    expect(frame).toContain("0 working");
     expect(frame).toContain("last observed");
     await setup.mockInput.pressEnter();
     await setup.mockMouse.click(5, 4, MouseButtons.LEFT);
@@ -283,4 +284,43 @@ describe("flat Home agent roster", () => {
     expect(calls).toEqual(["retry", "more", "retry", "more"]);
     setup.renderer.destroy();
   });
+});
+
+it("exposes fleet scope and routes machine/attention filters only while Home owns input", async () => {
+  const calls: string[] = [];
+  const routes = createKeyboardRouteOwner();
+  const setup = await renderForTest(
+    () => {
+      useKeyboard((event) => routes.route(event));
+      return (
+        <KeyboardRouteProvider owner={routes}>
+          <HomeAgentRoster
+            theme={createSemanticThemeSnapshot({ mode: "light" })}
+            width={100}
+            height={12}
+            snapshot={snapshot([
+              row("Claude", { machineLabel: "Spark", serverLabel: "build", sessionName: "work" }),
+            ])}
+            selection={{ selectedKey: "Claude", scrollOffset: 0 }}
+            inputActive={true}
+            filterLabel="All machines · All agents"
+            onCycleMachine={() => calls.push("machine")}
+            onToggleAttention={() => calls.push("attention")}
+            onSelect={() => {}}
+            onMove={() => {}}
+            onViewport={() => {}}
+            onOpen={() => {}}
+          />
+        </KeyboardRouteProvider>
+      );
+    },
+    { width: 100, height: 12 },
+  );
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("Spark / build / work");
+  expect(setup.captureCharFrame()).toContain("All machines · All agents");
+  await setup.mockInput.pressKey("f");
+  await setup.mockInput.pressKey("a");
+  expect(calls).toEqual(["machine", "attention"]);
+  setup.renderer.destroy();
 });

@@ -360,6 +360,28 @@ export function createApplicationMachineNavigation(options: {
     catalog,
     agents,
     selectedMachineId: () => manager.snapshot().selectedMachineId,
+    openHomeAgent: (row: ApplicationMachineAgent, source: "keyboard" | "mouse") => {
+      if (!agents.isCurrentTarget(row.machineId, row) || row.disabled) return;
+      const session = snapshot()
+        .groups.find((group) => group.id === row.machineId)
+        ?.sessions.find(
+          (session) =>
+            session.liveSessionId === row.liveSessionId &&
+            !session.disabled &&
+            session.server?.serverId === row.server?.serverId &&
+            session.server?.generation === row.server?.generation,
+        );
+      if (!session) {
+        options.setNote("That agent session has changed. Select it again.");
+        return;
+      }
+      options.cancelOpen();
+      if (!select(row.machineId, row.liveSessionId, row.server)) return;
+      setActiveSessionKey(session.id);
+      navigation++;
+      setFocused(false);
+      return options.openAgent?.(row, source);
+    },
     openSelectedSession: (name: string, source: "keyboard" | "mouse", key?: string) =>
       open(manager.snapshot().selectedMachineId, name, source, true, undefined, undefined, key),
     automaticOpen: manager.snapshot().machines.length === 1,

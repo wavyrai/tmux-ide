@@ -5,13 +5,30 @@ description: Home, Terminals, contextual commands, and optional project views
 
 ## Home
 
-Home is the configless front door. It shows live tmux session count, aggregate
-agent status, the selected session, theme control, and the action to open
-Terminals. The machine sidebar groups local and remote sessions, with connection status for
-each machine.
+Home shows agents across your configured local and SSH machines. Each agent row
+includes its machine, tmux server and session so identical session names stay
+distinguishable. Select an available agent to open its terminal on that machine.
 
-When no tmux server exists, Home stays useful and offers a new-session action.
-The session list updates as ordinary tmux sessions appear or disappear.
+Use the machine filter to narrow the roster, or show only agents needing attention.
+Connection and observation status remain visible: disconnected machines show
+last-observed information, and their agents cannot be opened until the connection
+recovers. One unavailable machine does not prevent other machines from updating.
+
+The machine sidebar lists sessions and connection status. Home also provides
+terminal, command and theme actions. When no tmux server exists, the terminal
+browser offers a new-session action.
+
+### Learn tmux-ide
+
+Choose **Learn tmux-ide** on Home to start a guided walkthrough. It introduces
+machines, servers, sessions, windows and panes, then guides you through splitting,
+focusing and resizing panes, finding commands, changing themes and returning to
+a running session.
+
+Practice happens in a dedicated local tutorial session. Steps advance from
+observed application changes, and progress is saved locally so you can pause and
+resume. You can replay the walkthrough from Home. Your other sessions keep
+running; the walkthrough does not close them.
 
 Recent pane activity shows the latest reported reads and input actions, with
 brief matching indicators in pane headers. This includes tmux-ide actions and

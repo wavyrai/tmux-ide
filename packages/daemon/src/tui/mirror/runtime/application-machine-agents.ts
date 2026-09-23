@@ -10,7 +10,7 @@ import {
   type ApplicationHomeAgentObserver,
 } from "./application-home-agent-observer.ts";
 import { createApplicationHomeAgentTransport } from "./application-home-agent-transport.ts";
-import type { HomeAgentRow } from "./application-home-agents.ts";
+import type { HomeAgentRow, HomeAgentSnapshot } from "./application-home-agents.ts";
 
 export interface ApplicationMachineAgent extends HomeAgentRow {
   readonly id: string;
@@ -19,6 +19,7 @@ export interface ApplicationMachineAgent extends HomeAgentRow {
 }
 export interface ApplicationMachineAgentGroup {
   readonly available?: boolean;
+  readonly observation?: HomeAgentSnapshot;
   readonly machineId: string;
   readonly agents: readonly ApplicationMachineAgent[];
 }
@@ -74,6 +75,7 @@ export function createApplicationMachineAgents(options: {
         const current = !!entry && entry.binding === bindingFor(entry.handle);
         return Object.freeze({
           machineId: group.id,
+          observation: entry?.observer?.getSnapshot(),
           available:
             group.state === "ready" && current && entry?.observer?.getSnapshot().phase === "live",
           agents: Object.freeze(
@@ -184,6 +186,12 @@ export function createApplicationMachineAgents(options: {
         entry.binding === bindingFor(entry.handle) &&
         !!entry.observer?.isCurrentTarget(row)
       );
+    },
+    retry() {
+      for (const entry of entries.values()) entry.observer?.retry();
+    },
+    loadMore() {
+      for (const entry of entries.values()) entry.observer?.loadMore();
     },
     start() {
       if (started || disposed) return;

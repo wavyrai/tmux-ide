@@ -35,7 +35,12 @@ export interface ApplicationHomeSurfaceProps {
   readonly theme: SemanticThemeSnapshot;
   readonly onOpenTerminals: () => void;
   readonly onOpenCommands: () => void;
+  readonly onOpenTutorial?: () => void;
+  readonly tutorialLabel?: string;
   readonly onCycleTheme?: () => void;
+  readonly agentFilterLabel?: string;
+  readonly onCycleAgentMachine?: () => void;
+  readonly onToggleAgentAttention?: () => void;
   readonly agentRoster?: HomeAgentSnapshot;
   readonly recentPaneActivity?: readonly InteractionReceipt[];
   readonly agentSelection?: HomeAgentSelectionSnapshot;
@@ -74,10 +79,11 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
     naturalButtonWidth("Open terminals", "F2") +
       naturalButtonWidth("Commands", "F5") +
       (props.onCycleTheme ? naturalButtonWidth(themeLabel()) + 2 : 0) +
+      (props.onOpenTutorial ? naturalButtonWidth(props.tutorialLabel ?? "Learn tmux-ide") + 2 : 0) +
       2;
   const reservedRows = () =>
     (spacious() ? 4 : 2) +
-    (actionsInRow() ? 1 : props.onCycleTheme ? 3 : 2) +
+    (actionsInRow() ? 1 : 2 + (props.onCycleTheme ? 1 : 0) + (props.onOpenTutorial ? 1 : 0)) +
     (spacious() ? 1 : 0) +
     (props.note ? (spacious() ? 2 : 1) : 0);
   const recentActivity = () =>
@@ -156,6 +162,9 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
         >
           {(snapshot) => (
             <HomeAgentRoster
+              filterLabel={props.agentFilterLabel}
+              onCycleMachine={props.onCycleAgentMachine}
+              onToggleAttention={props.onToggleAgentAttention}
               theme={props.theme}
               width={bodyWidth()}
               height={rosterHeight()}
@@ -220,6 +229,16 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
             width={buttonWidth("Commands", "F5")}
             onPress={props.onOpenCommands}
           />
+          <Show when={props.onOpenTutorial}>
+            {(open) => (
+              <TuiButton
+                theme={props.theme}
+                label={props.tutorialLabel ?? "Learn tmux-ide"}
+                width={buttonWidth(props.tutorialLabel ?? "Learn tmux-ide")}
+                onPress={open()}
+              />
+            )}
+          </Show>
           <Show when={props.onCycleTheme}>
             {(onCycleTheme) => (
               <TuiButton

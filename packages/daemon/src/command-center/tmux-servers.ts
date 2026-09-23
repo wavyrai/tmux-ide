@@ -262,6 +262,17 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
           workspace.sessionName,
           c.req.raw.signal,
         );
+        // Discovery can yield while a same-name session is replaced. Revalidate
+        // the captured incarnation before publishing agent metadata as current.
+        const currentSessions = await owner.catalog();
+        if (
+          !currentSessions.some(
+            (row) =>
+              row.sessionName === workspace.sessionName &&
+              row.liveSessionId === c.req.query("liveSessionId"),
+          )
+        )
+          throw new TmuxServerScopeError("stale-generation");
         return snapshot ? projectApplicationShellResource(snapshot) : null;
       });
       return resource

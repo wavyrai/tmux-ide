@@ -557,3 +557,56 @@ it("retains the exact attached default session for agent jumps but resets a diff
   owner.sidebar.onOpenAgent?.("local", "same", "pane", "mouse");
   expect(callbacks.resetWorkspace).toHaveBeenCalledOnce();
 });
+
+it("opens Home agents through exact server identity and rejects replaced generations", () => {
+  const first = { serverId: `tmux-server.${"a".repeat(32)}`, generation: "first" };
+  const second = { serverId: `tmux-server.${"b".repeat(32)}`, generation: "second" };
+  const row = {
+    id: "agent",
+    machineId: "local",
+    disabled: false,
+    key: "key",
+    sessionKey: "session",
+    sessionName: "same",
+    liveSessionId: "same-live-id",
+    daemonInstanceId: "second",
+    agentId: "agent",
+    paneId: "same-pane-id",
+    name: "Codex",
+    harness: "codex",
+    activity: "running" as const,
+    attention: false,
+    projectName: "project",
+    server: second,
+  };
+  state.agentGroups = [{ machineId: "local", agents: [row] }];
+  const { owner, callbacks } = navigation();
+  const publish = (replacement = false) =>
+    state.listener?.({
+      selectedMachineId: "local",
+      groups: [
+        {
+          id: "local",
+          label: "Local",
+          state: "ready",
+          sessions: [first, replacement ? { ...second, generation: "replacement" } : second].map(
+            (server) => ({
+              id: server.serverId,
+              name: "same",
+              liveSessionId: row.liveSessionId,
+              server,
+              paneCount: 1,
+              disabled: false,
+            }),
+          ),
+        },
+      ],
+    });
+  publish();
+  owner.openHomeAgent(row, "mouse");
+  expect(callbacks.resetWorkspace).toHaveBeenCalledWith("local", row.liveSessionId, second);
+  expect(callbacks.openAgent).toHaveBeenCalledWith(row, "mouse");
+  publish(true);
+  owner.openHomeAgent(row, "mouse");
+  expect(callbacks.openAgent).toHaveBeenCalledTimes(1);
+});

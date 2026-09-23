@@ -536,6 +536,8 @@ describe("production ApplicationShellView", () => {
             onOpenSession={() => undefined}
             onSetPaletteOpen={(open, source) => events.push(`${source}:palette:${open}`)}
             onCycleTheme={() => events.push("mouse:theme")}
+            onOpenTutorial={() => events.push("mouse:tutorial")}
+            tutorialLabel="Learn tmux-ide"
             onSelectPane={() => undefined}
             onResizePreview={() => undefined}
             onResizePane={() => undefined}
@@ -554,6 +556,7 @@ describe("production ApplicationShellView", () => {
       expect(frame).toContain("Open terminals F2");
       expect(frame).toContain("Commands F5");
       expect(frame).toContain("Theme: dark");
+      expect(frame).toContain("Learn tmux-ide");
       expect(frame).not.toContain("website");
       expect(frame).not.toContain("░████████");
       expect(frame).not.toContain("▀█▀ █▄█ █ █ ▀▄▀");
@@ -568,10 +571,60 @@ describe("production ApplicationShellView", () => {
       await setup.mockMouse.click(rows[terminalsY]!.indexOf("Open terminals") + 2, terminalsY);
       await setup.mockMouse.click(rows[commandsY]!.indexOf("Commands") + 2, commandsY);
       await setup.mockMouse.click(rows[themeY]!.indexOf("Theme") + 2, themeY);
-      expect(events).toEqual(["mouse:surface:terminals", "mouse:palette:true", "mouse:theme"]);
+      const tutorialY = rows.findIndex((row) => row.includes("Learn tmux-ide"));
+      expect(tutorialY).toBeGreaterThanOrEqual(0);
+      await setup.mockMouse.click(rows[tutorialY]!.indexOf("Learn tmux-ide") + 2, tutorialY);
+      expect(events).toEqual([
+        "mouse:surface:terminals",
+        "mouse:palette:true",
+        "mouse:theme",
+        "mouse:tutorial",
+      ]);
       setup.renderer.destroy();
     },
   );
+
+  it("opens the tutorial from Home before a terminal session exists", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "light" });
+    let opened = 0;
+    const setup = await renderForTest(
+      () => (
+        <ApplicationShellView
+          dimensions={() => ({ width: 80, height: 24 })}
+          surface={() => "home"}
+          semantic={() => null}
+          generationStatus={() => "idle"}
+          sessions={[]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => null}
+          layout={terminalLayout}
+          focusedPane={() => null}
+          theme={theme}
+          palette={createTerminalPaletteProjection(theme)}
+          onOpenSurface={() => undefined}
+          onOpenSession={() => undefined}
+          onSetPaletteOpen={() => undefined}
+          onOpenTutorial={() => opened++}
+          tutorialLabel="Learn tmux-ide"
+          onSelectPane={() => undefined}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+        />
+      ),
+      { width: 80, height: 24 },
+    );
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expectFrameBounds(frame, 80, 24);
+    const rows = frame.split("\n");
+    const y = rows.findIndex((row) => row.includes("Learn tmux-ide"));
+    expect(y).toBeGreaterThanOrEqual(0);
+    await setup.mockMouse.click(rows[y]!.indexOf("Learn tmux-ide") + 2, y);
+    expect(opened).toBe(1);
+    setup.renderer.destroy();
+  });
 
   it("repaints every Home control background across a live theme switch", async () => {
     const dark = createSemanticThemeSnapshot({ mode: "dark" });

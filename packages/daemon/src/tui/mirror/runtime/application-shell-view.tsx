@@ -117,6 +117,8 @@ export interface ApplicationShellViewProps {
   readonly onCreateWindow?: () => void;
   readonly onCreateSession?: () => void;
   readonly onCycleTheme?: () => void;
+  readonly onOpenTutorial?: () => void;
+  readonly tutorialLabel?: string;
   readonly onBeginPaneRename?: (paneId: string, currentName: string) => void;
   readonly onCancelPaneRename?: () => void;
   readonly onSubmitPaneRename?: () => void;
@@ -270,6 +272,8 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
           onPaletteActivate={props.onPaletteActivate}
           onCreateSession={props.onCreateSession}
           onCycleTheme={props.onCycleTheme}
+          onOpenTutorial={props.onOpenTutorial}
+          tutorialLabel={props.tutorialLabel}
         />
       }
     >
@@ -456,6 +460,8 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
                   onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
                   onCycleTheme={props.onCycleTheme}
+                  onOpenTutorial={props.onOpenTutorial}
+                  tutorialLabel={props.tutorialLabel}
                 />
               </Show>
               <box

@@ -27,6 +27,9 @@ import {
 
 export type ApplicationHomeAgentPresentation = Pick<
   ApplicationHomeSurfaceProps,
+  | "agentFilterLabel"
+  | "onCycleAgentMachine"
+  | "onToggleAgentAttention"
   | "agentRoster"
   | "agentSelection"
   | "agentInputActive"
@@ -197,6 +200,7 @@ export function createApplicationHomeAgentsOwner(options: {
 
 /** Compose Home navigation with competing chrome intents; physical input stays in the root. */
 export function createApplicationHomeNavigationOwner(options: {
+  readonly fleetHome?: ApplicationHomeAgentPresentation;
   readonly fleetCommands?: () => readonly ApplicationPaletteCommand[];
   readonly openFleet?: (
     command: Exclude<ApplicationPaletteCommand, string>,
@@ -236,7 +240,7 @@ export function createApplicationHomeNavigationOwner(options: {
   );
   const homeAgents = createApplicationHomeAgentsOwner({
     catalog: options.catalog.snapshot,
-    active: () => options.activeSurface() === "home",
+    active: () => !options.fleetHome && options.activeSurface() === "home",
     inputActive: () =>
       options.activeSurface() === "home" &&
       !paneRename.draft() &&
@@ -307,5 +311,11 @@ export function createApplicationHomeNavigationOwner(options: {
     onNavigationIntent: homeAgents.cancel,
   });
   const paletteCommandList = paletteCommands.commands;
-  return { homeAgents, paneRename, paletteCommands, paletteCommandList, openAgent };
+  return {
+    homeAgents: options.fleetHome ? { ...homeAgents, presentation: options.fleetHome } : homeAgents,
+    paneRename,
+    paletteCommands,
+    paletteCommandList,
+    openAgent,
+  };
 }

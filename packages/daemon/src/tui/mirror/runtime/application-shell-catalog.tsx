@@ -71,6 +71,8 @@ export interface ApplicationCatalogShellProps {
   ) => void;
   readonly onCreateSession?: () => void;
   readonly onCycleTheme?: () => void;
+  readonly onOpenTutorial?: () => void;
+  readonly tutorialLabel?: string;
 }
 
 const CATALOG_VIEWS: readonly ShellChromeView[] = [
@@ -462,6 +464,8 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                 onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
                 onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
                 onCycleTheme={props.onCycleTheme}
+                onOpenTutorial={props.onOpenTutorial}
+                tutorialLabel={props.tutorialLabel}
               />
             </Show>
           </box>

@@ -1,6 +1,8 @@
 import { readApplicationDaemonInfo as readCanonicalDaemonInfo } from "./application-daemon-authority.ts";
 import {
   ApplicationShellResourceV2SchemaZ,
+  ApplicationShellProjectionInputV2SchemaZ,
+  TmuxServerScopeSchemaZ,
   DaemonEventClientFrameSchemaZ,
   DaemonEventServerFrameSchemaZ,
   WorkspaceCatalogResourceV3SchemaZ,
@@ -66,6 +68,25 @@ export function createApplicationHomeAgentTransport(
         if (!response.ok) throw new Error(`Agent observation returned HTTP ${response.status}.`);
         return response.json();
       };
+      if (session.server) {
+        const server = TmuxServerScopeSchemaZ.parse(session.server);
+        const base = `/api/v1/tmux-servers/${server.serverId}/${server.generation}`;
+        const raw = await get(
+          `${base}/application-shell/${encodeURIComponent(session.workspaceName ?? session.name)}?liveSessionId=${encodeURIComponent(session.liveSessionId ?? "")}`,
+        );
+        const actual = TmuxServerScopeSchemaZ.parse(raw.server);
+        if (
+          raw.version !== 1 ||
+          actual.serverId !== server.serverId ||
+          actual.generation !== server.generation
+        )
+          throw new Error("Agent server incarnation changed.");
+        return {
+          version: 2,
+          daemon,
+          resource: ApplicationShellProjectionInputV2SchemaZ.parse(raw.resource),
+        };
+      }
       const shell = ApplicationShellResourceV2SchemaZ.parse(
         await get(`/api/project/${encodeURIComponent(session.name)}/application-shell?version=2`),
       );
@@ -87,6 +108,54 @@ export function createApplicationHomeAgentTransport(
       return shell;
     },
     connect(daemon, sessions, handlers) {
+      const scoped = sessions.filter((session) => session.server);
+      if (scoped.length > 0) {
+        // Scoped session events currently carry topology, not agent activity.
+        // Refresh metadata with a bounded cadence; never attach terminal streams.
+        // Keep legacy observations independent from scoped owner availability.
+        const pushed = sessions.filter(
+          (session) => !session.server || session.server.generation === daemon.instanceId,
+        );
+        let closed = false;
+        let pushHealthy = false;
+        const interval = setInterval(() => {
+          if (!closed)
+            for (const session of scoped) {
+              if (!pushHealthy || session.server?.generation !== daemon.instanceId)
+                handlers.invalidate(session.id);
+            }
+        }, 5_000);
+        interval.unref?.();
+        const connection = pushed.length
+          ? createApplicationHomeAgentTransport(options).connect(
+              daemon,
+              pushed.map((session) => ({ ...session, server: undefined })),
+              {
+                ...handlers,
+                // The root event stream is advisory for scoped reads. Failure must
+                // not stall independent scoped owners or suppress their rows.
+                ready: (unavailable) => {
+                  pushHealthy = unavailable.length === 0;
+                  if (!closed) for (const session of pushed) handlers.invalidate(session.id);
+                },
+                unavailable: () => {
+                  pushHealthy = false;
+                  if (!closed) for (const session of pushed) handlers.invalidate(session.id);
+                },
+              },
+            )
+          : null;
+        queueMicrotask(() => {
+          if (!closed) handlers.ready([]);
+        });
+        return {
+          close() {
+            closed = true;
+            clearInterval(interval);
+            connection?.close();
+          },
+        };
+      }
       let closed = false;
       let failed = false;
       const sockets: HomeAgentEventSocket[] = [];

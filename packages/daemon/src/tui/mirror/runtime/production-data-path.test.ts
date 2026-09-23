@@ -388,6 +388,27 @@ describe("production OpenTUI v2 data path", () => {
     expect(productionGraph.sourceByFile.get(serverConnectionPath)).not.toMatch(
       /\b(?:createWorkspaceClient|createTerminalFastLane|setInterval|requestRender)\s*\(/u,
     );
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(154);
+    // Fleet Home and the walkthrough add eight explicit feature modules, including
+    // the existing state-home path helper newly reached by tour persistence. They
+    // compose resident observers/actions and must not create another terminal lane.
+    const learningModules = [
+      "packages/daemon/src/lib/state-home.ts",
+      ...[
+        "application-home-fleet.ts",
+        "application-home-experience.ts",
+        "application-guided-tour-integration.tsx",
+        "application-guided-tour-owner.ts",
+        "guided-tour-storage.ts",
+        "guided-tour.ts",
+        "guided-tour.tsx",
+      ].map((name) => `packages/daemon/src/tui/mirror/runtime/${name}`),
+    ];
+    for (const path of learningModules) {
+      expect(authorityDataPathFiles).toContain(path);
+      expect(productionGraph.sourceByFile.get(path)).not.toMatch(
+        /\b(?:createWorkspaceClient|createTerminalFastLane|createOpenTuiSessionOwner|TerminalFastLaneRendererAdapter|openSshDaemonTransport)\s*\(/u,
+      );
+    }
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(154 + learningModules.length);
   });
 });

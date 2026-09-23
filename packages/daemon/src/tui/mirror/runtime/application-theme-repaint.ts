@@ -1,3 +1,5 @@
+import { createEffect } from "solid-js";
+import type { ApplicationAppearanceOwner } from "./application-appearance-owner.ts";
 import type { createCliRenderer } from "@opentui/core";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 
@@ -42,4 +44,21 @@ export function applyApplicationAppearanceToRenderer(
   if (paintedGeneration !== null && generation !== paintedGeneration)
     requestApplicationThemeRepaint(renderer);
   return generation;
+}
+
+/** Bind the complete appearance publication to one renderer transaction. */
+export function createApplicationAppearanceRendererBinding(
+  renderer: Renderer,
+  appearance: Pick<ApplicationAppearanceOwner, "appearance">,
+): void {
+  let paintedGeneration: number | null = null;
+  createEffect(() => {
+    const next = appearance.appearance();
+    paintedGeneration = applyApplicationAppearanceToRenderer(
+      renderer,
+      next.theme,
+      next.generation,
+      paintedGeneration,
+    );
+  });
 }

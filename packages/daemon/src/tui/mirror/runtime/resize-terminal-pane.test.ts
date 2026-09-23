@@ -72,6 +72,23 @@ describe("resizeTerminalPane", () => {
     });
   });
 
+  it("does not request geometry authority for a runtime that is already retired", async () => {
+    const rig = fixture();
+    rig.setCurrent(null);
+    const failures = vi.fn();
+    await expect(
+      resizeTerminalPane(
+        rig.target,
+        rig.current,
+        { operationId, semanticPaneId: "pane-a", axis: "cols", cells: 41 },
+        failures,
+      ),
+    ).resolves.toBeNull();
+    expect(rig.client.requestAuthority).not.toHaveBeenCalled();
+    expect(rig.client.dispatch).not.toHaveBeenCalled();
+    expect(failures).toHaveBeenCalledWith({ stage: "pre-dispatch", reason: "generation-replaced" });
+  });
+
   it("preserves an exact native row request through the production wrapper", async () => {
     const { client, target, current } = fixture();
     client.dispatch.mockResolvedValueOnce({

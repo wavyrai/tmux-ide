@@ -42,6 +42,11 @@ export const WorkspaceSessionCreateResultSchemaZ = z
     operationId: z.uuid(),
     daemonInstanceId: z.uuid(),
     outcome: z.enum(["created", "adopted", "replayed"]),
+    /** Captured atomically by new-session; absent from older daemons and adopted routes. */
+    liveSessionId: z
+      .string()
+      .regex(/^\$[0-9]+$/u)
+      .optional(),
     fleetSessionId: FleetSessionIdSchemaZ,
     /** Canonical registered route; displayName is presentation only. */
     workspaceName: DesktopWorkspaceNameSchemaZ,
