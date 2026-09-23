@@ -56,10 +56,13 @@ const LIFECYCLE_RUNTIME_PHASES = new Set([
 ]);
 
 const lifecycleRecords = new Map<string, string>();
+let closing = false;
+let closePromise: Promise<void> | null = null;
 
 function serializeMark(phase: string, details?: Readonly<Record<string, unknown>>): string | null {
   if (
     !stream ||
+    closing ||
     (!tuiPerfStream &&
       !LIFECYCLE_PHASES.has(phase) &&
       !(
@@ -160,10 +163,19 @@ async function flushTuiPerfMarks(): Promise<void> {
   });
 }
 
-export async function closeTuiPerfMarks(): Promise<void> {
-  if (!stream) return;
-  await flushTuiPerfMarks();
-  await new Promise<void>((resolveClose) => stream.end(resolveClose));
-  stream.off("error", fail);
-  stream.off("drain", drain);
+export function closeTuiPerfMarks(): Promise<void> {
+  if (closePromise) return closePromise;
+  // Renderer/runtime callbacks can still emit marks during asynchronous teardown.
+  // Stop accepting them before yielding, and let every caller await one close.
+  closing = true;
+  closePromise = (async () => {
+    if (!stream) return;
+    await flushTuiPerfMarks();
+    // No drain callback may enqueue another critical record after end().
+    stream.off("drain", drain);
+    await new Promise<void>((resolveClose) => stream.end(resolveClose));
+    // Keep the error listener through the underlying file descriptor teardown;
+    // an asynchronous close error must remain a logging failure, not a crash.
+  })();
+  return closePromise;
 }

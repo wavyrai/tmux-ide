@@ -211,6 +211,8 @@ const checks = [
       "run",
       "src/tui/compiled.test.ts",
       "src/lib/__tests__/tui-binary.test.ts",
+      "src/tui/mirror/runtime/application-performance-log.test.ts",
+      "src/tui/mirror/runtime/bounded-performance-record-writer.test.ts",
     ],
   },
   {

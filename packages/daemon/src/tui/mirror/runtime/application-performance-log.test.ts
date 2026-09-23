@@ -67,3 +67,26 @@ it.each([false, true])(
     if (explicit) await expect(readFile(automatic)).rejects.toThrow();
   },
 );
+
+it("rejects shutdown marks and closes a real file stream exactly once", async () => {
+  directory = await mkdtemp(join(tmpdir(), "tmi-log-close-"));
+  const path = join(directory, "trace.jsonl");
+  vi.stubEnv("TMUX_IDE_TUI_PERF_LOG", path);
+  vi.resetModules();
+  logger = await import("./application-performance-log.ts");
+  logger.tuiPerfMark("before-close");
+  const closing = logger.closeTuiPerfMarks();
+  logger.tuiPerfMark("during-close");
+  expect(logger.tuiPerfCriticalMark("late", "critical-during-close")).toBe(false);
+  await Promise.all([closing, logger.closeTuiPerfMarks()]);
+  logger.tuiPerfMark("after-close");
+  expect(logger.tuiPerfCriticalMark("late", "critical-after-close")).toBe(false);
+  await logger.closeTuiPerfMarks();
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(logger.tuiPerfDiagnostics().failed).toBe(false);
+  const records = (await readFile(path, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(records.map((record) => record.phase)).toEqual(["before-close"]);
+});
