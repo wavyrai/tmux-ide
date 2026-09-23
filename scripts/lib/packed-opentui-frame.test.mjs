@@ -1,7 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { frameShowsTerminalFocus } from "./packed-opentui-frame.mjs";
+import { frameShowsTerminalFocus, frameShowsSelectedHomeAgent } from "./packed-opentui-frame.mjs";
+
+const narrowHome = `• Codex [WORKING]
+  journey-beta
+  1 observed agent · 0 need attention · 1 working
+  AGENT                 MACHINE / SERVER / SE… STATUS
+  › Codex               Local / Default / jou… WORKING
+  Local / Default / journey-beta · Enter open`;
+
+test("accepts a truncated Home location with its exact selected-row footer", () => {
+  assert.equal(frameShowsSelectedHomeAgent(narrowHome, "Codex", "journey-beta"), true);
+  assert.equal(
+    frameShowsSelectedHomeAgent(
+      narrowHome.replace("jou…", "journey-beta"),
+      "Codex",
+      "journey-beta",
+    ),
+    true,
+  );
+});
+
+test("requires the Home roster row, working status and exact selected location", () => {
+  for (const frame of [
+    narrowHome.replace("› Codex", "› Other"),
+    narrowHome.replace("jou… WORKING", "jou… IDLE"),
+    narrowHome.replace("journey-beta · Enter open", "journey-other · Enter open"),
+    narrowHome.replace("  › Codex               Local / Default / jou… WORKING\n", ""),
+  ])
+    assert.equal(frameShowsSelectedHomeAgent(frame, "Codex", "journey-beta"), false);
+});
 
 test("accepts the wide terminal-focus footer", () => {
   assert.equal(frameShowsTerminalFocus("Terminals · focus terminal · ready"), true);

@@ -16,3 +16,22 @@ export function frameShowsTerminalFocus(frame) {
     (/●❯/u.test(frame) && /\S+\s+Live tmux session discovered\b/u.test(frame))
   );
 }
+
+/** The selected Home row's footer keeps its full location when its column truncates. */
+export function frameShowsSelectedHomeAgent(frame, agentLabel, sessionName) {
+  const lines = frame.split("\n");
+  const header = lines.findIndex(
+    (line) =>
+      line.includes("AGENT") && line.includes("MACHINE / SERVER") && line.includes("STATUS"),
+  );
+  if (!frame.includes("1 observed agent") || header < 0) return false;
+  const rows = lines.slice(header + 1);
+  return (
+    rows.some(
+      (line) =>
+        line.includes(`› ${agentLabel} `) &&
+        line.includes("Local / Default /") &&
+        /\bWORKING\s*$/u.test(line),
+    ) && rows.some((line) => line.trim() === `Local / Default / ${sessionName} · Enter open`)
+  );
+}

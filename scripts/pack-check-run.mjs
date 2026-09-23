@@ -32,7 +32,10 @@ import {
   runPackedInstallScenarios,
   verifyPackedPostinstallLinks,
 } from "./lib/packed-install-scenarios.mjs";
-import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
+import {
+  frameShowsTerminalFocus,
+  frameShowsSelectedHomeAgent,
+} from "./lib/packed-opentui-frame.mjs";
 import { diagnosePackedEmpty } from "./lib/packed-empty-diagnostics.mjs";
 import { diagnosePackedHome } from "./lib/packed-home-diagnostics.mjs";
 import {
@@ -1254,13 +1257,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       10_000,
       () => {
         const frame = capture(one.targetPane);
-        return (
-          frame.includes("1 observed agent") &&
-          frame.includes("STATUS") &&
-          frame
-            .split("\n")
-            .some((line) => line.includes(agentClickLabel) && line.includes("journey-beta"))
-        );
+        return frameShowsSelectedHomeAgent(frame, agentClickLabel, "journey-beta");
       },
       one.diagnostics,
     );
