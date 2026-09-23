@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { createEffect, createMemo, Show, type Accessor } from "solid-js";
 import { createApplicationGuidedTourOwner } from "./application-guided-tour-owner.ts";
-import { GuidedTourCoach } from "./guided-tour.tsx";
+import { GuidedTourCoach } from "./guided-tour-coach.tsx";
 import type { GuidedTourPractice } from "./guided-tour.ts";
 import { createFleetSession } from "./fleet-lifecycle-client.ts";
 import { applicationMachineAuthorityManager } from "./application-machine-authority.ts";

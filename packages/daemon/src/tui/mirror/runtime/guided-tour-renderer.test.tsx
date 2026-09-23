@@ -1,7 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
 import { describe, expect, it } from "bun:test";
-import { GuidedTourCoach } from "./guided-tour.tsx";
+import { GuidedTourCoach } from "./guided-tour-coach.tsx";
 import { initialGuidedTourState } from "./guided-tour.ts";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import { expectFrameBounds, renderForTest } from "../testing/renderer-harness.test.ts";

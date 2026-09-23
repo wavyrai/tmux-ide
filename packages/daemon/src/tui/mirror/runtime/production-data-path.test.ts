@@ -400,7 +400,7 @@ describe("production OpenTUI v2 data path", () => {
         "application-guided-tour-owner.ts",
         "guided-tour-storage.ts",
         "guided-tour.ts",
-        "guided-tour.tsx",
+        "guided-tour-coach.tsx",
       ].map((name) => `packages/daemon/src/tui/mirror/runtime/${name}`),
     ];
     for (const path of learningModules) {
