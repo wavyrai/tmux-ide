@@ -48,6 +48,7 @@ export function observedGuidedTourEvent(
     return null;
   if (
     state.step === "split" &&
+    previous.panes.length > 0 &&
     current.panes.length > previous.panes.length &&
     previous.panes.every((old) => current.panes.some((p) => p.id === old.id)) &&
     current.panes.some((p) => !previous.panes.some((old) => old.id === p.id))

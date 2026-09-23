@@ -26,6 +26,15 @@ const before: GuidedTourObservation = {
   theme: "dark",
 };
 describe("tour observed evidence", () => {
+  it("does not count initial layout delivery or a window switch as a split", () => {
+    const split = { ...state, step: "split" as const };
+    const one = { ...before, panes: [before.panes[0]!] };
+    expect(observedGuidedTourEvent(split, one, before)?.type).toBe("split-confirmed");
+    expect(
+      observedGuidedTourEvent(split, one, { ...before, panes: [before.panes[1]!] }),
+    ).toBeNull();
+    expect(observedGuidedTourEvent(split, { ...one, panes: [] }, before)).toBeNull();
+  });
   it("can finish leaving when a theme was selected from Home", () => {
     const home = { ...before, surface: "home" as const, theme: "light" };
     expect(
