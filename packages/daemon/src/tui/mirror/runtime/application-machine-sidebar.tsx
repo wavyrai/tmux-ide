@@ -306,10 +306,14 @@ export function ApplicationMachineSidebar(props: {
       props.model.onSelectMachine(row.group.id, source);
     else toggle(row.group);
   };
+  const sectionGap = (row: Row) =>
+    !row.session && !row.agent && !row.server && row.group.id !== props.model.groups()[0]?.id
+      ? 1
+      : 0;
+  const rowHeight = (row: Row) =>
+    (row.agent ? (row.agentHeading ? 3 : 2) : row.serverHeading ? 2 : 1) + sectionGap(row);
   const revealFocusedRow = () => {
     if (!focused() || !scroll) return;
-    const rowHeight = (row: Row) =>
-      row.agent ? (row.agentHeading ? 3 : 2) : row.serverHeading ? 2 : 1;
     const y = rows()
       .slice(0, index())
       .reduce((sum, row) => sum + rowHeight(row), 0);
@@ -527,10 +531,11 @@ export function ApplicationMachineSidebar(props: {
             return (
               <box
                 width={Math.max(1, props.width - 1)}
-                height={row.agent ? (row.agentHeading ? 3 : 2) : row.serverHeading ? 2 : 1}
+                height={rowHeight(row)}
                 flexShrink={0}
                 flexDirection="column"
               >
+                <box height={sectionGap(row)} flexShrink={0} />
                 <Show when={row.serverHeading}>
                   <NavigationRow
                     theme={props.theme}
@@ -568,19 +573,13 @@ export function ApplicationMachineSidebar(props: {
                     row.server
                       ? "  "
                       : row.agent
-                        ? active(row)
-                          ? row.agent.attention
-                            ? "›!"
-                            : "›"
-                          : row.agent.attention
-                            ? "!"
-                            : "•"
+                        ? row.agent.attention
+                          ? "!"
+                          : " "
                         : row.session
                           ? props.model.favorites?.().includes(row.session.id)
                             ? " ★"
-                            : active(row)
-                              ? " ›"
-                              : "  "
+                            : "  "
                           : collapsed().has(preferenceKey(row.group))
                             ? "▸"
                             : "▾"
@@ -593,7 +592,7 @@ export function ApplicationMachineSidebar(props: {
                       : row.agent
                         ? row.group.state !== "ready" || row.agent.disabled
                           ? "unavailable"
-                          : `[${terminalAgentStatusLabel(row.agent.activity)}]`
+                          : terminalAgentStatusLabel(row.agent.activity).toLowerCase()
                         : row.session
                           ? row.group.state !== "ready" || row.session.disabled
                             ? "unavailable"
@@ -604,7 +603,11 @@ export function ApplicationMachineSidebar(props: {
                   }
                   selected={Boolean((row.session || row.agent) && active(row))}
                   focused={Boolean(focused() && row.key === selectedKey())}
-                  attention={row.agent?.attention ?? activity(row).kind === "attention"}
+                  status={
+                    (row.agent?.attention ?? activity(row).kind === "attention")
+                      ? "blocked"
+                      : undefined
+                  }
                   onActivate={(source) => activate(row, source)}
                 />
                 <Show when={row.agent}>
@@ -648,8 +651,9 @@ export function ApplicationMachineSidebar(props: {
         <NavigationRow
           theme={props.theme}
           id="machine:switcher"
-          label="Search fleet (F6)"
-          marker="/"
+          label="Sessions"
+          detail="F6"
+          marker=" "
           width={props.width}
           onActivate={() => props.model.onOpenSwitcher?.()}
         />
@@ -696,8 +700,9 @@ export function ApplicationMachineSidebar(props: {
           <NavigationRow
             theme={props.theme}
             id="machine:add"
-            label="Add machine (A)"
-            marker="+"
+            label="Add machine"
+            detail="A"
+            marker=" "
             width={props.width}
             onActivate={add}
           />

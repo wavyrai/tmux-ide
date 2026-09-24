@@ -122,10 +122,14 @@ describe("machine sidebar", () => {
     );
     const selected = async () => {
       await setup.renderOnce();
+      const bg = createSemanticThemeSnapshot({ mode: "dark" })
+        .roles.selection.selection.toInts()
+        .join(",");
       return setup
-        .captureCharFrame()
-        .split("\n")
-        .filter((line) => line.includes("agent") && line.includes("›"));
+        .captureSpans()
+        .lines.flatMap((line) => line.spans)
+        .filter((span) => span.text.includes("agent") && span.bg.toInts().join(",") === bg)
+        .map((span) => span.text);
     };
     expect((await selected())[0]).toContain("local agent");
     expect((await selected()).length).toBe(1);
@@ -297,9 +301,14 @@ for (const surface of ["home", "terminals"] as const) {
     );
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("Machines");
-    expect(frame).toContain("My server");
-    expect(frame.split("\n").filter((line) => line.includes("Machines"))).toHaveLength(1);
+    if (surface === "home") {
+      expect(frame).not.toContain("Machines");
+      expect(frame).not.toContain("My server");
+      expect(frame).toContain("Your agents");
+    } else {
+      expect(frame).toContain("My server");
+      expect(frame.split("\n").filter((line) => line.includes("Machines"))).toHaveLength(1);
+    }
     setup.renderer.destroy();
   });
 }
@@ -353,7 +362,7 @@ it("retains agents across machine selection and routes identical pane IDs only t
       .findIndex((line) => line.includes("server agent"));
   expect(setup.captureCharFrame()).toContain("local agent");
   expect(setup.captureCharFrame()).toContain("server agent");
-  expect(setup.captureCharFrame()).toContain("WORKING");
+  expect(setup.captureCharFrame()).toContain("working");
   setActiveMachine("server");
   await setup.renderOnce();
   expect(setup.captureCharFrame()).toContain("local agent");

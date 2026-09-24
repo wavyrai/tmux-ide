@@ -96,7 +96,7 @@ describe("compact production Home presentation", () => {
     it.each([
       [80, 24],
       [120, 40],
-    ])("keeps a left-aligned information hierarchy at %ix%i in " + mode, async (width, height) => {
+    ])("centers a bounded information column at %ix%i in " + mode, async (width, height) => {
       const props = homeProps({ width, height, theme: createSemanticThemeSnapshot({ mode }) });
       const setup = await renderForTest(() => <ApplicationHomeSurface {...props} />, {
         width,
@@ -106,10 +106,11 @@ describe("compact production Home presentation", () => {
       const frame = setup.captureCharFrame();
       expectFrameBounds(frame, width, height);
       const lines = frame.split("\n").map((line) => line.trimEnd());
-      expect(lines[1]).toBe("  tmux-ide");
-      expect(lines[3]).toBe("  research · live");
-      expect(lines[4]).toBe("  2 sessions in view");
-      expect(lines[5]).toBe("  Current session · 1 working · 1 needs attention");
+      const left = " ".repeat(Math.max(2, Math.floor((width - 96) / 2)));
+      expect(lines[1]).toBe(`${left}Your agents`);
+      expect(lines[3]).toBe(`${left}research · live`);
+      expect(lines[4]).toBe(`${left}2 sessions in view`);
+      expect(lines[5]).toBe(`${left}Current session · 1 working · 1 needs attention`);
       expect(frame).toContain("Open terminals F2");
       expect(frame).toContain("Commands F5");
       expect(frame).toContain(`Theme: ${mode}`);

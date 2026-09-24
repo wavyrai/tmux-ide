@@ -31,6 +31,7 @@ export type ApplicationCatalogSurface = "home" | "terminals";
 export type ApplicationCatalogInputSource = "keyboard" | "mouse";
 export interface ApplicationCatalogShellProps {
   readonly machineSidebar?: ApplicationMachineSidebarModel;
+  readonly sidebarVisible?: boolean;
   readonly machineColor?: string;
   readonly machineLabel?: string | null;
   readonly appearanceOwner?: ApplicationAppearanceOwner;
@@ -222,7 +223,7 @@ function CatalogStatusStrip(props: {
   return (
     <StatusBar theme={props.theme} width={props.width}>
       <StatusBarGroup width={contextWidth()}>
-        <StatusBarSegment theme={props.theme} label={context()} width={contextWidth()} active />
+        <StatusBarSegment theme={props.theme} label={context()} width={contextWidth()} />
       </StatusBarGroup>
       <StatusBarGroup grow>
         <StatusBarSegment
@@ -243,12 +244,10 @@ function CatalogStatusStrip(props: {
             />
           )}
         </For>
-        <StatusBarAction
+        <StatusBarSegment
           theme={props.theme}
-          label="Commands"
-          shortcut="F5"
+          label="F5 Commands"
           width={15}
-          primary
           onPress={props.onOpenCommands}
         />
       </StatusBarGroup>
@@ -261,7 +260,11 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
   const sessions = (): readonly string[] =>
     typeof props.sessions === "function" ? props.sessions() : props.sessions;
   const chrome = createMemo(() =>
-    shellChromeLayout(props.dimensions().width, props.dimensions().height, 28),
+    shellChromeLayout(
+      props.dimensions().width,
+      props.dimensions().height,
+      props.sidebarVisible === false ? 0 : 28,
+    ),
   );
   // Catalog navigation is the first-run wayfinding surface. Keep its two
   // labels visible at compact widths; the icon-only terminal chrome is useful
@@ -282,9 +285,9 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
     return sessions().length === 0 ? " ○ no sessions " : ` ● ${sessions().length} live `;
   };
   const showCatalogSidebar = () =>
-    Boolean(props.machineSidebar) ||
-    (props.surface() === "terminals" &&
-      !(props.connectionFeedback?.() && props.dimensions().width < 60));
+    props.sidebarVisible !== false &&
+    props.surface() === "terminals" &&
+    !(props.connectionFeedback?.() && props.dimensions().width < 60);
   const catalogContentWidth = () =>
     showCatalogSidebar() ? chrome().main.width : props.dimensions().width;
   const overlayLayers = (): readonly OverlayLayer[] => [

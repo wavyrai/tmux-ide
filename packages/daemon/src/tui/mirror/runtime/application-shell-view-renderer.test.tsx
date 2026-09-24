@@ -1,4 +1,5 @@
 /* @jsxImportSource @opentui/solid */
+import { createHomeSidebarFocusGuard } from "./application-home-experience.ts";
 import { EventEmitter } from "node:events";
 import { createAppearanceOwner } from "./application-appearance-owner.ts";
 import type { ApplicationTerminalPaletteSnapshot } from "./application-terminal-palette-owner.ts";
@@ -671,7 +672,7 @@ describe("production ApplicationShellView", () => {
       commands: Boolean(backgroundFor("Commands F5")),
       theme: Boolean(backgroundFor("Theme: light")),
     }).toEqual({ commands: true, theme: true });
-    expect(colorKey(backgroundFor("Commands F5")!)).toBe(colorKey(light.roles.surfaces.panel));
+    expect(colorKey(backgroundFor("Commands F5")!)).toBe(colorKey(light.roles.surfaces.canvas));
     expect(colorKey(backgroundFor("Theme: light")!)).toBe(colorKey(light.roles.surfaces.canvas));
     expect(colorKey(backgroundFor("Commands F5")!)).not.toBe("255,255,255,255");
     expect(colorKey(backgroundFor("Theme: light")!)).not.toBe("255,255,255,255");
@@ -1055,144 +1056,149 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
-  it("routes exact SGR app mouse and keeps explicit select mode local in the real 160x44 shell", async () => {
-    registerPaneSurface();
-    const theme = createSemanticThemeSnapshot({ mode: "dark" });
-    const palette = createTerminalPaletteProjection(theme);
-    const forwarded: Array<{ paneId: string; input: Record<string, unknown> }> = [];
-    const selected: string[] = [];
-    const copied: string[] = [];
-    let selectionKey: ((name: string) => boolean) | null = null;
-    const liveAdapter = selectionAdapter();
-    liveAdapter.renderSource.paneCanonicalIdentity = (paneId) =>
-      paneId === focusPaneId
-        ? {
-            generation: "11111111-1111-4111-8111-111111111111",
-            incarnation: "11111111-1111-4111-8111-111111111111:0",
-            revision: 1,
-            stateHash: "selection-state",
-            cols: 132,
-            rows: 41,
-            sourceEpoch: 1,
-            historyTrim: 0,
-          }
-        : null;
-    const connection = {};
-    const client = {};
-    let ingressOwnerCalls = 0;
-    let ingressClockCalls = 0;
-    const diagnosticsOffIngress = applicationMousePointerIngressCapability(false, () => {
-      ingressOwnerCalls += 1;
-      return null;
-    });
-    expect(
-      beginApplicationMouseIngress(diagnosticsOffIngress, () => {
-        ingressClockCalls += 1;
-        return 1;
-      }),
-    ).toBeNull();
-    const applicationIngress = applicationMousePointerIngressCapability(true, (input) => ({
-      ...input,
-      gestureId: "00000000-0000-4000-8000-000000000001",
-    }));
-    const setup = await renderForTest(
-      () => (
-        <ApplicationShellView
-          dimensions={() => ({ width: 160, height: 44 })}
-          surface={() => "terminals"}
-          semantic={() => semantic()}
-          generationStatus={() => "live"}
-          sessions={["main"]}
-          selectedSession={() => 0}
-          bootstrapNote={() => null}
-          paletteOpen={() => false}
-          terminalRendererSource={() => ({ adapter: liveAdapter, rendererEpoch: 1 })}
-          terminalGestureRuntime={() => ({
-            daemonGeneration: "22222222-2222-4222-8222-222222222222",
-            clientGeneration: 1,
-            connection,
-            client,
-            adapter: liveAdapter,
-            rendererEpoch: 1,
-          })}
-          onApplicationMousePointerIngress={applicationIngress}
-          layout={focusLayout}
-          focusedPane={() => focusPaneId}
-          rendererFocused={() => true}
-          theme={theme}
-          palette={palette}
-          onOpenSurface={() => undefined}
-          onOpenSession={() => undefined}
-          onSetPaletteOpen={() => undefined}
-          onSelectPane={(paneId) => selected.push(paneId)}
-          onResizePreview={() => undefined}
-          onResizePane={() => undefined}
-          onTerminalInput={(paneId, input) => forwarded.push({ paneId, input: { ...input } })}
-          onCopyText={(text) => (copied.push(text), true)}
-          onSelectionKeyOwner={(handle) => {
-            selectionKey = handle;
-          }}
-        />
-      ),
-      { width: 160, height: 44 },
-    );
-    try {
-      await setup.renderOnce();
-      expect(setup.captureCharFrame()).toContain("SELECT_TARGET");
+  it.each([true, false])(
+    "routes exact SGR app mouse and local selection with sidebar visible=%s",
+    async (sidebarVisible) => {
+      const shift = sidebarVisible ? 0 : 28;
+      registerPaneSurface();
+      const theme = createSemanticThemeSnapshot({ mode: "dark" });
+      const palette = createTerminalPaletteProjection(theme);
+      const forwarded: Array<{ paneId: string; input: Record<string, unknown> }> = [];
+      const selected: string[] = [];
+      const copied: string[] = [];
+      let selectionKey: ((name: string) => boolean) | null = null;
+      const liveAdapter = selectionAdapter();
+      liveAdapter.renderSource.paneCanonicalIdentity = (paneId) =>
+        paneId === focusPaneId
+          ? {
+              generation: "11111111-1111-4111-8111-111111111111",
+              incarnation: "11111111-1111-4111-8111-111111111111:0",
+              revision: 1,
+              stateHash: "selection-state",
+              cols: 132,
+              rows: 41,
+              sourceEpoch: 1,
+              historyTrim: 0,
+            }
+          : null;
+      const connection = {};
+      const client = {};
+      let ingressOwnerCalls = 0;
+      let ingressClockCalls = 0;
+      const diagnosticsOffIngress = applicationMousePointerIngressCapability(false, () => {
+        ingressOwnerCalls += 1;
+        return null;
+      });
+      expect(
+        beginApplicationMouseIngress(diagnosticsOffIngress, () => {
+          ingressClockCalls += 1;
+          return 1;
+        }),
+      ).toBeNull();
+      const applicationIngress = applicationMousePointerIngressCapability(true, (input) => ({
+        ...input,
+        gestureId: "00000000-0000-4000-8000-000000000001",
+      }));
+      const setup = await renderForTest(
+        () => (
+          <ApplicationShellView
+            dimensions={() => ({ width: 160 - shift, height: 44 })}
+            surface={() => "terminals"}
+            sidebarVisible={sidebarVisible}
+            semantic={() => semantic()}
+            generationStatus={() => "live"}
+            sessions={["main"]}
+            selectedSession={() => 0}
+            bootstrapNote={() => null}
+            paletteOpen={() => false}
+            terminalRendererSource={() => ({ adapter: liveAdapter, rendererEpoch: 1 })}
+            terminalGestureRuntime={() => ({
+              daemonGeneration: "22222222-2222-4222-8222-222222222222",
+              clientGeneration: 1,
+              connection,
+              client,
+              adapter: liveAdapter,
+              rendererEpoch: 1,
+            })}
+            onApplicationMousePointerIngress={applicationIngress}
+            layout={focusLayout}
+            focusedPane={() => focusPaneId}
+            rendererFocused={() => true}
+            theme={theme}
+            palette={palette}
+            onOpenSurface={() => undefined}
+            onOpenSession={() => undefined}
+            onSetPaletteOpen={() => undefined}
+            onSelectPane={(paneId) => selected.push(paneId)}
+            onResizePreview={() => undefined}
+            onResizePane={() => undefined}
+            onTerminalInput={(paneId, input) => forwarded.push({ paneId, input: { ...input } })}
+            onCopyText={(text) => (copied.push(text), true)}
+            onSelectionKeyOwner={(handle) => {
+              selectionKey = handle;
+            }}
+          />
+        ),
+        { width: 160 - shift, height: 44 },
+      );
+      try {
+        await setup.renderOnce();
+        expect(setup.captureCharFrame()).toContain("SELECT_TARGET");
 
-      await setup.mockMouse.pressDown(29, 3, MouseButtons.LEFT);
-      await setup.mockMouse.release(159, 2, MouseButtons.LEFT);
-      expect(forwarded.map(({ paneId, input }) => ({ paneId, data: input.data }))).toEqual([
-        { paneId: focusPaneId, data: "\u001b[<0;2;1M" },
-        { paneId: focusPaneId, data: "\u001b[<0;132;1m" },
-      ]);
-      expect(ingressOwnerCalls).toBe(0);
-      expect(ingressClockCalls).toBe(0);
-      expect(forwarded.map(({ input }) => input)).toEqual([
-        expect.objectContaining({
-          kind: "application-mouse",
-          action: "down",
-          column: 1,
-          row: 0,
-          button: 0,
-          modifiers: { shift: false, alt: false, ctrl: false },
-          ingress: expect.objectContaining({
-            gestureId: "00000000-0000-4000-8000-000000000001",
+        await setup.mockMouse.pressDown(29 - shift, 3, MouseButtons.LEFT);
+        await setup.mockMouse.release(159 - shift, 2, MouseButtons.LEFT);
+        expect(forwarded.map(({ paneId, input }) => ({ paneId, data: input.data }))).toEqual([
+          { paneId: focusPaneId, data: "\u001b[<0;2;1M" },
+          { paneId: focusPaneId, data: "\u001b[<0;132;1m" },
+        ]);
+        expect(ingressOwnerCalls).toBe(0);
+        expect(ingressClockCalls).toBe(0);
+        expect(forwarded.map(({ input }) => input)).toEqual([
+          expect.objectContaining({
+            kind: "application-mouse",
             action: "down",
+            column: 1,
+            row: 0,
+            button: 0,
+            modifiers: { shift: false, alt: false, ctrl: false },
+            ingress: expect.objectContaining({
+              gestureId: "00000000-0000-4000-8000-000000000001",
+              action: "down",
+            }),
           }),
-        }),
-        expect.objectContaining({
-          kind: "application-mouse",
-          action: "up",
-          column: 131,
-          row: 0,
-          button: 0,
-          ingress: expect.objectContaining({
-            gestureId: "00000000-0000-4000-8000-000000000001",
+          expect.objectContaining({
+            kind: "application-mouse",
             action: "up",
+            column: 131,
+            row: 0,
+            button: 0,
+            ingress: expect.objectContaining({
+              gestureId: "00000000-0000-4000-8000-000000000001",
+              action: "up",
+            }),
           }),
-        }),
-      ]);
-      expect(copied).toEqual([]);
-      expect(selected).toEqual([focusPaneId]);
+        ]);
+        expect(copied).toEqual([]);
+        expect(selected).toEqual([focusPaneId]);
 
-      await setup.mockMouse.click(29, 3, MouseButtons.RIGHT);
-      await setup.renderOnce();
-      expect(setup.captureCharFrame()).toContain("Select text…");
-      expect(selectionKey?.("enter")).toBe(true);
-      await setup.renderOnce();
-      await setup.mockMouse.pressDown(29, 3, MouseButtons.LEFT);
-      await setup.mockMouse.moveTo(34, 3);
-      await setup.renderOnce();
-      await setup.mockMouse.release(34, 3, MouseButtons.LEFT);
-      await setup.renderOnce();
-      expect(forwarded).toHaveLength(2);
-      expect(copied).toEqual(["ELECT_"]);
-      expect(setup.captureCharFrame()).not.toContain("⧉ select");
-    } finally {
-      setup.renderer.destroy();
-    }
-  });
+        await setup.mockMouse.click(29 - shift, 3, MouseButtons.RIGHT);
+        await setup.renderOnce();
+        expect(setup.captureCharFrame()).toContain("Select text…");
+        expect(selectionKey?.("enter")).toBe(true);
+        await setup.renderOnce();
+        await setup.mockMouse.pressDown(29 - shift, 3, MouseButtons.LEFT);
+        await setup.mockMouse.moveTo(34 - shift, 3);
+        await setup.renderOnce();
+        await setup.mockMouse.release(34 - shift, 3, MouseButtons.LEFT);
+        await setup.renderOnce();
+        expect(forwarded).toHaveLength(2);
+        expect(copied).toEqual(["ELECT_"]);
+        expect(setup.captureCharFrame()).not.toContain("⧉ select");
+      } finally {
+        setup.renderer.destroy();
+      }
+    },
+  );
 
   it("projects vertical and horizontal pane resize guides through the real 160x44 shell", async () => {
     registerPaneSurface();
@@ -2444,4 +2450,108 @@ describe("theme library viewport", () => {
         setup.renderer.destroy();
       }
     });
+});
+
+it("hides machine navigation on attached Home and ignores its former session hit targets", async () => {
+  const [surface, setSurface] = createSignal<"home" | "terminals">("home");
+  const calls: string[] = [];
+  const [sidebarVisible, setSidebarVisible] = createSignal(true);
+  const theme = createSemanticThemeSnapshot({ mode: "dark" });
+  const setup = await renderForTest(
+    () => (
+      <ApplicationShellView
+        dimensions={() => ({ width: 120, height: 30 })}
+        surface={surface}
+        sidebarVisible={sidebarVisible()}
+        semantic={() => semantic()}
+        generationStatus={() => "live"}
+        sessions={["main"]}
+        selectedSession={() => 0}
+        bootstrapNote={() => null}
+        paletteOpen={() => false}
+        terminalRendererSource={() => null}
+        layout={terminalLayout}
+        focusedPane={() => null}
+        theme={theme}
+        palette={createTerminalPaletteProjection(theme)}
+        onOpenSurface={setSurface}
+        onOpenSession={() => calls.push("session")}
+        onSetPaletteOpen={() => {}}
+        onSelectPane={() => {}}
+        onResizePreview={() => {}}
+        onResizePane={() => {}}
+        machineSidebar={{
+          groups: () => [
+            {
+              id: "local",
+              label: "Home-hidden-machine",
+              state: "ready",
+              sessions: [{ id: "main", name: "main", paneCount: 1 }],
+            },
+          ],
+          activeMachineId: () => "local",
+          activeSessionName: () => "main",
+          onOpen: () => calls.push("machine-session"),
+          onSelectMachine: () => calls.push("machine"),
+        }}
+      />
+    ),
+    { width: 120, height: 30 },
+  );
+  try {
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Your agents");
+    expect(setup.captureCharFrame()).not.toContain("Home-hidden-machine");
+    await setup.mockMouse.click(4, 3, MouseButtons.LEFT);
+    expect(calls).toEqual([]);
+    setSurface("terminals");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Home-hidden-machine");
+    setSidebarVisible(false);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toContain("Home-hidden-machine");
+    await setup.mockMouse.click(4, 3, MouseButtons.LEFT);
+    expect(calls).toEqual([]);
+    setSidebarVisible(true);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Home-hidden-machine");
+    setSurface("home");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toContain("Home-hidden-machine");
+    expectFrameBounds(setup.captureCharFrame(), 120, 30);
+  } finally {
+    setup.renderer.destroy();
+  }
+});
+
+it("clears sidebar focus on Home, including focus restored by a dismissed machine dialog", async () => {
+  const [surface, setSurface] = createSignal<"home" | "terminals">("home");
+  const [focused, setFocused] = createSignal(true);
+  const [sidebarVisible, setSidebarVisible] = createSignal(true);
+  const setup = await renderForTest(
+    () => {
+      createHomeSidebarFocusGuard(surface, focused, () => setFocused(false), sidebarVisible);
+      return <text>Home focus guard</text>;
+    },
+    { width: 24, height: 2 },
+  );
+  try {
+    await setup.renderOnce();
+    expect(focused()).toBe(false);
+    setFocused(true);
+    await setup.renderOnce();
+    expect(focused()).toBe(false);
+    setSurface("terminals");
+    setFocused(true);
+    await setup.renderOnce();
+    expect(focused()).toBe(true);
+    setSidebarVisible(false);
+    await setup.renderOnce();
+    expect(focused()).toBe(false);
+    setSurface("home");
+    await setup.renderOnce();
+    expect(focused()).toBe(false);
+  } finally {
+    setup.renderer.destroy();
+  }
 });

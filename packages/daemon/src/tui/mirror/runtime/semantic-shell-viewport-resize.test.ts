@@ -22,6 +22,26 @@ function live(resize: ReturnType<typeof vi.fn>, overrides = {}) {
 }
 
 describe("semantic shell viewport resize owner", () => {
+  it("fits reclaimed sidebar columns and restores them without redundant resizes", async () => {
+    let visible = true;
+    const resize = vi.fn(async () => ({ status: "applied" as const }));
+    const owner = createSemanticShellViewportResizeOwner(undefined, () => visible);
+    const generation = live(resize);
+    const semantic = {} as never;
+    owner.adopt({ width: 120, height: 30 }, semantic, generation);
+    expect(resize).toHaveBeenLastCalledWith({ cols: 92, rows: 27 });
+    await Promise.resolve();
+    visible = false;
+    owner.adopt({ width: 120, height: 30 }, semantic, generation);
+    expect(resize).toHaveBeenLastCalledWith({ cols: 120, rows: 27 });
+    await Promise.resolve();
+    owner.adopt({ width: 120, height: 30 }, semantic, generation);
+    expect(resize).toHaveBeenCalledTimes(2);
+    visible = true;
+    owner.adopt({ width: 120, height: 30 }, semantic, generation);
+    expect(resize).toHaveBeenLastCalledWith({ cols: 92, rows: 27 });
+    owner.dispose();
+  });
   it("replays the applied size when a pending resize reverses back to it", async () => {
     let settleMiddle!: (value: { status: "applied" }) => void;
     const resize = vi

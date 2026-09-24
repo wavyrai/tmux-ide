@@ -324,8 +324,8 @@ describe("ShellChrome OpenTUI renderer", () => {
 
   it.each([
     [80, 24, ["web", "F5"], ["tmux-ide", "terminal", "Commands", "Claude Code"]],
-    [120, 40, ["web", "terminal", "F5 Commands"], ["tmux-ide", "Claude Code"]],
-    [200, 60, ["tmux-ide", "web", "terminal", "Claude Code", "F5 Commands"], []],
+    [120, 40, ["web", "F5 Commands"], ["tmux-ide", "Claude Code", "terminal"]],
+    [200, 60, ["tmux-ide", "web", "Claude Code", "F5 Commands"], ["terminal"]],
   ] as const)(
     "collapses contextual footer segments deliberately at %sx%s",
     async (width, height, visible, hidden) => {

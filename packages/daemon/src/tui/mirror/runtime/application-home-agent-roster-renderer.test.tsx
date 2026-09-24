@@ -6,6 +6,8 @@ import { createSignal, onCleanup } from "solid-js";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import { renderForTest, expectFrameBounds } from "../testing/renderer-harness.test.ts";
 import { createKeyboardRouteOwner, KeyboardRouteProvider } from "../ui/keyboard-router.tsx";
+import { createApplicationHomeFleetOwner } from "./application-home-fleet.ts";
+import type { ApplicationMachineAgentGroup } from "./application-machine-agents.ts";
 import { HomeAgentRoster } from "./application-home-agent-roster.tsx";
 import { createHomeAgentSelectionOwner } from "./application-home-agent-selection.ts";
 import type { HomeAgentRow, HomeAgentSnapshot } from "./application-home-agents.ts";
@@ -84,13 +86,13 @@ describe("flat Home agent roster", () => {
       if (width >= 76) {
         expect(frame).toContain("3 observed agents · 1 needs attention · 1 working");
         expect(frame).toContain("Scope: 3 of 3 sessions observed");
-        expect(frame).toContain("SESSION");
-        expect(frame).toContain("! BLOCKED");
-        expect(frame).toContain("DISCONNECTED");
+        expect(frame).toContain("Session");
+        expect(frame).toContain("! blocked");
+        expect(frame).toContain("disconnected");
         expect(frame).toContain("分析 Café 👨‍💻");
       }
       if (width === 32) {
-        expect(frame).not.toContain("SESSION");
+        expect(frame).not.toContain("Session");
         expect(frame).toContain("tmux-ide · Enter open");
       }
       setup.renderer.destroy();
@@ -173,7 +175,11 @@ describe("flat Home agent roster", () => {
     expect(selection.snapshot().selectedKey).toBe("agent-1");
     await setup.mockInput.pressEnter();
     expect(calls).toEqual(["agent-1:keyboard"]);
-    await setup.mockMouse.click(6, 4, MouseButtons.LEFT);
+    const firstRowY = setup
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((line) => line.includes("agent-0"));
+    await setup.mockMouse.click(6, firstRowY, MouseButtons.LEFT);
     expect(calls).toEqual(["agent-1:keyboard", "agent-0:mouse"]);
     await setup.mockMouse.scroll(6, 5, "down");
     expect(selection.snapshot().selectedKey).toBe("agent-1");
@@ -323,4 +329,170 @@ it("exposes fleet scope and routes machine/attention filters only while Home own
   await setup.mockInput.pressKey("a");
   expect(calls).toEqual(["machine", "attention"]);
   setup.renderer.destroy();
+});
+
+it("searches resident fleet rows, retains identity, and isolates editing from shortcuts and overlays", async () => {
+  const routes = createKeyboardRouteOwner();
+  const [active, setActive] = createSignal(true);
+  const calls: string[] = [];
+  const makeGroup = (): ApplicationMachineAgentGroup => ({
+    machineId: "spark",
+    available: true,
+    agents: ["one", "two"].map((id) => ({
+      ...row(id),
+      id,
+      machineId: "spark",
+      name: id === "one" ? "Claude" : "Codex",
+      sessionName: id === "one" ? "research" : "rendering",
+      paneId: `pane.${id}`,
+      activity: "running" as const,
+    })),
+  });
+  let groups = [makeGroup()];
+  let update!: (groups: readonly ApplicationMachineAgentGroup[]) => void;
+  let presentation!: ReturnType<typeof createApplicationHomeFleetOwner>["presentation"];
+  const setup = await renderForTest(
+    () => {
+      const owner = createApplicationHomeFleetOwner({
+        catalog: {
+          getSnapshot: () => ({
+            selectedMachineId: "spark",
+            groups: [
+              {
+                id: "spark",
+                label: "Spark",
+                state: "ready",
+                note: null,
+                sessions: [],
+              },
+            ],
+          }),
+          subscribe: () => () => {},
+        },
+        agents: {
+          getSnapshot: () => groups,
+          subscribe(listener) {
+            update = listener;
+            return () => {};
+          },
+        },
+        inputActive: active,
+        open: (machine, agent) => {
+          calls.push(`${machine}/${agent.id}/${agent.paneId}`);
+        },
+      });
+      presentation = owner.presentation;
+      return (
+        <KeyboardRouteProvider owner={routes}>
+          <HomeAgentRoster
+            theme={createSemanticThemeSnapshot({ mode: "dark" })}
+            width={96}
+            height={24}
+            snapshot={presentation.agentRoster!}
+            selection={presentation.agentSelection!}
+            query={presentation.agentQuery}
+            onQueryChange={presentation.onAgentQueryChange}
+            inputActive={active()}
+            onSelect={presentation.onSelectAgent!}
+            onMove={presentation.onMoveAgent!}
+            onViewport={presentation.onAgentViewport!}
+            onOpen={presentation.onOpenAgent!}
+            onCycleMachine={() => calls.push("filter")}
+            onToggleAttention={() => calls.push("attention")}
+          />
+        </KeyboardRouteProvider>
+      );
+    },
+    { width: 96, height: 24 },
+  );
+  const key = (name: string, eventType = "press") =>
+    routes.route({
+      name,
+      eventType,
+      ctrl: false,
+      meta: false,
+      shift: false,
+      preventDefault() {},
+      stopPropagation() {},
+    });
+  try {
+    await setup.renderOnce();
+    key("/");
+    for (const c of "rendering") key(c);
+    await setup.renderOnce();
+    expect(presentation.agentRoster!.rows.map((row) => row.key)).toEqual(["two"]);
+    expect(presentation.agentSelection!.selectedKey).toBe("two");
+    expect(calls).toEqual([]);
+    groups = [{ ...makeGroup(), agents: makeGroup().agents.slice().reverse() }];
+    update(groups);
+    await setup.renderOnce();
+    expect(presentation.agentSelection!.selectedKey).toBe("two");
+    key("enter", "repeat");
+    expect(calls).toEqual([]);
+    key("enter");
+    expect(calls).toEqual(["spark/two/pane.two"]);
+    setActive(false);
+    expect(routes.routePaste(new TextEncoder().encode("ignored"))).toBe(false);
+    key("f");
+    expect(presentation.agentQuery).toBe("rendering");
+    setActive(true);
+    key("escape");
+    expect(routes.routePaste(new TextEncoder().encode("research"))).toBe(true);
+    await setup.renderOnce();
+    expect(presentation.agentSelection!.selectedKey).toBe("one");
+    key("escape");
+    key("escape");
+    key("a");
+    expect(calls.at(-1)).toBe("attention");
+    await setup.renderOnce();
+    expectFrameBounds(setup.captureCharFrame(), 96, 24);
+    expect(setup.captureCharFrame()).not.toContain("›");
+  } finally {
+    setup.renderer.destroy();
+    routes.dispose();
+  }
+});
+
+it("does not open a search selection when a short viewport cannot display its row", async () => {
+  const routes = createKeyboardRouteOwner();
+  const calls: string[] = [];
+  const setup = await renderForTest(
+    () => (
+      <KeyboardRouteProvider owner={routes}>
+        <HomeAgentRoster
+          theme={createSemanticThemeSnapshot({ mode: "light" })}
+          width={20}
+          height={6}
+          snapshot={snapshot([row("hidden")])}
+          selection={{ selectedKey: "hidden", scrollOffset: 0 }}
+          query=""
+          onQueryChange={() => {}}
+          inputActive
+          onSelect={() => {}}
+          onMove={() => {}}
+          onViewport={() => {}}
+          onOpen={() => calls.push("opened")}
+        />
+      </KeyboardRouteProvider>
+    ),
+    { width: 20, height: 6 },
+  );
+  try {
+    await setup.renderOnce();
+    for (const name of ["/", "enter"])
+      routes.route({
+        name,
+        eventType: "press",
+        ctrl: false,
+        meta: false,
+        shift: false,
+        preventDefault() {},
+        stopPropagation() {},
+      });
+    expect(calls).toEqual([]);
+    expectFrameBounds(setup.captureCharFrame(), 20, 6);
+  } finally {
+    setup.renderer.destroy();
+    routes.dispose();
+  }
 });

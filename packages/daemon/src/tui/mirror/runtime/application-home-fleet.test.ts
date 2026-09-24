@@ -85,3 +85,22 @@ describe("fleet Home projection", () => {
     expect(view(true)).toEqual(view(false));
   });
 });
+
+it("searches observed names and host context without changing coverage or stale meaning", () => {
+  const groups = [
+    { machineId: "local", available: true, agents: [agent("local", "one")] },
+    {
+      machineId: "spark",
+      available: false,
+      agents: [{ ...agent("spark", "two", true), name: "Renderer", serverLabel: "build" }],
+    },
+  ];
+  const view = (query: string) =>
+    projectHomeFleet(catalog, groups, { machineId: null, attentionOnly: false, query });
+  expect(view("BUILD").rows.map((row) => row.key)).toEqual(["two"]);
+  expect(view("Spark").rows[0]?.disabled).toBe(true);
+  expect(view("missing").rows).toEqual([]);
+  expect(view("missing").phase).toBe("partial");
+  expect(view("missing").note).toContain("disconnected");
+  expect(view("missing").totalSessions).toBe(view("").totalSessions);
+});

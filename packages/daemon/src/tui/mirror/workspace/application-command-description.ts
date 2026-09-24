@@ -37,6 +37,8 @@ export interface ApplicationMachinePaletteCommand {
 }
 
 export type ApplicationPaletteCommand =
+  | "hide-sidebar"
+  | "show-sidebar"
   | "switch-session"
   | "shortcuts"
   | "whats-new"
@@ -64,6 +66,12 @@ export function applicationCommandDescription(command: ApplicationPaletteCommand
   detail: string;
   shortcut?: string;
 } {
+  if (command === "hide-sidebar" || command === "show-sidebar")
+    return {
+      id: command,
+      label: command === "hide-sidebar" ? "Hide sidebar" : "Show sidebar",
+      detail: "Terminal layout",
+    };
   if (command === "switch-session")
     return {
       id: command,

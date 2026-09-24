@@ -5,7 +5,13 @@ import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
 import { NavigationRow } from "../ui/navigation-row.tsx";
 import { TuiButton } from "../ui/button.tsx";
 import { useKeyboardRoute } from "../ui/keyboard-router.tsx";
-import type { ComponentInteractionState } from "../ui/state.ts";
+import {
+  applicationPaneRenameKeyAction,
+  applicationPaneRenamePaste,
+} from "./application-pane-rename-input.ts";
+import { HomeAgentSearch } from "../ui/home-agent-search.tsx";
+import { ActivityIndicator } from "../ui/activity-indicator.tsx";
+import { componentPalette, type ComponentInteractionState } from "../ui/state.ts";
 import {
   homeAgentStatusLabel,
   type HomeAgentRow,
@@ -14,6 +20,8 @@ import {
 import type { HomeAgentSelectionSnapshot } from "./application-home-agent-selection.ts";
 
 export interface HomeAgentRosterProps {
+  readonly query?: string;
+  readonly onQueryChange?: (query: string) => void;
   readonly filterLabel?: string;
   readonly onCycleMachine?: () => void;
   readonly onToggleAttention?: () => void;
@@ -46,6 +54,7 @@ function statusTone(row: HomeAgentRow): ComponentInteractionState["status"] {
 /** A flat projected roster; no subscriptions, navigation effects, or terminal input ingress. */
 export function HomeAgentRoster(props: HomeAgentRosterProps) {
   const [hovered, setHovered] = createSignal<string | null>(null);
+  const [editing, setEditing] = createSignal(false);
   const width = () => Math.max(0, Math.floor(props.width));
   const height = () => Math.max(0, Math.floor(props.height));
   const stale = (row: HomeAgentRow) =>
@@ -58,7 +67,15 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
         props.onRetry) ||
       (props.snapshot.truncatedSessions > 0 && props.onLoadMore),
     );
-  const visibleCount = () => Math.max(0, height() - 5 - (showRecovery() ? 1 : 0));
+  const rowHeight = () => (width() >= 60 && height() >= 16 ? 2 : 1);
+  const searchRows = () => (props.onQueryChange ? 2 : 0);
+  const visibleCount = () =>
+    Math.max(0, Math.floor((height() - 5 - searchRows() - (showRecovery() ? 1 : 0)) / rowHeight()));
+  const openSelected = () => {
+    const row = props.snapshot.rows.find((row) => row.key === props.selection.selectedKey);
+    if (props.inputActive && visibleCount() > 0 && row?.paneId && !stale(row))
+      props.onOpen(row, "keyboard");
+  };
   createEffect(() => props.onViewport(visibleCount()));
   const offset = () =>
     Math.max(
@@ -83,6 +100,7 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
     if (props.snapshot.phase === "unavailable") return "Agent overview unavailable";
     if (props.snapshot.phase === "loading" && props.snapshot.rows.length === 0)
       return "Loading agent overview…";
+    if (props.query && props.snapshot.rows.length === 0) return "No matching agents";
     if (props.snapshot.phase === "live" && props.snapshot.rows.length === 0)
       return "No agents reported";
     const count = props.snapshot.rows.length;
@@ -99,6 +117,8 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
     `Scope: ${props.snapshot.observedSessions} of ${props.snapshot.totalSessions} sessions observed${props.snapshot.phase === "partial" ? " · partial" : ""}${props.snapshot.loadingSessions ? ` · ${props.snapshot.loadingSessions} loading` : ""}${props.snapshot.unavailableSessions ? ` · ${props.snapshot.unavailableSessions} unavailable` : ""}${props.snapshot.truncatedSessions ? ` · ${props.snapshot.truncatedSessions} not loaded` : ""}`;
   const footer = () => {
     if (props.snapshot.note) return props.snapshot.note;
+    if (props.query && props.snapshot.rows.length === 0)
+      return "Search covers loaded observations · Esc clears search";
     if (props.snapshot.rows.length === 0) {
       if (props.snapshot.phase === "live")
         return "Observed sessions have no agent entries. F2 opens terminals.";
@@ -118,7 +138,8 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
     if (!props.inputActive || event.eventType !== "press" || event.ctrl || event.meta) return false;
     const key = event.name.toLowerCase();
     const filter =
-      key === "f" ? props.onCycleMachine : key === "a" ? props.onToggleAttention : undefined;
+      !editing() &&
+      (key === "f" ? props.onCycleMachine : key === "a" ? props.onToggleAttention : undefined);
     if (filter) {
       event.preventDefault();
       event.stopPropagation();
@@ -126,10 +147,12 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
       return true;
     }
     const retry =
+      !editing() &&
       key === "r" &&
       (props.snapshot.phase === "unavailable" || props.snapshot.unavailableSessions > 0) &&
       props.onRetry;
-    const more = key === "m" && props.snapshot.truncatedSessions > 0 && props.onLoadMore;
+    const more =
+      !editing() && key === "m" && props.snapshot.truncatedSessions > 0 && props.onLoadMore;
     const recovery = retry || more;
     if (recovery) {
       event.preventDefault();
@@ -155,6 +178,7 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
   });
   return (
     <box
+      position="relative"
       width={width()}
       height={height()}
       flexShrink={0}
@@ -170,30 +194,59 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
       }}
       onMouseOut={() => setHovered(null)}
     >
-      <text width={width()} height={1} flexShrink={0} fg={props.theme.roles.text.primary}>
-        {clipTerminal(title(), width())}
-      </text>
-      <text width={width()} height={1} flexShrink={0} fg={props.theme.roles.text.muted}>
-        {clipTerminal(coverage(), width())}
-      </text>
-      <text width={width()} height={1} flexShrink={0} fg={props.theme.roles.text.secondary}>
-        {clipTerminal(
-          props.filterLabel ? `${props.filterLabel} · f machine · a attention` : "",
-          width(),
-        )}
-      </text>
+      <box width={width()} height={1} flexShrink={0} flexDirection="row">
+        <Show when={props.snapshot.phase === "loading" || props.snapshot.loadingSessions > 0}>
+          <ActivityIndicator theme={props.theme} active={props.inputActive} />
+        </Show>
+        <text height={1} flexGrow={1} fg={props.theme.roles.text.primary}>
+          {clipTerminal(title(), width())}
+        </text>
+      </box>
+      <box height={searchRows()} flexShrink={0} />
+      <box width={width()} height={1} flexShrink={0} flexDirection="row">
+        <text
+          width={Math.max(0, width() - (props.onToggleAttention ? 16 : 0))}
+          height={1}
+          fg={props.theme.roles.text.secondary}
+          onMouseDown={(event) => {
+            if (!props.inputActive || event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            props.onCycleMachine?.();
+          }}
+        >
+          {clipTerminal(
+            props.filterLabel ? `${props.filterLabel} · f machine` : "",
+            Math.max(0, width() - (props.onToggleAttention ? 16 : 0)),
+          )}
+        </text>
+        <Show when={props.onToggleAttention}>
+          <TuiButton
+            theme={props.theme}
+            label="Attention"
+            shortcut="a"
+            size="compact"
+            variant="ghost"
+            background={props.theme.roles.surfaces.canvas}
+            width={Math.min(16, width())}
+            onPress={() => {
+              if (props.inputActive) props.onToggleAttention?.();
+            }}
+          />
+        </Show>
+      </box>
       <Show
         when={props.snapshot.rows.length > 0}
-        fallback={<box height={Math.max(0, visibleCount() + 1)} flexShrink={0} />}
+        fallback={<box height={Math.max(0, visibleCount() * rowHeight() + 1)} flexShrink={0} />}
       >
         <text width={width()} height={1} flexShrink={0} fg={props.theme.roles.text.muted}>
           {clipTerminal(
-            `  ${padCells("AGENT", columns().agent)}${padCells(props.filterLabel ? "MACHINE / SERVER / SESSION" : "SESSION", columns().session)} ${padCells("STATUS", columns().status)}`,
+            `  ${padCells("Agent", columns().agent)}${padCells(props.filterLabel ? "Workspace / machine" : "Session", columns().session)} ${padCells("Status", columns().status)}`,
             width(),
           )}
         </text>
         <box
-          height={visibleCount()}
+          height={visibleCount() * rowHeight()}
           width={width()}
           flexShrink={0}
           flexDirection="column"
@@ -204,9 +257,24 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
               const row = () => byKey().get(key)!;
               return (
                 <box
-                  height={1}
+                  height={rowHeight()}
+                  flexDirection="column"
+                  backgroundColor={
+                    componentPalette(props.theme, {
+                      selected: props.selection.selectedKey === key,
+                      disabled: row().paneId === null || stale(row()),
+                    }).background
+                  }
                   width={width()}
                   flexShrink={0}
+                  onMouseDown={(event) => {
+                    if (!props.inputActive || event.button !== 0 || !row().paneId || stale(row()))
+                      return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    props.onSelect(key);
+                    props.onOpen(row(), "mouse");
+                  }}
                   onMouseOver={() => setHovered(key)}
                   onMouseMove={() => setHovered(key)}
                 >
@@ -217,22 +285,23 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
                     label={
                       padCells(row().name, columns().agent) +
                       padCells(
-                        [row().machineLabel, row().serverLabel, row().sessionName]
-                          .filter(Boolean)
-                          .join(" / "),
+                        rowHeight() > 1
+                          ? row().sessionName
+                          : [row().machineLabel, row().serverLabel, row().sessionName]
+                              .filter(Boolean)
+                              .join(" / "),
                         columns().session,
                       )
                     }
                     detail={padCells(
-                      `${!stale(row()) && row().attention ? "! " : ""}${stale(row()) ? "last seen" : homeAgentStatusLabel(row().activity)}`,
+                      `${!stale(row()) && row().attention ? "! " : ""}${stale(row()) ? "last seen" : homeAgentStatusLabel(row().activity).toLowerCase()}`,
                       columns().status,
                     )}
                     detailAlign="end"
-                    marker={props.selection.selectedKey === key ? "›" : " "}
+                    marker=" "
                     selected={props.selection.selectedKey === key}
-                    focused={props.inputActive && props.selection.selectedKey === key}
+                    focused={props.inputActive && !editing() && props.selection.selectedKey === key}
                     hovered={hovered() === key}
-                    attention={!stale(row()) && row().attention}
                     status={stale(row()) ? "unknown" : statusTone(row())}
                     disabled={row().paneId === null || stale(row())}
                     onActivate={(source) => {
@@ -241,12 +310,59 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
                       props.onOpen(row(), source);
                     }}
                   />
+                  <Show when={rowHeight() > 1}>
+                    <text
+                      width={width()}
+                      height={1}
+                      fg={
+                        props.selection.selectedKey === key
+                          ? props.theme.roles.selection.selectionText
+                          : props.theme.roles.text.muted
+                      }
+                      bg={
+                        componentPalette(props.theme, {
+                          selected: props.selection.selectedKey === key,
+                          disabled: row().paneId === null || stale(row()),
+                        }).background
+                      }
+                    >
+                      {clipTerminal(
+                        `  ${padCells(row().harness, columns().agent)}${[row().machineLabel, row().serverLabel].filter(Boolean).join(" / ")}`,
+                        width(),
+                      )}
+                    </text>
+                  </Show>
                 </box>
               );
             }}
           </For>
         </box>
       </Show>
+      <Show when={props.onQueryChange}>
+        {(onQueryChange) => (
+          <box position="absolute" top={1} left={0} width={width()} height={1}>
+            <HomeAgentSearch
+              theme={props.theme}
+              width={width()}
+              query={props.query ?? ""}
+              active={props.inputActive}
+              onChange={onQueryChange()}
+              onEdit={(event) => {
+                const action = applicationPaneRenameKeyAction(event, props.query ?? "");
+                if (action.kind === "update") onQueryChange()(action.value);
+              }}
+              onPaste={(bytes) =>
+                onQueryChange()(applicationPaneRenamePaste(props.query ?? "", bytes))
+              }
+              onEditing={setEditing}
+              onSubmit={openSelected}
+            />
+          </box>
+        )}
+      </Show>
+      <text width={width()} height={1} flexShrink={0} fg={props.theme.roles.text.muted}>
+        {clipTerminal(coverage(), width())}
+      </text>
       <text width={width()} height={1} flexShrink={0} fg={props.theme.roles.text.muted}>
         {clipTerminal(footer(), width())}
       </text>

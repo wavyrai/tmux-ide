@@ -253,7 +253,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         });
         appearance = createAppearanceOwner(config.app, renderer, terminalPaletteOwner);
         const { theme, palette, setTransientNote } = appearance;
-        const semanticViewportResize = createSemanticShellViewportResizeOwner(layoutSnapshot);
+        const [sidebarVisible, setSidebarVisible] = createSignal(true);
+        const semanticViewportResize = createSemanticShellViewportResizeOwner(
+          layoutSnapshot,
+          sidebarVisible,
+        );
         const activeSurface = createMemo<"home" | "terminals">(
           () => shell().semantic?.workspaceCanvas.activeMode ?? surface(),
         );
@@ -269,7 +273,10 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           layout: layoutSnapshot,
           focusedPane,
           rendererFocused,
-          shellPresentation: () => applicationShellBindingRenderSignature(shell()),
+          shellPresentation: () => [
+            sidebarVisible(),
+            ...(applicationShellBindingRenderSignature(shell()) ?? []),
+          ],
           setFocusedPane,
           diagnosticsEnabled: Boolean(tuiPerfStream),
           detailedWindowSwitchTiming:
@@ -386,6 +393,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const { homeAgents, paneRename, paletteCommands, paletteCommandList, openAgent, tour } =
           createApplicationHomeExperience({
             machines,
+            sidebarVisible,
+            toggleSidebar: () => setSidebarVisible((visible) => !visible),
             lifecycle,
             generation,
             generationMachineId,
@@ -445,10 +454,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             return;
           if (paletteCommands.handleKey(event)) return;
           if (event.ctrl && name === "g") {
-            machines.focus();
+            if (activeSurface() === "home" || !sidebarVisible()) machines.showSwitcher(false);
+            else machines.focus();
             return;
           }
-          if (machines.focused() && !(event.ctrl && name === "q")) {
+          if (machines.focused() && !["f1", "f2"].includes(name) && !(event.ctrl && name === "q")) {
             componentKeyboardRoutes.route(event);
             return;
           }
@@ -479,8 +489,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             homeCatalog.handleKey(name)
           )
             return;
+          if (componentKeyboardRoutes.route(event)) return;
           if (
-            (activeSurface() === "home" || activeSurface() === "terminals") &&
             name === "n" &&
             homeCatalog.phase() === "live" &&
             homeCatalog.sessionNames().length === 0
@@ -488,7 +498,6 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             void homeCatalog.createLocalSession();
             return;
           }
-          if (componentKeyboardRoutes.route(event)) return;
           if (activeSurface() === "terminals" && interaction.routeWorkspaceKey(event)) return;
           if (
             activeSurface() === "terminals" &&
@@ -511,6 +520,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           if (paneRename.handlePaste(event.bytes)) return;
           if (selectionOwner.blocksInput()) return;
           if (paletteCommands.handlePaste(event.bytes)) return;
+          if (activeSurface() === "home" && componentKeyboardRoutes.routePaste(event.bytes)) return;
           if (machines.focused()) return;
           if (
             activeSurface() !== "terminals" ||
@@ -536,6 +546,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             <ApplicationShellView
               machineLabel={machines.isLocal() ? null : machines.label()}
               machineColor={machines.color()}
+              sidebarVisible={sidebarVisible()}
               machineSidebar={machines.sidebar}
               appearanceOwner={appearance}
               homeAgents={homeAgents.presentation}

@@ -38,6 +38,8 @@ export interface ApplicationHomeSurfaceProps {
   readonly onOpenTutorial?: () => void;
   readonly tutorialLabel?: string;
   readonly onCycleTheme?: () => void;
+  readonly agentQuery?: string;
+  readonly onAgentQueryChange?: (query: string) => void;
   readonly agentFilterLabel?: string;
   readonly onCycleAgentMachine?: () => void;
   readonly onToggleAgentAttention?: () => void;
@@ -57,11 +59,20 @@ export interface ApplicationHomeSurfaceProps {
 export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.Element {
   const width = () => Math.max(0, Math.floor(props.width));
   const height = () => Math.max(0, Math.floor(props.height));
-  const inset = () => (width() >= 40 ? 2 : width() >= 12 ? 1 : 0);
+  const inset = () =>
+    Math.max(
+      width() >= 40 ? 2 : width() >= 12 ? 1 : 0,
+      props.branded ? Math.floor((width() - 96) / 2) : 0,
+    );
   const bodyWidth = () => Math.max(0, width() - inset() * 2);
   const spacious = () => height() >= 14;
   const context = () =>
-    clipTerminal(`${props.session ?? "No session selected"} · ${props.status}`, bodyWidth());
+    clipTerminal(
+      props.branded && props.agentRoster
+        ? "Across your machines"
+        : `${props.session ?? "No session selected"} · ${props.status}`,
+      bodyWidth(),
+    );
   const summary = () => {
     if (!props.session || props.agents === undefined) return "Agent signals unavailable";
     const working = props.agents.filter((agent) => agent.activity === "running").length;
@@ -71,7 +82,7 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
   const themeLabel = () => `Theme: ${props.theme.setting}`;
   // Use the existing TuiButton cell budget for both its label and hit target.
   const naturalButtonWidth = (label: string, shortcut?: string) =>
-    terminalDisplayWidth(label) + (shortcut ? terminalDisplayWidth(shortcut) + 1 : 0) + 4;
+    terminalDisplayWidth(label) + (shortcut ? terminalDisplayWidth(shortcut) + 1 : 0) + 2;
   const buttonWidth = (label: string, shortcut?: string) =>
     Math.min(bodyWidth(), naturalButtonWidth(label, shortcut));
   const actionsInRow = () =>
@@ -132,7 +143,7 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
       overflow="hidden"
     >
       <text width={bodyWidth()} height={1} flexShrink={0} fg={props.theme.roles.text.primary}>
-        <strong>{clipTerminal(props.branded ? "tmux-ide" : props.project, bodyWidth())}</strong>
+        <strong>{clipTerminal(props.branded ? "Your agents" : props.project, bodyWidth())}</strong>
       </text>
       <box height={spacious() ? 1 : 0} flexShrink={0} />
       <text width={bodyWidth()} height={1} flexShrink={0} fg={props.theme.roles.text.secondary}>
@@ -162,6 +173,8 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
         >
           {(snapshot) => (
             <HomeAgentRoster
+              query={props.agentQuery}
+              onQueryChange={props.onAgentQueryChange}
               filterLabel={props.agentFilterLabel}
               onCycleMachine={props.onCycleAgentMachine}
               onToggleAttention={props.onToggleAgentAttention}
@@ -219,12 +232,17 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
             label="Open terminals"
             shortcut="F2"
             width={buttonWidth("Open terminals", "F2")}
-            variant="primary"
+            size="compact"
+            variant="ghost"
+            background={props.theme.roles.surfaces.canvas}
             onPress={props.onOpenTerminals}
           />
           <TuiButton
             theme={props.theme}
             label="Commands"
+            size="compact"
+            variant="ghost"
+            background={props.theme.roles.surfaces.canvas}
             shortcut="F5"
             width={buttonWidth("Commands", "F5")}
             onPress={props.onOpenCommands}
@@ -234,6 +252,9 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
               <TuiButton
                 theme={props.theme}
                 label={props.tutorialLabel ?? "Learn tmux-ide"}
+                size="compact"
+                variant="ghost"
+                background={props.theme.roles.surfaces.canvas}
                 width={buttonWidth(props.tutorialLabel ?? "Learn tmux-ide")}
                 onPress={open()}
               />
@@ -245,6 +266,7 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
                 theme={props.theme}
                 label={themeLabel()}
                 width={buttonWidth(themeLabel())}
+                size="compact"
                 variant="ghost"
                 background={props.theme.roles.surfaces.canvas}
                 onPress={onCycleTheme()}

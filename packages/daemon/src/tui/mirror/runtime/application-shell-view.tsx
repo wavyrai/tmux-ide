@@ -64,6 +64,7 @@ export function applicationShellKeyAction(
 
 export interface ApplicationShellViewProps {
   readonly machineSidebar?: ApplicationMachineSidebarModel;
+  readonly sidebarVisible?: boolean;
   readonly machineColor?: string;
   readonly machineLabel?: string | null;
   readonly paneInteractions?: TerminalWorkspaceProps["paneInteractions"];
@@ -154,7 +155,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
     return projectApplicationShell({
       width: props.dimensions().width,
       height: props.dimensions().height,
-      preferredSidebarWidth: 28,
+      preferredSidebarWidth: props.sidebarVisible === false ? 0 : 28,
       shell: semantic,
       hoveredTabIndex: null,
       quitHint: "^q quit",
@@ -217,7 +218,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
     if (props.appearanceOwner?.pickerOpen()) return;
     const shell = projection();
     if (!shell) return;
-    if (props.machineSidebar) {
+    if (props.machineSidebar && props.surface() === "terminals") {
       const sidebar = shell.layout.sidebar;
       if (
         x >= sidebar.x &&
@@ -230,7 +231,8 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
     }
     const hit = applicationShellHitTest(shell, x, y);
     if (hit?.kind === "view") props.onOpenSurface(hit.viewId, "mouse");
-    else if (hit?.kind === "session") props.onOpenSession(hit.session, "mouse");
+    else if (hit?.kind === "session" && props.surface() === "terminals")
+      props.onOpenSession(hit.session, "mouse");
     else if (hit?.kind === "palette") props.onSetPaletteOpen(true, "mouse");
   };
 
@@ -240,6 +242,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
       keyed
       fallback={
         <ApplicationCatalogShell
+          sidebarVisible={props.sidebarVisible}
           machineSidebar={props.machineSidebar}
           machineLabel={props.machineLabel}
           machineColor={props.machineColor}
@@ -400,7 +403,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   : props.generationStatus())
               }
               showToolStatus={false}
-              showSidebar={Boolean(props.machineSidebar) || props.surface() === "terminals"}
+              showSidebar={props.surface() === "terminals" && props.sidebarVisible !== false}
               sidebar={
                 <Show
                   when={props.machineSidebar}
@@ -456,7 +459,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   project={shell.semantic.project.name}
                   status={props.generationStatus()}
                   note={props.bootstrapNote()}
-                  width={props.machineSidebar ? shell.content.width : shell.layout.width}
+                  width={shell.layout.width}
                   height={shell.content.height}
                   sessionCount={shell.semantic.sidebar.sessions.length}
                   session={friendlySessionLabel(shell.activeSession)}

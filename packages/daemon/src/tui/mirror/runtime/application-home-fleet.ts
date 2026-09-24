@@ -11,6 +11,7 @@ import type { ApplicationHomeAgentPresentation } from "./application-home-agents
 export interface HomeFleetFilter {
   readonly machineId: string | null;
   readonly attentionOnly: boolean;
+  readonly query?: string;
 }
 export function projectHomeFleet(
   catalog: ApplicationMachineCatalogSnapshot,
@@ -68,6 +69,19 @@ export function projectHomeFleet(
       machine.state !== "ready" ||
       !groups.find((group) => group.machineId === machine.id)?.available,
   );
+  const query = filter.query?.trim().toLocaleLowerCase() ?? "";
+  const matching = query
+    ? rows.filter((row) =>
+        [
+          row.name,
+          row.harness,
+          row.projectName,
+          row.sessionName,
+          row.machineLabel,
+          row.serverLabel,
+        ].some((value) => value?.toLocaleLowerCase().includes(query)),
+      )
+    : rows;
   return {
     phase: missing.length
       ? rows.length || observedSessions
@@ -76,7 +90,7 @@ export function projectHomeFleet(
           ? "loading"
           : "unavailable"
       : "live",
-    rows,
+    rows: matching,
     observedSessions,
     totalSessions,
     loadingSessions,
@@ -136,6 +150,12 @@ export function createApplicationHomeFleetOwner(options: {
     selection.dispose();
   });
   const presentation: ApplicationHomeAgentPresentation = {
+    get agentQuery() {
+      return filter().query ?? "";
+    },
+    onAgentQueryChange(query) {
+      setFilter((value) => ({ ...value, query }));
+    },
     get agentRoster() {
       return snapshot();
     },

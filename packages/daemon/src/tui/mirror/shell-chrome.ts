@@ -101,6 +101,7 @@ export function shellSidebarWidth(
   preferredWidth: number,
   variant = shellChromeVariant(terminalWidth, 24),
 ): number {
+  if (preferredWidth === 0) return 0;
   const safe = Math.max(0, Math.floor(terminalWidth));
   const preferred = Math.max(16, Math.min(48, Math.floor(preferredWidth)));
   if (variant === "compact")

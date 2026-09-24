@@ -9,6 +9,7 @@ export function paletteSection(command: ApplicationPaletteCommand): string {
         ? "Machines"
         : "Sessions";
   if (command === "home" || command === "terminals") return "Navigation";
+  if (command === "hide-sidebar" || command === "show-sidebar") return "Appearance";
   if (command === "appearance") return "Appearance";
   if (command === "shortcuts" || command === "whats-new") return "Help";
   return "Panes";

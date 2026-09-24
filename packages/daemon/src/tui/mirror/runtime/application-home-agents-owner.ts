@@ -27,6 +27,8 @@ import {
 
 export type ApplicationHomeAgentPresentation = Pick<
   ApplicationHomeSurfaceProps,
+  | "agentQuery"
+  | "onAgentQueryChange"
   | "agentFilterLabel"
   | "onCycleAgentMachine"
   | "onToggleAgentAttention"
@@ -223,6 +225,8 @@ export function createApplicationHomeNavigationOwner(options: {
   >;
   readonly openSessions?: () => void;
   readonly openAppearance?: () => void;
+  readonly sidebarVisible?: Accessor<boolean>;
+  readonly toggleSidebar?: () => void;
   readonly zoomPane?: () => Promise<string>;
   readonly appearanceOpen?: () => boolean;
   readonly rendererFocused: Accessor<boolean>;
@@ -270,15 +274,23 @@ export function createApplicationHomeNavigationOwner(options: {
     observer: options.observer,
   });
   const paletteCommands = createApplicationPaletteCommandOwner({
-    commands: () =>
-      options.fleetCommands
+    commands: () => [
+      ...(options.fleetCommands
         ? [
             ...applicationPaletteCommands(options.shell().semantic).filter(
               (c) => typeof c === "string",
             ),
             ...options.fleetCommands(),
           ]
-        : applicationPaletteCommands(options.shell().semantic, options.catalog.sessionNames()),
+        : applicationPaletteCommands(options.shell().semantic, options.catalog.sessionNames())),
+      ...(options.toggleSidebar
+        ? [
+            options.sidebarVisible?.() === false
+              ? ("show-sidebar" as const)
+              : ("hide-sidebar" as const),
+          ]
+        : []),
+    ],
     isOpen: () =>
       Boolean(options.shell().semantic?.focus.palette.open ?? options.shell().localPaletteOpen),
     targetKey: () =>
@@ -291,6 +303,8 @@ export function createApplicationHomeNavigationOwner(options: {
         command === "home" ||
         command === "terminals" ||
         command === "appearance" ||
+        command === "hide-sidebar" ||
+        command === "show-sidebar" ||
         command === "shortcuts" ||
         command === "whats-new" ||
         command === "switch-session"
@@ -305,6 +319,7 @@ export function createApplicationHomeNavigationOwner(options: {
     setSurface: options.setSurface,
     setNote: options.setNote,
     openAppearance: options.openAppearance,
+    toggleSidebar: options.toggleSidebar,
     openSessions: options.openSessions,
     zoomPane: options.zoomPane,
     newWindow: options.interaction.newWindow,

@@ -13,11 +13,20 @@ export interface KeyHintProps extends ComponentInteractionState {
   /** Exact cell projection for compact chrome that already owns spacing. */
   presentation?: string;
   onPress?: () => void;
+  quiet?: boolean;
 }
 
 /** A one-row, cell-aligned keyboard affordance with optional pointer/keyboard activation. */
 export function KeyHint(props: KeyHintProps) {
   const palette = () => componentPalette(props.theme, props, "neutral");
+  const background = () =>
+    props.quiet && !props.focused && !props.hovered
+      ? props.theme.roles.surfaces.header
+      : palette().background;
+  const foreground = () =>
+    props.quiet && !props.focused && !props.hovered
+      ? props.theme.roles.text.muted
+      : palette().foreground;
   const text = () => props.presentation ?? `${props.keys}${props.label ? ` ${props.label}` : ""}`;
   const width = () => Math.max(1, Math.floor(props.width ?? terminalDisplayWidth(text()) + 2));
   const content = () => clipTerminal(props.presentation ?? ` ${text()} `, width());
@@ -45,7 +54,7 @@ export function KeyHint(props: KeyHintProps) {
       width={width()}
       height={1}
       overflow="hidden"
-      backgroundColor={palette().background}
+      backgroundColor={background()}
       focusable={Boolean(props.onPress) && !props.disabled}
       focused={Boolean(props.focused)}
       onMouseDown={(event) => {
@@ -55,7 +64,7 @@ export function KeyHint(props: KeyHintProps) {
         activate();
       }}
     >
-      <text fg={palette().foreground} bg={palette().background}>
+      <text fg={foreground()} bg={background()}>
         {props.focused || props.selected ? <strong>{content()}</strong> : content()}
       </text>
     </box>

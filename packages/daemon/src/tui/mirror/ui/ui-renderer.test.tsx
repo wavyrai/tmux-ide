@@ -2,7 +2,8 @@
 import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard, type JSX } from "@opentui/solid";
 import { createSignal, onCleanup } from "solid-js";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import { ActivityIndicator } from "./activity-indicator.tsx";
 
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import { colorToThemeBytes } from "../theme.ts";
@@ -470,4 +471,51 @@ describe("OpenTUI ui primitives", () => {
       setup.renderer.destroy();
     },
   );
+});
+
+it("runs one pending-region timer only while visible and motion is enabled", async () => {
+  const [active, setActive] = createSignal(false);
+  const [reduced, setReduced] = createSignal(false);
+  const intervals = spyOn(globalThis, "setInterval");
+  const clears = spyOn(globalThis, "clearInterval");
+  const setup = await renderForTest(
+    () => (
+      <ActivityIndicator
+        active={active()}
+        theme={createSemanticThemeSnapshot({
+          mode: "dark",
+          accessibility: { reducedMotion: reduced() },
+        })}
+      />
+    ),
+    { width: 10, height: 2 },
+  );
+  const timers = () => intervals.mock.calls.filter((call) => call[1] === 100).length;
+  try {
+    await setup.renderOnce();
+    const baseline = timers();
+    setActive(true);
+    await setup.renderOnce();
+    expect(timers()).toBe(baseline + 1);
+    const before = clears.mock.calls.length;
+    setReduced(true);
+    await setup.renderOnce();
+    expect(clears.mock.calls.length).toBeGreaterThan(before);
+    expect(setup.captureCharFrame()).toContain("…");
+    setActive(false);
+    setActive(true);
+    await setup.renderOnce();
+    expect(timers()).toBe(baseline + 1);
+    setReduced(false);
+    await setup.renderOnce();
+    expect(timers()).toBe(baseline + 2);
+    const beforeHide = clears.mock.calls.length;
+    setActive(false);
+    await setup.renderOnce();
+    expect(clears.mock.calls.length).toBeGreaterThan(beforeHide);
+  } finally {
+    setup.renderer.destroy();
+    intervals.mockRestore();
+    clears.mockRestore();
+  }
 });

@@ -22,6 +22,7 @@ export function createApplicationPaletteCommandOwner(options: {
   readonly setNote: (note: string | null) => void;
   readonly openSessions?: () => void;
   readonly openAppearance?: () => void;
+  readonly toggleSidebar?: () => void;
   readonly zoomPane?: () => Promise<string>;
   readonly newWindow: () => Promise<string>;
   readonly splitPane: (direction: "right" | "down") => Promise<string>;
@@ -77,6 +78,11 @@ export function createApplicationPaletteCommandOwner(options: {
       }
       setOpen(false, source);
       options.openSessions();
+      return;
+    }
+    if (command === "hide-sidebar" || command === "show-sidebar") {
+      setOpen(false, source);
+      options.toggleSidebar?.();
       return;
     }
     if (command === "appearance") {

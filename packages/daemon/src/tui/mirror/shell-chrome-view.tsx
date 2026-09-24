@@ -187,19 +187,25 @@ export function ContextStatusBar(props: ShellStatusStripProps) {
       ),
     );
   const visibleLocation = () => {
-    const candidates = presentation().location.map((segment, index) => ({
-      segment,
-      index,
-      width: terminalDisplayWidth(segment.label) + 2,
-      priority:
-        segment.id === "session"
-          ? 100
-          : segment.id === "pane"
-            ? 80
-            : segment.id === "mode"
-              ? 60
-              : 40,
-    }));
+    const candidates = presentation()
+      .location.filter(
+        (segment) =>
+          segment.id !== "mode" &&
+          (segment.id !== "project" || segment.label !== (props.session ?? props.project)),
+      )
+      .map((segment, index) => ({
+        segment,
+        index,
+        width: terminalDisplayWidth(segment.label) + 2,
+        priority:
+          segment.id === "session"
+            ? 100
+            : segment.id === "pane"
+              ? 80
+              : segment.id === "mode"
+                ? 60
+                : 40,
+      }));
     const chosen: typeof candidates = [];
     let remaining = locationBudget();
     for (const candidate of [...candidates].sort((a, b) => b.priority - a.priority)) {
@@ -223,8 +229,8 @@ export function ContextStatusBar(props: ShellStatusStripProps) {
               theme={props.theme}
               label={item.segment.label}
               width={item.width}
-              selected={item.segment.id === "session"}
-              strong={item.segment.essential}
+              selected={false}
+              strong={false}
             />
           )}
         </For>
@@ -251,7 +257,7 @@ export function ContextStatusBar(props: ShellStatusStripProps) {
             <KeyHint
               theme={props.theme}
               keys={hint.keys}
-              selected={hint.command === "commands"}
+              quiet
               {...(hint.label ? { label: hint.label } : {})}
               {...(hint.command === "commands" && props.onHelp ? { onPress: props.onHelp } : {})}
             />

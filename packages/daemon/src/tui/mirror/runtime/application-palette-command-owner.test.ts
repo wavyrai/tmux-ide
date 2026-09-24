@@ -25,6 +25,15 @@ const testOwner = (
   });
 
 describe("application palette command owner", () => {
+  it("routes sidebar visibility locally without falling through to pane commands", () => {
+    const toggleSidebar = vi.fn();
+    const splitPane = vi.fn(async () => "unexpected");
+    const owner = testOwner({ toggleSidebar, splitPane });
+    owner.activate("hide-sidebar", "keyboard");
+    owner.activate("show-sidebar", "mouse");
+    expect(toggleSidebar).toHaveBeenCalledTimes(2);
+    expect(splitPane).not.toHaveBeenCalled();
+  });
   it("routes Switch session to the same fleet switcher entry without pane mutation", () => {
     const openSessions = vi.fn();
     const splitPane = vi.fn(async () => "unexpected");

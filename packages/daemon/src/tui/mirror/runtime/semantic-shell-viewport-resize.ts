@@ -19,6 +19,7 @@ export function createSemanticShellViewportResizeOwner(
     >[];
     readonly current: Pick<OpenTuiWorkspaceLayout, "paneBorderStatus"> | null;
   } = () => ({ current: { paneBorderStatus: "top" } }),
+  sidebarVisible: () => boolean = () => true,
 ): Readonly<{
   adopt(
     dimensions: Dimensions,
@@ -156,7 +157,7 @@ export function createSemanticShellViewportResizeOwner(
             if (!authoritySuspended) retry?.();
           }) ?? null;
       }
-      const viewport = applicationShellViewport(dimensions, true);
+      const viewport = applicationShellViewport(dimensions, true, sidebarVisible());
       const lane = generation.fastLane;
       const target = Object.freeze({
         lane,

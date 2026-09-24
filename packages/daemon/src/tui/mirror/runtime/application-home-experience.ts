@@ -1,10 +1,22 @@
-import type { Accessor } from "solid-js";
+import { createEffect, type Accessor } from "solid-js";
 import { createApplicationHomeFleetOwner } from "./application-home-fleet.ts";
 import { createApplicationHomeNavigationOwner } from "./application-home-agents-owner.ts";
 import { createApplicationGuidedTourIntegration } from "./application-guided-tour-integration.tsx";
 
 type NavigationOptions = Parameters<typeof createApplicationHomeNavigationOwner>[0];
 type TourOptions = Parameters<typeof createApplicationGuidedTourIntegration>[0];
+/** A late modal dismissal must not restore focus into Home's hidden sidebar. */
+export function createHomeSidebarFocusGuard(
+  surface: Accessor<"home" | "terminals">,
+  focused: Accessor<boolean>,
+  blur: () => void,
+  sidebarVisible: Accessor<boolean> = () => true,
+) {
+  createEffect(() => {
+    if ((surface() === "home" || !sidebarVisible()) && focused()) blur();
+  });
+}
+
 /** Compose Home's fleet, navigation and learning experience without additional transports. */
 export function createApplicationHomeExperience(
   options: Omit<NavigationOptions, "fleetHome" | "fleetCommands" | "openFleet"> &
@@ -20,6 +32,12 @@ export function createApplicationHomeExperience(
     > & { paletteModalOpen: Accessor<boolean> },
 ) {
   const { machines, appearance } = options;
+  createHomeSidebarFocusGuard(
+    options.activeSurface,
+    machines.focused,
+    () => machines.sidebar.onBlur?.(),
+    options.sidebarVisible,
+  );
   const paletteOpen = () =>
     options.shell().semantic?.focus.palette.open ?? options.shell().localPaletteOpen;
   const fleetHome = createApplicationHomeFleetOwner({
