@@ -68,7 +68,11 @@ describe("command discovery", () => {
         close: vi.fn(),
         onChange: vi.fn(),
       });
-      owner.select(9);
+      owner.select(
+        owner
+          .commands()
+          .findIndex((command) => typeof command === "object" && command.sessionName === "beta"),
+      );
       setSessions(["new", "beta", "alpha"]);
       expect(owner.commands()[owner.selection()]).toMatchObject({ sessionName: "beta" });
       owner.handleKey({ ...key("enter"), repeated: true });

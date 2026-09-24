@@ -3,6 +3,7 @@ import { For, createMemo } from "solid-js";
 import { fuzzyTermsMatch as commandSearchMatch } from "../../team/fuzzy.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
+import { overlayRowPalette } from "./overlay-surface.ts";
 import { componentPalette } from "./state.ts";
 
 export interface OverlayListRowProps {
@@ -10,9 +11,12 @@ export interface OverlayListRowProps {
   readonly id: string;
   readonly label: string;
   readonly query?: string;
+  readonly surface?: boolean;
   readonly width: number;
   readonly shortcut?: string;
   readonly selected?: boolean;
+  /** When provided, mark the committed value independently of the selection. */
+  readonly current?: boolean;
   readonly disabled?: boolean;
   readonly danger?: boolean;
   /** Fixed selection gutter for menus; compact palette callers retain their budget. */
@@ -23,14 +27,39 @@ export interface OverlayListRowProps {
 
 export function OverlayListRow(props: OverlayListRowProps) {
   const palette = () =>
-    componentPalette(
-      props.theme,
-      { selected: props.selected, disabled: props.disabled, attention: props.danger },
-      props.danger ? "blocked" : "neutral",
-    );
+    props.surface
+      ? overlayRowPalette(props.theme, {
+          selected: props.selected,
+          disabled: props.disabled,
+          attention: props.danger,
+        })
+      : componentPalette(
+          props.theme,
+          { selected: props.selected, disabled: props.disabled, attention: props.danger },
+          props.danger ? "blocked" : "neutral",
+        );
   const content = () => {
-    const shortcut = props.shortcut ? ` ${props.shortcut}` : "";
-    const prefix = props.selected ? "› " : props.reserveMarker ? "  " : "";
+    const prefix =
+      props.current !== undefined
+        ? props.current
+          ? "● "
+          : "  "
+        : props.selected
+          ? props.surface
+            ? "  "
+            : "› "
+          : props.reserveMarker
+            ? "  "
+            : "";
+    const shortcut =
+      props.shortcut &&
+      props.width >=
+        terminalDisplayWidth(prefix) +
+          terminalDisplayWidth(props.label) +
+          terminalDisplayWidth(props.shortcut) +
+          2
+        ? ` ${props.shortcut}`
+        : "";
     const available = Math.max(
       1,
       props.width - terminalDisplayWidth(prefix) - terminalDisplayWidth(shortcut),
@@ -43,10 +72,10 @@ export function OverlayListRow(props: OverlayListRowProps) {
         terminalDisplayWidth(label) -
         terminalDisplayWidth(shortcut),
     );
-    return clipTerminal(`${prefix}${label}${" ".repeat(gap)}${shortcut}`, props.width);
+    return { body: clipTerminal(`${prefix}${label}${" ".repeat(gap)}`, props.width), shortcut };
   };
   const segments = createMemo(() => {
-    const value = content();
+    const value = content().body;
     const matches = new Set(
       props.query ? (commandSearchMatch(value, props.query)?.indices ?? []) : [],
     );
@@ -91,6 +120,14 @@ export function OverlayListRow(props: OverlayListRowProps) {
           )
         }
       </For>
+      <span
+        style={{
+          fg:
+            props.selected && !props.disabled ? palette().foreground : props.theme.roles.text.muted,
+        }}
+      >
+        {content().shortcut}
+      </span>
     </text>
   );
 }

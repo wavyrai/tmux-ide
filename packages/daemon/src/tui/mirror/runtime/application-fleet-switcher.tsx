@@ -105,9 +105,7 @@ export function ApplicationFleetSwitcher(props: {
         width={props.width}
         height={props.height}
         selected={search.selection()}
-        title={
-          props.attentionOnly ? "Agent attention across machines" : "Switch session across machines"
-        }
+        title={props.attentionOnly ? "Agent attention" : "Sessions"}
         query={search.query()}
         keyboardHint={search.keyboardHint()}
         commands={search.commands()}

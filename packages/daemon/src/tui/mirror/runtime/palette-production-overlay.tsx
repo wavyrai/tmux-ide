@@ -33,14 +33,11 @@ export function PaletteProductionOverlay(props: PaletteProductionOverlayProps) {
             width={props.overlayWidth}
             flexDirection="column"
             backgroundColor={props.theme.roles.surfaces.command}
-            border
-            borderColor={
-              props.loadState === "error"
-                ? props.theme.roles.statusTone.danger
-                : props.theme.roles.borders.focused
-            }
-            paddingLeft={1}
-            paddingRight={1}
+            border={[]}
+            paddingTop={1}
+            paddingBottom={1}
+            paddingLeft={3}
+            paddingRight={3}
           >
             <text fg={props.theme.roles.text.link} attributes={1}>
               {props.loadState === "error" ? "Unable to open Navigator" : "Opening Navigator…"}

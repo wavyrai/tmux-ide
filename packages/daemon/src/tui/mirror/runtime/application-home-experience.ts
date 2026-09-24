@@ -41,6 +41,7 @@ export function createApplicationHomeExperience(
     fleetHome: fleetHome.presentation,
     fleetCommands: machines.paletteCommands,
     openFleet: machines.openPalette,
+    openSessions: () => machines.showSwitcher(false),
   });
   const tour = createApplicationGuidedTourIntegration({
     ...options,

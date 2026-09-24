@@ -12,6 +12,7 @@ export interface DialogProps {
   width: number;
   height: number;
   title?: string;
+  surface?: boolean;
   footer?: string;
   placement?: OverlayPlacement;
   active?: boolean;
@@ -24,6 +25,7 @@ export interface DialogProps {
 export function Dialog(props: DialogProps) {
   return (
     <OverlayFrame
+      surface={props.surface}
       theme={props.theme}
       viewportWidth={props.viewportWidth}
       viewportHeight={props.viewportHeight}

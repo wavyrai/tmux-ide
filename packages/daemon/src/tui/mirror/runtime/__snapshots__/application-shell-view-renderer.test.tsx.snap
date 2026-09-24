@@ -50,23 +50,23 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 1`] = `
 "  ⌂  ●❯                live
- t╭──────────────────────╮
- m│ Command palette      │
- 2│ / Search commands…   │
- C│ › F1 Home            │…
-  │   F2 Terminals       │
-  │   New terminal wind… │
-  ╰──────────────────────╯
+ t  Command palette  esc
+ m   Search commands…
+ 2    Home            F1
+ C    Terminals       F2  …
+      New terminal wind…
+
+
  main  Live              F5"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 2`] = `
 "  ⌂  ●❯        live
- t╭──────────────╮
- m│ Commands     │
- 2│ / Search co… │w
- C│ › F1 Home    │…
-  ╰──────────────╯…
+ tCommand palette
+ m …rch commands…
+ 2  Home        F1w
+ C                …
+                  …
   ○ Commands F5"
 `;
 

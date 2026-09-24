@@ -85,6 +85,8 @@ export interface ApplicationShellViewProps {
   readonly paletteOpen: Accessor<boolean>;
   readonly paneRenameDialog?: Accessor<ApplicationPaneRenameDraft | null>;
   readonly paletteSelection?: Accessor<number>;
+  readonly paletteReferencePage?: Accessor<"shortcuts" | "changes" | undefined>;
+  readonly onPaletteReferenceChange?: (page: "shortcuts" | "changes" | undefined) => void;
   readonly paletteKeyboardHint?: Accessor<string>;
   readonly palettePreviewActive?: Accessor<boolean>;
   readonly onPaletteModalChange?: (open: boolean) => void;
@@ -256,6 +258,8 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
           paletteOpen={props.paletteOpen}
           paletteSelection={props.paletteSelection}
           paletteQuery={props.paletteQuery}
+          paletteReferencePage={props.paletteReferencePage}
+          onPaletteReferenceChange={props.onPaletteReferenceChange}
           paletteKeyboardHint={props.paletteKeyboardHint}
           palettePreviewActive={props.palettePreviewActive}
           onPaletteModalChange={props.onPaletteModalChange}
@@ -308,6 +312,8 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   height={props.dimensions().height}
                   selected={props.paletteSelection?.() ?? 0}
                   query={props.paletteQuery?.() ?? ""}
+                  referencePage={props.paletteReferencePage?.()}
+                  onReferenceChange={props.onPaletteReferenceChange}
                   keyboardHint={props.paletteKeyboardHint?.()}
                   previewActive={
                     props.palettePreviewActive?.() ?? props.rendererFocused?.() !== false

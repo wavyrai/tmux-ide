@@ -130,7 +130,7 @@ describe("production command discovery flow", () => {
       await setup.renderOnce();
       setup.renderer.keyInput.emit("paste", { bytes: Buffer.from("beta") });
       await setup.renderOnce();
-      expect(setup.captureCharFrame()).toContain("/ beta▏");
+      expect(setup.captureCharFrame()).toContain("beta▏");
       expect(setup.captureCharFrame()).toContain("Open session · beta workspace");
       setNote("an unrelated notification");
       await setup.renderOnce();
@@ -185,7 +185,7 @@ describe("production command discovery flow", () => {
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
     expectFrameBounds(frame, 20, 7);
-    expect(frame).toContain("› Close pan…");
+    expect(frame).toContain("Close pane…");
     setup.renderer.destroy();
   });
   it("renames by mouse and prevents an empty name or duplicate save", async () => {
@@ -795,8 +795,8 @@ describe("production ApplicationShellView", () => {
 
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("F1 Home");
-    expect(frame).toContain("F2 Terminals");
+    expect(frame).toMatch(/Home +F1/u);
+    expect(frame).toMatch(/Terminals +F2/u);
     expect(frame).not.toContain("Sessions");
     expect(frame).not.toContain("ordinary-one");
     expect(frame).toContain("2 sessions live");
@@ -1924,13 +1924,13 @@ describe("production ApplicationShellView", () => {
       { width: 120, height: 40 },
     );
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("› F2 Terminals");
+    expect(setup.captureCharFrame()).toContain("  Terminals ");
     await setup.mockMouse.click(
       33,
       setup
         .captureCharFrame()
         .split("\n")
-        .findIndex((line) => line.includes("› F2 Terminals")),
+        .findIndex((line) => line.includes("  Terminals ")),
       MouseButtons.LEFT,
     );
     expect(activated).toEqual(["mouse:terminals"]);
@@ -1952,7 +1952,11 @@ describe("production ApplicationShellView", () => {
           selectedSession={() => 0}
           bootstrapNote={() => null}
           paletteOpen={() => true}
-          paletteSelection={() => 8}
+          paletteSelection={() =>
+            applicationPaletteCommands(semantic()).findIndex(
+              (command) => typeof command === "object" && command.kind === "jump-agent",
+            )
+          }
           terminalRendererSource={() => null}
           layout={() => ({ current: null, windows: [] })}
           focusedPane={() => null}
@@ -1974,13 +1978,13 @@ describe("production ApplicationShellView", () => {
     );
     await setup.renderOnce();
 
-    expect(setup.captureCharFrame()).toContain("› Jump to Codex · main");
+    expect(setup.captureCharFrame()).toContain("Jump to Codex · main");
     await setup.mockMouse.click(
       33,
       setup
         .captureCharFrame()
         .split("\n")
-        .findIndex((line) => line.includes("› Jump to Codex")),
+        .findIndex((line) => line.includes("Jump to Codex")),
       MouseButtons.LEFT,
     );
     expect(opened).toEqual(["mouse:main:pane.main"]);
@@ -2024,7 +2028,7 @@ describe("production ApplicationShellView", () => {
       { width: 120, height: 40 },
     );
     await setup.renderOnce();
-    await setup.mockMouse.click(30, 10, MouseButtons.LEFT);
+    await setup.mockMouse.click(1, 10, MouseButtons.LEFT);
     expect(events).toEqual(["mouse:palette:false"]);
     expect(selected).toEqual([]);
     expect(terminalInputs).toEqual([]);
@@ -2079,7 +2083,7 @@ describe("production ApplicationShellView", () => {
     expectFrameBounds(resized, 20, 7);
     expect(resized).toContain("Commands");
     // A 20x7 viewport has room for query + one result; selection scrolls that slot.
-    expect(resized).toContain("F1 Home");
+    expect(resized).toContain("Home");
     expect(trimFrameRight(resized)).toMatchSnapshot();
     setup.renderer.destroy();
   });
@@ -2101,7 +2105,7 @@ describe("production ApplicationShellView", () => {
     });
     expect(applicationPaletteKeyAction({ name: "up" }, true, 0)).toEqual({
       kind: "select",
-      index: 7,
+      index: applicationPaletteCommands(null).length - 1,
     });
     expect(applicationPaletteKeyAction({ name: "enter" }, true, 1)).toEqual({
       kind: "activate",
@@ -2351,7 +2355,7 @@ describe("production appearance picker", () => {
           { width, height: 18 },
         );
         await setup.renderOnce();
-        expect(setup.captureCharFrame()).toContain("Appearance");
+        expect(setup.captureCharFrame()).toContain("Themes");
         const contrastLines = setup.captureCharFrame().split("\n");
         const contrastY = contrastLines.findIndex((line) => line.includes("Contrast:"));
         await setup.mockMouse.click(
@@ -2376,6 +2380,7 @@ describe("production appearance picker", () => {
         await setup.mockMouse.click(lines[y]!.indexOf("Light"), y, MouseButtons.LEFT);
         await setup.renderOnce();
         expect(owner.theme().setting).toBe("light");
+        expect(setup.captureCharFrame()).toContain(mode === "dark" ? "● Dark" : "● Light");
         expect(restored).toEqual([]);
         setup.renderer.keyInput.emit("paste", { bytes: Buffer.from("DO_NOT_SEND") });
         setup.renderer.keyInput.emit("keypress", {

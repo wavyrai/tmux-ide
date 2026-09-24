@@ -73,3 +73,11 @@ export function createOverlayFocusCoordinator(options: {
     },
   };
 }
+
+/** Cell padding collapses before labels become unusable in tiny terminals. */
+export function overlaySurfacePadding(width: number, height: number) {
+  return {
+    horizontal: height < 6 ? 0 : width >= 48 ? 3 : width >= 12 ? 2 : 0,
+    vertical: height >= 8 ? 1 : 0,
+  };
+}

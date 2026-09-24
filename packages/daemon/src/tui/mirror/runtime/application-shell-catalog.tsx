@@ -49,6 +49,8 @@ export interface ApplicationCatalogShellProps {
   readonly paletteSelection?: Accessor<number>;
   readonly palettePreviewActive?: Accessor<boolean>;
   readonly onPaletteModalChange?: (open: boolean) => void;
+  readonly paletteReferencePage?: Accessor<"shortcuts" | "changes" | undefined>;
+  readonly onPaletteReferenceChange?: (page: "shortcuts" | "changes" | undefined) => void;
   readonly paletteKeyboardHint?: Accessor<string>;
   readonly paletteQuery?: Accessor<string>;
   readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
@@ -296,6 +298,8 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                 height={props.dimensions().height}
                 selected={props.paletteSelection?.() ?? 0}
                 query={props.paletteQuery?.() ?? ""}
+                referencePage={props.paletteReferencePage?.()}
+                onReferenceChange={props.onPaletteReferenceChange}
                 keyboardHint={props.paletteKeyboardHint?.()}
                 previewActive={props.palettePreviewActive?.() ?? true}
                 onModalChange={props.onPaletteModalChange}

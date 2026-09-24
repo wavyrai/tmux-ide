@@ -1,3 +1,5 @@
+import { OverlaySearchField } from "../ui/overlay-search-field.tsx";
+import { paletteListLayout, paletteSection } from "../workspace/palette-list-layout.ts";
 import { ApplicationReferenceSheet } from "./application-reference-sheet.tsx";
 import { ApplicationFleetSessionActions } from "./application-fleet-session-actions.tsx";
 import { ApplicationPalettePreview } from "./application-palette-preview.tsx";
@@ -7,16 +9,18 @@ import { For, Show, createMemo, createSignal, createEffect } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, clipTerminalEnd } from "../terminal-text.ts";
-import { Badge } from "../ui/badge.tsx";
 import { KeyHint } from "../ui/key-hint.tsx";
 import { useKeyboardRoute } from "../ui/keyboard-router.tsx";
 import { applicationMachineAuthorityManager } from "./application-machine-authority.ts";
 import { Dialog } from "../ui/dialog.tsx";
 import { OverlayFrame } from "../ui/overlay-frame.tsx";
-import { overlayFrameSize } from "../ui/overlay-model.ts";
+import { overlayFrameSize, overlaySurfacePadding } from "../ui/overlay-model.ts";
 import { OverlayListRow } from "../ui/overlay-list-row.tsx";
 import { TuiButton } from "../ui/button.tsx";
-import { applicationCommandDescription } from "../workspace/application-command-description.ts";
+import {
+  applicationCommandDescription,
+  PALETTE_REFERENCE_COMMANDS,
+} from "../workspace/application-command-description.ts";
 import type { ApplicationPaneRenameDraft } from "./application-pane-rename-input.ts";
 import type { ApplicationPaletteCommand } from "./application-palette-input.ts";
 
@@ -92,6 +96,8 @@ export function MinimalPalette(props: {
   readonly title?: string;
   readonly onViewport?: (rows: number) => void;
   readonly onFavorite?: (command: ApplicationPaletteCommand) => void;
+  readonly referencePage?: "shortcuts" | "changes";
+  readonly onReferenceChange?: (page: "shortcuts" | "changes" | undefined) => void;
   readonly keyboardHint?: string;
   readonly previewActive?: boolean;
   readonly onModalChange?: (open: boolean) => void;
@@ -109,10 +115,18 @@ export function MinimalPalette(props: {
   const [modal, setModal] = createSignal(false);
   const [sheet, setSheet] = createSignal<"shortcuts" | "changes">();
   const openSheet = (page: "shortcuts" | "changes" | undefined) => {
+    props.onReferenceChange?.(page);
     setSheet(page);
     setModal(!!page);
     props.onModalChange?.(!!page);
   };
+  createEffect(() => {
+    if (props.onReferenceChange) {
+      setSheet(props.referencePage);
+      setModal(!!props.referencePage);
+      props.onModalChange?.(!!props.referencePage);
+    }
+  });
   const [lastHost, setLastHost] = createSignal<ApplicationPaletteCommand>();
   createEffect(() => {
     const c = props.commands[props.selected];
@@ -133,6 +147,18 @@ export function MinimalPalette(props: {
   createEffect(() => {
     if (!hasPreview()) setExpanded(false);
   });
+  const grouped = () => !props.query?.trim() && props.height >= 18;
+  const sectionSpace = () =>
+    grouped()
+      ? props.commands.reduce(
+          (count, command, index) =>
+            count +
+            (index === 0 || paletteSection(command) !== paletteSection(props.commands[index - 1]!)
+              ? 2
+              : 0),
+          0,
+        )
+      : 0;
   const horizontalInset = () => (props.width >= 8 ? 2 : 0);
   const verticalInset = () => (props.height >= 10 ? 1 : 0);
   const width = () =>
@@ -145,13 +171,14 @@ export function MinimalPalette(props: {
       preferredHeight: Math.max(
         3,
         Math.min(
-          hasPreview() ? 36 : 20,
-          Math.max(hasPreview() ? 22 : 9, props.commands.length + 6),
+          hasPreview() ? 36 : 34,
+          Math.max(hasPreview() ? 22 : 9, props.commands.length + sectionSpace() + 7),
           props.height - verticalInset() * 2,
         ),
       ),
     }).height;
-  const innerWidth = () => Math.max(1, width() - 4);
+  const innerWidth = () =>
+    Math.max(1, width() - overlaySurfacePadding(width(), height()).horizontal * 2);
   const commandLabel = (command: ApplicationPaletteCommand): string => {
     return props.closeArmed && command === "close-pane"
       ? "Confirm close pane"
@@ -173,7 +200,7 @@ export function MinimalPalette(props: {
         : Math.max(4, Math.floor(bodyHeight() * 0.55));
   const visibleCapacity = () =>
     expanded() ? 0 : sideBySide() ? bodyHeight() : Math.max(1, bodyHeight() - previewHeight());
-  createEffect(() => props.onViewport?.(Math.max(1, visibleCapacity())));
+  createEffect(() => props.onViewport?.(Math.max(1, commandRows().length)));
   const favorite = () => {
     const c = selectedCommand();
     return typeof c === "object" && c.kind === "open-session" ? c.fleet?.favorite : undefined;
@@ -192,36 +219,21 @@ export function MinimalPalette(props: {
     event.preventDefault();
     event.stopPropagation();
     if (event.eventType !== "press") return true;
-    if (key === "k" || key === "b") openSheet(key === "k" ? "shortcuts" : "changes");
+    const reference = Object.values(PALETTE_REFERENCE_COMMANDS).find((entry) => entry.key === key);
+    if (reference) openSheet(reference.page);
     const c = selectedCommand();
     if (c && key === "f") props.onFavorite?.(c);
     if (typeof c === "object" && c.fleet && key === "r")
       applicationMachineAuthorityManager.retry(c.fleet.machineId);
     return true;
   });
-  const firstVisible = createMemo((previous: number) => {
-    const capacity = visibleCapacity();
-    const next =
-      props.selected < previous
-        ? props.selected
-        : props.selected >= previous + capacity
-          ? props.selected - capacity + 1
-          : previous;
-    return Math.max(0, Math.min(next, props.commands.length - capacity));
-  }, 0);
-  const commandRows = () =>
-    props.commands
-      .slice(firstVisible(), firstVisible() + visibleCapacity())
-      .map((command, offset) => {
-        const index = firstVisible() + offset;
-        return {
-          command,
-          index,
-        };
-      });
+  const commandRows = createMemo(() =>
+    paletteListLayout(props.commands, props.selected, visibleCapacity(), grouped()),
+  );
   return (
     <>
       <Dialog
+        surface
         theme={props.theme}
         viewportWidth={props.width}
         viewportHeight={props.height}
@@ -235,37 +247,16 @@ export function MinimalPalette(props: {
         zIndex={props.zIndex}
         onDismiss={props.onClose}
       >
-        <text
-          height={1}
+        <OverlaySearchField
+          theme={props.theme}
           width={innerWidth()}
-          fg={props.theme.roles.text.link}
-          content={clipTerminal(
-            props.query
-              ? `/ ${clipTerminalEnd(`${props.query}▏`, innerWidth() - 2)}`
-              : "/ Search commands…",
-            innerWidth(),
-          )}
+          query={props.query}
+          placeholder="Search commands…"
         />
         <Show when={height() >= 12}>
-          <box height={1} flexDirection="row" gap={1} overflow="hidden">
-            <TuiButton
-              theme={props.theme}
-              label="Shortcuts ^K"
-              size="compact"
-              onPress={() => openSheet("shortcuts")}
-            />
-            <TuiButton
-              theme={props.theme}
-              label="What's new ^B"
-              size="compact"
-              onPress={() => openSheet("changes")}
-            />
-            <Badge theme={props.theme} label={`${props.commands.length} matches`} />
-            <Show when={hasPreview()}>
-              <Badge theme={props.theme} label="PASSIVE PREVIEW" tone="neutral" />
-            </Show>
-          </box>
+          <box height={1} flexShrink={0} />
         </Show>
+
         <box
           height={bodyHeight()}
           flexDirection={sideBySide() ? "row" : "column"}
@@ -313,24 +304,42 @@ export function MinimalPalette(props: {
                         (row) => applicationCommandDescription(row.command).id === id,
                       )!;
                     return (
-                      <OverlayListRow
-                        theme={props.theme}
-                        id={id}
-                        label={`${typeof row().command === "object" && (row().command as { fleet?: { favorite?: boolean } }).fleet?.favorite ? "★ " : ""}${commandLabel(row().command)}`}
-                        query={props.query}
-                        width={listWidth()}
-                        selected={props.selected === row().index}
-                        reserveMarker={innerWidth() >= 16}
-                        disabled={
-                          props.active === false || Boolean(props.disabledReason?.(row().command))
-                        }
-                        danger={props.closeArmed && row().command === "close-pane"}
-                        onHighlight={() => props.onSelect?.(row().index)}
-                        onPress={() => {
-                          props.onSelect?.(row().index);
-                          props.onActivate(row().command);
-                        }}
-                      />
+                      <>
+                        <Show when={row().gap}>
+                          <box height={1} flexShrink={0} />
+                        </Show>
+                        <Show when={row().heading}>
+                          <text
+                            height={1}
+                            flexShrink={0}
+                            fg={props.theme.roles.text.link}
+                            content={clipTerminal(row().heading ?? "", listWidth())}
+                          />
+                        </Show>
+                        <OverlayListRow
+                          surface
+                          theme={props.theme}
+                          id={id}
+                          label={`${typeof row().command === "object" && (row().command as { fleet?: { favorite?: boolean } }).fleet?.favorite ? "★ " : ""}${commandLabel(row().command)}`}
+                          shortcut={applicationCommandDescription(row().command).shortcut}
+                          query={props.query}
+                          width={listWidth()}
+                          selected={props.selected === row().index}
+                          reserveMarker={innerWidth() >= 16}
+                          disabled={
+                            props.active === false || Boolean(props.disabledReason?.(row().command))
+                          }
+                          danger={props.closeArmed && row().command === "close-pane"}
+                          onHighlight={() => props.onSelect?.(row().index)}
+                          onPress={() => {
+                            props.onSelect?.(row().index);
+                            const command = row().command;
+                            if (command === "shortcuts" || command === "whats-new")
+                              openSheet(PALETTE_REFERENCE_COMMANDS[command].page);
+                            else props.onActivate(command);
+                          }}
+                        />
+                      </>
                     );
                   }}
                 </For>
@@ -338,11 +347,10 @@ export function MinimalPalette(props: {
             </box>
           </Show>
           <Show when={sideBySide()}>
-            <text
+            <box
               width={1}
               height={bodyHeight()}
-              fg={props.theme.roles.text.muted}
-              content={Array(bodyHeight()).fill("│").join("\n")}
+              backgroundColor={props.theme.roles.surfaces.panel}
             />
           </Show>
           <Show when={hasPreview()}>
@@ -397,7 +405,9 @@ export function MinimalPalette(props: {
                   props.disabledReason?.(command) ??
                   (props.closeArmed
                     ? "Closes the pane and its running process"
-                    : `${props.selected + 1}/${props.commands.length} · ${applicationCommandDescription(command).detail}`)
+                    : hasPreview()
+                      ? `${props.selected + 1}/${props.commands.length} · ${applicationCommandDescription(command).detail}`
+                      : "")
                 );
               })(),
               innerWidth(),
@@ -486,86 +496,110 @@ export function AppearanceDialog(props: {
   active?: boolean;
   zIndex?: number;
 }) {
-  const width = () => Math.max(1, Math.min(48, props.width - (props.width >= 8 ? 4 : 0)));
+  const width = () => Math.max(1, Math.min(64, props.width - (props.width >= 8 ? 4 : 0)));
+  const height = () => Math.min(26, props.height);
+  const padding = () => overlaySurfacePadding(width(), height());
+  const contentWidth = () => Math.max(1, width() - padding().horizontal * 2);
+  const spacious = () => height() >= 16;
+  const capacity = () =>
+    Math.max(
+      1,
+      height() -
+        padding().vertical * 2 -
+        4 -
+        (spacious() ? 3 : 0) -
+        (props.owner.pickerError() ? 1 : 0),
+    );
+  const visibleOptions = () => {
+    const options = props.owner.pickerOptions();
+    const index = options.findIndex((option) => option.id === props.owner.pickerSelection());
+    const start = Math.max(
+      0,
+      Math.min(index - Math.floor(capacity() / 2), options.length - capacity()),
+    );
+    return options.slice(start, start + capacity());
+  };
   return (
     <Dialog
+      surface
       theme={props.owner.theme()}
       viewportWidth={props.width}
       viewportHeight={props.height}
       width={width()}
-      height={Math.min(19, props.height)}
-      title="Appearance"
-      footer={width() < 40 ? "Enter save · Esc back" : "↑↓ preview · Enter save · Esc cancel"}
+      height={height()}
+      title="Themes"
       active={props.active}
       zIndex={props.zIndex}
       onDismiss={props.owner.cancelPicker}
     >
-      <text
-        height={1}
-        fg={props.owner.theme().roles.text.primary}
-        content={`Search: ${props.owner.pickerQuery() || "type to filter"}`}
-      />
-      <TuiButton
+      <box height={spacious() ? 1 : 0} flexShrink={0} />
+      <OverlaySearchField
         theme={props.owner.theme()}
-        label={`^A Contrast: ${props.owner.automaticContrast() ? "On" : "Off"}`}
-        size="compact"
+        width={contentWidth()}
+        query={props.owner.pickerQuery()}
+        placeholder="Search themes…"
+      />
+      <box height={spacious() ? 1 : 0} flexShrink={0} />
+      <box height={capacity()} flexShrink={0} flexDirection="column" overflow="hidden">
+        <Show
+          when={visibleOptions().length > 0}
+          fallback={
+            <text
+              height={1}
+              fg={props.owner.theme().roles.text.muted}
+              content={clipTerminal("No matching themes", contentWidth())}
+            />
+          }
+        >
+          <For each={visibleOptions()}>
+            {(option) => (
+              <OverlayListRow
+                surface
+                reserveMarker
+                theme={props.owner.theme()}
+                id={option.id}
+                label={option.name}
+                width={contentWidth()}
+                selected={props.owner.pickerSelection() === option.id}
+                current={props.owner.pickerOriginalSelection() === option.id}
+                disabled={props.active === false}
+                onPress={() => props.owner.preview(option.id)}
+              />
+            )}
+          </For>
+        </Show>
+      </box>
+      <box height={spacious() ? 1 : 0} flexShrink={0} />
+      <Show when={props.owner.pickerError()}>
+        <text
+          height={1}
+          fg={props.owner.theme().roles.statusTone.danger}
+          content={clipTerminal(props.owner.pickerError() ?? "", contentWidth())}
+        />
+      </Show>
+      <OverlayListRow
+        surface
+        theme={props.owner.theme()}
+        id="theme-contrast"
+        label={`Contrast: ${props.owner.automaticContrast() ? "On" : "Off"}`}
+        shortcut="Ctrl+A"
+        width={contentWidth()}
         disabled={props.active === false}
         onPress={props.owner.toggleAutomaticContrast}
       />
-      <For
-        each={(() => {
-          const options = props.owner.pickerOptions();
-          const count = Math.max(1, Math.min(10, props.height - 9));
-          const index = options.findIndex((p) => p.id === props.owner.pickerSelection());
-          const start = Math.max(
-            0,
-            Math.min(index - Math.floor(count / 2), options.length - count),
-          );
-          return options.slice(start, start + count);
-        })()}
-      >
-        {(option) => (
-          <OverlayListRow
-            theme={props.owner.theme()}
-            id={option.id}
-            label={option.name}
-            width={Math.max(1, width() - 4)}
-            selected={props.owner.pickerSelection() === option.id}
-            disabled={props.active === false}
-            onPress={() => props.owner.preview(option.id)}
-          />
-        )}
-      </For>
-      <text
-        height={1}
-        fg={props.owner.theme().roles.text.muted}
-        content={
-          props.owner.pickerError()
-            ? width() < 40
-              ? "Save failed · retry"
-              : props.owner.pickerError()!
-            : width() < 40
-              ? "↑↓ preview"
-              : "Preview now · Save to remember"
+      <OverlayListRow
+        surface
+        theme={props.owner.theme()}
+        id="theme-apply"
+        label="Apply theme"
+        shortcut="Enter"
+        width={contentWidth()}
+        disabled={
+          props.active === false ||
+          !props.owner.pickerOptions().some((option) => option.id === props.owner.pickerSelection())
         }
+        onPress={props.owner.savePicker}
       />
-      <box height={1} flexDirection="row" gap={1}>
-        <TuiButton
-          theme={props.owner.theme()}
-          label="Save"
-          size="compact"
-          variant="primary"
-          disabled={props.active === false}
-          onPress={props.owner.savePicker}
-        />
-        <TuiButton
-          theme={props.owner.theme()}
-          label="Cancel"
-          size="compact"
-          disabled={props.active === false}
-          onPress={props.owner.cancelPicker}
-        />
-      </box>
     </Dialog>
   );
 }

@@ -20,6 +20,7 @@ export function createApplicationPaletteCommandOwner(options: {
   ) => CommandSource;
   readonly setSurface: (surface: "home" | "terminals") => void;
   readonly setNote: (note: string | null) => void;
+  readonly openSessions?: () => void;
   readonly openAppearance?: () => void;
   readonly zoomPane?: () => Promise<string>;
   readonly newWindow: () => Promise<string>;
@@ -37,6 +38,7 @@ export function createApplicationPaletteCommandOwner(options: {
   readonly disabledReason?: (command: ApplicationPaletteCommand) => string | null;
   readonly targetKey?: () => string;
 }) {
+  const [referencePage, setReferencePage] = createSignal<"shortcuts" | "changes">();
   const [closeArmed, setCloseArmed] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   let armedTarget: string | undefined;
@@ -49,6 +51,7 @@ export function createApplicationPaletteCommandOwner(options: {
     onChange: () => setCloseArmed(false),
   });
   const setOpen = (open: boolean, source: Source): void => {
+    setReferencePage(undefined);
     openRevision += 1;
     setCloseArmed(false);
     if (open) search.reset(options.activeSurface() === "home" ? 0 : 1);
@@ -62,6 +65,20 @@ export function createApplicationPaletteCommandOwner(options: {
     confirmed = false,
   ): void => {
     if (busy()) return;
+    if (command === "shortcuts" || command === "whats-new") {
+      setCloseArmed(false);
+      setReferencePage(command === "shortcuts" ? "shortcuts" : "changes");
+      return;
+    }
+    if (command === "switch-session") {
+      if (!options.openSessions) {
+        options.setNote("Session switching is unavailable.");
+        return;
+      }
+      setOpen(false, source);
+      options.openSessions();
+      return;
+    }
     if (command === "appearance") {
       setOpen(false, source);
       options.openAppearance?.();
@@ -161,6 +178,8 @@ export function createApplicationPaletteCommandOwner(options: {
   };
   return {
     ...search,
+    referencePage,
+    setReferencePage,
     busy,
     disabledReason: options.disabledReason ?? (() => null),
     closeArmed: () => closeArmed() && armedTarget === options.targetKey?.(),

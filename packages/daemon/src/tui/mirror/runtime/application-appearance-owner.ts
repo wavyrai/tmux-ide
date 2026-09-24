@@ -36,6 +36,7 @@ export interface ApplicationAppearanceOwner {
   readonly preview: (id: string) => void;
   readonly pickerQuery: Accessor<string>;
   readonly pickerSelection: Accessor<string>;
+  readonly pickerOriginalSelection: Accessor<string>;
   readonly pickerOptions: Accessor<readonly { id: string; name: string }[]>;
   readonly cancelPicker: () => void;
   readonly savePicker: () => void;
@@ -146,7 +147,7 @@ export function createAppearanceOwner(
     { id: "system", name: "System · follow terminal" },
     { id: "dark", name: "Dark" },
     { id: "light", name: "Light" },
-    ...VISUAL_THEME_PRESETS,
+    ...[...VISUAL_THEME_PRESETS].sort((a, b) => a.name.localeCompare(b.name)),
   ];
   const pickerOptions = () =>
     options.filter((p) => `${p.id} ${p.name}`.toLowerCase().includes(pickerQuery().toLowerCase()));
@@ -169,6 +170,12 @@ export function createAppearanceOwner(
     setPickerError(null);
     if (options.some((p) => p.id === id)) apply(id);
   };
+  const filterPicker = (query: string): void => {
+    setPickerQuery(query);
+    const first = pickerOptions()[0];
+    if (!query) preview(originalSelection);
+    else if (first) preview(first.id);
+  };
   const cancelPicker = (): void => {
     if (!pickerOpen()) return;
     setContrast(originalContrast);
@@ -177,7 +184,7 @@ export function createAppearanceOwner(
     setPickerError(null);
   };
   const savePicker = (): void => {
-    if (!pickerOpen()) return;
+    if (!pickerOpen() || !pickerOptions().some((option) => option.id === pickerSelection())) return;
     try {
       updateAppConfig({
         theme: {
@@ -216,6 +223,7 @@ export function createAppearanceOwner(
     pickerError,
     pickerQuery,
     pickerSelection,
+    pickerOriginalSelection: () => originalSelection,
     pickerOptions,
     openPicker() {
       if (pickerOpen()) return;
@@ -248,10 +256,10 @@ export function createAppearanceOwner(
           preview(choices[index]!.id);
         }
       } else if (name === "backspace") {
-        setPickerQuery((q) => q.slice(0, -1));
+        filterPicker(pickerQuery().slice(0, -1));
       } else if (!event.ctrl && !event.meta) {
         const text = event.sequence ?? (name.length === 1 ? name : "");
-        if (text.length === 1 && text >= " ") setPickerQuery((q) => (q + text).slice(0, 80));
+        if (text.length === 1 && text >= " ") filterPicker((pickerQuery() + text).slice(0, 80));
       }
       return true;
     },

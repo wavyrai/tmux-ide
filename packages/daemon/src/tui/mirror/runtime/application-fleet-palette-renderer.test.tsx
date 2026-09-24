@@ -1,4 +1,5 @@
 /* @jsxImportSource @opentui/solid */
+import { MouseButtons } from "@opentui/core/testing";
 import { expect, it } from "bun:test";
 import { renderForTest } from "../testing/renderer-harness.test.ts";
 import { createSemanticThemeSnapshot } from "../theme.ts";
@@ -92,7 +93,8 @@ it("keeps wide and narrow previews inside their surface and offers true full pre
       writeFileSync(`/tmp/beta18-palette-${width}.txt`, frame);
       expect(frame).toContain("Mini · api");
       expect(frame).toContain("Expand");
-      expect(frame).toContain("1 matches");
+      // Result position remains in the detail footer; the duplicate count badge is gone.
+      expect(frame).toContain("1/1 · Mini · Session");
       owner.route({
         name: "e",
         ctrl: true,
@@ -165,3 +167,67 @@ it("opens offline reference sheets and restores palette input after dismissal", 
     owner.dispose();
   }
 });
+
+for (const mode of ["dark", "light"] as const)
+  for (const width of [80, 28]) {
+    it(`${mode} ${width}: aligns shortcuts, drops optional hints on narrow rows, and opens reference rows`, async () => {
+      const routes = createKeyboardRouteOwner();
+      const theme = createSemanticThemeSnapshot({ mode });
+      const setup = await renderForTest(
+        () => (
+          <KeyboardRouteProvider owner={routes}>
+            <MinimalPalette
+              width={width}
+              height={24}
+              selected={0}
+              commands={["home", "terminals", "shortcuts", "whats-new"]}
+              theme={theme}
+              closeArmed={false}
+              onActivate={() => {}}
+              onClose={() => {}}
+            />
+          </KeyboardRouteProvider>
+        ),
+        { width, height: 24 },
+      );
+      try {
+        await setup.renderOnce();
+        const lines = setup.captureCharFrame().split("\n");
+        const home = lines.find((line) => line.includes("Home"))!;
+        const terminals = lines.find((line) => line.includes("Terminals"))!;
+        expect(home.indexOf("F1")).toBe(terminals.indexOf("F2"));
+        expect(home).toMatch(/Home +F1/u);
+        const reference = lines.findIndex((line) => line.includes("Keyboard shortcuts"));
+        expect(reference).toBeGreaterThan(-1);
+        if (width === 80)
+          expect(lines[reference]!.indexOf("Ctrl+K") + 6).toBe(home.indexOf("F1") + 2);
+        else expect(lines[reference]).not.toContain("Ctrl+K");
+        const span = setup
+          .captureSpans()
+          .lines[lines.indexOf(home)]!.spans.find((span) => span.text.includes("F1"))!;
+        expect(span.fg.toInts()).toEqual(theme.roles.selection.selectionText.toInts());
+        await setup.mockMouse.click(
+          lines[reference]!.indexOf("Keyboard shortcuts"),
+          reference,
+          MouseButtons.LEFT,
+        );
+        await setup.renderOnce();
+        expect(setup.captureCharFrame()).toContain("APPLICATION");
+        routes.route({
+          name: "escape",
+          ctrl: false,
+          meta: false,
+          shift: false,
+          eventType: "press",
+          preventDefault() {},
+          stopPropagation() {},
+        });
+        await setup.renderOnce();
+        expect(setup.captureCharFrame()).not.toContain("APPLICATION");
+        expect(setup.captureCharFrame()).toContain("Command palette");
+      } finally {
+        setup.renderer.destroy();
+        routes.dispose();
+      }
+    });
+  }

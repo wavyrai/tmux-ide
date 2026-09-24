@@ -221,6 +221,7 @@ export function createApplicationHomeNavigationOwner(options: {
     ReturnType<typeof createApplicationTerminalInteractionController>,
     "selectPane" | "renamePane" | "newWindow" | "splitPane" | "closePane"
   >;
+  readonly openSessions?: () => void;
   readonly openAppearance?: () => void;
   readonly zoomPane?: () => Promise<string>;
   readonly appearanceOpen?: () => boolean;
@@ -289,7 +290,10 @@ export function createApplicationHomeNavigationOwner(options: {
         typeof command === "object" ||
         command === "home" ||
         command === "terminals" ||
-        command === "appearance"
+        command === "appearance" ||
+        command === "shortcuts" ||
+        command === "whats-new" ||
+        command === "switch-session"
       )
         return null;
       if (options.sessionOwner()?.snapshot()?.status !== "live") return "Open a live session first";
@@ -301,6 +305,7 @@ export function createApplicationHomeNavigationOwner(options: {
     setSurface: options.setSurface,
     setNote: options.setNote,
     openAppearance: options.openAppearance,
+    openSessions: options.openSessions,
     zoomPane: options.zoomPane,
     newWindow: options.interaction.newWindow,
     splitPane: options.interaction.splitPane,

@@ -1,3 +1,4 @@
+import { overlaySurfacePadding } from "../ui/overlay-model.ts";
 import { terminalDisplayWidth } from "../panel-host.ts";
 import type { Rect } from "../recipes.ts";
 import { workspaceIcon, type WorkspaceIconId } from "./icons.ts";
@@ -189,13 +190,13 @@ function paletteGeometry(width: number, height: number, variant: CommandPaletteV
     width: overlayWidth,
     height: overlayHeight,
   };
-  const bordered = overlay.width >= 8 && overlay.height >= 6;
-  const inset = bordered ? 1 : 0;
+  const bordered = false;
+  const padding = overlaySurfacePadding(overlay.width, overlay.height);
   const inner: Rect = {
-    x: overlay.x + inset,
-    y: overlay.y + inset,
-    width: Math.max(0, overlay.width - inset * 2),
-    height: Math.max(0, overlay.height - inset * 2),
+    x: overlay.x + padding.horizontal,
+    y: overlay.y + padding.vertical,
+    width: Math.max(0, overlay.width - padding.horizontal * 2),
+    height: Math.max(0, overlay.height - padding.vertical * 2),
   };
   const headerHeight = inner.height >= 3 ? 1 : 0;
   const queryHeight = inner.height >= 2 ? 1 : 0;
@@ -358,13 +359,7 @@ function projectCommandRow(
   const disabledReason = command.disabledReason?.trim() ?? "";
   const disabled = disabledReason.length > 0;
   const left = rect.x;
-  const markerText = disabled
-    ? "×"
-    : selected
-      ? workspaceIcon("command")
-      : command.current
-        ? "✓"
-        : " ";
+  const markerText = disabled ? "×" : selected ? " " : command.current ? "✓" : " ";
   const markerSpan = span(markerText, left, rect.y, Math.min(1, rect.width));
   const iconX = left + Math.min(2, rect.width);
   const iconSpan = span(workspaceIcon(command.icon), iconX, rect.y, Math.max(0, rect.width - 2));
@@ -416,7 +411,7 @@ function projectStateRow(
   retryCommandId: string,
 ): CommandPaletteStateRow {
   const selected = candidate.actionable && selectedCommandId === retryCommandId;
-  const prefix = `${selected ? workspaceIcon("command") : " "} ${candidate.icon} `;
+  const prefix = `${selected ? " " : " "} ${candidate.icon} `;
   const labelSpan = span(`${prefix}${candidate.title}`, rect.x, rect.y, rect.width);
   const detailSpan =
     rect.height > 1

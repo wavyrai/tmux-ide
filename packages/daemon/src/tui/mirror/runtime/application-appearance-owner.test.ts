@@ -337,6 +337,27 @@ describe("appearance picker", () => {
 });
 
 describe("named theme picker", () => {
+  it("previews filtered results, retains the original marker, and never saves an empty result", () => {
+    const path = useTemporaryConfig();
+    const owner = createAppearanceOwner(
+      parseAppConfig({ theme: { preset: "nord" } }),
+      new ThemeRenderer(),
+      new PaletteOwner(),
+    );
+    owner.openPicker();
+    for (const name of "dracula") owner.handlePickerKey({ name });
+    expect(owner.pickerSelection()).toBe("dracula");
+    expect(owner.pickerOriginalSelection()).toBe("nord");
+    owner.handlePickerKey({ name: "z" });
+    expect(owner.pickerOptions()).toEqual([]);
+    owner.handlePickerKey({ name: "enter" });
+    expect(owner.pickerOpen()).toBe(true);
+    expect(() => readFileSync(path)).toThrow();
+    while (owner.pickerQuery()) owner.handlePickerKey({ name: "backspace" });
+    expect(owner.pickerSelection()).toBe("nord");
+    owner.cancelPicker();
+    owner.dispose();
+  });
   it("searches presets, previews locally, restores on cancel and persists selection", () => {
     const path = useTemporaryConfig();
     const owner = createAppearanceOwner(

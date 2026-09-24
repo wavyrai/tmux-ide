@@ -97,6 +97,42 @@ async function renderPalette(width: number, height: number) {
 }
 
 describe("CommandPaletteSurface OpenTUI renderer", () => {
+  it.each(["dark", "light"] as const)(
+    "uses distinct borderless surfaces and readable selected spans in %s mode",
+    async (mode) => {
+      const theme = createSemanticThemeSnapshot({ mode });
+      const projection = projectCommandPalette({
+        width: 120,
+        height: 40,
+        query: "",
+        commands,
+        selectedCommandId: "workspace.terminals.open",
+      });
+      const setup = await renderForTest(
+        () => <CommandPaletteSurface theme={theme} projection={projection} />,
+        { width: 120, height: 40 },
+      );
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).not.toMatch(/[╭╮╰╯─]/u);
+      expect(colorKey(theme.roles.surfaces.command)).not.toBe(
+        colorKey(theme.roles.surfaces.canvas),
+      );
+      const row = projection.rows.find((row) => row.kind === "command" && row.selected)!;
+      const lines = setup.captureSpans().lines;
+      for (const y of [row.rect.y, row.rect.y + 1]) {
+        for (const span of lines[y]!.spans.filter((span) => span.text.trim())) {
+          expect(colorKey(span.bg)).toBe(colorKey(theme.roles.selection.selection));
+          expect(colorKey(span.fg)).toBe(colorKey(theme.roles.selection.selectionText));
+        }
+      }
+      const title = lines[projection.header.y]!.spans.find((span) =>
+        span.text.includes("Command palette"),
+      )!;
+      expect(colorKey(title.bg)).toBe(colorKey(theme.roles.surfaces.command));
+    },
+  );
+
   it.each([
     [80, 24, "compact"],
     [120, 40, "standard"],
@@ -177,7 +213,7 @@ describe("CommandPaletteSurface OpenTUI renderer", () => {
     setup.mockInput.pressArrow("down");
     await setup.renderOnce();
     expect(ids).toEqual(beforeIds);
-    expect(stableFrame(setup.captureCharFrame())).toContain("› ❯ Open Terminals");
+    expect(stableFrame(setup.captureCharFrame())).toContain("❯ Open Terminals");
   });
 
   it("lets disabled fully override simultaneous current and selected icon chrome", async () => {

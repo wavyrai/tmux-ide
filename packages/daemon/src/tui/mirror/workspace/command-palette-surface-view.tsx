@@ -1,7 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { createMemo, For, Show } from "solid-js";
 import { terminalDisplayWidth } from "../panel-host.ts";
-import { recipePalette } from "../recipes.ts";
+import { overlayRowPalette } from "../ui/overlay-surface.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { workspaceIcon } from "./icons.ts";
 import type {
@@ -30,7 +30,7 @@ function localY(projection: CommandPaletteProjection, y: number): number {
 }
 
 function commandRowPalette(theme: SemanticThemeSnapshot, row: CommandPaletteCommandRow) {
-  return recipePalette(theme, {
+  return overlayRowPalette(theme, {
     disabled: row.disabled,
     selected: row.selected,
     focused: row.current,
@@ -71,7 +71,9 @@ function CommandRow(props: {
       >
         <text
           fg={
-            props.row.current && !props.row.disabled ? props.theme.colors.focus : palette().accent
+            props.row.current && !props.row.disabled && !props.row.selected
+              ? props.theme.colors.focus
+              : palette().accent
           }
         >
           {props.row.iconSpan.text}
@@ -95,7 +97,11 @@ function CommandRow(props: {
           height={1}
         >
           <text
-            fg={props.row.disabled ? props.theme.colors.mutedForeground : props.theme.colors.accent}
+            fg={
+              props.row.selected && !props.row.disabled
+                ? palette().foreground
+                : props.theme.colors.mutedForeground
+            }
           >
             {props.row.trailingSpan!.text}
           </text>
@@ -111,8 +117,8 @@ function CommandRow(props: {
         >
           <text
             fg={
-              props.row.disabled
-                ? props.theme.colors.status.blocked
+              props.row.selected && !props.row.disabled
+                ? palette().foreground
                 : props.theme.colors.mutedForeground
             }
           >
@@ -130,7 +136,7 @@ function StateRow(props: {
   row: CommandPaletteStateRow;
 }) {
   const palette = () =>
-    recipePalette(props.theme, {
+    overlayRowPalette(props.theme, {
       loading: props.row.state === "loading",
       empty: props.row.state === "empty" || props.row.state === "no-match",
       attention: props.row.state === "error",
@@ -180,7 +186,7 @@ function Row(props: {
               top={localY(props.projection, props.row.rect.y)}
               width={props.row.rect.width}
               height={1}
-              backgroundColor={props.theme.colors.surface}
+              backgroundColor={props.theme.roles.surfaces.command}
               overflow="hidden"
             >
               <box
@@ -237,11 +243,11 @@ function footerRight(projection: CommandPaletteProjection): string {
 export function CommandPaletteSurface(props: CommandPaletteSurfaceProps) {
   const entries = createMemo(() => new Map(props.projection.rows.map((row) => [row.id, row])));
   const rowIds = createMemo(() => props.projection.rowIds, undefined, { equals: sameIds });
-  const count = () => `${props.projection.commandCount}`;
+  const count = () => "esc";
   const countWidth = () => terminalDisplayWidth(count());
   const headerTitle = () =>
     clipWorkspaceText(
-      ` ${workspaceIcon("command")} ${props.projection.title}`,
+      props.projection.title,
       Math.max(0, props.projection.header.width - countWidth() - 2),
     );
   const leftFooter = () =>
@@ -273,7 +279,7 @@ export function CommandPaletteSurface(props: CommandPaletteSurfaceProps) {
         border={props.projection.bordered ? true : []}
         borderStyle="rounded"
         borderColor={props.theme.colors.focusBorder}
-        backgroundColor={props.theme.colors.surface}
+        backgroundColor={props.theme.roles.surfaces.command}
         overflow="hidden"
       >
         <Show when={props.projection.header.height > 0}>
@@ -283,10 +289,12 @@ export function CommandPaletteSurface(props: CommandPaletteSurfaceProps) {
             top={localY(props.projection, props.projection.header.y)}
             width={props.projection.header.width}
             height={1}
-            backgroundColor={props.theme.colors.surfaceRaised}
+            backgroundColor={props.theme.roles.surfaces.command}
             overflow="hidden"
           >
-            <text fg={props.theme.colors.foreground}>{headerTitle()}</text>
+            <text fg={props.theme.colors.foreground}>
+              <strong>{headerTitle()}</strong>
+            </text>
             <box position="absolute" right={0} top={0} width={countWidth()} height={1}>
               <text fg={props.theme.colors.mutedForeground}>{count()}</text>
             </box>
@@ -299,7 +307,7 @@ export function CommandPaletteSurface(props: CommandPaletteSurfaceProps) {
             top={localY(props.projection, props.projection.query.y)}
             width={props.projection.query.width}
             height={1}
-            backgroundColor={props.theme.colors.background}
+            backgroundColor={props.theme.roles.surfaces.panel}
             overflow="hidden"
             flexDirection="row"
           >
@@ -324,7 +332,7 @@ export function CommandPaletteSurface(props: CommandPaletteSurfaceProps) {
             height={1}
             overflow="hidden"
           >
-            <text fg={props.theme.colors.border}>{"─".repeat(props.projection.divider.width)}</text>
+            {/* Space separates search from results without a rule. */}
           </box>
         </Show>
         <For each={rowIds()}>
@@ -339,7 +347,7 @@ export function CommandPaletteSurface(props: CommandPaletteSurfaceProps) {
             top={localY(props.projection, props.projection.footer.y)}
             width={props.projection.footer.width}
             height={1}
-            backgroundColor={props.theme.colors.surfaceRaised}
+            backgroundColor={props.theme.roles.surfaces.command}
             overflow="hidden"
           >
             <text fg={props.theme.colors.mutedForeground}>{leftFooter()}</text>

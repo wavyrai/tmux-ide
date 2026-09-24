@@ -37,6 +37,9 @@ export interface ApplicationMachinePaletteCommand {
 }
 
 export type ApplicationPaletteCommand =
+  | "switch-session"
+  | "shortcuts"
+  | "whats-new"
   | "home"
   | "terminals"
   | "appearance"
@@ -49,8 +52,27 @@ export type ApplicationPaletteCommand =
   | ApplicationAgentPaletteCommand
   | ApplicationSessionPaletteCommand;
 
+export const PALETTE_REFERENCE_COMMANDS = {
+  shortcuts: { label: "Keyboard shortcuts", shortcut: "Ctrl+K", key: "k", page: "shortcuts" },
+  "whats-new": { label: "What's new", shortcut: "Ctrl+B", key: "b", page: "changes" },
+} as const;
+
 /** Presentation only: execution remains in the existing application owners. */
-export function applicationCommandDescription(command: ApplicationPaletteCommand) {
+export function applicationCommandDescription(command: ApplicationPaletteCommand): {
+  id: string;
+  label: string;
+  detail: string;
+  shortcut?: string;
+} {
+  if (command === "switch-session")
+    return {
+      id: command,
+      label: "Switch session",
+      shortcut: "F6",
+      detail: "Sessions across machines",
+    };
+  if (command === "shortcuts" || command === "whats-new")
+    return { id: command, ...PALETTE_REFERENCE_COMMANDS[command], detail: "Help and reference" };
   if (typeof command === "object" && command.kind === "open-machine")
     return {
       id: JSON.stringify([
@@ -101,11 +123,8 @@ export function applicationCommandDescription(command: ApplicationPaletteCommand
         : command === "zoom-pane"
           ? "Zoom / unzoom pane"
           : undefined) ??
-      (command === "home"
-        ? "F1 Home"
-        : command === "terminals"
-          ? "F2 Terminals"
-          : "New terminal window"),
+      (command === "home" ? "Home" : command === "terminals" ? "Terminals" : "New terminal window"),
+    shortcut: command === "home" ? "F1" : command === "terminals" ? "F2" : undefined,
     detail:
       command === "home"
         ? "sessions and agent state"
@@ -121,8 +140,8 @@ export function filterApplicationCommands(
 ) {
   return commands
     .map((command, index) => {
-      const { label, detail } = applicationCommandDescription(command);
-      const score = commandSearchMatch(`${label} ${detail}`, query)?.score;
+      const { label, detail, shortcut } = applicationCommandDescription(command);
+      const score = commandSearchMatch(`${label} ${detail} ${shortcut ?? ""}`, query)?.score;
       const fleet = typeof command === "object" ? command.fleet : undefined;
       return {
         command,

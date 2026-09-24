@@ -151,7 +151,7 @@ describe("command palette surface projection", () => {
       shortcut: "F2",
     });
     if (selected?.kind === "command") {
-      expect(selected.markerSpan.text).toBe("›");
+      expect(selected.markerSpan.text).toBe(" ");
       expect(selected.trailingSpan?.text).toContain("3 agents");
       expect(selected.trailingSpan?.text).toContain("F2");
     }

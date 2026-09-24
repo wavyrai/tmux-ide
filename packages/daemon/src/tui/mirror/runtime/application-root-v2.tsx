@@ -561,6 +561,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               paneRenameDialog={paneRename.draft}
               paletteSelection={paletteCommands.selection}
               paletteQuery={paletteCommands.query}
+              paletteReferencePage={paletteCommands.referencePage}
+              onPaletteReferenceChange={paletteCommands.setReferencePage}
               paletteKeyboardHint={paletteCommands.keyboardHint}
               palettePreviewActive={() =>
                 rendererFocused() && !machines.switching() && !machines.adding()

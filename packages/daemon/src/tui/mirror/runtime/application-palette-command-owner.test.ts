@@ -25,6 +25,50 @@ const testOwner = (
   });
 
 describe("application palette command owner", () => {
+  it("routes Switch session to the same fleet switcher entry without pane mutation", () => {
+    const openSessions = vi.fn();
+    const splitPane = vi.fn(async () => "unexpected");
+    const setPaletteOpen = vi.fn(async () => true);
+    const owner = testOwner({
+      openSessions,
+      splitPane,
+      binding: {
+        setPaletteOpen,
+        openSurface: vi.fn(async () => true),
+        activatePaletteSurface: vi.fn(async () => true),
+      },
+    });
+    owner.activate("switch-session", "keyboard");
+    expect(setPaletteOpen).toHaveBeenCalledWith(false, expect.anything());
+    expect(openSessions).toHaveBeenCalledTimes(1);
+    expect(splitPane).not.toHaveBeenCalled();
+  });
+  it("searches and opens reference commands without closing the palette or mutating panes", () =>
+    createRoot((dispose) => {
+      const splitPane = vi.fn(async () => "unexpected");
+      const setPaletteOpen = vi.fn(async () => true);
+      const owner = testOwner({
+        splitPane,
+        binding: {
+          setPaletteOpen,
+          openSurface: vi.fn(async () => true),
+          activatePaletteSurface: vi.fn(async () => true),
+        },
+      });
+      owner.setQuery("Ctrl+B");
+      expect(owner.commands()).toEqual(["whats-new"]);
+      owner.handleKey({ name: "enter", ctrl: false, meta: false, shift: false });
+      expect(owner.referencePage()).toBe("changes");
+      expect(setPaletteOpen).not.toHaveBeenCalled();
+      expect(splitPane).not.toHaveBeenCalled();
+      owner.setReferencePage(undefined);
+      expect(owner.query()).toBe("Ctrl+B");
+      owner.activate("shortcuts", "mouse");
+      expect(owner.referencePage()).toBe("shortcuts");
+      owner.setOpen(false, "keyboard");
+      expect(owner.referencePage()).toBeUndefined();
+      dispose();
+    }));
   it("requires fresh confirmation after a query, selection or target change and ignores repeated Enter", async () => {
     let target = "pane-a";
     const closePane = vi.fn(async () => "closed");
