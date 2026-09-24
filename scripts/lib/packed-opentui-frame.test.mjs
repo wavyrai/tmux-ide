@@ -67,3 +67,21 @@ test("rejects non-terminal focus", () => {
 test("rejects a live session footer without terminal focus evidence", () => {
   assert.equal(frameShowsTerminalFocus("journey-beta  Live tmux session discovered"), false);
 });
+
+const calmHome = `Your agents
+  1 observed agent · 0 need attention · 1 working
+  Agent             Workspace / machine       Status
+  Codex             journey-beta              working
+  codex             Local / Default
+  Local / Default / journey-beta · Enter open`;
+
+test("accepts the calm two-line Home row without a selection chevron", () => {
+  assert.equal(frameShowsSelectedHomeAgent(calmHome, "Codex", "journey-beta"), true);
+  for (const frame of [
+    calmHome.replace("Codex", "Other"),
+    calmHome.replace("              working", "              idle"),
+    calmHome.replace("codex             Local / Default", "codex             Remote / Default"),
+    calmHome.replace("journey-beta · Enter open", "another · Enter open"),
+  ])
+    assert.equal(frameShowsSelectedHomeAgent(frame, "Codex", "journey-beta"), false);
+});
