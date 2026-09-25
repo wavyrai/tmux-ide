@@ -1257,7 +1257,8 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       10_000,
       () => {
         const frame = capture(one.targetPane);
-        return frameShowsSelectedHomeAgent(frame, agentClickLabel, "journey-beta");
+        // The fixture only echoes input; enriched discovery correctly reports it idle.
+        return frameShowsSelectedHomeAgent(frame, agentClickLabel, "journey-beta", "idle");
       },
       one.diagnostics,
     );

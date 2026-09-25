@@ -18,7 +18,12 @@ export function frameShowsTerminalFocus(frame) {
 }
 
 /** The selected Home row's footer keeps its full location when its column truncates. */
-export function frameShowsSelectedHomeAgent(frame, agentLabel, sessionName) {
+export function frameShowsSelectedHomeAgent(
+  frame,
+  agentLabel,
+  sessionName,
+  expectedStatus = "working",
+) {
   const lines = frame.split("\n");
   const summary = lines.findIndex((line) => line.includes("1 observed agent"));
   if (summary < 0) return false;
@@ -30,7 +35,7 @@ export function frameShowsSelectedHomeAgent(frame, agentLabel, sessionName) {
         (line.includes("Local / Default /") ||
           rows[index + 1]?.trimEnd().endsWith("Local / Default") ||
           rows[index + 1]?.trimStart().startsWith(`${sessionName} · Local · Default · `)) &&
-        /\bworking\s*$/iu.test(line),
+        line.trimEnd().split(/\s+/u).at(-1)?.toLowerCase() === expectedStatus.toLowerCase(),
     ) && rows.some((line) => line.trim() === `Local / Default / ${sessionName} · Enter open`)
   );
 }

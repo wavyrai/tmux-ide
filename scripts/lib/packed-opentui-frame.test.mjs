@@ -107,3 +107,11 @@ test("accepts unified Home while retaining exact agent, status and location chec
   ])
     assert.equal(frameShowsSelectedHomeAgent(frame, "Codex", "journey-beta"), false);
 });
+
+test("requires idle for the inactive installed agent fixture", () => {
+  const idleHome = unifiedHome.replaceAll("working", "idle");
+  assert.equal(frameShowsSelectedHomeAgent(idleHome, "Codex", "journey-beta", "idle"), true);
+  assert.equal(frameShowsSelectedHomeAgent(unifiedHome, "Codex", "journey-beta", "idle"), false);
+  assert.equal(frameShowsSelectedHomeAgent(idleHome, "Other", "journey-beta", "idle"), false);
+  assert.equal(frameShowsSelectedHomeAgent(idleHome, "Codex", "other", "idle"), false);
+});
