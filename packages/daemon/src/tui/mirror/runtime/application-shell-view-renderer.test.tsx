@@ -923,7 +923,10 @@ describe("production ApplicationShellView", () => {
     "retains shell, window strip, pane chrome, and canvas at %sx%s",
     async (width, height) => {
       registerPaneSurface();
-      const theme = createSemanticThemeSnapshot({ mode: "dark" });
+      const theme = createSemanticThemeSnapshot({
+        mode: "dark",
+        accessibility: { reducedMotion: true },
+      });
       const palette = createTerminalPaletteProjection(theme);
       const canonical = semantic();
       const setup = await renderForTest(
@@ -1318,8 +1321,13 @@ describe("production ApplicationShellView", () => {
 
   it("retains two 132x41 window surfaces through warm switches and an active rename", async () => {
     registerPaneSurface();
-    const theme = createSemanticThemeSnapshot({ mode: "dark" });
-    const palette = createTerminalPaletteProjection(theme);
+    const [theme, setTheme] = createSignal(
+      createSemanticThemeSnapshot({
+        mode: "dark",
+        accessibility: { reducedMotion: true },
+      }),
+    );
+    const palette = createTerminalPaletteProjection(theme());
     const tracked = trackedAdapter();
     const windowA = {
       type: "layout" as const,
@@ -1363,7 +1371,7 @@ describe("production ApplicationShellView", () => {
           layout={layout}
           focusedPane={focused}
           rendererFocused={() => true}
-          theme={theme}
+          theme={theme()}
           palette={palette}
           onOpenSurface={() => undefined}
           onOpenSession={() => undefined}
@@ -1443,6 +1451,16 @@ describe("production ApplicationShellView", () => {
     expect(tracked.lifecycle.unsubscriptions).toBe(0);
     expect(measuredFrameStages).toEqual(["warm-a", "warm-b", "rename", "rename"]);
     setup.renderer.off("frame", onMeasuredFrame);
+    // Motion may paint chrome frames, but must not reblit or remount terminals.
+    setTheme(createSemanticThemeSnapshot({ mode: "dark" }));
+    await setup.renderOnce();
+    tracked.blits.length = 0;
+    const animatedBefore = setup.captureCharFrame();
+    await Bun.sleep(180);
+    expect(setup.captureCharFrame()).not.toBe(animatedBefore);
+    expect(tracked.blits).toEqual([]);
+    expect(tracked.lifecycle.subscriptions).toBe(2);
+    expect(tracked.lifecycle.unsubscriptions).toBe(0);
     setup.renderer.destroy();
   });
 
@@ -2145,7 +2163,10 @@ describe("production ApplicationShellView", () => {
 
   it("preserves canonical attention while prioritizing mixed window activity", async () => {
     registerPaneSurface();
-    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const theme = createSemanticThemeSnapshot({
+      mode: "dark",
+      accessibility: { reducedMotion: true },
+    });
     const palette = createTerminalPaletteProjection(theme);
     const base = semantic();
     const mixed = {
@@ -2206,7 +2227,7 @@ describe("production ApplicationShellView", () => {
     expect(frame.split("\n")[2]).toContain("● working");
     expect(frame).toContain("! Scout");
     expect(frame).toContain("[IDLE]");
-    expect(frame).toContain("• Codex [WORKING]");
+    expect(frame).toContain("● Codex [WORKING]");
     expect(frame).toContain("! Scout ! [IDLE]");
     // The trusted live catalog, not an unrelated semantic display label, owns session routes.
     expect(frame).not.toContain("website");

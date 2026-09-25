@@ -7,7 +7,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
  ○ website          CANONICAL-CELL
 
  Agents
- • Codex [WORKING]
+ ● Codex [WORKING]
 
 
 
@@ -23,7 +23,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
  ○ website                  CANONICAL-CELL
 
  Agents
- • Codex [WORKING]
+ ● Codex [WORKING]
 
 
 
@@ -39,7 +39,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
  ○ website                  CANONICAL-CELL
 
  Agents
- • Codex [WORKING]
+ ● Codex [WORKING]
 
 
 
@@ -76,7 +76,7 @@ exports[`production ApplicationShellView preserves canonical attention while pri
  ● main                       ● Codex                  ● working  ⋯   ! Scout                     ! idle
                             CANONICAL-CELL                          CANONICAL-CELL
  Agents
- • Codex [WORKING]
+ ● Codex [WORKING]
  ! Scout ! [IDLE]
 
 

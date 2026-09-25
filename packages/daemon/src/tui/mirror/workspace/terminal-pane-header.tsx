@@ -290,6 +290,7 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
           theme={props.theme}
           label={statusLabel()!}
           status={status()!}
+          activity={props.activity}
           width={badgeWidth(statusLabel())}
           selected={props.selected}
           focused={props.keyboardFocused || props.terminalFocused}

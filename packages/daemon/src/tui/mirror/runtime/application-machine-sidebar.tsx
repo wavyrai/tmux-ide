@@ -1,3 +1,4 @@
+import { createAgentStatusMarker } from "../ui/agent-status-marker.ts";
 import type { TmuxServerDescriptor, TmuxServerScope } from "@tmux-ide/contracts";
 import { fleetHostColor, summarizeFleetActivity } from "./fleet-presentation.ts";
 import { TuiButton } from "../ui/button.tsx";
@@ -528,6 +529,12 @@ export function ApplicationMachineSidebar(props: {
                 return current().agentHeading;
               },
             };
+            const agentMarker = createAgentStatusMarker({
+              theme: () => props.theme,
+              status: () => row.agent?.activity,
+              attention: () => Boolean(row.agent?.attention),
+              unavailable: () => row.group.state !== "ready" || Boolean(row.agent?.disabled),
+            });
             return (
               <box
                 width={Math.max(1, props.width - 1)}
@@ -573,9 +580,7 @@ export function ApplicationMachineSidebar(props: {
                     row.server
                       ? "  "
                       : row.agent
-                        ? row.agent.attention
-                          ? "!"
-                          : " "
+                        ? agentMarker()
                         : row.session
                           ? props.model.favorites?.().includes(row.session.id)
                             ? " ★"

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.0-beta.33
+
+- Working agents now have animated indicators across Home, sidebars, and pane headers. Done, blocked, and idle agents have distinct static indicators alongside their status labels.
+- Agent animations share one clock, stop for stale observations, and respect reduced motion. Terminal contents remain retained during animation.
+
 ## 2.9.0-beta.7
 
 ### OpenTUI beta

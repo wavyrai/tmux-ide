@@ -1,8 +1,9 @@
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard, type JSX } from "@opentui/solid";
-import { createSignal, onCleanup } from "solid-js";
+import { For, Show, createSignal, onCleanup } from "solid-js";
 import { describe, expect, it, spyOn } from "bun:test";
+import { createAgentStatusMarker } from "./agent-status-marker.ts";
 import { ActivityIndicator } from "./activity-indicator.tsx";
 
 import { createSemanticThemeSnapshot } from "../theme.ts";
@@ -514,6 +515,78 @@ it("runs one pending-region timer only while visible and motion is enabled", asy
     expect(timers()).toBe(baseline + 2);
     const beforeHide = clears.mock.calls.length;
     setActive(false);
+    await setup.renderOnce();
+    expect(clears.mock.calls.length).toBeGreaterThan(beforeHide);
+  } finally {
+    setup.renderer.destroy();
+    intervals.mockRestore();
+    clears.mockRestore();
+  }
+});
+
+it("shares one agent animation clock and stops for stale, reduced-motion and unmounted rows", async () => {
+  const [working, setWorking] = createSignal(true);
+  const [unavailable, setUnavailable] = createSignal(false);
+  const [reduced, setReduced] = createSignal(false);
+  const [visible, setVisible] = createSignal(true);
+  const intervals = spyOn(globalThis, "setInterval");
+  const clears = spyOn(globalThis, "clearInterval");
+  const theme = () =>
+    createSemanticThemeSnapshot({
+      mode: "dark",
+      accessibility: { reducedMotion: reduced() },
+    });
+  const setup = await renderForTest(
+    () => (
+      <Show when={visible()}>
+        <box flexDirection="column">
+          <For each={[0, 1, 2]}>
+            {() => {
+              const marker = createAgentStatusMarker({
+                theme,
+                status: () => (working() ? "running" : "complete"),
+                unavailable,
+              });
+              return <text>{marker()} agent</text>;
+            }}
+          </For>
+        </box>
+      </Show>
+    ),
+    { width: 20, height: 4 },
+  );
+  const clocks = () => intervals.mock.calls.filter((call) => call[1] === 80);
+  try {
+    await setup.renderOnce();
+    expect(clocks()).toHaveLength(1);
+    const first = setup.captureCharFrame();
+    const tick = clocks()[0]![0] as () => void;
+    tick();
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).not.toBe(first);
+    expect(setup.captureCharFrame().match(/⠙/gu)).toHaveLength(3);
+    setWorking(false);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame().match(/✓/gu)).toHaveLength(3);
+    expect(clears.mock.calls.length).toBeGreaterThan(0);
+    setReduced(true);
+    setWorking(true);
+    await setup.renderOnce();
+    expect(clocks()).toHaveLength(1);
+    expect(setup.captureCharFrame().match(/●/gu)).toHaveLength(3);
+    setReduced(false);
+    await setup.renderOnce();
+    expect(clocks()).toHaveLength(2);
+    const beforeStale = clears.mock.calls.length;
+    setUnavailable(true);
+    await setup.renderOnce();
+    expect(clears.mock.calls.length).toBeGreaterThan(beforeStale);
+    expect(setup.captureCharFrame().match(/·/gu)).toHaveLength(3);
+    setUnavailable(false);
+    await setup.renderOnce();
+    expect(clocks()).toHaveLength(3);
+    const beforeHide = clears.mock.calls.length;
+    setVisible(false);
     await setup.renderOnce();
     expect(clears.mock.calls.length).toBeGreaterThan(beforeHide);
   } finally {

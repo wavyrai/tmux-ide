@@ -1,3 +1,4 @@
+import { createAgentStatusMarker } from "../ui/agent-status-marker.ts";
 /* @jsxImportSource @opentui/solid */
 import type { AgentActivity } from "@tmux-ide/contracts";
 import type { JSX } from "solid-js";
@@ -156,6 +157,12 @@ export function ApplicationSidebarAgents(
       <For each={props.shell.semantic.sidebar.agents}>
         {(agent) => {
           const status = () => agentStatus(agent.activity);
+          const marker = createAgentStatusMarker({
+            theme: () => props.theme,
+            status: () => agent.activity,
+            attention: () => agent.attention,
+            unavailable: () => !agent.paneId,
+          });
           return (
             <NavigationRow
               theme={props.theme}
@@ -165,7 +172,7 @@ export function ApplicationSidebarAgents(
               detailMarker={agent.attention ? "!" : undefined}
               detailAlign="adjacent"
               width={rowWidth()}
-              marker={agent.attention ? "!" : "•"}
+              marker={marker()}
               focused={sidebarFocused() && agent.paneId === focusedAgentPane()}
               status={status()}
               attention={agent.attention || status() === "blocked"}

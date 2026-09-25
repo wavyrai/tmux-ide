@@ -1,5 +1,7 @@
 /* @jsxImportSource @opentui/solid */
+import type { AgentActivity } from "@tmux-ide/contracts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
+import { createAgentStatusMarker } from "./agent-status-marker.ts";
 import { Badge } from "./badge.tsx";
 import type { ComponentInteractionState } from "./state.ts";
 
@@ -9,17 +11,18 @@ export interface AgentBadgeProps extends ComponentInteractionState {
   theme: SemanticThemeSnapshot;
   label: string;
   status: AgentBadgeStatus;
+  activity?: AgentActivity;
   width?: number;
 }
 
 /** Agent-specific semantic badge. Agent lifecycle remains outside this presentation primitive. */
 export function AgentBadge(props: AgentBadgeProps) {
-  const marker = () => {
-    if (props.attention || props.status === "blocked") return "!";
-    if (props.status === "working") return props.theme.glyphs.active;
-    if (props.status === "done") return props.theme.glyphs.check;
-    return props.theme.glyphs.inactive;
-  };
+  const marker = createAgentStatusMarker({
+    theme: () => props.theme,
+    status: () => props.activity ?? props.status,
+    attention: () => Boolean(props.attention),
+    unavailable: () => Boolean(props.disabled),
+  });
   return (
     <Badge
       theme={props.theme}

@@ -10,6 +10,7 @@ import {
   applicationPaneRenamePaste,
 } from "./application-pane-rename-input.ts";
 import { HomeAgentSearch } from "../ui/home-agent-search.tsx";
+import { createAgentStatusMarker } from "../ui/agent-status-marker.ts";
 import { ActivityIndicator } from "../ui/activity-indicator.tsx";
 import { componentPalette, type ComponentInteractionState } from "../ui/state.ts";
 import {
@@ -266,6 +267,12 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
           <For each={keys()}>
             {(key) => {
               const row = () => byKey().get(key)!;
+              const marker = createAgentStatusMarker({
+                theme: () => props.theme,
+                status: () => row().activity,
+                attention: () => row().attention,
+                unavailable: () => stale(row()),
+              });
               return (
                 <box
                   height={rowHeight()}
@@ -305,7 +312,7 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
                           )
                     }
                     detail={padCells(
-                      `${!stale(row()) && row().attention ? "! " : ""}${stale(row()) ? "last seen" : homeAgentStatusLabel(row().activity).toLowerCase()}`,
+                      `${marker()} ${stale(row()) ? "last seen" : homeAgentStatusLabel(row().activity).toLowerCase()}`,
                       columns().status,
                     )}
                     detailAlign="end"
