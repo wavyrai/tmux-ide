@@ -20,20 +20,16 @@ export function frameShowsTerminalFocus(frame) {
 /** The selected Home row's footer keeps its full location when its column truncates. */
 export function frameShowsSelectedHomeAgent(frame, agentLabel, sessionName) {
   const lines = frame.split("\n");
-  const header = lines.findIndex(
-    (line) =>
-      /\bAgent\b/iu.test(line) &&
-      /MACHINE \/ SERVER|Workspace \/ machine/u.test(line) &&
-      /\bStatus\b/iu.test(line),
-  );
-  if (!frame.includes("1 observed agent") || header < 0) return false;
-  const rows = lines.slice(header + 1);
+  const summary = lines.findIndex((line) => line.includes("1 observed agent"));
+  if (summary < 0) return false;
+  const rows = lines.slice(summary + 1);
   return (
     rows.some(
       (line, index) =>
         (line.includes(`› ${agentLabel} `) || line.trimStart().startsWith(`${agentLabel} `)) &&
         (line.includes("Local / Default /") ||
-          rows[index + 1]?.trimEnd().endsWith("Local / Default")) &&
+          rows[index + 1]?.trimEnd().endsWith("Local / Default") ||
+          rows[index + 1]?.trimStart().startsWith(`${sessionName} · Local · Default · `)) &&
         /\bworking\s*$/iu.test(line),
     ) && rows.some((line) => line.trim() === `Local / Default / ${sessionName} · Enter open`)
   );

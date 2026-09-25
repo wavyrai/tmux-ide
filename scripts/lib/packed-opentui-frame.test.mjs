@@ -85,3 +85,25 @@ test("accepts the calm two-line Home row without a selection chevron", () => {
   ])
     assert.equal(frameShowsSelectedHomeAgent(frame, "Codex", "journey-beta"), false);
 });
+
+const unifiedHome = `tmux-ide
+  1 observed agent · 0 need attention · 1 working
+  All machines · All agents · f machine
+  Codex                                                     working
+  journey-beta · Local · Default · codex
+  Local / Default / journey-beta · Enter open`;
+
+test("accepts unified Home while retaining exact agent, status and location checks", () => {
+  assert.equal(frameShowsSelectedHomeAgent(unifiedHome, "Codex", "journey-beta"), true);
+  for (const frame of [
+    unifiedHome.replace("Codex", "Other"),
+    unifiedHome.replace(
+      "Codex                                                     working",
+      "Codex                                                     idle",
+    ),
+    unifiedHome.replace("· Local ·", "· Remote ·"),
+    unifiedHome.replace("journey-beta · Local", "other · Local"),
+    unifiedHome.replace("journey-beta · Enter open", "other · Enter open"),
+  ])
+    assert.equal(frameShowsSelectedHomeAgent(frame, "Codex", "journey-beta"), false);
+});
