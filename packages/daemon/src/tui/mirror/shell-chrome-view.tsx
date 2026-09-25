@@ -1,5 +1,5 @@
 /* @jsxImportSource @opentui/solid */
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import {
   contextStatusPresentation,
   developmentChromeLabel,
@@ -172,97 +172,61 @@ export function ContextStatusBar(props: ShellStatusStripProps) {
       notification: props.notification,
       transient: props.transient,
     });
-  const hintsWidth = () =>
-    presentation().hints.reduce(
-      (width, hint) =>
-        width + terminalDisplayWidth(`${hint.keys}${hint.label ? ` ${hint.label}` : ""}`) + 2,
-      0,
-    );
-  const locationBudget = () =>
-    Math.max(
-      1,
-      Math.min(
-        Math.floor(props.layout.status.width * (props.layout.variant === "wide" ? 0.5 : 0.4)),
-        props.layout.status.width - hintsWidth() - (props.layout.variant === "compact" ? 10 : 16),
-      ),
-    );
-  const visibleLocation = () => {
-    const candidates = presentation()
-      .location.filter(
-        (segment) =>
-          segment.id !== "mode" &&
-          (segment.id !== "project" || segment.label !== (props.session ?? props.project)),
-      )
-      .map((segment, index) => ({
-        segment,
-        index,
-        width: terminalDisplayWidth(segment.label) + 2,
-        priority:
-          segment.id === "session"
-            ? 100
-            : segment.id === "pane"
-              ? 80
-              : segment.id === "mode"
-                ? 60
-                : 40,
-      }));
-    const chosen: typeof candidates = [];
-    let remaining = locationBudget();
-    for (const candidate of [...candidates].sort((a, b) => b.priority - a.priority)) {
-      if (candidate.width <= remaining || candidate.segment.essential) {
-        const width = Math.max(1, Math.min(candidate.width, remaining));
-        if (width <= 0) continue;
-        chosen.push({ ...candidate, width });
-        remaining -= width;
-      }
-      if (remaining <= 0) break;
-    }
-    return chosen.sort((a, b) => a.index - b.index);
+  const commandWidth = () =>
+    Math.min(props.layout.status.width, props.layout.status.width >= 24 ? 13 : 4);
+  const available = () => Math.max(0, props.layout.status.width - commandWidth());
+  const activity = () => presentation().activity;
+  const showMessage = () => !/^(?:Live|\d+ sessions? live)$/iu.test(activity().label);
+  const hints = () => {
+    const candidates = /^home$/iu.test(props.mode)
+      ? [
+          { keys: "↑↓", label: "Select" },
+          { keys: "Enter", label: "Open" },
+          { keys: "/", label: "Search" },
+        ]
+      : [
+          { keys: "F6", label: "Sessions" },
+          { keys: "F7", label: "Attention" },
+        ];
+    let remaining = available();
+    return candidates.filter((hint) => {
+      const width = terminalDisplayWidth(`${hint.keys} ${hint.label}`) + 2;
+      if (width > remaining) return false;
+      remaining -= width;
+      return true;
+    });
   };
-  const contextWidth = () => visibleLocation().reduce((width, item) => width + item.width, 0);
   return (
     <StatusBar theme={props.theme} width={props.layout.status.width}>
-      <StatusBarGroup width={contextWidth()}>
-        <For each={visibleLocation()}>
-          {(item) => (
-            <StatusSegment
-              theme={props.theme}
-              label={item.segment.label}
-              width={item.width}
-              selected={false}
-              strong={false}
-            />
-          )}
-        </For>
-      </StatusBarGroup>
-      <StatusBarGroup grow>
-        <StatusSegment
-          theme={props.theme}
-          label={presentation().activity.label}
-          tone={presentation().activity.tone}
-          attention={presentation().activity.attention}
-          loading={presentation().activity.tone === "working"}
-          marker={
-            presentation().activity.attention
-              ? "!"
-              : presentation().activity.tone === "done"
-                ? "✓"
-                : undefined
+      <StatusBarGroup width={available()} grow>
+        <Show
+          when={showMessage()}
+          fallback={
+            <For each={hints()}>
+              {(hint) => <KeyHint theme={props.theme} keys={hint.keys} label={hint.label} quiet />}
+            </For>
           }
-        />
+        >
+          <StatusSegment
+            theme={props.theme}
+            label={activity().label}
+            width={available()}
+            tone={activity().tone}
+            attention={activity().attention}
+            loading={activity().tone === "working"}
+            marker={activity().attention ? "!" : activity().tone === "done" ? "✓" : undefined}
+          />
+        </Show>
       </StatusBarGroup>
-      <StatusBarGroup width={hintsWidth()} align="end">
-        <For each={presentation().hints}>
-          {(hint) => (
-            <KeyHint
-              theme={props.theme}
-              keys={hint.keys}
-              quiet
-              {...(hint.label ? { label: hint.label } : {})}
-              {...(hint.command === "commands" && props.onHelp ? { onPress: props.onHelp } : {})}
-            />
-          )}
-        </For>
+      <StatusBarGroup width={commandWidth()} align="end">
+        <KeyHint
+          theme={props.theme}
+          keys="F5"
+          label={props.layout.status.width >= 24 ? "Commands" : undefined}
+          width={commandWidth()}
+          quiet
+          onPress={props.onHelp}
+        />
       </StatusBarGroup>
     </StatusBar>
   );

@@ -394,7 +394,7 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
                         id={`catalog-session:${session}`}
                         label={friendlySessionLabel(session)}
                         width={Math.max(1, chrome().sidebar.width - 1)}
-                        marker={props.selectedSession() === index() ? "›" : "○"}
+                        marker=" "
                         selected={props.selectedSession() === index()}
                         onActivate={(source) => props.onOpenSession(session, source)}
                       />

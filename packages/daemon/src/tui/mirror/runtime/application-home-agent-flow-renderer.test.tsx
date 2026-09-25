@@ -168,7 +168,8 @@ describe("production shell Home agent flow", () => {
           expectFrameBounds(frame, width, height);
           expect(frame).toContain("Scope: 3 of 3 sessions observed");
           expect(frame).toContain("Agent-30 分析 Café 👨‍💻");
-          expect(frame).toContain("Status");
+          expect(frame).toContain("working");
+          expect(frame).not.toContain("Workspace / machine");
           expect(frame).toContain("Commands F5");
           const returnState = selection.snapshot();
           await setup.mockInput.pressEnter();

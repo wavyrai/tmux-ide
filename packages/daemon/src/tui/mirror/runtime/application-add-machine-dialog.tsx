@@ -2,6 +2,7 @@
 import { Show } from "solid-js";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal } from "../terminal-text.ts";
+import { overlaySurfaceMetrics } from "../ui/overlay-model.ts";
 import { Dialog } from "../ui/dialog.tsx";
 import { TuiButton } from "../ui/button.tsx";
 
@@ -20,7 +21,13 @@ export interface ApplicationAddMachineDialogProps {
 /** Collects an SSH target only; the owner validates and opens the connection. */
 export function ApplicationAddMachineDialog(props: ApplicationAddMachineDialogProps) {
   const width = () => Math.max(1, Math.min(58, props.width - (props.width >= 8 ? 4 : 0)));
-  const contentWidth = () => Math.max(1, width() - 4);
+  const contentWidth = () =>
+    overlaySurfaceMetrics({
+      viewportWidth: props.width,
+      viewportHeight: props.height,
+      preferredWidth: width(),
+      preferredHeight: 10,
+    }).contentWidth;
   return (
     <Show when={props.open}>
       <Dialog

@@ -502,8 +502,8 @@ function rendererShellClient(initial: ReturnType<typeof semantic>) {
 describe("production ApplicationShellView", () => {
   it("selects a deterministic terminal-safe Home brand for each golden viewport", () => {
     expect(applicationHomeBrandVariant(52, 21)).toBe("wordmark");
-    expect(applicationHomeBrandVariant(92, 37)).toBe("wordmark");
-    expect(applicationHomeBrandVariant(172, 57)).toBe("wordmark");
+    expect(applicationHomeBrandVariant(92, 37)).toBe("ascii");
+    expect(applicationHomeBrandVariant(172, 57)).toBe("ascii");
     expect(applicationHomeBrandVariant(24, 10)).toBe("wordmark");
   });
 
@@ -728,7 +728,7 @@ describe("production ApplicationShellView", () => {
     );
     const agentLabel = agentLine?.spans.find((span) => span.text.includes("Codex"));
     const agentStatus = agentLine?.spans.find((span) => span.text.includes("WORKING"));
-    const footerMessage = spans.lines.at(-1)?.spans.find((span) => span.text.includes("Live"));
+    const footerMessage = spans.lines.at(-1)?.spans.find((span) => span.text.includes("Sessions"));
     const terminalCell = spans.lines
       .flatMap((line) => line.spans)
       .find((span) => span.text.includes("CANONICAL-CELL"));
@@ -752,12 +752,12 @@ describe("production ApplicationShellView", () => {
       terminalCell: true,
       blankSidebarCell: true,
     });
-    expect(colorKey(topNavigation!.bg)).toBe(colorKey(light.roles.surfaces.header));
+    expect(colorKey(topNavigation!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(inactiveHomeTab!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(sidebarTitle!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(agentLabel!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(agentStatus!.bg)).toBe(colorKey(light.roles.surfaces.panel));
-    expect(colorKey(footerMessage!.bg)).toBe(colorKey(light.roles.surfaces.header));
+    expect(colorKey(footerMessage!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(terminalCell!.bg)).toBe(colorKey(light.roles.surfaces.terminal));
     expect(colorKey(blankSidebarCell!)).toBe(colorKey(light.roles.surfaces.panel));
     expect(terminal.lifecycle).toMatchObject({ subscriptions: 1, unsubscriptions: 0 });
@@ -2500,7 +2500,7 @@ it("hides machine navigation on attached Home and ignores its former session hit
   );
   try {
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("Your agents");
+    expect(setup.captureCharFrame()).toContain("tmux-ide");
     expect(setup.captureCharFrame()).not.toContain("Home-hidden-machine");
     await setup.mockMouse.click(4, 3, MouseButtons.LEFT);
     expect(calls).toEqual([]);

@@ -304,9 +304,16 @@ describe("ShellChrome OpenTUI renderer", () => {
     const spans = setup!.captureSpans().lines.flatMap((line) => line.spans);
     expectFrameBounds(harness.frame(), width, height);
     expect(stableFrame(harness.frame())).toContain("workspace");
-    expect(spans.some((span) => colorKey(span.bg) === colorKey(theme.roles.surfaces.header))).toBe(
-      true,
-    );
+    // Header, sidebar and footer share one neutral frame surface.
+    for (const y of [0, height - 1]) {
+      expect(
+        setup!
+          .captureSpans()
+          .lines[
+            y
+          ]!.spans.some((span) => colorKey(span.bg) === colorKey(theme.roles.surfaces.panel)),
+      ).toBe(true);
+    }
     expect(spans.some((span) => colorKey(span.bg) === colorKey(theme.roles.surfaces.panel))).toBe(
       true,
     );
@@ -323,9 +330,9 @@ describe("ShellChrome OpenTUI renderer", () => {
   });
 
   it.each([
-    [80, 24, ["web", "F5"], ["tmux-ide", "terminal", "Commands", "Claude Code"]],
-    [120, 40, ["web", "F5 Commands"], ["tmux-ide", "Claude Code", "terminal"]],
-    [200, 60, ["tmux-ide", "web", "Claude Code", "F5 Commands"], ["terminal"]],
+    [80, 24, ["F6 Sessions", "F5 Commands"], ["web", "terminal", "Live", "Claude Code"]],
+    [120, 40, ["F6 Sessions", "F5 Commands"], ["web", "Claude Code", "terminal"]],
+    [200, 60, ["F6 Sessions", "F7 Attention", "F5 Commands"], ["web", "Claude Code", "terminal"]],
   ] as const)(
     "collapses contextual footer segments deliberately at %sx%s",
     async (width, height, visible, hidden) => {
@@ -491,3 +498,37 @@ it("renders distinct DEV identities from launch metadata without changing keyboa
     });
   }
 });
+
+it.each(["Home", "Terminals"])(
+  "shows actionable %s hints on the shared frame surface",
+  async (mode) => {
+    const theme = createSemanticThemeSnapshot({ mode: "light" });
+    setup = await renderForTest(
+      () => (
+        <ContextStatusBar
+          theme={theme}
+          layout={{
+            ...shellChromeLayout(80, 24, 0),
+            status: { x: 0, y: 23, width: 80, height: 1 },
+          }}
+          project="example"
+          session="example"
+          mode={mode}
+          notification={null}
+          help="F5 Commands"
+        />
+      ),
+      { width: 80, height: 1 },
+    );
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain(mode === "Home" ? "↑↓ Select" : "F6 Sessions");
+    expect(frame).toContain(mode === "Home" ? "/ Search" : "F7 Attention");
+    expect(frame).toContain("F5 Commands");
+    expect(frame).not.toContain("example");
+    expect(frame).not.toContain("Live");
+    const key = setup.captureSpans().lines[0]!.spans.find((span) => span.text.includes("F5"));
+    expect(colorKey(key!.fg)).toBe(colorKey(theme.roles.text.primary));
+    expect(colorKey(key!.bg)).toBe(colorKey(theme.roles.surfaces.panel));
+  },
+);

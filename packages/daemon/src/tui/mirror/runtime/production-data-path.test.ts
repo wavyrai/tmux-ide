@@ -273,8 +273,9 @@ describe("production OpenTUI v2 data path", () => {
     // Machine-scoped agent navigation composes cancellation and exact-target input admission.
     // Fleet preview visibility, modal ownership and explicit-route callbacks remain composition only.
     // Two reference-dialog props connect the existing command owner to presentation.
-    // Home search and client-local sidebar visibility are wired here; navigation uses the existing picker.
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(688);
+    // Home search and client-local sidebar visibility are wired here; navigation uses the existing picker. Reference search uses the modal paste route.
+    // Home activity receives its daemon identity to avoid cross-machine attribution.
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(690);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.

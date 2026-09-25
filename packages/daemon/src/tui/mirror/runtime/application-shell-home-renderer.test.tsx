@@ -2,6 +2,9 @@ import type { InteractionReceipt } from "@tmux-ide/contracts";
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
 import { describe, expect, it } from "bun:test";
+import { createSignal } from "solid-js";
+import { readFileSync } from "node:fs";
+import { APPLICATION_HOME_WORDMARK } from "../ui/home-wordmark.ts";
 
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal } from "../terminal-text.ts";
@@ -36,6 +39,56 @@ function homeProps(
 }
 
 describe("compact production Home presentation", () => {
+  it("reuses the exact marketing-site ASCII wordmark", () => {
+    const svg = readFileSync(
+      new URL("../../../../../../docs/public/ascii-wordmark.svg", import.meta.url),
+      "utf8",
+    );
+    const rows = [...svg.matchAll(/<text x="0" y="\d+">([^<]*)<\/text>/gu)].map(
+      (match) => match[1],
+    );
+    expect(APPLICATION_HOME_WORDMARK).toEqual(rows);
+  });
+  it("reserves the ASCII logo for an observed empty fleet, not loading or search results", async () => {
+    for (const [phase, query, expected] of [
+      ["live", "", true],
+      ["live", "missing", false],
+      ["loading", "", false],
+      ["partial", "", false],
+      ["unavailable", "", false],
+    ] as const) {
+      const setup = await renderForTest(
+        () => (
+          <ApplicationHomeSurface
+            {...homeProps({
+              width: 120,
+              height: 40,
+              agentQuery: query,
+              agentRoster: {
+                phase,
+                rows: [],
+                observedSessions: 0,
+                totalSessions: 0,
+                loadingSessions: 0,
+                unavailableSessions: 0,
+                truncatedSessions: 0,
+                refreshingSessionKeys: [],
+                unavailableSessionKeys: [],
+                note: null,
+              },
+            })}
+          />
+        ),
+        { width: 120, height: 40 },
+      );
+      try {
+        await setup.renderOnce();
+        expect(setup.captureCharFrame().includes(APPLICATION_HOME_WORDMARK[2])).toBe(expected);
+      } finally {
+        setup.renderer.destroy();
+      }
+    }
+  });
   it.each([
     [80, 24],
     [120, 40],
@@ -107,7 +160,7 @@ describe("compact production Home presentation", () => {
       expectFrameBounds(frame, width, height);
       const lines = frame.split("\n").map((line) => line.trimEnd());
       const left = " ".repeat(Math.max(2, Math.floor((width - 96) / 2)));
-      expect(lines[1]).toBe(`${left}Your agents`);
+      expect(lines[1]).toBe(`${left}tmux-ide`);
       expect(lines[3]).toBe(`${left}research · live`);
       expect(lines[4]).toBe(`${left}2 sessions in view`);
       expect(lines[5]).toBe(`${left}Current session · 1 working · 1 needs attention`);
@@ -230,8 +283,41 @@ describe("Home observed pane activity", () => {
     at: "2026-09-08T10:00:00.000Z",
     resourceRevision: null,
   };
+  const activityProps = (overrides: Partial<ApplicationHomeSurfaceProps> = {}) =>
+    homeProps({
+      activityDaemonId: "daemon-local",
+      agentSelection: { selectedKey: "tests", scrollOffset: 0 },
+      agentRoster: {
+        phase: "live",
+        observedSessions: 1,
+        totalSessions: 1,
+        loadingSessions: 0,
+        unavailableSessions: 0,
+        truncatedSessions: 0,
+        refreshingSessionKeys: [],
+        unavailableSessionKeys: [],
+        note: null,
+        rows: [
+          {
+            key: "tests",
+            sessionKey: "research",
+            sessionName: "research",
+            liveSessionId: "$1",
+            daemonInstanceId: "daemon-local",
+            agentId: "tests",
+            paneId: "pane.tests",
+            name: "Tests",
+            harness: "codex",
+            activity: "running",
+            attention: false,
+            projectName: "research",
+          },
+        ],
+      },
+      ...overrides,
+    });
   it("shows safe observed relationships without inventing an agent identity or rendering payloads", async () => {
-    const props = homeProps({
+    const props = activityProps({
       recentPaneActivity: [Object.assign({}, receipt, { content: "SECRET_PANE_CONTENT" })],
     });
     const setup = await renderForTest(() => <ApplicationHomeSurface {...props} />, {
@@ -241,9 +327,9 @@ describe("Home observed pane activity", () => {
     try {
       await setup.renderOnce();
       const frame = setup.captureCharFrame();
-      expect(frame).toContain("Recent pane activity");
+      expect(frame).toContain("Tests · latest activity");
       expect(frame).toContain("09-08 10:00Z");
-      expect(frame).toContain("External reader reads pane.tests");
+      expect(frame).toContain("External reader reads Tests");
       expect(frame).toContain("Activity reported through tmux-ide");
       expect(frame).not.toContain("SECRET_PANE_CONTENT");
       expect(frame).toContain("Open terminals");
@@ -252,8 +338,74 @@ describe("Home observed pane activity", () => {
       setup.renderer.destroy();
     }
   });
+  it.each([
+    ["accepted", "reading"],
+    ["observed", "read"],
+    ["rejected", "failed"],
+    ["timed-out", "timed out"],
+  ] as const)("keeps %s activity explicit with secondary timestamps", async (phase, label) => {
+    const setup = await renderForTest(
+      () => (
+        <ApplicationHomeSurface
+          {...activityProps({
+            height: 32,
+            recentPaneActivity: [{ ...receipt, phase } as InteractionReceipt],
+          })}
+        />
+      ),
+      { width: 80, height: 32 },
+    );
+    try {
+      await setup.renderOnce();
+      const lines = setup.captureCharFrame().split("\n");
+      const row = lines.findIndex((line) => line.includes("External reader reads Tests"));
+      expect(row).toBeGreaterThan(-1);
+      expect(lines[row]!.trimEnd().endsWith(label)).toBe(true);
+      expect(lines[row + 1]).toContain("09-08 10:00Z");
+      expect(lines[row]).not.toContain("09-08");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+  it("only reveals activity for the selected agent on its originating daemon", async () => {
+    const base = activityProps({ height: 32 });
+    const [selectedKey, setSelectedKey] = createSignal<string | null>("tests");
+    const [daemonId, setDaemonId] = createSignal<string | null>("daemon-local");
+    const setup = await renderForTest(
+      () => (
+        <ApplicationHomeSurface
+          {...base}
+          activityDaemonId={daemonId()}
+          agentSelection={{ selectedKey: selectedKey(), scrollOffset: 0 }}
+          recentPaneActivity={[
+            receipt,
+            { ...receipt, workspaceName: "another-workspace", at: "2026-09-09T12:00:00Z" },
+          ]}
+        />
+      ),
+      { width: 80, height: 32 },
+    );
+    try {
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("Tests · latest activity");
+      expect(setup.captureCharFrame()).not.toContain("09-09 12:00Z");
+      setSelectedKey(null);
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).not.toContain("latest activity");
+      setSelectedKey("tests");
+      setDaemonId("daemon-remote");
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).not.toContain("latest activity");
+      setDaemonId(null);
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).not.toContain("latest activity");
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
   it("preserves Home controls in a short terminal by omitting the optional feed", async () => {
-    const props = homeProps({
+    const props = activityProps({
       width: 40,
       height: 14,
       recentPaneActivity: [receipt, receipt, receipt],
@@ -265,7 +417,7 @@ describe("Home observed pane activity", () => {
     try {
       await setup.renderOnce();
       const frame = setup.captureCharFrame();
-      expect(frame).not.toContain("Recent pane activity");
+      expect(frame).not.toContain("Tests · latest activity");
       expect(frame).toContain("Open terminals");
       expectFrameBounds(frame, 40, 14);
     } finally {

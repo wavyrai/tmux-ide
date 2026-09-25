@@ -235,6 +235,11 @@ export function ApplicationFleetSessionActions(props: {
             focused={!busy()}
             value={value()}
             maxLength={100}
+            backgroundColor={props.theme.roles.surfaces.command}
+            focusedBackgroundColor={props.theme.roles.surfaces.command}
+            textColor={props.theme.roles.text.primary}
+            focusedTextColor={props.theme.roles.text.primary}
+            placeholderColor={props.theme.roles.text.muted}
             onInput={setValue}
             onSubmit={() => void submit()}
             placeholder={mode() === "create" ? "New session name" : "yes"}

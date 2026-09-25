@@ -20,7 +20,7 @@ export function StatusBar(props: StatusBarProps) {
       height={1}
       flexDirection="row"
       justifyContent="space-between"
-      backgroundColor={props.theme.roles.surfaces.header}
+      backgroundColor={props.theme.roles.surfaces.panel}
       overflow="hidden"
     >
       {props.children}
@@ -151,7 +151,7 @@ export function StatusSegment(props: StatusSegmentProps) {
       props.tone,
     );
   const background = () =>
-    palette().state === "base" ? props.theme.roles.surfaces.header : palette().background;
+    palette().state === "base" ? props.theme.roles.surfaces.panel : palette().background;
   const foreground = () => {
     if (palette().state !== "base") return palette().foreground;
     if (props.tone && props.tone !== "neutral") return palette().accent;

@@ -81,3 +81,14 @@ export function overlaySurfacePadding(width: number, height: number) {
     vertical: height >= 8 ? 1 : 0,
   };
 }
+
+/** Content geometry for the default calm overlay, after viewport clamping. */
+export function overlaySurfaceMetrics(input: Parameters<typeof overlayFrameSize>[0]) {
+  const size = overlayFrameSize(input);
+  const padding = overlaySurfacePadding(size.width, size.height);
+  return {
+    ...size,
+    contentWidth: Math.max(1, size.width - padding.horizontal * 2),
+    contentHeight: Math.max(0, size.height - padding.vertical * 2),
+  };
+}

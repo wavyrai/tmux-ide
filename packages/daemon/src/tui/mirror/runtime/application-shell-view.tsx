@@ -68,6 +68,7 @@ export interface ApplicationShellViewProps {
   readonly machineColor?: string;
   readonly machineLabel?: string | null;
   readonly paneInteractions?: TerminalWorkspaceProps["paneInteractions"];
+  readonly activityDaemonId?: () => string | null;
   readonly recentPaneActivity?: () => readonly InteractionReceipt[];
   readonly appearanceOwner?: ApplicationAppearanceOwner;
   readonly homeAgents?: ApplicationHomeAgentPresentation;
@@ -380,6 +381,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
             }}
           >
             <ApplicationShell
+              footerContext={props.surface() === "home" ? "home" : "terminals"}
               rightChips={
                 props.machineLabel
                   ? [
@@ -456,6 +458,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                 <ApplicationHomeSurface
                   {...props.homeAgents}
                   recentPaneActivity={props.recentPaneActivity?.()}
+                  activityDaemonId={props.activityDaemonId?.()}
                   project={shell.semantic.project.name}
                   status={props.generationStatus()}
                   note={props.bootstrapNote()}

@@ -13,7 +13,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                     main  Live                                              F5"
+                     F6 Sessions  F7 Attention                      F5 Commands"
 `;
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 2`] = `
@@ -29,7 +29,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                             main  Live                                                                     F5 Commands"
+                             F6 Sessions  F7 Attention                                                      F5 Commands"
 `;
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 3`] = `
@@ -45,24 +45,24 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                             tmux-ide  main  Live                                                                                                                                           F5 Commands"
+                             F6 Sessions  F7 Attention                                                                                                                                      F5 Commands"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 1`] = `
 "  ⌂  ●❯                live
- Y  Command palette  esc
+ t  Command palette  esc
  m   Search commands…
  2    Home            F1
  C    Terminals       F2  …
       New terminal wind…
 
 
- main  Live              F5"
+ ↑↓ Select      F5 Commands"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 2`] = `
 "  ⌂  ●❯        live
- YCommand palette
+ tCommand palette
  m …rch commands…
  2  Home        F1w
  C                …
@@ -83,5 +83,5 @@ exports[`production ApplicationShellView preserves canonical attention while pri
 
 …
 
-                             main  Live                                                                     F5 Commands"
+                             F6 Sessions  F7 Attention                                                      F5 Commands"
 `;

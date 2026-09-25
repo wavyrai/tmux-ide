@@ -194,15 +194,15 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
       }}
       onMouseOut={() => setHovered(null)}
     >
+      <box height={searchRows()} flexShrink={0} />
       <box width={width()} height={1} flexShrink={0} flexDirection="row">
         <Show when={props.snapshot.phase === "loading" || props.snapshot.loadingSessions > 0}>
           <ActivityIndicator theme={props.theme} active={props.inputActive} />
         </Show>
-        <text height={1} flexGrow={1} fg={props.theme.roles.text.primary}>
+        <text height={1} flexGrow={1} fg={props.theme.roles.text.muted}>
           {clipTerminal(title(), width())}
         </text>
       </box>
-      <box height={searchRows()} flexShrink={0} />
       <box width={width()} height={1} flexShrink={0} flexDirection="row">
         <text
           width={Math.max(0, width() - (props.onToggleAttention ? 16 : 0))}
@@ -237,14 +237,25 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
       </box>
       <Show
         when={props.snapshot.rows.length > 0}
-        fallback={<box height={Math.max(0, visibleCount() * rowHeight() + 1)} flexShrink={0} />}
+        fallback={
+          <box
+            height={Math.max(0, visibleCount() * rowHeight() + 1)}
+            flexShrink={0}
+            flexDirection="column"
+            overflow="hidden"
+          >
+            <Show when={props.snapshot.phase === "live" && !props.query}>
+              <text height={1} width={width()} fg={props.theme.roles.text.primary}>
+                {clipTerminal("Your next session starts here", width())}
+              </text>
+              <text height={1} width={width()} fg={props.theme.roles.text.muted}>
+                {clipTerminal("Open terminals, or use Commands to connect a machine.", width())}
+              </text>
+            </Show>
+          </box>
+        }
       >
-        <text width={width()} height={1} flexShrink={0} fg={props.theme.roles.text.muted}>
-          {clipTerminal(
-            `  ${padCells("Agent", columns().agent)}${padCells(props.filterLabel ? "Workspace / machine" : "Session", columns().session)} ${padCells("Status", columns().status)}`,
-            width(),
-          )}
-        </text>
+        <box height={1} flexShrink={0} />
         <box
           height={visibleCount() * rowHeight()}
           width={width()}
@@ -283,15 +294,15 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
                     id={`home-agent:${key}`}
                     width={width()}
                     label={
-                      padCells(row().name, columns().agent) +
-                      padCells(
-                        rowHeight() > 1
-                          ? row().sessionName
-                          : [row().machineLabel, row().serverLabel, row().sessionName]
+                      rowHeight() > 1
+                        ? row().name
+                        : padCells(row().name, columns().agent) +
+                          padCells(
+                            [row().machineLabel, row().serverLabel, row().sessionName]
                               .filter(Boolean)
                               .join(" / "),
-                        columns().session,
-                      )
+                            columns().session,
+                          )
                     }
                     detail={padCells(
                       `${!stale(row()) && row().attention ? "! " : ""}${stale(row()) ? "last seen" : homeAgentStatusLabel(row().activity).toLowerCase()}`,
@@ -327,7 +338,7 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
                       }
                     >
                       {clipTerminal(
-                        `  ${padCells(row().harness, columns().agent)}${[row().machineLabel, row().serverLabel].filter(Boolean).join(" / ")}`,
+                        `  ${[row().sessionName, row().machineLabel, row().serverLabel, row().harness].filter(Boolean).join(" · ")}`,
                         width(),
                       )}
                     </text>
@@ -340,7 +351,7 @@ export function HomeAgentRoster(props: HomeAgentRosterProps) {
       </Show>
       <Show when={props.onQueryChange}>
         {(onQueryChange) => (
-          <box position="absolute" top={1} left={0} width={width()} height={1}>
+          <box position="absolute" top={0} left={0} width={width()} height={1}>
             <HomeAgentSearch
               theme={props.theme}
               width={width()}

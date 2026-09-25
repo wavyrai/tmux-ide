@@ -39,10 +39,13 @@ export function OverlayFrame(props: OverlayFrameProps) {
   const width = () => size().width;
   const height = () => size().height;
   // Empty border sides below keep OpenTUI border styling from enabling a frame.
-  const bordered = () => !props.surface && width() >= 4 && height() >= 3;
+  const bordered = () => props.surface === false && width() >= 4 && height() >= 3;
   const padding = () => overlaySurfacePadding(width(), height());
   const innerWidth = () =>
-    Math.max(1, width() - (props.surface ? padding().horizontal * 2 : bordered() ? 2 : 0));
+    Math.max(
+      1,
+      width() - (props.surface !== false ? padding().horizontal * 2 : bordered() ? 2 : 0),
+    );
   const left = () => {
     if (props.placement === "anchor")
       return Math.max(0, Math.min(props.anchor?.x ?? 0, viewportWidth() - width()));
@@ -68,13 +71,15 @@ export function OverlayFrame(props: OverlayFrameProps) {
       borderStyle="rounded"
       borderColor={props.theme.roles.borders.focused}
       backgroundColor={
-        props.surface ? props.theme.roles.surfaces.command : props.theme.roles.surfaces.panelRaised
+        props.surface !== false
+          ? props.theme.roles.surfaces.command
+          : props.theme.roles.surfaces.panelRaised
       }
       flexDirection="column"
-      paddingLeft={props.surface ? padding().horizontal : bordered() ? 1 : 0}
-      paddingRight={props.surface ? padding().horizontal : 0}
-      paddingTop={props.surface ? padding().vertical : 0}
-      paddingBottom={props.surface ? padding().vertical : 0}
+      paddingLeft={props.surface !== false ? padding().horizontal : bordered() ? 1 : 0}
+      paddingRight={props.surface !== false ? padding().horizontal : 0}
+      paddingTop={props.surface !== false ? padding().vertical : 0}
+      paddingBottom={props.surface !== false ? padding().vertical : 0}
       overflow="hidden"
       onMouseDown={(event) => {
         event.preventDefault();
@@ -84,18 +89,21 @@ export function OverlayFrame(props: OverlayFrameProps) {
       {props.title && height() >= 4 ? (
         <box width={innerWidth()} height={1} flexShrink={0} flexDirection="row">
           <text
-            width={Math.max(1, innerWidth() - (props.surface && innerWidth() >= 20 ? 4 : 0))}
+            width={Math.max(
+              1,
+              innerWidth() - (props.surface !== false && innerWidth() >= 20 ? 4 : 0),
+            )}
             fg={props.theme.roles.text.primary}
             overflow="hidden"
           >
             <strong>
               {clipTerminal(
                 props.title,
-                Math.max(1, innerWidth() - (props.surface && innerWidth() >= 20 ? 4 : 0)),
+                Math.max(1, innerWidth() - (props.surface !== false && innerWidth() >= 20 ? 4 : 0)),
               )}
             </strong>
           </text>
-          {props.surface && innerWidth() >= 20 ? (
+          {props.surface !== false && innerWidth() >= 20 ? (
             <text
               width={4}
               fg={props.theme.roles.text.muted}
@@ -119,7 +127,7 @@ export function OverlayFrame(props: OverlayFrameProps) {
           flexShrink={0}
           fg={props.theme.roles.text.muted}
           bg={
-            props.surface
+            props.surface !== false
               ? props.theme.roles.surfaces.command
               : props.theme.roles.surfaces.panelRaised
           }

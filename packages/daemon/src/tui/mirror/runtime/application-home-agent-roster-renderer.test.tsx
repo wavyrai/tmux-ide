@@ -86,7 +86,7 @@ describe("flat Home agent roster", () => {
       if (width >= 76) {
         expect(frame).toContain("3 observed agents · 1 needs attention · 1 working");
         expect(frame).toContain("Scope: 3 of 3 sessions observed");
-        expect(frame).toContain("Session");
+        expect(frame).not.toContain("Workspace / machine");
         expect(frame).toContain("! blocked");
         expect(frame).toContain("disconnected");
         expect(frame).toContain("分析 Café 👨‍💻");

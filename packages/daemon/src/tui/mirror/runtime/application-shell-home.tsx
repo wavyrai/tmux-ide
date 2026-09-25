@@ -6,20 +6,23 @@ import { For, Show } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
+import { DetailRow } from "../ui/detail-row.tsx";
 import { TuiButton } from "../ui/button.tsx";
 import type { ApplicationTerminalAgentIndicator } from "./application-terminal-workspace-policy.ts";
 import { HomeAgentRoster } from "./application-home-agent-roster.tsx";
 import type { HomeAgentRow, HomeAgentSnapshot } from "./application-home-agents.ts";
 import type { HomeAgentSelectionSnapshot } from "./application-home-agent-selection.ts";
 
-export type ApplicationHomeBrandVariant = "wordmark";
+import { APPLICATION_HOME_WORDMARK, APPLICATION_HOME_WORDMARK_WIDTH } from "../ui/home-wordmark.ts";
 
-/** Home reserves its cells for workspace information at every terminal size. */
+export type ApplicationHomeBrandVariant = "wordmark" | "ascii";
+
+/** Keep the marketing wordmark intact, falling back when the agent list needs the room. */
 export function applicationHomeBrandVariant(
-  _width: number,
-  _height: number,
+  width: number,
+  height: number,
 ): ApplicationHomeBrandVariant {
-  return "wordmark";
+  return width >= APPLICATION_HOME_WORDMARK_WIDTH && height >= 28 ? "ascii" : "wordmark";
 }
 
 export interface ApplicationHomeSurfaceProps {
@@ -44,6 +47,7 @@ export interface ApplicationHomeSurfaceProps {
   readonly onCycleAgentMachine?: () => void;
   readonly onToggleAgentAttention?: () => void;
   readonly agentRoster?: HomeAgentSnapshot;
+  readonly activityDaemonId?: string | null;
   readonly recentPaneActivity?: readonly InteractionReceipt[];
   readonly agentSelection?: HomeAgentSelectionSnapshot;
   readonly agentInputActive?: boolean;
@@ -65,11 +69,18 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
       props.branded ? Math.floor((width() - 96) / 2) : 0,
     );
   const bodyWidth = () => Math.max(0, width() - inset() * 2);
+  const showAscii = () =>
+    props.branded &&
+    props.agentRoster?.phase === "live" &&
+    props.agentRoster.rows.length === 0 &&
+    !props.agentQuery &&
+    applicationHomeBrandVariant(bodyWidth(), height()) === "ascii";
+  const brandRows = () => (showAscii() ? APPLICATION_HOME_WORDMARK.length : 1);
   const spacious = () => height() >= 14;
   const context = () =>
     clipTerminal(
       props.branded && props.agentRoster
-        ? "Across your machines"
+        ? "Your agents, across your machines"
         : `${props.session ?? "No session selected"} · ${props.status}`,
       bodyWidth(),
     );
@@ -93,18 +104,48 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
       (props.onOpenTutorial ? naturalButtonWidth(props.tutorialLabel ?? "Learn tmux-ide") + 2 : 0) +
       2;
   const reservedRows = () =>
+    brandRows() -
+    1 +
     (spacious() ? 4 : 2) +
     (actionsInRow() ? 1 : 2 + (props.onCycleTheme ? 1 : 0) + (props.onOpenTutorial ? 1 : 0)) +
     (spacious() ? 1 : 0) +
     (props.note ? (spacious() ? 2 : 1) : 0);
+  const activityRows = () => (height() >= 24 && bodyWidth() >= 48 ? 2 : 1);
+  const selectedAgent = () =>
+    props.agentRoster?.rows.find((row) => row.key === props.agentSelection?.selectedKey);
+  // Receipts lack a fleet-wide machine identity. Never attribute a same-named
+  // workspace/pane collision to the selected agent.
+  const selectedActivity = () => {
+    const selected = selectedAgent();
+    if (!selected?.paneId || selected.daemonInstanceId !== props.activityDaemonId) return [];
+    const matches = props.agentRoster?.rows.filter(
+      (row) => row.sessionName === selected.sessionName && row.paneId === selected.paneId,
+    );
+    if (matches?.length !== 1) return [];
+    return (props.recentPaneActivity ?? []).filter(
+      (receipt) =>
+        receipt.workspaceName === selected.sessionName &&
+        receipt.target.kind === "pane" &&
+        receipt.target.semanticPaneId === selected.paneId,
+    );
+  };
   const recentActivity = () =>
-    (props.recentPaneActivity ?? []).slice(
+    selectedActivity().slice(
       0,
       spacious()
-        ? Math.max(0, Math.min(3, height() - reservedRows() - (props.agentRoster ? 4 : 2) - 2))
+        ? Math.max(
+            0,
+            Math.min(
+              1,
+              Math.floor(
+                (height() - reservedRows() - (props.agentRoster ? 12 : 2) - 2) / activityRows(),
+              ),
+            ),
+          )
         : 0,
     );
-  const activityHeight = () => (recentActivity().length > 0 ? recentActivity().length + 2 : 0);
+  const activityHeight = () =>
+    recentActivity().length > 0 ? recentActivity().length * activityRows() + 2 : 0;
   const paneLabel = (paneId: string) => {
     const matches = props.agentRoster?.rows.filter((row) => row.paneId === paneId) ?? [];
     return matches.length === 1 ? matches[0]!.name : paneId;
@@ -142,9 +183,33 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
       backgroundColor={props.theme.roles.surfaces.canvas}
       overflow="hidden"
     >
-      <text width={bodyWidth()} height={1} flexShrink={0} fg={props.theme.roles.text.primary}>
-        <strong>{clipTerminal(props.branded ? "Your agents" : props.project, bodyWidth())}</strong>
-      </text>
+      <box height={brandRows()} width={bodyWidth()} flexShrink={0} flexDirection="column">
+        <Show
+          when={showAscii()}
+          fallback={
+            <text width={bodyWidth()} height={1} fg={props.theme.roles.text.primary}>
+              <strong>
+                {clipTerminal(props.branded ? "tmux-ide" : props.project, bodyWidth())}
+              </strong>
+            </text>
+          }
+        >
+          <For each={APPLICATION_HOME_WORDMARK}>
+            {(line) => (
+              <text
+                width={bodyWidth()}
+                height={1}
+                flexShrink={0}
+                fg={props.theme.roles.text.primary}
+              >
+                {" ".repeat(
+                  Math.max(0, Math.floor((bodyWidth() - APPLICATION_HOME_WORDMARK_WIDTH) / 2)),
+                ) + line}
+              </text>
+            )}
+          </For>
+        </Show>
+      </box>
       <box height={spacious() ? 1 : 0} flexShrink={0} />
       <text width={bodyWidth()} height={1} flexShrink={0} fg={props.theme.roles.text.secondary}>
         {context()}
@@ -202,16 +267,18 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
             overflow="hidden"
           >
             <text height={1} width={bodyWidth()} fg={props.theme.roles.text.secondary}>
-              {clipTerminal("Recent pane activity", bodyWidth())}
+              {clipTerminal(`${selectedAgent()?.name ?? "Agent"} · latest activity`, bodyWidth())}
             </text>
             <For each={recentActivity()}>
               {(receipt) => (
-                <text height={1} width={bodyWidth()} fg={props.theme.roles.text.primary}>
-                  {clipTerminal(
-                    `${activityTime(receipt)} · ${interactionReceiptTargetLabel(receipt, paneLabel)} · ${activityPhase(receipt)}`,
-                    bodyWidth(),
-                  )}
-                </text>
+                <DetailRow
+                  theme={props.theme}
+                  width={bodyWidth()}
+                  label={interactionReceiptTargetLabel(receipt, paneLabel)}
+                  detail={activityPhase(receipt)}
+                  description={activityRows() === 2 ? activityTime(receipt) : undefined}
+                  attention={receipt.phase === "rejected" || receipt.phase === "timed-out"}
+                />
               )}
             </For>
             <text height={1} width={bodyWidth()} fg={props.theme.roles.text.muted}>

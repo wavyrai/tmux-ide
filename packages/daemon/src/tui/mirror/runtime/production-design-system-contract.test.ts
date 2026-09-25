@@ -50,6 +50,13 @@ function localImports(source: string): string[] {
 }
 
 describe("production OpenTUI design-system boundary", () => {
+  it("requires an explicit audited exception to restore bordered overlay chrome", () => {
+    const overrides = productionGraph.files.filter((path) =>
+      /surface=\{false\}/u.test(sourceFor(path)),
+    );
+    expect(overrides).toEqual([]);
+  });
+
   it("rejects raw render colors outside the semantic theme boundary", () => {
     const owners = productionGraph.files.filter((path) => RAW_APP_COLOR.test(sourceFor(path)));
     expect(owners).toEqual([...RAW_COLOR_COMPATIBILITY_OWNERS].sort());

@@ -512,7 +512,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         });
         usePaste((event) => {
           noteHostInteraction();
-          if (paletteModalOpen() || appearance.pickerOpen() || machines.adding()) return;
+          if (paletteModalOpen()) return void componentKeyboardRoutes.routePaste(event.bytes);
+          if (appearance.pickerOpen() || machines.adding()) return;
           if (machines.switching()) {
             componentKeyboardRoutes.routePaste(event.bytes);
             return;
@@ -587,6 +588,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               paletteCommands={paletteCommandList}
               paneInteractions={paneInteractions}
               recentPaneActivity={paneInteractions.activity}
+              activityDaemonId={() => generation()?.daemonGeneration ?? null}
               terminalRendererSource={terminalRendererSource}
               terminalGestureRuntime={terminalGestureRuntime}
               onApplicationMousePointerIngress={focusedApplicationMouseIngress}

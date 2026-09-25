@@ -14,7 +14,11 @@ import { useKeyboardRoute } from "../ui/keyboard-router.tsx";
 import { applicationMachineAuthorityManager } from "./application-machine-authority.ts";
 import { Dialog } from "../ui/dialog.tsx";
 import { OverlayFrame } from "../ui/overlay-frame.tsx";
-import { overlayFrameSize, overlaySurfacePadding } from "../ui/overlay-model.ts";
+import {
+  overlayFrameSize,
+  overlaySurfacePadding,
+  overlaySurfaceMetrics,
+} from "../ui/overlay-model.ts";
 import { OverlayListRow } from "../ui/overlay-list-row.tsx";
 import { TuiButton } from "../ui/button.tsx";
 import {
@@ -35,7 +39,13 @@ export function PaneRenameDialog(props: {
   readonly zIndex?: number;
 }): JSX.Element {
   const width = () => Math.max(1, Math.min(52, props.width - (props.width >= 8 ? 4 : 0)));
-  const fieldWidth = () => Math.max(1, width() - 4);
+  const fieldWidth = () =>
+    overlaySurfaceMetrics({
+      viewportWidth: props.width,
+      viewportHeight: props.height,
+      preferredWidth: width(),
+      preferredHeight: 8,
+    }).contentWidth;
   return (
     <Dialog
       theme={props.theme}

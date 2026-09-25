@@ -212,7 +212,7 @@ for (const mode of ["dark", "light"] as const)
           MouseButtons.LEFT,
         );
         await setup.renderOnce();
-        expect(setup.captureCharFrame()).toContain("APPLICATION");
+        expect(setup.captureCharFrame()).toContain("Application");
         routes.route({
           name: "escape",
           ctrl: false,
@@ -223,7 +223,7 @@ for (const mode of ["dark", "light"] as const)
           stopPropagation() {},
         });
         await setup.renderOnce();
-        expect(setup.captureCharFrame()).not.toContain("APPLICATION");
+        expect(setup.captureCharFrame()).not.toContain("Application");
         expect(setup.captureCharFrame()).toContain("Command palette");
       } finally {
         setup.renderer.destroy();
@@ -231,3 +231,62 @@ for (const mode of ["dark", "light"] as const)
       }
     });
   }
+
+import { ApplicationReferenceSheet } from "./application-reference-sheet.tsx";
+
+for (const mode of ["light", "dark"] as const) {
+  it(`${mode}: searches shortcut labels and keys without executing commands and preserves parent dismissal`, async () => {
+    const owner = createKeyboardRouteOwner();
+    let closed = 0;
+    const setup = await renderForTest(
+      () => (
+        <KeyboardRouteProvider owner={owner}>
+          <ApplicationReferenceSheet
+            page="shortcuts"
+            width={80}
+            height={24}
+            theme={createSemanticThemeSnapshot({ mode })}
+            onClose={() => closed++}
+          />
+        </KeyboardRouteProvider>
+      ),
+      { width: 80, height: 24 },
+    );
+    const key = (name: string, ctrl = false) =>
+      owner.route({
+        name,
+        ctrl,
+        meta: false,
+        shift: false,
+        eventType: "press",
+        preventDefault() {},
+        stopPropagation() {},
+      });
+    try {
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).not.toMatch(/[╭╮╰╯›]/u);
+      owner.routePaste(new TextEncoder().encode("Ctrl+G"));
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("Sidebar / Sessions when hidden");
+      expect(setup.captureCharFrame()).not.toContain("Agent attention");
+      key("enter");
+      expect(closed).toBe(0);
+      key("u", true);
+      owner.routePaste(new TextEncoder().encode("unmatchable"));
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("No matching shortcuts");
+      key("tab");
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("2.9.0-beta.30");
+      expect(setup.captureCharFrame()).toContain("2.9.0-beta.29");
+      key("tab");
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("unmatchable");
+      key("escape");
+      expect(closed).toBe(1);
+    } finally {
+      setup.renderer.destroy();
+      owner.dispose();
+    }
+  });
+}

@@ -20,7 +20,7 @@ export function Badge(props: BadgeProps) {
   const palette = () => componentPalette(props.theme, props, props.tone);
   const background = () =>
     props.surface === "header" && palette().state === "base"
-      ? props.theme.roles.surfaces.header
+      ? props.theme.roles.surfaces.panel
       : palette().background;
   const width = () => Math.max(1, Math.floor(props.width ?? terminalDisplayWidth(props.label) + 2));
   const content = () =>

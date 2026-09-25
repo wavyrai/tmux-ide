@@ -4,7 +4,7 @@ import { For } from "solid-js";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { OverlayFrame } from "./overlay-frame.tsx";
 import { OverlayListRow } from "./overlay-list-row.tsx";
-import { overlayFrameSize } from "./overlay-model.ts";
+import { overlaySurfaceMetrics } from "./overlay-model.ts";
 
 export interface MenuItem {
   id: string;
@@ -33,25 +33,26 @@ export interface MenuProps {
 }
 
 export function Menu(props: MenuProps) {
-  // Match OverlayFrame's clamped border + left padding budget, not the
-  // requested width; otherwise right-aligned shortcuts disappear offscreen.
-  const innerWidth = () =>
-    Math.max(
-      1,
-      overlayFrameSize({
-        viewportWidth: props.viewportWidth ?? Math.max(props.width, props.left + props.width),
-        viewportHeight: props.viewportHeight ?? Math.max(3, props.top + props.items.length + 4),
-        preferredWidth: props.width,
-        preferredHeight: props.items.length + 4,
-      }).width - 4,
-    );
+  const preferredHeight = () =>
+    props.items.length + (props.title ? 1 : 0) + (props.footer ? 1 : 0) + 2;
+  const metrics = () =>
+    overlaySurfaceMetrics({
+      viewportWidth: props.viewportWidth ?? Math.max(props.width, props.left + props.width),
+      viewportHeight:
+        props.viewportHeight ?? Math.max(preferredHeight(), props.top + preferredHeight()),
+      preferredWidth: props.width,
+      preferredHeight: preferredHeight(),
+    });
+  const innerWidth = () => metrics().contentWidth;
   return (
     <OverlayFrame
       theme={props.theme}
       viewportWidth={props.viewportWidth ?? Math.max(props.width, props.left + props.width)}
-      viewportHeight={props.viewportHeight ?? Math.max(3, props.top + props.items.length + 3)}
+      viewportHeight={
+        props.viewportHeight ?? Math.max(preferredHeight(), props.top + preferredHeight())
+      }
       width={props.width}
-      height={props.items.length + (props.title ? 3 : 2) + (props.footer ? 1 : 0)}
+      height={preferredHeight()}
       placement="anchor"
       anchor={{ x: props.left, y: props.top }}
       zIndex={props.zIndex ?? 20}

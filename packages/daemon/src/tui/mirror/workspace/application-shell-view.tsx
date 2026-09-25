@@ -11,6 +11,7 @@ import type { SemanticThemeSnapshot } from "../theme.ts";
 import type { ApplicationShellProjection } from "./application-shell.ts";
 
 export interface ApplicationShellProps {
+  footerContext?: "home" | "terminals";
   theme: SemanticThemeSnapshot;
   projection: ApplicationShellProjection;
   help: string;
@@ -125,9 +126,11 @@ export function ApplicationShell(props: ApplicationShellProps) {
             session={props.projection.activeSession}
             pane={activePaneTitle()}
             mode={
+              props.footerContext ??
               props.projection.semantic.primaryNavigation.items.find(
                 (item) => item.id === props.projection.semantic.workspaceCanvas.activeMode,
-              )?.label ?? props.projection.semantic.workspaceCanvas.activeMode
+              )?.label ??
+              props.projection.semantic.workspaceCanvas.activeMode
             }
             inputMode={props.interactionMode}
             tool={

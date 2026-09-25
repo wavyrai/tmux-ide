@@ -304,7 +304,7 @@ for (const surface of ["home", "terminals"] as const) {
     if (surface === "home") {
       expect(frame).not.toContain("Machines");
       expect(frame).not.toContain("My server");
-      expect(frame).toContain("Your agents");
+      expect(frame).toContain("tmux-ide");
     } else {
       expect(frame).toContain("My server");
       expect(frame.split("\n").filter((line) => line.includes("Machines"))).toHaveLength(1);

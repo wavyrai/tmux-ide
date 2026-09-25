@@ -154,7 +154,14 @@ describe("pane title hierarchy polish", () => {
       expect(row).toBeDefined();
       await setup.mockMouse.moveTo(row.x + 4, row.y);
       await setup.renderOnce();
-      expect(rename()).toContain("›");
+      expect(rename()).not.toContain("›");
+      expect(
+        setup
+          .captureSpans()
+          .lines[
+            row.y
+          ]!.spans.some((span) => colorKey(span.bg) === colorKey(theme.roles.selection.selection)),
+      ).toBe(true);
       expect(rename().indexOf("Rename pane")).toBe(before.indexOf("Rename pane"));
       select("split-down");
       await setup.renderOnce();
@@ -162,7 +169,14 @@ describe("pane title hierarchy polish", () => {
       expect(setup.renderer.root.findDescendantById("ui-overlay-row:rename-pane")).toBe(row);
       await setup.mockMouse.moveTo(row.x + 5, row.y);
       await setup.renderOnce();
-      expect(rename()).toContain("›");
+      expect(rename()).not.toContain("›");
+      expect(
+        setup
+          .captureSpans()
+          .lines[
+            row.y
+          ]!.spans.some((span) => colorKey(span.bg) === colorKey(theme.roles.selection.selection)),
+      ).toBe(true);
       await setup.mockMouse.click(row.x + 5, row.y, MouseButtons.LEFT);
       expect(actions).toEqual(["rename-pane"]);
       expect(stableFrame(setup.captureCharFrame())).toMatchSnapshot();

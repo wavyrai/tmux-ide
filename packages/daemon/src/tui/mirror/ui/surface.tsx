@@ -55,7 +55,7 @@ export function Surface(props: SurfaceProps) {
       case "raised":
         return local.theme.roles.surfaces.panelRaised;
       case "header":
-        return local.theme.roles.surfaces.header;
+        return local.theme.roles.surfaces.panel;
       case "panel":
       default:
         return local.theme.roles.surfaces.panel;

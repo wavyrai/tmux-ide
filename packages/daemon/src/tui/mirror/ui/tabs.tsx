@@ -54,10 +54,7 @@ export function Tabs(props: TabsProps) {
     );
   const itemWidth = (item: TabItem) =>
     props.fit === "equal" && props.width ? equalWidth() : terminalDisplayWidth(tabText(item));
-  const background = () =>
-    props.variant === "header"
-      ? props.theme.roles.surfaces.header
-      : props.theme.roles.surfaces.panel;
+  const background = () => props.theme.roles.surfaces.panel;
   useKeyboardRoute((event) => {
     if (!props.focused || event.eventType !== "press") return false;
     const key = event.name.toLowerCase();

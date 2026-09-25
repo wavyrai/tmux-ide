@@ -27,7 +27,7 @@ export interface OverlayListRowProps {
 
 export function OverlayListRow(props: OverlayListRowProps) {
   const palette = () =>
-    props.surface
+    props.surface !== false
       ? overlayRowPalette(props.theme, {
           selected: props.selected,
           disabled: props.disabled,
@@ -45,7 +45,7 @@ export function OverlayListRow(props: OverlayListRowProps) {
           ? "● "
           : "  "
         : props.selected
-          ? props.surface
+          ? props.surface !== false
             ? "  "
             : "› "
           : props.reserveMarker

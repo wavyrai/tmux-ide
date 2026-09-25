@@ -125,7 +125,7 @@ describe("OpenTUI ui primitives", () => {
     expect(colorKey(inactiveTab!.bg)).toBe(colorKey(theme.roles.surfaces.panel));
     expect(colorKey(addButton!.bg)).toBe(colorKey(theme.roles.surfaces.panel));
     expect(colorKey(ghostButton!.bg)).toBe(colorKey(theme.roles.surfaces.panel));
-    expect(colorKey(status!.bg)).toBe(colorKey(theme.roles.surfaces.header));
+    expect(colorKey(status!.bg)).toBe(colorKey(theme.roles.surfaces.panel));
     setup.renderer.destroy();
   });
 
@@ -143,7 +143,7 @@ describe("OpenTUI ui primitives", () => {
           footer="↑↓ choose · Enter open · Esc close"
           onDismiss={() => undefined}
         >
-          <text fg={theme.roles.text.secondary}>› New terminal window</text>
+          <text fg={theme.roles.text.secondary}>New terminal window</text>
         </Dialog>
       ),
       { width: 60, height: 12 },
@@ -152,7 +152,9 @@ describe("OpenTUI ui primitives", () => {
     const frame = stableFrame(setup.captureCharFrame());
     expect(frame).toContain("Command palette");
     expect(frame).toContain("New terminal window");
-    expect(frame).toContain("Enter open · Esc");
+    expect(frame).toContain("Enter open");
+    expect(frame).toContain("esc");
+    expect(frame).not.toMatch(/[╭╮╰╯]/u);
     setup.renderer.destroy();
   });
 
@@ -457,7 +459,8 @@ describe("OpenTUI ui primitives", () => {
       expect(terminalDisplayWidth(setup.captureCharFrame().split("\n")[0]!)).toBe(width);
 
       await setup.mockInput.pressArrow("down");
-      await setup.mockMouse.click(Math.floor((width - 42) / 2) + 3, 10, MouseButtons.LEFT);
+      const row = setup.renderer.root.findDescendantById("ui-overlay-row:rename:row")!;
+      await setup.mockMouse.click(row.x + 1, row.y, MouseButtons.LEFT);
       await setup.renderOnce();
       expect(activated).toEqual(["keyboard:rename", "pointer:rename"]);
       setup.mockInput.pressEscape();

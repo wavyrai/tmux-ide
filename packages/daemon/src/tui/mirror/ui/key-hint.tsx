@@ -21,7 +21,7 @@ export function KeyHint(props: KeyHintProps) {
   const palette = () => componentPalette(props.theme, props, "neutral");
   const background = () =>
     props.quiet && !props.focused && !props.hovered
-      ? props.theme.roles.surfaces.header
+      ? props.theme.roles.surfaces.panel
       : palette().background;
   const foreground = () =>
     props.quiet && !props.focused && !props.hovered
@@ -65,7 +65,22 @@ export function KeyHint(props: KeyHintProps) {
       }}
     >
       <text fg={foreground()} bg={background()}>
-        {props.focused || props.selected ? <strong>{content()}</strong> : content()}
+        {props.focused || props.selected ? (
+          <strong>{content()}</strong>
+        ) : props.quiet && !props.presentation ? (
+          <>
+            {" "}
+            <span style={{ fg: props.theme.roles.text.primary }}>
+              {clipTerminal(props.keys, Math.max(0, width() - 1))}
+            </span>
+            {clipTerminal(
+              props.label ? ` ${props.label} ` : " ",
+              Math.max(0, width() - terminalDisplayWidth(props.keys) - 1),
+            )}
+          </>
+        ) : (
+          content()
+        )}
       </text>
     </box>
   );
