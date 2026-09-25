@@ -258,9 +258,10 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
           )
         )
           throw new TmuxServerScopeError("stale-generation");
-        const snapshot = await owner.terminalInventoryRuntime.discoverTerminalRuntimeSession(
+        // Agent lists need the same status enrichment as pane headers. Raw
+        // terminal inventory omits these facts and falls back to process activity.
+        const snapshot = await owner.terminalInventoryRuntime.discoverApplicationShellSession(
           workspace.sessionName,
-          c.req.raw.signal,
         );
         // Discovery can yield while a same-name session is replaced. Revalidate
         // the captured incarnation before publishing agent metadata as current.

@@ -13,6 +13,7 @@ async function fixture() {
   const ownersCreated: {
     catalog: ReturnType<typeof vi.fn>;
     discover: ReturnType<typeof vi.fn>;
+    discoverShell: ReturnType<typeof vi.fn>;
     mutate: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
     issue: ReturnType<typeof vi.fn>;
@@ -47,10 +48,14 @@ async function fixture() {
         effectiveViewerMode: request.viewerMode,
       }));
       const discover = vi.fn(async () => null);
-      ownersCreated.push({ catalog, mutate, dispose, issue, discover });
+      const discoverShell = vi.fn(async () => null);
+      ownersCreated.push({ catalog, mutate, dispose, issue, discover, discoverShell });
       return {
         catalog,
-        terminalInventoryRuntime: { discoverTerminalRuntimeSession: discover },
+        terminalInventoryRuntime: {
+          discoverTerminalRuntimeSession: discover,
+          discoverApplicationShellSession: discoverShell,
+        },
         multiplexerBackend: { mutate },
         dispose,
         workspaceRegistry: {
@@ -238,7 +243,7 @@ it("rejects a session replaced during scoped agent-shell discovery before projec
   const project = vi
     .spyOn(shellProjection, "projectApplicationShellResource")
     .mockReturnValue({ replacement: true } as never);
-  owner.discover.mockImplementationOnce(async () => {
+  owner.discoverShell.mockImplementationOnce(async () => {
     owner.catalog.mockResolvedValue([
       { sessionName: "same", liveSessionId: `live-session.${"b".repeat(20)}`, paneCount: 1 },
     ]);
@@ -253,6 +258,55 @@ it("rejects a session replaced during scoped agent-shell discovery before projec
     expect(owner.catalog).toHaveBeenCalledTimes(2);
   } finally {
     project.mockRestore();
+    await f.manager.dispose();
+  }
+});
+
+it("uses enriched agent discovery for scoped shells so fleet statuses match pane headers", async () => {
+  const f = await fixture();
+  const owner = f.ownersCreated[0]!;
+  const now = Math.floor(Date.now() / 1000);
+  const session = {
+    name: "same",
+    runtimeSessionId: "$4",
+    catalogIssue: "missing-semantic-stamp" as const,
+    dir: "/private/project",
+    panes: ["done", "blocked", "idle", "working"].map((state, index) => ({
+      runtimePaneId: `%${index}`,
+      semanticPaneId: `pane.agent${index}`,
+      index,
+      title: `Agent ${index}`,
+      currentCommand: "claude",
+      active: index === 0,
+      windowPaneCount: 4,
+      role: "agent",
+      name: `Agent ${index}`,
+      type: "agent",
+      agentStateRaw: `${state}:${now}`,
+      agentScrapeState: null,
+    })),
+  };
+  owner.discoverShell.mockResolvedValue(session);
+  // Raw terminal inventory deliberately has no agent status enrichment.
+  owner.discover.mockResolvedValue({
+    ...session,
+    panes: session.panes.map(
+      ({ agentStateRaw: _state, agentScrapeState: _scrape, ...pane }) => pane,
+    ),
+  });
+  try {
+    const response = await f.request(
+      f.scope(f.a) + `/application-shell/same?liveSessionId=live-session.${"a".repeat(20)}`,
+    );
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(
+      body.resource.workspace.sidebar.agents.map((agent: { activity: string }) => agent.activity),
+    ).toEqual(["complete", "waiting", "idle", "running"]);
+    expect(owner.discoverShell).toHaveBeenCalledExactlyOnceWith("same");
+    expect(owner.discover).not.toHaveBeenCalled();
+    expect(f.ownersCreated[1]!.discoverShell).not.toHaveBeenCalled();
+  } finally {
     await f.manager.dispose();
   }
 });
