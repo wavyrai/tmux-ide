@@ -1334,6 +1334,29 @@ describe("TerminalReplicaInterpreter", () => {
     ).toBe("AB");
   });
 
+  it("retains changed rows across separate synchronized-output writes", async () => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const interpreter = create(updates, 12, 5);
+    const write = (text: string) =>
+      interpreter.enqueue({ type: "write", data: new TextEncoder().encode(text) });
+    try {
+      await write("\u001b[HOLD-TOP\u001b[5;1HOLD-BOTTOM");
+      updates.length = 0;
+      await write("\u001b[?2026h\u001b[HNEW-TOP");
+      await write("\u001b[5;1HNEW-BOTTOM");
+      expect(updates).toHaveLength(0);
+      await write("\u001b[?2026l");
+      expect(updates).toHaveLength(1);
+      const lines = interpreter
+        .currentSnapshot()
+        .grid.map((row) => row.cells.map((cell) => cell.grapheme || " ").join(""));
+      expect(lines[0]).toContain("NEW-TOP");
+      expect(lines[4]).toContain("NEW-BOTTOM");
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    }
+  });
+
   it("applies admitted resize geometry before later synchronized bytes parse", async () => {
     const updates: CanonicalTerminalReplicaUpdate[] = [];
     const interpreter = create(updates, 4, 2);

@@ -161,6 +161,8 @@ export class TerminalReplicaInterpreter {
   #widgetGate = false;
   #markerTail = "";
   #pendingResize: { cols: number; rows: number } | null = null;
+  // null: no unpublished writes; undefined: a write requires full projection.
+  #pendingWriteDirty: { start: number; end: number } | null | undefined = null;
   #pendingRaw: Uint8Array[] = [];
   #pendingRawBytes = 0;
   #rawContinuityLost = false;
@@ -464,6 +466,19 @@ export class TerminalReplicaInterpreter {
         this.#observability.nowMicros(),
         trace,
       );
+    // The parser resets its dirty tracker per write. Synchronized output may
+    // span many writes before publication, so retain their union until commit.
+    const dirty = this.#backend.dirtyRange();
+    const pending = this.#pendingWriteDirty;
+    this.#pendingWriteDirty =
+      pending === null
+        ? dirty
+        : pending === undefined || dirty === undefined
+          ? undefined
+          : {
+              start: Math.min(pending.start, dirty.start),
+              end: Math.max(pending.end, dirty.end),
+            };
     // DEC synchronized-output is atomic: no intermediate frame leaks.
     if (this.#backend.requiresNativeReseed()) {
       this.#commit(false);
@@ -531,7 +546,18 @@ export class TerminalReplicaInterpreter {
       return;
     }
     const reduceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+    const pending = this.#pendingWriteDirty;
+    if (pending !== null) {
+      dirty =
+        pending === undefined || dirty === undefined
+          ? undefined
+          : {
+              start: Math.min(pending.start, dirty.start),
+              end: Math.max(pending.end, dirty.end),
+            };
+    }
     const projected = this.#project(forceSeed ? undefined : dirty);
+    this.#pendingWriteDirty = null;
     const previous = this.#snapshot;
     const dirtyRows: CanonicalTerminalReplicaPatch["patch"]["rows"] = [];
     for (let index = 0; index < projected.grid.length; index += 1) {

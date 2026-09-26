@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.0-beta.34
+
+- Fix stale or duplicated-looking rows while scrolling Claude Code and other applications that split synchronized redraws across multiple output chunks. All changed rows are retained until the redraw is published.
+
 ## 2.9.0-beta.33
 
 - Working agents now have animated indicators across Home, sidebars, and pane headers. Done, blocked, and idle agents have distinct static indicators alongside their status labels.
