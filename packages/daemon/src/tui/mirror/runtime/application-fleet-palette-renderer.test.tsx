@@ -290,3 +290,54 @@ for (const mode of ["light", "dark"] as const) {
     }
   });
 }
+
+for (const width of [40, 100]) {
+  it(`explains the workspace in a scrollable help dialog at ${width} columns`, async () => {
+    const owner = createKeyboardRouteOwner();
+    let closed = 0;
+    const setup = await renderForTest(
+      () => (
+        <KeyboardRouteProvider owner={owner}>
+          <ApplicationReferenceSheet
+            page="help"
+            width={width}
+            height={24}
+            theme={createSemanticThemeSnapshot({ mode: "dark" })}
+            onClose={() => closed++}
+          />
+        </KeyboardRouteProvider>
+      ),
+      { width, height: 24 },
+    );
+    const key = (name: string) =>
+      owner.route({
+        name,
+        ctrl: false,
+        meta: false,
+        shift: false,
+        eventType: "press",
+        preventDefault() {},
+        stopPropagation() {},
+      });
+    try {
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("Using tmux-ide");
+      expect(setup.captureCharFrame()).toContain("Find your work");
+      expect(setup.renderer.root.findDescendantById("ui-overlay-frame-host")).toBeDefined();
+      expect(owner.routePaste(new TextEncoder().encode("do not send to terminal"))).toBe(true);
+      expect(key("f2")).toBe(true);
+      expect(closed).toBe(0);
+      for (let i = 0; i < 10; i++) key("pagedown");
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("headless");
+      key("tab");
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("Keyboard shortcuts");
+      key("escape");
+      expect(closed).toBe(1);
+    } finally {
+      setup.renderer.destroy();
+      owner.dispose();
+    }
+  });
+}

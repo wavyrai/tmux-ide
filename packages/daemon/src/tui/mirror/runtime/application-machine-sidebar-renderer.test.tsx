@@ -2,7 +2,8 @@ import { ApplicationCatalogShell } from "./application-shell-catalog.tsx";
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
 import { describe, expect, it } from "bun:test";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
+import { ApplicationReferenceSheet } from "./application-reference-sheet.tsx";
 import { createSemanticThemeSnapshot } from "../theme.ts";
 import { renderForTest } from "../testing/renderer-harness.test.ts";
 import { KeyboardRouteProvider, createKeyboardRouteOwner } from "../ui/keyboard-router.tsx";
@@ -501,10 +502,12 @@ it("keeps collapsed activity visible, handles vim/page navigation and scopes hel
   const [focused, setFocused] = createSignal(true);
   const opened: string[] = [];
   let searches = 0;
+  const [help, setHelp] = createSignal(false);
   const setup = await renderForTest(
     () => (
       <KeyboardRouteProvider owner={owner}>
         <ApplicationMachineSidebar
+          onHelp={() => setHelp(true)}
           width={42}
           height={18}
           theme={createSemanticThemeSnapshot({ mode: "dark" })}
@@ -540,6 +543,15 @@ it("keeps collapsed activity visible, handles vim/page navigation and scopes hel
             onOpenSwitcher: () => searches++,
           }}
         />
+        <Show when={help()}>
+          <ApplicationReferenceSheet
+            page="help"
+            width={42}
+            height={18}
+            theme={createSemanticThemeSnapshot({ mode: "dark" })}
+            onClose={() => setHelp(false)}
+          />
+        </Show>
       </KeyboardRouteProvider>
     ),
     { width: 42, height: 18 },
@@ -574,9 +586,11 @@ it("keeps collapsed activity visible, handles vim/page navigation and scopes hel
   expect(opened[1]).not.toBe("work-0");
   key("?");
   await setup.renderOnce();
-  expect(setup.captureCharFrame()).toContain("Ctrl-U/D half");
+  expect(setup.captureCharFrame()).toContain("Using tmux-ide");
   key("escape");
   expect(focused()).toBe(true);
+  expect(help()).toBe(false);
+  await setup.renderOnce();
   key("/");
   expect(searches).toBe(1);
   key("escape");
@@ -650,6 +664,7 @@ it("uses shortcut-first buttons for sidebar actions with isolated clicks", async
   const setup = await renderForTest(
     () => (
       <ApplicationMachineSidebar
+        onHelp={(source) => actions.push(`help:${source}`)}
         width={28}
         height={12}
         theme={createSemanticThemeSnapshot({ mode: "light" })}
@@ -679,7 +694,8 @@ it("uses shortcut-first buttons for sidebar actions with isolated clicks", async
     const y = lines.findIndex((line) => line.includes("? Help"));
     await setup.mockMouse.click(lines[y]!.indexOf("? Help"), y, MouseButtons.LEFT);
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("collapse/expand");
+    expect(actions).toEqual(["sessions", "attention", "add", "help:mouse"]);
+    expect(setup.captureCharFrame()).toBe(lines.join("\n"));
   } finally {
     setup.renderer.destroy();
   }

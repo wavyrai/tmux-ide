@@ -100,8 +100,8 @@ export interface ApplicationShellViewProps {
   readonly paletteOpen: Accessor<boolean>;
   readonly paneRenameDialog?: Accessor<ApplicationPaneRenameDraft | null>;
   readonly paletteSelection?: Accessor<number>;
-  readonly paletteReferencePage?: Accessor<"shortcuts" | "changes" | undefined>;
-  readonly onPaletteReferenceChange?: (page: "shortcuts" | "changes" | undefined) => void;
+  readonly paletteReferencePage?: Accessor<"shortcuts" | "changes" | "help" | undefined>;
+  readonly onPaletteReferenceChange?: (page: "shortcuts" | "changes" | "help" | undefined) => void;
   readonly paletteKeyboardHint?: Accessor<string>;
   readonly palettePreviewActive?: Accessor<boolean>;
   readonly onPaletteModalChange?: (open: boolean) => void;
@@ -455,6 +455,10 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   {(model) => (
                     <ApplicationMachineSidebar
                       model={model()}
+                      onHelp={(source) => {
+                        props.onSetPaletteOpen(true, source);
+                        props.onPaletteReferenceChange?.("help");
+                      }}
                       agentRows={
                         model()
                           .groups()

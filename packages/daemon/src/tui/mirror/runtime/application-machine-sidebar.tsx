@@ -117,8 +117,8 @@ export function ApplicationMachineSidebar(props: {
   readonly theme: SemanticThemeSnapshot;
   readonly agents?: JSX.Element;
   readonly agentRows?: number;
+  readonly onHelp?: (source: "keyboard" | "mouse") => void;
 }) {
-  const [showHelp, setShowHelp] = createSignal(false);
   const [localFocused, setLocalFocused] = createSignal(false);
   const focused = () => props.model.focused?.() ?? localFocused();
   const [localCollapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
@@ -141,8 +141,6 @@ export function ApplicationMachineSidebar(props: {
     const start = Math.max(0, active - tabHeight() + 1);
     return tabs.slice(start, start + tabHeight());
   };
-  const helpHeight = () =>
-    showHelp() ? Math.min(5, Math.max(0, Math.floor(props.height / 3))) : 0;
   const machineHeight = () =>
     Math.max(
       0,
@@ -152,7 +150,6 @@ export function ApplicationMachineSidebar(props: {
         agentHeight() -
         controlsHeight() -
         searchHeight() -
-        helpHeight() -
         tabHeight(),
     );
   const active = (row: Row) =>
@@ -378,7 +375,7 @@ export function ApplicationMachineSidebar(props: {
     event.preventDefault();
     event.stopPropagation();
     if (key === "help") {
-      setShowHelp(!showHelp());
+      props.onHelp?.("keyboard");
       return true;
     }
     if (key === "search") {
@@ -386,10 +383,6 @@ export function ApplicationMachineSidebar(props: {
       return true;
     }
     if (key === "escape") {
-      if (showHelp()) {
-        setShowHelp(false);
-        return true;
-      }
       setLocalFocused(false);
       props.model.onBlur?.();
       return true;
@@ -471,7 +464,7 @@ export function ApplicationMachineSidebar(props: {
           label={props.width >= 20 ? "Help" : undefined}
           quiet
           button
-          onPress={() => setShowHelp(!showHelp())}
+          onPress={() => props.onHelp?.("mouse")}
         />
       </box>
       <For each={visibleTabs()}>
@@ -657,13 +650,6 @@ export function ApplicationMachineSidebar(props: {
           </scrollbox>
         )}
       </For>
-      <Show when={helpHeight() > 0}>
-        <text height={helpHeight()} fg={props.theme.roles.text.secondary}>
-          {
-            "j/k ↑↓ move · g/G ends\nPgUp/Dn · Ctrl-U/D half\nh/l ←→ collapse/expand\nEnter open · / search\nf favorite · Esc terminal"
-          }
-        </text>
-      </Show>
       <Show when={props.model.onOpenSwitcher}>
         <KeyHint
           theme={props.theme}

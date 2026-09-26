@@ -39,7 +39,7 @@ export function createApplicationPaletteCommandOwner(options: {
   readonly disabledReason?: (command: ApplicationPaletteCommand) => string | null;
   readonly targetKey?: () => string;
 }) {
-  const [referencePage, setReferencePage] = createSignal<"shortcuts" | "changes">();
+  const [referencePage, setReferencePage] = createSignal<"shortcuts" | "changes" | "help">();
   const [closeArmed, setCloseArmed] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   let armedTarget: string | undefined;

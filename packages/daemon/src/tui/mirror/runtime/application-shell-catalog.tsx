@@ -51,8 +51,8 @@ export interface ApplicationCatalogShellProps {
   readonly paletteSelection?: Accessor<number>;
   readonly palettePreviewActive?: Accessor<boolean>;
   readonly onPaletteModalChange?: (open: boolean) => void;
-  readonly paletteReferencePage?: Accessor<"shortcuts" | "changes" | undefined>;
-  readonly onPaletteReferenceChange?: (page: "shortcuts" | "changes" | undefined) => void;
+  readonly paletteReferencePage?: Accessor<"shortcuts" | "changes" | "help" | undefined>;
+  readonly onPaletteReferenceChange?: (page: "shortcuts" | "changes" | "help" | undefined) => void;
   readonly paletteKeyboardHint?: Accessor<string>;
   readonly paletteQuery?: Accessor<string>;
   readonly paletteDisabledReason?: (command: ApplicationPaletteCommand) => string | null;
@@ -418,6 +418,10 @@ export function ApplicationCatalogShell(props: ApplicationCatalogShellProps): JS
               {(model) => (
                 <ApplicationMachineSidebar
                   model={model()}
+                  onHelp={(source) => {
+                    props.onSetPaletteOpen(true, source);
+                    props.onPaletteReferenceChange?.("help");
+                  }}
                   width={chrome().sidebar.width}
                   height={chrome().sidebar.height}
                   theme={props.theme}

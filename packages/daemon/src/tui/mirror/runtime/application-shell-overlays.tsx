@@ -106,8 +106,8 @@ export function MinimalPalette(props: {
   readonly title?: string;
   readonly onViewport?: (rows: number) => void;
   readonly onFavorite?: (command: ApplicationPaletteCommand) => void;
-  readonly referencePage?: "shortcuts" | "changes";
-  readonly onReferenceChange?: (page: "shortcuts" | "changes" | undefined) => void;
+  readonly referencePage?: "shortcuts" | "changes" | "help";
+  readonly onReferenceChange?: (page: "shortcuts" | "changes" | "help" | undefined) => void;
   readonly keyboardHint?: string;
   readonly previewActive?: boolean;
   readonly onModalChange?: (open: boolean) => void;
@@ -123,8 +123,8 @@ export function MinimalPalette(props: {
 }): JSX.Element {
   const [expanded, setExpanded] = createSignal(false);
   const [modal, setModal] = createSignal(false);
-  const [sheet, setSheet] = createSignal<"shortcuts" | "changes">();
-  const openSheet = (page: "shortcuts" | "changes" | undefined) => {
+  const [sheet, setSheet] = createSignal<"shortcuts" | "changes" | "help">();
+  const openSheet = (page: "shortcuts" | "changes" | "help" | undefined) => {
     props.onReferenceChange?.(page);
     setSheet(page);
     setModal(!!page);

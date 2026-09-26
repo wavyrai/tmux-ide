@@ -44,7 +44,7 @@ const releases = [
 type Row = { kind: "heading" | "text" | "action" | "gap"; label: string; detail?: string };
 
 export function ApplicationReferenceSheet(props: {
-  page: "shortcuts" | "changes";
+  page: "shortcuts" | "changes" | "help";
   width: number;
   height: number;
   theme: SemanticThemeSnapshot;
@@ -78,7 +78,48 @@ export function ApplicationReferenceSheet(props: {
       }
       if (!result.length) result.push({ kind: "text", label: "No matching shortcuts" });
     } else {
-      for (const release of releases) {
+      const sections =
+        page() === "help"
+          ? [
+              {
+                version: "Find your work",
+                lines: [
+                  "Machines are your local computer and connected SSH hosts. Each session contains terminal windows and panes.",
+                  "Open a session or agent in the sidebar to jump to its terminal. Home brings agents from your connected machines together.",
+                ],
+              },
+              {
+                version: "Move around",
+                lines: [
+                  "F1 Home · F2 Terminals · F6 Sessions · F7 Attention",
+                  "F10 shows or hides the sidebar. F5 opens Commands for actions, appearance and keyboard shortcuts.",
+                ],
+              },
+              {
+                version: "Use the sidebar",
+                lines: [
+                  "Click a row to open it. With the sidebar focused, use ↑↓ or j/k to move and Enter to open.",
+                  "←→ or h/l collapse/expand machines. / searches sessions. f toggles a session favorite. Esc returns to the terminal.",
+                  "PgUp/PgDn scroll a page; Ctrl-U/D scroll half a page. g/G jump to the first or last row.",
+                ],
+              },
+              {
+                version: "Follow your agents",
+                lines: [
+                  "On Home, search by name and choose All, Working or Needs attention. Select an agent and press Enter to open its pane.",
+                  "Unavailable means the connection or observation is missing; it does not mean the agent has stopped.",
+                ],
+              },
+              {
+                version: "Connect another machine",
+                lines: [
+                  "Choose Add machine in the sidebar and enter an SSH alias or user@host. Set up SSH key access and host trust first.",
+                  "Run tmux-ide --headless on the remote machine before connecting.",
+                ],
+              },
+            ]
+          : releases;
+      for (const release of sections) {
         if (result.length) result.push({ kind: "gap", label: "" });
         result.push({ kind: "heading", label: release.version });
         for (const line of release.lines) {
@@ -139,8 +180,18 @@ export function ApplicationReferenceSheet(props: {
       viewportHeight={props.height}
       width={metrics().width}
       height={metrics().height}
-      title={page() === "shortcuts" ? "Keyboard shortcuts" : "What's new"}
-      footer="Tab switch sheet · ↑↓ scroll · Esc back"
+      title={
+        page() === "help"
+          ? "Using tmux-ide"
+          : page() === "shortcuts"
+            ? "Keyboard shortcuts"
+            : "What's new"
+      }
+      footer={
+        page() === "help"
+          ? "Tab shortcuts · ↑↓ scroll · Esc back"
+          : "Tab switch sheet · ↑↓ scroll · Esc back"
+      }
       zIndex={100}
       onDismiss={props.onClose}
     >
