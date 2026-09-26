@@ -31,7 +31,13 @@ export function createApplicationTransientNoteOwner(options: {
     publish(note) {
       clear();
       options.write(note);
-      if (!note) return;
+      if (
+        !note ||
+        /\b(?:failed|failure|error|unavailable|disconnected|reconnecting|recovering|read.only|denied)\b/iu.test(
+          note,
+        )
+      )
+        return;
       timer = clock.setTimeout(() => {
         timer = null;
         if (options.read() === note) options.write(null);

@@ -11,6 +11,7 @@ import type { SemanticThemeSnapshot } from "../theme.ts";
 import type { ApplicationShellProjection } from "./application-shell.ts";
 
 export interface ApplicationShellProps {
+  scrollback?: boolean;
   footerContext?: "home" | "terminals";
   theme: SemanticThemeSnapshot;
   projection: ApplicationShellProjection;
@@ -144,6 +145,7 @@ export function ApplicationShell(props: ApplicationShellProps) {
               props.showToolStatus === false ? null : props.projection.semantic.bottomDock.mode
             }
             focus={props.focusLabel ?? applicationShellFocusLabel(props.projection)}
+            scrollback={props.scrollback}
             notification={props.projection.semantic.statusStrip.message}
             transient={props.note}
             connectionState={props.projection.semantic.statusStrip.state}

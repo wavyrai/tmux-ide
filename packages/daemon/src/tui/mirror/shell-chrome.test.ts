@@ -54,6 +54,32 @@ describe("shell chrome responsive projection", () => {
     expect(presentation.hints).toEqual([{ keys: "F5", label: hintLabel, command: "commands" }]);
   });
 
+  it("suppresses discovery chatter and keeps connection failures ahead of success feedback", () => {
+    const base = {
+      variant: "wide",
+      project: "web",
+      session: "main",
+      mode: "Terminals",
+      connectionState: "connected",
+    } as const;
+    expect(
+      contextStatusPresentation({ ...base, notification: "Live tmux session discovered" }).activity
+        .label,
+    ).toBe("Live");
+    expect(
+      contextStatusPresentation({
+        ...base,
+        connectionState: "disconnected",
+        notification: "Connection unavailable",
+        transient: "Copied",
+      }).activity.label,
+    ).toBe("Connection unavailable");
+    expect(
+      contextStatusPresentation({ ...base, notification: "Input unavailable", transient: "Copied" })
+        .activity.label,
+    ).toBe("Input unavailable");
+  });
+
   it("gives bounded transient activity priority over persistent status", () => {
     expect(
       contextStatusPresentation({

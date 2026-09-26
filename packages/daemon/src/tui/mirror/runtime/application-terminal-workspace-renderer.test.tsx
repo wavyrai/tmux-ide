@@ -1721,6 +1721,7 @@ it("keeps history local through app-mode changes and fences automatic wheel deli
   const connection = {};
   const client = {};
   let staleRuntime = false;
+  const historyStates: boolean[] = [];
   const events: Readonly<Record<string, unknown>>[] = [];
   const inputs: Array<{ paneId: string; data: string }> = [];
   const selected: string[] = [];
@@ -1730,6 +1731,7 @@ it("keeps history local through app-mode changes and fences automatic wheel deli
   const setup = await renderForTest(
     () => (
       <ApplicationTerminalWorkspace
+        onScrollbackChange={(active) => historyStates.push(active)}
         layout={layout}
         adapter={live}
         rendererEpoch={1}
@@ -1762,8 +1764,11 @@ it("keeps history local through app-mode changes and fences automatic wheel deli
   );
   try {
     await setup.renderOnce();
+    expect(historyStates.at(-1)).toBe(false);
     // A shell gesture starts in host history, then the app enables mouse mode.
     await setup.mockMouse.scroll(2, 3, "up");
+    await setup.renderOnce();
+    expect(historyStates.at(-1)).toBe(true);
     expect(events.at(-1)).toMatchObject({ route: "local-history", offsetAfter: 5 });
     replica = {
       ...replica,

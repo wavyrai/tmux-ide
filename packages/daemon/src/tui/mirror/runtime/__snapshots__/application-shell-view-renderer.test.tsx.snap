@@ -1,7 +1,7 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 1`] = `
-"  ⌂  ●❯                                                                    live
+"  ⌂  ●❯                                                            Local · main
   tmux              ● main    ● workin…                                       +
  ● main               ● Codex                  ● working  ⋯
  ○ website          CANONICAL-CELL
@@ -13,11 +13,11 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                     F6 Sessions  F7 Attention                      F5 Commands"
+                     F6 Sessions  F7 Attention  F10 Sidebar         F5 Commands"
 `;
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 2`] = `
-"   tmux-ide   ⌂ Home  ●❯ Terminals                                                                                 live
+"   tmux-ide   ⌂ Home  ●❯ Terminals                                                                         Local · main
   tmux-ide                  ● main    ● workin…                                                            + New window
  ● main                       ● Codex                  ● working  ⋯
  ○ website                  CANONICAL-CELL
@@ -29,11 +29,11 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                             F6 Sessions  F7 Attention                                                      F5 Commands"
+                             F6 Sessions  F7 Attention  F10 Sidebar                                         F5 Commands"
 `;
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 3`] = `
-"   tmux-ide  F1  ⌂ Home  F2 ●❯ Terminals                                                                                                                                                           live
+"   tmux-ide  F1  ⌂ Home  F2 ●❯ Terminals                                                                                                                                                   Local · main
   tmux-ide                  ● main    ● workin…                                                                                                                                            + New window
  ● main                       ● Codex                  ● working  ⋯
  ○ website                  CANONICAL-CELL
@@ -45,11 +45,11 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                             F6 Sessions  F7 Attention                                                                                                                                      F5 Commands"
+                             F6 Sessions  F7 Attention  F10 Sidebar                                                                                                                         F5 Commands"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 1`] = `
-"  ⌂  ●❯                live
+"  ⌂  ●❯
  t  Command palette  esc
  m   Search commands…
  2    Home            F1
@@ -61,7 +61,7 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 2`] = `
-"  ⌂  ●❯        live
+"  ⌂  ●❯
  tCommand palette
  m …rch commands…
  2  Home        F1w
@@ -71,7 +71,7 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
 `;
 
 exports[`production ApplicationShellView preserves canonical attention while prioritizing mixed window activity 1`] = `
-"   tmux-ide   ⌂ Home  ●❯ Terminals                                                                                 live
+"   tmux-ide   ⌂ Home  ●❯ Terminals                                                                         Local · main
   tmux-ide                  ! main    ! workin…                                                            + New window
  ● main                       ● Codex                  ● working  ⋯   ! Scout                     ! idle  ⋯
                             CANONICAL-CELL                          CANONICAL-CELL
@@ -83,5 +83,5 @@ exports[`production ApplicationShellView preserves canonical attention while pri
 
 …
 
-                             F6 Sessions  F7 Attention                                                      F5 Commands"
+                             F6 Sessions  F7 Attention  F10 Sidebar                                         F5 Commands"
 `;

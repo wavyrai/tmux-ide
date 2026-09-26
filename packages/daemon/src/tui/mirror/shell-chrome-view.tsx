@@ -2,6 +2,7 @@
 import { For, Show } from "solid-js";
 import {
   contextStatusPresentation,
+  meaningfulStatusMessage,
   developmentChromeLabel,
   shellNavigationPresentation,
   shellSurfaceTabs,
@@ -106,7 +107,14 @@ export function ShellTabBar(props: ShellTabBarProps) {
           />
         )}
       </For>
-      <For each={props.note ? [props.note] : []}>
+      <For
+        each={
+          meaningfulStatusMessage(props.note) &&
+          /read.only|reconnect|disconnect|recover|unavailable|failed/iu.test(props.note ?? "")
+            ? [props.note!]
+            : []
+        }
+      >
         {(note) => (
           <Badge
             theme={props.theme}
@@ -117,24 +125,28 @@ export function ShellTabBar(props: ShellTabBarProps) {
               1,
               Math.min(Math.floor(props.width / 3), terminalDisplayWidth(note) + 1),
             )}
-            tone="accent"
+            tone="warning"
           />
         )}
       </For>
       <For each={props.rightChips ?? []}>
         {(chip) => (
-          <Badge
-            theme={props.theme}
-            label={chip.label.trim()}
-            textColor={chip.textColor}
-            width={Math.max(1, terminalDisplayWidth(chip.label) + (chip.context ? 1 : 0))}
-            presentation={`${chip.label}${chip.context ? " " : ""}`}
-            surface="header"
-            hovered={chip.hovered}
-            context={chip.context}
-            attention={chip.attention}
-            tone={chip.attention ? "warning" : chip.context ? "accent" : "neutral"}
-          />
+          <text
+            width={Math.min(
+              Math.max(1, Math.floor(props.width / 3)),
+              terminalDisplayWidth(chip.label),
+            )}
+            flexShrink={0}
+            fg={
+              chip.attention
+                ? props.theme.roles.statusTone.warning
+                : (chip.textColor ?? props.theme.roles.text.muted)
+            }
+            bg={props.theme.roles.surfaces.panel}
+            overflow="hidden"
+          >
+            {clipTerminal(chip.label, Math.max(1, Math.floor(props.width / 3)))}
+          </text>
         )}
       </For>
     </Surface>
@@ -152,6 +164,7 @@ export interface ShellStatusStripProps {
   tool?: string | null;
   dockMode?: string | null;
   focus?: string | null;
+  scrollback?: boolean;
   notification: string | null;
   transient?: string | null;
   connectionState?: "connected" | "reconnecting" | "disconnected" | "recovering";
@@ -178,16 +191,19 @@ export function ContextStatusBar(props: ShellStatusStripProps) {
   const activity = () => presentation().activity;
   const showMessage = () => !/^(?:Live|\d+ sessions? live)$/iu.test(activity().label);
   const hints = () => {
-    const candidates = /^home$/iu.test(props.mode)
-      ? [
-          { keys: "↑↓", label: "Select" },
-          { keys: "Enter", label: "Open" },
-          { keys: "/", label: "Search" },
-        ]
-      : [
-          { keys: "F6", label: "Sessions" },
-          { keys: "F7", label: "Attention" },
-        ];
+    const candidates = props.scrollback
+      ? [{ keys: "Esc", label: "Back to live" }]
+      : /^home$/iu.test(props.mode)
+        ? [
+            { keys: "↑↓", label: "Select" },
+            { keys: "Enter", label: "Open" },
+            { keys: "/", label: "Search" },
+          ]
+        : [
+            { keys: "F6", label: "Sessions" },
+            { keys: "F7", label: "Attention" },
+            { keys: "F10", label: "Sidebar" },
+          ];
     let remaining = available();
     return candidates.filter((hint) => {
       const width = terminalDisplayWidth(`${hint.keys} ${hint.label}`) + 2;

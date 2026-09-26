@@ -8,7 +8,14 @@
  * variants at the same tmux size.
  */
 export function frameShowsTerminalFocus(frame) {
+  const lines = frame.trimEnd().split("\n");
+  const contextualChrome =
+    /●❯/u.test(lines[0] ?? "") &&
+    /F6 Sessions/u.test(lines.at(-1) ?? "") &&
+    /F5(?: Commands)?/u.test(lines.at(-1) ?? "") &&
+    !/reconnect|disconnect|recover|read.only|unavailable/iu.test(lines[0] ?? "");
   return (
+    contextualChrome ||
     frame.includes("focus terminal") ||
     /Terminals\s+·\s+terminal\s+·/u.test(frame) ||
     /Terminals\s*\/\s*terminal\b/u.test(frame) ||

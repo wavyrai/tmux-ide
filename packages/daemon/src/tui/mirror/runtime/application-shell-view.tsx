@@ -10,7 +10,7 @@ import type { ApplicationAppearanceOwner } from "./application-appearance-owner.
 /* @jsxImportSource @opentui/solid */
 import type { ApplicationShellProjectionV1 } from "@tmux-ide/contracts";
 import type { Accessor, ComponentProps, JSX } from "solid-js";
-import { Show, createMemo } from "solid-js";
+import { Show, createMemo, createSignal } from "solid-js";
 
 import { friendlySessionLabel } from "../terminal-text.ts";
 import { ApplicationShell } from "../workspace/application-shell-view.tsx";
@@ -163,6 +163,7 @@ export interface ApplicationShellViewProps {
 
 /** Pure Solid composition over the WorkspaceClient semantic projection. */
 export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Element {
+  const [scrollback, setScrollback] = createSignal(false);
   const projection = createMemo(() => {
     const semantic = props.semantic();
     if (!semantic) return null;
@@ -395,14 +396,13 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
           >
             <ApplicationShell
               footerContext={props.surface() === "home" ? "home" : "terminals"}
+              scrollback={props.surface() === "terminals" && scrollback()}
               rightChips={
-                props.machineLabel
+                props.surface() === "terminals" && props.dimensions().width >= 60
                   ? [
                       {
-                        id: "machine",
-                        label: `SSH ${props.machineLabel}`,
-                        context: true,
-                        textColor: props.machineColor,
+                        id: "workspace-context",
+                        label: ` ${props.machineLabel ?? "Local"} · ${friendlySessionLabel(shell.activeSession)} `,
                       },
                     ]
                   : undefined
@@ -413,6 +413,11 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
               onHelp={() => props.onSetPaletteOpen(true, "mouse")}
               note={
                 props.bootstrapNote() ??
+                (props.copyFeedback
+                  ? props.copyFeedback.copied
+                    ? "Copied"
+                    : "Copy unavailable"
+                  : null) ??
                 (props.generationStatus() === "read-only"
                   ? `Read-only input · select a pane to request control · shared tmux ${props.layout().current?.cols ?? "?"}×${props.layout().current?.rows ?? "?"}`
                   : props.generationStatus())
@@ -517,6 +522,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                 >
                   {(source) => (
                     <ApplicationTerminalWorkspace
+                      onScrollbackChange={setScrollback}
                       layout={props.layout}
                       adapter={source.adapter}
                       rendererEpoch={source.rendererEpoch}

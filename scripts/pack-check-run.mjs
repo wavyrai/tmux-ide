@@ -1610,7 +1610,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     20_000,
     () => {
       const frame = capture(one.targetPane);
-      if (!frame.includes("Live tmux session discovered") || !frameShowsTerminalFocus(frame)) {
+      if (!frameShowsTerminalFocus(frame)) {
         stableReconnectFocusFrames = 0;
         return false;
       }

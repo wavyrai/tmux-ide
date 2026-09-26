@@ -115,3 +115,15 @@ test("requires idle for the inactive installed agent fixture", () => {
   assert.equal(frameShowsSelectedHomeAgent(idleHome, "Other", "journey-beta", "idle"), false);
   assert.equal(frameShowsSelectedHomeAgent(idleHome, "Codex", "other", "idle"), false);
 });
+
+test("accepts contextual terminal chrome without discovery chatter", () => {
+  const frame =
+    "tmux-ide Home ●❯ Terminals Local · main\n ● Shell ⋯\n F6 Sessions F7 Attention F10 Sidebar F5 Commands";
+  assert.equal(frameShowsTerminalFocus(frame), true);
+  for (const invalid of [
+    frame.replace("●❯", "○"),
+    frame.replace("F6 Sessions", "↑↓ Select"),
+    frame.replace("Local · main", "Reconnecting"),
+  ])
+    assert.equal(frameShowsTerminalFocus(invalid), false);
+});

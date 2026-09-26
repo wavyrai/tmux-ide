@@ -385,9 +385,13 @@ export interface ContextStatusPresentation {
   readonly hints: readonly ContextStatusHint[];
 }
 
-function meaningfulStatusMessage(message: string | null | undefined): string | null {
+export function meaningfulStatusMessage(message: string | null | undefined): string | null {
   const value = message?.trim();
-  if (!value || /^(?:ready|live|connected)$/iu.test(value)) return null;
+  if (
+    !value ||
+    /^(?:ready|live|connected|live tmux sessions? discovered|\d+ sessions? live)$/iu.test(value)
+  )
+    return null;
   return value;
 }
 
@@ -445,7 +449,14 @@ export function contextStatusPresentation(input: {
         : input.connectionState === "recovering"
           ? "Recovering"
           : "Disconnected";
-  const activityLabel = transient ?? notification ?? connectionLabel;
+  const persistentProblem =
+    notification && contextStatusTone(notification, "connected").tone === "blocked";
+  const activityLabel =
+    input.connectionState !== "connected"
+      ? (notification ?? connectionLabel)
+      : persistentProblem
+        ? notification
+        : (transient ?? notification ?? connectionLabel);
   const activityTone = contextStatusTone(activityLabel, input.connectionState);
   const location: ContextStatusLocationSegment[] =
     input.variant === "wide"

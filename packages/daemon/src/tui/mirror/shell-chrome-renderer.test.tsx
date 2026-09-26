@@ -406,14 +406,13 @@ describe("ShellChrome OpenTUI renderer", () => {
     await renderShell(120, 40);
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const attentionPalette = shellVisualPalette(theme, { attention: true });
-    const contextPalette = shellVisualPalette(theme, { context: true });
     const selectedAttention = shellVisualPalette(theme, { selected: true, attention: true });
     const spans = setup!.captureSpans();
     const contextChip = spans.lines
       .flatMap((line) => line.spans)
       .find((span) => span.text.includes("⧉ web"));
     expect(contextChip).toBeDefined();
-    expect(colorKey(contextChip!.bg)).toBe(colorKey(contextPalette.bg));
+    expect(colorKey(contextChip!.bg)).toBe(colorKey(theme.roles.surfaces.panel));
     expect(colorKey(contextChip!.bg)).not.toBe(colorKey(theme.derived.attentionSurface));
 
     const tabAttentionMarker = spans.lines[0]!.spans.find((span) => span.text === "!");
@@ -514,7 +513,7 @@ it.each(["Home", "Terminals"])(
           project="example"
           session="example"
           mode={mode}
-          notification={null}
+          notification="Live tmux session discovered"
           help="F5 Commands"
         />
       ),
@@ -525,6 +524,7 @@ it.each(["Home", "Terminals"])(
     expect(frame).toContain(mode === "Home" ? "↑↓ Select" : "F6 Sessions");
     expect(frame).toContain(mode === "Home" ? "/ Search" : "F7 Attention");
     expect(frame).toContain("F5 Commands");
+    if (mode === "Terminals") expect(frame).toContain("F10 Sidebar");
     expect(frame).not.toContain("example");
     expect(frame).not.toContain("Live");
     const key = setup.captureSpans().lines[0]!.spans.find((span) => span.text.includes("F5"));
@@ -532,3 +532,29 @@ it.each(["Home", "Terminals"])(
     expect(colorKey(key!.bg)).toBe(colorKey(theme.roles.selection.selection));
   },
 );
+
+it("restores terminal shortcuts after the focused pane returns to live", async () => {
+  const [history, setHistory] = createSignal(true);
+  setup = await renderForTest(
+    () => (
+      <ContextStatusBar
+        theme={createSemanticThemeSnapshot({ mode: "dark" })}
+        layout={{ ...shellChromeLayout(80, 24, 0), status: { x: 0, y: 23, width: 80, height: 1 } }}
+        project="web"
+        session="main"
+        mode="Terminals"
+        notification={null}
+        scrollback={history()}
+        help="F5 Commands"
+      />
+    ),
+    { width: 80, height: 1 },
+  );
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("Esc Back to live");
+  expect(setup.captureCharFrame()).not.toContain("F6 Sessions");
+  setHistory(false);
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("F10 Sidebar");
+  expect(setup.captureCharFrame()).not.toContain("Back to live");
+});

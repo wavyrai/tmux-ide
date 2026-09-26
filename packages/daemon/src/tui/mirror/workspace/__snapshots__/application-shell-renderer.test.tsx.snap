@@ -1,7 +1,7 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`production ApplicationShell → WorkbenchShell OpenTUI renderer records the %sx%s collapsed dock acceptance baseline 1`] = `
-"  ⌂  ●❯                                               production application ro…
+"  ⌂  ●❯
   tmux              ▌› Native terminal canvas                 terminals · canvas
  ● main
  ○ website
@@ -28,7 +28,7 @@ exports[`production ApplicationShell → WorkbenchShell OpenTUI renderer records
 `;
 
 exports[`production ApplicationShell → WorkbenchShell OpenTUI renderer records the %sx%s open dock acceptance baseline 1`] = `
-"   tmux-ide   ⌂ Home  ●❯ Terminals                                                          production application root
+"   tmux-ide   ⌂ Home  ●❯ Terminals
   tmux-ide                  ▌› Native terminal canvas                                                 terminals · canvas
  ● main
  ○ website
@@ -71,7 +71,7 @@ exports[`production ApplicationShell → WorkbenchShell OpenTUI renderer records
 `;
 
 exports[`production ApplicationShell → WorkbenchShell OpenTUI renderer records the %sx%s maximized dock acceptance baseline 1`] = `
-"   tmux-ide  F1  ⌂ Home  F2 ●❯ Terminals                                                                                                                                    production application root
+"   tmux-ide  F1  ⌂ Home  F2 ●❯ Terminals
   tmux-ide                   ▸ tools  F3  ▤ Files  F4  ± Changes  F6 ●◆ Missions  F9  ◷ Activity                                                                                    ▾ close   ▣ restore
  ● main                     ▌○ Native Missions surface                                                                                                                                         maximized
  ○ website

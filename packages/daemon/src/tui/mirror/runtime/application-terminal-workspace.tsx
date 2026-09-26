@@ -148,6 +148,7 @@ export function beginApplicationMouseIngress(
 }
 
 export interface ApplicationTerminalWorkspaceProps {
+  readonly onScrollbackChange?: (active: boolean) => void;
   readonly paneInteractions?: Accessor<ReadonlyMap<string, PaneInteractionProjection>>;
   readonly layout: Accessor<OpenTuiWorkspaceLayoutSnapshot>;
   readonly adapter: PaneScopedTerminalAdapter;
@@ -318,6 +319,12 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     },
     (paneId) => props.adapter.retainPaneView?.(paneId) ?? null,
   );
+
+  createEffect(() => {
+    const paneId = props.focusedPane;
+    props.onScrollbackChange?.(paneId !== null && scrollback.offset(paneId) > 0);
+  });
+  onCleanup(() => props.onScrollbackChange?.(false));
   const selectionViewport = (paneId: string, frame: OpenTuiPaneFrame) =>
     props.adapter.renderSource.supportsViewportOrigin
       ? {

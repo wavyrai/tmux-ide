@@ -34,4 +34,21 @@ describe("createApplicationTransientNoteOwner", () => {
     owner.dispose();
     vi.useRealTimers();
   });
+  it("keeps actionable failures until explicitly cleared", () => {
+    vi.useFakeTimers();
+    let note: string | null = null;
+    const owner = createApplicationTransientNoteOwner({
+      read: () => note,
+      write: (value) => {
+        note = value;
+      },
+    });
+    owner.publish("Copy unavailable");
+    vi.advanceTimersByTime(10_000);
+    expect(note).toBe("Copy unavailable");
+    owner.publish(null);
+    expect(note).toBeNull();
+    owner.dispose();
+    vi.useRealTimers();
+  });
 });
