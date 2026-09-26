@@ -312,6 +312,8 @@ it("exposes fleet scope and routes machine/attention filters only while Home own
             filterLabel="All machines · All agents"
             onCycleMachine={() => calls.push("machine")}
             onToggleAttention={() => calls.push("attention")}
+            activityFilter="all"
+            onSetActivityFilter={(value) => calls.push(value)}
             onSelect={() => {}}
             onMove={() => {}}
             onViewport={() => {}}
@@ -324,10 +326,15 @@ it("exposes fleet scope and routes machine/attention filters only while Home own
   );
   await setup.renderOnce();
   expect(setup.captureCharFrame()).toContain("Spark / build / work");
-  expect(setup.captureCharFrame()).toContain("All machines · All agents");
+  expect(setup.captureCharFrame()).toContain("f All machines");
   await setup.mockInput.pressKey("f");
   await setup.mockInput.pressKey("a");
-  expect(calls).toEqual(["machine", "attention"]);
+  await setup.mockInput.pressKey("w");
+  await setup.mockInput.pressKey("0");
+  const lines = setup.captureCharFrame().split("\n");
+  const y = lines.findIndex((line) => line.includes("w Working"));
+  await setup.mockMouse.click(lines[y]!.indexOf("w Working"), y, MouseButtons.LEFT);
+  expect(calls).toEqual(["machine", "attention", "working", "all", "working"]);
   setup.renderer.destroy();
 });
 
@@ -494,5 +501,45 @@ it("does not open a search selection when a short viewport cannot display its ro
   } finally {
     setup.renderer.destroy();
     routes.dispose();
+  }
+});
+
+it("stacks filters in a narrow roster and opens the selected agent from its action button", async () => {
+  const opened: string[] = [];
+  const setup = await renderForTest(
+    () => (
+      <HomeAgentRoster
+        theme={createSemanticThemeSnapshot({ mode: "light" })}
+        width={48}
+        height={16}
+        snapshot={snapshot([
+          row("Claude", { machineLabel: "Mac", serverLabel: "Default", sessionName: "work" }),
+        ])}
+        selection={{ selectedKey: "Claude", scrollOffset: 0 }}
+        inputActive={true}
+        filterLabel="All machines · All agents"
+        activityFilter="all"
+        onCycleMachine={() => {}}
+        onSetActivityFilter={() => {}}
+        onSelect={() => {}}
+        onMove={() => {}}
+        onViewport={() => {}}
+        onOpen={(agent, source) => opened.push(`${agent.key}:${source}`)}
+      />
+    ),
+    { width: 48, height: 16 },
+  );
+  try {
+    await setup.renderOnce();
+    const lines = setup.captureCharFrame().split("\n");
+    expect(lines.findIndex((line) => line.includes("f All machines"))).not.toBe(
+      lines.findIndex((line) => line.includes("w Working")),
+    );
+    const y = lines.findIndex((line) => line.includes("Enter open"));
+    expect(y).toBeGreaterThanOrEqual(0);
+    await setup.mockMouse.click(lines[y]!.indexOf("Enter open"), y, MouseButtons.LEFT);
+    expect(opened).toEqual(["Claude:mouse"]);
+  } finally {
+    setup.renderer.destroy();
   }
 });

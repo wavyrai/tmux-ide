@@ -23,14 +23,18 @@ export function KeyHint(props: KeyHintProps) {
   const palette = () => componentPalette(props.theme, props, "neutral");
   const background = () =>
     props.button
-      ? props.theme.roles.surfaces.panelRaised
+      ? props.selected
+        ? props.theme.roles.selection.selection
+        : props.theme.roles.surfaces.panelRaised
       : props.quiet && !props.focused && !props.hovered
         ? props.theme.roles.surfaces.panel
         : palette().background;
   const foreground = () =>
-    props.quiet && !props.focused && !props.hovered
-      ? props.theme.roles.text.muted
-      : palette().foreground;
+    props.selected
+      ? props.theme.roles.selection.selectionText
+      : props.quiet && !props.focused && !props.hovered
+        ? props.theme.roles.text.muted
+        : palette().foreground;
   const text = () => props.presentation ?? `${props.keys}${props.label ? ` ${props.label}` : ""}`;
   const width = () => Math.max(1, Math.floor(props.width ?? terminalDisplayWidth(text()) + 2));
   const content = () => clipTerminal(props.presentation ?? ` ${text()} `, width());

@@ -11,6 +11,7 @@ import type { ApplicationHomeAgentPresentation } from "./application-home-agents
 export interface HomeFleetFilter {
   readonly machineId: string | null;
   readonly attentionOnly: boolean;
+  readonly workingOnly?: boolean;
   readonly query?: string;
 }
 export function projectHomeFleet(
@@ -52,6 +53,15 @@ export function projectHomeFleet(
       if (
         filter.attentionOnly &&
         !(agent.attention || agent.activity === "waiting" || agent.activity === "failed")
+      )
+        continue;
+      if (
+        filter.workingOnly &&
+        (agent.disabled ||
+          group?.available === false ||
+          unavailable.has(sessionKey) ||
+          machine.state !== "ready" ||
+          agent.activity !== "running")
       )
         continue;
       const paneKey = agent.paneId
@@ -166,7 +176,7 @@ export function createApplicationHomeFleetOwner(options: {
       return options.inputActive();
     },
     get agentFilterLabel() {
-      return `${catalog().groups.find((group) => group.id === filter().machineId)?.label ?? "All machines"} · ${filter().attentionOnly ? "Needs attention" : "All agents"}`;
+      return `${catalog().groups.find((group) => group.id === filter().machineId)?.label ?? "All machines"} · ${filter().attentionOnly ? "Needs attention" : filter().workingOnly ? "Working" : "All agents"}`;
     },
     onCycleAgentMachine() {
       const ids = [null, ...catalog().groups.map((group) => group.id)];
@@ -175,8 +185,18 @@ export function createApplicationHomeFleetOwner(options: {
         machineId: ids[(ids.indexOf(value.machineId) + 1) % ids.length]!,
       }));
     },
+    get agentActivityFilter() {
+      return filter().attentionOnly ? "attention" : filter().workingOnly ? "working" : "all";
+    },
+    onSetAgentActivityFilter(activity) {
+      setFilter((value) => ({
+        ...value,
+        attentionOnly: activity === "attention",
+        workingOnly: activity === "working",
+      }));
+    },
     onToggleAgentAttention() {
-      setFilter((value) => ({ ...value, attentionOnly: !value.attentionOnly }));
+      setFilter((value) => ({ ...value, attentionOnly: !value.attentionOnly, workingOnly: false }));
     },
     onRetryAgents: () => options.agents.retry?.(),
     onLoadMoreAgents: () => options.agents.loadMore?.(),

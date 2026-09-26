@@ -30,6 +30,8 @@ export type ApplicationHomeAgentPresentation = Pick<
   | "agentQuery"
   | "onAgentQueryChange"
   | "agentFilterLabel"
+  | "agentActivityFilter"
+  | "onSetAgentActivityFilter"
   | "onCycleAgentMachine"
   | "onToggleAgentAttention"
   | "agentRoster"

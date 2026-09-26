@@ -104,3 +104,26 @@ it("searches observed names and host context without changing coverage or stale 
   expect(view("missing").note).toContain("disconnected");
   expect(view("missing").totalSessions).toBe(view("").totalSessions);
 });
+
+it("Working shows only current running agents while preserving fleet coverage", () => {
+  const groups = [
+    {
+      machineId: "local",
+      available: true,
+      agents: [
+        agent("local", "running"),
+        { ...agent("local", "idle"), paneId: "pane.idle", activity: "idle" as const },
+      ],
+    },
+    { machineId: "spark", available: false, agents: [agent("spark", "stale-running")] },
+  ];
+  const all = projectHomeFleet(catalog, groups, { machineId: null, attentionOnly: false });
+  const working = projectHomeFleet(catalog, groups, {
+    machineId: null,
+    attentionOnly: false,
+    workingOnly: true,
+  });
+  expect(working.rows.map((row) => row.key)).toEqual(["running"]);
+  expect(working.totalSessions).toBe(all.totalSessions);
+  expect(working.phase).toBe("partial");
+});

@@ -44,6 +44,8 @@ export interface ApplicationHomeSurfaceProps {
   readonly agentQuery?: string;
   readonly onAgentQueryChange?: (query: string) => void;
   readonly agentFilterLabel?: string;
+  readonly agentActivityFilter?: "all" | "working" | "attention";
+  readonly onSetAgentActivityFilter?: (value: "all" | "working" | "attention") => void;
   readonly onCycleAgentMachine?: () => void;
   readonly onToggleAgentAttention?: () => void;
   readonly agentRoster?: HomeAgentSnapshot;
@@ -74,6 +76,7 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
     props.agentRoster?.phase === "live" &&
     props.agentRoster.rows.length === 0 &&
     !props.agentQuery &&
+    (!props.agentActivityFilter || props.agentActivityFilter === "all") &&
     applicationHomeBrandVariant(bodyWidth(), height()) === "ascii";
   const brandRows = () => (showAscii() ? APPLICATION_HOME_WORDMARK.length : 1);
   const spacious = () => height() >= 14;
@@ -241,6 +244,8 @@ export function ApplicationHomeSurface(props: ApplicationHomeSurfaceProps): JSX.
               query={props.agentQuery}
               onQueryChange={props.onAgentQueryChange}
               filterLabel={props.agentFilterLabel}
+              activityFilter={props.agentActivityFilter}
+              onSetActivityFilter={props.onSetAgentActivityFilter}
               onCycleMachine={props.onCycleAgentMachine}
               onToggleAttention={props.onToggleAgentAttention}
               theme={props.theme}
