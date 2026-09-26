@@ -512,6 +512,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     }>;
     pointer: Readonly<{ x: number; y: number }>;
     moved: boolean;
+    readonly linkUrl?: string;
   } | null = null;
   let linkPointer = false;
   let liveReturnPointer = false;
@@ -1458,6 +1459,18 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
               )
             : null;
         if (
+          active.linkUrl &&
+          head &&
+          !active.moved &&
+          head.row === active.anchor.row &&
+          head.col === active.anchor.col
+        ) {
+          const url = active.linkUrl;
+          endSelectionView();
+          props.onOpenLink?.(url);
+          return;
+        }
+        if (
           !snapshot ||
           !head ||
           (active.unit === "cell" &&
@@ -1522,6 +1535,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       if (!snapshot) return;
       const lease = captureGestureLease(hit.frame.paneId, hit.frame);
       if (!lease) return;
+      let shiftLink: string | undefined;
       if (props.onOpenLink && isTerminalLinkClick(event)) {
         const cell = terminalSelectionCell(
           snapshot,
@@ -1533,10 +1547,13 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         const url = cell && terminalLinkAt(snapshot, cell);
         if (url) {
           event.stopPropagation?.();
-          linkPointer = true;
           lastSelectionClick = null;
-          props.onOpenLink(url);
-          return;
+          if (event.modifiers?.shift) shiftLink = url;
+          else {
+            linkPointer = true;
+            props.onOpenLink(url);
+            return;
+          }
         }
       }
       const appMouse = terminalMouseActionSupported(snapshot, "down");
@@ -1625,6 +1642,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           frame: hit.frame,
           lease: selectionLease,
           moved: false,
+          linkUrl: shiftLink ? (terminalLinkAt(selectionSnapshot, anchor) ?? undefined) : undefined,
         };
         setPointerSelecting(true);
         setCommittedSelection(null);

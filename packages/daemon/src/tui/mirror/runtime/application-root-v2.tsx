@@ -1,3 +1,4 @@
+import { createApplicationSidebarShortcuts } from "./application-sidebar-shortcuts.ts";
 import type { TmuxServerScope } from "@tmux-ide/contracts";
 import { terminalWindowActionCallbacks } from "./application-terminal-workspace-policy.ts";
 import { applicationRouteConnection } from "./application-route-connection.ts";
@@ -425,6 +426,13 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           focusedPane();
           terminalInputIngress.adopt();
         });
+        const sidebarShortcut = createApplicationSidebarShortcuts(
+          activeSurface,
+          sidebarVisible,
+          setSidebarVisible,
+          machines,
+          paletteCommands,
+        );
         useKeyboard((event) => {
           noteHostInteraction();
           const name = event.name.toLowerCase();
@@ -438,11 +446,6 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           }
           if (name === "f6" || name === "f7") paletteCommands.setOpen(false, "keyboard");
           if (handleFleetShortcut(event, machines)) return;
-          if (name === "f5") {
-            machines.sidebar.onBlur?.();
-            paletteCommands.setOpen(true, "keyboard");
-            return;
-          }
           if (appearance.handlePickerKey(event)) return;
           if (paneRename.handleKey(event)) return;
           if (
@@ -453,11 +456,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           )
             return;
           if (paletteCommands.handleKey(event)) return;
-          if (event.ctrl && name === "g") {
-            if (activeSurface() === "home" || !sidebarVisible()) machines.showSwitcher(false);
-            else machines.focus();
-            return;
-          }
+          if (sidebarShortcut(event)) return;
           if (machines.focused() && !["f1", "f2"].includes(name) && !(event.ctrl && name === "q")) {
             componentKeyboardRoutes.route(event);
             return;

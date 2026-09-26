@@ -12,6 +12,7 @@ import { For, Show, createMemo } from "solid-js";
 import { shellChromeLayout, type ShellChromeView } from "../shell-chrome.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, friendlySessionLabel } from "../terminal-text.ts";
+import { KeyHint } from "../ui/key-hint.tsx";
 import { Button } from "../ui/button.tsx";
 import { NavigationRow } from "../ui/navigation-row.tsx";
 import type { OverlayLayer } from "../ui/overlay-host.tsx";
@@ -244,9 +245,12 @@ function CatalogStatusStrip(props: {
             />
           )}
         </For>
-        <StatusBarSegment
+        <KeyHint
           theme={props.theme}
-          label="F5 Commands"
+          keys="F5"
+          label="Commands"
+          quiet
+          button
           width={15}
           onPress={props.onOpenCommands}
         />

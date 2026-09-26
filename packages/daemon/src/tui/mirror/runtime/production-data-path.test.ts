@@ -412,6 +412,19 @@ describe("production OpenTUI v2 data path", () => {
         /\b(?:createWorkspaceClient|createTerminalFastLane|createOpenTuiSessionOwner|TerminalFastLaneRendererAdapter|openSshDaemonTransport)\s*\(/u,
       );
     }
-    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(154 + learningModules.length);
+    // Sidebar key routing and scoped host Shift capture reuse existing owners.
+    // Neither may introduce daemon, transport, replica, or scheduling authority.
+    const inputHelpers = ["application-sidebar-shortcuts", "host-shift-capture"].map(
+      (name) => `packages/daemon/src/tui/mirror/runtime/${name}.ts`,
+    );
+    for (const path of inputHelpers) {
+      expect(authorityDataPathFiles).toContain(path);
+      expect(productionGraph.sourceByFile.get(path)).not.toMatch(
+        /\b(?:createWorkspaceClient|createTerminalFastLane|openSshDaemonTransport|setInterval|setTimeout)\s*\(/u,
+      );
+    }
+    expect(authorityDataPathFiles.length).toBeLessThanOrEqual(
+      154 + learningModules.length + inputHelpers.length,
+    );
   });
 });

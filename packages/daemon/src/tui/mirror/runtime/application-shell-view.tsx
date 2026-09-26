@@ -1,3 +1,4 @@
+import { isSidebarToggleKey } from "./application-sidebar-shortcuts.ts";
 import {
   ApplicationMachineSidebar,
   type ApplicationMachineSidebarModel,
@@ -48,13 +49,25 @@ export { applicationShellViewport } from "./application-shell-viewport.ts";
 type TerminalWorkspaceProps = ComponentProps<typeof ApplicationTerminalWorkspace>;
 export type RootSurface = "home" | "terminals";
 type InputSource = "keyboard" | "mouse";
-export type ApplicationShellKeyAction = "home" | "terminals" | "palette-open" | "palette-close";
+export type ApplicationShellKeyAction =
+  | "home"
+  | "terminals"
+  | "palette-open"
+  | "palette-close"
+  | "sidebar-toggle";
 
 export function applicationShellKeyAction(
-  key: { readonly name: string },
+  key: {
+    readonly name: string;
+    readonly shift?: boolean;
+    readonly ctrl?: boolean;
+    readonly meta?: boolean;
+    readonly eventType?: string;
+  },
   paletteOpen: boolean,
 ): ApplicationShellKeyAction | null {
   const name = key.name.toLowerCase();
+  if (isSidebarToggleKey(key)) return "sidebar-toggle";
   if (name === "f1") return "home";
   if (name === "f2") return "terminals";
   if (name === "f5") return "palette-open";

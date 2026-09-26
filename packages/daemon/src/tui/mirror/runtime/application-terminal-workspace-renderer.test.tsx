@@ -1897,6 +1897,19 @@ it("routes raw mouse multi-click, wheel-drag, edge scrolling and Ctrl-link activ
     expect(copied.at(-1)).toBe("hello world https://a.test");
     await setup.mockMouse.click(16, 4, MouseButtons.LEFT, { modifiers: { ctrl: true } });
     expect(opened).toEqual(["https://a.test/"]);
+    await setup.mockMouse.pressDown(16, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
+    expect(opened).toHaveLength(1);
+    await setup.mockMouse.release(16, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
+    expect(opened).toHaveLength(2);
+    await setup.mockMouse.release(16, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
+    expect(opened).toHaveLength(2);
+    await setup.mockMouse.pressDown(16, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
+    await setup.mockMouse.moveTo(23, 4);
+    await setup.mockMouse.release(23, 4, MouseButtons.LEFT, { modifiers: { shift: true } });
+    expect(opened).toHaveLength(2);
+    expect(copied.at(-1)).toBe("s://a.te");
+    opened.pop(); // Keep the existing compatibility-route assertions below.
+
     // Exercise the workspace fallback hit surface through real OpenTUI dispatch.
     // Pane surfaces normally cover it; lifting its hit layer deterministically
     // covers the same routing when the compositor selects the background.

@@ -14,15 +14,19 @@ export interface KeyHintProps extends ComponentInteractionState {
   presentation?: string;
   onPress?: () => void;
   quiet?: boolean;
+  /** Distinct footer button with an emphasized shortcut. */
+  button?: boolean;
 }
 
 /** A one-row, cell-aligned keyboard affordance with optional pointer/keyboard activation. */
 export function KeyHint(props: KeyHintProps) {
   const palette = () => componentPalette(props.theme, props, "neutral");
   const background = () =>
-    props.quiet && !props.focused && !props.hovered
-      ? props.theme.roles.surfaces.panel
-      : palette().background;
+    props.button
+      ? props.theme.roles.surfaces.panelRaised
+      : props.quiet && !props.focused && !props.hovered
+        ? props.theme.roles.surfaces.panel
+        : palette().background;
   const foreground = () =>
     props.quiet && !props.focused && !props.hovered
       ? props.theme.roles.text.muted
@@ -67,10 +71,17 @@ export function KeyHint(props: KeyHintProps) {
       <text fg={foreground()} bg={background()}>
         {props.focused || props.selected ? (
           <strong>{content()}</strong>
-        ) : props.quiet && !props.presentation ? (
+        ) : (props.quiet || props.button) && !props.presentation ? (
           <>
             {" "}
-            <span style={{ fg: props.theme.roles.text.primary }}>
+            <span
+              style={{
+                fg: props.button
+                  ? props.theme.roles.selection.selectionText
+                  : props.theme.roles.text.primary,
+                bg: props.button ? props.theme.roles.selection.selection : background(),
+              }}
+            >
               {clipTerminal(props.keys, Math.max(0, width() - 1))}
             </span>
             {clipTerminal(

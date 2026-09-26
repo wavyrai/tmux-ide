@@ -71,6 +71,7 @@ export function applicationCommandDescription(command: ApplicationPaletteCommand
       id: command,
       label: command === "hide-sidebar" ? "Hide sidebar" : "Show sidebar",
       detail: "Terminal layout",
+      shortcut: "F10",
     };
   if (command === "switch-session")
     return {

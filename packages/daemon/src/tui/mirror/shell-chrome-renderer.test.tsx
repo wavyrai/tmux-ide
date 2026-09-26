@@ -528,7 +528,7 @@ it.each(["Home", "Terminals"])(
     expect(frame).not.toContain("example");
     expect(frame).not.toContain("Live");
     const key = setup.captureSpans().lines[0]!.spans.find((span) => span.text.includes("F5"));
-    expect(colorKey(key!.fg)).toBe(colorKey(theme.roles.text.primary));
-    expect(colorKey(key!.bg)).toBe(colorKey(theme.roles.surfaces.panel));
+    expect(colorKey(key!.fg)).toBe(colorKey(theme.roles.selection.selectionText));
+    expect(colorKey(key!.bg)).toBe(colorKey(theme.roles.selection.selection));
   },
 );

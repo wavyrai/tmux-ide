@@ -13,8 +13,11 @@ export const APPLICATION_SHORTCUTS: readonly ApplicationShortcut[] = [
     return { category: "Application", label: description.label, keys: description.shortcut! };
   }),
   { category: "Application", label: "Commands", keys: "F5" },
+  { category: "Application", label: "Show / hide sidebar", keys: "F10" },
   { category: "Application", label: "Agent attention", keys: "F7" },
   { category: "Application", label: "Sidebar / Sessions when hidden", keys: "Ctrl+G" },
+  { category: "Terminals", label: "Open link", keys: "Shift+click" },
+  { category: "Terminals", label: "Select and copy text", keys: "Shift+drag" },
   { category: "Home", label: "Find an agent or workspace", keys: "/" },
   { category: "Home", label: "Cycle machine filter", keys: "f" },
   { category: "Home", label: "Toggle attention filter", keys: "a" },

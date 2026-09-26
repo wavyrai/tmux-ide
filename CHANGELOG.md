@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.0-beta.35
+
+- F10 toggles the sidebar, with the shortcut shown in Commands and keyboard help.
+- The footer Commands button has a distinct surface and high-contrast F5 keycap.
+- Shift-click opens links on release; Shift-drag selects and copies without opening them. Ctrl-click remains supported.
+- Direct Ghostty sessions request Shift mouse reporting while the TUI is active, without changing global settings.
+
 ## 2.9.0-beta.34
 
 - Fix stale or duplicated-looking rows while scrolling Claude Code and other applications that split synchronized redraws across multiple output chunks. All changed rows are retained until the redraw is published.

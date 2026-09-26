@@ -2113,6 +2113,11 @@ describe("production ApplicationShellView", () => {
   });
 
   it("maps the production chrome keyboard contract without consuming terminal keys", () => {
+    expect(applicationShellKeyAction({ name: "f10", eventType: "press" }, false)).toBe(
+      "sidebar-toggle",
+    );
+    expect(applicationShellKeyAction({ name: "f10", shift: true }, false)).toBeNull();
+    expect(applicationShellKeyAction({ name: "f10", eventType: "release" }, false)).toBeNull();
     expect(applicationShellKeyAction({ name: "f1" }, false)).toBe("home");
     expect(applicationShellKeyAction({ name: "F2" }, false)).toBe("terminals");
     expect(applicationShellKeyAction({ name: "f5" }, false)).toBe("palette-open");

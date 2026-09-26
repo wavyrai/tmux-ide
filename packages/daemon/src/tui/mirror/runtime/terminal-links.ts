@@ -18,8 +18,9 @@ export function isTerminalLinkClick(event: {
   return (
     event.type === "down" &&
     event.button === 0 &&
-    Boolean(event.modifiers?.ctrl || event.modifiers?.meta) &&
-    !event.modifiers?.shift &&
+    (event.modifiers?.shift
+      ? !event.modifiers.ctrl && !event.modifiers.meta
+      : Boolean(event.modifiers?.ctrl || event.modifiers?.meta)) &&
     !event.modifiers?.alt
   );
 }

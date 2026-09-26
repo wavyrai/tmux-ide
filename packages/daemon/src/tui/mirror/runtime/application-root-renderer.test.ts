@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const createRenderer = vi.hoisted(() =>
   vi.fn(async (_options: Record<string, unknown>): Promise<Record<string, unknown>> => ({})),
 );
+const shiftCapture = vi.hoisted(() => ({ acquire: vi.fn(), release: vi.fn() }));
+vi.mock("./host-shift-capture.ts", () => ({ acquireHostShiftCapture: shiftCapture.acquire }));
+
 const outputTransport = vi.hoisted(() => vi.fn());
 vi.mock("./renderer-output-transport.ts", () => ({
   createRendererOutputTransport: outputTransport,
@@ -24,6 +27,7 @@ import { createApplicationRootRenderer } from "./application-root-renderer.ts";
 import { TuiApplicationLifecycle } from "./application-lifecycle.ts";
 
 beforeEach(() => {
+  shiftCapture.acquire.mockReturnValue(shiftCapture.release);
   perf.enabled = false;
   vi.stubEnv("TMUX_IDE_FRAME_OUTPUT", undefined);
   vi.stubEnv("OTUI_DUMP_CAPTURES", undefined);
@@ -454,4 +458,12 @@ describe("root renderer frame-output experiment", () => {
     expect(stdout.listenerCount("resize")).toBe(0);
     expect(stdout.listenerCount("error")).toBe(0);
   });
+});
+
+it("releases host Shift capture when the renderer is destroyed", async () => {
+  await createApplicationRootRenderer(false);
+  expect(shiftCapture.acquire).toHaveBeenCalledOnce();
+  const options = createRenderer.mock.calls.at(-1)![0];
+  (options.onDestroy as () => void)();
+  expect(shiftCapture.release).toHaveBeenCalledOnce();
 });

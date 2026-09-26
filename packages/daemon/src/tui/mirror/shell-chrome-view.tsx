@@ -225,6 +225,7 @@ export function ContextStatusBar(props: ShellStatusStripProps) {
           label={props.layout.status.width >= 24 ? "Commands" : undefined}
           width={commandWidth()}
           quiet
+          button
           onPress={props.onHelp}
         />
       </StatusBarGroup>

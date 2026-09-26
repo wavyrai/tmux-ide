@@ -26,11 +26,12 @@ function snapshot(
 }
 
 describe("deliberate terminal links", () => {
-  it("requires unambiguous modifier primary-down and ignores hover, release, shift selection", () => {
+  it("requires unambiguous modifier primary-down and ignores hover, release, mixed modifiers", () => {
     expect(isTerminalLinkClick({ type: "down", button: 0, modifiers: { ctrl: true } })).toBe(true);
     expect(isTerminalLinkClick({ type: "down", button: 0, modifiers: { meta: true } })).toBe(true);
     for (const type of ["up", "move", "drag", "scroll"])
       expect(isTerminalLinkClick({ type, button: 0, modifiers: { ctrl: true } })).toBe(false);
+    expect(isTerminalLinkClick({ type: "down", button: 0, modifiers: { shift: true } })).toBe(true);
     expect(isTerminalLinkClick({ type: "down", button: 0 })).toBe(false);
     expect(isTerminalLinkClick({ type: "down", button: 2, modifiers: { ctrl: true } })).toBe(false);
     expect(

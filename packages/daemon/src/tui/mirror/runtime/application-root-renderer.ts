@@ -1,3 +1,4 @@
+import { acquireHostShiftCapture } from "./host-shift-capture.ts";
 import { CliRenderEvents, createCliRenderer } from "@opentui/core";
 
 import { tuiPerfMark, tuiPerfStream } from "./application-performance-log.ts";
@@ -37,7 +38,10 @@ export async function createApplicationRootRenderer(
   const preserveCaptureDump = ["true", "1", "on", "yes"].includes(
     (process.env.OTUI_DUMP_CAPTURES ?? "").toLowerCase(),
   );
+  let releaseShiftCapture: (() => void) | undefined;
   const disposeOutput = () => {
+    releaseShiftCapture?.();
+    releaseShiftCapture = undefined;
     removeCapabilityObserver?.();
     removeCapabilityObserver = undefined;
     clearTimeout(resizeTimer);
@@ -84,6 +88,7 @@ export async function createApplicationRootRenderer(
     disposeOutput();
     throw error;
   }
+  releaseShiftCapture = acquireHostShiftCapture();
   const activeRenderer = renderer;
   if (tuiPerfStream) {
     let previous: string | undefined;
