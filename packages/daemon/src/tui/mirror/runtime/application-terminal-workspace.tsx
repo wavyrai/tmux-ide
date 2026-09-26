@@ -1880,6 +1880,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       <Show when={windowLinkMenu()}>
         <Menu
           theme={props.theme}
+          viewportOrigin={{ x: props.originX ?? 0, y: props.originY ?? 0 }}
           title="Window link"
           left={0}
           top={1}
@@ -1902,6 +1903,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
             width={paneContextMenuWidth()}
             viewportWidth={props.width}
             viewportHeight={props.height + topOffset()}
+            viewportOrigin={{ x: props.originX ?? 0, y: props.originY ?? 0 }}
             paneTitle={menu().displayName}
             active
             onDismiss={paneMenu.dismiss}

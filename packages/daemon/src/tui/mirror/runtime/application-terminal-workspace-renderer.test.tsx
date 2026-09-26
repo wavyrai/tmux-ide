@@ -556,7 +556,8 @@ describe("ApplicationTerminalWorkspace", () => {
       ]),
     );
     await setup.renderOnce();
-    expect(setup.captureCharFrame()).toContain("READ");
+    // Narrow headers retain the pane name rather than squeezing in a receipt.
+    expect(setup.captureCharFrame()).toContain("Claude Code");
     expect(blits).toEqual([]);
     setPaneInteractions(new Map());
     setIndicators(new Map());

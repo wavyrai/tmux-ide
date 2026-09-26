@@ -37,6 +37,65 @@ function KeyboardRouteTestHost(props: { readonly children: JSX.Element }) {
   return <KeyboardRouteProvider owner={owner}>{props.children}</KeyboardRouteProvider>;
 }
 
+it.each(["dark", "light"] as const)(
+  "dims the whole %s app behind a workspace menu and restores it on close",
+  async (mode) => {
+    const theme = createSemanticThemeSnapshot({ mode });
+    const [open, setOpen] = createSignal(false);
+    let backgroundClicks = 0;
+    const setup = await renderForTest(
+      () => (
+        <box width={80} height={12} backgroundColor={theme.roles.surfaces.canvas}>
+          <text fg={theme.roles.text.primary} onMouseDown={() => backgroundClicks++}>
+            SIDEBAR
+          </text>
+          <box position="absolute" left={20} top={2} width={60} height={10}>
+            <Show when={open()}>
+              <OverlayFrame
+                theme={theme}
+                viewportWidth={60}
+                viewportHeight={10}
+                viewportOrigin={{ x: 20, y: 2 }}
+                placement="anchor"
+                anchor={{ x: 2, y: 1 }}
+                width={25}
+                height={6}
+                onDismiss={() => setOpen(false)}
+              >
+                <text fg={theme.roles.text.primary}>ACTIVE MENU</text>
+              </OverlayFrame>
+            </Show>
+          </box>
+        </box>
+      ),
+      { width: 80, height: 12 },
+    );
+    try {
+      await setup.renderOnce();
+      const find = (label: string) =>
+        setup
+          .captureSpans()
+          .lines.flatMap((line) => line.spans)
+          .find((span) => span.text.includes(label))!;
+      const original = colorToThemeBytes(find("SIDEBAR").fg);
+      setOpen(true);
+      await setup.renderOnce();
+      const dimmed = colorToThemeBytes(find("SIDEBAR").fg);
+      expect(dimmed.slice(0, 3).every((channel, index) => channel < original[index]!)).toBe(true);
+      expect(colorToThemeBytes(find("ACTIVE MENU").fg)).toEqual(
+        colorToThemeBytes(theme.roles.text.primary),
+      );
+      await setup.mockMouse.click(1, 0, MouseButtons.LEFT);
+      await setup.renderOnce();
+      expect(open()).toBe(false);
+      expect(backgroundClicks).toBe(0);
+      expect(colorToThemeBytes(find("SIDEBAR").fg)).toEqual(original);
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
+
 describe("OpenTUI ui primitives", () => {
   const colorKey = (color: Parameters<typeof colorToThemeBytes>[0]) =>
     colorToThemeBytes(color).join(",");

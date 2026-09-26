@@ -1,7 +1,8 @@
 /* @jsxImportSource @opentui/solid */
-import type { JSX } from "@opentui/solid";
+import { Portal, useTerminalDimensions, type JSX } from "@opentui/solid";
+import { type BoxRenderable } from "@opentui/core";
 
-import type { SemanticThemeSnapshot } from "../theme.ts";
+import { MODAL_BACKDROP, type SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal } from "../terminal-text.ts";
 import { overlayFrameSize, overlaySurfacePadding, type OverlayPlacement } from "./overlay-model.ts";
 
@@ -17,6 +18,8 @@ export interface OverlayFrameProps {
   footer?: string;
   placement?: OverlayPlacement;
   anchor?: Readonly<{ x: number; y: number }>;
+  /** Lift an anchored workspace menu into the full application overlay plane. */
+  viewportOrigin?: Readonly<{ x: number; y: number }>;
   modal?: boolean;
   active?: boolean;
   zIndex?: number;
@@ -27,8 +30,11 @@ export interface OverlayFrameProps {
 
 /** Owns modal geometry and pointer capture without owning commands or renderer lifecycle. */
 export function OverlayFrame(props: OverlayFrameProps) {
-  const viewportWidth = () => Math.max(1, Math.floor(props.viewportWidth));
-  const viewportHeight = () => Math.max(1, Math.floor(props.viewportHeight));
+  const dimensions = useTerminalDimensions();
+  const viewportWidth = () =>
+    Math.max(1, Math.floor(props.viewportOrigin ? dimensions().width : props.viewportWidth));
+  const viewportHeight = () =>
+    Math.max(1, Math.floor(props.viewportOrigin ? dimensions().height : props.viewportHeight));
   const size = () =>
     overlayFrameSize({
       viewportWidth: viewportWidth(),
@@ -48,13 +54,25 @@ export function OverlayFrame(props: OverlayFrameProps) {
     );
   const left = () => {
     if (props.placement === "anchor")
-      return Math.max(0, Math.min(props.anchor?.x ?? 0, viewportWidth() - width()));
+      return Math.max(
+        0,
+        Math.min(
+          (props.anchor?.x ?? 0) + (props.viewportOrigin?.x ?? 0),
+          viewportWidth() - width(),
+        ),
+      );
     if (props.placement === "top-right") return Math.max(0, viewportWidth() - width() - 1);
     return Math.max(0, Math.floor((viewportWidth() - width()) / 2));
   };
   const top = () => {
     if (props.placement === "anchor")
-      return Math.max(0, Math.min(props.anchor?.y ?? 0, viewportHeight() - height()));
+      return Math.max(
+        0,
+        Math.min(
+          (props.anchor?.y ?? 0) + (props.viewportOrigin?.y ?? 0),
+          viewportHeight() - height(),
+        ),
+      );
     if (props.placement === "top-right") return Math.min(1, viewportHeight() - height());
     return Math.max(0, Math.floor((viewportHeight() - height()) / 2));
   };
@@ -139,7 +157,7 @@ export function OverlayFrame(props: OverlayFrameProps) {
     </box>
   );
   if (props.modal === false) return frame();
-  return (
+  const host = () => (
     <box
       id="ui-overlay-frame-host"
       position="absolute"
@@ -148,6 +166,7 @@ export function OverlayFrame(props: OverlayFrameProps) {
       width={viewportWidth()}
       height={viewportHeight()}
       zIndex={props.zIndex ?? 100}
+      backgroundColor={props.active === false ? undefined : MODAL_BACKDROP}
       onMouseDown={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -156,5 +175,22 @@ export function OverlayFrame(props: OverlayFrameProps) {
     >
       {frame()}
     </box>
+  );
+  return props.viewportOrigin ? (
+    <Portal
+      ref={(node) => {
+        const container = node as BoxRenderable;
+        container.position = "absolute";
+        container.left = 0;
+        container.top = 0;
+        container.width = "100%";
+        container.height = "100%";
+        container.zIndex = props.zIndex ?? 100;
+      }}
+    >
+      {host()}
+    </Portal>
+  ) : (
+    host()
   );
 }

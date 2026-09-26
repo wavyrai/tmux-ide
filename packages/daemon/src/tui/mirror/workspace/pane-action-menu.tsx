@@ -12,6 +12,7 @@ export interface PaneActionMenuProps {
   readonly width: number;
   readonly viewportWidth?: number;
   readonly viewportHeight?: number;
+  readonly viewportOrigin?: Readonly<{ x: number; y: number }>;
   readonly active?: boolean;
   readonly selectedId: PaneMenuActionId;
   readonly closeArmed: boolean;
@@ -39,6 +40,7 @@ export function PaneActionMenu(props: PaneActionMenuProps) {
       width={props.width}
       viewportWidth={props.viewportWidth}
       viewportHeight={props.viewportHeight}
+      viewportOrigin={props.viewportOrigin}
       active={props.active}
       title={props.paneTitle}
       footer={

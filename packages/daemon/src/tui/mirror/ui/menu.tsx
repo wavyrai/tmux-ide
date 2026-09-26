@@ -24,6 +24,7 @@ export interface MenuProps {
   width: number;
   viewportWidth?: number;
   viewportHeight?: number;
+  viewportOrigin?: Readonly<{ x: number; y: number }>;
   zIndex?: number;
   active?: boolean;
   footer?: string;
@@ -53,6 +54,7 @@ export function Menu(props: MenuProps) {
       }
       width={props.width}
       height={preferredHeight()}
+      viewportOrigin={props.viewportOrigin}
       placement="anchor"
       anchor={{ x: props.left, y: props.top }}
       zIndex={props.zIndex ?? 20}

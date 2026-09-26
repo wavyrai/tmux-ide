@@ -84,6 +84,7 @@ function badgeWidth(status: string | undefined): number {
  */
 export function PaneTitleBar(props: PaneTitleBarProps) {
   const [pointerInside, setPointerInside] = createSignal(false);
+  const [menuHovered, setMenuHovered] = createSignal(false);
   const hovered = () => props.hovered ?? pointerInside();
   const safeWidth = () => Math.max(1, Math.floor(props.width));
   const status = () => agentStatus(props.activity);
@@ -96,11 +97,17 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
   const presence = () => (props.interaction ? paneInteractionPresence(props.interaction) : null);
   const activityLabel = () =>
     presence()
-      ? `${presence()!.badge}${props.interaction?.origin === "external" ? " · External tmux" : ""}`
+      ? `${presence()!.badge[0]}${presence()!.badge.slice(1).toLowerCase()}${props.interaction?.origin === "external" ? " · tmux" : ""}`
       : "";
   const activityWidth = () => {
     const available =
-      safeWidth() - markerGutterWidth() - markerWidth() - actionWidth() - zoomWidth() - 4;
+      safeWidth() -
+      markerGutterWidth() -
+      markerWidth() -
+      actionWidth() -
+      zoomWidth() -
+      badgeWidth(statusLabel()) -
+      12;
     if (!presence() || available < presence()!.badge.length + 2) return 0;
     return Math.min(available, terminalDisplayWidth(activityLabel()) + 2);
   };
@@ -111,13 +118,6 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
   // Reserve these cells even when the control is quiet or unavailable. Hover
   // and menu lifetime must never change title clipping or terminal geometry.
   const actionWidth = () => (safeWidth() >= 7 ? 3 : 0);
-  const actionsVisible = () =>
-    props.selected ||
-    props.keyboardFocused ||
-    props.terminalFocused ||
-    hovered() ||
-    props.menuFocused ||
-    props.menuOpen;
   const zoomLabel = () =>
     !props.zoomed
       ? ""
@@ -267,49 +267,60 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
           {clipTerminal(zoomLabel(), zoomWidth())}
         </text>
       ) : null}
-      <Show when={activityBadge()} keyed>
-        {(activity) => (
-          <Badge
+      <box
+        id={`pane-header-status:${props.paneId}`}
+        width={activityWidth() + (showBadge() ? badgeWidth(statusLabel()) : 0)}
+        height={1}
+        flexShrink={0}
+        flexDirection="row"
+        backgroundColor={props.theme.roles.surfaces.panel}
+      >
+        <Show when={activityBadge()} keyed>
+          {(activity) => (
+            <Badge
+              theme={props.theme}
+              label={activity.label}
+              width={activity.width}
+              tone={
+                activity.presence.tone === "danger"
+                  ? "destructive"
+                  : activity.presence.tone === "info"
+                    ? "accent"
+                    : "done"
+              }
+            />
+          )}
+        </Show>
+        {showBadge() ? (
+          <AgentBadge
             theme={props.theme}
-            label={activity.label}
-            width={activity.width}
-            tone={
-              activity.presence.tone === "danger"
-                ? "destructive"
-                : activity.presence.tone === "info"
-                  ? "accent"
-                  : "done"
-            }
-            selected={props.selected}
-            focused={props.keyboardFocused || props.terminalFocused}
+            label={statusLabel()!}
+            status={status()!}
+            activity={props.activity}
+            width={badgeWidth(statusLabel())}
+            attention={props.attention}
           />
-        )}
-      </Show>
-      {showBadge() ? (
-        <AgentBadge
-          theme={props.theme}
-          label={statusLabel()!}
-          status={status()!}
-          activity={props.activity}
-          width={badgeWidth(statusLabel())}
-          selected={props.selected}
-          focused={props.keyboardFocused || props.terminalFocused}
-          hovered={hovered()}
-          attention={props.attention}
-        />
-      ) : null}
+        ) : null}
+      </box>
       {actionWidth() > 0 ? (
-        <box width={actionWidth()} height={1} flexShrink={0}>
+        <box
+          width={actionWidth()}
+          height={1}
+          flexShrink={0}
+          onMouseOver={() => setMenuHovered(true)}
+          onMouseOut={() => setMenuHovered(false)}
+        >
           <IconButton
             theme={props.theme}
-            icon={actionsVisible() ? "⋯" : " "}
+            icon="⋯"
             label="Pane actions"
-            variant="ghost"
+            variant="secondary"
             width={actionWidth()}
+            hovered={menuHovered()}
             focused={props.menuFocused}
             selected={props.menuOpen}
             disabled={props.menuDisabled}
-            background={palette().background}
+            background={props.theme.roles.surfaces.panelRaised}
             onPress={() => activateMenu()}
           />
         </box>

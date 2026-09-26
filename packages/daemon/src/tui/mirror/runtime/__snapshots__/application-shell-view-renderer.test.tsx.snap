@@ -73,7 +73,7 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
 exports[`production ApplicationShellView preserves canonical attention while prioritizing mixed window activity 1`] = `
 "   tmux-ide   ⌂ Home  ●❯ Terminals                                                                                 live
   tmux-ide                  ! main    ! workin…                                                            + New window
- ● main                       ● Codex                  ● working  ⋯   ! Scout                     ! idle
+ ● main                       ● Codex                  ● working  ⋯   ! Scout                     ! idle  ⋯
                             CANONICAL-CELL                          CANONICAL-CELL
  Agents
  ● Codex [WORKING]

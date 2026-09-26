@@ -74,11 +74,11 @@ describe("pane title hierarchy polish", () => {
     }
   });
   for (const mode of ["dark", "light"] as const) {
-    it(`${mode}: live pointer hover reveals actions without moving the title or selecting the pane`, async () => {
+    it(`${mode}: keeps a visible menu button while hover emphasizes only the title`, async () => {
       let selected = 0;
       const { setup, theme, title } = await header(mode, { onSelectIntent: () => selected++ });
       const before = stableFrame(setup.captureCharFrame());
-      expect(before).not.toContain("⋯");
+      expect(before).toContain("⋯");
       await setup.mockMouse.moveTo(8, 0);
       await setup.renderOnce();
       const hover = stableFrame(setup.captureCharFrame());
@@ -95,6 +95,43 @@ describe("pane title hierarchy polish", () => {
       await setup.renderOnce();
       expect(stableFrame(setup.captureCharFrame())).toBe(before);
       setup.renderer.destroy();
+    });
+
+    it(`${mode}: separates selected title, status, and menu surfaces`, async () => {
+      let opened = 0;
+      const { setup, theme, title } = await header(mode, {
+        selected: true,
+        activity: "idle",
+        width: 80,
+        onMenuIntent: () => opened++,
+        interaction: {
+          paneId: "pane.polish",
+          direction: "incoming",
+          sourcePaneId: null,
+          destinationPaneId: "pane.polish",
+          operationKind: "workspace.pane.send",
+          operationId: "input",
+          phase: "observed",
+          origin: "external",
+          label: "input observed",
+          sequence: 1,
+          at: new Date().toISOString(),
+        },
+      });
+      try {
+        const spans = setup.captureSpans().lines[0]!.spans;
+        const receipt = spans.find((span) => span.text.includes("Received"))!;
+        const menu = spans.find((span) => span.text.includes("⋯"))!;
+        expect(colorKey(title().bg)).toBe(colorKey(theme.roles.selection.selection));
+        expect(colorKey(receipt.bg)).toBe(colorKey(theme.roles.surfaces.panel));
+        expect(colorKey(menu.bg)).toBe(colorKey(theme.roles.surfaces.panelRaised));
+        expect(colorKey(menu.fg)).toBe(colorKey(theme.roles.text.primary));
+        expect(setup.captureCharFrame()).toContain("Received · tmux");
+        await setup.mockMouse.click(78, 0, MouseButtons.LEFT);
+        expect(opened).toBe(1);
+      } finally {
+        setup.renderer.destroy();
+      }
     });
 
     it(`${mode}: menu state and disabled state keep the title/action geometry fixed`, async () => {
@@ -227,7 +264,7 @@ describe("pane title hierarchy polish", () => {
         });
         const spans = setup.captureSpans().lines[0]!.spans;
         const badge = spans.find((span) => span.text.includes("block"))!;
-        const palette = componentPalette(theme, { selected, status: "blocked", attention: true });
+        const palette = componentPalette(theme, { status: "blocked", attention: true });
         expect(badge).toBeDefined();
         expect(colorKey(badge.bg)).toBe(colorKey(palette.background));
         expect(stableFrame(setup.captureCharFrame()).split("\n")[0]).toContain("!");
@@ -388,16 +425,16 @@ describe("pane activity labels", () => {
     );
     try {
       await setup.renderOnce();
-      expect(setup.captureCharFrame()).toContain("READ");
-      const badge = setup.renderer.root.findDescendantById("ui-badge:READ · External tmux");
+      expect(setup.captureCharFrame()).toContain("Read");
+      const badge = setup.renderer.root.findDescendantById("ui-badge:Read · tmux");
       expect(badge).toBeDefined();
       setInteraction({ ...interaction()!, sequence: 2, operationId: "next-read" });
       await setup.renderOnce();
-      expect(setup.renderer.root.findDescendantById("ui-badge:READ · External tmux")).toBe(badge);
+      expect(setup.renderer.root.findDescendantById("ui-badge:Read · tmux")).toBe(badge);
       setInteraction({ ...interaction()!, operationKind: "workspace.pane.send", sequence: 3 });
       await setup.renderOnce();
-      expect(setup.captureCharFrame()).toContain("RECEIVED · External tmux");
-      expect(setup.captureCharFrame()).not.toContain("READ");
+      expect(setup.captureCharFrame()).toContain("Received · tmux");
+      expect(setup.captureCharFrame()).not.toContain("Read");
       setInteraction({ ...interaction()!, phase: "accepted", sequence: 4 });
       await setup.renderOnce();
       expect(() =>
@@ -407,7 +444,7 @@ describe("pane activity labels", () => {
         }),
       ).not.toThrow();
       await setup.renderOnce();
-      expect(setup.captureCharFrame()).not.toContain("READ");
+      expect(setup.captureCharFrame()).not.toContain("Read");
       expect(setup.captureCharFrame()).toContain("Shell");
     } finally {
       setup.renderer.destroy();
@@ -449,7 +486,7 @@ describe("pane activity labels", () => {
     );
     await setup.renderOnce();
     const rows = setup.captureCharFrame().split("\n");
-    expect(rows[0]).toContain("RECEIVED · External tmux");
+    expect(rows[0]).toContain("Received · tmux");
     expect(rows[0]).toContain("failed");
     expect(rows[0]).toContain("Zoomed");
     expect(rows[1]!.trim()).toBe("");

@@ -11279,7 +11279,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.31",
+      version: "2.9.0-beta.36",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
@@ -48541,6 +48541,8 @@ var init_terminal_replica_interpreter = __esm({
       #widgetGate = false;
       #markerTail = "";
       #pendingResize = null;
+      // null: no unpublished writes; undefined: a write requires full projection.
+      #pendingWriteDirty = null;
       #pendingRaw = [];
       #pendingRawBytes = 0;
       #rawContinuityLost = false;
@@ -48792,6 +48794,12 @@ var init_terminal_replica_interpreter = __esm({
             this.#observability.nowMicros(),
             trace
           );
+        const dirty = this.#backend.dirtyRange();
+        const pending = this.#pendingWriteDirty;
+        this.#pendingWriteDirty = pending === null ? dirty : pending === void 0 || dirty === void 0 ? void 0 : {
+          start: Math.min(pending.start, dirty.start),
+          end: Math.max(pending.end, dirty.end)
+        };
         if (this.#backend.requiresNativeReseed()) {
           this.#commit(false);
           return;
@@ -48847,7 +48855,15 @@ var init_terminal_replica_interpreter = __esm({
           return;
         }
         const reduceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+        const pending = this.#pendingWriteDirty;
+        if (pending !== null) {
+          dirty = pending === void 0 || dirty === void 0 ? void 0 : {
+            start: Math.min(pending.start, dirty.start),
+            end: Math.max(pending.end, dirty.end)
+          };
+        }
         const projected = this.#project(forceSeed ? void 0 : dirty);
+        this.#pendingWriteDirty = null;
         const previous = this.#snapshot;
         const dirtyRows = [];
         for (let index = 0; index < projected.grid.length; index += 1) {
@@ -71620,9 +71636,8 @@ function mountTmuxServerRoutes(app, options) {
           (row) => row.sessionName === workspace.sessionName && row.liveSessionId === c.req.query("liveSessionId")
         ))
           throw new TmuxServerScopeError("stale-generation");
-        const snapshot2 = await owner.terminalInventoryRuntime.discoverTerminalRuntimeSession(
-          workspace.sessionName,
-          c.req.raw.signal
+        const snapshot2 = await owner.terminalInventoryRuntime.discoverApplicationShellSession(
+          workspace.sessionName
         );
         const currentSessions = await owner.catalog();
         if (!currentSessions.some(

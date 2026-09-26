@@ -16,7 +16,7 @@ export interface TuiButtonProps extends ComponentInteractionState {
   variant?: ButtonVariant;
   size?: ButtonSize;
   width?: number;
-  /** Opaque surface used by neutral/ghost controls embedded in custom chrome. */
+  /** Opaque base surface used by neutral controls embedded in custom chrome. */
   background?: RGBA;
   onPress?: () => void;
 }
@@ -55,7 +55,7 @@ export function TuiButton(props: TuiButtonProps) {
     return clipTerminal(`${" ".repeat(inset)}${marker}${props.label}${shortcut} `, width());
   };
   const background = () =>
-    variant() === "ghost" && palette().state === "base"
+    palette().state === "base" && (variant() === "ghost" || variant() === "secondary")
       ? (props.background ?? props.theme.roles.surfaces.panel)
       : palette().background;
   const activate = () => {

@@ -10,6 +10,9 @@
  * verbatim, aliasing @opentui/core to a browser shim that only exposes RGBA.
  */
 import { RGBA } from "@opentui/core";
+
+/** Shared scrim for modal surfaces across light and dark themes. */
+export const MODAL_BACKDROP = RGBA.fromInts(0, 0, 0, 150);
 import {
   BUILTIN_VISUAL_THEMES,
   findVisualThemePreset,
