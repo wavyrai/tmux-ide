@@ -395,6 +395,16 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
             }}
           >
             <ApplicationShell
+              onFooterAction={(key) => {
+                props.machineSidebar?.onBlur?.();
+                if (key === "F6") props.machineSidebar?.onOpenSwitcher?.();
+                else if (key === "F7") props.machineSidebar?.onOpenAttention?.();
+                else
+                  props.onPaletteActivate?.(
+                    props.sidebarVisible === false ? "show-sidebar" : "hide-sidebar",
+                    "mouse",
+                  );
+              }}
               footerContext={props.surface() === "home" ? "home" : "terminals"}
               scrollback={props.surface() === "terminals" && scrollback()}
               rightChips={

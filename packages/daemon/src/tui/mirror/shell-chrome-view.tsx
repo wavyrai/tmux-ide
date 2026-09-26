@@ -164,6 +164,7 @@ export interface ShellStatusStripProps {
   tool?: string | null;
   dockMode?: string | null;
   focus?: string | null;
+  onFooterAction?: (key: "F6" | "F7" | "F10") => void;
   scrollback?: boolean;
   notification: string | null;
   transient?: string | null;
@@ -219,7 +220,26 @@ export function ContextStatusBar(props: ShellStatusStripProps) {
           when={showMessage()}
           fallback={
             <For each={hints()}>
-              {(hint) => <KeyHint theme={props.theme} keys={hint.keys} label={hint.label} quiet />}
+              {(hint) => {
+                const action = () =>
+                  hint.keys === "F6" || hint.keys === "F7" || hint.keys === "F10"
+                    ? hint.keys
+                    : null;
+                return (
+                  <KeyHint
+                    theme={props.theme}
+                    keys={hint.keys}
+                    label={hint.label}
+                    quiet
+                    button={action() !== null}
+                    onPress={
+                      action() && props.onFooterAction
+                        ? () => props.onFooterAction?.(action()!)
+                        : undefined
+                    }
+                  />
+                );
+              }}
             </For>
           }
         >

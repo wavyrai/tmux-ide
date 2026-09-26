@@ -558,3 +558,33 @@ it("restores terminal shortcuts after the focused pane returns to live", async (
   expect(setup.captureCharFrame()).toContain("F10 Sidebar");
   expect(setup.captureCharFrame()).not.toContain("Back to live");
 });
+
+it("routes each footer button once without forwarding the click to the workspace", async () => {
+  const actions: string[] = [];
+  let backgroundClicks = 0;
+  setup = await renderForTest(
+    () => (
+      <box onMouseDown={() => backgroundClicks++}>
+        <ContextStatusBar
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          layout={{ ...shellChromeLayout(80, 24, 0), status: { x: 0, y: 0, width: 80, height: 1 } }}
+          project="web"
+          session="main"
+          mode="Terminals"
+          notification={null}
+          help="F5 Commands"
+          onFooterAction={(key) => actions.push(key)}
+          onHelp={() => actions.push("F5")}
+        />
+      </box>
+    ),
+    { width: 80, height: 1 },
+  );
+  await setup.renderOnce();
+  const frame = setup.captureCharFrame();
+  for (const key of ["F6", "F7", "F10", "F5"]) {
+    await setup.mockMouse.click(frame.indexOf(key), 0, MouseButtons.LEFT);
+  }
+  expect(actions).toEqual(["F6", "F7", "F10", "F5"]);
+  expect(backgroundClicks).toBe(0);
+});

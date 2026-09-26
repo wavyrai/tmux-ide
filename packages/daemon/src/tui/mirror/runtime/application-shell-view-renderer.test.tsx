@@ -757,7 +757,7 @@ describe("production ApplicationShellView", () => {
     expect(colorKey(sidebarTitle!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(agentLabel!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(agentStatus!.bg)).toBe(colorKey(light.roles.surfaces.panel));
-    expect(colorKey(footerMessage!.bg)).toBe(colorKey(light.roles.surfaces.panel));
+    expect(colorKey(footerMessage!.bg)).toBe(colorKey(light.roles.surfaces.panelRaised));
     expect(colorKey(terminalCell!.bg)).toBe(colorKey(light.roles.surfaces.terminal));
     expect(colorKey(blankSidebarCell!)).toBe(colorKey(light.roles.surfaces.panel));
     expect(terminal.lifecycle).toMatchObject({ subscriptions: 1, unsubscriptions: 0 });

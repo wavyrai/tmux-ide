@@ -21,6 +21,7 @@ import {
 } from "solid-js";
 import { clipTerminal, friendlySessionLabel } from "../terminal-text.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
+import { KeyHint } from "../ui/key-hint.tsx";
 import { NavigationRow } from "../ui/navigation-row.tsx";
 import { Surface } from "../ui/surface.tsx";
 import { useKeyboardRoute } from "../ui/keyboard-router.tsx";
@@ -458,10 +459,21 @@ export function ApplicationMachineSidebar(props: {
       flexDirection="column"
       overflow="hidden"
     >
-      <text height={1} fg={props.theme.roles.text.secondary}>
-        {" "}
-        {props.model.tabs?.().length ? "Machines · F9 tabs · ?" : "Machines · ? help"}
-      </text>
+      <box height={1} flexShrink={0} flexDirection="row" overflow="hidden">
+        <text fg={props.theme.roles.text.secondary}>{" Machines"}</text>
+        <box flexGrow={1} />
+        <Show when={props.model.tabs?.().length && props.width >= 28}>
+          <KeyHint theme={props.theme} keys="F9" label="Tabs" quiet />
+        </Show>
+        <KeyHint
+          theme={props.theme}
+          keys="?"
+          label={props.width >= 20 ? "Help" : undefined}
+          quiet
+          button
+          onPress={() => setShowHelp(!showHelp())}
+        />
+      </box>
       <For each={visibleTabs()}>
         {(tab) => (
           <box height={1} flexDirection="row">
@@ -653,24 +665,25 @@ export function ApplicationMachineSidebar(props: {
         </text>
       </Show>
       <Show when={props.model.onOpenSwitcher}>
-        <NavigationRow
+        <KeyHint
           theme={props.theme}
-          id="machine:switcher"
+          keys="F6"
           label="Sessions"
-          detail="F6"
-          marker=" "
           width={props.width}
-          onActivate={() => props.model.onOpenSwitcher?.()}
+          quiet
+          button
+          onPress={() => props.model.onOpenSwitcher?.()}
         />
       </Show>
       <Show when={props.model.onOpenAttention}>
-        <NavigationRow
+        <KeyHint
           theme={props.theme}
-          id="machine:attention"
-          label={`Attention (${props.model.groups().reduce((sum, group) => sum + (group.state === "ready" ? (group.agents ?? []).filter((agent) => agent.attention && !agent.disabled).length : 0), 0)}) · F7`}
-          marker="!"
+          keys="F7"
+          label={`Attention (${props.model.groups().reduce((sum, group) => sum + (group.state === "ready" ? (group.agents ?? []).filter((agent) => agent.attention && !agent.disabled).length : 0), 0)})`}
           width={props.width}
-          onActivate={() => props.model.onOpenAttention?.()}
+          quiet
+          button
+          onPress={() => props.model.onOpenAttention?.()}
         />
       </Show>
       <Show when={controlsHeight() > 0 && controlGroup()}>
@@ -681,35 +694,37 @@ export function ApplicationMachineSidebar(props: {
                 ? fleetConnectionMessage(group().diagnostic!)
                 : connectionDetail(group())}
             </text>
-            <NavigationRow
+            <KeyHint
               theme={props.theme}
-              id="machine:retry"
-              label="Retry connection (R)"
-              marker="↻"
+              keys="R"
+              label="Retry connection"
               width={props.width}
-              onActivate={() => props.model.onRetryMachine?.(group().id)}
+              quiet
+              button
+              onPress={() => props.model.onRetryMachine?.(group().id)}
             />
-            <NavigationRow
+            <KeyHint
               theme={props.theme}
-              id="machine:disconnect"
-              label="Disconnect (D)"
-              marker="×"
+              keys="D"
+              label="Disconnect"
               width={props.width}
-              onActivate={() => props.model.onDisconnectMachine?.(group().id)}
+              quiet
+              button
+              onPress={() => props.model.onDisconnectMachine?.(group().id)}
             />
           </>
         )}
       </Show>
       <For each={props.model.onAddMachine ? [props.model.onAddMachine] : []}>
         {(add) => (
-          <NavigationRow
+          <KeyHint
             theme={props.theme}
-            id="machine:add"
+            keys="A"
             label="Add machine"
-            detail="A"
-            marker=" "
             width={props.width}
-            onActivate={add}
+            quiet
+            button
+            onPress={add}
           />
         )}
       </For>

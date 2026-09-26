@@ -446,7 +446,7 @@ it("offers keyboard and mouse connection controls for the focused remote only", 
   );
   await setup.mockMouse.click(
     6,
-    lines.findIndex((line) => line.includes("Disconnect (D)")),
+    lines.findIndex((line) => line.includes("D Disconnect")),
     MouseButtons.LEFT,
   );
   expect(calls).toEqual(["retry:mini", "disconnect:mini", "retry:mini", "disconnect:mini"]);
@@ -485,7 +485,7 @@ it("renders bounded host tabs and scopes mouse open/close to their exact keys", 
   );
   await setup.renderOnce();
   const lines = setup.captureCharFrame().split("\n");
-  expect(lines[0]).toContain("F9 tabs");
+  expect(lines[0]).toContain("F9 Tabs");
   const gpu = lines.findIndex((line) => line.includes("GPU / api"));
   expect(gpu).toBeGreaterThan(0);
   expect(lines[gpu]).toContain("offline");
@@ -643,4 +643,44 @@ it("shows duplicate server labels separately and clicks the exact session row", 
   setGroups([{ ...groups()[0]!, sessions: [groups()[0]!.sessions[0]!] }]);
   await setup.renderOnce();
   expect(setup.captureCharFrame()).not.toContain("work ·");
+});
+
+it("uses shortcut-first buttons for sidebar actions with isolated clicks", async () => {
+  const actions: string[] = [];
+  const setup = await renderForTest(
+    () => (
+      <ApplicationMachineSidebar
+        width={28}
+        height={12}
+        theme={createSemanticThemeSnapshot({ mode: "light" })}
+        model={{
+          groups: () => [],
+          activeMachineId: () => null,
+          activeSessionName: () => null,
+          onOpen() {},
+          onSelectMachine() {},
+          onOpenSwitcher: () => actions.push("sessions"),
+          onOpenAttention: () => actions.push("attention"),
+          onAddMachine: () => actions.push("add"),
+        }}
+      />
+    ),
+    { width: 28, height: 12 },
+  );
+  try {
+    await setup.renderOnce();
+    const lines = setup.captureCharFrame().split("\n");
+    for (const label of ["F6 Sessions", "F7 Attention (0)", "A Add machine"]) {
+      const y = lines.findIndex((line) => line.includes(label));
+      expect(y).toBeGreaterThanOrEqual(0);
+      await setup.mockMouse.click(lines[y]!.indexOf(label), y, MouseButtons.LEFT);
+    }
+    expect(actions).toEqual(["sessions", "attention", "add"]);
+    const y = lines.findIndex((line) => line.includes("? Help"));
+    await setup.mockMouse.click(lines[y]!.indexOf("? Help"), y, MouseButtons.LEFT);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("collapse/expand");
+  } finally {
+    setup.renderer.destroy();
+  }
 });
