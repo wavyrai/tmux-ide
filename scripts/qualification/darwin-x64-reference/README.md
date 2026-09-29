@@ -1,0 +1,1 @@
+Matched Intel grid reference build only. See ci/pins.json for admitted input and recipe hashes. The workflow downloads original retained inputs, reconstructs a grid-only reference against original headers and exact retained library bytes, and preserves bounded diagnostics. Native4998 is never rebuilt. No performance acceptance is implied.

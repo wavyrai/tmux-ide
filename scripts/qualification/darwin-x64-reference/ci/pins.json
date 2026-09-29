@@ -1,0 +1,21 @@
+{
+  "acceptedInputArtifactId": 11052542881,
+  "acceptedInputArtifactDigest": "3ba2233ca2af157b07e7befdd9e194125b679fa0211c38a4e6d6a7a077bbe25c",
+  "inputPayloadSha256": "5d260a999f41555d593c94713ddb435fbfc3e753c550cb3b64aae3b60a4effe8",
+  "inputPayloadReceiptSha256": "a553ebbb88243b9aaa0dcb913b087e474de8c057ca928930667c8e82446490c4",
+  "upstream": "e476c1230b958df0cb12977517d24b3dc931375b",
+  "executionAuthorized": true,
+  "scope": "Matched reference build only; no performance or instrumented native rebuild",
+  "recipeHashes": {
+    "build-reference.py": "a567a0071609cf878c1fa6951067256c8ad1ba5f5410b3c49f124cba6d2920c9",
+    "macho_identity.py": "59e7ee50d9bccef8c86fd6280eec00917af08649f20679cb14917ca1459a8d55",
+    "bottle-receipt.json": "a579e7c5b612f78d2b020450cb07e2196f00927be106cd807346bb040735533e",
+    "library-identity.json": "9a8de782e84dd51ae70db5084aaab63bfdee44d7660030d1dd3c84b48ae08ae9",
+    "ci/intake.py": "4e07766a9eaf9471e427278cc2d1e7b00b18d8c5a554e94e90f6cc4a19f08a8d",
+    "ci/admission.py": "fc1570473a4dedc04503e4262b911144e545495f6db5e0a674747fc1c3020259",
+    "ci/payload.py": "9e2e92623f2cccbdec8edbd106c31aa46d7972fd3c348f1affaac9f424c2ebc5",
+    "ci/bounded.py": "605ef4ffa1803224fb717dee1e1920d9900b8b3da0ee23591589c0aa50f0de5b",
+    "ci/prepare.py": "c44bf50d95d9c15a62d721d929e665f9ad24cbb7a14d7c8c71b49137d99f0ca4",
+    "ci/workflow.yml": "eb70b5fe96bccddba0ee76106fd55984a96a33f16b1d75e57f995bf901375b15"
+  }
+}

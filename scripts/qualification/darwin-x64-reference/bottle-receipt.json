@@ -1,0 +1,310 @@
+{
+  "utf8proc": {
+    "version": "2.11.3",
+    "bottleTag": "sonoma",
+    "sha256": "ca594194ca639a162e078a88fd0da6d22d0ec8c588f12e3b32545455851aff6e",
+    "url": "https://ghcr.io/v2/homebrew/core/utf8proc/blobs/sha256:ca594194ca639a162e078a88fd0da6d22d0ec8c588f12e3b32545455851aff6e",
+    "members": {
+      "utf8proc/2.11.3/include/utf8proc.h": {
+        "size": 34049,
+        "sha256": "a4e498b7392c383cf3b22e662da21e0b48f1264806235d87b5d8bd166232f658"
+      },
+      "utf8proc/2.11.3/lib/libutf8proc.3.2.3.dylib": {
+        "size": 354608,
+        "sha256": "d6f963dfb0e16fa2b5b38257c4f9441d2df6d81d914190f8e47d6e55629d5ee4"
+      },
+      "utf8proc/2.11.3/lib/pkgconfig/libutf8proc.pc": {
+        "size": 333,
+        "sha256": "70be70c21e8bc434a737c601cb11f76945953145c0a12313180b9e36bb63c1c6"
+      }
+    }
+  },
+  "libevent": {
+    "version": "2.1.13",
+    "bottleTag": "sonoma",
+    "sha256": "9a84f598bdd5283e794ee467ce1e8505df47930d0c101309f7329944db743d96",
+    "url": "https://ghcr.io/v2/homebrew/core/libevent/blobs/sha256:9a84f598bdd5283e794ee467ce1e8505df47930d0c101309f7329944db743d96",
+    "members": {
+      "libevent/2.1.13/include/evdns.h": {
+        "size": 2019,
+        "sha256": "23a401ad32cfca6653e1529bb392c99f9eae5471d1d8126798b6a876da6f7c3c"
+      },
+      "libevent/2.1.13/include/event.h": {
+        "size": 2744,
+        "sha256": "6b6109226e90afb12183e08529b4e7feceb84b29643eb20519eb32411a3344e7"
+      },
+      "libevent/2.1.13/include/event2/buffer.h": {
+        "size": 39189,
+        "sha256": "ca0e01cd9996615a5a1f755e23371941703be4fb4439b25f8408184a06b08e4f"
+      },
+      "libevent/2.1.13/include/event2/buffer_compat.h": {
+        "size": 4741,
+        "sha256": "37f5a043b9c032f6917f7e1889bed07185eca6b3a3cb51e08caab99f9b30860a"
+      },
+      "libevent/2.1.13/include/event2/bufferevent.h": {
+        "size": 34683,
+        "sha256": "8f2094670cc294b29b947339741ed65787118359fae4aeb00ad38108836f64e6"
+      },
+      "libevent/2.1.13/include/event2/bufferevent_compat.h": {
+        "size": 4538,
+        "sha256": "87b760fbb0404ac0b6547827b14291725f3c77c8cb69b7d908395eaceb6eec06"
+      },
+      "libevent/2.1.13/include/event2/bufferevent_ssl.h": {
+        "size": 4848,
+        "sha256": "9ca09315885b7acc1996634508bbfe3839e338c4fe09d0daa1baaf0312346950"
+      },
+      "libevent/2.1.13/include/event2/bufferevent_struct.h": {
+        "size": 4135,
+        "sha256": "593efa39fd986b9fb1926764b0d51107a334777b8b82743d6e7c7c8bdf021d9f"
+      },
+      "libevent/2.1.13/include/event2/dns.h": {
+        "size": 28018,
+        "sha256": "bc40ab5ec25934e3a4ee8182f375f6c71f24b165e66ac8532f0079ed2c4c1133"
+      },
+      "libevent/2.1.13/include/event2/dns_compat.h": {
+        "size": 12588,
+        "sha256": "c97eb16f1821df8bfd23ca645e025cf71ed5d9f77a9ac854806ba1a2b80e3a74"
+      },
+      "libevent/2.1.13/include/event2/dns_struct.h": {
+        "size": 2596,
+        "sha256": "70bfb11dd140f26cb96ee7fc3bbc62c56f2e6d0a261f0bf7c1b389733d170e02"
+      },
+      "libevent/2.1.13/include/event2/event-config.h": {
+        "size": 20097,
+        "sha256": "8fce62632eefba250a108d0728dcb80c351630bf5d4ece121219b9ee44d420bf"
+      },
+      "libevent/2.1.13/include/event2/event.h": {
+        "size": 62337,
+        "sha256": "a93b3346f3f653236a45799c2f67dabe0f5fe71612130d3e512efe53bfc2e2e6"
+      },
+      "libevent/2.1.13/include/event2/event_compat.h": {
+        "size": 7639,
+        "sha256": "ca01dc1e74024f619cdf603dbc224113146243176dd05123c900b402623496eb"
+      },
+      "libevent/2.1.13/include/event2/event_struct.h": {
+        "size": 5024,
+        "sha256": "7b52b49ccf92b2a93d330907a8834b6b7d7082ce7a6c21a923d68d712d4d1f0e"
+      },
+      "libevent/2.1.13/include/event2/http.h": {
+        "size": 42809,
+        "sha256": "8eae9570fe42f81d8821b827c79b450fa41b8f6490c59187854ba6ef074c8be7"
+      },
+      "libevent/2.1.13/include/event2/http_compat.h": {
+        "size": 3265,
+        "sha256": "7268edcd165578ae3af6dbf726824b90ec62e4bcd245241c289525ad2a58d968"
+      },
+      "libevent/2.1.13/include/event2/http_struct.h": {
+        "size": 4809,
+        "sha256": "06037f7be8eab59daed8207df0bc3388c80922c8589d5700915f0285d9f27f76"
+      },
+      "libevent/2.1.13/include/event2/keyvalq_struct.h": {
+        "size": 2603,
+        "sha256": "353f7341da0baf99451947a814ca97c76f409871bbe2db02fbccdbae0533348a"
+      },
+      "libevent/2.1.13/include/event2/listener.h": {
+        "size": 7991,
+        "sha256": "71e54b24e55967a21cbb0bc96a1ee59c09d78fee004f61ab9b5e273c28a39459"
+      },
+      "libevent/2.1.13/include/event2/rpc.h": {
+        "size": 21764,
+        "sha256": "477d073a8d7f0fdf202dd820fea62d0f9cf4be44decbca58f32e82e9d4a7e24c"
+      },
+      "libevent/2.1.13/include/event2/rpc_compat.h": {
+        "size": 2351,
+        "sha256": "95eb790804950275eb12b1d4f60831fa77031ce3d08f853609cd562ed283b25d"
+      },
+      "libevent/2.1.13/include/event2/rpc_struct.h": {
+        "size": 3598,
+        "sha256": "d1041c44af37449a32d7c41c4d51e895fc872682fb1ab444a2240de743ad94fa"
+      },
+      "libevent/2.1.13/include/event2/tag.h": {
+        "size": 4975,
+        "sha256": "8715ebbe2047e547cf0c30617825c82d0bb03514810c61b7df5598f0e2772fdb"
+      },
+      "libevent/2.1.13/include/event2/tag_compat.h": {
+        "size": 2141,
+        "sha256": "478ca6534915377b6895cf82181f772365b2ff097e68fe9c432b77d731110caa"
+      },
+      "libevent/2.1.13/include/event2/thread.h": {
+        "size": 9952,
+        "sha256": "9bbc4767426833fb71f3324fcd550c135d8fdd554e56d5876717f81ef732be1e"
+      },
+      "libevent/2.1.13/include/event2/util.h": {
+        "size": 29420,
+        "sha256": "c438dbc2b6085084366e70ef9bad6b02936ca34d2b6944f7b6dc7645edec66e8"
+      },
+      "libevent/2.1.13/include/event2/visibility.h": {
+        "size": 2871,
+        "sha256": "7a8a2ae1c0cbdc01282b994caa72bc33cc4e66cca399a791864dbec4ac8a674d"
+      },
+      "libevent/2.1.13/include/evhttp.h": {
+        "size": 2035,
+        "sha256": "c51a557d4fca95be83691a9dad87711f0bf2fdb921832d0eafab47a2d62bcaa0"
+      },
+      "libevent/2.1.13/include/evrpc.h": {
+        "size": 2015,
+        "sha256": "941b0c0be213217c788ae542038d5415a97cb80ccfacf81a989c834aeb8ac3f2"
+      },
+      "libevent/2.1.13/include/evutil.h": {
+        "size": 1782,
+        "sha256": "1ff1e5990aaa53eb2fb160523f5f8bd58196317436d5c48d402304d8a32f261a"
+      },
+      "libevent/2.1.13/lib/libevent-2.1.7.dylib": {
+        "size": 252696,
+        "sha256": "a4140746c9f3e3a22a5cf1df8acad99dd013a90d2db86e281ac832728d9c6bf4"
+      },
+      "libevent/2.1.13/lib/libevent_core-2.1.7.dylib": {
+        "size": 155456,
+        "sha256": "99f3f8b75c7140f7e2f389a4ea5e9f9f1936606ae8d57e35c25e6e678d34ce4e"
+      },
+      "libevent/2.1.13/lib/libevent_extra-2.1.7.dylib": {
+        "size": 117320,
+        "sha256": "76b29376a79c13fd5bd0af41a285e91572f645a36335be6a268882ecdce81077"
+      },
+      "libevent/2.1.13/lib/libevent_openssl-2.1.7.dylib": {
+        "size": 32904,
+        "sha256": "7d3cb1c5710590c2797ae045077cca402a975b8198cfeaa4d91feb7af61c75ee"
+      },
+      "libevent/2.1.13/lib/libevent_pthreads-2.1.7.dylib": {
+        "size": 18488,
+        "sha256": "a0e7852276275e8025057c07275955bc8aed631c16a227482b2fc4d94a18fa1e"
+      },
+      "libevent/2.1.13/lib/pkgconfig/libevent.pc": {
+        "size": 374,
+        "sha256": "810a2f11688c34226eda948f496c20c7a462df171e9c30fe5fb31da2899c4e9a"
+      },
+      "libevent/2.1.13/lib/pkgconfig/libevent_core.pc": {
+        "size": 338,
+        "sha256": "71f21d5daf644afff811c4a33da79cc672e2c8b031b6bbefe1427d3589c5d7e8"
+      },
+      "libevent/2.1.13/lib/pkgconfig/libevent_extra.pc": {
+        "size": 341,
+        "sha256": "1ce62e4028f41307ebbc094deaf771be4b322f94209d2953dcb74aed7f6f13bc"
+      },
+      "libevent/2.1.13/lib/pkgconfig/libevent_openssl.pc": {
+        "size": 505,
+        "sha256": "f00cd923e9989df5bc0549c3671f87c45d096d9bd0500237ee68be2e1fe21fea"
+      },
+      "libevent/2.1.13/lib/pkgconfig/libevent_pthreads.pc": {
+        "size": 426,
+        "sha256": "404bf765fc399c9432e29b38d9d824f9fc33ce505194656d0515e840512d4b04"
+      }
+    }
+  },
+  "ncurses": {
+    "version": "6.6",
+    "bottleTag": "sonoma",
+    "sha256": "3981626d4214e14e1d01528b4652e0c9ac470c0a63fc2c995b875cd39efd1976",
+    "url": "https://ghcr.io/v2/homebrew/core/ncurses/blobs/sha256:3981626d4214e14e1d01528b4652e0c9ac470c0a63fc2c995b875cd39efd1976",
+    "members": {
+      "ncurses/6.6/include/ncursesw/curses.h": {
+        "size": 105228,
+        "sha256": "b299ef94a42335fc6df7f27c9830578c5058082d38470e7aea7625f6c4b2c415"
+      },
+      "ncurses/6.6/include/ncursesw/cursesapp.h": {
+        "size": 7234,
+        "sha256": "2176e1dd2f3a5a6c4736f09020df3066743383228dd4d1a5fbc17e7fb2189404"
+      },
+      "ncurses/6.6/include/ncursesw/cursesf.h": {
+        "size": 28297,
+        "sha256": "c3855b39fc9a5344ae95293fc881177f6639d7a43f68ecd66920109d233ed1c6"
+      },
+      "ncurses/6.6/include/ncursesw/cursesm.h": {
+        "size": 20061,
+        "sha256": "ebad2a9d56c5bce0a49c6f4ff28d8ef00fe3777d8b9ab32f5a91f15d972b0ca4"
+      },
+      "ncurses/6.6/include/ncursesw/cursesp.h": {
+        "size": 8838,
+        "sha256": "b65d72f477c4328ee46ac086540d3cac2357264f716cdd8b114fc9977f8b682b"
+      },
+      "ncurses/6.6/include/ncursesw/cursesw.h": {
+        "size": 50393,
+        "sha256": "e5bfbadb6ef723bba58c4f38336511a3aaee5c10d641071c6adb86215f331083"
+      },
+      "ncurses/6.6/include/ncursesw/cursslk.h": {
+        "size": 7336,
+        "sha256": "f3493364185fc46e26db5f1e94cf36992fb830ca118a224b6c0470ac7cc3cfc5"
+      },
+      "ncurses/6.6/include/ncursesw/eti.h": {
+        "size": 2969,
+        "sha256": "43ad9607033a45272cfdf3dd864889661720b88f0f59f91f9a6f5a1261d0ec72"
+      },
+      "ncurses/6.6/include/ncursesw/etip.h": {
+        "size": 10610,
+        "sha256": "20d911347e0f98b0da1ed860beb2a4252f1cc6714933ee16467841304208a30a"
+      },
+      "ncurses/6.6/include/ncursesw/form.h": {
+        "size": 18917,
+        "sha256": "39c735c0e6371b8e34155f03318af771ff88e9a0158f036d142a9d5252c064ec"
+      },
+      "ncurses/6.6/include/ncursesw/menu.h": {
+        "size": 11893,
+        "sha256": "f6e77052064163a14516f8d09bf10b23e67f2f1a3c5ce30d848102b90e467410"
+      },
+      "ncurses/6.6/include/ncursesw/ncurses_dll.h": {
+        "size": 4183,
+        "sha256": "8ce112a66482f18fa5e0378b46a4f028b21a80f8e6c43815c562ad0d6b7ed727"
+      },
+      "ncurses/6.6/include/ncursesw/panel.h": {
+        "size": 4521,
+        "sha256": "08511870b7da8bc2c206932fb659e9e8e93d8ca63921e42e6f76dbe622c2b681"
+      },
+      "ncurses/6.6/include/ncursesw/term.h": {
+        "size": 42222,
+        "sha256": "a0d7568b54530e08e53f3f0335d6663f3f0493f784896a5a6d5951c49a425633"
+      },
+      "ncurses/6.6/include/ncursesw/term_entry.h": {
+        "size": 8703,
+        "sha256": "b49445e11cf843949cfa14095abbea197650666ecbec92b01bb66c84439c8c7f"
+      },
+      "ncurses/6.6/include/ncursesw/termcap.h": {
+        "size": 3477,
+        "sha256": "4c5ea583c1cd3808dc1c1f6ffd39f680e3752269209bc366d0a1ea03e239a55b"
+      },
+      "ncurses/6.6/include/ncursesw/unctrl.h": {
+        "size": 3223,
+        "sha256": "9db3d9ef728f5ce90433d52667946be6c0685861910ec5337d0fe1308752d366"
+      },
+      "ncurses/6.6/lib/libformw.6.dylib": {
+        "size": 62992,
+        "sha256": "bbb736aafb11eb94864f13d957e0e539fd3837cb76bd24d593beaab47ef66819"
+      },
+      "ncurses/6.6/lib/libmenuw.6.dylib": {
+        "size": 34704,
+        "sha256": "e382e5bb0d4320cdcef3284eb1c49536ca67f9191a6682e340448f15f277fab9"
+      },
+      "ncurses/6.6/lib/libncurses++w.6.dylib": {
+        "size": 76904,
+        "sha256": "455a63b5208e9bbf64ab9c0e1785637737a148d157670024e55f4e1782a47d00"
+      },
+      "ncurses/6.6/lib/libncursesw.6.dylib": {
+        "size": 321176,
+        "sha256": "787b14adae44e98eea6ac4346230272f680c80fcd9332d58200b5fdff83c4e9b"
+      },
+      "ncurses/6.6/lib/libpanelw.6.dylib": {
+        "size": 17816,
+        "sha256": "6c44af22e4e12be4237eb4b8d69ea33ba138014d3a0682541fbe3c209a1efdf4"
+      },
+      "ncurses/6.6/lib/pkgconfig/formw.pc": {
+        "size": 578,
+        "sha256": "d2e16937067e4f52b9bca084a4fbcc267afa830c59a3264606fda1cdd94dd6d0"
+      },
+      "ncurses/6.6/lib/pkgconfig/menuw.pc": {
+        "size": 578,
+        "sha256": "9d3c34a620a63f7a356ccbd3d8eb122ba3b9bc0b05d8308325d31b55f9342059"
+      },
+      "ncurses/6.6/lib/pkgconfig/ncurses++w.pc": {
+        "size": 610,
+        "sha256": "27d122d7f1374987d5f1d78d8513c1c60c8067461dfc29a1c4f50001ba19747c"
+      },
+      "ncurses/6.6/lib/pkgconfig/ncursesw.pc": {
+        "size": 569,
+        "sha256": "c8a09b1c8ab11ff2fbb4544fdee7391b3982c8015969e5ebc59c7e9e5c91589d"
+      },
+      "ncurses/6.6/lib/pkgconfig/panelw.pc": {
+        "size": 580,
+        "sha256": "6e18d1fdda3fe8c7c2eaf39d3a24cfba40fdee51e90884cd8a6cab90940ba178"
+      }
+    }
+  }
+}
