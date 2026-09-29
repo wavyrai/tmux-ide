@@ -1,0 +1,54 @@
+{
+  "inputArtifact": {
+    "id": 11039584548,
+    "runId": 36581517710,
+    "bytes": 704781316,
+    "sha256": "052cabc075719fc470bd6198604b2883fea79694493da95c81bc10f752a2e131"
+  },
+  "imageId": "sha256:d52067ef26a974b46ad1b6301b449b4f774ead40c2c41df971c50e0778a0d76b",
+  "imageToolHashes": {
+    "/opt/node26/bin/node": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+    "/pinned/bun": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+    "/pinned/pnpm.cjs": "b276da51dc8ca5b0d3ee3371695b50fc8b3244b281b091c63a3f082a88dadeb9",
+    "/usr/bin/python3": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+    "/usr/bin/git": "2a8c18fbf43da9f692d75474c72bea9dfd796c260b0f3dfe456376abc3bbd668",
+    "/usr/bin/pgrep": "0756bd5153d53e69d61b9b101b4323533934a33e8eb797bf6101394e5368c01f",
+    "/usr/bin/readelf": "64c58e15274bbbb5153f31078e455e9e77ee5f51489e709bba5bb788ce9df2b0",
+    "/usr/bin/getconf": "6f04d25de4c614629c807207723c33ae826ef26cf8519b9da7902d0f355141b8",
+    "/bin/sh": "86d31f6fb799e91fa21bad341484564510ca287703a16e9e46c53338776f4f42",
+    "/usr/bin/env": "886e5fa8be716b03eeda48856e0f04493f2969fc148fb7812594ffac647fa050",
+    "/lib64/ld-linux-x86-64.so.2": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da"
+  },
+  "runnerImageVersion": "20260920.314.1",
+  "cpuset": "0,2",
+  "nativeSha256": "8933071dbaeea131b04961ab74ff8b21a622891bce6a01f43ef5122e2fad14d2",
+  "dockerPath": "/usr/bin/docker",
+  "dockerSha256": "6435ff9214bf8e0931078fb0980809728cac0a54a526d4f28a26d3e48132b58d",
+  "dockerHost": "unix:///var/run/docker.sock",
+  "scope": "be8/default0 coherence six original cases",
+  "reviewed": false,
+  "coherenceArtifact": null,
+  "runtimeArchiveSha256": null,
+  "artifactReceiptSha256": null,
+  "cliSha256": null,
+  "stockSha256": null,
+  "lane": "coherence-native-stock",
+  "budgets": {
+    "clients": [
+      2,
+      4,
+      8
+    ],
+    "records": 500,
+    "resizes": 20,
+    "retries": 0
+  },
+  "source": {
+    "commit": "be8bcfad29610265716b8dcb657658cf8f1d0ba3",
+    "tree": "4dec271c1d435c2ceaa147441538cc188294039c"
+  },
+  "upstream": {
+    "commit": "e476c1230b958df0cb12977517d24b3dc931375b",
+    "tree": "ad5fe15a4b84ae9489eb4bb643f932ffab949ed2"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "tests": 7,
+  "passed": true,
+  "pythonAST": true,
+  "artifactPinsUnset": true,
+  "executionRefused": true,
+  "runtimeScope": "be8/default0",
+  "liveRuns": 0
+}

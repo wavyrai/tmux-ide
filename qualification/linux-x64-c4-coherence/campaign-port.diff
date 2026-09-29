@@ -1,0 +1,116 @@
+--- accepted-arm/run-coherence.py
++++ held-x64/run-coherence.py
+@@ -3,18 +3,14 @@
+ from bounded import run_bounded
+ from extract_runtime import extract_runtime
+ from coherence_contract import admission,validate_report,SOURCE
+-I=pathlib.Path('/inputs');E=pathlib.Path('/evidence');D=json.loads((I/'descriptor.json').read_text());os.umask(0o077)
+-code=1;phase='admission';post=None;admitted=None;host_final=False;receipt=None;before_modes=None
++from fresh_process_host import bind,require_closed_campaign
++from admit_topology import admit
++import subprocess
++I=pathlib.Path('/inputs');E=pathlib.Path('/evidence');PINS=json.loads((I/'pins.json').read_text());require_closed_campaign(PINS);D=json.loads((I/'descriptor.json').read_text());os.umask(0o077)
++code=1;phase='admission';post=None;receipt=None;before_modes=None;fresh=None;fresh_sha=None
+
+ def sha(path):
+  with pathlib.Path(path).open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+-def barrier(name,abort=True):
+- end=time.monotonic()+30
+- while time.monotonic()<end:
+-  if abort:assert not (E/'host-monitor-failed.json').exists()
+-  if (E/name).exists():return json.loads((E/name).read_text())
+-  time.sleep(.1)
+- raise TimeoutError('Host barrier '+name)
+ def verify():
+  assert sha(I/'coherence-receipt.json')==D['portable']['artifactReceiptSha256']
+  for name,h in D['portable']['inputHashes'].items():assert sha(I/name)==h,name
+@@ -24,6 +20,7 @@
+  for name,expected in receipt['links'].items():
+   p=pathlib.Path(name);assert p.is_symlink() and os.readlink(p)==expected['target'] and str(p.resolve(strict=True))==expected['resolved'],name
+  if before_modes is not None:assert modes==before_modes
++ if fresh_sha is not None:assert sha(E/'fresh-process-host.json')==fresh_sha
+  return modes
+ def run(name,args,lane=None,timeout=900):
+  home=E/('home-'+(lane or 'preflight'));home.mkdir(mode=0o700,exist_ok=True)
+@@ -34,29 +31,30 @@
+ try:
+  assert D['portable']['lane']=='coherence-native-stock'
+  assert sha(I/'frozen-coherence.json')==D['portable']['expectedSpecSha256'];spec=json.loads((I/'frozen-coherence.json').read_text());assert spec['order']==['native','stock'] and spec['clients']==[2,4,8] and spec['recordsPerCase']==500 and spec['resizesPerCase']==20
+- assert sha(I/'coherence-runtime.tar')==D['portable']['runtimeTarSha256']=='54b5138bffc218d503347a61737c4b455f85751ab3216b96bd12f8c0c9112828'
+- assert sha(I/'coherence-receipt.json')==D['portable']['artifactReceiptSha256']=='4da2d4bc207c61b55d0b4f4e4b5be46d2d34e9a5559aafb893995b059ad5234f'
++ assert sha(I/'coherence-runtime.tar')==D['portable']['runtimeTarSha256']==PINS['runtimeArchiveSha256']
++ assert sha(I/'coherence-receipt.json')==D['portable']['artifactReceiptSha256']==PINS['artifactReceiptSha256']
+  receipt=json.loads((I/'coherence-receipt.json').read_text())
+- admitted=barrier('host-admitted.json');assert admitted['accepted'] and admitted['cpus']==[5,6] and admitted['cpuMax']=='max 100000'
+- phase='extract';(E/'extraction.json').write_text(json.dumps(extract_runtime(I/'coherence-runtime.tar','/work')))
++ assert D['imageId']==os.environ['APPROVED_IMAGE_ID'] and D['runnerImageVersion']==os.environ['APPROVED_RUNNER_IMAGE_VERSION']
++ assert os.uname().machine=='x86_64' and os.getuid()>0
++ first=admit(D['cpuset']);(E/'topology-before.json').write_text(json.dumps(first,indent=2))
++ phase='extract';scratch=pathlib.Path('/work/coherence-extracted');proof=extract_runtime(I/'coherence-runtime.tar',scratch)
++ for p in scratch.iterdir():assert not (pathlib.Path('/work')/p.name).exists();p.rename(pathlib.Path('/work')/p.name)
++ scratch.rmdir();(E/'extraction.json').write_text(json.dumps(proof))
+  # Preserve archived timestamp caches, never regenerate or exclude artifact bytes.
+  with tarfile.open(I/'coherence-runtime.tar') as tf:
+   for m in tf.getmembers():
+    if m.isfile():
+     p=pathlib.Path('/work')/m.name;assert p.is_file() and not p.is_symlink() and math.isfinite(m.mtime);os.utime(p,(m.mtime,m.mtime),follow_symlinks=False)
+- uid=D['execution']['uid'];assert uid>0
+- for root,dirs,files in os.walk('/work'):
+-  os.chown(root,uid,uid)
+-  for name in dirs+files:os.lchown(pathlib.Path(root)/name,uid,uid)
+- os.chown(E,uid,uid)
+- for p in E.iterdir():os.lchown(p,uid,uid)
+- os.setgroups([]);os.setgid(uid);os.setuid(uid)
+  phase='pre-closure';before_modes=verify();(E/'pre-closure.json').write_text(json.dumps({'passed':True,'files':len(before_modes)}))
+- assert pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()==receipt['processHost']['bootId']==D['execution']['bootId']
+- (E/'runtime-binding.json').write_text(json.dumps({'archivedProcessHost':receipt['processHost'],'hostAdmission':admitted,'containerPidNamespace':os.readlink('/proc/self/ns/pid'),'source':SOURCE,'runtimeArchiveSha256':D['portable']['runtimeTarSha256'],'scope':'Fresh container is bound by exact init/cgroup outer host monitor, not archived process host.'},indent=2))
++ assert receipt['cliSha256']==PINS['cliSha256'] and receipt['stock']['binarySha256']==PINS['stockSha256']
++ observed={'platform':'linux','arch':'x64','bootId':pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'clockTicksPerSecond':int(subprocess.check_output(['/usr/bin/getconf','CLK_TCK'],text=True)),'getconf':{'path':'/usr/bin/getconf','sha256':sha('/usr/bin/getconf')}}
++ fresh=bind(receipt,observed,PINS['artifactReceiptSha256'])
++ (E/'fresh-process-host.json').write_text(json.dumps(fresh,indent=2))
++ fresh_sha=sha(E/'fresh-process-host.json')
++ (E/'runtime-binding.json').write_text(json.dumps({'freshHostSha256':sha(E/'fresh-process-host.json'),'archiveReceiptSha256':PINS['artifactReceiptSha256'],'hostAdmission':first,'containerPidNamespace':os.readlink('/proc/self/ns/pid'),'source':SOURCE,'runtimeArchiveSha256':PINS['runtimeArchiveSha256']},indent=2))
+  for lane in ['native','stock']:
+   phase=lane
+-  descriptor=E/(lane+'-admission.json');descriptor.write_text(json.dumps(admission(receipt,lane,D['portable']['artifactReceiptSha256']),indent=2));os.chmod(descriptor,0o600)
++  descriptor=E/(lane+'-admission.json');descriptor.write_text(json.dumps(admission(receipt,lane,D['portable']['artifactReceiptSha256'],fresh),indent=2));os.chmod(descriptor,0o600)
+   # The driver is unchanged and owns its original assertions, diagnostics and cleanup.
+   run(lane,['/opt/node26/bin/node','--import',SOURCE+'/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/loader.mjs','/work/current/coherence/'+lane+'/coherence-canonical.ts',str(E/lane),str(descriptor)],lane)
+   report=json.loads((E/lane/'report.json').read_text());assert (E/lane/'complete.json').is_file()
+@@ -73,9 +71,10 @@
+    post=False;code=1
+    (E/'post-closure-failure.txt').write_text(traceback.format_exc())
+   (E/'post-closure.json').write_text(json.dumps({'passed':post}))
+- (E/'campaign-finished.json').write_text(json.dumps({'codeBeforeHostFinal':code}))
+  try:
+-  final=barrier('host-final.json',abort=False);assert final['accepted'] and admitted and final['containerId']==admitted['containerId'];host_final=True
++  assert admit(D['cpuset'])==first
++  if fresh is not None:
++   assert pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()==fresh['processHost']['bootId']
+  except BaseException:code=1
+- (E/'coherence-lane-result.json').write_text(json.dumps({'exit':code,'phase':phase,'postClosurePassed':post,'hostFinalAccepted':host_final,'performanceQualified':False}))
++ (E/'coherence-lane-result.json').write_text(json.dumps({'exit':code,'phase':phase,'postClosurePassed':post,'performanceQualified':False,'scope':'be8/default0 original native and stock2/4/8'}))
+ sys.exit(code)
+--- accepted-arm/coherence_contract.py
++++ held-x64/coherence_contract.py
+@@ -7,16 +7,17 @@
+ NATIVE='/work/native/tmux'
+ STOCK='/work/current/stock/tmux'
+
+-def admission(receipt,lane,receipt_hash):
++def admission(receipt,lane,receipt_hash,fresh_binding):
++ assert fresh_binding['archiveReceiptSha256']==receipt_hash
+  assert lane in ('native','stock')
+  assert receipt['source']['commit']==COMMIT and receipt['source']['tree']==TREE
+  assert receipt['cli']==CLI and receipt['originalClosureUnchanged'] is True
+  assert receipt['stock']['patches']==[]
+  binary=NATIVE if lane=='native' else STOCK
+- assert receipt['closure'][binary]==(receipt['stock']['binarySha256'] if lane=='stock' else '369290ef00468b962b438ea249d1ef41a619107df86a57f43c48e1b6ffc9a869')
++ assert receipt['closure'][binary]==(receipt['stock']['binarySha256'] if lane=='stock' else '8933071dbaeea131b04961ab74ff8b21a622891bce6a01f43ef5122e2fad14d2')
+  overlay={p:h for p,h in receipt['closure'].items() if p.startswith('/work/current/coherence/')}
+  assert len(overlay)>10
+- return {'version':1,'mode':'native-enabled' if lane=='native' else 'stock-observation-off','nativeObservation':'enabled' if lane=='native' else 'disabled','source':SOURCE,'commit':COMMIT,'tree':TREE,'node':'/opt/node26/bin/node','cli':CLI,'cliSha256':receipt['cliSha256'],'native':binary,'nativeSha256':receipt['closure'][binary],'componentClosure':'/inputs/coherence-receipt.json','componentClosureSha256':receipt_hash,'overlay':overlay,'processHost':receipt['processHost']}
++ return {'version':1,'mode':'native-enabled' if lane=='native' else 'stock-observation-off','nativeObservation':'enabled' if lane=='native' else 'disabled','source':SOURCE,'commit':COMMIT,'tree':TREE,'node':'/opt/node26/bin/node','cli':CLI,'cliSha256':receipt['cliSha256'],'native':binary,'nativeSha256':receipt['closure'][binary],'componentClosure':'/inputs/coherence-receipt.json','componentClosureSha256':receipt_hash,'overlay':overlay,'processHost':fresh_binding['processHost']}
+
+ def validate_report(report,lane):
+  assert report['completed'] is True and report['failure'] is None
