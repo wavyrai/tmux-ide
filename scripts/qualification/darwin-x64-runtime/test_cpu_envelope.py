@@ -13,6 +13,22 @@ class EnvelopeTests(unittest.TestCase):
    with tarfile.open(archive,'w') as out:out.addfile(m)
    with self.assertRaises(AssertionError):module('intake-cpu').extract_tar(archive,root/'payload',{'x':{'kind':'link','target':'../escape','mode':0o777}})
    self.assertFalse((root/'escape').exists())
+ def test_actual_symlink_modes_roundtrip_without_chmod_target(self):
+  import tarfile,hashlib,stat
+  if os.chmod not in os.supports_follow_symlinks:self.skipTest('Darwin no-follow chmod required')
+  for mask,link_mode in [(0o022,0o700),(0o077,0o755)]:
+   with tempfile.TemporaryDirectory() as t:
+    root=pathlib.Path(t);archive=root/'x.tar';ledger={'target':{'kind':'file','mode':0o600,'bytes':2,'sha256':hashlib.sha256(b'ok').hexdigest()},'link':{'kind':'link','mode':link_mode,'target':'target'}}
+    with tarfile.open(archive,'w') as out:
+     m=tarfile.TarInfo('target');m.size=2;m.mode=0o600;out.addfile(m,io.BytesIO(b'ok'))
+     m=tarfile.TarInfo('link');m.type=tarfile.SYMTYPE;m.linkname='target';m.mode=link_mode;out.addfile(m)
+    previous=os.umask(mask)
+    try:module('intake-cpu').extract_tar(archive,root/'payload',ledger)
+    finally:os.umask(previous)
+    self.assertEqual(stat.S_IMODE((root/'payload/link').lstat().st_mode),link_mode)
+    self.assertEqual(stat.S_IMODE((root/'payload/target').stat().st_mode),0o600)
+    self.assertEqual((root/'payload/target').read_bytes(),b'ok')
+    self.assertEqual(os.readlink(root/'payload/link'),'target')
  def test_tar_hardlink_materialized_and_tampered_pin_refused(self):
   import tarfile,hashlib
   with tempfile.TemporaryDirectory() as t:

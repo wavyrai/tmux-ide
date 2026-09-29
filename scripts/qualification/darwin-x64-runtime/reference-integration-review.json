@@ -7,12 +7,12 @@
     "bodyAndExternalPaths": 1,
     "mockOwnership": 3,
     "failedPrerequisiteStopsCpuAndPreservesEvidence": 1,
-    "cpuEnvelope": 5
+    "cpuEnvelope": 6
   },
   "files": {
     "runner.py": "58deee75e558f1023f0f2a30c3cf8ef2514aa82e10f9b21e16f9e951ca662882",
     "freeze-cpu.py": "47590d025007b529df07e25b15cfbbd6a40c1cf6a62dea784b43ab89cf5d7240",
-    "recipe-files.json": "b1116b6c05afc0645f321a79f923e952a1ca171cee283e0bf7ff60040a428509",
+    "recipe-files.json": "e6ce7ffb1d4c60b223c2764304b194b2d797497d5236f27a428584ef94985fff",
     "test_reference_integration.py": "f8a4aea1f90be9fb958407efcb9e2b6e2bd449e8b2d63f5a5cf28299b64fb84e",
     "pins.json": "464f627051ab8aab219fb8286b8dfb5fbc0d1fcc7decb8ad2ffa011daa99c5cb",
     "reference-functional/run.py": "c632012783dfb66b034aec31b1bc81206a45962a2e7f844ecd66cf57ef6eb866",
@@ -26,6 +26,7 @@
   },
   "freshHostBeforeReference": true,
   "sourceExecutionAuthorized": true,
-  "pushExecuted": false,
-  "pushDestination": "qualification/darwin-x64-runtime-cpu-r1"
+  "pushExecuted": true,
+  "pushDestination": "qualification/darwin-x64-runtime-cpu-r1",
+  "firstRunAdmissionFailure": 36626475919
 }

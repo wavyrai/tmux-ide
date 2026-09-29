@@ -29,7 +29,9 @@ def extract_tar(archive,target,ledger):
     with tf.extractfile(m) as src,dest.open('xb') as dst:shutil.copyfileobj(src,dst,1024*1024)
     dest.chmod(m.mode&0o7777);os.utime(dest,(m.mtime,m.mtime));assert sha(dest)==ledger[m.name]['sha256']
   for m in members:
-   if m.issym():dest=safe(m.name);dest.parent.mkdir(parents=True,exist_ok=True);dest.symlink_to(m.linkname)
+   if m.issym():
+    dest=safe(m.name);dest.parent.mkdir(parents=True,exist_ok=True);dest.symlink_to(m.linkname)
+    os.chmod(dest,m.mode&0o7777,follow_symlinks=False)
  for rel,row in ledger.items():
   if row['kind']=='link':assert safe(rel).resolve(strict=True).is_relative_to(target.resolve())
 
