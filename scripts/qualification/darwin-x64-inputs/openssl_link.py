@@ -22,7 +22,7 @@ def inspect_link():
                             'sha256':hashlib.sha256(real.read_bytes()).hexdigest()}
     return result
 
-def remedy_known_openssl(run, save, environment, observe=inspect_link):
+def remedy_known_openssl(run, save, environment, observe=inspect_link, unlink=os.unlink):
     assert environment.get('GITHUB_ACTIONS')=='true'
     assert environment.get('RUNNER_ENVIRONMENT')=='github-hosted'
     assert environment.get('RUNNER_OS')=='macOS' and environment.get('RUNNER_ARCH')=='X64'
@@ -50,4 +50,15 @@ def remedy_known_openssl(run, save, environment, observe=inspect_link):
         run('openssl1-unlink',['brew','unlink','openssl@1.1'])
     finally:
         after=observe();save('openssl-link-after.json',{'action':'supported-unlink','observation':after})
-    assert after['state']=='absent','OpenSSL link not absent after supported unlink'
+    if after['state']!='absent':
+        save('openssl-link-supported-unlink-leftover.json',after)
+        assert after==before,'OpenSSL link changed after supported unlink'
+        current=observe();save('openssl-link-fallback-revalidated.json',current)
+        assert current==before,'OpenSSL link changed before exact symlink removal'
+        # unlink removes the directory entry, never follows the symlink target.
+        try:
+            unlink(LINK)
+        finally:
+            after=observe()
+            save('openssl-link-after.json',{'action':'verified-leftover-symlink-unlink','observation':after})
+    assert after['state']=='absent','OpenSSL link not absent after retirement'
