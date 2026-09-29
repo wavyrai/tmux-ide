@@ -5,7 +5,7 @@ HOST={'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','RUNNER_OS':'
 class CoreTests(unittest.TestCase):
     def fixture(self,root):
         pins={'repository':core.REPOSITORY,'revision':'a'*40,'tree':'b'*40,'formulas':{'openssl@3':{'path':'Formula/o/openssl@3.rb','sha256':hashlib.sha256(b'formula').hexdigest()}}}
-        replies={'core-origin':core.REPOSITORY,'core-head':pins['revision'],'core-tree':pins['tree'],'core-clean':'','brew-repository':'/usr/local/Homebrew','core-tap-origin':core.REPOSITORY,'core-tap-clean':''}
+        replies={'core-origin':core.REPOSITORY,'core-head':pins['revision'],'core-tree':pins['tree'],'core-clean':'','brew-repository':'/usr/local/Homebrew','core-before-origin':core.REPOSITORY,'core-before-dirty':'','core-before-root':str(root),'core-before-head':'c'*40,'core-before-tree':'d'*40}
         def run(name,argv,**kwargs):return replies.get(name,'')
         return pins,replies,run
     def test_checkout_identity_and_formula_bytes(self):
@@ -25,17 +25,34 @@ class CoreTests(unittest.TestCase):
             def run(name,argv,**kwargs):
                 calls.append((name,argv,kwargs))
                 if name=='core-tap':
-                    self.assertEqual(env['HOMEBREW_NO_INSTALL_FROM_API'],'1');root.mkdir()
+                    self.assertEqual(env['HOMEBREW_NO_INSTALL_FROM_API'],'1');root.mkdir();(root/'.git').mkdir()
                     self.assertEqual(argv,['brew','tap','homebrew/core'])
                 return replies.get(name,'')
             with patch.object(core,'CORE',root),patch.object(core,'validate_checkout',return_value={'verified':True}):
                 core.prepare_core(run,saved.append,env,HOST,pins)
-                self.assertEqual(saved,[{'verified':True}])
+                self.assertEqual(saved[-1]['after'],{'verified':True})
                 self.assertEqual(next(c[2]['timeout'] for c in calls if c[0]=='core-tap'),600)
                 self.assertEqual(next(c[2]['timeout'] for c in calls if c[0]=='core-fetch'),120)
-                before=len(calls)
-                with self.assertRaises(AssertionError):core.prepare_core(run,saved.append,env,HOST,pins)
-                self.assertEqual(len(calls),before)
+                calls.clear()
+                core.prepare_core(run,saved.append,env,HOST,pins)
+                self.assertFalse(any(c[0]=='core-tap' for c in calls))
+                self.assertTrue(saved[-1]['existed'])
+                self.assertEqual(saved[-1]['before']['head'],'c'*40)
+    def test_existing_dirty_nonofficial_wrongroot_and_placeholder_refuse_before_mutation(self):
+        for change in [{'core-before-dirty':' M formula'}, {'core-before-origin':'https://other.invalid/core'}, {'core-before-root':'/other'}]:
+            with tempfile.TemporaryDirectory() as tmp:
+                root=pathlib.Path(tmp)/'core';root.mkdir();(root/'.git').mkdir()
+                pins,replies,_=self.fixture(root);replies.update(change);calls=[];saved=[]
+                def run(name,argv,**kwargs):calls.append(name);return replies.get(name,'')
+                with patch.object(core,'CORE',root),self.assertRaises(AssertionError):
+                    core.prepare_core(run,saved.append,{},HOST,pins)
+                self.assertFalse(any(name in calls for name in ['core-tap','core-fetch','core-checkout']))
+                self.assertTrue(saved[-1]['before'])
+        with tempfile.TemporaryDirectory() as tmp:
+            root=pathlib.Path(tmp)/'core';root.mkdir();pins,replies,_=self.fixture(root);calls=[]
+            with patch.object(core,'CORE',root),self.assertRaises(AssertionError):
+                core.prepare_core(lambda name,argv,**kw:(calls.append(name) or replies.get(name,'')),lambda value:None,{},HOST,pins)
+            self.assertEqual(calls,['brew-repository'])
     def test_wrong_host_refuses_before_commands(self):
         pins,_,_=self.fixture(pathlib.Path('/unused'));calls=[]
         with self.assertRaises(AssertionError):core.prepare_core(lambda *a,**k:calls.append(a),lambda x:None,{}, {},pins)

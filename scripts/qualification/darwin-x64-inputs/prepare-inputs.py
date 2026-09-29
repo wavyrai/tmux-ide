@@ -142,7 +142,12 @@ def main():
         run('brew-before',['brew','info','--json=v2','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'])
         stage='openssl-link-admission'
         remedy_known_openssl(run,lambda name,value:(out/name).write_text(json.dumps(value,indent=2)),os.environ)
-        prepare_core(run,lambda receipt:(out/'core-tap.json').write_text(json.dumps(receipt,indent=2)),env,os.environ,PINS['homebrewCore'])
+        stage='core-tap-admission'
+        try:
+            prepare_core(run,lambda receipt:(out/'core-tap.json').write_text(json.dumps(receipt,indent=2)),env,os.environ,PINS['homebrewCore'])
+        except BaseException:
+            stage='core-tap-admission'
+            raise
         with_diagnostics(
             lambda:run('brew-build-inputs',['brew','install','--verbose','--debug','--build-from-source','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'],timeout=1800),
             lambda:capture_logs(out/'tmp/homebrew-logs',logs/'homebrew'),
