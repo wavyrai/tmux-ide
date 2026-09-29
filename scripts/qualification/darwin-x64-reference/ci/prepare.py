@@ -1,16 +1,21 @@
 """Closed one-shot Intel reference input intake/build/package; no Homebrew or campaign."""
 import sys
 sys.dont_write_bytecode=True
-import argparse,json,pathlib,os,platform,importlib.util,urllib.request,urllib.parse,time,hashlib,shutil
+import argparse,json,pathlib,os,platform,importlib.util,urllib.request,urllib.parse,urllib.error,time,hashlib,shutil
 from intake import intake
 from admission import unpack,verify_input,sha
 from bounded import run_bounded
 from payload import package_payload
 HERE=pathlib.Path(__file__).resolve().parent;RECIPE=HERE.parent
 
+class DownloadConnectionError(Exception):pass
+
 def download(request,path,expected,cap):
  start=time.monotonic();total=0
- with urllib.request.urlopen(request,timeout=30) as src,path.open('xb') as dst:
+ try:response=urllib.request.urlopen(request,timeout=30)
+ except urllib.error.HTTPError:raise
+ except urllib.error.URLError as error:raise DownloadConnectionError() from error
+ with response as src,path.open('xb') as dst:
   while True:
    assert time.monotonic()-start<180,'Download deadline'
    data=src.read(1024*1024)
@@ -18,6 +23,21 @@ def download(request,path,expected,cap):
    total+=len(data);assert total<=cap,'Download cap';dst.write(data)
  assert sha(path)==expected,'Download hash'
  return {'file':path.name,'bytes':total,'sha256':expected}
+
+AUTOMAKE_URLS=('https://ftp.gnu.org/gnu/automake/automake-1.18.1.tar.xz','https://mirrors.kernel.org/gnu/automake/automake-1.18.1.tar.xz')
+AUTOMAKE_SHA='168aa363278351b89af56684448f525a5bce5079d0b6842bd910fdd3f1646887'
+def prepare_automake(assets,search_path,record):
+ if shutil.which('automake',path=search_path):
+  record({'input':'automake-source','outcome':'not-needed-tool-present'});return
+ for index,url in enumerate(AUTOMAKE_URLS):
+  try:receipt=download(url,assets/'automake-1.18.1.tar.xz',AUTOMAKE_SHA,8*1024**2)
+  except DownloadConnectionError:
+   record({'input':'automake-source','url':url,'outcome':'connection-failed'})
+   if index==0:continue
+   raise
+  except BaseException:
+   record({'input':'automake-source','url':url,'outcome':'failed'});raise
+  record({'input':'automake-source','url':url,'outcome':'verified',**receipt});return
 
 def main():
  p=argparse.ArgumentParser()
@@ -39,6 +59,8 @@ def main():
   receipt=json.loads((out/'intake/payload-manifest.json').read_text());manifest=receipt['members']
   unpack(out/'intake/inputs.tar.gz',inputs,manifest);verify_input(inputs,manifest)
   downloads=[]
+  def record_download(receipt):
+   downloads.append(receipt);(out/'downloads.json').write_text(json.dumps(downloads,indent=2))
   for name,bottle in json.loads((RECIPE/'bottle-receipt.json').read_text()).items():
    assert name in ('utf8proc','libevent','ncurses')
    url='https://ghcr.io/token?'+urllib.parse.urlencode({'service':'ghcr.io','scope':f'repository:homebrew/core/{name}:pull'})
@@ -46,9 +68,9 @@ def main():
     token=json.loads(response.read(65537));assert isinstance(token['token'],str) and len(token['token'])<65536
    expected='https://ghcr.io/v2/homebrew/core/'+name+'/blobs/sha256:'+bottle['sha256'];assert bottle['url']==expected
    request=urllib.request.Request(expected,headers={'Authorization':'Bearer '+token['token']})
-   downloads.append(download(request,out/'assets'/(name+'.bottle.tar.gz'),bottle['sha256'],32*1024**2))
-  downloads.append(download('https://ftp.gnu.org/gnu/automake/automake-1.18.1.tar.xz',out/'assets/automake-1.18.1.tar.xz','168aa363278351b89af56684448f525a5bce5079d0b6842bd910fdd3f1646887',8*1024**2))
-  (out/'downloads.json').write_text(json.dumps(downloads,indent=2))
+   record_download({'url':expected,'outcome':'verified',**download(request,out/'assets'/(name+'.bottle.tar.gz'),bottle['sha256'],32*1024**2)})
+  input_pins=json.loads((inputs/'recipe/pins.json').read_text());node=inputs/'tools/node'/input_pins['downloads']['node']['root']/input_pins['downloads']['node']['executable']
+  prepare_automake(out/'assets',str(node.parent)+':'+env['PATH'],record_download)
   upstream=out/'tmux-source';run('git-init',['/usr/bin/git','init',upstream]);run('git-origin',['/usr/bin/git','-C',upstream,'remote','add','origin','https://github.com/tmux/tmux.git'])
   run('git-fetch',['/usr/bin/git','-C',upstream,'fetch','--depth=1','origin',pins['upstream']],120)
   run('git-checkout',['/usr/bin/git','-C',upstream,'checkout','--detach',pins['upstream']])
