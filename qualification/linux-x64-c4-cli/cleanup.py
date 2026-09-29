@@ -24,4 +24,4 @@ if E.exists():
   with p.open('rb') as f:
    for b in iter(lambda:f.read(1024*1024),b''):h.update(b)
   return h.hexdigest()
- (E/'artifact-hashes.json').write_text(json.dumps({str(p.relative_to(E)):digest(p) for p in sorted(E.rglob('*')) if p.is_file() and p.name!='artifact-hashes.json'},indent=2))
+ (E/'artifact-hashes.json').write_text(json.dumps({str(p.relative_to(E)):digest(p) for p in sorted(E.rglob('*')) if p.is_file() and p!=E/'artifact-hashes.json'},indent=2))
