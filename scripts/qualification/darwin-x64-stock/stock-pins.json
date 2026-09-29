@@ -1,0 +1,31 @@
+{
+  "executionAuthorized": true,
+  "scope": "stock-preparation-only; capability/coherence admission remains pending",
+  "upstream": "e476c1230b958df0cb12977517d24b3dc931375b",
+  "acceptedInputArtifactId": 11052542881,
+  "inputPayloadSha256": "5d260a999f41555d593c94713ddb435fbfc3e753c550cb3b64aae3b60a4effe8",
+  "inputPayloadReceiptSha256": "a553ebbb88243b9aaa0dcb913b087e474de8c057ca928930667c8e82446490c4",
+  "referenceRecipeCommit": "d5a8dfeba86f051c4475fc93ed212235e25366a2",
+  "referenceHelperHashes": {
+    "build-reference.py": "83337b94a6819575dbf9650a6216ffc281f342c3c3421a5b5a5ad484c9735892",
+    "macho_identity.py": "59e7ee50d9bccef8c86fd6280eec00917af08649f20679cb14917ca1459a8d55",
+    "bottle-receipt.json": "a579e7c5b612f78d2b020450cb07e2196f00927be106cd807346bb040735533e",
+    "ci/bounded.py": "605ef4ffa1803224fb717dee1e1920d9900b8b3da0ee23591589c0aa50f0de5b",
+    "ci/admission.py": "fc1570473a4dedc04503e4262b911144e545495f6db5e0a674747fc1c3020259",
+    "ci/payload.py": "9e2e92623f2cccbdec8edbd106c31aa46d7972fd3c348f1affaac9f424c2ebc5"
+  },
+  "recipeHashes": {
+    "prepare-stock.py": "0ec442beac9e78b1a96365be39be0a50193a39b04fbe2cf4eb13b3adc840d072",
+    "relocate-stock.mjs": "29e6ab4559409e68e71df1e1a3d32e55516fc3bb4a8484e759a7cd50d74ba574",
+    "stock-graph.mjs": "121f035aa62a111fd72a3c874ec224c673fc0b4fbe4448ca093393aef74ab823",
+    "ci/intake.py": "4e07766a9eaf9471e427278cc2d1e7b00b18d8c5a554e94e90f6cc4a19f08a8d",
+    "ci/admission.py": "fc1570473a4dedc04503e4262b911144e545495f6db5e0a674747fc1c3020259",
+    "ci/payload.py": "9e2e92623f2cccbdec8edbd106c31aa46d7972fd3c348f1affaac9f424c2ebc5",
+    "ci/bounded.py": "605ef4ffa1803224fb717dee1e1920d9900b8b3da0ee23591589c0aa50f0de5b",
+    "ci/prepare.py": "aa7715a8244bdf6552073420e3336ce4b07c10bf40a91792830f55fa2f601e8a",
+    "ci/workflow.yml": "e429f201423cb1d7ab2dcb910bcc930eee9ab3b02d13d849f528e054e49fa19f"
+  },
+  "referenceTarContainsGit": false,
+  "genericReferencePayloadGitIncludedField": "ignored; actual17member ledger has no Git checkout",
+  "acceptedInputArtifactDigest": "3ba2233ca2af157b07e7befdd9e194125b679fa0211c38a4e6d6a7a077bbe25c"
+}

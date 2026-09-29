@@ -1,0 +1,58 @@
+name: Darwin x64 genuine stock preparation (build only)
+on:
+  workflow_dispatch:
+  push:
+    branches: [qualification/darwin-x64-stock]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: darwin-x64-stock-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: macos-15-intel
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          path: recipe
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: d5a8dfeba86f051c4475fc93ed212235e25366a2
+          path: reference-recipe
+          persist-credentials: false
+      - name: Download exact accepted Intel input artifact
+        timeout-minutes: 12
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir "$RUNNER_TEMP/stock-download"
+          gh api repos/wavyrai/tmux-ide/actions/artifacts/11052542881 > "$RUNNER_TEMP/stock-download/artifact.json"
+          gh api repos/wavyrai/tmux-ide/actions/artifacts/11052542881/zip > "$RUNNER_TEMP/stock-download/artifact.zip"
+      - name: Admit inputs and prepare genuine stock only
+        timeout-minutes: 35
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          /usr/bin/python3 recipe/scripts/qualification/darwin-x64-stock/ci/prepare.py \
+            --metadata "$RUNNER_TEMP/stock-download/artifact.json" \
+            --archive "$RUNNER_TEMP/stock-download/artifact.zip" \
+            --reference-recipe "$GITHUB_WORKSPACE/reference-recipe/scripts/qualification/darwin-x64-reference" \
+            --output "$RUNNER_TEMP/stock"
+      - name: Preserve stock and failure receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: darwin-x64-stock-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/stock/stock-runtime.tar
+            ${{ runner.temp }}/stock/*.json
+            ${{ runner.temp }}/stock/logs
+            ${{ runner.temp }}/stock/stock/*.json
+            ${{ runner.temp }}/stock/stock/logs
+            ${{ runner.temp }}/stock-download/artifact.json
+          if-no-files-found: error
+          retention-days: 7
