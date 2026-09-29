@@ -1,0 +1,23 @@
+{
+  "platform": "linux-x64",
+  "tests": 18,
+  "files": 8,
+  "patches": [
+    {
+      "patch": "native-grid.patch",
+      "patchSha256": "b0bedabf8e2bd055662f796609b8e8b9a8c8746c6f2a655b0d017872d4827f4f"
+    },
+    {
+      "patch": "interaction-journal-v1.patch",
+      "patchSha256": "fab780c9ca4a8452fbf73d5ed04e0d9420c887c6006c84b9d0c83a89af80aa0d"
+    }
+  ],
+  "cleanup": {
+    "clean": true,
+    "remaining": [],
+    "coverage": "new tmux processes absent; individual suites own socket/client cleanup",
+    "functionalEvidencePresent": true,
+    "performanceQualified": false
+  },
+  "tmuxSha256": "8933071dbaeea131b04961ab74ff8b21a622891bce6a01f43ef5122e2fad14d2"
+}

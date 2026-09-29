@@ -1,0 +1,45 @@
+name: Linux x64 C4 input preparation only
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-x64-c4-inputs-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: cb6f09efb173d045d2bc221d0f14cfe415075b48
+          path: candidate-source
+          persist-credentials: false
+      - name: Fetch exact reference upstream (no build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/x64-upstream"
+          git -C "$RUNNER_TEMP/x64-upstream" remote add origin https://github.com/tmux/tmux.git
+          git -C "$RUNNER_TEMP/x64-upstream" fetch --depth=1 origin e476c1230b958df0cb12977517d24b3dc931375b
+          git -C "$RUNNER_TEMP/x64-upstream" checkout --detach FETCH_HEAD
+          test "$(git -C candidate-source rev-parse HEAD)" = cb6f09efb173d045d2bc221d0f14cfe415075b48
+          test "$(git -C "$RUNNER_TEMP/x64-upstream" rev-parse HEAD)" = e476c1230b958df0cb12977517d24b3dc931375b
+      - name: Prepare image, grid-only reference and offline dependencies once
+        run: python3 qualification/linux-x64-c4/runner.py
+      - name: Independently finish exact-owned cleanup
+        if: always()
+        run: python3 qualification/linux-x64-c4/cleanup.py
+      - name: Retain preparation provenance and artifacts even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-x64-c4-inputs-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/x64-c4-inputs
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

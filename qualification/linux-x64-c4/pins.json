@@ -1,0 +1,63 @@
+{
+  "source": "cb6f09efb173d045d2bc221d0f14cfe415075b48",
+  "candidatePatch": {
+    "path": ".tasks/whole-runtime-linux-arm64-prep/candidate-default32.patch",
+    "sha256": "4393ae0bbef9d696122e062a0113fdbbd4a0ad48699b9c962b3afc9c730619d1"
+  },
+  "node": {
+    "url": "https://nodejs.org/dist/v26.8.2/node-v26.8.2-linux-x64.tar.xz",
+    "sha256": "40e1d3225c1c9ae9a2671c98ecb9857e4d5555026394f348645676798840d5c5"
+  },
+  "bun": {
+    "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64.zip",
+    "sha256": "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913"
+  },
+  "baseImage": "ubuntu@sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4",
+  "nativeReceiptRoot": ".tasks/native-linux-x64-36556264585",
+  "nativeReceiptFiles": {
+    "bundle/COPYING": "2116115d46eeb1e736acfa562eed14fe6c34760794bc5b484642fe694adde0fd",
+    "bundle/lib/libevent_core-2.1.so.7": "adf343350b739d3dba2b8a6cccbe0729cd9e9ee32b38ba69c08bd14f24a8431e",
+    "bundle/lib/libtinfo.so.6": "170db4dd0c324ee73d8d5440a38708726066e1288aba942d57191c6f002240d9",
+    "bundle/lib/libutf8proc.so.3": "a5aa10c99ac2e9a30c4e01fa4baa85a03dadf71eb73119c76fb3f9f54798962d",
+    "bundle/licenses/interaction-journal.txt": "9f02e74957c4c5efb1b65cf35d14b291a7e83807d89e8afedf6e9cb5dbfed39c",
+    "bundle/licenses/libevent_core-2.1.so.7.txt": "d32d223a2f96bb222faa1f6d2b4573b512465b2b234f56e040a4d7daab060d69",
+    "bundle/licenses/libtinfo.so.6.txt": "7c9d2c8dbee48b6f4bbbffb1f370cc5858de11cc4f5a70c5c622c274917e1c65",
+    "bundle/licenses/libutf8proc.so.3.txt": "af24901f438e9a8631904e293aa115f76e6c577c7bc5368a281becf68586428a",
+    "bundle/manifest.json": "e7efe92247014c0126024bf1d0b4e0b327f158b3d10f5bc775bef2d2461483b0",
+    "bundle/tmux": "8933071dbaeea131b04961ab74ff8b21a622891bce6a01f43ef5122e2fad14d2",
+    "cleanup.json": "1d8732e63df3bf824328a691a05f8d123abe495f508d5336b31d3870ef3481c2",
+    "daemon.log": "af51403fcc717dd5a0ae4cb52b0cbfce4a1fc75f185529a31bdd76d768e35938",
+    "functional.json": "5519dd0bd9e737b074ae18420db58394426dcd121bf6ad01738b97b57a886ce3",
+    "host.json": "479db79579d4060c3e5497fc178fee33e61bbbfd3fd04c7f0a6733a4c268bf07",
+    "processes-after.txt": "37d8b22f5a754b39a8c91d242fad9c15f5a901e7d77a6e2c323fbeb795ca8918",
+    "processes-before.txt": "06bca2cbc6961adeefc9ab76121547036847817591c1ea459df8a7ee08d577e4",
+    "production.log": "a22537305d5e11ac9cbac3363144548636382d7caa77b4d2192f83cf261ce517",
+    "provenance.json": "5b372b5232da38e6a439fce48c7c7f3f9b4356441c12a7ba6244c0f6da8976a5",
+    "root-reviewed.json": "d7432d19851615b49cf9bd2010f4baca26d268025990429f6d83d99f05d0ac66",
+    "sanitizer-passed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "sanitizer.log": "ac3c3b352ad21e359612499b6d43ab10b9d6aa2d0fc5aca5f6d0e0f19a6c0982",
+    "toolchain.txt": "02c07fabedcf02e7312df05236275cdc115cec54ac4397237938fe3f67d1dd37",
+    "vitest.json": "21cef503b424b34262b48f9693b7fabca6c2e72ece0e5fa8309fc93773cb3f94"
+  },
+  "reference": {
+    "upstream": "e476c1230b958df0cb12977517d24b3dc931375b",
+    "gridPatchSha256": "b0bedabf8e2bd055662f796609b8e8b9a8c8746c6f2a655b0d017872d4827f4f",
+    "journalPatchIncluded": false,
+    "artifactMissing": true
+  },
+  "complete": false,
+  "qualifiedNativeArchiveSha256": "17aa62c64eb6a6cdf8fd94ff666b5a514c259be8ba9b6e7a3a0a3275c939bfb1",
+  "pnpm": {
+    "version": "10.21.0",
+    "url": "https://registry.npmjs.org/pnpm/-/pnpm-10.21.0.tgz",
+    "integrity": "sha512-2jM3Jn5AD909R5psaAeaxtsB2MpPZ1cgg+cid1p5Z4inqZVmE3SeAA+sINQktZT3p5Gl9OLhNYHF75R/JpaKQA=="
+  },
+  "referenceRequiredInputs": {
+    "scripts/build-bundled-tmux.mjs": "2696ab0b11fe2ef5caa4fe12647316e42c94128d33f5244aac4799ea6dce4b11",
+    "scripts/lib/tmux-native-patches.mjs": "f057e86c25d34639fb1b44cb54bb5e775e12e72df5551fe646261cfeae0279a5",
+    "scripts/lib/linux-tmux-bundle.mjs": "1486b7564168fe5b0dea56d973317fa97fc05fc25a61bbac92d1cfe821dd2f3a",
+    "native/tmux/COPYING": "2116115d46eeb1e736acfa562eed14fe6c34760794bc5b484642fe694adde0fd",
+    "native/tmux/native-grid.patch": "b0bedabf8e2bd055662f796609b8e8b9a8c8746c6f2a655b0d017872d4827f4f",
+    "packages/daemon/src/terminal/mirror/native-grid-capture.ts": "c8f343df9675c287dc6c67bd985912f19e51b803ff7c3364a558d59ff28594d5"
+  }
+}
