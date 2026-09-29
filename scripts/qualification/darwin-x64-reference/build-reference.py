@@ -1,7 +1,7 @@
 """Review candidate: build grid reference against original Intel bottle headers/retained libs.
 No instrumented tmux build or execution. Requires admitted/extracted input payload and upstream checkout.
 """
-import argparse,hashlib,importlib.util,json,os,pathlib,platform,shutil,sys,tarfile
+import argparse,hashlib,importlib.util,json,os,pathlib,platform,shutil,sys,tarfile,stat
 sys.dont_write_bytecode=True
 from macho_identity import inspect
 HERE=pathlib.Path(__file__).resolve().parent
@@ -17,6 +17,14 @@ def extract_bottle(helper, archive, prefix, name, version, receipt):
  for header,record in receipt['members'].items():
   if '/include/' in header or '/lib/pkgconfig/' in header:assert sha(extracted/header)==record['sha256']
  return keg
+
+def rewrite_pkgconfig(keg):
+ # Original .pc hashes were verified by extract_bottle. Mutate only private copies.
+ paths={pc.resolve(strict=True) for pc in (keg/'lib/pkgconfig').glob('*.pc')}
+ for pc in paths:
+  assert pc.is_file() and pc.is_relative_to(keg.resolve())
+  data=pc.read_text().replace('@@HOMEBREW_CELLAR@@',str(keg.parent.parent));assert '@@HOMEBREW' not in data
+  pc.chmod(stat.S_IMODE(pc.stat().st_mode)|stat.S_IWUSR);pc.write_text(data)
 
 def restore_source_mtimes(archive, target):
  # Safe unpack has already validated paths/types and created links last.
@@ -98,8 +106,7 @@ def main():
    if alias.is_symlink() or alias.exists():alias.unlink()
    alias.symlink_to(library)
    shutil.copy2(native/'licenses'/f'{library}.txt',keg/'COPYING')
-   for pc in (keg/'lib/pkgconfig').glob('*.pc'):
-    data=pc.read_text().replace('@@HOMEBREW_CELLAR@@',str(keg.parent.parent));assert '@@HOMEBREW' not in data;pc.write_text(data)
+   rewrite_pkgconfig(keg)
   env['PKG_CONFIG_LIBDIR']=':'.join(str(keg/'lib/pkgconfig') for keg in kegs)
   recipe=out/'reference-recipe';shutil.copytree(inputs/'source',recipe,symlinks=True)
   store=out/'pnpm-store';shutil.copytree(inputs/'pnpm-store',store,symlinks=True)

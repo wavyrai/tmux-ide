@@ -1,0 +1,7 @@
+{
+  "bottleSha256": "ca594194ca639a162e078a88fd0da6d22d0ec8c588f12e3b32545455851aff6e",
+  "member": "utf8proc/2.11.3/lib/pkgconfig/libutf8proc.pc",
+  "mode": 292,
+  "sha256": "70be70c21e8bc434a737c601cb11f76945953145c0a12313180b9e36bb63c1c6",
+  "text": "prefix=@@HOMEBREW_CELLAR@@/utf8proc/2.11.3\nexec_prefix=@@HOMEBREW_CELLAR@@/utf8proc/2.11.3/bin\nlibdir=@@HOMEBREW_CELLAR@@/utf8proc/2.11.3/lib\nincludedir=@@HOMEBREW_CELLAR@@/utf8proc/2.11.3/include\n\nName: libutf8proc\nDescription: UTF8 processing\nVersion: 2.11.3\nLibs: -L${libdir} -lutf8proc\nCflags: -I${includedir} -DUTF8PROC_EXPORTS\n"
+}
