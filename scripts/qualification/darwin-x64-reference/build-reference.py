@@ -18,6 +18,13 @@ def extract_bottle(helper, archive, prefix, name, version, receipt):
   if '/include/' in header or '/lib/pkgconfig/' in header:assert sha(extracted/header)==record['sha256']
  return keg
 
+def admit_payload_files(inputs, payload, closure):
+ admitted={relative:record['sha256'] for relative,record in payload.items() if record['kind']=='file' and relative.startswith(('source/','pnpm-store/','qualified-native/'))}
+ missing=sorted(relative for relative in admitted if relative not in closure['hashes'])
+ assert all(closure['hashes'][relative]==digest for relative,digest in admitted.items() if relative in closure['hashes']),'Legacy closure overlap mismatch'
+ assert all((inputs/relative).is_file() and sha(inputs/relative)==digest for relative,digest in admitted.items()),'Payload bytes mismatch'
+ return admitted,{'admittedFileCount':len(admitted),'legacyOverlapCount':len(admitted)-len(missing),'legacyNonoverlapCount':len(missing),'legacyNonoverlapPaths':missing,'authoritativeInventory':'accepted-payload-manifest'}
+
 def main():
  p=argparse.ArgumentParser()
  for name in ['inputs','upstream','output','payload-manifest','assets']:p.add_argument('--'+name,required=True)
@@ -39,8 +46,8 @@ def main():
  env={'PATH':str(node.parent)+':/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin','HOME':str(out/'home'),'TMPDIR':str(out/'tmp'),'LC_ALL':'C','TZ':'UTC','DEVELOPER_DIR':'/Applications/Xcode_16.4.app/Contents/Developer'}
  payload=json.loads(pathlib.Path(args.payload_manifest).read_text())['members']
  assert payload['input-closure.json']['sha256']==sha(inputs/'input-closure.json')
- admitted={relative:record['sha256'] for relative,record in payload.items() if record['kind']=='file' and relative.startswith(('source/','pnpm-store/','qualified-native/'))}
- assert all(closure['hashes'][relative]==digest for relative,digest in admitted.items())
+ admitted,overlap=admit_payload_files(inputs,payload,closure)
+ (out/'legacy-closure-overlap.json').write_text(json.dumps(overlap,indent=2))
  def unchanged():return all((inputs/relative).is_file() and sha(inputs/relative)==digest for relative,digest in admitted.items())
  assert unchanged()
  stages=[];success=False
