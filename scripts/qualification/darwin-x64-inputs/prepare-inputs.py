@@ -5,6 +5,7 @@ from bounded import run_bounded
 from package_payload import package_payload
 from openssl_link import remedy_known_openssl
 from brew_diagnostics import capture_logs, with_diagnostics
+from brew_core import prepare_core
 HERE = pathlib.Path(__file__).resolve().parent
 PINS = json.loads((HERE / 'pins.json').read_text())
 
@@ -141,6 +142,7 @@ def main():
         run('brew-before',['brew','info','--json=v2','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'])
         stage='openssl-link-admission'
         remedy_known_openssl(run,lambda name,value:(out/name).write_text(json.dumps(value,indent=2)),os.environ)
+        prepare_core(run,lambda receipt:(out/'core-tap.json').write_text(json.dumps(receipt,indent=2)),env,os.environ,PINS['homebrewCore'])
         with_diagnostics(
             lambda:run('brew-build-inputs',['brew','install','--verbose','--debug','--build-from-source','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'],timeout=1800),
             lambda:capture_logs(out/'tmp/homebrew-logs',logs/'homebrew'),

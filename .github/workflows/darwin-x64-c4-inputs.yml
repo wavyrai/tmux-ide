@@ -12,7 +12,7 @@ concurrency:
 jobs:
   prepare:
     runs-on: macos-15-intel
-    timeout-minutes: 75
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -49,6 +49,7 @@ jobs:
             ${{ runner.temp }}/darwin-x64-inputs/input-closure.json
             ${{ runner.temp }}/darwin-x64-inputs/preparation-status.json
             ${{ runner.temp }}/darwin-x64-inputs/openssl-*.json
+            ${{ runner.temp }}/darwin-x64-inputs/core-tap.json
             ${{ runner.temp }}/darwin-x64-inputs/stages.json
             ${{ runner.temp }}/darwin-x64-inputs/host-before.json
             ${{ runner.temp }}/darwin-x64-inputs/logs

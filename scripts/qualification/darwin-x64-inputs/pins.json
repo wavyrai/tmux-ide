@@ -34,5 +34,54 @@
       "executable": "bin/pnpm.cjs",
       "version": "10.21.0"
     }
+  },
+  "homebrewCore": {
+    "repository": "https://github.com/Homebrew/homebrew-core",
+    "revision": "704d1c827537ecb2d6e22cbde28cfc8007091889",
+    "formulas": {
+      "automake": {
+        "path": "Formula/a/automake.rb",
+        "sha256": "706ee509ee3d3a4bc05999b0695f0998cddedeb7d534699bf721ebb0ee4ec487",
+        "version": "1.19"
+      },
+      "autoconf": {
+        "path": "Formula/a/autoconf.rb",
+        "sha256": "cab75402095f9a65be6a5d3fc11a2f7a6a7fdf04189abee37bfc1c6e5adff499",
+        "version": "2.73"
+      },
+      "pkgconf": {
+        "path": "Formula/p/pkgconf.rb",
+        "sha256": "aa4787b4c8af3925054fb55ae38c9ce16cea5325ce5788e2d1c6cec514f30f5c",
+        "version": "3.0.7"
+      },
+      "libevent": {
+        "path": "Formula/lib/libevent.rb",
+        "sha256": "f565875361ae7603b136ca463390a93648b8352b881c3fabc6bf5c05d5223d2f",
+        "version": "2.1.13"
+      },
+      "ncurses": {
+        "path": "Formula/n/ncurses.rb",
+        "sha256": "2e35152ac8c0b209f90373090ad3d3a64d7818fc965d6f58142ab1d9fa95f824",
+        "version": "6.6"
+      },
+      "utf8proc": {
+        "path": "Formula/u/utf8proc.rb",
+        "sha256": "f5d8327be5ad5b71700af9011c1b0066950d524acd49820a4c3f0d24e6f1d1c0",
+        "version": "2.12.0"
+      },
+      "openssl@3": {
+        "path": "Formula/o/openssl@3.rb",
+        "sha256": "e5c03ebbc8f6dc2a48690c9a293b2dcf71857a63a9a33d0a5c405539634bc30d"
+      },
+      "ca-certificates": {
+        "path": "Formula/c/ca-certificates.rb",
+        "sha256": "e7807634f02d41cfad036cdebb546daacd45e118fcb463acc6c6e4f6e07dcf3f"
+      },
+      "cmake": {
+        "path": "Formula/c/cmake.rb",
+        "sha256": "b6640b40b96c513cfe79cb15f43c4b6de9b08386104bb9096c965ad02fd1f87f"
+      }
+    },
+    "tree": "195a35bf9897d55d9b6740c7bea29637a3066733"
   }
 }

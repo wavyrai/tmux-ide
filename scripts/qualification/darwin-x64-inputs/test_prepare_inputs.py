@@ -27,7 +27,7 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual([timeout(name) for name in remaining],[600,120,600,600])
         workflow=recipe.parents[3]/'.github/workflows/darwin-x64-c4-inputs.yml'
         minutes=int(next(line.split(':')[1] for line in workflow.read_text().splitlines() if 'timeout-minutes:' in line))
-        self.assertGreaterEqual(minutes*60,1800+sum(timeout(name) for name in remaining)+600)
+        self.assertGreaterEqual(minutes*60,1800+sum(timeout(name) for name in remaining)+600+720)
     def archive(self, root, members):
         p=root/'input.tar'
         with tarfile.open(p,'w') as tar:
