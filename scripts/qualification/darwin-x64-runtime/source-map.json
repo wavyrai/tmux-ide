@@ -1,0 +1,43 @@
+{
+  "cpu": {
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r2/campaign.py": "158749ca711d2fea17fe850b6b81d0078e79c105909e139fd269fd18636f2fab",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r2/case.mjs": "f0732696e70602374cd4071962059a30b16b8c9a42c62937072f47f212332d69",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r2/accounting.mjs": "a0aba6b1cacb8121201394afc7c48e53348112ddc9716386ace7f8a5090c49c4",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r2/orchestration.mjs": "0efbb3ef0a1535f57b0aecf9bad6125b89a4bd0c52ca89f147a790b5915a1bf9",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r2/readiness.mjs": "bbeae2886cb86e18021a6070c873714b0778a800b5117a40659a149ea1708ba5",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r2/cleanup-witnesses.mjs": "7dcb01646af7c906ee189148a67383b2884a4cd09763f4972392c9842864be1f",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r2/verify.mjs": "7a18cd3bf8396b0be2f5d1abc750ae1a7b6c5da0cbb888939081408759ce56c5",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r2/candidate-proof.mjs": "f7eabe01d62bd62294ab31f5b2ae59a6deb3eab55d16ffdc8c27a07698b84956",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r2/test_wait4_aggregation.py": "252f09a3fcfc7859413cb3fc25f2ff7af51abacc2db201b48dd4877e6a17bce1"
+  },
+  "idle": {
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r3/campaign.py": "158749ca711d2fea17fe850b6b81d0078e79c105909e139fd269fd18636f2fab",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r3/case.mjs": "9b787b37bb8d89379b6246d73282bb2cd086abe99ffa339e689257587183c0b6",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r3/daemon-traced.ts": "fb65087c1aa2ccada9840dd977a90ac5f4bdcae2cca9368ab937a7a5d85d1b39",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r3/readiness.mjs": "d7c10aadbdaf3b414788f72daa7a2b3bc59e542577a50b5bb1d39c3c051d5c8f",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r3/trace-client.mjs": "cf9ff024b5ab59d547d57e96e4aa15f7997593bdd602cd198aa4e48d8ecea2b1",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r3/trace-executable.mjs": "1d9c9ac9fae1f5d96e06f0753bd5a98579fdc6596c9c441e8a623950d94b5aff",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r3/trace-hook.mjs": "05756630a3422895bb17dfecabd2fde6118e630288f5dd3e111a0572aa4d36ba",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r3/trace-preload.mjs": "297afbf33d43f155ddc3a7f514acb940f7e786a805f71fc3b13ff166f00a666b",
+    "/Users/thijs/Developer/tmux-ide-attribution-whole-runtime/.tasks/whole-runtime-r3/trace-verify.mjs": "69655f367955ec5f19adb215c81e2e331b0a5add4ddb6f0a1ae5728d6d073d62"
+  },
+  "parser": {
+    ".tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/.tasks/components/parser/echo.mjs": "d9fe9f896764ef790adf04d317cd15ab0954f26c8264cae01d7e60892e9a9013",
+    ".tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/.tasks/components/parser/comparative.mjs": "569f0a376dfe65dac59d6c0d4014a329c523cc312cd52e339552c18d272efdb6",
+    ".tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/.tasks/components/parser/candidate.ts": "a9b6baff3c52415dfb17083d4fa6951c1c29e9d4248fe79843579f27a907474a",
+    ".tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/.tasks/components/parser/cleanup-witnesses.mjs": "7dcb01646af7c906ee189148a67383b2884a4cd09763f4972392c9842864be1f"
+  },
+  "metadata": {
+    ".tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/.tasks/components/metadata/metadata.py": "108e69396cf0c8b5656f6ba70f846cf565a563efc85d9ecf22c7a0d79e1f7eff",
+    ".tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/.tasks/components/metadata/candidate.ts": "a9b6baff3c52415dfb17083d4fa6951c1c29e9d4248fe79843579f27a907474a"
+  },
+  "tail": {
+    ".tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/.tasks/components/tail/tail_backlog.py": "068b46b1d9b2a6371baa9d2e596cecfeed82589ac08fce536936e181d870dbac",
+    ".tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/.tasks/components/tail/candidate.ts": "a9b6baff3c52415dfb17083d4fa6951c1c29e9d4248fe79843579f27a907474a"
+  },
+  "existingOverlays": {
+    ".tasks/whole-runtime-portability/process-cpu.mjs": "392bc56292b00618c1a6a08105471c762afa7bd6a57aa9b3b69247df4e1e8cda",
+    ".tasks/whole-runtime-darwin-x64-prep/idle-final-capture.patch": "db6c49ba4cb2de8e402520fe19f63037bdab8229777ef6f6c943938bfb0704f6",
+    ".tasks/whole-runtime-darwin-x64-prep/final-capture-drain.mjs": "50b57a81810b93c7bd9ae84a54dded6ae2d8f1e07ec1bdf08fd6f8bc3575327a"
+  }
+}

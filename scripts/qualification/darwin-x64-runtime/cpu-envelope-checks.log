@@ -1,0 +1,9 @@
+test_held_runner_rejects_before_transport (test_cpu_envelope.EnvelopeTests.test_held_runner_rejects_before_transport) ... ok
+test_supervisor_cancel_retires_exact_child_and_never_starts_second_case (test_cpu_envelope.EnvelopeTests.test_supervisor_cancel_retires_exact_child_and_never_starts_second_case) ... ok
+test_tar_hardlink_materialized_and_tampered_pin_refused (test_cpu_envelope.EnvelopeTests.test_tar_hardlink_materialized_and_tampered_pin_refused) ... ok
+test_tar_symlink_escape_rejected_before_file_extraction (test_cpu_envelope.EnvelopeTests.test_tar_symlink_escape_rejected_before_file_extraction) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.011s
+
+OK

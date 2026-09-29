@@ -1,0 +1,37 @@
+name: Darwin x64 original CPU qualification (held)
+on:
+  workflow_dispatch:
+  push:
+    branches: [qualification/darwin-x64-runtime-cpu-r1]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: darwin-x64-runtime-cpu
+  cancel-in-progress: false
+jobs:
+  cpu:
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Closed single CPU envelope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -eu
+          /usr/bin/python3 scripts/qualification/darwin-x64-runtime/runner.py "$RUNNER_TEMP/darwin-x64-runtime-cpu"
+      - name: Preserve all case and failure receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: darwin-x64-runtime-cpu-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/darwin-x64-runtime-cpu/evidence
+            ${{ runner.temp }}/darwin-x64-runtime-cpu/status.json
+            ${{ runner.temp }}/darwin-x64-runtime-cpu/*-download/*.stderr
+          if-no-files-found: error
+          retention-days: 7

@@ -1,0 +1,405 @@
+--- original/cpu/case.mjs
++++ bound/cpu/case.mjs
+@@ -1,3 +1,5 @@
++import {createOwnedProcessSampler} from './process-cpu.mjs';
++import {fenceNativeTmuxCommand} from "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/tmux-server-generation-runner.ts";
+ // Draft, one explicitly approved private canonical case. No build is performed.
+ import assert from 'node:assert/strict';
+ import {execFile} from 'node:child_process';
+@@ -6,8 +8,8 @@
+ import {readFileSync,writeFileSync,mkdirSync,lstatSync,unlinkSync,symlinkSync,existsSync} from 'node:fs';
+ import {resolve,join,dirname} from 'node:path';
+ import {fileURLToPath} from 'node:url';
+-import {createScratchFleet} from '../../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts';
+-import {startDaemon} from '../../apps/desktop-renderer/e2e/fixtures/daemon.ts';
++import {createScratchFleet} from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts';
++import {startDaemon} from './daemon-prebuilt.ts';
+ import {TmuxServerInteractionEventSchemaZ} from '@tmux-ide/contracts';
+ import {boundIssuerReference,reconcile} from './accounting.mjs';
+ import {seededIdle,retireStream,caseEnvironment,assertObservationMode} from './orchestration.mjs';
+@@ -21,7 +23,7 @@
+ assert(['disabled','enabled-no-reader','candidate32','reference'].includes(spec.mode));
+ assert(['cpu','idle'].includes(spec.lane));
+ assert.equal(sha(spec.binary),spec.binarySha256);
+-assert.equal(sha(join(here,'../../bin/cli.js')),spec.cliSha256);
++assert.equal(sha(spec.cli),spec.cliSha256);
+ const output=resolve(spec.output);mkdirSync(output,{mode:0o700});
+ mkdirSync(join(output,'bin'),{mode:0o700});symlinkSync(spec.binary,join(output,'bin/tmux'));
+ const cleanEnv=caseEnvironment(process.env,spec.mode,join(output,'bin')+':'+spec.systemPath);
+@@ -47,7 +49,10 @@
+  persist('witnesses.json',{pids:[...observed],errors:snap.errors});
+  assert.deepEqual(snap.errors,[],'descendant enumeration uncertain');return snap.pids;
+ }
+-async function cpu(pid){const t=(await run('/bin/ps',['-o','time=','-p',String(pid)],{timeout:5000})).stdout.trim();const p=t.split(':').map(Number);assert(p.length===2&&p.every(Number.isFinite));return p[0]*60+p[1];}
++const ownedCpu=new Map();
++const sampler=createOwnedProcessSampler({platform:'darwin',readSnapshot:async(pid)=>(await run('/bin/ps',['-p',String(pid),'-o','pid=','-o','lstart=','-o','state=','-o','time=','-o','command='],{timeout:5000,env:{...process.env,LC_ALL:'C',TZ:'UTC'}})).stdout});
++async function rememberCpu(pid){const sample=await sampler.sampleOwnedProcess(Number(pid));ownedCpu.set(Number(pid),sample);return sample;}
++async function cpu(pid){const prior=ownedCpu.get(Number(pid));assert(prior,'Missing initial owned CPU witness');const sample=await sampler.sampleOwnedProcess(Number(pid),prior.startIdentity);assert.equal(sample.command,prior.command,'Owned CPU command changed');persist('cpu-witness-'+pid+'.json',{before:prior,after:sample});return sample.cpuSeconds;}
+ async function stream(){
+  const auth={Authorization:`Bearer ${daemon.record.authToken}`};
+  const response=await fetch(daemon.baseUrl+'/api/v1/tmux-servers',{headers:auth,signal:AbortSignal.timeout(10000)});assert(response.ok);
+@@ -83,6 +88,7 @@
+  appPid=Number(await command(['display-message','-p','-t',fleet.sessionNames[0],'#{pane_pid}']));assert(Number.isSafeInteger(appPid)&&appPid>0);
+  appStart=(await run('/bin/ps',['-o','lstart=','-o','command=','-p',String(appPid)],{timeout:5000})).stdout.trim();assert(appStart.includes(app),'Unexpected fixture app process');
+  persist('ownership.json',{appPid,appStart,root:fleet.root,socket:fleet.socketPath,identity,witness});
++ await rememberCpu(identity[0]);await rememberCpu(appPid);
+  if(spec.mode!=='reference'){const cap=JSON.parse(await command(['tmux-ide-events','-V']));epoch=cap.serverEpoch;assert.equal(cap.enabled,false);if(spec.mode==='enabled-no-reader')await command(['tmux-ide-events','-e']);}
+  daemon=await startDaemon(fleet,{prebuiltCliSha256:spec.cliSha256});
+  persist('daemon-owned.json',{pid:daemon.record.pid,instanceId:daemon.record.instanceId});await descendants();
+@@ -128,7 +134,9 @@
+  if(daemon){try{await Promise.race([daemon.stop(),sleep(10000).then(()=>{throw Error('daemon stop timeout');})]);await until(()=>!alive(daemon.record.pid));cleanup.push({daemonGone:true});}catch(e){cleanup.push({error:String(e)});}}
+  retainLog('after-stop');
+  if(fleet){try{
+-  assert.deepEqual((await command(['display-message','-p','#{pid}\t#{start_time}'])).split('\t'),identity);await command(['kill-server']);
++  assert.deepEqual((await command(['display-message','-p','#{pid}\t#{start_time}'])).split('\t'),identity);const live=lstatSync(fleet.socketPath);assert(live.isSocket());assert.deepEqual({dev:live.dev,ino:live.ino,uid:live.uid},witness);
++  const fence=fenceNativeTmuxCommand(['-N','-u','kill-server'],{pid:identity[0],startTime:identity[1]});
++  const retired=await run(spec.binary,['-S',fleet.socketPath,...fence.argv],{timeout:5000,maxBuffer:1048576});fence.verify(retired.stdout);
+   await until(()=>[...observed].every(pid=>!alive(pid)));
+   if(existsSync(fleet.socketPath)){const st=lstatSync(fleet.socketPath);assert(st.isSocket());assert.deepEqual({dev:st.dev,ino:st.ino,uid:st.uid},witness);unlinkSync(fleet.socketPath);}
+   cleanup.push({ownedProcessesAbsent:true,socketAbsent:true});
+--- original/cpu/daemon-prebuilt.ts
++++ bound/cpu/daemon-prebuilt.ts
+@@ -20,14 +20,14 @@
+   processIsAlive,
+   spawnHarnessChild,
+   type HarnessChild,
+-} from "./harness-process.ts";
+-import type { ScratchFleet } from "./scratch-fleet.ts";
++} from "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/apps/desktop-renderer/e2e/fixtures/harness-process.ts";
++import type { ScratchFleet } from "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
+ 
+ const DAEMON_READY_TIMEOUT_MS = 45_000;
+ const LADDER_TIMEOUT_MS = 45_000;
+ const BUNDLE_BUILD_TIMEOUT_MS = 120_000;
+ 
+-export const repoRoot = resolve(import.meta.dirname, "..", "..", "..", "..");
++export const repoRoot = "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source";
+ export const rendererRoot = resolve(import.meta.dirname, "..", "..");
+ 
+ export type CanonicalDaemonRecord = CanonicalDaemonInfo & { readonly authToken: string };
+@@ -62,41 +62,16 @@
+ }
+ 
+ const execFileAsync = promisify(execFile);
+-let bundleBuild: Promise<void> | null = null;
+-
+-/**
+- * Rebuild `bin/cli.js` before the first daemon of a run starts.
+- *
+- * The daemon under test is not the source tree — it is the esbuild bundle, so
+- * every daemon-side change is invisible here until that bundle is rebuilt. A
+- * stale bundle does not fail loudly; it silently tests the PREVIOUS commit's
+- * daemon and reports whatever that code does, which is worse than a red suite
+- * because it looks like a real verdict.
+- *
+- * This is not hypothetical. A rebase rewrites the tracked bundle to the target
+- * branch's build, so the suite ran main's daemon against this branch's
+- * assertions and reported a fix as broken. mtime cannot catch that — the rebase
+- * makes the stale bundle NEWER than the sources it disagrees with — so the only
+- * honest answer is to build it. It costs about a second, once per run.
+- */
+-async function ensureDaemonBundle(): Promise<void> {
+-  bundleBuild ??= execFileAsync("node", [join(repoRoot, "scripts", "build-cli.mjs")], {
+-    cwd: repoRoot,
+-    timeout: BUNDLE_BUILD_TIMEOUT_MS,
+-  }).then(() => undefined);
+-  await bundleBuild;
+-}
+-
+ export async function startDaemon(
+   fleet: ScratchFleet,
+   options: { readonly prebuiltCliSha256?: string } = {},
+ ): Promise<RunningDaemon> {
+-  if (options.prebuiltCliSha256 === undefined) await ensureDaemonBundle();
++  if (options.prebuiltCliSha256 === undefined) throw new Error("Reviewed prebuilt CLI digest required; no build permitted");
+   else {
+     if (!/^[a-f0-9]{64}$/.test(options.prebuiltCliSha256))
+       throw new TypeError("Invalid prebuilt CLI digest");
+     const actual = createHash("sha256")
+-      .update(await readFile(join(repoRoot, "bin", "cli.js")))
++      .update(await readFile("/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/.tasks/qualified-cli/cli.mjs"))
+       .digest("hex");
+     if (actual !== options.prebuiltCliSha256) throw new Error("Prebuilt CLI digest changed");
+   }
+@@ -110,7 +85,7 @@
+ 
+   const harness: HarnessChild = spawnHarnessChild({
+     command: process.execPath,
+-    args: [join(repoRoot, "bin", "cli.js"), "--headless"],
++    args: ["/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/.tasks/qualified-cli/cli.mjs", "--headless"],
+     cwd: repoRoot,
+     env: environment,
+   });
+--- original/idle/case.mjs
++++ bound/idle/case.mjs
+@@ -1,3 +1,6 @@
++import {finalCaptureDrained} from './final-capture-drain.mjs';
++import {createOwnedProcessSampler} from './process-cpu.mjs';
++import {fenceNativeTmuxCommand} from "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/tmux-server-generation-runner.ts";
+ // Draft, one explicitly approved private canonical case. No build is performed.
+ import assert from 'node:assert/strict';
+ import {execFile} from 'node:child_process';
+@@ -6,7 +9,7 @@
+ import {readFileSync,writeFileSync,mkdirSync,lstatSync,unlinkSync,symlinkSync,existsSync} from 'node:fs';
+ import {resolve,join,dirname} from 'node:path';
+ import {fileURLToPath,pathToFileURL} from 'node:url';
+-import {createScratchFleet} from '../../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts';
++import {createScratchFleet} from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts';
+ import {startDaemon} from './daemon-traced.ts';
+ import {TmuxServerInteractionEventSchemaZ} from '@tmux-ide/contracts';
+ import {boundIssuerReference,reconcile} from './accounting.mjs';
+@@ -23,7 +26,7 @@
+ assert(['disabled','enabled-no-reader','candidate32','reference'].includes(spec.mode));
+ assert.equal(spec.lane,'idle','Revision3 is an instrumented idle diagnostic only');
+ assert.equal(sha(spec.binary),spec.binarySha256);
+-assert.equal(sha(join(here,'../../bin/cli.js')),spec.cliSha256);
++assert.equal(sha(spec.cli),spec.cliSha256);
+ const output=resolve(spec.output);mkdirSync(output,{mode:0o700});
+ mkdirSync(join(output,'bin'),{mode:0o700});symlinkSync(spec.binary,join(output,'bin/tmux'));
+ const cleanEnv=caseEnvironment(process.env,spec.mode,join(output,'bin')+':'+spec.systemPath);
+@@ -49,7 +52,10 @@
+  persist('witnesses.json',{pids:[...observed],errors:snap.errors});
+  assert.deepEqual(snap.errors,[],'descendant enumeration uncertain');return snap.pids;
+ }
+-async function cpu(pid){const t=(await run('/bin/ps',['-o','time=','-p',String(pid)],{timeout:5000})).stdout.trim();const p=t.split(':').map(Number);assert(p.length===2&&p.every(Number.isFinite));return p[0]*60+p[1];}
++const ownedCpu=new Map();
++const sampler=createOwnedProcessSampler({platform:'darwin',readSnapshot:async(pid)=>(await run('/bin/ps',['-p',String(pid),'-o','pid=','-o','lstart=','-o','state=','-o','time=','-o','command='],{timeout:5000,env:{...process.env,LC_ALL:'C',TZ:'UTC'}})).stdout});
++async function rememberCpu(pid){const sample=await sampler.sampleOwnedProcess(Number(pid));ownedCpu.set(Number(pid),sample);return sample;}
++async function cpu(pid){const prior=ownedCpu.get(Number(pid));assert(prior,'Missing initial owned CPU witness');const sample=await sampler.sampleOwnedProcess(Number(pid),prior.startIdentity);assert.equal(sample.command,prior.command,'Owned CPU command changed');persist('cpu-witness-'+pid+'.json',{before:prior,after:sample});return sample.cpuSeconds;}
+ async function stream(){
+  const auth={Authorization:`Bearer ${daemon.record.authToken}`};
+  const response=await fetch(daemon.baseUrl+'/api/v1/tmux-servers',{headers:auth,signal:AbortSignal.timeout(10000)});assert(response.ok);
+@@ -85,6 +91,7 @@
+  appPid=Number(await command(['display-message','-p','-t',fleet.sessionNames[0],'#{pane_pid}']));assert(Number.isSafeInteger(appPid)&&appPid>0);
+  appStart=(await run('/bin/ps',['-o','lstart=','-o','command=','-p',String(appPid)],{timeout:5000})).stdout.trim();assert(appStart.includes(app),'Unexpected fixture app process');
+  persist('ownership.json',{appPid,appStart,root:fleet.root,socket:fleet.socketPath,identity,witness});
++ await rememberCpu(identity[0]);await rememberCpu(appPid);
+  if(spec.mode!=='reference'){const cap=JSON.parse(await command(['tmux-ide-events','-V']));epoch=cap.serverEpoch;assert.equal(cap.enabled,false);if(spec.mode==='enabled-no-reader')await command(['tmux-ide-events','-e']);}
+  traceSocket=join(fleet.root,'trace.sock');
+  const traceConfig=join(output,'trace-config.json');persist('trace-config.json',{ownerPid:process.pid,socket:traceSocket,log:join(output,'subprocess-trace.jsonl')});
+@@ -113,8 +120,14 @@
+  const started=performance.now();let count=spec.lane==='idle'?1:0;
+  for(let i=0;i<n;i++){if(streamError)throw streamError;const got=await pair();assert(got>=count&&got<=i+1+(spec.lane==='idle'?1:0));count=got;}
+  // Capture-only final verification has a different connection; disclose as background.
+- await until(async()=>Number(/COUNT:(\d+)/.exec(await command(['capture-pane','-p','-t',fleet.sessionNames[0]]))?.[1])===n+(spec.lane==='idle'?1:0));
+- if(spec.mode==='candidate32')await until(()=>{if(streamError)throw streamError;try{result.counts=reconcile(evidence,issuers,n+(spec.lane==='idle'?1:0));return evidenceStatusBarrier(evidence,status,issuers);}catch{return false;}});
++ let finalIssuer;
++ await until(async()=>{
++  const identified=spec.lane==='idle'&&spec.mode==='candidate32';
++  const text=await command([...(identified?['tmux-ide-events','-i',';']:[]),'capture-pane','-p','-t',fleet.sessionNames[0]]);
++  if(identified){const id=JSON.parse(text.slice(0,text.indexOf('\n')));assert.equal(id.serverEpoch,epoch);finalIssuer=boundIssuerReference(status,epoch,id.connectionId);}
++  return Number(/COUNT:(\d+)/.exec(text)?.[1])===n+(spec.lane==='idle'?1:0);
++ });
++ if(spec.mode==='candidate32')await until(()=>{if(streamError)throw streamError;try{result.counts=reconcile(evidence,issuers,n+(spec.lane==='idle'?1:0));return evidenceStatusBarrier(evidence,status,issuers)&&(spec.lane!=='idle'||finalCaptureDrained(evidence,status,{setupIssuer,pairIssuers:issuers,finalIssuer}));}catch{return false;}});
+  result.elapsedSeconds=(performance.now()-started)/1000;result.serverCpuSeconds=await cpu(identity[0]); // Fresh server cumulative CPU includes startup.
+  assert.equal((await run('/bin/ps',['-o','lstart=','-o','command=','-p',String(appPid)],{timeout:5000})).stdout.trim(),appStart);
+  result.orphanAppCpuSeconds=await cpu(appPid); // PTY app is reaped by tmux, not fixture Node.
+@@ -134,7 +147,9 @@
+  retainLog('after-stop');
+  try{result.trace=verifyTrace(readFileSync(join(output,'subprocess-trace.jsonl'),'utf8'),spec.binary);}catch(e){cleanup.push({error:`trace verification: ${e}`});}
+  if(fleet){try{
+-  assert.deepEqual((await command(['display-message','-p','#{pid}\t#{start_time}'])).split('\t'),identity);await command(['kill-server']);
++  assert.deepEqual((await command(['display-message','-p','#{pid}\t#{start_time}'])).split('\t'),identity);const live=lstatSync(fleet.socketPath);assert(live.isSocket());assert.deepEqual({dev:live.dev,ino:live.ino,uid:live.uid},witness);
++  const fence=fenceNativeTmuxCommand(['-N','-u','kill-server'],{pid:identity[0],startTime:identity[1]});
++  const retired=await run(spec.binary,['-S',fleet.socketPath,...fence.argv],{timeout:5000,maxBuffer:1048576});fence.verify(retired.stdout);
+   await until(()=>[...observed].every(pid=>!alive(pid)));
+   if(existsSync(fleet.socketPath)){const st=lstatSync(fleet.socketPath);assert(st.isSocket());assert.deepEqual({dev:st.dev,ino:st.ino,uid:st.uid},witness);unlinkSync(fleet.socketPath);}
+   cleanup.push({ownedProcessesAbsent:true,socketAbsent:true});
+--- original/idle/daemon-traced.ts
++++ bound/idle/daemon-traced.ts
+@@ -20,14 +20,14 @@
+   processIsAlive,
+   spawnHarnessChild,
+   type HarnessChild,
+-} from "../../apps/desktop-renderer/e2e/fixtures/harness-process.ts";
+-import type { ScratchFleet } from "../../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
++} from "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/apps/desktop-renderer/e2e/fixtures/harness-process.ts";
++import type { ScratchFleet } from "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
+ 
+ const DAEMON_READY_TIMEOUT_MS = 45_000;
+ const LADDER_TIMEOUT_MS = 45_000;
+ const BUNDLE_BUILD_TIMEOUT_MS = 120_000;
+ 
+-export const repoRoot = resolve(import.meta.dirname, "..", "..");
++export const repoRoot = "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source";
+ export const rendererRoot = join(repoRoot, "apps", "desktop-renderer");
+ 
+ export type CanonicalDaemonRecord = CanonicalDaemonInfo & { readonly authToken: string };
+@@ -62,41 +62,16 @@
+ }
+ 
+ const execFileAsync = promisify(execFile);
+-let bundleBuild: Promise<void> | null = null;
+-
+-/**
+- * Rebuild `bin/cli.js` before the first daemon of a run starts.
+- *
+- * The daemon under test is not the source tree — it is the esbuild bundle, so
+- * every daemon-side change is invisible here until that bundle is rebuilt. A
+- * stale bundle does not fail loudly; it silently tests the PREVIOUS commit's
+- * daemon and reports whatever that code does, which is worse than a red suite
+- * because it looks like a real verdict.
+- *
+- * This is not hypothetical. A rebase rewrites the tracked bundle to the target
+- * branch's build, so the suite ran main's daemon against this branch's
+- * assertions and reported a fix as broken. mtime cannot catch that — the rebase
+- * makes the stale bundle NEWER than the sources it disagrees with — so the only
+- * honest answer is to build it. It costs about a second, once per run.
+- */
+-async function ensureDaemonBundle(): Promise<void> {
+-  bundleBuild ??= execFileAsync("node", [join(repoRoot, "scripts", "build-cli.mjs")], {
+-    cwd: repoRoot,
+-    timeout: BUNDLE_BUILD_TIMEOUT_MS,
+-  }).then(() => undefined);
+-  await bundleBuild;
+-}
+-
+ export async function startDaemon(
+   fleet: ScratchFleet,
+   options: { readonly prebuiltCliSha256?: string; readonly qualificationPreload?: string } = {},
+ ): Promise<RunningDaemon> {
+-  if (options.prebuiltCliSha256 === undefined) await ensureDaemonBundle();
++  if (options.prebuiltCliSha256 === undefined) throw new Error("Reviewed prebuilt CLI digest required; no build permitted");
+   else {
+     if (!/^[a-f0-9]{64}$/.test(options.prebuiltCliSha256))
+       throw new TypeError("Invalid prebuilt CLI digest");
+     const actual = createHash("sha256")
+-      .update(await readFile(join(repoRoot, "bin", "cli.js")))
++      .update(await readFile("/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/.tasks/qualified-cli/cli.mjs"))
+       .digest("hex");
+     if (actual !== options.prebuiltCliSha256) throw new Error("Prebuilt CLI digest changed");
+   }
+@@ -110,7 +85,7 @@
+ 
+   const harness: HarnessChild = spawnHarnessChild({
+     command: process.execPath,
+-    args: [...(options.qualificationPreload ? ["--import", options.qualificationPreload] : []), join(repoRoot, "bin", "cli.js"), "--headless"],
++    args: [...(options.qualificationPreload ? ["--import", options.qualificationPreload] : []), "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/.tasks/qualified-cli/cli.mjs", "--headless"],
+     cwd: repoRoot,
+     env: environment,
+   });
+--- original/parser/candidate.ts
++++ bound/parser/candidate.ts
+@@ -1,8 +1,8 @@
+-import { AuthoredNativeReceiptEnricher } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/authored-native-receipt-staging.ts';
+-import { NativeTmuxInteractionObserver } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/native-tmux-interaction-observer.ts';
+-import { OwnerInteractionObservation } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/owner-interaction-observation.ts';
+-import { InteractionReceiptJournal } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/interaction-receipt-journal.ts';
+-import { InteractionObservationStatusStore } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/interaction-observation-status.ts';
++import { AuthoredNativeReceiptEnricher } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/authored-native-receipt-staging.ts';
++import { NativeTmuxInteractionObserver } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/native-tmux-interaction-observer.ts';
++import { OwnerInteractionObservation } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/owner-interaction-observation.ts';
++import { InteractionReceiptJournal } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/interaction-receipt-journal.ts';
++import { InteractionObservationStatusStore } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/interaction-observation-status.ts';
+ import { createInterface } from 'node:readline';
+ import { writeFileSync } from 'node:fs';
+ import { execFileSync } from 'node:child_process';
+--- original/parser/comparative.mjs
++++ bound/parser/comparative.mjs
+@@ -32,13 +32,13 @@
+   artifact,
+   retireOwnedProcess,
+   retirePrivateTmux,
+-} from "../../../scripts/comparative-terminal-support.mjs";
+-import { sampleProcessTree } from "../../../scripts/lib/comparative-terminal-resources.mjs";
+-import { renderComparativeTerminalReport } from "../../../scripts/lib/comparative-terminal-report.mjs";
++} from "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/scripts/comparative-terminal-support.mjs";
++import { sampleProcessTree } from "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/scripts/lib/comparative-terminal-resources.mjs";
++import { renderComparativeTerminalReport } from "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/scripts/lib/comparative-terminal-report.mjs";
+ const execute = promisify(execFile);
+-const require = createRequire(new URL("../../../packages/daemon/package.json", import.meta.url));
++const require = createRequire(new URL("/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/package.json", import.meta.url));
+ const pty = require("node-pty");
+-const producer = fileURLToPath(new URL("../../../scripts/comparative-terminal-producer.mjs", import.meta.url));
++const producer = fileURLToPath(new URL("/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/scripts/comparative-terminal-producer.mjs", import.meta.url));
+ const command = (binary, args, env, cwd) =>
+   execute(binary, args, { env, cwd, timeout: 5000, maxBuffer: 1024 * 1024 }).then(
+     (result) => result.stdout,
+--- original/metadata/candidate.ts
++++ bound/metadata/candidate.ts
+@@ -1,8 +1,8 @@
+-import { AuthoredNativeReceiptEnricher } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/authored-native-receipt-staging.ts';
+-import { NativeTmuxInteractionObserver } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/native-tmux-interaction-observer.ts';
+-import { OwnerInteractionObservation } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/owner-interaction-observation.ts';
+-import { InteractionReceiptJournal } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/interaction-receipt-journal.ts';
+-import { InteractionObservationStatusStore } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/interaction-observation-status.ts';
++import { AuthoredNativeReceiptEnricher } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/authored-native-receipt-staging.ts';
++import { NativeTmuxInteractionObserver } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/native-tmux-interaction-observer.ts';
++import { OwnerInteractionObservation } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/owner-interaction-observation.ts';
++import { InteractionReceiptJournal } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/interaction-receipt-journal.ts';
++import { InteractionObservationStatusStore } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/interaction-observation-status.ts';
+ import { createInterface } from 'node:readline';
+ import { writeFileSync } from 'node:fs';
+ import { execFileSync } from 'node:child_process';
+--- original/metadata/metadata.py
++++ bound/metadata/metadata.py
+@@ -2,14 +2,14 @@
+ from bounded_io import readline,wait4,prove_absent,retire_socket
+ from owned_cleanup import cleanup_owned
+ import os,sys,time,tempfile,subprocess,json,re,resource,statistics,hashlib,shutil
+-B='/private/tmp/tmux-ide-native-arm-888c15d4/.tasks/qualification/bundle/tmux'
++B='/Users/runner/work/_temp/darwin-x64-runtime/runtime/admitted/qualified-native/bundle/tmux'
+ N=1500
+ if sys.argv[1:] != ['--approved-metadata']:raise SystemExit('Expected reviewed --approved-metadata command')
+ from cpu_diagnostics import readiness_diagnostics, descendant_snapshot
+ from pathlib import Path
+ HERE=Path(__file__).resolve().parent
+ def verify_sources(destination):
+- subprocess.run(['/opt/homebrew/Cellar/node/26.8.2/bin/node',str(HERE/'verify.mjs')],check=True)
++ subprocess.run(['/Users/runner/work/_temp/darwin-x64-runtime/runtime/admitted/tools/node/node-v26.8.2-darwin-x64/bin/node',str(HERE/'verify.mjs')],check=True)
+  manifest=json.loads((HERE/'source-at-prepare.json').read_text())
+  for path,digest in manifest['hashes'].items():
+   assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,('source changed',path)
+@@ -43,7 +43,7 @@
+    else:raise Exception('app not ready')
+    if mode.startswith(('baseline-','candidate-')):
+     spawned_at=time.perf_counter()
+-    reader=subprocess.Popen(['/opt/homebrew/Cellar/node/26.8.2/bin/node',str(HERE/(mode.split('-')[0]+'.mjs')),B,socket,pid,start,mode.split('-')[1],'latency'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=open(root+'/reader.err','w'),text=True)
++    reader=subprocess.Popen(['/Users/runner/work/_temp/darwin-x64-runtime/runtime/admitted/tools/node/node-v26.8.2-darwin-x64/bin/node',str(HERE/(mode.split('-')[0]+'.mjs')),B,socket,pid,start,mode.split('-')[1],'latency'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=open(root+'/reader.err','w'),text=True)
+     telemetry=MetadataStream(reader.stdout)
+     ready=telemetry.reply();assert ready['ready']
+     ready_elapsed=time.perf_counter()-spawned_at
+--- original/tail/candidate.ts
++++ bound/tail/candidate.ts
+@@ -1,8 +1,8 @@
+-import { AuthoredNativeReceiptEnricher } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/authored-native-receipt-staging.ts';
+-import { NativeTmuxInteractionObserver } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/native-tmux-interaction-observer.ts';
+-import { OwnerInteractionObservation } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/owner-interaction-observation.ts';
+-import { InteractionReceiptJournal } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/interaction-receipt-journal.ts';
+-import { InteractionObservationStatusStore } from '/Users/thijs/Developer/tmux-ide/.tasks/current-native-components-657e0c97b9ee4def9db18f0c43181cbc/source/packages/daemon/src/lib/interaction-observation-status.ts';
++import { AuthoredNativeReceiptEnricher } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/authored-native-receipt-staging.ts';
++import { NativeTmuxInteractionObserver } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/native-tmux-interaction-observer.ts';
++import { OwnerInteractionObservation } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/owner-interaction-observation.ts';
++import { InteractionReceiptJournal } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/interaction-receipt-journal.ts';
++import { InteractionObservationStatusStore } from '/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/packages/daemon/src/lib/interaction-observation-status.ts';
+ import { createInterface } from 'node:readline';
+ import { writeFileSync } from 'node:fs';
+ import { execFileSync } from 'node:child_process';
+--- original/tail/tail_backlog.py
++++ bound/tail/tail_backlog.py
+@@ -3,14 +3,14 @@
+ from bounded_io import readline,wait4,prove_absent,retire_socket
+ from owned_cleanup import cleanup_owned
+ import os,sys,time,tempfile,subprocess,json,re,resource,statistics,hashlib,shutil
+-B='/private/tmp/tmux-ide-native-arm-888c15d4/.tasks/qualification/bundle/tmux'
++B='/Users/runner/work/_temp/darwin-x64-runtime/runtime/admitted/qualified-native/bundle/tmux'
+ N=1500
+ if sys.argv[1:] != ['--approved-tail-backlog']:raise SystemExit('Expected reviewed --approved-tail-backlog command')
+ from cpu_diagnostics import readiness_diagnostics, descendant_snapshot
+ from pathlib import Path
+ HERE=Path(__file__).resolve().parent
+ def verify_sources(destination):
+- subprocess.run(['/opt/homebrew/Cellar/node/26.8.2/bin/node',str(HERE/'verify.mjs')],check=True)
++ subprocess.run(['/Users/runner/work/_temp/darwin-x64-runtime/runtime/admitted/tools/node/node-v26.8.2-darwin-x64/bin/node',str(HERE/'verify.mjs')],check=True)
+  manifest=json.loads((HERE/'source-at-prepare.json').read_text())
+  for path,digest in manifest['hashes'].items():
+   assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,('source changed',path)
+@@ -44,7 +44,7 @@
+    else:raise Exception('app not ready')
+    if mode.startswith(('baseline-','candidate-')):
+     spawned_at=time.perf_counter()
+-    reader=subprocess.Popen(['/opt/homebrew/Cellar/node/26.8.2/bin/node',str(HERE/(mode.split('-')[0]+'.mjs')),B,socket,pid,start,mode.split('-')[1],'latency'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=open(root+'/reader.err','w'),text=True)
++    reader=subprocess.Popen(['/Users/runner/work/_temp/darwin-x64-runtime/runtime/admitted/tools/node/node-v26.8.2-darwin-x64/bin/node',str(HERE/(mode.split('-')[0]+'.mjs')),B,socket,pid,start,mode.split('-')[1],'latency'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=open(root+'/reader.err','w'),text=True)
+     telemetry=MetadataStream(reader.stdout)
+     ready=telemetry.reply();assert ready['ready']
+     ready_elapsed=time.perf_counter()-spawned_at

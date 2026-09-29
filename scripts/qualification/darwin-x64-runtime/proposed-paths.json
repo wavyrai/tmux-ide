@@ -1,0 +1,14 @@
+{
+  "exampleFreshRoot": "/Users/runner/work/_temp/darwin-x64-runtime/runtime",
+  "notAnActualRun": true,
+  "paths": {
+    "source": "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source",
+    "cli": "/Users/runner/work/_temp/darwin-x64-runtime/runtime/source/.tasks/qualified-cli/cli.mjs",
+    "node": "/Users/runner/work/_temp/darwin-x64-runtime/runtime/admitted/tools/node/node-v26.8.2-darwin-x64/bin/node",
+    "bun": "/Users/runner/work/_temp/darwin-x64-runtime/runtime/admitted/tools/bun/package/bin/bun",
+    "pnpm": "/Users/runner/work/_temp/darwin-x64-runtime/runtime/admitted/tools/pnpm/package/bin/pnpm.cjs",
+    "native": "/Users/runner/work/_temp/darwin-x64-runtime/runtime/admitted/qualified-native/bundle/tmux"
+  },
+  "matchedReference": null,
+  "executionAuthorized": false
+}

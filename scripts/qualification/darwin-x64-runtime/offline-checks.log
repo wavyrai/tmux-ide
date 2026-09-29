@@ -1,0 +1,13 @@
+test_actual_cpu_and_idle_transform_preserve_measurement_bodies (test_binding.BindingTests.test_actual_cpu_and_idle_transform_preserve_measurement_bodies) ... ok
+test_actual_receipts_have_consistent_identity_but_missing_reference_rejects (test_binding.BindingTests.test_actual_receipts_have_consistent_identity_but_missing_reference_rejects) ... ok
+test_actual_whole_stage_is_external_and_held (test_binding.BindingTests.test_actual_whole_stage_is_external_and_held) ... ok
+test_full_tree_changed_bytes_extra_members_modes_and_link_target (test_binding.BindingTests.test_full_tree_changed_bytes_extra_members_modes_and_link_target) ... ok
+test_no_build_fallback_in_actual_daemon_fixtures (test_binding.BindingTests.test_no_build_fallback_in_actual_daemon_fixtures) ... ok
+test_path_escape_and_foreign_prefix_rejected (test_binding.BindingTests.test_path_escape_and_foreign_prefix_rejected) ... ok
+test_actual_staged_import_roots_resolve_without_evaluation (test_binding.ImportRootTests.test_actual_staged_import_roots_resolve_without_evaluation) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.323s
+
+OK
+{"stagedFiles":26,"resolvedImports":50,"evaluatedProductModules":0,"scope":"Source/import-root check; actual x64 artifact import admission remains required"}

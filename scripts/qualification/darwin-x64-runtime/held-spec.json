@@ -1,0 +1,108 @@
+{
+  "state": "HELD_NOT_EXECUTABLE",
+  "authorization": null,
+  "platform": "darwin-x64",
+  "runner": "macos-15-intel",
+  "sourceCommit": "c95f246ae4a87e86f5299a4d3b594f086f2333f2",
+  "runtimePatch": null,
+  "observerSha256": "25fe499de80614c77679b3634c4afb83f81d47e906e71c22d2b5194a1df57158",
+  "defaultObservationBatchMs": 32,
+  "nativeOptInDefault": false,
+  "nativeSha256": "4998ab3bde94e588a0c4ef300e0de657cfb39d7b0689f10627517a989b7fcaf7",
+  "runtimeArtifact": {
+    "runId": 36615931764,
+    "artifactId": 11056102558,
+    "zipSha256": "71e4c5f8bc267cb7cc5c2e03238f7e804c7699683f1d6b74f005f995e7201114",
+    "zipBytes": 933381361,
+    "tarSha256": "48041475fba75b067b9add9c4bea01b554a558db104526696c6e5695e9f492e4",
+    "tarBytes": 3084677120,
+    "sourceTree": "faf91085a562009c6b64e8fcea925ed92f861c06",
+    "cliSha256": "6fc2c68512bebec1ebc5b38f666390ee84e490ab12f2308f3d1273173aff4481",
+    "cliReceiptSha256": "c658da54ad9f9fcb82aa5adbc958796c27495105c3136ffa822139073e7f04ea",
+    "payloadProofSha256": "14c2e8b605c34190bdd529e7fc88f0472c0bea63a66143d3170ea0003637bd50",
+    "evidenceScope": "Range CRC verified receipts; not local full ZIP/tar/member acceptance",
+    "matchedReference": null
+  },
+  "matchedGridReferenceArtifact": null,
+  "freshHost": null,
+  "boundPaths": null,
+  "frozenClosure": null,
+  "componentBuildReceipt": null,
+  "cpu": {
+    "modes": [
+      "reference",
+      "disabled",
+      "enabled-no-reader",
+      "candidate32"
+    ],
+    "rounds": 3,
+    "pairsPerCase": 1500,
+    "cpuMedianOverDisabledMaxPercent": 10,
+    "elapsedMedianOverDisabledMaxPercent": 10
+  },
+  "idle": {
+    "seconds": 125,
+    "samples": 26,
+    "wakeMaxMs": 100,
+    "finalEffectSequence": 11,
+    "finalStatusCursor": 12,
+    "trace": "idle-only"
+  },
+  "parser": {
+    "modes": [
+      "reference",
+      "disabled",
+      "enabled",
+      "reader-0",
+      "reader-16",
+      "reader-32"
+    ],
+    "rounds": 3,
+    "samples": 200,
+    "warmups": 2,
+    "resizes": 10,
+    "medianRoundP95DeltaMaxMs": 1
+  },
+  "metadata": {
+    "windowsMs": [
+      0,
+      16,
+      32
+    ],
+    "rounds": 3,
+    "pairs": 1500,
+    "records": 6002,
+    "p99MaxMs": 50,
+    "maxMs": 100
+  },
+  "tail": {
+    "windowsMs": [
+      0,
+      16,
+      32
+    ],
+    "phases": [
+      1,
+      256,
+      1,
+      256,
+      1,
+      256,
+      1,
+      256,
+      1,
+      471
+    ],
+    "records": 6002,
+    "p99MaxMs": 50,
+    "maxMs": 100
+  },
+  "attemptPolicy": "one approved attempt per lane, stop first failure, no retry, preserve postclosure/cleanup",
+  "excluded": [
+    "native rebuild",
+    "CLI rebuild",
+    "TUI/startup",
+    "new performance axes",
+    "threshold changes"
+  ]
+}
