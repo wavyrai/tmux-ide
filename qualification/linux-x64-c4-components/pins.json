@@ -1,0 +1,974 @@
+{
+  "sourceCommit": "cb6f09efb173d045d2bc221d0f14cfe415075b48",
+  "sourceTree": "9d2b15709502af95a4a736b56069d3158cc08a1a",
+  "candidatePatchSha256": "4393ae0bbef9d696122e062a0113fdbbd4a0ad48699b9c962b3afc9c730619d1",
+  "candidateDiffSha256": "a1b393707c97ac24f17bda1fcd319ae4700abd712fa35237b71993c8f6f3f579",
+  "candidateChangedFiles": {
+    "packages/daemon/src/lib/native-tmux-interaction-observer-handshake.test.ts": "ef088abe88b97c4a8473a38ba307a80c03bacc0642ac5870a922c106d94a0dc9",
+    "packages/daemon/src/lib/native-tmux-interaction-observer.test.ts": "a20bc990b61b10749024cc41838a09ddbfd805c4807068eefaf0dc48a2631ccf",
+    "packages/daemon/src/lib/native-tmux-interaction-observer.ts": "25fe499de80614c77679b3634c4afb83f81d47e906e71c22d2b5194a1df57158"
+  },
+  "inputArtifact": {
+    "id": 11039584548,
+    "runId": 36581517710,
+    "bytes": 704781316,
+    "sha256": "052cabc075719fc470bd6198604b2883fea79694493da95c81bc10f752a2e131"
+  },
+  "imageId": "sha256:d52067ef26a974b46ad1b6301b449b4f774ead40c2c41df971c50e0778a0d76b",
+  "imageToolHashes": {
+    "/opt/node26/bin/node": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+    "/pinned/bun": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+    "/pinned/pnpm.cjs": "b276da51dc8ca5b0d3ee3371695b50fc8b3244b281b091c63a3f082a88dadeb9",
+    "/usr/bin/python3": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+    "/usr/bin/git": "2a8c18fbf43da9f692d75474c72bea9dfd796c260b0f3dfe456376abc3bbd668",
+    "/usr/bin/pgrep": "0756bd5153d53e69d61b9b101b4323533934a33e8eb797bf6101394e5368c01f",
+    "/usr/bin/readelf": "64c58e15274bbbb5153f31078e455e9e77ee5f51489e709bba5bb788ce9df2b0",
+    "/usr/bin/getconf": "6f04d25de4c614629c807207723c33ae826ef26cf8519b9da7902d0f355141b8",
+    "/bin/sh": "86d31f6fb799e91fa21bad341484564510ca287703a16e9e46c53338776f4f42",
+    "/usr/bin/env": "886e5fa8be716b03eeda48856e0f04493f2969fc148fb7812594ffac647fa050",
+    "/lib64/ld-linux-x86-64.so.2": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da"
+  },
+  "runnerImageVersion": "20260920.314.1",
+  "cpuset": "0,2",
+  "referenceSha256": "9eddef3910822353ff02c2f6b273e3a03459a684e84a98b1a3d83ea893c745c8",
+  "nativeSha256": "8933071dbaeea131b04961ab74ff8b21a622891bce6a01f43ef5122e2fad14d2",
+  "nativeArchiveSha256": "17aa62c64eb6a6cdf8fd94ff666b5a514c259be8ba9b6e7a3a0a3275c939bfb1",
+  "harnessFiles": {
+    "accounting.mjs": "a0aba6b1cacb8121201394afc7c48e53348112ddc9716386ace7f8a5090c49c4",
+    "accounting.test.mjs": "95065d506da1ea45404d3b0c7aec012c3b03b82177e775193b0dd98db843c880",
+    "build.mjs": "7f1e68ac92bf437bcf25f9863335885035f01107fa15673cec0c14c229d07b13",
+    "campaign.py": "3a50b855c77f1c4599dd1f63a5239612c80f951ad928f0cc02221d45bdd01ccf",
+    "candidate-proof.mjs": "f7eabe01d62bd62294ab31f5b2ae59a6deb3eab55d16ffdc8c27a07698b84956",
+    "case.mjs": "97cb43d3af1d39ecf91f35e8602b2a9ec9ff1c1b5db36fe200a0e979240332e5",
+    "cleanup-witnesses.mjs": "7dcb01646af7c906ee189148a67383b2884a4cd09763f4972392c9842864be1f",
+    "cpu_accounting.py": "58a2fa2166865cd221eaebb39cdb353647bd8068331b92c81795c9eb406b8e83",
+    "cpu_accounting_test.py": "5f2f9fe8f98369d858481c5986ec5b8e743876f390703e453cdad533c5c431e7",
+    "daemon-traced.ts": "a6f2bde81719ec89811252c8f6f0d1bb170b61311b3bace8c1ab8cdbe1d3f81f",
+    "elf-closure.mjs": "635fb12235d06f2ae4414dc85fcd2cc2c81f2808264ac38f0e510523bede7a05",
+    "elf-closure.test.mjs": "b37c050fd5864b26bb3909582fc8de5422c628360e7709d9cfc154c5ae9162d2",
+    "host-descriptor.mjs": "b5a9f3ca85992b14e3880b225508791159541a1a25f4b0b1363cdd3cfcdb3596",
+    "host-descriptor.test.mjs": "a5344bb64adfbb3f6c637a52de5288423de857596b80ab4329a11e05b44684a6",
+    "host-fixture.mjs": "e07235bb9e7558dc95b819473a7f003f3cf145544d3d56f9c756c165c7536056",
+    "host-inputs.mjs": "b2ff2d9a8981f72e050c772bd69e99b78451b24adc2b8c4bce53dce3f649fa07",
+    "import-check.mjs": "dbb30f1bc8ea8e9dd937db2459e647683ef613191c6acf5da4f3a8e49773760e",
+    "linux-host.mjs": "63bc4e18333a43d6c871d552dbe422779079ee52b50e392ce0e36643ae65cffe",
+    "orchestration.mjs": "62c9592c4ed3152557e4205b629a21cd8cb0894a50b7d0a7ea759f4c04242f24",
+    "orchestration.test.mjs": "6e037cc37865c61907769d1237cb2636c5a4201d832c1d7751500e4fe1b2f7f6",
+    "platform-inputs.mjs": "0a6a7a894a22ae2bc5d66390a0978fa82de2698050d9e38b4349fd58a842a292",
+    "prepare-freeze.mjs": "abb3bc2705edf4fbf532054c9b05e67bb64056509e5ddd75a0964d21f67e305e",
+    "process-cpu.mjs": "392bc56292b00618c1a6a08105471c762afa7bd6a57aa9b3b69247df4e1e8cda",
+    "process-cpu.test.mjs": "e68ffcb18623be3b397efe0cd8dc1c30b9bc4fed03cf3cafb251111948fe52cb",
+    "read-owned-proc-stat.mjs": "81d6b545f5908b0e6c3c97e0b3cab6685daf5447d2dcfd63fdb881168e022f9c",
+    "read-owned-proc-stat.test.mjs": "e9644a97e4792574895c4c9330f04efd9fbc292ad65b657a7d495cc7faa46016",
+    "readiness.mjs": "d7c10aadbdaf3b414788f72daa7a2b3bc59e542577a50b5bb1d39c3c051d5c8f",
+    "readiness.test.mjs": "84847f9e9bb5ffe7f9eaa4a34ec4547d70e91004ee41e99a42a5c72395eedb31",
+    "trace-client.mjs": "cf9ff024b5ab59d547d57e96e4aa15f7997593bdd602cd198aa4e48d8ecea2b1",
+    "trace-executable.mjs": "1d9c9ac9fae1f5d96e06f0753bd5a98579fdc6596c9c441e8a623950d94b5aff",
+    "trace-executable.test.mjs": "fb1d20db220347ffcaaf884215df41b83a93ccef5f8b8a65496dd2ffd9c5cc9b",
+    "trace-hook.mjs": "05756630a3422895bb17dfecabd2fde6118e630288f5dd3e111a0572aa4d36ba",
+    "trace-hook.test.mjs": "fe0581def3a4cd5ae8f28eb17e26bdbd40709c0d4e685560035be9eee63a5660",
+    "trace-preload.mjs": "297afbf33d43f155ddc3a7f514acb940f7e786a805f71fc3b13ff166f00a666b",
+    "trace-preload.test.mjs": "e58da9bfc9ef9c8a21560d5b45f6640ca7ed1cab32e468f23caf44ed8c4a6137",
+    "trace-verify.mjs": "69655f367955ec5f19adb215c81e2e331b0a5add4ddb6f0a1ae5728d6d073d62",
+    "trace-verify.test.mjs": "b5e0f5f06eae0cd52f22d752e8a127072ab84afcd6a3de3c04010afa556f3bae",
+    "verify.mjs": "67409d680f0e688ec14d5869008347d8e7f713be25e53600577aa71ba1200608",
+    "x64-admission.test.mjs": "84c0d81c43974041420e5c8782d4df43e8b5b5019d9fe4ae95c7aa2ec08e838b"
+  },
+  "dockerPath": "/usr/bin/docker",
+  "dockerSha256": "6435ff9214bf8e0931078fb0980809728cac0a54a526d4f28a26d3e48132b58d",
+  "dockerHost": "unix:///var/run/docker.sock",
+  "scope": "cb6/private32 base; explicit component0/16/32. Build/import only, no performance.",
+  "cliArtifact": {
+    "id": 11043293883,
+    "runId": 36589727232,
+    "bytes": 549182668,
+    "sha256": "4b86aacbbfce201f70afc5aa4a885497dd7a9b10764295e77f56962232a29e76"
+  },
+  "runtimeArchive": {
+    "bytes": 458497538,
+    "sha256": "cb4f71b3cc8343f5afdf4e4193da3b6b70b36e1d1c1861f8dc32c3579c433d14"
+  },
+  "cliSha256": "dccb0d0ec877e1195ebca42456861855a97ae85b40d15c16703c623b06bb2cc3",
+  "priorManifestSha256": "f40b2fb7bb3a14cf8aa038ff1e05b5acabd0951c3171a35246dca77f8bee38f5",
+  "preparationOnly": true,
+  "originalPortFiles": {
+    "parser/comparative.mjs": "cb1dc11b96e9287d55f956cfb7b18a0c60072f9d6a0817f39e808cc3d01b00e3",
+    "parser/cleanup-witnesses.test.mjs": "4cffe2763b5462bf2d65de0a5f93e2c37e6362865bcca685be418adefcf1fb60",
+    "parser/candidate.ts": "4c97b0d9b5f84844f3a2e3f07576fc91becc0528ef4eb2a440116431ef96afa8",
+    "parser/cleanup-witnesses.mjs": "7dcb01646af7c906ee189148a67383b2884a4cd09763f4972392c9842864be1f",
+    "parser/echo.mjs": "9281bf348b278b0fdcc1c46815e0a330e85c5b10f30078352c5fd449f49fa4b9",
+    "tail/bounded_io.py": "b0c1032a6bb4024a6eaf53a4d28d923c9b6f963d872b80978370d6eada8e495f",
+    "tail/test_socket_retirement.py": "d702c84b06db74cf06269371716660eb35457d9e5eb0f5b53c09bfbb09b034be",
+    "tail/metadata_report.py": "6d72e88cc440acd9106565dc337fd6d27370f6ec282ff98d6f6e31de7f611e19",
+    "tail/test_metadata_stream.py": "e6a3c5cdf44efb23f4a3aab093e20fee05e8559ed6ede7802fc51b06c83ace66",
+    "tail/candidate.ts": "4c97b0d9b5f84844f3a2e3f07576fc91becc0528ef4eb2a440116431ef96afa8",
+    "tail/test_burst_source.py": "d13985f006e503cbdfd5d0c2391a8900e3739dc97490eb4ef489d8aff090e849",
+    "tail/cpu_diagnostics.py": "4b7bb85ae61bed79e0e7bde33f22e04b32ddef9481f730d0720237bbce7dc332",
+    "tail/tail_backlog.py": "b5462a32c79945a7732d348763e9d947bbaed41d23db30c4ad784d654cdfdf11",
+    "tail/metadata_stream.py": "c19b76bf0b14d81e787ae8ffc517d40bcafcc9c53960b0a1c2d1136e6a4f43e3",
+    "tail/owned_cleanup.py": "2791568cfd3cb22050dafe6ad7c6a1cc8d5c95d8a8d80961541cf38ef10e9a88",
+    "tail/test_owned_cleanup.py": "c6168e15dabe7dc35fd2c6304b2558420bf96163f363a368f5f8aa1f3e9f3105",
+    "tail/test_metadata_report.py": "8b14daae7cd4f42af8fc9fb70be76e1bdace55e7bccd8dce7a931c3bc00383d3",
+    "tail/burst_source.py": "1244a59d6ed492ae8aa0fec570be7f4b1e2e54fe771993903e7d6fc9cc77ebf7",
+    "tail/test_cpu_diagnostics.py": "aa7bf693d7db97ed6472ea52a71c03daa8eda05aea788accacda8d09e573df04",
+    "tail/test_bounded_io.py": "c2b0c5e5c31e98371dd73e37ebf2f44959a498243e7f1b5a0a6abe5eec895261",
+    "common/read-owned-proc-stat.mjs": "81d6b545f5908b0e6c3c97e0b3cab6685daf5447d2dcfd63fdb881168e022f9c",
+    "common/linux-host.mjs": "7104745f6dd97dae04313b0c2b1bf53076cf1db2d67eaf2af8b91e72248f7064",
+    "common/host-descriptor.mjs": "c5f137b841f2d074330d1c19fec2848765243981f101098d4bbee4211aa14a55",
+    "common/linux_process.py": "f744620e2925a5a3ec3731e1ed2a67fa78c3300ffd46e20f3d63ac3ea4063866",
+    "common/proc-bridge.mjs": "84964d0c56edc74ac75a705e883016a7f10b07d5d6a4cc8a2df946a2397d98dc",
+    "common/owned-process.mjs": "6524f778e7e2fdca1399a84857bd754de69a4e0874328839d0bcc1a8b638ea1c",
+    "common/linux-owned.mjs": "276d3360dd683174228881c4d9fe5ab3b34e3dacfbd0e61114a42afd3150f5ba",
+    "common/process-cpu.mjs": "392bc56292b00618c1a6a08105471c762afa7bd6a57aa9b3b69247df4e1e8cda",
+    "metadata/bounded_io.py": "b0c1032a6bb4024a6eaf53a4d28d923c9b6f963d872b80978370d6eada8e495f",
+    "metadata/test_socket_retirement.py": "d702c84b06db74cf06269371716660eb35457d9e5eb0f5b53c09bfbb09b034be",
+    "metadata/metadata_report.py": "6d72e88cc440acd9106565dc337fd6d27370f6ec282ff98d6f6e31de7f611e19",
+    "metadata/metadata.py": "9823c857b627de9ba1e0f4ca73c167f05072b6aaef56fd8a285f7ffe87a55acb",
+    "metadata/test_metadata_stream.py": "e6a3c5cdf44efb23f4a3aab093e20fee05e8559ed6ede7802fc51b06c83ace66",
+    "metadata/candidate.ts": "4c97b0d9b5f84844f3a2e3f07576fc91becc0528ef4eb2a440116431ef96afa8",
+    "metadata/cpu_diagnostics.py": "4b7bb85ae61bed79e0e7bde33f22e04b32ddef9481f730d0720237bbce7dc332",
+    "metadata/metadata_stream.py": "c19b76bf0b14d81e787ae8ffc517d40bcafcc9c53960b0a1c2d1136e6a4f43e3",
+    "metadata/owned_cleanup.py": "2791568cfd3cb22050dafe6ad7c6a1cc8d5c95d8a8d80961541cf38ef10e9a88",
+    "metadata/test_owned_cleanup.py": "c6168e15dabe7dc35fd2c6304b2558420bf96163f363a368f5f8aa1f3e9f3105",
+    "metadata/test_metadata_report.py": "8b14daae7cd4f42af8fc9fb70be76e1bdace55e7bccd8dce7a931c3bc00383d3",
+    "metadata/test_cpu_diagnostics.py": "aa7bf693d7db97ed6472ea52a71c03daa8eda05aea788accacda8d09e573df04",
+    "metadata/test_bounded_io.py": "c2b0c5e5c31e98371dd73e37ebf2f44959a498243e7f1b5a0a6abe5eec895261"
+  },
+  "portFiles": {
+    "parser/comparative.mjs": "cb1dc11b96e9287d55f956cfb7b18a0c60072f9d6a0817f39e808cc3d01b00e3",
+    "parser/cleanup-witnesses.test.mjs": "4cffe2763b5462bf2d65de0a5f93e2c37e6362865bcca685be418adefcf1fb60",
+    "parser/candidate.ts": "4c97b0d9b5f84844f3a2e3f07576fc91becc0528ef4eb2a440116431ef96afa8",
+    "parser/cleanup-witnesses.mjs": "7dcb01646af7c906ee189148a67383b2884a4cd09763f4972392c9842864be1f",
+    "parser/echo.mjs": "9281bf348b278b0fdcc1c46815e0a330e85c5b10f30078352c5fd449f49fa4b9",
+    "tail/bounded_io.py": "b0c1032a6bb4024a6eaf53a4d28d923c9b6f963d872b80978370d6eada8e495f",
+    "tail/test_socket_retirement.py": "d702c84b06db74cf06269371716660eb35457d9e5eb0f5b53c09bfbb09b034be",
+    "tail/metadata_report.py": "6d72e88cc440acd9106565dc337fd6d27370f6ec282ff98d6f6e31de7f611e19",
+    "tail/test_metadata_stream.py": "e6a3c5cdf44efb23f4a3aab093e20fee05e8559ed6ede7802fc51b06c83ace66",
+    "tail/candidate.ts": "4c97b0d9b5f84844f3a2e3f07576fc91becc0528ef4eb2a440116431ef96afa8",
+    "tail/test_burst_source.py": "d13985f006e503cbdfd5d0c2391a8900e3739dc97490eb4ef489d8aff090e849",
+    "tail/cpu_diagnostics.py": "4b7bb85ae61bed79e0e7bde33f22e04b32ddef9481f730d0720237bbce7dc332",
+    "tail/tail_backlog.py": "b5462a32c79945a7732d348763e9d947bbaed41d23db30c4ad784d654cdfdf11",
+    "tail/metadata_stream.py": "c19b76bf0b14d81e787ae8ffc517d40bcafcc9c53960b0a1c2d1136e6a4f43e3",
+    "tail/owned_cleanup.py": "2791568cfd3cb22050dafe6ad7c6a1cc8d5c95d8a8d80961541cf38ef10e9a88",
+    "tail/test_owned_cleanup.py": "c6168e15dabe7dc35fd2c6304b2558420bf96163f363a368f5f8aa1f3e9f3105",
+    "tail/test_metadata_report.py": "8b14daae7cd4f42af8fc9fb70be76e1bdace55e7bccd8dce7a931c3bc00383d3",
+    "tail/burst_source.py": "1244a59d6ed492ae8aa0fec570be7f4b1e2e54fe771993903e7d6fc9cc77ebf7",
+    "tail/test_cpu_diagnostics.py": "aa7bf693d7db97ed6472ea52a71c03daa8eda05aea788accacda8d09e573df04",
+    "tail/test_bounded_io.py": "c2b0c5e5c31e98371dd73e37ebf2f44959a498243e7f1b5a0a6abe5eec895261",
+    "common/read-owned-proc-stat.mjs": "81d6b545f5908b0e6c3c97e0b3cab6685daf5447d2dcfd63fdb881168e022f9c",
+    "common/linux-host.mjs": "68cec6db3da433a24adad4f86fba36200cb8854b9740b234546fd78da5fc6892",
+    "common/host-descriptor.mjs": "96cc0aa046312bd9c4cd973d48723af73f56772f074bd43d2f8f870c2a264736",
+    "common/linux_process.py": "f744620e2925a5a3ec3731e1ed2a67fa78c3300ffd46e20f3d63ac3ea4063866",
+    "common/proc-bridge.mjs": "68125fb5ac1505ffeddd57088ac147271a517865f32dd98864fd7a5b5b4a1629",
+    "common/owned-process.mjs": "6524f778e7e2fdca1399a84857bd754de69a4e0874328839d0bcc1a8b638ea1c",
+    "common/linux-owned.mjs": "3cf9ef6315ae1362e236dce4d98dacf98644368bc23b837050f3b83619860850",
+    "common/process-cpu.mjs": "392bc56292b00618c1a6a08105471c762afa7bd6a57aa9b3b69247df4e1e8cda",
+    "metadata/bounded_io.py": "b0c1032a6bb4024a6eaf53a4d28d923c9b6f963d872b80978370d6eada8e495f",
+    "metadata/test_socket_retirement.py": "d702c84b06db74cf06269371716660eb35457d9e5eb0f5b53c09bfbb09b034be",
+    "metadata/metadata_report.py": "6d72e88cc440acd9106565dc337fd6d27370f6ec282ff98d6f6e31de7f611e19",
+    "metadata/metadata.py": "9823c857b627de9ba1e0f4ca73c167f05072b6aaef56fd8a285f7ffe87a55acb",
+    "metadata/test_metadata_stream.py": "e6a3c5cdf44efb23f4a3aab093e20fee05e8559ed6ede7802fc51b06c83ace66",
+    "metadata/candidate.ts": "4c97b0d9b5f84844f3a2e3f07576fc91becc0528ef4eb2a440116431ef96afa8",
+    "metadata/cpu_diagnostics.py": "4b7bb85ae61bed79e0e7bde33f22e04b32ddef9481f730d0720237bbce7dc332",
+    "metadata/metadata_stream.py": "c19b76bf0b14d81e787ae8ffc517d40bcafcc9c53960b0a1c2d1136e6a4f43e3",
+    "metadata/owned_cleanup.py": "2791568cfd3cb22050dafe6ad7c6a1cc8d5c95d8a8d80961541cf38ef10e9a88",
+    "metadata/test_owned_cleanup.py": "c6168e15dabe7dc35fd2c6304b2558420bf96163f363a368f5f8aa1f3e9f3105",
+    "metadata/test_metadata_report.py": "8b14daae7cd4f42af8fc9fb70be76e1bdace55e7bccd8dce7a931c3bc00383d3",
+    "metadata/test_cpu_diagnostics.py": "aa7bf693d7db97ed6472ea52a71c03daa8eda05aea788accacda8d09e573df04",
+    "metadata/test_bounded_io.py": "c2b0c5e5c31e98371dd73e37ebf2f44959a498243e7f1b5a0a6abe5eec895261"
+  },
+  "matchingReaderInputs": [
+    {
+      "path": "/work/source/packages/contracts/src/lib-internal/auth.ts",
+      "armPreparedSha256": "855435f90a21be4433a68dc5f6ad1cc3b53f4e07be9031d1e94ce7095834ce59",
+      "x64PreparedSha256": "855435f90a21be4433a68dc5f6ad1cc3b53f4e07be9031d1e94ce7095834ce59",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/lib-internal/hq.ts",
+      "armPreparedSha256": "9ca7592543429d67e8dccf214faedf20b255392b8e6b168e33e5fac23ed0e7cf",
+      "x64PreparedSha256": "9ca7592543429d67e8dccf214faedf20b255392b8e6b168e33e5fac23ed0e7cf",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/semantic-identity.ts",
+      "armPreparedSha256": "1240bd066579779a5bc3620fe3455027e5dcf16744a79321904e10295d3b516c",
+      "x64PreparedSha256": "1240bd066579779a5bc3620fe3455027e5dcf16744a79321904e10295d3b516c",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-state.ts",
+      "armPreparedSha256": "c5918cffe663c212bc016a12472e0a13c10711af3f735ae9dd473aec53cd2ea9",
+      "x64PreparedSha256": "c5918cffe663c212bc016a12472e0a13c10711af3f735ae9dd473aec53cd2ea9",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/ide-config.ts",
+      "armPreparedSha256": "48599fdca8fed2e72658ca0b52227305043b4d7f953f2515929527875bbdeedd",
+      "x64PreparedSha256": "48599fdca8fed2e72658ca0b52227305043b4d7f953f2515929527875bbdeedd",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/domain.ts",
+      "armPreparedSha256": "66b09f390c1744337116c2b1ff021b136aee6d75767e252f49ed6d6af0db51fb",
+      "x64PreparedSha256": "66b09f390c1744337116c2b1ff021b136aee6d75767e252f49ed6d6af0db51fb",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/mission-projections.ts",
+      "armPreparedSha256": "d20017fc8c5618ff9f5d6428b9610ce7da9294976d9638a26d38d0d06cf0d855",
+      "x64PreparedSha256": "d20017fc8c5618ff9f5d6428b9610ce7da9294976d9638a26d38d0d06cf0d855",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/tmux.ts",
+      "armPreparedSha256": "7bf1ed957e635296b58b415a071d0e1290fc7a423c73ac5b338bbfcb67832f76",
+      "x64PreparedSha256": "7bf1ed957e635296b58b415a071d0e1290fc7a423c73ac5b338bbfcb67832f76",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace.ts",
+      "armPreparedSha256": "3286b1cbc8e3fbb6f432c897b8238539c65a10ab3a6950305c66fcbf8421c2d8",
+      "x64PreparedSha256": "3286b1cbc8e3fbb6f432c897b8238539c65a10ab3a6950305c66fcbf8421c2d8",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/app-window-state.ts",
+      "armPreparedSha256": "181840bfa45a23cce474d7ae75f5b8fcb0fbcb4528ffc2f12578fc7138879512",
+      "x64PreparedSha256": "181840bfa45a23cce474d7ae75f5b8fcb0fbcb4528ffc2f12578fc7138879512",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/commands.ts",
+      "armPreparedSha256": "3c52947869cfb9fcdf856920a3657e2ee165ea00d125bba28200b5e08efc3014",
+      "x64PreparedSha256": "3c52947869cfb9fcdf856920a3657e2ee165ea00d125bba28200b5e08efc3014",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/experience-identifiers.ts",
+      "armPreparedSha256": "9eac0b4656d1dc82be5670c5915427392bcff1d9d01f96e7af1838d655821957",
+      "x64PreparedSha256": "9eac0b4656d1dc82be5670c5915427392bcff1d9d01f96e7af1838d655821957",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/pane-appearance.ts",
+      "armPreparedSha256": "a2c1b71ed79b85058681fbb96789521b6fcc0e070ca62cd7aa83026e2bd30e92",
+      "x64PreparedSha256": "a2c1b71ed79b85058681fbb96789521b6fcc0e070ca62cd7aa83026e2bd30e92",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/experience-shell.ts",
+      "armPreparedSha256": "8bfb26ea1c6f9b3ce6f4f9e53a5ac65dd7cfebd1f242b01b803be62926bc3adb",
+      "x64PreparedSha256": "8bfb26ea1c6f9b3ce6f4f9e53a5ac65dd7cfebd1f242b01b803be62926bc3adb",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/focus-overlay.ts",
+      "armPreparedSha256": "74cdd066ed4365ef4cb62cdb39d2bdbd3399af4bd4495f6467af72e957d5f78b",
+      "x64PreparedSha256": "74cdd066ed4365ef4cb62cdb39d2bdbd3399af4bd4495f6467af72e957d5f78b",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/client-view-state.ts",
+      "armPreparedSha256": "ed841fd4e420b2715fba3ffc7d357e28c37d6114185961869a32f8221b996fdb",
+      "x64PreparedSha256": "ed841fd4e420b2715fba3ffc7d357e28c37d6114185961869a32f8221b996fdb",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/desktop-daemon-capability-error.ts",
+      "armPreparedSha256": "add4530670e3cbab8b8d7b7d4e67c966c68b544cd7dc2987d6677e7cea585d2a",
+      "x64PreparedSha256": "add4530670e3cbab8b8d7b7d4e67c966c68b544cd7dc2987d6677e7cea585d2a",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/desktop-workspace-name.ts",
+      "armPreparedSha256": "462ea5ac089fbbe2529534baa35e2c4eb5a815fb644e0e02485a4acac2851491",
+      "x64PreparedSha256": "462ea5ac089fbbe2529534baa35e2c4eb5a815fb644e0e02485a4acac2851491",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/app-window-mutation.ts",
+      "armPreparedSha256": "02377caa52d8b4ec8c299feab0bf841eac66721b0587feeb02f2c40e62eb8dd7",
+      "x64PreparedSha256": "02377caa52d8b4ec8c299feab0bf841eac66721b0587feeb02f2c40e62eb8dd7",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-config.ts",
+      "armPreparedSha256": "87057f9bb73d812903f38df7939189f2af557ae38a26787b33b9f1462f27b10a",
+      "x64PreparedSha256": "87057f9bb73d812903f38df7939189f2af557ae38a26787b33b9f1462f27b10a",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-pane-creation.ts",
+      "armPreparedSha256": "76d7339f23e46ed45d7ca63c24ee96e5b0d59e08f2433705e1a27040ae501c5a",
+      "x64PreparedSha256": "76d7339f23e46ed45d7ca63c24ee96e5b0d59e08f2433705e1a27040ae501c5a",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-open.ts",
+      "armPreparedSha256": "8d42f7bb08b4427b3e782f011cacf84597f82c44cc90d299b98721676961da43",
+      "x64PreparedSha256": "8d42f7bb08b4427b3e782f011cacf84597f82c44cc90d299b98721676961da43",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/daemon-wire.ts",
+      "armPreparedSha256": "59764869efb2425e83081b4e115d7cd4e1068ac115052176e9abc380cd020043",
+      "x64PreparedSha256": "59764869efb2425e83081b4e115d7cd4e1068ac115052176e9abc380cd020043",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/owner-scope-identity.ts",
+      "armPreparedSha256": "9cc013224379218b44454b4826c73abed96ac77c434e7aef9a69f43cc4032872",
+      "x64PreparedSha256": "9cc013224379218b44454b4826c73abed96ac77c434e7aef9a69f43cc4032872",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/interaction-evidence.ts",
+      "armPreparedSha256": "c8daf41d71c918036db077cac8d2135363be6006025f5ef1f6d083178a0366cd",
+      "x64PreparedSha256": "c8daf41d71c918036db077cac8d2135363be6006025f5ef1f6d083178a0366cd",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/agent-graph-overlay.ts",
+      "armPreparedSha256": "a596d4ae3acb892faab0e2863766c7559b79f9767e17670b0644fd693b94678a",
+      "x64PreparedSha256": "a596d4ae3acb892faab0e2863766c7559b79f9767e17670b0644fd693b94678a",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/fleet-catalog.ts",
+      "armPreparedSha256": "a3b1f86d5d62891371f977fe7f323a8c314e2a2fd4e07378228ad274d41c3feb",
+      "x64PreparedSha256": "a3b1f86d5d62891371f977fe7f323a8c314e2a2fd4e07378228ad274d41c3feb",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/issue-error.ts",
+      "armPreparedSha256": "d1cc4ebcc6332b74f012f5f86c59af3e9045901128f01d478de41886214edf04",
+      "x64PreparedSha256": "d1cc4ebcc6332b74f012f5f86c59af3e9045901128f01d478de41886214edf04",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/terminal-attachments.ts",
+      "armPreparedSha256": "2f773e0f2e5d050c9794b82435c826e843e8db594fdb7c9f5e5acb8ce14d5cc8",
+      "x64PreparedSha256": "2f773e0f2e5d050c9794b82435c826e843e8db594fdb7c9f5e5acb8ce14d5cc8",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-open-handoff.ts",
+      "armPreparedSha256": "e05e091f382d98413bbfcb4e5a08ad0a10f1b8e25e8520e9a955a21dd4cd056e",
+      "x64PreparedSha256": "e05e091f382d98413bbfcb4e5a08ad0a10f1b8e25e8520e9a955a21dd4cd056e",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-promotion.ts",
+      "armPreparedSha256": "8f200f933c604833ac967263ac4054e0ffdc69040f380d50d396e1bbec68d309",
+      "x64PreparedSha256": "8f200f933c604833ac967263ac4054e0ffdc69040f380d50d396e1bbec68d309",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-catalog-resource.ts",
+      "armPreparedSha256": "615e32707023cd9606d79c43e4afd84cb9329c1e8544fe5e1379fed451fb154a",
+      "x64PreparedSha256": "615e32707023cd9606d79c43e4afd84cb9329c1e8544fe5e1379fed451fb154a",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/window-links.ts",
+      "armPreparedSha256": "a9e1f474bb622560a5d5f56664289e458679a3e84e4a18888cb31f1f6d8df57b",
+      "x64PreparedSha256": "a9e1f474bb622560a5d5f56664289e458679a3e84e4a18888cb31f1f6d8df57b",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/interaction-receipts.ts",
+      "armPreparedSha256": "4790982a937e1aa05d1ff1597cc3cf4a3f01a26f6aaf3c551f9e8e67f17a5796",
+      "x64PreparedSha256": "4790982a937e1aa05d1ff1597cc3cf4a3f01a26f6aaf3c551f9e8e67f17a5796",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-multiplexer.ts",
+      "armPreparedSha256": "ea9b8e783daf6e2246716f0e3718f390284fd1e21e66a222cdf06bfda79650f3",
+      "x64PreparedSha256": "ea9b8e783daf6e2246716f0e3718f390284fd1e21e66a222cdf06bfda79650f3",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/fleet-lifecycle.ts",
+      "armPreparedSha256": "0d914d0979d84a00ff6527502fee6847b174c92b0e506763f17bad945fb349ec",
+      "x64PreparedSha256": "0d914d0979d84a00ff6527502fee6847b174c92b0e506763f17bad945fb349ec",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/actions-contract.ts",
+      "armPreparedSha256": "cfa112de7eb12a076d7b369e06ba9a5272d44a3c1ab9996050a1eddd225a590d",
+      "x64PreparedSha256": "cfa112de7eb12a076d7b369e06ba9a5272d44a3c1ab9996050a1eddd225a590d",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/actions-errors.ts",
+      "armPreparedSha256": "3df31b3970a045e240ccc6da3ab98c540b7478bf0a86a431c8be8c51e01b4b7f",
+      "x64PreparedSha256": "3df31b3970a045e240ccc6da3ab98c540b7478bf0a86a431c8be8c51e01b4b7f",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/terminals.ts",
+      "armPreparedSha256": "ceef6c77a61870979f48d8830316016ddb514f00aa7fd34ee200a8ec75f18a2f",
+      "x64PreparedSha256": "ceef6c77a61870979f48d8830316016ddb514f00aa7fd34ee200a8ec75f18a2f",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/tmux-server-scope.ts",
+      "armPreparedSha256": "7a2afe06e28bcc22a7c0a36777d6219d207a4f6db2165abf3fd7c0fe0020a2b0",
+      "x64PreparedSha256": "7a2afe06e28bcc22a7c0a36777d6219d207a4f6db2165abf3fd7c0fe0020a2b0",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/terminal-replica.ts",
+      "armPreparedSha256": "8688723dd2cce48dcde850c42be79e5394cfe18a3e61aebf88923a644d1dacfe",
+      "x64PreparedSha256": "8688723dd2cce48dcde850c42be79e5394cfe18a3e61aebf88923a644d1dacfe",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/session-runtime.ts",
+      "armPreparedSha256": "157fa9eebbd92e061fdf4d7c71dc485b6b17ee90cf23bb67adec3f8b0d7d2fc0",
+      "x64PreparedSha256": "157fa9eebbd92e061fdf4d7c71dc485b6b17ee90cf23bb67adec3f8b0d7d2fc0",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/causal-cell.ts",
+      "armPreparedSha256": "0e28f5bd82e8f09e9ed878c7504435c3705c090541e62da9bc50d5619dc8f99a",
+      "x64PreparedSha256": "0e28f5bd82e8f09e9ed878c7504435c3705c090541e62da9bc50d5619dc8f99a",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/terminal-delivery.ts",
+      "armPreparedSha256": "0202616362dc27bf00088978e75cfeaa0d0b456719bcfeb98333b38feaeec5e9",
+      "x64PreparedSha256": "0202616362dc27bf00088978e75cfeaa0d0b456719bcfeb98333b38feaeec5e9",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/pane-stream.ts",
+      "armPreparedSha256": "3b9dc5c3484731b6ca8ca663d3d289726888522de9539aba3976269677c5a7bc",
+      "x64PreparedSha256": "3b9dc5c3484731b6ca8ca663d3d289726888522de9539aba3976269677c5a7bc",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/control.ts",
+      "armPreparedSha256": "1e40953cfc289b85e1a5d8f0f866fff0df331efe283610d9d8e530c80158735d",
+      "x64PreparedSha256": "1e40953cfc289b85e1a5d8f0f866fff0df331efe283610d9d8e530c80158735d",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/desktop-daemon-issue.ts",
+      "armPreparedSha256": "647ad2afc077ed35a6b56cc18343abe940b2aee542bb1abb3b883dd26fb7cd67",
+      "x64PreparedSha256": "647ad2afc077ed35a6b56cc18343abe940b2aee542bb1abb3b883dd26fb7cd67",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/desktop-missions.ts",
+      "armPreparedSha256": "850798690ef81bdfa16f15446cd578ebdf8c0b51aece90ca334a50d6ede850e0",
+      "x64PreparedSha256": "850798690ef81bdfa16f15446cd578ebdf8c0b51aece90ca334a50d6ede850e0",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/visual-tokens.ts",
+      "armPreparedSha256": "8d6bb05e00ca1c70caa1bdec444a2e41197111216807a73a09b27aab496a61eb",
+      "x64PreparedSha256": "8d6bb05e00ca1c70caa1bdec444a2e41197111216807a73a09b27aab496a61eb",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/cohesion-fixture.ts",
+      "armPreparedSha256": "c5b16b0f20ee8159d16fe2bc77d2a76f83b943399d75da461b0ce0e52856476d",
+      "x64PreparedSha256": "c5b16b0f20ee8159d16fe2bc77d2a76f83b943399d75da461b0ce0e52856476d",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/application-shell.ts",
+      "armPreparedSha256": "e253eb8b1d12e50ea8be1aa1de7f6b8e6b2d371d97ee4e9a5a625fc1c2d84777",
+      "x64PreparedSha256": "e253eb8b1d12e50ea8be1aa1de7f6b8e6b2d371d97ee4e9a5a625fc1c2d84777",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/startup-readiness.ts",
+      "armPreparedSha256": "ba6141663e0feaba57e15185a0e4ec53682196faa53c91d1672afcbf4aa6d36a",
+      "x64PreparedSha256": "ba6141663e0feaba57e15185a0e4ec53682196faa53c91d1672afcbf4aa6d36a",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/application-shell-resource.ts",
+      "armPreparedSha256": "a3cd70abead9752ad7752c50243079e2822fdbbcc361fb563ac77a24908c148c",
+      "x64PreparedSha256": "a3cd70abead9752ad7752c50243079e2822fdbbcc361fb563ac77a24908c148c",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-resource-identity.ts",
+      "armPreparedSha256": "82874c9d7855982182e17b31a3e25ac0fecdc6a07933081b523a818b26c0c915",
+      "x64PreparedSha256": "82874c9d7855982182e17b31a3e25ac0fecdc6a07933081b523a818b26c0c915",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-files-resource.ts",
+      "armPreparedSha256": "4ef668599e8d759a555b15f56682a2e3aaaec1c8a0dd73bf36cba269db2ccfac",
+      "x64PreparedSha256": "4ef668599e8d759a555b15f56682a2e3aaaec1c8a0dd73bf36cba269db2ccfac",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-changes-resource.ts",
+      "armPreparedSha256": "b3bc6462c56bc6525bb11cc7ad9649b24dbfaa2aea231c5b65372411506987a2",
+      "x64PreparedSha256": "b3bc6462c56bc6525bb11cc7ad9649b24dbfaa2aea231c5b65372411506987a2",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-missions-resource.ts",
+      "armPreparedSha256": "e190acb0ee3253f8abdb1f8549da65cf63f7732bd0631babf870036bbd9ea48c",
+      "x64PreparedSha256": "e190acb0ee3253f8abdb1f8549da65cf63f7732bd0631babf870036bbd9ea48c",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/daemon-resources.ts",
+      "armPreparedSha256": "da29162cbc2cf02fd68fc5e03eb83a375e63d4faac01bcca40c855b326344ba2",
+      "x64PreparedSha256": "da29162cbc2cf02fd68fc5e03eb83a375e63d4faac01bcca40c855b326344ba2",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/daemon-events.ts",
+      "armPreparedSha256": "bf54b8970b4492bbbebab10dc4578e32fd98cddcb036ebaf0bb10833b1e1668d",
+      "x64PreparedSha256": "bf54b8970b4492bbbebab10dc4578e32fd98cddcb036ebaf0bb10833b1e1668d",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/desktop-host.ts",
+      "armPreparedSha256": "dae72b7e7f9401475c530c08e327bde12fb568cea8d9fb33e71766b95e38a45b",
+      "x64PreparedSha256": "dae72b7e7f9401475c530c08e327bde12fb568cea8d9fb33e71766b95e38a45b",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/multiplexer-verbs.ts",
+      "armPreparedSha256": "dad56cc34db19ee7b89d9196d7ca6612e6ca64b09ceb1b11fc10de787f035bdb",
+      "x64PreparedSha256": "dad56cc34db19ee7b89d9196d7ca6612e6ca64b09ceb1b11fc10de787f035bdb",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/widget-asset.ts",
+      "armPreparedSha256": "4ec31f1c1ece584b98afd428d13481d69df3e3bc5dbed795cd4cf622f1e79068",
+      "x64PreparedSha256": "4ec31f1c1ece584b98afd428d13481d69df3e3bc5dbed795cd4cf622f1e79068",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/daemon-resource-request.ts",
+      "armPreparedSha256": "668cc6ff5e937ff3f08580f344b87b4de237139e831ea33df1edcb93851c42ce",
+      "x64PreparedSha256": "668cc6ff5e937ff3f08580f344b87b4de237139e831ea33df1edcb93851c42ce",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/terminal-runtime-inventory.ts",
+      "armPreparedSha256": "fa0a7445466ff692975d6bdb7defb5494a413c67712f7e8ce753551654642c1f",
+      "x64PreparedSha256": "fa0a7445466ff692975d6bdb7defb5494a413c67712f7e8ce753551654642c1f",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-files-tree.ts",
+      "armPreparedSha256": "f2418b649dd3cbc427659e2ab2ef0eda038603387724b022d1734c3d18c9c516",
+      "x64PreparedSha256": "f2418b649dd3cbc427659e2ab2ef0eda038603387724b022d1734c3d18c9c516",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-changes-view.ts",
+      "armPreparedSha256": "f68f5c557528586cc6d07ebb1ee0b3a59ab1bc63f3e9f9145d153020d3429374",
+      "x64PreparedSha256": "f68f5c557528586cc6d07ebb1ee0b3a59ab1bc63f3e9f9145d153020d3429374",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/interaction-journal.ts",
+      "armPreparedSha256": "8b8366ddcd95cf9f2e5ceb6594c9cca62947b71ced73bd0cc88b5a4fb175ea0e",
+      "x64PreparedSha256": "8b8366ddcd95cf9f2e5ceb6594c9cca62947b71ced73bd0cc88b5a4fb175ea0e",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/visual-recipes.ts",
+      "armPreparedSha256": "c5fb3be5dc7c6c404cd6271c0dcf546d318c0c724ff4292bb2c5c8accf86405b",
+      "x64PreparedSha256": "c5fb3be5dc7c6c404cd6271c0dcf546d318c0c724ff4292bb2c5c8accf86405b",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/fleet-agent-graph.ts",
+      "armPreparedSha256": "bdc40538af7df1b9892065d40cdec9a82a21c9b64ab65bb370150e553af79157",
+      "x64PreparedSha256": "bdc40538af7df1b9892065d40cdec9a82a21c9b64ab65bb370150e553af79157",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/desktop-update.ts",
+      "armPreparedSha256": "86a12bfa6efacab07bbf59ea2907a3b04b2b011a5f81bdabe42ac50fdd693064",
+      "x64PreparedSha256": "86a12bfa6efacab07bbf59ea2907a3b04b2b011a5f81bdabe42ac50fdd693064",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/pane-widget-marker.ts",
+      "armPreparedSha256": "2cfa764bba55f9e8f92381674b8d1e9f1ecddae061f4e5a38568728aafc911c5",
+      "x64PreparedSha256": "2cfa764bba55f9e8f92381674b8d1e9f1ecddae061f4e5a38568728aafc911c5",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/rich-card-widget.ts",
+      "armPreparedSha256": "9d223bc61a65b54b8f594788e578debf0e4da762d7274324decd4cdfa23e23fc",
+      "x64PreparedSha256": "9d223bc61a65b54b8f594788e578debf0e4da762d7274324decd4cdfa23e23fc",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/pane-widget-descriptor.ts",
+      "armPreparedSha256": "93bf5c16ebe03991adee02fd2c88e8f0363e9d4dfdab72677631ac2789dbdb93",
+      "x64PreparedSha256": "93bf5c16ebe03991adee02fd2c88e8f0363e9d4dfdab72677631ac2789dbdb93",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/performance-qualification.ts",
+      "armPreparedSha256": "023fd39647ab7bc477b11d2576c2f91263f8eb95b7db39caf26914d446cfae7d",
+      "x64PreparedSha256": "023fd39647ab7bc477b11d2576c2f91263f8eb95b7db39caf26914d446cfae7d",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/performance-metrics.ts",
+      "armPreparedSha256": "f115a0c7625e2c259afdd52d6e8f065d0291b527e296b88ac13a2a791f5b11aa",
+      "x64PreparedSha256": "f115a0c7625e2c259afdd52d6e8f065d0291b527e296b88ac13a2a791f5b11aa",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/shared-monotonic-clock.ts",
+      "armPreparedSha256": "4cc1d653d2ad91cfeac907e5561d99d3697f3f473188d59b5d2723d7c47c0327",
+      "x64PreparedSha256": "4cc1d653d2ad91cfeac907e5561d99d3697f3f473188d59b5d2723d7c47c0327",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/visual-theme-presets.ts",
+      "armPreparedSha256": "354f49a4d687052e3a32a287ffb31e61433882f8beea8466af567b26b33cb745",
+      "x64PreparedSha256": "354f49a4d687052e3a32a287ffb31e61433882f8beea8466af567b26b33cb745",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/saved-machines.ts",
+      "armPreparedSha256": "2fc96766a667daff9337cc2fed78bbf359afdebe50b9f0a180daaf11cdededd5",
+      "x64PreparedSha256": "2fc96766a667daff9337cc2fed78bbf359afdebe50b9f0a180daaf11cdededd5",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/semantic-icons.ts",
+      "armPreparedSha256": "5ec0390d0d4b5d56e02a31b1808a3bc5902ad12712efa71e70b568ecceb5b108",
+      "x64PreparedSha256": "5ec0390d0d4b5d56e02a31b1808a3bc5902ad12712efa71e70b568ecceb5b108",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/workspace-admission.ts",
+      "armPreparedSha256": "dc2c31a9a4211cf951b82be37aac155b638514ffa04cfca5900478563390d32c",
+      "x64PreparedSha256": "dc2c31a9a4211cf951b82be37aac155b638514ffa04cfca5900478563390d32c",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/tmux-server-interaction-events.ts",
+      "armPreparedSha256": "ab2af2df2fd6d0d0e35fd0a1d85e886a2d209bce501c5e98d164b9704a770232",
+      "x64PreparedSha256": "ab2af2df2fd6d0d0e35fd0a1d85e886a2d209bce501c5e98d164b9704a770232",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/automation-operations.ts",
+      "armPreparedSha256": "a653686295a7c1e03313ed7d833f4f7c4cc5807d7a063c9ae51c9caac60e6c06",
+      "x64PreparedSha256": "a653686295a7c1e03313ed7d833f4f7c4cc5807d7a063c9ae51c9caac60e6c06",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/native-interaction-journal.ts",
+      "armPreparedSha256": "171f6049bd59cb9149f1012db19cc85c42c0348e25312a0cfba77fed61195aa8",
+      "x64PreparedSha256": "171f6049bd59cb9149f1012db19cc85c42c0348e25312a0cfba77fed61195aa8",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/native-operation-identity.ts",
+      "armPreparedSha256": "550881a3556a6602c567265ccb26e4cd3045b440fc2d4b049197f34ba4a43449",
+      "x64PreparedSha256": "550881a3556a6602c567265ccb26e4cd3045b440fc2d4b049197f34ba4a43449",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/contracts/src/index.ts",
+      "armPreparedSha256": "39aea4bb1ef64b4c8e67f25a81bad7e2169717d601c0f3a3077773b1b1fb856c",
+      "x64PreparedSha256": "39aea4bb1ef64b4c8e67f25a81bad7e2169717d601c0f3a3077773b1b1fb856c",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/core/src/interaction-evidence.ts",
+      "armPreparedSha256": "a57110808fb937621106b1b9de362304ff29645b94c574b88296d1b417f78604",
+      "x64PreparedSha256": "a57110808fb937621106b1b9de362304ff29645b94c574b88296d1b417f78604",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/native-journal-validation.ts",
+      "armPreparedSha256": "3fc62f7a5a5c71d9686a9b357f746fa61b29c05cd4b45e7b00cd30e022ec6187",
+      "x64PreparedSha256": "3fc62f7a5a5c71d9686a9b357f746fa61b29c05cd4b45e7b00cd30e022ec6187",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/native-interaction-projector.ts",
+      "armPreparedSha256": "949648e30da6a7e714d07ae5d29216339150c3f1b5319f0d75931723d3b02a3c",
+      "x64PreparedSha256": "949648e30da6a7e714d07ae5d29216339150c3f1b5319f0d75931723d3b02a3c",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/authored-native-receipt-enrichment.ts",
+      "armPreparedSha256": "05ff4715a9d9e9cafedba3a21220a0a78ed5868f9c99affe2eda30eeebdc37ec",
+      "x64PreparedSha256": "05ff4715a9d9e9cafedba3a21220a0a78ed5868f9c99affe2eda30eeebdc37ec",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/authored-native-receipt-staging.ts",
+      "armPreparedSha256": "1ba3bf975b1267f8255f9b2966ce5a127aac38d3ed94e9483758d8fb6952cbff",
+      "x64PreparedSha256": "1ba3bf975b1267f8255f9b2966ce5a127aac38d3ed94e9483758d8fb6952cbff",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/bounded-tmux-read.ts",
+      "armPreparedSha256": "f9464a01b711448cf44126d624ab39bb3c9ac49c3a5d57d5694e42b242256de5",
+      "x64PreparedSha256": "f9464a01b711448cf44126d624ab39bb3c9ac49c3a5d57d5694e42b242256de5",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/tmux-bridge/src/errors.ts",
+      "armPreparedSha256": "670636a373693a6d940ade476a23eef7cd3bb4102499f406390fbb1396959529",
+      "x64PreparedSha256": "670636a373693a6d940ade476a23eef7cd3bb4102499f406390fbb1396959529",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/tmux-bridge/src/runner.ts",
+      "armPreparedSha256": "8d97396cb91401b673917a8c86a72f9f4c414016660bdac2dbcbbd384a01d33b",
+      "x64PreparedSha256": "8d97396cb91401b673917a8c86a72f9f4c414016660bdac2dbcbbd384a01d33b",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/tmux-bridge/src/sessions.ts",
+      "armPreparedSha256": "872a7e4a8f1a23bb8e6a38eecff31d75558aefb29ded725be8a75b1d769aa4bd",
+      "x64PreparedSha256": "872a7e4a8f1a23bb8e6a38eecff31d75558aefb29ded725be8a75b1d769aa4bd",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/tmux-bridge/src/panes.ts",
+      "armPreparedSha256": "15bd3d736777c6eef4233684129d13aae7dafe3bd01d2a5dac5a6003fd94e3d3",
+      "x64PreparedSha256": "15bd3d736777c6eef4233684129d13aae7dafe3bd01d2a5dac5a6003fd94e3d3",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/tmux-bridge/src/monitor.ts",
+      "armPreparedSha256": "63de87b10139d336def2fd9333e4065a8445475cf3f286adbbec670d5cc3372f",
+      "x64PreparedSha256": "63de87b10139d336def2fd9333e4065a8445475cf3f286adbbec670d5cc3372f",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/tmux-bridge/src/targeting.ts",
+      "armPreparedSha256": "c86ec60583fe6c05fdc013a20aa0b405b3a0e11deb1ef41dc45d0f8db1e6f0d4",
+      "x64PreparedSha256": "c86ec60583fe6c05fdc013a20aa0b405b3a0e11deb1ef41dc45d0f8db1e6f0d4",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/tmux-bridge/src/index.ts",
+      "armPreparedSha256": "c0896c04e69f5c48af860af17f7ade627505db6cdb114271e5363d60969026a3",
+      "x64PreparedSha256": "c0896c04e69f5c48af860af17f7ade627505db6cdb114271e5363d60969026a3",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/unix-socket-authority.ts",
+      "armPreparedSha256": "c44280dd8d88de7e0922ff1edf9c45484a16bef62b6744d191bad523edaa4282",
+      "x64PreparedSha256": "c44280dd8d88de7e0922ff1edf9c45484a16bef62b6744d191bad523edaa4282",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/tmux-named-socket-fence.ts",
+      "armPreparedSha256": "9e40db6527045d98dd64fcbd22ffdc61152317d05ba4a754358d8f0ee332b3f9",
+      "x64PreparedSha256": "9e40db6527045d98dd64fcbd22ffdc61152317d05ba4a754358d8f0ee332b3f9",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/development-instance.ts",
+      "armPreparedSha256": "c15570fb561136e2968755e2986d00dff654f9c6e0ebcf9528cd1e694548eebe",
+      "x64PreparedSha256": "c15570fb561136e2968755e2986d00dff654f9c6e0ebcf9528cd1e694548eebe",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/runtime-namespace.ts",
+      "armPreparedSha256": "4145dde15e020aadb0b269f41909af35e5be70a4c430c639de774a15c2f36ee9",
+      "x64PreparedSha256": "4145dde15e020aadb0b269f41909af35e5be70a4c430c639de774a15c2f36ee9",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/development-build.ts",
+      "armPreparedSha256": "feb37e7bbe8d9ba5366b13fcbd0c3451204911d02bee18eaa3872eef055b5960",
+      "x64PreparedSha256": "feb37e7bbe8d9ba5366b13fcbd0c3451204911d02bee18eaa3872eef055b5960",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/bundled-tmux.ts",
+      "armPreparedSha256": "12352d0de9e67f671790b3c952445e14bb5021fba2d78965fb6ff6363ded31b6",
+      "x64PreparedSha256": "12352d0de9e67f671790b3c952445e14bb5021fba2d78965fb6ff6363ded31b6",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/tmux-client-execution.ts",
+      "armPreparedSha256": "28a2920bed897e8d1450b2eb1c23a537606ab9485bf375d14dbabe000c9f538f",
+      "x64PreparedSha256": "28a2920bed897e8d1450b2eb1c23a537606ab9485bf375d14dbabe000c9f538f",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/project-readiness.ts",
+      "armPreparedSha256": "7166cb3e91d7fe735beae2fd5a5f2e30e8f5fbd80e3e0174e5dd9d69b49aa6f5",
+      "x64PreparedSha256": "7166cb3e91d7fe735beae2fd5a5f2e30e8f5fbd80e3e0174e5dd9d69b49aa6f5",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/project-resolver.ts",
+      "armPreparedSha256": "0e5c627a8b4a031745adb3201c1b79c916ec16f2adbf309b123d296eccb58082",
+      "x64PreparedSha256": "0e5c627a8b4a031745adb3201c1b79c916ec16f2adbf309b123d296eccb58082",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/project-probe.ts",
+      "armPreparedSha256": "7e72111655e629f4e1e49a6e1f4e68a1ab169f97c7c55eb897b1ac6bf340af61",
+      "x64PreparedSha256": "7e72111655e629f4e1e49a6e1f4e68a1ab169f97c7c55eb897b1ac6bf340af61",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/project-readiness-probe.ts",
+      "armPreparedSha256": "b0e54325d7dcbaa6af67e8bb10a2195ab21da830cd99992da9cbccaafe3dff0b",
+      "x64PreparedSha256": "b0e54325d7dcbaa6af67e8bb10a2195ab21da830cd99992da9cbccaafe3dff0b",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/shell.ts",
+      "armPreparedSha256": "68131f01bf17c593d6eaf38134e9aa0b9d0aa9b0ddcd2a975f3b1ee6fd1dc60b",
+      "x64PreparedSha256": "68131f01bf17c593d6eaf38134e9aa0b9d0aa9b0ddcd2a975f3b1ee6fd1dc60b",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/tui/integrations/claude.ts",
+      "armPreparedSha256": "760ddf056584f4dce48e94de0d45401d683fcb641ce25112de68910a2e67cd0d",
+      "x64PreparedSha256": "760ddf056584f4dce48e94de0d45401d683fcb641ce25112de68910a2e67cd0d",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/tui/integrations/opencode.ts",
+      "armPreparedSha256": "c03b805ab9b03ef640521d193e705306b97c16400235fd2eb4735fd278656be3",
+      "x64PreparedSha256": "c03b805ab9b03ef640521d193e705306b97c16400235fd2eb4735fd278656be3",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/agent-discovery.ts",
+      "armPreparedSha256": "f05764408252bd0136d8ea5d9fbc698de4e6c006bee28f3eeb1e342b9ccfb469",
+      "x64PreparedSha256": "f05764408252bd0136d8ea5d9fbc698de4e6c006bee28f3eeb1e342b9ccfb469",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/agent-kind.ts",
+      "armPreparedSha256": "34ab547e7f92194f2e55308ed3ae7d31220383f2bcab811b7dc9cc0724fc6fba",
+      "x64PreparedSha256": "34ab547e7f92194f2e55308ed3ae7d31220383f2bcab811b7dc9cc0724fc6fba",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/workspace-config-loader.ts",
+      "armPreparedSha256": "45256571e3a6689ada778e0d4f37e9ff33843a4955acbb6768f3f54ce8b71ee7",
+      "x64PreparedSha256": "45256571e3a6689ada778e0d4f37e9ff33843a4955acbb6768f3f54ce8b71ee7",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/workspace-registry.ts",
+      "armPreparedSha256": "249d8fca70361991e3f42cc1a533b93bfbfd6f963b421f97b510071eae260515",
+      "x64PreparedSha256": "249d8fca70361991e3f42cc1a533b93bfbfd6f963b421f97b510071eae260515",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/terminal/protocol/pane-display-name.ts",
+      "armPreparedSha256": "e97a49671bcc28d166aabf941dd3b15bf4225111b61188f6b8f2157afaf66a55",
+      "x64PreparedSha256": "e97a49671bcc28d166aabf941dd3b15bf4225111b61188f6b8f2157afaf66a55",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/errors.ts",
+      "armPreparedSha256": "754aeb2d389659d7abf7e62f453f33fd84afa19fd9b0d63fa15335af297792d7",
+      "x64PreparedSha256": "754aeb2d389659d7abf7e62f453f33fd84afa19fd9b0d63fa15335af297792d7",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/project-runtime-errors.ts",
+      "armPreparedSha256": "04c1657fd0f4ad99f58e671956a9d8a091697e47dd0dab16a8d4bb9be97fce7c",
+      "x64PreparedSha256": "04c1657fd0f4ad99f58e671956a9d8a091697e47dd0dab16a8d4bb9be97fce7c",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/state-home.ts",
+      "armPreparedSha256": "11d0351a6b4f9a6184b055f6b549392be57350a43e7c20d32b9f2da24564063d",
+      "x64PreparedSha256": "11d0351a6b4f9a6184b055f6b549392be57350a43e7c20d32b9f2da24564063d",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/project-runtime-repository.ts",
+      "armPreparedSha256": "cd63849fea3a2c233bef072cc64136234cbd4cf21958c2d2ebf680c84b4b30fc",
+      "x64PreparedSha256": "cd63849fea3a2c233bef072cc64136234cbd4cf21958c2d2ebf680c84b4b30fc",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/mission-repository.ts",
+      "armPreparedSha256": "09e21aa04bb97274b0e5eb8b382251bf3b4dbe01e1f8d241f76c47b29e401a01",
+      "x64PreparedSha256": "09e21aa04bb97274b0e5eb8b382251bf3b4dbe01e1f8d241f76c47b29e401a01",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/tmux-terminal-color.ts",
+      "armPreparedSha256": "5a1a6c66390ad3249e38d5308246fb67bfd0fe2d6458fc2df56c4b8af8324fbc",
+      "x64PreparedSha256": "5a1a6c66390ad3249e38d5308246fb67bfd0fe2d6458fc2df56c4b8af8324fbc",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/workspace-pane-creation.ts",
+      "armPreparedSha256": "0b5de1af01b7421e4caf5e36d2b3a24b9c90d228dd3cfd0fd7e76edf3af2deb6",
+      "x64PreparedSha256": "0b5de1af01b7421e4caf5e36d2b3a24b9c90d228dd3cfd0fd7e76edf3af2deb6",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/tmux-server-generation-runner.ts",
+      "armPreparedSha256": "09c021d8b14c18761e97ffb031871b637d30672e1e610775d14e146a435bc48d",
+      "x64PreparedSha256": "09c021d8b14c18761e97ffb031871b637d30672e1e610775d14e146a435bc48d",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/terminal/protocol/control.ts",
+      "armPreparedSha256": "d6ccf098522a8e31c8d980138c077682bf347772980c82ccfdeef25889248f4d",
+      "x64PreparedSha256": "d6ccf098522a8e31c8d980138c077682bf347772980c82ccfdeef25889248f4d",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/native-journal-control-connection.ts",
+      "armPreparedSha256": "94891866e60cd26294739b48eaca7f3f2407c3b2f58def3c57f5e724e1b56dd0",
+      "x64PreparedSha256": "94891866e60cd26294739b48eaca7f3f2407c3b2f58def3c57f5e724e1b56dd0",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/native-tmux-interaction-observer.ts",
+      "armPreparedSha256": "25fe499de80614c77679b3634c4afb83f81d47e906e71c22d2b5194a1df57158",
+      "x64PreparedSha256": "25fe499de80614c77679b3634c4afb83f81d47e906e71c22d2b5194a1df57158",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/owned-native-interaction-bindings.ts",
+      "armPreparedSha256": "da6064aeca79cf4e7150e54cc31758df7647a77015dd3d7a7e8ab548199308f4",
+      "x64PreparedSha256": "da6064aeca79cf4e7150e54cc31758df7647a77015dd3d7a7e8ab548199308f4",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/owner-interaction-observation.ts",
+      "armPreparedSha256": "ed7c940e24f4bfe2626baec2d2977dd34e206740a12415346508c8e8912fb59e",
+      "x64PreparedSha256": "ed7c940e24f4bfe2626baec2d2977dd34e206740a12415346508c8e8912fb59e",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/interaction-receipt-journal.ts",
+      "armPreparedSha256": "e142dd4ba0384b76235e2a48bfbe1e20cd83e264f1444417c5eb628cb869ee70",
+      "x64PreparedSha256": "e142dd4ba0384b76235e2a48bfbe1e20cd83e264f1444417c5eb628cb869ee70",
+      "equal": true
+    },
+    {
+      "path": "/work/source/packages/daemon/src/lib/interaction-observation-status.ts",
+      "armPreparedSha256": "5e0b1915fc509bdebc4ef25fa790d4c6fcb20414156a66f328187f1c396cc9e6",
+      "x64PreparedSha256": "5e0b1915fc509bdebc4ef25fa790d4c6fcb20414156a66f328187f1c396cc9e6",
+      "equal": true
+    }
+  ]
+}

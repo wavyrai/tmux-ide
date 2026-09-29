@@ -1,0 +1,13 @@
+import {readFileSync} from 'node:fs';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+import {linuxHost} from './linux-host.mjs';import {ownedProcesses} from './owned-process.mjs';
+const execute=promisify(execFile),host=linuxHost(JSON.parse(readFileSync('/evidence/component-host.json','utf8')));
+await host.assertIdentity();
+const input=readFileSync(0,'utf8');if(Buffer.byteLength(input)>65536)throw Error('Oversized process request');const q=JSON.parse(input);
+const owned=ownedProcesses(host,async(pid,remaining)=>{try{const r=await execute('/usr/bin/pgrep',['-P',String(pid)],{timeout:Math.min(remaining,5000),maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LC_ALL:'C',TZ:'UTC'}});return r.stdout.trim().split(/\s+/).filter(Boolean).map(Number);}catch(e){if(e.code===1)return [];throw e;}});
+owned.load(q.witnesses);
+let result;
+if(q.op==='sample')result=await owned.sample(q.pid);
+else if(q.op==='snapshot')result=await owned.snapshot(q.pids);
+else if(q.op==='retired')result=await owned.retired(q.pid);
+else throw Error('Closed process operation required');
+process.stdout.write(JSON.stringify({result,witnesses:[...owned.witnesses.values()]}));

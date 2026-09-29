@@ -1,0 +1,51 @@
+--- accepted-arm/common/linux-host.mjs
++++ x64/common/linux-host.mjs
+@@ -7,6 +7,7 @@
+  const sampler=createOwnedProcessSampler({platform:'linux',clockTicksPerSecond:d.clockTicksPerSecond,bootId:d.bootId,readSnapshot:pid=>readOwnedProcStat(pid,read)});
+  return {...sampler,async assertIdentity(){
+   assert.equal((await read('/proc/sys/kernel/random/boot_id')).trim(),d.bootId);
++  assert.equal((await read('/proc/self/cgroup')).trim(),d.cgroupPath,'Fresh component cgroup identity changed');
+   const r=await execute(d.tools.getconf.path,['CLK_TCK'],{timeout:5000,encoding:'utf8',env:{PATH:d.environment.PATH,LC_ALL:'C',TZ:'UTC'}});assert.equal(Number(r.stdout.trim()),d.clockTicksPerSecond);
+  },async parentPid(pid,expectedIdentity){
+   await sampler.sampleOwnedProcess(pid,expectedIdentity);const raw=await read(`/proc/${pid}/stat`);const fields=raw.slice(raw.lastIndexOf(')')+2).trim().split(/\s+/);const parent=Number(fields[1]);assert(Number.isSafeInteger(parent)&&parent>=0);await sampler.sampleOwnedProcess(pid,expectedIdentity);return parent;
+--- accepted-arm/common/host-descriptor.mjs
++++ x64/common/host-descriptor.mjs
+@@ -1,6 +1,6 @@
+ import assert from 'node:assert/strict';
+ export function validateHostDescriptor(d){
+- assert.equal(d.version,1);assert.equal(d.platform,'linux');assert.equal(d.arch,'arm64');
++ assert.equal(d.version,1);assert.equal(d.platform,'linux');assert.equal(d.arch,'x64');
+  assert.match(d.bootId,/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);assert(Number.isSafeInteger(d.clockTicksPerSecond)&&d.clockTicksPerSecond>0);
+  assert.match(d.containerImage,/^sha256:[a-f0-9]{64}$/);assert.equal(d.containerInit,true);
+  assert.equal(d.candidate.base,'cb6f09efb173d045d2bc221d0f14cfe415075b48');assert.equal(d.candidate.observationBatchMs,32);assert.equal(d.candidate.nativeDefaultEnabled,false);
+@@ -9,8 +9,8 @@
+  assert.match(d.tools.node.version,/^26\./);assert.equal(d.tools.bun.version,'1.4.2');
+  for(const key of ['native','reference']){assert(d[key].path.startsWith('/'));assert.match(d[key].sha256,/^[a-f0-9]{64}$/);}
+  assert.match(d.native.journalPatchSha256,/^[a-f0-9]{64}$/);assert.equal(d.native.functionalReviewed,true);assert.equal(d.native.sanitizerReviewed,true);assert.equal(d.native.cleanupReviewed,true);
+- assert.equal(d.native.sha256,'369290ef00468b962b438ea249d1ef41a619107df86a57f43c48e1b6ffc9a869');
+- assert.equal(d.elf.machine,'AArch64');assert(d.elf.interpreter.startsWith('/'));assert.match(d.elf.interpreterSha256,/^[a-f0-9]{64}$/);assert(Array.isArray(d.elf.systemDirs)&&d.elf.systemDirs.length>0);
++ assert.equal(d.native.sha256,'8933071dbaeea131b04961ab74ff8b21a622891bce6a01f43ef5122e2fad14d2');
++ assert.equal(d.elf.machine,'Advanced Micro Devices X86-64');assert(d.elf.interpreter.startsWith('/'));assert.match(d.elf.interpreterSha256,/^[a-f0-9]{64}$/);assert(Array.isArray(d.elf.systemDirs)&&d.elf.systemDirs.length>0);
+  for(const p of d.elf.systemDirs)assert(p.startsWith('/')&&!p.includes('..'));
+  assert.equal(d.environment.LC_ALL,'C');assert.equal(d.environment.TZ,'UTC');
+  for(const key of Object.keys(d.environment))assert(!/^(LD_|NODE_OPTIONS|NODE_PATH)/.test(key));
+--- accepted-arm/common/proc-bridge.mjs
++++ x64/common/proc-bridge.mjs
+@@ -1,6 +1,6 @@
+ import {readFileSync} from 'node:fs';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+ import {linuxHost} from './linux-host.mjs';import {ownedProcesses} from './owned-process.mjs';
+-const execute=promisify(execFile),host=linuxHost(JSON.parse(readFileSync('/work/host.json','utf8')));
++const execute=promisify(execFile),host=linuxHost(JSON.parse(readFileSync('/evidence/component-host.json','utf8')));
+ await host.assertIdentity();
+ const input=readFileSync(0,'utf8');if(Buffer.byteLength(input)>65536)throw Error('Oversized process request');const q=JSON.parse(input);
+ const owned=ownedProcesses(host,async(pid,remaining)=>{try{const r=await execute('/usr/bin/pgrep',['-P',String(pid)],{timeout:Math.min(remaining,5000),maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LC_ALL:'C',TZ:'UTC'}});return r.stdout.trim().split(/\s+/).filter(Boolean).map(Number);}catch(e){if(e.code===1)return [];throw e;}});
+--- accepted-arm/common/linux-owned.mjs
++++ x64/common/linux-owned.mjs
+@@ -1,6 +1,6 @@
+ import {readFileSync} from 'node:fs';import {execFile} from 'node:child_process';import {promisify} from 'node:util';
+ import {linuxHost} from './linux-host.mjs';import {ownedProcesses} from './owned-process.mjs';
+ export async function createLinuxOwned(){
+- const host=linuxHost(JSON.parse(readFileSync('/work/host.json','utf8')));await host.assertIdentity();const execute=promisify(execFile);
++ const host=linuxHost(JSON.parse(readFileSync('/evidence/component-host.json','utf8')));await host.assertIdentity();const execute=promisify(execFile);
+  return ownedProcesses(host,async(pid,remaining)=>{try{const r=await execute('/usr/bin/pgrep',['-P',String(pid)],{timeout:Math.min(remaining,5000),maxBuffer:65536,env:{PATH:'/usr/bin:/bin',LC_ALL:'C',TZ:'UTC'}});return r.stdout.trim().split(/\s+/).filter(Boolean).map(Number);}catch(e){if(e.code===1)return [];throw e;}});
+ }
