@@ -26,12 +26,17 @@
   "dockerSha256": "6435ff9214bf8e0931078fb0980809728cac0a54a526d4f28a26d3e48132b58d",
   "dockerHost": "unix:///var/run/docker.sock",
   "scope": "be8/default0 coherence six original cases",
-  "reviewed": false,
-  "coherenceArtifact": null,
-  "runtimeArchiveSha256": null,
-  "artifactReceiptSha256": null,
-  "cliSha256": null,
-  "stockSha256": null,
+  "reviewed": true,
+  "coherenceArtifact": {
+    "run": 36606002477,
+    "id": 11052065821,
+    "bytes": 1685032111,
+    "sha256": "c8f3e50d94e9600858b9a5b82e9a58358153dc1528d7679170c01e186ccd7fa9"
+  },
+  "runtimeArchiveSha256": "df43285415745189fa617a7bf47e2af25c3b30e28b74957611491e236f58c503",
+  "artifactReceiptSha256": "0590ce344e8d0af2f05d7b8b968a897b79474f599e30ac8b37fbf5cc2b85146c",
+  "cliSha256": "c15dffe3985a3380b34f3e42bd5ed0b83791112d8cf24d8f9bb36c0219e5f1e7",
+  "stockSha256": "32f1609a353ec3021acf305c047141583e77a4ecc4dabd51aeb4fcdf60d7a689",
   "lane": "coherence-native-stock",
   "budgets": {
     "clients": [

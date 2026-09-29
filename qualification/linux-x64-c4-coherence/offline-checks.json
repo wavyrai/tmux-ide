@@ -2,8 +2,10 @@
   "tests": 7,
   "passed": true,
   "pythonAST": true,
-  "artifactPinsUnset": true,
-  "executionRefused": true,
+  "artifactPinsUnset": false,
+  "executionRefused": "missing/unreviewed pins refused; reviewed complete pins pass",
   "runtimeScope": "be8/default0",
-  "liveRuns": 0
+  "liveRuns": 0,
+  "positiveClosedPinTests": 1,
+  "unchangedSuiteNotRepeated": true
 }

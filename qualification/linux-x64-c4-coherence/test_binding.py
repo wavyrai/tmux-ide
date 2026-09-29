@@ -12,7 +12,7 @@ class Binding(unittest.TestCase):
    r,o=self.fixture();o[key]=val
    with self.assertRaises(AssertionError):bind(r,o,'b'*64)
  def test_draft_pins_cannot_execute(self):
-  d=json.loads((pathlib.Path(__file__).parent/'pins.json').read_text())
+  d=json.loads((pathlib.Path(__file__).parent/'pins.json').read_text());d.update(reviewed=False,runtimeArchiveSha256=None)
   with self.assertRaises(AssertionError):require_reviewed_pins(d)
   with self.assertRaises(AssertionError):require_closed_campaign(d)
   d['reviewed']=True
