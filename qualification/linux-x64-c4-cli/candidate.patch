@@ -1,0 +1,82 @@
+diff --git a/packages/daemon/src/lib/native-tmux-interaction-observer-handshake.test.ts b/packages/daemon/src/lib/native-tmux-interaction-observer-handshake.test.ts
+index 78986eaf..605b4f49 100644
+--- a/packages/daemon/src/lib/native-tmux-interaction-observer-handshake.test.ts
++++ b/packages/daemon/src/lib/native-tmux-interaction-observer-handshake.test.ts
+@@ -119,7 +119,8 @@ it("hundreds of completed batches leave no idle lease or handshake deadline", as
+   const reader = observer();
+   try {
+     await reader.start();
+-    await vi.advanceTimersByTimeAsync(0);
++    // Complete each default 32ms caught-up window before asserting parked idle.
++    await vi.advanceTimersByTimeAsync(300 * 32);
+     expect(mocks.read).toHaveBeenCalledTimes(301);
+     expect(mocks.construct).toHaveBeenCalledTimes(1);
+     expect(mocks.start).toHaveBeenCalledTimes(1);
+diff --git a/packages/daemon/src/lib/native-tmux-interaction-observer.test.ts b/packages/daemon/src/lib/native-tmux-interaction-observer.test.ts
+index dcc145db..4efa3e38 100644
+--- a/packages/daemon/src/lib/native-tmux-interaction-observer.test.ts
++++ b/packages/daemon/src/lib/native-tmux-interaction-observer.test.ts
+@@ -93,6 +93,7 @@ function fixture(
+     nativeServerIdentity: { pid: "1", startTime: "1" },
+     onEvent: (event) => events.push(event),
+     io,
++    timing: { observationBatchMs: 0 },
+     ...options,
+   });
+   return { observer, events, io, delays, releases };
+@@ -401,7 +402,7 @@ describe("native observer lifecycle", () => {
+   });
+ });
+ 
+-describe("opt-in observation batching", () => {
++describe("observation batching", () => {
+   it.each([16, 32] as const)(
+     "drains a quiet trailing record after one fixed %ims window",
+     async (window) => {
+@@ -541,7 +542,32 @@ describe("opt-in observation batching", () => {
+ });
+ 
+ describe("observation batching defaults and failure", () => {
+-  it.each([undefined, 0] as const)("keeps %s batching immediate", async (window) => {
++  it.each([undefined, {}] as const)(
++    "defaults omitted timing %s to one fixed 32ms window",
++    async (timing) => {
++      let reads = 0;
++      const f = fixture(
++        async (args, signal) => {
++          if (args.includes("-V")) return JSON.stringify(capability);
++          return ++reads === 1 ? JSON.stringify(batch(["1"])) : pending(signal);
++        },
++        { timing },
++      );
++      await f.observer.start();
++      await flush();
++      expect(reads).toBe(1);
++      expect(f.delays).toEqual([32]);
++      await flush();
++      expect(f.delays).toEqual([32]);
++      f.releases[0]!();
++      await flush();
++      expect(reads).toBe(2);
++      await f.observer.dispose();
++    },
++  );
++
++  it("keeps explicit 0 batching immediate", async () => {
++    const window = 0;
+     let reads = 0;
+     const f = fixture(
+       async (args, signal) => {
+diff --git a/packages/daemon/src/lib/native-tmux-interaction-observer.ts b/packages/daemon/src/lib/native-tmux-interaction-observer.ts
+index 7f899cec..6ee30a31 100644
+--- a/packages/daemon/src/lib/native-tmux-interaction-observer.ts
++++ b/packages/daemon/src/lib/native-tmux-interaction-observer.ts
+@@ -153,7 +153,7 @@ export class NativeTmuxInteractionObserver {
+     this.#retryMs = bounded(options.timing?.retryMs, 1_000, 60_000);
+     this.#maxRetryMs = bounded(options.timing?.maxRetryMs, 30_000, 300_000);
+     if (this.#maxRetryMs < this.#retryMs) throw new TypeError("Invalid native retry bounds");
+-    this.#observationBatchMs = options.timing?.observationBatchMs ?? 0;
++    this.#observationBatchMs = options.timing?.observationBatchMs ?? 32;
+     if (![0, 16, 32].includes(this.#observationBatchMs))
+       throw new TypeError("Invalid native observation batching window");
+     this.#io = options.io ?? {

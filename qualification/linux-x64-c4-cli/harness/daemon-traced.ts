@@ -1,0 +1,277 @@
+/**
+ * The daemon under test: a real headless `tmux-ide` process over a scratch
+ * fleet, and the owner-gated client the harness uses for SETUP only.
+ *
+ * Readiness is taken from the daemon's own startup-readiness ladder rather than
+ * from ad-hoc polling of whichever route a test happens to need. The ladder is
+ * the daemon's positive answer to "am I up?", so waiting on it means the suite
+ * and the product agree on what "up" means — and a harness that hangs reports
+ * the rung it is stuck at instead of a bare timeout.
+ */
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
+import { CanonicalDaemonInfoSchema, type CanonicalDaemonInfo } from "@tmux-ide/contracts";
+
+import {
+  pollUntil,
+  processIsAlive,
+  spawnHarnessChild,
+  type HarnessChild,
+} from "../../../apps/desktop-renderer/e2e/fixtures/harness-process.ts";
+import type { ScratchFleet } from "../../../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
+
+const DAEMON_READY_TIMEOUT_MS = 45_000;
+const LADDER_TIMEOUT_MS = 45_000;
+const BUNDLE_BUILD_TIMEOUT_MS = 120_000;
+
+export const repoRoot = resolve(import.meta.dirname, "..", "..", "..");
+export const rendererRoot = join(repoRoot, "apps", "desktop-renderer");
+
+export type CanonicalDaemonRecord = CanonicalDaemonInfo & { readonly authToken: string };
+
+export interface StartupReadinessRung {
+  readonly rung: string;
+  readonly status: "pending" | "satisfied" | "stuck";
+  readonly reason?: { readonly vocabulary: string; readonly code: string };
+  readonly population?: {
+    readonly fleet: "empty" | "populated";
+    readonly workspaceCount: number;
+    readonly attachablePaneCount: number;
+  };
+}
+
+export interface StartupReadinessLadder {
+  readonly rungs: readonly StartupReadinessRung[];
+  readonly blockedAt: string | null;
+}
+
+export interface RunningDaemon {
+  readonly record: CanonicalDaemonRecord;
+  readonly baseUrl: string;
+  readonly readiness: () => Promise<StartupReadinessLadder>;
+  /** SETUP ONLY. Registers a session as a workspace without using the UI. */
+  readonly promote: (label: string) => Promise<string>;
+  readonly fleetLabels: () => Promise<readonly string[]>;
+  /** Observe a new generation published by the same owned process; never spawn it. */
+  readonly refreshGeneration: () => Promise<void>;
+  readonly output: () => string;
+  readonly stop: () => Promise<void>;
+}
+
+const execFileAsync = promisify(execFile);
+let bundleBuild: Promise<void> | null = null;
+
+/**
+ * Rebuild `bin/cli.js` before the first daemon of a run starts.
+ *
+ * The daemon under test is not the source tree — it is the esbuild bundle, so
+ * every daemon-side change is invisible here until that bundle is rebuilt. A
+ * stale bundle does not fail loudly; it silently tests the PREVIOUS commit's
+ * daemon and reports whatever that code does, which is worse than a red suite
+ * because it looks like a real verdict.
+ *
+ * This is not hypothetical. A rebase rewrites the tracked bundle to the target
+ * branch's build, so the suite ran main's daemon against this branch's
+ * assertions and reported a fix as broken. mtime cannot catch that — the rebase
+ * makes the stale bundle NEWER than the sources it disagrees with — so the only
+ * honest answer is to build it. It costs about a second, once per run.
+ */
+async function ensureDaemonBundle(): Promise<void> {
+  bundleBuild ??= execFileAsync("node", [join(repoRoot, "scripts", "build-cli.mjs")], {
+    cwd: repoRoot,
+    timeout: BUNDLE_BUILD_TIMEOUT_MS,
+  }).then(() => undefined);
+  await bundleBuild;
+}
+
+export async function startDaemon(
+  fleet: ScratchFleet,
+  options: { readonly prebuiltCliSha256?: string; readonly qualificationPreload?: string } = {},
+): Promise<RunningDaemon> {
+  if (options.prebuiltCliSha256 === undefined) await ensureDaemonBundle();
+  else {
+    if (!/^[a-f0-9]{64}$/.test(options.prebuiltCliSha256))
+      throw new TypeError("Invalid prebuilt CLI digest");
+    const actual = createHash("sha256")
+      .update(await readFile(join(repoRoot, "bin", "cli.js")))
+      .digest("hex");
+    if (actual !== options.prebuiltCliSha256) throw new Error("Prebuilt CLI digest changed");
+  }
+  const environment: NodeJS.ProcessEnv = { ...process.env, ...fleet.environment };
+  // Inherited runtime hooks and a stale pane id would follow the daemon into
+  // the scratch world and point it back at the developer's real tmux server.
+  delete environment.NODE_OPTIONS;
+  delete environment.NODE_PATH;
+  delete environment.TMUX_PANE;
+  delete environment.TMUX_TMPDIR;
+
+  const harness: HarnessChild = spawnHarnessChild({
+    command: process.execPath,
+    args: [...(options.qualificationPreload ? ["--import", options.qualificationPreload] : []), join(repoRoot, "bin", "cli.js"), "--headless"],
+    cwd: repoRoot,
+    env: environment,
+  });
+
+  let record = await pollUntil<CanonicalDaemonRecord>({
+    probe: async () => {
+      if (harness.child.exitCode !== null) {
+        throw new Error(`daemon exited (${harness.child.exitCode})\n${harness.output()}`);
+      }
+      const parsed = CanonicalDaemonInfoSchema.safeParse(
+        JSON.parse(await readFile(join(fleet.daemonInfoDir, "daemon.json"), "utf8")),
+      );
+      // A SIGKILL intentionally leaves daemon.json behind. Never let a newly
+      // spawned harness child "become ready" by reading its predecessor's
+      // still-valid record before it has published its own identity.
+      if (
+        !parsed.success ||
+        parsed.data.authToken === null ||
+        parsed.data.pid !== harness.child.pid
+      )
+        return null;
+      return parsed.data as CanonicalDaemonRecord;
+    },
+    detail: "the daemon to publish its canonical record",
+    timeoutMs: DAEMON_READY_TIMEOUT_MS,
+  }).catch(async (error: unknown) => {
+    // Startup has not returned its owner handle yet. Retire only the harness
+    // that this invocation spawned, never a PID read from a stale info file.
+    try {
+      await harness.stop();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Daemon startup and cleanup failed", {
+        cause: cleanupError,
+      });
+    }
+    throw error;
+  });
+
+  let baseUrl = `http://127.0.0.1:${record.port}`;
+  let owner = { Authorization: `Bearer ${record.authToken}` };
+
+  const readiness = async (): Promise<StartupReadinessLadder> => {
+    const response = await fetch(`${baseUrl}/api/resources/startup-readiness`, { headers: owner });
+    if (!response.ok) throw new Error(`startup-readiness answered ${response.status}`);
+    const body = (await response.json()) as { readonly ladder: StartupReadinessLadder };
+    return body.ladder;
+  };
+
+  const fleetLabels = async (): Promise<readonly string[]> => {
+    const response = await fetch(`${baseUrl}/api/resources/fleet-catalog`, { headers: owner });
+    if (!response.ok) throw new Error(`fleet-catalog answered ${response.status}`);
+    const body = (await response.json()) as {
+      readonly sessions?: readonly { readonly label: string }[];
+    };
+    return (body.sessions ?? []).map((session) => session.label);
+  };
+
+  const promote = async (label: string): Promise<string> => {
+    const session = await pollUntil<{ sessionId: string }>({
+      probe: async () => {
+        const response = await fetch(`${baseUrl}/api/resources/fleet-catalog`, { headers: owner });
+        if (!response.ok) return null;
+        const body = (await response.json()) as {
+          readonly sessions?: readonly { readonly label: string; readonly sessionId: string }[];
+        };
+        return body.sessions?.find((entry) => entry.label === label) ?? null;
+      },
+      detail: `the session ${label} to appear in the fleet catalog`,
+      timeoutMs: 30_000,
+      intervalMs: 200,
+    });
+    const response = await fetch(`${baseUrl}/api/v2/action/workspace.promote`, {
+      method: "POST",
+      headers: {
+        ...owner,
+        "Content-Type": "application/json",
+        "X-Tmux-Ide-Operation-Id": randomUUID(),
+      },
+      body: JSON.stringify({ sessionId: session.sessionId }),
+    });
+    const body = (await response.json()) as {
+      readonly ok?: boolean;
+      readonly result?: { readonly resource?: { readonly workspaceName?: string } };
+    };
+    const workspaceName = body.result?.resource?.workspaceName;
+    if (body.ok !== true || !workspaceName) {
+      throw new Error(`workspace.promote refused for ${label}: ${JSON.stringify(body)}`);
+    }
+    return workspaceName;
+  };
+
+  return {
+    get record() {
+      return record;
+    },
+    get baseUrl() {
+      return baseUrl;
+    },
+    refreshGeneration: async () => {
+      const previous = record.instanceId;
+      record = await pollUntil<CanonicalDaemonRecord>({
+        probe: async () => {
+          const parsed = CanonicalDaemonInfoSchema.safeParse(
+            JSON.parse(await readFile(join(fleet.daemonInfoDir, "daemon.json"), "utf8")),
+          );
+          return parsed.success &&
+            parsed.data.authToken !== null &&
+            parsed.data.pid === harness.child.pid &&
+            parsed.data.instanceId !== previous
+            ? (parsed.data as CanonicalDaemonRecord)
+            : null;
+        },
+        detail: "the owned daemon process to publish a replacement generation",
+        timeoutMs: 30_000,
+      });
+      baseUrl = `http://127.0.0.1:${record.port}`;
+      owner = { Authorization: `Bearer ${record.authToken}` };
+    },
+    readiness,
+    promote,
+    fleetLabels,
+    output: harness.output,
+    stop: async () => {
+      await harness.stop();
+      if (Number.isInteger(record.pid) && processIsAlive(record.pid)) {
+        try {
+          process.kill(record.pid, "SIGKILL");
+        } catch {
+          // Already gone with its group, which is the outcome we wanted.
+        }
+      }
+    },
+  };
+}
+
+/**
+ * Wait for the daemon's own five-rung ladder to clear.
+ *
+ * `attachment-issuable` satisfied means a pane-stream lease could be issued NOW
+ * — which is precisely the precondition the terminal chain depends on, and the
+ * thing that used to be approximated by sleeping.
+ */
+export async function waitForReadinessLadder(
+  daemon: RunningDaemon,
+): Promise<StartupReadinessLadder> {
+  let last: StartupReadinessLadder | null = null;
+  return await pollUntil<StartupReadinessLadder>({
+    probe: async () => {
+      const ladder = await daemon.readiness();
+      last = ladder;
+      return ladder.blockedAt === null ? ladder : null;
+    },
+    detail: "the startup readiness ladder to clear every rung",
+    timeoutMs: LADDER_TIMEOUT_MS,
+    intervalMs: 250,
+  }).catch((error: Error) => {
+    const blocked = last?.blockedAt ?? "unknown";
+    const rung = last?.rungs.find((entry) => entry.rung === blocked);
+    const reason = rung?.reason
+      ? `${rung.reason.vocabulary}/${rung.reason.code}`
+      : "no reason given";
+    throw new Error(`${error.message} — blocked at rung "${blocked}" (${reason})`);
+  });
+}

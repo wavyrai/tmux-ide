@@ -1,0 +1,15 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {readOwnedProcStat} from './read-owned-proc-stat.mjs';
+import {createOwnedProcessSampler,ownedRetirementProof} from './process-cpu.mjs';
+const boot='9bc8d103-87df-4657-833c-6c64a23b7db7',pid=9422,expected=`linux:${boot}:${pid}:100`;
+const error=(code,extra={})=>Object.assign(new Error(code),{code,syscall:'read',path:`/proc/${pid}/stat`,...extra});
+function stat(start=100,state='S'){const a=Array(20).fill('0');a[0]=state;a[11]='5';a[12]='6';a[19]=String(start);return `${pid} (owned tmux) ${a.join(' ')}`;}
+function reader(items){let calls=0;const read=async path=>{assert.equal(path,`/proc/${pid}/stat`);const item=items[calls++];if(item instanceof Error)throw item;return item;};return {read,calls:()=>calls};}
+function sampler(read){return createOwnedProcessSampler({platform:'linux',bootId:boot,clockTicksPerSecond:100,readSnapshot:p=>readOwnedProcStat(p,read)});}
+test('mid-read ESRCH then fresh ENOENT confirms absence with exactly two reads',async()=>{const r=reader([error('ESRCH'),error('ENOENT')]);const observed=await sampler(r.read).observeOwnedProcess(pid,expected);assert.equal(observed.status,'absent');assert.deepEqual(ownedRetirementProof(expected,observed),{retired:true,maySignal:false,reason:'absent'});assert.equal(r.calls(),2);});
+test('ESRCH then valid same identity remains live, never absent',async()=>{const r=reader([error('ESRCH'),stat()]);assert.equal((await sampler(r.read).sampleOwnedProcess(pid,expected)).status,'present');assert.equal(r.calls(),2);});
+test('ESRCH then reused PID retires original and forbids signalling replacement',async()=>{const r=reader([error('ESRCH'),stat(101)]);const observed=await sampler(r.read).observeOwnedProcess(pid,expected);assert.equal(observed.status,'reused');assert.deepEqual(ownedRetirementProof(expected,observed),{retired:true,maySignal:false,reason:'pid-reused'});});
+test('ESRCH then zombie does not prove reaped retirement',async()=>{const r=reader([error('ESRCH'),stat(100,'Z')]);const observed=await sampler(r.read).observeOwnedProcess(pid,expected);assert.equal(ownedRetirementProof(expected,observed).retired,false);});
+test('permission, unrelated path/syscall and unknown errors are not retried',async()=>{for(const e of [error('EACCES'),error('EIO'),error('ESRCH',{path:'/proc/9422/cmdline'}),error('ESRCH',{syscall:'kill'}),error('ESRCH',{path:undefined})]){const r=reader([e]);await assert.rejects(()=>readOwnedProcStat(pid,r.read),x=>x===e);assert.equal(r.calls(),1);}});
+test('second ESRCH or permission failure remains uncertain; no unbounded retry',async()=>{for(const e of [error('ESRCH'),error('EACCES')]){const r=reader([error('ESRCH'),e]);await assert.rejects(()=>readOwnedProcStat(pid,r.read),x=>x===e);assert.equal(r.calls(),2);}});
+test('malformed second stat is rejected by unchanged identity parser',async()=>{const r=reader([error('ESRCH'),'not a stat']);await assert.rejects(()=>sampler(r.read).observeOwnedProcess(pid,expected),/Malformed/);});

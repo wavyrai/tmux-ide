@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "platform": "linux",
+  "arch": "x64",
+  "containerImage": "sha256:d52067ef26a974b46ad1b6301b449b4f774ead40c2c41df971c50e0778a0d76b",
+  "containerInit": true,
+  "candidate": {
+    "base": "cb6f09efb173d045d2bc221d0f14cfe415075b48",
+    "observationBatchMs": 32,
+    "nativeDefaultEnabled": false,
+    "commandMs": 2000,
+    "waitMs": 60000,
+    "runnerMaxMs": 60000
+  },
+  "tools": {
+    "node": {
+      "path": "/opt/node26/bin/node",
+      "sha256": "8a22a371fd85aecf5411636574309f6380fbc42694aaf0651a089a8ef9c44e52",
+      "version": "26.8.2"
+    },
+    "bun": {
+      "path": "/pinned/bun",
+      "sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2"
+    },
+    "python": {
+      "path": "/usr/bin/python3",
+      "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f",
+      "version": "prepared-image-pinned"
+    },
+    "pgrep": {
+      "path": "/usr/bin/pgrep",
+      "sha256": "0756bd5153d53e69d61b9b101b4323533934a33e8eb797bf6101394e5368c01f",
+      "version": "prepared-image-pinned"
+    },
+    "readelf": {
+      "path": "/usr/bin/readelf",
+      "sha256": "64c58e15274bbbb5153f31078e455e9e77ee5f51489e709bba5bb788ce9df2b0",
+      "version": "prepared-image-pinned"
+    },
+    "getconf": {
+      "path": "/usr/bin/getconf",
+      "sha256": "6f04d25de4c614629c807207723c33ae826ef26cf8519b9da7902d0f355141b8",
+      "version": "prepared-image-pinned"
+    },
+    "sh": {
+      "path": "/bin/sh",
+      "sha256": "86d31f6fb799e91fa21bad341484564510ca287703a16e9e46c53338776f4f42",
+      "version": "prepared-image-pinned"
+    },
+    "env": {
+      "path": "/usr/bin/env",
+      "sha256": "886e5fa8be716b03eeda48856e0f04493f2969fc148fb7812594ffac647fa050",
+      "version": "prepared-image-pinned"
+    }
+  },
+  "native": {
+    "path": "/work/native/tmux",
+    "sha256": "8933071dbaeea131b04961ab74ff8b21a622891bce6a01f43ef5122e2fad14d2",
+    "upstream": "e476c1230b958df0cb12977517d24b3dc931375b",
+    "gridPatchSha256": "b0bedabf8e2bd055662f796609b8e8b9a8c8746c6f2a655b0d017872d4827f4f",
+    "journalPatchSha256": "fab780c9ca4a8452fbf73d5ed04e0d9420c887c6006c84b9d0c83a89af80aa0d",
+    "functionalReviewed": true,
+    "sanitizerReviewed": true,
+    "cleanupReviewed": true
+  },
+  "reference": {
+    "path": "/work/native-grid-reference/tmux",
+    "sha256": "9eddef3910822353ff02c2f6b273e3a03459a684e84a98b1a3d83ea893c745c8"
+  },
+  "elf": {
+    "machine": "Advanced Micro Devices X86-64",
+    "systemDirs": [
+      "/lib/x86_64-linux-gnu",
+      "/usr/lib/x86_64-linux-gnu",
+      "/lib64",
+      "/lib"
+    ],
+    "interpreter": "/lib64/ld-linux-x86-64.so.2",
+    "interpreterSha256": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da"
+  },
+  "environment": {
+    "PATH": "/opt/node26/bin:/pinned:/usr/bin:/bin",
+    "LC_ALL": "C",
+    "TZ": "UTC"
+  },
+  "budgets": {
+    "cpuPercent": 10,
+    "elapsedPercent": 10,
+    "idleSeconds": 125,
+    "wakeMs": 100
+  }
+}

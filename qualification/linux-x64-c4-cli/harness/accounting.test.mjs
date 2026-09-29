@@ -1,0 +1,10 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {reconcile,caseCpu,boundIssuerReference} from './accounting.mjs';
+const effect=(id,issuer,command,kind)=>({interactionId:id,actor:{kind:'native',issuerId:issuer},observation:{kind:'native-journal',parentCommandId:null,command},effect:{kind}});
+const rows=[effect('1','a','send-keys','input-enqueued'),effect('2','a','capture-pane','snapshot-produced')];
+test('reconciles exact external pair while disclosing background',()=>assert.deepEqual(reconcile([...rows,effect('3','b','capture-pane','snapshot-produced')],new Set(['a']),1),{pairs:1,externalEffects:2,backgroundEvidence:1,totalEvidence:3}));
+test('rejects missing, duplicate and malformed external effects',()=>{for(const x of [[rows[0]],[...rows,rows[0]],[rows[0],effect('2','a','capture-pane','unknown')]])assert.throws(()=>reconcile(x,new Set(['a']),1));});
+test('does not borrow an unrelated issuer capture',()=>assert.throws(()=>reconcile([rows[0],effect('2','b','capture-pane','snapshot-produced')],new Set(['a']),1)));
+test('CPU includes reaped children once and removes fixture self explicitly',()=>assert.deepEqual(caseCpu({wait4Seconds:4,fixtureSelfSeconds:1,serverSeconds:2,appSeconds:.25}),{fixtureAndReapedCpuSeconds:4,fixtureSelfSeconds:1,reapedChildrenCpuSeconds:3,orphanServerCpuSeconds:2,orphanAppCpuSeconds:.25,totalCpuSeconds:5.25}));
+test('rejects unavailable or impossible CPU',()=>{for(const x of [NaN,-1])assert.throws(()=>caseCpu({wait4Seconds:x,fixtureSelfSeconds:0,serverSeconds:0,appSeconds:0}));assert.throws(()=>caseCpu({wait4Seconds:1,fixtureSelfSeconds:2,serverSeconds:0,appSeconds:0}));});
+test('issuer hash binds server epoch and owner generation',()=>{const s={method:'native-journal',environmentId:'e',serverScope:{serverId:'s',generation:'g'}};const epoch='11111111-1111-4111-8111-111111111111';const a=boundIssuerReference(s,epoch,'1');assert.notEqual(a,boundIssuerReference({...s,serverScope:{...s.serverScope,generation:'h'}},epoch,'1'));assert.throws(()=>boundIssuerReference(s,epoch,'0'));});
