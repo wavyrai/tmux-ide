@@ -1,0 +1,13 @@
+{
+  "sharedBase": "c4638a02fd91e04ddc9109c68b4b2782f2c422bf",
+  "tests": 6,
+  "buildStarted": false,
+  "workloadStarted": false,
+  "executionAuthorized": false,
+  "authorizedLane": null,
+  "referenceArtifact": 11059409786,
+  "functionalReceiptPending": true,
+  "sharedHelpersChanged": false,
+  "recipeManifestSha256": "4e4c9f79e8d7dc3886c5e22c5e84c03029bcde91611e1deca91668173ec60d2f",
+  "workflowSha256": "dec1c734047b707041986b7259fbe02b23376acee8b4a16e3f948bb8de174c62"
+}

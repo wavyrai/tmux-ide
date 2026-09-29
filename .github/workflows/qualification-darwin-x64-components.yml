@@ -1,0 +1,38 @@
+name: Darwin x64 original component lane (held)
+on:
+  workflow_dispatch:
+  push:
+    branches: [qualification/darwin-x64-components-r1]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: darwin-x64-components
+  cancel-in-progress: false
+jobs:
+  component:
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Admit inputs, prepare readers and run one original authorized lane
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -eu
+          LANE=$(/usr/bin/python3 -c 'import json; p=json.load(open("scripts/qualification/darwin-x64-runtime/pins-components.json")); assert p["executionAuthorized"] is True; assert p["authorizedLane"] in ["parser","metadata","tail"]; print(p["authorizedLane"])')
+          /usr/bin/python3 scripts/qualification/darwin-x64-runtime/runner-component.py "$LANE" "$RUNNER_TEMP/darwin-x64-component"
+      - name: Preserve preparation and original lane evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: darwin-x64-component-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/darwin-x64-component/evidence
+            ${{ runner.temp }}/darwin-x64-component/status.json
+            ${{ runner.temp }}/darwin-x64-component/*-download/*.stderr
+          if-no-files-found: error
+          retention-days: 7

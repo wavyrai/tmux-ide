@@ -1,0 +1,28 @@
+{
+  "sharedBase": "c4638a02fd91e04ddc9109c68b4b2782f2c422bf",
+  "gateSources": {
+    "parser_gate.py": {
+      "origin": "/Users/thijs/Developer/tmux-ide/.tasks/whole-runtime-linux-arm64-parser-r1/inputs/parser_gate.py",
+      "sha256": "b84af41c4c1faab6e05fa4187d747b48133a5f9b2021c2a5dc439b473e81a3d9",
+      "unchanged": true
+    },
+    "metadata_gate.py": {
+      "origin": "/Users/thijs/Developer/tmux-ide/.tasks/whole-runtime-linux-arm64-metadata-r1/inputs/metadata_gate.py",
+      "sha256": "2ee6332c1dd99a59b5304dee167e6a6eb20c2882aa3ce188b2bb8d52a0f6d851",
+      "unchanged": true
+    },
+    "tail_gate.py": {
+      "origin": "/Users/thijs/Developer/tmux-ide/.tasks/whole-runtime-linux-arm64-tail-r1/inputs/tail_gate.py",
+      "sha256": "830fbc407a52af7608ff3d4dc5b9872387192b8bb90c8c2961c21fb2d0f9247a",
+      "unchanged": true
+    },
+    "metadata_report.py": {
+      "origin": "/private/tmp/tmux-ide-darwin-x64-runtime-cpu-c95/scripts/qualification/darwin-x64-runtime/upstream/metadata/metadata_report.py",
+      "sha256": "6d72e88cc440acd9106565dc337fd6d27370f6ec282ff98d6f6e31de7f611e19",
+      "unchanged": true
+    }
+  },
+  "workloadsStarted": false,
+  "readersBuilt": false,
+  "executionAuthorized": false
+}

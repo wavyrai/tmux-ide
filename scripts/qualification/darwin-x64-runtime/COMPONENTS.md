@@ -1,0 +1,26 @@
+# Held original Darwin Intel component lanes
+
+Additive source at c4638a02. Existing CPU/idle/admission/stage/build-reader files are unchanged. No build, workload, push or deployment was performed. `pins-components.json` is held (`executionAuthorized:false`, `authorizedLane:null`, functional receipt SHA/run null); filling reviewed reference pins/prerequisite and authorizing exactly one lane remain separate root actions.
+
+`runner-component.py` reuses actual `runner.download`, `intake-cpu.intake`, `bind_runtime`, `stage_sources` and `verify-cpu` implementations. Each fresh hosted envelope verifies actual ZIP/tar/every member before executable imports, stages external sources, admits fresh Intel host/Mach/native addon, builds the three existing reader bundles using admitted Bun, then freezes and runs only the pinned original lane. No extra CI preparation job or human pause is required between checked machine phases. CLI/native/reference are never rebuilt or modified.
+
+`freeze-component.py` generates the required reference.json/source-at-prepare.json/verify.mjs, hashes staged sources/bundles/metafiles/descriptors and all shared recipe/host/tool inputs. Spec/output live outside source ledger. The original payloads remain closed and fully reverified before and in finally after any outcome. The three existing bundles are preparation artifacts, never reader executions. The existing renderer-neutral plugin and esbuild recipe remain unchanged.
+
+Workloads/gates:
+- Parser18: original six modes, three round rotations,200+2samples,10resizes; median-round p95 delta<=1ms versus disabled. Parked reader/parser callback, not attributed-command consumed paint.
+- Metadata9: original0/16/32 round orders,1500pairs/6002records/3001effects, exact kinds/pending/gaps/cleanup, every case plus pool p99<=50ms/max<=100ms.
+- Tail3: original ten phases/source-file bursts/64-record backlog, same6002/3001 counts and every phase+run gates. No tail rerun, tuning or relaxed latency.
+
+Pure gates in component-gates are unchanged accepted source copies; component-gate-origins records origins/hashes. Entry adapters remove Linux path literals, not gate logic. Metadata report's combined-lane main is never called; only its shared pure distribution is used. Original command/telemetry loops and clocks are unchanged.
+
+Only fixture execution delta is cancellation: parser preload sets a flag and an exact overlay seam checks it before the next case, permitting current bounded case cleanup; the Python bootstrap converts SIGTERM/SIGINT once into the original driver's failure/finally path and ignores repeated cancellation during cleanup. Wrapper also remembers cancellation and never accepts a cancelled run. Neither original admitted source nor shared upstream snapshot is changed. There is no supervisor-only timeout that orphans a live case; hosted job ceiling120minutes is a last external bound and force termination means missing/incomplete cleanup, never acceptance. Existing per-case bounded waits/retirement remain authoritative.
+
+A failed gate or uncertain cleanup retains all raw results, driver log, terminal receipt and finally-postclosure. Success requires original gate plus all expected cleaned cases. Partial results are not complete cleanup proof. A one-shot marker refuses restart in the same output. All generated evidence and reader receipts are collected, excluding node_modules/home/caches.
+
+Six focused tests pass on /usr/bin/python3: actual descriptor explicit bindings, original lane argv, actual wrapper postclosure on failed exit/uncertain cleanup, held runner refusal before transport, and bounded pure Python cancellation fixture proving original finally executes even on second signal. The added sixth test checks exact receipt byte pinning, same-reference identity, success/cleanup/prepost fields and missing/tampered/failed prerequisite refusal. No tmux/daemon/reader workload or unchanged qualification matrix was run. Existing shared and pure-gate tests were not redundantly repeated.
+
+Proposed machine command after separate approval:
+`/usr/bin/python3 scripts/qualification/darwin-x64-runtime/runner-component.py metadata "$RUNNER_TEMP/darwin-x64-component"`
+Parser or tail requires matching explicit authorizedLane pin. Workflow reads that closed pin, not arbitrary dispatch inputs. Current workflow is inactive/unpushed. Reference functional4case prerequisite is owned separately by cold_start_preparation and is not bypassed here.
+
+Accepted reference artifact11059409786/run36624139102 is now pinned verbatim from the owner recipe: binary01bd7831…, ZIP047fde1b…, tar2c657ac5…. This is build acceptance, not functional acceptance. `component-prerequisite.py` requires the ORIGINAL forthcoming accepted.json as fixed `reference-functional-accepted.json`, exact reviewed SHA and originating CI run. It checks same binary SHA,4cases/no skips, cleanup and pre/post admission. The file and pins remain absent/null until root audits actual CPU artifact terminal/vitest/four ownership receipts; then root can retain and pin that exact accepted receipt here. No synthetic receipt, boolean override, prerequisite rerun or additional transfer framework. The complete recipe freeze includes its bytes once supplied.
