@@ -1,0 +1,45 @@
+{
+  "sourceRun": 36592542720,
+  "formulae": [
+    {
+      "name": "automake",
+      "stableVersion": "1.19",
+      "bottleAvailable": false,
+      "installedVersions": []
+    },
+    {
+      "name": "autoconf",
+      "stableVersion": "2.73",
+      "bottleAvailable": true,
+      "installedVersions": [
+        "2.73"
+      ]
+    },
+    {
+      "name": "pkgconf",
+      "stableVersion": "3.0.7",
+      "bottleAvailable": false,
+      "installedVersions": [
+        "3.0.5"
+      ]
+    },
+    {
+      "name": "libevent",
+      "stableVersion": "2.1.13",
+      "bottleAvailable": true,
+      "installedVersions": []
+    },
+    {
+      "name": "ncurses",
+      "stableVersion": "6.6",
+      "bottleAvailable": true,
+      "installedVersions": []
+    },
+    {
+      "name": "utf8proc",
+      "stableVersion": "2.12.0",
+      "bottleAvailable": false,
+      "installedVersions": []
+    }
+  ]
+}

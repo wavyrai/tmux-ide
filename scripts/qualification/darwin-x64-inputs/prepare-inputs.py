@@ -136,7 +136,7 @@ def main():
         assert json.loads(run('node-platform',[node,'-p','JSON.stringify([process.platform,process.arch])'])) == ['darwin','x64']
         # This is dependency preparation, not runtime or a performance measurement.
         run('brew-before',['brew','info','--json=v2','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'])
-        run('brew-build-inputs',['brew','install','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'],timeout=900)
+        run('brew-build-inputs',['brew','install','--build-from-source','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'],timeout=900)
         run('brew-after',['brew','info','--json=v2','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'])
         for name in ('libevent','ncurses','utf8proc'):
             prefix=run('prefix-'+name,['brew','--prefix',name]).strip()

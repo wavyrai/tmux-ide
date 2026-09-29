@@ -1,10 +1,22 @@
-import io, pathlib, tarfile, tempfile, unittest
+import ast, io, json, pathlib, tarfile, tempfile, unittest
 import importlib.util
 spec=importlib.util.spec_from_file_location('prepare_inputs',pathlib.Path(__file__).with_name('prepare-inputs.py'))
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 unpack_tar=module.unpack_tar
 from package_payload import package_payload
 class ExtractTests(unittest.TestCase):
+    def test_preparation_admits_actual_intel_formulas_without_bottles(self):
+        # Actual hosted-runner metadata, not a simulated successful brew install.
+        metadata=json.loads(pathlib.Path(__file__).with_name('fixtures').joinpath('intel-build-inputs.json').read_text())
+        tree=ast.parse(pathlib.Path(__file__).with_name('prepare-inputs.py').read_text())
+        commands=[node for node in ast.walk(tree) if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id=='run' and node.args and isinstance(node.args[0],ast.Constant) and node.args[0].value=='brew-build-inputs']
+        self.assertEqual(len(commands),1)
+        argv=ast.literal_eval(commands[0].args[1])
+        requested=set(arg for arg in argv[2:] if not arg.startswith('-'))
+        missing_bottles={f['name'] for f in metadata['formulae'] if not f['bottleAvailable']}
+        self.assertTrue(missing_bottles)
+        self.assertTrue(missing_bottles<=requested)
+        self.assertTrue('--build-from-source' in argv, 'Recorded Intel inputs have no bottle: implicit brew install cannot admit this host')
     def archive(self, root, members):
         p=root/'input.tar'
         with tarfile.open(p,'w') as tar:
