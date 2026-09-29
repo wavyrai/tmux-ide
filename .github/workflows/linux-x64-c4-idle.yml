@@ -1,0 +1,35 @@
+name: Linux x64 C4 idle campaign once
+on:
+  push:
+    branches: [qualification/linux-x64-c4-idle-r1]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: linux-x64-c4-idle
+  cancel-in-progress: false
+jobs:
+  idle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify retained inputs and run one closed idle campaign
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 qualification/linux-x64-c4-idle/runner.py
+      - name: Independently finish exact-owned cleanup
+        if: always()
+        run: python3 qualification/linux-x64-c4-idle/cleanup.py
+      - name: Retain campaign, admission, closure and cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-x64-c4-idle-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/x64-idle-evidence
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

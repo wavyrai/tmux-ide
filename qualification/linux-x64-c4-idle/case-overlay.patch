@@ -1,0 +1,64 @@
+--- accepted-x64-case.mjs
++++ accepted-Spark-r2-case-idle.mjs
+@@ -1,3 +1,5 @@
++import {finalCaptureDrained} from './final-capture-drain.mjs';
++import {cleanupDiagnostic} from './cleanup-diagnostic.mjs';
+ // Draft, one explicitly approved private canonical case. No build is performed.
+ import assert from 'node:assert/strict';
+ import {execFile} from 'node:child_process';
+@@ -122,8 +124,14 @@
+  const started=performance.now();let count=spec.lane==='idle'?1:0;
+  for(let i=0;i<n;i++){if(streamError)throw streamError;const got=await pair();assert(got>=count&&got<=i+1+(spec.lane==='idle'?1:0));count=got;}
+  // Capture-only final verification has a different connection; disclose as background.
+- await until(async()=>Number(/COUNT:(\d+)/.exec(await command(['capture-pane','-p','-t',fleet.sessionNames[0]]))?.[1])===n+(spec.lane==='idle'?1:0));
+- if(spec.mode==='candidate32')await until(()=>{if(streamError)throw streamError;try{result.counts=reconcile(evidence,issuers,n+(spec.lane==='idle'?1:0));return evidenceStatusBarrier(evidence,status,issuers);}catch{return false;}});
++ let finalIssuer;
++ await until(async()=>{
++  const identified=spec.lane==='idle'&&spec.mode==='candidate32';
++  const text=await command([...(identified?['tmux-ide-events','-i',';']:[]),'capture-pane','-p','-t',fleet.sessionNames[0]]);
++  if(identified){const id=JSON.parse(text.slice(0,text.indexOf('\n')));assert.equal(id.serverEpoch,epoch);finalIssuer=boundIssuerReference(status,epoch,id.connectionId);}
++  return Number(/COUNT:(\d+)/.exec(text)?.[1])===n+(spec.lane==='idle'?1:0);
++ });
++ if(spec.mode==='candidate32')await until(()=>{if(streamError)throw streamError;try{result.counts=reconcile(evidence,issuers,n+(spec.lane==='idle'?1:0));return evidenceStatusBarrier(evidence,status,issuers)&&(spec.lane!=='idle'||finalCaptureDrained(evidence,status,{setupIssuer,pairIssuers:issuers,finalIssuer}));}catch{return false;}});
+  result.elapsedSeconds=(performance.now()-started)/1000;result.reapedIdentities=[daemonSample.startIdentity];result.serverSample=await host.sampleOwnedProcess(serverSample.pid,serverSample.startIdentity);result.serverCpuSeconds=result.serverSample.cpuSeconds; // Fresh server cumulative CPU includes startup.
+  assert.equal(await host.commandLine(appPid,appSample.startIdentity),appStart);
+  assert.equal(await host.parentPid(serverSample.pid,serverSample.startIdentity),1);assert.equal(await host.parentPid(appSample.pid,appSample.startIdentity),serverSample.pid);
+@@ -135,23 +143,29 @@
+ }catch(e){failure=String(e.stack??e);}
+ finally{
+  inCleanup=true;
+- const retainLog=phase=>{try{persist(`daemon-${phase}.json`,boundedDaemonOutput(daemon));}catch(e){cleanup.push({error:`daemon log retention ${phase}: ${e}`});}};
++ const retainLog=phase=>{try{persist(`daemon-${phase}.json`,boundedDaemonOutput(daemon));}catch(e){cleanup.push(cleanupDiagnostic(`daemon-log-${phase}`,e));}};
+  retainLog('before-stop');
+- if(daemon&&spec.lane==='idle'){try{result.traceCleanupPhase=await tracePhase(traceSocket,'cleanup');}catch(e){cleanup.push({error:`trace cleanup phase: ${e}`});}}
+- try{await descendants();}catch(e){cleanup.push({error:String(e)});}
+- try{await retireStream(streamTask,abort);if(streamError)throw streamError;cleanup.push({streamRetired:true});}catch(e){cleanup.push({error:String(e)});}
+- if(daemon){try{await host.sampleOwnedProcess(daemon.record.pid,daemonSample.startIdentity);await Promise.race([daemon.stop(),sleep(10000).then(()=>{throw Error('daemon stop timeout');})]);await until(()=>retired(daemon.record.pid));cleanup.push({daemonGone:true});}catch(e){cleanup.push({error:String(e)});}}
++ if(daemon&&spec.lane==='idle'){try{result.traceCleanupPhase=await tracePhase(traceSocket,'cleanup');}catch(e){cleanup.push(cleanupDiagnostic('trace-cleanup-phase',e));}}
++ try{await descendants();}catch(e){cleanup.push(cleanupDiagnostic('descendants-before-stop',e));}
++ try{await retireStream(streamTask,abort);if(streamError)throw streamError;cleanup.push({streamRetired:true});}catch(e){cleanup.push(cleanupDiagnostic('stream-retirement',e));}
++ let daemonCleanupPhase='daemon-identity';
++ if(daemon){try{await host.sampleOwnedProcess(daemon.record.pid,daemonSample.startIdentity);daemonCleanupPhase='daemon-stop';await Promise.race([daemon.stop(),sleep(10000).then(()=>{throw Error('daemon stop timeout');})]);daemonCleanupPhase='daemon-retirement';await until(()=>retired(daemon.record.pid));cleanup.push({daemonGone:true});}catch(e){cleanup.push(cleanupDiagnostic(daemonCleanupPhase,e));}}
+  retainLog('after-stop');
+- if(spec.lane==='idle')try{result.trace=verifyTrace(readFileSync(join(output,'subprocess-trace.jsonl'),'utf8'),spec.binary);}catch(e){cleanup.push({error:`trace verification: ${e}`});}
++ if(spec.lane==='idle')try{result.trace=verifyTrace(readFileSync(join(output,'subprocess-trace.jsonl'),'utf8'),spec.binary);}catch(e){cleanup.push(cleanupDiagnostic('trace-verification',e));}
++ let fleetCleanupPhase='server-identity';
+  if(fleet){try{
+   await host.sampleOwnedProcess(serverSample.pid,serverSample.startIdentity);
+-  assert.deepEqual((await command(['display-message','-p','#{pid}\t#{start_time}'])).split('\t'),identity);await command(['kill-server']);
++  fleetCleanupPhase='tmux-identity';
++  assert.deepEqual((await command(['display-message','-p','#{pid}\t#{start_time}'])).split('\t'),identity);fleetCleanupPhase='kill-server';await command(['kill-server']);
++  fleetCleanupPhase='owned-process-retirement';
+   await until(async()=>{for(const pid of observed)if(!await retired(pid))return false;return true;});
++  fleetCleanupPhase='socket-retirement';
+   if(existsSync(fleet.socketPath)){const st=lstatSync(fleet.socketPath);assert(st.isSocket());assert.deepEqual({dev:st.dev,ino:st.ino,uid:st.uid},witness);unlinkSync(fleet.socketPath);}
+   cleanup.push({ownedProcessesAbsent:true,socketAbsent:true});
++  fleetCleanupPhase='fleet-dispose';
+   if(!cleanup.some(x=>x.error))await fleet.dispose();
+- }catch(e){cleanup.push({error:String(e)});}}
+- try{await host.assertIdentity();}catch(e){cleanup.push({error:`host identity changed: ${e}`});}
++ }catch(e){cleanup.push(cleanupDiagnostic(fleetCleanupPhase,e));}}
++ try{await host.assertIdentity();}catch(e){cleanup.push(cleanupDiagnostic('host-identity',e));}
+  const fixtureUsage=process.cpuUsage();
+  result={...result,evidence,status,error:failure,cleanup,fixtureSelfCpuSeconds:(fixtureUsage.user+fixtureUsage.system)/1e6};persist('result.json',result);
+  if(failure||cleanup.some(x=>x.error))process.exitCode=1;
