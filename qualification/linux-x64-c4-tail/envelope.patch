@@ -1,0 +1,100 @@
+--- accepted-metadata/run-metadata.py
++++ tail/run-tail.py
+@@ -1,13 +1,13 @@
+-"""One original metadata9 workload from two frozen archives; no build or retries."""
++"""One original tail3 workload from two frozen archives; no build or retries."""
+ import json,os,pathlib,shutil,subprocess,tarfile,traceback
+ from bounded import run_bounded
+ from closure import sha,verify
+ from admit_topology import admit
+ from cpu_environment import capture
+ from overlay_times import restore_overlay_times
+-P=pathlib.Path;I=P('/inputs');E=P('/evidence');W=P('/work');NODE='/opt/node26/bin/node';H=W/'source/.tasks/native-x64-c4/harness';T=W/'source/.tasks/components-linux';LANE=T/'metadata'
++P=pathlib.Path;I=P('/inputs');E=P('/evidence');W=P('/work');NODE='/opt/node26/bin/node';H=W/'source/.tasks/native-x64-c4/harness';T=W/'source/.tasks/components-linux';LANE=T/'tail'
+ os.umask(0o077);D=json.loads((I/'admission.json').read_text());ledger=json.loads((I/'full-closure.json').read_text());restored=False;code=1;stage='admission';before=None;component=None
+-ENV={'HOME':'/evidence/home-metadata','PATH':'/opt/node26/bin:/pinned:/usr/bin:/bin','LC_ALL':'C','TZ':'UTC'}
++ENV={'HOME':'/evidence/home-tail','PATH':'/opt/node26/bin:/pinned:/usr/bin:/bin','LC_ALL':'C','TZ':'UTC'}
+ def run(name,args,timeout=300,extra=None):
+  global stage
+  stage=name;env={**ENV,**(extra or {})}
+@@ -15,7 +15,7 @@
+  (E/(name+'-status.json')).write_text(json.dumps({'exit':r.returncode,'truncated':r.truncated,'bytes':r.bytes}))
+  assert r.returncode==0 and not r.truncated,name
+ try:
+- assert D['lane']=='metadata9' and D['budgets']['retries']==0
++ assert D['lane']=='tail3' and D['budgets']['retries']==0
+  assert D['imageId']==os.environ['APPROVED_IMAGE_ID'] and D['runnerImageVersion']==os.environ['APPROVED_RUNNER_IMAGE_VERSION']
+  assert {p.name:sha(p) for p in I.iterdir() if p.name!='admission.json'}==D['inputHashes']
+  for p,h in D['imageToolHashes'].items():assert sha(p)==h,p
+@@ -40,18 +40,18 @@
+  base=json.loads((W/'artifact-receipt.json').read_text());assert base==json.loads((I/'artifact-receipt.json').read_text());assert base['cliSha256']==D['cliSha256'];base['reviewed']=True;base['reviewBasis']='Parent accepted CLI36589727232 and component36597548371 artifacts; raw receipts remain immutable.'
+  reviewed=E/'reviewed-base.json';reviewed.write_text(json.dumps(base,indent=2))
+  artifact=json.loads((W/'host-inputs.json').read_text())['artifact'];runtime={'bootId':P('/proc/sys/kernel/random/boot_id').read_text().strip(),'clockTicksPerSecond':int(subprocess.check_output(['/usr/bin/getconf','CLK_TCK'],text=True)),'cgroupPath':first['cgroupPath']}
+- (E/'fresh-host-inputs.json').write_text(json.dumps({'artifact':artifact,'runtime':runtime}));(E/'component-host.json').write_text(json.dumps({**artifact,**runtime}));(E/'home-metadata').mkdir(mode=0o700)
++ (E/'fresh-host-inputs.json').write_text(json.dumps({'artifact':artifact,'runtime':runtime}));(E/'component-host.json').write_text(json.dumps({**artifact,**runtime}));(E/'home-tail').mkdir(mode=0o700)
+  shutil.copy2(I/'lane-verify.mjs',LANE/'verify.mjs');(LANE/'reference.json').write_text(json.dumps({'binary':'/work/native-grid-reference/tmux','sha256':D['referenceSha256']}))
+  # Reuse admitted actual-native import and explicit fresh identity validation; no fixture starts.
+  run('component-import',[NODE,'/inputs/import-components.mjs'])
+- run('cache-import',['/usr/bin/python3','-c','import bounded_io,cpu_diagnostics,metadata_report,metadata_stream,owned_cleanup,linux_process'],extra={'PYTHONPATH':str(LANE)+':'+str(T/'common')})
++ run('cache-import',['/usr/bin/python3','-c','import bounded_io,burst_source,cpu_diagnostics,metadata_report,metadata_stream,owned_cleanup,linux_process'],extra={'PYTHONPATH':str(LANE)+':'+str(T/'common')})
+  for p,h in component['closure'].items():assert sha(p)==h,p
+  run('base-freeze',[NODE,str(H/'prepare-freeze.mjs'),'/evidence/fresh-host-inputs.json',str(reviewed),'cpu','/evidence/base-spec.json','/evidence/unused-base-output'])
+- run('metadata-freeze',[NODE,'/inputs/freeze-metadata.mjs'])
++ run('tail-freeze',[NODE,'/inputs/freeze-tail.mjs'])
+  run('preflight',[NODE,'/inputs/verify-components.mjs'])
+  before=capture(E/'environment-before.json');assert all(v==0 for a in before['ancestors'] for v in a['throttling'].values())
+- run('metadata',['/usr/bin/python3',str(LANE/'metadata.py'),'--approved-metadata'],300)
+- run('metadata-gate',['/usr/bin/python3','/inputs/gate-metadata.py'])
++ run('tail',['/usr/bin/python3',str(LANE/'tail_backlog.py'),'--approved-tail-backlog'],300)
++ run('tail-gate',['/usr/bin/python3','/inputs/gate-tail.py'])
+  code=0
+ except BaseException:
+  (E/'failure.txt').write_text(traceback.format_exc())
+@@ -62,14 +62,14 @@
+    (E/'closure-after.json').write_text(json.dumps(verify(W,ledger,allow_component=True)))
+    if component is not None:
+     for p,h in component['closure'].items():assert sha(p)==h,p
+-   if (E/'frozen-metadata.json').exists():run('post-closure',[NODE,'/inputs/verify-components.mjs'])
++   if (E/'frozen-tail.json').exists():run('post-closure',[NODE,'/inputs/verify-components.mjs'])
+    assert admit(D['cpuset'])==first
+    if before is not None:assert capture(E/'environment-after.json')==before
+    post=True
+  except BaseException:
+   code=1;(E/'post-verification-failure.txt').write_text(traceback.format_exc())
+  try:
+-  for name in ['metadata-results.json','metadata-source-at-start.json','metadata-source-at-end.json','source-at-prepare.json']:
++  for name in ['tail-backlog-results.json','tail-backlog-source-at-start.json','tail-backlog-source-at-end.json','source-at-prepare.json']:
+    p=LANE/name
+    if p.is_file():assert p.stat().st_size<=32*1024*1024;shutil.copy2(p,E/name)
+   dest=E/'private-fixture-diagnostics';dest.mkdir(exist_ok=True)
+@@ -81,5 +81,5 @@
+      (dest/(root.name+'-'+p.name)).write_bytes(data[:65536])
+  except BaseException:
+   code=1;(E/'retention-failure.txt').write_text(traceback.format_exc())
+- (E/'metadata-lane-result.json').write_text(json.dumps({'exit':code,'stage':attempt_stage,'postClosurePassed':post,'performanceQualified':False,'scope':D['scope']}))
++ (E/'tail-lane-result.json').write_text(json.dumps({'exit':code,'stage':attempt_stage,'postClosurePassed':post,'performanceQualified':False,'scope':D['scope']}))
+ raise SystemExit(code)
+--- accepted-metadata/freeze-metadata.mjs
++++ tail/freeze-tail.mjs
+@@ -3,8 +3,8 @@
+ const read=p=>JSON.parse(readFileSync(p)),sha=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
+ const spec=read('/evidence/base-spec.json'),component=read('/inputs/component-receipt.json');assert.equal(component.noFixturesStarted,true);assert.equal(component.sourceBase,spec.host.candidate.base);assert.equal(component.cliSha256,spec.cliSha256);assert.deepEqual(component.explicitComponentWindows,[0,16,32]);
+ const closure={...spec.closure,...component.closure};for(const [p,h] of Object.entries(closure))assert.equal(sha(p),h,p);
+-for(const p of ['/evidence/component-host.json','/inputs/component-receipt.json','/inputs/run-metadata.py','/inputs/freeze-metadata.mjs','/inputs/verify-components.mjs','/inputs/lane-verify.mjs','/inputs/metadata_gate.py','/inputs/gate-metadata.py','/inputs/bounded.py','/inputs/admit_topology.py','/inputs/cpu_environment.py','/inputs/closure.py','/inputs/extract_runtime.py','/work/source/.tasks/components-linux/metadata/verify.mjs','/work/source/.tasks/components-linux/metadata/reference.json'])closure[realpathSync(p)]=sha(p);
++for(const p of ['/evidence/component-host.json','/inputs/component-receipt.json','/inputs/run-tail.py','/inputs/freeze-tail.mjs','/inputs/verify-components.mjs','/inputs/lane-verify.mjs','/inputs/tail_gate.py','/inputs/gate-tail.py','/inputs/bounded.py','/inputs/admit_topology.py','/inputs/cpu_environment.py','/inputs/closure.py','/inputs/extract_runtime.py','/work/source/.tasks/components-linux/tail/verify.mjs','/work/source/.tasks/components-linux/tail/reference.json'])closure[realpathSync(p)]=sha(p);
+ assert.deepEqual(read('/evidence/component-host.json'),spec.host);
+-const sourceManifest='/work/source/.tasks/components-linux/metadata/source-at-prepare.json';writeFileSync(sourceManifest,JSON.stringify({hashes:closure},null,2),{flag:'wx',mode:0o600});closure[sourceManifest]=sha(sourceManifest);
+-const frozen={...spec,lane:'metadata9',output:'/evidence/metadata-results',closure,resolutions:[...spec.resolutions,...component.extraResolutions],componentSharedClosures:component.sharedClosures,componentOverlaySha256:'0718450c6823dfb590f88f8e313338c7f016cc73303ef57bfdc0346a3ac7061e',scope:'cb6/private32 base; explicit component0/16/32 metadata9'};
+-writeFileSync('/evidence/frozen-metadata.json',JSON.stringify(frozen,null,2),{flag:'wx',mode:0o600});console.log(JSON.stringify({specSha256:sha('/evidence/frozen-metadata.json'),closureFiles:Object.keys(closure).length,componentHostSha256:sha('/evidence/component-host.json')}));
++const sourceManifest='/work/source/.tasks/components-linux/tail/source-at-prepare.json';writeFileSync(sourceManifest,JSON.stringify({hashes:closure},null,2),{flag:'wx',mode:0o600});closure[sourceManifest]=sha(sourceManifest);
++const frozen={...spec,lane:'tail3',output:'/evidence/tail-results',closure,resolutions:[...spec.resolutions,...component.extraResolutions],componentSharedClosures:component.sharedClosures,componentOverlaySha256:'0718450c6823dfb590f88f8e313338c7f016cc73303ef57bfdc0346a3ac7061e',scope:'cb6/private32 base; explicit component0/16/32 tail3'};
++writeFileSync('/evidence/frozen-tail.json',JSON.stringify(frozen,null,2),{flag:'wx',mode:0o600});console.log(JSON.stringify({specSha256:sha('/evidence/frozen-tail.json'),closureFiles:Object.keys(closure).length,componentHostSha256:sha('/evidence/component-host.json')}));
+--- accepted-metadata/verify-components.mjs
++++ tail/verify-components.mjs
+@@ -1,5 +1,5 @@
+ import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
+-process.argv[2]='/evidence/frozen-metadata.json';
++process.argv[2]='/evidence/frozen-tail.json';
+ await import('/work/source/.tasks/native-x64-c4/harness/verify.mjs');
+ const {elfClosure}=await import('/work/source/.tasks/native-x64-c4/harness/elf-closure.mjs');
+ const spec=JSON.parse(readFileSync(process.argv[2]));
