@@ -1,0 +1,45 @@
+{
+  "archiveSha256": "168aa363278351b89af56684448f525a5bce5079d0b6842bd910fdd3f1646887",
+  "files": {
+    "configure.ac": {
+      "mtime": 1750887914,
+      "sha256": "e4ba8652db7c9771cfc32a0f50001ddfe8d8a83a7298152df86c732dca7e2a75"
+    },
+    "m4/amversion.in": {
+      "mtime": 1736699429,
+      "sha256": "82c1be483d873d8e6097b4dad3ef3ab70c6ea1b0e1402bab9487025aa7849286"
+    },
+    "m4/amversion.m4": {
+      "mtime": 1750888049,
+      "sha256": "80e6294157c72fce9e45b26e37bfc1699703a48feb59957e6f63d5c3b19b4cbb"
+    },
+    "aclocal.m4": {
+      "mtime": 1750888049,
+      "sha256": "d9b950c567a405d968cc289a5c1912892279995a1f6cd0ae683ff20061711810"
+    },
+    "configure": {
+      "mtime": 1750888049,
+      "sha256": "ab3a3e41c3d669c0a6f715558e898e59beeae439f4e231a7b60a73765303779a"
+    },
+    "Makefile.am": {
+      "mtime": 1736699429,
+      "sha256": "17bba5c18fd29a242f863be304e4880166942a9edef0f81dec034ade74b85da7"
+    },
+    "Makefile.in": {
+      "mtime": 1750888050,
+      "sha256": "6fe93f17d5bf5a7d299b721f5c520c6477e15de6343c938aad3e95e1d41e2a50"
+    },
+    "t/testsuite-part.am": {
+      "mtime": 1750888049,
+      "sha256": "b7de0b0f2fa5c94c48476dad229d810821d7b8bc1c1473cce6852cae50644fdc"
+    },
+    "gen-testsuite-part": {
+      "mtime": 1738280331,
+      "sha256": "b8973af263067bdfd6369f38ec5af33077f246b6b1af6bff0f5cd32ec6b2459e"
+    },
+    "t/list-of-tests.mk": {
+      "mtime": 1740274619,
+      "sha256": "6fbdbbe0c1ec4c2475314f7ad6ad3b7ffab1b989145c7409f6540311d038d2ef"
+    }
+  }
+}

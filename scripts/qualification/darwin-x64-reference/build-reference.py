@@ -1,7 +1,7 @@
 """Review candidate: build grid reference against original Intel bottle headers/retained libs.
 No instrumented tmux build or execution. Requires admitted/extracted input payload and upstream checkout.
 """
-import argparse,hashlib,importlib.util,json,os,pathlib,platform,shutil,sys
+import argparse,hashlib,importlib.util,json,os,pathlib,platform,shutil,sys,tarfile
 sys.dont_write_bytecode=True
 from macho_identity import inspect
 HERE=pathlib.Path(__file__).resolve().parent
@@ -17,6 +17,15 @@ def extract_bottle(helper, archive, prefix, name, version, receipt):
  for header,record in receipt['members'].items():
   if '/include/' in header or '/lib/pkgconfig/' in header:assert sha(extracted/header)==record['sha256']
  return keg
+
+def restore_source_mtimes(archive, target):
+ # Safe unpack has already validated paths/types and created links last.
+ with tarfile.open(archive) as tar:
+  for member in tar:
+   if not member.isfile():continue
+   path=target/member.name
+   assert not path.is_symlink() and path.resolve().is_relative_to(target.resolve())
+   os.utime(path,(member.mtime,member.mtime),follow_symlinks=False)
 
 def admit_payload_files(inputs, payload, closure):
  admitted={relative:record['sha256'] for relative,record in payload.items() if record['kind']=='file' and relative.startswith(('source/','pnpm-store/','qualified-native/'))}
@@ -63,7 +72,7 @@ def main():
   assert run('upstream',['git','-C',upstream,'rev-parse','HEAD']).strip()==pins['upstream']
   if not shutil.which('automake',path=env['PATH']):
    archive=assets/'automake-1.18.1.tar.xz';assert sha(archive)=='168aa363278351b89af56684448f525a5bce5079d0b6842bd910fdd3f1646887'
-   helper.unpack_tar(archive,out/'automake-source');source=out/'automake-source/automake-1.18.1'
+   helper.unpack_tar(archive,out/'automake-source');restore_source_mtimes(archive,out/'automake-source');source=out/'automake-source/automake-1.18.1'
    run('automake-configure',['/bin/sh','configure','--prefix='+str(out/'automake')],source,120)
    run('automake-build',['/usr/bin/make','-j','2'],source,180)
    run('automake-install',['/usr/bin/make','install'],source,120)
