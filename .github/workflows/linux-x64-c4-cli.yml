@@ -1,5 +1,7 @@
 name: Linux x64 offline CLI preparation only
 on:
+  push:
+    branches: [qualification/linux-x64-c4-cli-preparation]
   workflow_dispatch:
 permissions:
   contents: read
