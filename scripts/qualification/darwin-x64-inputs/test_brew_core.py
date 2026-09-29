@@ -6,7 +6,7 @@ HOST={'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','RUNNER_OS':'
 class CoreTests(unittest.TestCase):
     def fixture(self,root):
         pins={'repository':core.REPOSITORY,'revision':'a'*40,'tree':'b'*40,'formulas':{'openssl@3':{'path':'Formula/o/openssl@3.rb','sha256':hashlib.sha256(b'formula').hexdigest()}}}
-        replies={'core-origin':core.REPOSITORY,'core-head':pins['revision'],'core-tree':pins['tree'],'core-clean':'','brew-repository':'/usr/local/Homebrew','core-before-origin':core.REPOSITORY,'core-before-dirty':'','core-before-root':str(root),'core-before-head':'c'*40,'core-before-tree':'d'*40}
+        replies={'core-origin':core.REPOSITORY,'core-head':pins['revision'],'core-tree':pins['tree'],'core-clean':'','brew-repository':'/usr/local/Homebrew','core-before-origin':core.REPOSITORY,'core-before-dirty':'','core-before-root':str(root),'core-before-head':'c'*40,'core-before-tree':'d'*40,'core-tap-path':str(root)}
         def run(name,argv,**kwargs):return replies.get(name,'')
         return pins,replies,run
     def test_checkout_identity_and_formula_bytes(self):
@@ -25,15 +25,17 @@ class CoreTests(unittest.TestCase):
             root=pathlib.Path(tmp)/'core';pins,replies,_=self.fixture(root);env={};calls=[];saved=[]
             def run(name,argv,**kwargs):
                 calls.append((name,argv,kwargs))
-                if name=='core-tap':
-                    self.assertEqual(env['HOMEBREW_NO_INSTALL_FROM_API'],'1');root.mkdir();(root/'.git').mkdir()
-                    self.assertEqual(argv,['brew','tap','homebrew/core'])
+                if name=='core-init':
+                    self.assertEqual(env['HOMEBREW_NO_INSTALL_FROM_API'],'1');(root/'.git').mkdir()
+                    self.assertTrue(root.is_dir())
                 return replies.get(name,'')
             with patch.object(core,'CORE',root),patch.object(core,'validate_checkout',return_value={'verified':True}):
                 core.prepare_core(run,saved.append,env,HOST,pins)
                 self.assertEqual(saved[-1]['after'],{'verified':True})
-                self.assertEqual(next(c[2]['timeout'] for c in calls if c[0]=='core-tap'),600)
-                self.assertEqual(next(c[2]['timeout'] for c in calls if c[0]=='core-fetch'),120)
+                self.assertFalse(any('clone' in c[1] for c in calls))
+                fetch=next(c for c in calls if c[0]=='core-fetch')
+                self.assertEqual(fetch[2]['timeout'],120)
+                self.assertEqual(fetch[1],['git','-C',str(root),'fetch','--depth=1','origin',pins['revision']])
                 calls.clear()
                 core.prepare_core(run,saved.append,env,HOST,pins)
                 self.assertFalse(any(c[0]=='core-tap' for c in calls))
@@ -62,12 +64,28 @@ class CoreTests(unittest.TestCase):
             calls=[];backup=CoreBackup(root,pathlib.Path(tmp)/'backup',lambda value:None)
             def run(name,argv,**kwargs):
                 calls.append(name)
-                if name=='core-replacement-tap':root.mkdir();(root/'.git').mkdir()
+                if name=='core-init':
+                    self.assertIsNotNone(backup.replacement);(root/'.git').mkdir()
                 return replies.get(name,'')
             with patch.object(core,'CORE',root),patch.object(core,'validate_checkout',return_value={'verified':True}):
                 core.prepare_core(run,lambda value:None,{},HOST,pins,backup)
             self.assertIn('core-fetch',calls);self.assertIsNotNone(backup.replacement)
             backup.restore();self.assertEqual((root/'custom').read_text(),'retain')
+    def test_partial_owned_init_failure_restores_original_without_guessing_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=pathlib.Path(tmp)/'core';root.mkdir();(root/'.git').mkdir();(root/'custom').write_text('retain')
+            pins,replies,_=self.fixture(root);replies['core-before-dirty']=' M Formula/r/rustup.rb'
+            backup=CoreBackup(root,pathlib.Path(tmp)/'backup',lambda value:None)
+            def run(name,argv,**kwargs):
+                if name=='core-init':
+                    self.assertIsNotNone(backup.replacement)
+                    (root/'partial').write_text('preserve');raise RuntimeError('git failure')
+                return replies.get(name,'')
+            with patch.object(core,'CORE',root),self.assertRaises(RuntimeError):
+                try:core.prepare_core(run,lambda value:None,{},HOST,pins,backup)
+                finally:backup.restore()
+            self.assertEqual((root/'custom').read_text(),'retain')
+            self.assertTrue((pathlib.Path(tmp)/'backup/replacement/partial').exists())
     def test_wrong_host_refuses_before_commands(self):
         pins,_,_=self.fixture(pathlib.Path('/unused'));calls=[]
         with self.assertRaises(AssertionError):core.prepare_core(lambda *a,**k:calls.append(a),lambda x:None,{}, {},pins)

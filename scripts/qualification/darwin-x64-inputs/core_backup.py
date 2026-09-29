@@ -21,7 +21,7 @@ class CoreBackup:
         os.rename(self.core,self.root/'original')
         self.receipt['active']=True;self.save(self.receipt)
     def admit_replacement(self):
-        # Caller must already have verified the new checkout's official origin/root.
+        # Caller just created this absent directory, before starting any Git process.
         self.replacement=witness(self.core)
         self.receipt['replacementWitness']=self.replacement;self.save(self.receipt)
     def restore(self):
