@@ -1,0 +1,48 @@
+name: Linux x64 C4 coherence preparation only
+on:
+  push:
+    branches: [qualification/linux-x64-c4-coherence-preparation]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: linux-x64-c4-coherence-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: be8bcfad29610265716b8dcb657658cf8f1d0ba3
+          path: coherence-source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: tmux/tmux
+          ref: e476c1230b958df0cb12977517d24b3dc931375b
+          path: coherence-upstream
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify retained inputs and run offline current CLI and unpatched stock build only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 qualification/linux-x64-c4-coherence-preparation/runner.py
+      - name: Independently finish exact-owned cleanup
+        if: always()
+        run: python3 qualification/linux-x64-c4-coherence-preparation/cleanup.py
+      - name: Retain coherence build, import, closure and cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-x64-c4-coherence-preparation-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/x64-coherence-prep-evidence
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

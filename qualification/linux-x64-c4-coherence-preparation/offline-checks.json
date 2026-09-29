@@ -1,0 +1,15 @@
+{
+  "pythonTests": 9,
+  "nodeIdentityTests": 5,
+  "passed": true,
+  "pythonAST": true,
+  "nodeSyntax": "26.8.2",
+  "fixtureFiles": 25,
+  "fixtureChangedFiles": [
+    "linux-identity.mjs",
+    "linux-identity.test.mjs"
+  ],
+  "originalDriverOracleBytesUnchanged": true,
+  "retainedOfflineFailure": "Initial receipt test fixture used obsolete evidence/ subdirectory; corrected only test path. No live attempt.",
+  "actualLinuxBuildImport66Helpers": "67 including new x64 negative; not run, pending preparation authorization"
+}

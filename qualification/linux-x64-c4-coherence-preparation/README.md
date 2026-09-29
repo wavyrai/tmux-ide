@@ -1,0 +1,26 @@
+# Linux x64 current coherence preparation — source review
+
+Build-only source proposal. No build, native/CLI import, daemon, tmux server, CI push or fixture execution occurred. Source runtime is be8bcfad29610265716b8dcb657658cf8f1d0ba3/tree4dec271c1d435c2ceaa147441538cc188294039c, actual default0/native-off. Prior cb6/private32 performance and parser/tail receipts remain unchanged. Parent qualification branch317ea0 fixes only parser log collection and remains unpushed.
+
+Reuse accepted CI36589727232 runtimecb4f71b3 for installed dependencies/native893 and original91,036-entry closure, plus CI36581517710 imaged52067ef/Node26.8.2/Bun1.4.2/tool/loader receipts. No native893 rebuild, new installation, reference build or component/performance rerun. pins.json closes exact artifact IDs/sizes/ZIP hashes, runtime hash, Docker/runner identity and tool inputs. Original nested-manifest discrepancy is retained and independently matched to accepted input artifact.
+
+Successful Spark553988 preparation supplies import/collector/payload code and25 fixture files. fixture-port.diff proves only Linux identity architecture guard/test changes; original native and stock drivers, ownership, ESM boundaries, scratch-fleet fences, stock admission and semantic oracle bytes are untouched. preparation-port.diff shows x64 extraction/admission/envelope differences. Native ELF collector uses existing x64 harness, not ARM paths.
+
+Future manual-only review boundary: workflow is exact-branch push scoped plus manual trigger, but NO push/dispatch is authorized by this document. After review, one push would trigger one build-only job. Pinned actions obtain full nonshallow clean be8 repository and exact upstream tmux e476/treead5. Runner verifies commit/tree/clean/nonshallow, creates standalone full Git bundles, records hashes in admitted inputs, and transfers them read-only to the offline container. Generated bundle bytes are admitted at that point; source identity is preclosed, not guessed bundle hashes. Relative checkout paths are outside private Docker payload. No credentials persist in checkout.
+
+Build wrapper extracts original runtime into a fresh subdirectory then moves admitted roots into mounted /work (the mount already exists); verifies full original closure; copies dependency bytes/relative links into new standalone /work/current/source. New current tree retains full.git with no alternates/gitfile; read-only Git uses GIT_OPTIONAL_LOCKS=0. Before build, actual Node26 import-only dependency checks and successful Spark hermetic helper suite run (now67 tests with x64-negative case). No driver entrypoint is imported or run. The actual Linux helper/import proof is pending this future preparation, not locally claimed.
+
+One proposed current CLI build:
+
+```
+/pinned/bun /work/current/source/scripts/build-cli.mjs --outfile /work/current/source/.tasks/coherence-cli/cli.mjs --metafile /work/current/source/.tasks/coherence-cli/cli-metafile.json
+/opt/node26/bin/node /work/current/source/.tasks/coherence-cli/cli.mjs --version
+```
+
+One genuinely unpatched stock build from verified upstream git archive: sh autogen.sh; configure --enable-utf8proc --disable-jemalloc; make -j2. Only stock -V is run, never a stock server or capability probe. Preserve COPYING, full source archive, compiler/tool hashes, flags and config logs. Grid-only reference9ed is not stock. New CLI/stock hashes and actual ELF/resolutions/metafile inputs are outputs, not preclaimed.
+
+Capture fresh build processHost boot/CLK_TCK/getconf hash, exact host topology/ancestor quota admission, full source/dependency/Git/tool/native/stock files and relative links, ELF/loader/shared-object closure. Package only current+native with complete modes/types/links and byte roundtrip. Omit original large runtime archive from new preparation-inputs while preserving its admitted hash and raw source receipts. Full original closure and topology rechecked in finally; mandatory receipt validator rejects incomplete imports/builds/fsck, patched stock or corrupt/ungrounded archive. Exact owned nonce/image/CID/mounts/config cleanup always runs, independent continuation and image retirement retained; Docker logs uses literal --tail100 with actual argv regression. No retry.
+
+Offline proof:9Python tests (payload2, receipts2, timestamp cache2, envelope3),5Node Linux identity tests; all PythonAST and Node syntax. Initial offline receipt fixture retained obsolete evidence/ subdirectory; corrected test path, no live failure. offline-checks.json and source diffs preserve scope. Current fixtures unchanged beyond x64 adapter admission. Future campaign must derive/freeze fresh runtime processHost outside immutable preparation receipt because CI boot changes; archived build host must not be treated as runtime identity. Campaign wrapper is not implemented or authorized here.
+
+After reviewing actual new artifact, a separate campaign can execute exactly native2/4/8 then stock2/4/8,500records/20resizes/one heldACK, unchanged assertions/bounds/deadlines and differentiated native-grid vs finite-stock-semantic oracle. This preparation adds no new performance metric or acceptance axis and does not qualify those cases by building successfully.

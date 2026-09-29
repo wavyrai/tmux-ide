@@ -1,0 +1,111 @@
+--- accepted-arm/prepare-coherence.py
++++ x64/prepare-coherence.py
+@@ -3,19 +3,13 @@
+ from bounded import run_bounded
+ from extract_runtime import extract_runtime
+ from payload import package_payload
+-I=pathlib.Path('/inputs');E=pathlib.Path('/evidence');D=json.loads((I/'descriptor.json').read_text());code=1;host_final=False;phase='admission';admitted=None;os.umask(0o077)
++from closure import verify
++from admit_topology import admit
++I=pathlib.Path('/inputs');E=pathlib.Path('/evidence');D=json.loads((I/'admission.json').read_text());code=1;phase='admission';restored=False;post=False;os.umask(0o077)
+ S=pathlib.Path('/work/current/source');CURRENT=S.parent
+ ENV={'HOME':'/work/home','PATH':'/opt/node26/bin:/pinned:/usr/bin:/bin','LC_ALL':'C','TZ':'UTC','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null','GIT_OPTIONAL_LOCKS':'0'}
+ def sha(p):
+  with pathlib.Path(p).open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
+-def barrier(name,abort=True):
+- deadline=time.monotonic()+30
+- while time.monotonic()<deadline:
+-  if abort:assert not (E/'host-monitor-failed.json').exists()
+-  p=E/name
+-  if p.exists():return json.loads(p.read_text())
+-  time.sleep(.1)
+- raise TimeoutError('Host barrier '+name)
+ def run(name,args,cwd='/work',timeout=180):
+  global phase
+  phase=name
+@@ -25,25 +19,26 @@
+  return (E/(name+'.log')).read_text()
+ def git(name,args,cwd=S):return run(name,['/usr/bin/git',*args],cwd)
+ try:
+- assert os.uname().machine=='aarch64' and D['portable']['lane']=='coherence-build-only'
++ assert os.uname().machine=='x86_64' and D['preparationOnly'] is True
++ assert D['imageId']==os.environ['APPROVED_IMAGE_ID'] and D['runnerImageVersion']==os.environ['APPROVED_RUNNER_IMAGE_VERSION']
++ assert {p.name:sha(p) for p in I.iterdir() if p.name!='admission.json'}==D['inputHashes']
++ for p,h in D['imageToolHashes'].items():assert sha(p)==h,p
+  assert D['source']['commit']=='be8bcfad29610265716b8dcb657658cf8f1d0ba3'
+- for name,key in [('runtime.tar','runtimeTarSha256')]:assert sha(I/name)==D['portable'][key]
++ assert sha(I/'runtime.tar.gz')==D['runtimeArchive']['sha256']
+  assert sha(I/'source.bundle')==D['source']['bundleSha256'] and sha(I/'upstream.bundle')==D['upstream']['bundleSha256']
+- admitted=barrier('host-admitted.json');assert admitted['accepted']
+- phase='extract';(E/'runtime-extraction.json').write_text(json.dumps(extract_runtime(I/'runtime.tar',pathlib.Path('/work'))))
+- assert sha('/work/artifact-receipt.json')==D['portable']['artifactReceiptSha256']
++ first=admit(D['cpuset']);(E/'topology-before.json').write_text(json.dumps(first,indent=2))
++ phase='extract';scratch=pathlib.Path('/work/runtime-extracted');proof=extract_runtime(I/'runtime.tar.gz',scratch)
++ for p in scratch.iterdir():assert not (pathlib.Path('/work')/p.name).exists();p.rename(pathlib.Path('/work')/p.name)
++ scratch.rmdir();(E/'runtime-extraction.json').write_text(json.dumps(proof))
++ ledger=json.loads((I/'full-closure.json').read_text());(E/'closure-before.json').write_text(json.dumps(verify('/work',ledger)));restored=True
++ assert json.loads(pathlib.Path('/work/artifact-receipt.json').read_text())==json.loads((I/'artifact-receipt.json').read_text())
+  base=json.loads(pathlib.Path('/work/artifact-receipt.json').read_text())
+  for p,digest in base['closure'].items():assert sha(p)==digest,p
+  CURRENT.mkdir();pathlib.Path('/work/home').mkdir(mode=0o700)
+- uid=D['execution']['uid'];assert uid>0
+- for root,dirs,files in os.walk('/work'):
+-  os.chown(root,uid,uid)
+-  for name in dirs+files:os.lchown(pathlib.Path(root)/name,uid,uid)
+- os.chown(E,uid,uid)
+- for p in E.iterdir():os.lchown(p,uid,uid)
+- os.setgroups([]);os.setgid(uid);os.setuid(uid)
++ assert os.getuid()>0
+  git('source-clone',['clone','--no-checkout',str(I/'source.bundle'),str(S)],CURRENT)
+  git('source-checkout',['checkout','--detach',D['source']['commit']])
++ assert git('source-head',['rev-parse','HEAD']).strip()==D['source']['commit']
+  assert git('source-tree',['rev-parse','HEAD^{tree}']).strip()==D['source']['tree']
+  assert not (S/'.git/objects/info/alternates').exists()
+  # Existing Linux dependency installation copied as bytes, never installed/rebuilt.
+@@ -67,7 +62,7 @@
+   # Bare workspace imports resolve against the exact private current checkout.
+   os.symlink('../../source/node_modules',CURRENT/'coherence'/lane/'node_modules')
+  process_host={'bootId':pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'clockTicksPerSecond':int(run('clock-ticks',['/usr/bin/getconf','CLK_TCK']).strip()),'getconf':{'path':'/usr/bin/getconf','sha256':sha('/usr/bin/getconf')}}
+- assert process_host['bootId']==D['execution']['bootId'];(CURRENT/'process-host.json').write_text(json.dumps(process_host,indent=2))
++ (CURRENT/'process-host.json').write_text(json.dumps(process_host,indent=2))
+  # Import graph before expensive stock build; source driver itself is NOT imported.
+  run('coherence-import',['/opt/node26/bin/node','--import',str(S/'node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/loader.mjs'),'/inputs/import-coherence.mjs'],S)
+  run('coherence-tests',['/opt/node26/bin/node','--import',str(S/'node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/loader.mjs'),'--test',str(CURRENT/'coherence/linux-identity.test.mjs'),str(CURRENT/'coherence/native/overlay.test.mjs'),str(CURRENT/'coherence/native/partial-allocation.test.ts'),str(CURRENT/'coherence/stock/overlay.test.mjs'),str(CURRENT/'coherence/stock/partial-allocation.test.ts'),str(CURRENT/'coherence/stock/collect-stock.test.mjs'),str(CURRENT/'coherence/stock/semantic-oracle.test.mjs'),str(CURRENT/'coherence/stock/stock-admission.test.mjs')],S)
+@@ -91,7 +86,7 @@
+  shutil.rmtree(CURRENT/'stock-source')
+  (CURRENT/'preparation-inputs').mkdir()
+  for p in I.iterdir():
+-  if p.is_file() and p.suffix not in ['.tar','.bundle']:shutil.copy2(p,CURRENT/'preparation-inputs'/p.name)
++  if p.is_file() and p.suffix not in ['.tar','.gz','.bundle']:shutil.copy2(p,CURRENT/'preparation-inputs'/p.name)
+  run('coherence-collect',['/opt/node26/bin/node','/inputs/collect-coherence.mjs'],S,300)
+  phase='package';proof=package_payload(pathlib.Path('/work'),['current','native'],E/'coherence-runtime.tar',pathlib.Path('/work/coherence-roundtrip'))
+  assert proof['gitIncluded'];(E/'payload-proof.json').write_text(json.dumps(proof))
+@@ -101,9 +96,12 @@
+  try:(E/'private-build-failure.txt').write_text(traceback.format_exc())
+  except BaseException:pass
+ finally:
+- (E/'campaign-finished.json').write_text(json.dumps({'buildOnly':True,'codeBeforeHostFinal':code}))
+  try:
+-  final=barrier('host-final.json',False);assert final['accepted'] and admitted and final['containerId']==admitted['containerId'];host_final=True
+- except BaseException:code=1
+- (E/'coherence-build-result.json').write_text(json.dumps({'exit':code,'phase':phase,'hostFinalAccepted':host_final,'performanceQualified':False}))
++  if restored:
++   (E/'closure-after.json').write_text(json.dumps(verify('/work',ledger)))
++   assert admit(D['cpuset'])==first
++   post=True
++ except BaseException:
++  code=1;(E/'post-verification-failure.txt').write_text(traceback.format_exc())
++ (E/'coherence-build-result.json').write_text(json.dumps({'exit':code,'phase':phase,'postClosurePassed':post,'performanceQualified':False,'fixturesStarted':False}))
+ sys.exit(code)
+--- accepted-arm/collect-coherence.mjs
++++ x64/collect-coherence.mjs
+@@ -1,7 +1,7 @@
+ import assert from 'node:assert/strict';import {readFileSync,writeFileSync,readdirSync,lstatSync,realpathSync,readlinkSync,existsSync} from 'node:fs';import {createHash} from 'node:crypto';import {join,resolve} from 'node:path';import {createRequire,isBuiltin} from 'node:module';import {execFileSync,spawnSync} from 'node:child_process';
+-import {elfClosure,verifyLoaderListing,nativeBundleFiles} from '/work/source/.tasks/whole-runtime-linux-arm64-prep/harness/elf-closure.mjs';
++import {elfClosure,verifyLoaderListing,nativeBundleFiles} from '/work/source/.tasks/native-x64-c4/harness/elf-closure.mjs';
+ const root='/work/current',source=root+'/source',sha=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
+-const d=JSON.parse(readFileSync('/inputs/descriptor.json')),base=JSON.parse(readFileSync('/work/artifact-receipt.json')),host=JSON.parse(readFileSync('/work/host.json')),imported=JSON.parse(readFileSync('/evidence/coherence-import.json'));
++const d=JSON.parse(readFileSync('/inputs/admission.json')),base=JSON.parse(readFileSync('/work/artifact-receipt.json')),host=JSON.parse(readFileSync('/work/host.json')),imported=JSON.parse(readFileSync('/evidence/coherence-import.json'));
+ assert(imported.fixturesStarted===false&&imported.nodePtyLoaded===true);
+ for(const [p,h] of Object.entries(base.closure))assert.equal(sha(p),h,'Original artifact changed '+p);
+ const closure={},links={},resolutions=[],buildInputs={};

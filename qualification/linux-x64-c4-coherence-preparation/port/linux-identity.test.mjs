@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';import {test} from 'node:test';
+import {createLinuxProcessIdentity} from './linux-identity.mjs';
+const boot='9bc8d103-87df-4657-833c-6c64a23b7db7';
+const descriptor={bootId:boot,clockTicksPerSecond:100,getconf:{path:'/usr/bin/getconf'}};
+function stat(start='900',state='S'){const f=Array(22).fill('0');f[0]=state;f[1]='1';f[11]='10';f[12]='5';f[19]=start;return `123 (name with ) space) ${f.join(' ')}`;}
+async function fixture(values){let index=0;return createLinuxProcessIdentity({descriptor},{platform:'linux',arch:'x64',execute:async()=>({stdout:'100\n'}),read:async path=>{if(path==='/proc/sys/kernel/random/boot_id')return boot;assert.equal(path,'/proc/123/stat');const value=values[index++];if(value instanceof Error)throw value;return value;}});}
+function error(code,syscall='read',path='/proc/123/stat'){return Object.assign(Error(code),{code,syscall,path});}
+test('exact identity distinguishes PID reuse and retains zombie witness',async()=>{const x=await fixture([stat(),stat('901'),stat('901','Z')]);assert.equal(await x.identify(123),`linux:${boot}:123:900`);assert.equal(await x.identify(123),`linux:${boot}:123:901`);assert.equal(await x.identify(123),`linux:${boot}:123:901`);});
+test('only confirmed absent maps null, including exact single-reopen race',async()=>{for(const v of [[error('ENOENT')],[error('ESRCH'),error('ENOENT')]])assert.equal(await(await fixture(v)).identify(123),null);});
+test('access malformed and repeated or mismatched ESRCH remain uncertainty',async()=>{for(const v of [[error('EACCES')],['malformed'],[error('ESRCH'),error('ESRCH')],[error('ESRCH','open')],[error('ESRCH','read','/proc/124/stat')]])await assert.rejects((await fixture(v)).identify(123));});
+test('boot and clock admission reject mismatch',async()=>{for(const change of [{read:async()=>boot.replace('9','8')},{execute:async()=>({stdout:'250'})}])await assert.rejects(createLinuxProcessIdentity({descriptor},{platform:'linux',arch:'x64',read:async()=>boot,execute:async()=>({stdout:'100'}),...change}));});
+test('x64 admission refuses an ARM identity adapter invocation',async()=>{await assert.rejects(createLinuxProcessIdentity({descriptor},{platform:'linux',arch:'arm64',read:async()=>boot,execute:async()=>({stdout:'100'})}));});
