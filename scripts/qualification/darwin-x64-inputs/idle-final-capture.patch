@@ -1,0 +1,24 @@
+--- a/case.mjs
++++ b/case.mjs
+@@ -1,3 +1,4 @@
++import {finalCaptureDrained} from './final-capture-drain.mjs';
+ // Draft, one explicitly approved private canonical case. No build is performed.
+ import assert from 'node:assert/strict';
+ import {execFile} from 'node:child_process';
+@@ -113,8 +114,14 @@
+  const started=performance.now();let count=spec.lane==='idle'?1:0;
+  for(let i=0;i<n;i++){if(streamError)throw streamError;const got=await pair();assert(got>=count&&got<=i+1+(spec.lane==='idle'?1:0));count=got;}
+  // Capture-only final verification has a different connection; disclose as background.
+- await until(async()=>Number(/COUNT:(\d+)/.exec(await command(['capture-pane','-p','-t',fleet.sessionNames[0]]))?.[1])===n+(spec.lane==='idle'?1:0));
+- if(spec.mode==='candidate32')await until(()=>{if(streamError)throw streamError;try{result.counts=reconcile(evidence,issuers,n+(spec.lane==='idle'?1:0));return evidenceStatusBarrier(evidence,status,issuers);}catch{return false;}});
++ let finalIssuer;
++ await until(async()=>{
++  const identified=spec.lane==='idle'&&spec.mode==='candidate32';
++  const text=await command([...(identified?['tmux-ide-events','-i',';']:[]),'capture-pane','-p','-t',fleet.sessionNames[0]]);
++  if(identified){const id=JSON.parse(text.slice(0,text.indexOf('\n')));assert.equal(id.serverEpoch,epoch);finalIssuer=boundIssuerReference(status,epoch,id.connectionId);}
++  return Number(/COUNT:(\d+)/.exec(text)?.[1])===n+(spec.lane==='idle'?1:0);
++ });
++ if(spec.mode==='candidate32')await until(()=>{if(streamError)throw streamError;try{result.counts=reconcile(evidence,issuers,n+(spec.lane==='idle'?1:0));return evidenceStatusBarrier(evidence,status,issuers)&&(spec.lane!=='idle'||finalCaptureDrained(evidence,status,{setupIssuer,pairIssuers:issuers,finalIssuer}));}catch{return false;}});
+  result.elapsedSeconds=(performance.now()-started)/1000;result.serverCpuSeconds=await cpu(identity[0]); // Fresh server cumulative CPU includes startup.
+  assert.equal((await run('/bin/ps',['-o','lstart=','-o','command=','-p',String(appPid)],{timeout:5000})).stdout.trim(),appStart);
+  result.orphanAppCpuSeconds=await cpu(appPid); // PTY app is reaped by tmux, not fixture Node.

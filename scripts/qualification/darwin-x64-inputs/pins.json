@@ -1,0 +1,38 @@
+{
+  "sourceCommit": "be8bcfad29610265716b8dcb657658cf8f1d0ba3",
+  "sourceTree": "4dec271c1d435c2ceaa147441538cc188294039c",
+  "upstream": "e476c1230b958df0cb12977517d24b3dc931375b",
+  "gridPatch": "b0bedabf8e2bd055662f796609b8e8b9a8c8746c6f2a655b0d017872d4827f4f",
+  "journalPatch": "fab780c9ca4a8452fbf73d5ed04e0d9420c887c6006c84b9d0c83a89af80aa0d",
+  "nativeArtifact": {
+    "runId": 36561287535,
+    "artifactId": 11030052402,
+    "digest": "b98ef992bd8161fbfb515c550821dd08654215a38378c6869706d3215901a376",
+    "name": "native-journal-darwin-x64-cb6f09efb173d045d2bc221d0f14cfe415075b48-1",
+    "manifestSha256": "a968edf132992eb9ccfe8939d0c5f5aeb7de8f6b07d81d1878e4d36be33a7d21"
+  },
+  "downloads": {
+    "node": {
+      "url": "https://nodejs.org/dist/v26.8.2/node-v26.8.2-darwin-x64.tar.gz",
+      "algorithm": "sha256",
+      "digest": "adb8feb2d4987df3d72d2ec46f4fc4b58039c859b8c3f0e3cc2d3c6cbaf8629c",
+      "root": "node-v26.8.2-darwin-x64",
+      "executable": "bin/node",
+      "version": "v26.8.2"
+    },
+    "bun": {
+      "url": "https://registry.npmjs.org/@oven/bun-darwin-x64/-/bun-darwin-x64-1.4.2.tgz",
+      "integrity": "sha512-gZTxZuLjkUhAWjTETu3tw0WhsEdNkJ64daj60ybhPf835a2yollV3yTkK9JozvzKPx4TRFzLSl8C+U525pxVbw==",
+      "root": "package",
+      "executable": "bin/bun",
+      "version": "1.4.2"
+    },
+    "pnpm": {
+      "url": "https://registry.npmjs.org/pnpm/-/pnpm-10.21.0.tgz",
+      "integrity": "sha512-2jM3Jn5AD909R5psaAeaxtsB2MpPZ1cgg+cid1p5Z4inqZVmE3SeAA+sINQktZT3p5Gl9OLhNYHF75R/JpaKQA==",
+      "root": "package",
+      "executable": "bin/pnpm.cjs",
+      "version": "10.21.0"
+    }
+  }
+}

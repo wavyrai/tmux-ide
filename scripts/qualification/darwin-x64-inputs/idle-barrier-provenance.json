@@ -1,0 +1,7 @@
+{
+  "macOriginalSha256": "9b787b37bb8d89379b6246d73282bb2cd086abe99ffa339e689257587183c0b6",
+  "sparkAcceptedBlockSha256": "add1d98ee38a8c6a3962505ed9725bd0643ab5f60030987a399850d8e67ff09b",
+  "patchedSourceSha256": "d0a518637d6962ef11e1767664a5db5980993eda980000c57d352752cf27f306",
+  "sourceOnly": true,
+  "appliedToHistoricalFiles": false
+}

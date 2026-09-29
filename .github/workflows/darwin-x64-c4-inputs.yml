@@ -1,0 +1,56 @@
+name: Darwin x64 performance input preparation (no campaign)
+on:
+  workflow_dispatch:
+  push:
+    branches: [qualification/darwin-x64-c4-inputs]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: darwin-x64-input-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          path: recipe
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: be8bcfad29610265716b8dcb657658cf8f1d0ba3
+          path: source
+          persist-credentials: false
+      - name: Fetch exact retained native artifact (never rebuild it)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/darwin-inputs-download"
+          gh api repos/wavyrai/tmux-ide/actions/artifacts/11030052402 > "$RUNNER_TEMP/darwin-inputs-download/artifact.json"
+          gh api repos/wavyrai/tmux-ide/actions/artifacts/11030052402/zip > "$RUNNER_TEMP/darwin-inputs-download/qualified.zip"
+      - name: Prepare pinned inputs only
+        run: |
+          /usr/bin/python3 recipe/scripts/qualification/darwin-x64-inputs/prepare-inputs.py \
+            --source "$GITHUB_WORKSPACE/source" \
+            --artifact "$RUNNER_TEMP/darwin-inputs-download" \
+            --output "$RUNNER_TEMP/darwin-x64-inputs"
+      - name: Preserve receipts and inputs on success or failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: darwin-x64-performance-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/darwin-x64-inputs/inputs.tar.gz
+            ${{ runner.temp }}/darwin-x64-inputs/payload-status.json
+            ${{ runner.temp }}/darwin-x64-inputs/payload-manifest.json
+            ${{ runner.temp }}/darwin-x64-inputs/payload-path-map.json
+            ${{ runner.temp }}/darwin-x64-inputs/input-closure.json
+            ${{ runner.temp }}/darwin-x64-inputs/preparation-status.json
+            ${{ runner.temp }}/darwin-x64-inputs/stages.json
+            ${{ runner.temp }}/darwin-x64-inputs/host-before.json
+            ${{ runner.temp }}/darwin-x64-inputs/logs
+            ${{ runner.temp }}/darwin-inputs-download
+          if-no-files-found: error
+          retention-days: 7
