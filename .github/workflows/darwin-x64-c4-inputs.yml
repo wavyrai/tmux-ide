@@ -48,6 +48,7 @@ jobs:
             ${{ runner.temp }}/darwin-x64-inputs/payload-path-map.json
             ${{ runner.temp }}/darwin-x64-inputs/input-closure.json
             ${{ runner.temp }}/darwin-x64-inputs/preparation-status.json
+            ${{ runner.temp }}/darwin-x64-inputs/openssl-*.json
             ${{ runner.temp }}/darwin-x64-inputs/stages.json
             ${{ runner.temp }}/darwin-x64-inputs/host-before.json
             ${{ runner.temp }}/darwin-x64-inputs/logs

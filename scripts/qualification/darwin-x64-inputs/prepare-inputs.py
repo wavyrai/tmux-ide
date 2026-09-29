@@ -3,6 +3,7 @@ import argparse, base64, hashlib, json, os, pathlib, platform, shutil, stat, str
 import tarfile, time, urllib.request, zipfile, sysconfig
 from bounded import run_bounded
 from package_payload import package_payload
+from openssl_link import remedy_known_openssl
 HERE = pathlib.Path(__file__).resolve().parent
 PINS = json.loads((HERE / 'pins.json').read_text())
 
@@ -136,6 +137,8 @@ def main():
         assert json.loads(run('node-platform',[node,'-p','JSON.stringify([process.platform,process.arch])'])) == ['darwin','x64']
         # This is dependency preparation, not runtime or a performance measurement.
         run('brew-before',['brew','info','--json=v2','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'])
+        stage='openssl-link-admission'
+        remedy_known_openssl(run,lambda name,value:(out/name).write_text(json.dumps(value,indent=2)),os.environ)
         run('brew-build-inputs',['brew','install','--build-from-source','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'],timeout=900)
         run('brew-after',['brew','info','--json=v2','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'])
         for name in ('libevent','ncurses','utf8proc'):
