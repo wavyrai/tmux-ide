@@ -4,6 +4,7 @@ import tarfile, time, urllib.request, zipfile, sysconfig
 from bounded import run_bounded
 from package_payload import package_payload
 from openssl_link import remedy_known_openssl
+from brew_diagnostics import capture_logs, with_diagnostics
 HERE = pathlib.Path(__file__).resolve().parent
 PINS = json.loads((HERE / 'pins.json').read_text())
 
@@ -71,7 +72,8 @@ def main():
     logs = out / 'logs'; logs.mkdir(); home = out / 'home'; home.mkdir()
     env = {'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin', 'HOME': str(home), 'LC_ALL': 'C', 'TZ': 'UTC',
            'TMPDIR': str(out / 'tmp'), 'HOMEBREW_NO_AUTO_UPDATE': '1', 'HOMEBREW_NO_INSTALL_CLEANUP': '1',
-           'HOMEBREW_CACHE': str(out / 'brew-cache')}
+           'HOMEBREW_CACHE': str(out / 'brew-cache'),
+           'HOMEBREW_LOGS': str(out / 'tmp/homebrew-logs'), 'HOMEBREW_DISABLE_DEBREW': '1'}
     (out / 'tmp').mkdir(); stages = []; stage = 'host'; success = False; failure_stage = None
     def run(name, argv, cwd=None, timeout=60):
         nonlocal stage
@@ -139,7 +141,10 @@ def main():
         run('brew-before',['brew','info','--json=v2','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'])
         stage='openssl-link-admission'
         remedy_known_openssl(run,lambda name,value:(out/name).write_text(json.dumps(value,indent=2)),os.environ)
-        run('brew-build-inputs',['brew','install','--build-from-source','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'],timeout=1800)
+        with_diagnostics(
+            lambda:run('brew-build-inputs',['brew','install','--verbose','--debug','--build-from-source','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'],timeout=1800),
+            lambda:capture_logs(out/'tmp/homebrew-logs',logs/'homebrew'),
+            lambda status:(logs/'homebrew-capture.json').write_text(json.dumps(status,indent=2)))
         run('brew-after',['brew','info','--json=v2','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'])
         for name in ('libevent','ncurses','utf8proc'):
             prefix=run('prefix-'+name,['brew','--prefix',name]).strip()
