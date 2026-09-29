@@ -5,7 +5,8 @@ from bounded import run_bounded
 from package_payload import package_payload
 from openssl_link import remedy_known_openssl
 from brew_diagnostics import capture_logs, with_diagnostics
-from brew_core import prepare_core
+from brew_core import prepare_core, CORE
+from core_backup import CoreBackup
 HERE = pathlib.Path(__file__).resolve().parent
 PINS = json.loads((HERE / 'pins.json').read_text())
 
@@ -76,6 +77,7 @@ def main():
            'HOMEBREW_CACHE': str(out / 'brew-cache'),
            'HOMEBREW_LOGS': str(out / 'tmp/homebrew-logs'), 'HOMEBREW_DISABLE_DEBREW': '1'}
     (out / 'tmp').mkdir(); stages = []; stage = 'host'; success = False; failure_stage = None
+    core_backup=CoreBackup(CORE,out/'tmp/core-checkout-backup',lambda receipt:(out/'core-restoration.json').write_text(json.dumps(receipt,indent=2)))
     def run(name, argv, cwd=None, timeout=60):
         nonlocal stage
         stage = name
@@ -144,7 +146,7 @@ def main():
         remedy_known_openssl(run,lambda name,value:(out/name).write_text(json.dumps(value,indent=2)),os.environ)
         stage='core-tap-admission'
         try:
-            prepare_core(run,lambda receipt:(out/'core-tap.json').write_text(json.dumps(receipt,indent=2)),env,os.environ,PINS['homebrewCore'])
+            prepare_core(run,lambda receipt:(out/'core-tap.json').write_text(json.dumps(receipt,indent=2)),env,os.environ,PINS['homebrewCore'],core_backup)
         except BaseException:
             stage='core-tap-admission'
             raise
@@ -204,10 +206,14 @@ def main():
         failure_stage = stage
         raise
     finally:
+        restoration_error=None
+        try:core_backup.restore()
+        except Exception as error:restoration_error=error
         try:
             run('processes-after',['/bin/ps','-axo','pid=,ppid=,stat=,lstart=,command='])
         finally:
-            (out/'preparation-status.json').write_text(json.dumps({'ok':success,'stage':stage,'failureStage':failure_stage,'loadAfter':os.getloadavg(),'performanceQualified':False,'cliBuilt':False,'instrumentedNativeRebuilt':False},indent=2))
+            (out/'preparation-status.json').write_text(json.dumps({'ok':success and restoration_error is None,'coreRestored':not core_backup.receipt['active'],'stage':stage,'failureStage':failure_stage,'loadAfter':os.getloadavg(),'performanceQualified':False,'cliBuilt':False,'instrumentedNativeRebuilt':False},indent=2))
+        if restoration_error is not None and failure_stage is None:raise restoration_error
     if success:
         hashes={};links={}
         for parent,dirs,files in os.walk(out,followlinks=False):

@@ -1,6 +1,7 @@
 import hashlib,pathlib,tempfile,unittest
 from unittest.mock import patch
 import brew_core as core
+from core_backup import CoreBackup
 HOST={'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','RUNNER_OS':'macOS','RUNNER_ARCH':'X64'}
 class CoreTests(unittest.TestCase):
     def fixture(self,root):
@@ -53,6 +54,20 @@ class CoreTests(unittest.TestCase):
             with patch.object(core,'CORE',root),self.assertRaises(AssertionError):
                 core.prepare_core(lambda name,argv,**kw:(calls.append(name) or replies.get(name,'')),lambda value:None,{},HOST,pins)
             self.assertEqual(calls,['brew-repository'])
+    def test_dirty_official_checkout_is_preserved_then_replacement_admitted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=pathlib.Path(tmp)/'core';root.mkdir();(root/'.git').mkdir();(root/'custom').write_text('retain')
+            pins,replies,_=self.fixture(root);replies['core-before-dirty']=' M Formula/r/rustup.rb'
+            replies.update({'core-replacement-root':str(root),'core-replacement-origin':core.REPOSITORY,'core-replacement-clean':''})
+            calls=[];backup=CoreBackup(root,pathlib.Path(tmp)/'backup',lambda value:None)
+            def run(name,argv,**kwargs):
+                calls.append(name)
+                if name=='core-replacement-tap':root.mkdir();(root/'.git').mkdir()
+                return replies.get(name,'')
+            with patch.object(core,'CORE',root),patch.object(core,'validate_checkout',return_value={'verified':True}):
+                core.prepare_core(run,lambda value:None,{},HOST,pins,backup)
+            self.assertIn('core-fetch',calls);self.assertIsNotNone(backup.replacement)
+            backup.restore();self.assertEqual((root/'custom').read_text(),'retain')
     def test_wrong_host_refuses_before_commands(self):
         pins,_,_=self.fixture(pathlib.Path('/unused'));calls=[]
         with self.assertRaises(AssertionError):core.prepare_core(lambda *a,**k:calls.append(a),lambda x:None,{}, {},pins)

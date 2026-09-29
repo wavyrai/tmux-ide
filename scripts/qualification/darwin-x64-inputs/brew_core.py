@@ -18,7 +18,7 @@ def validate_checkout(run, pins, directory=CORE):
         formulas[name]={'path':pin['path'],'sha256':actual}
     return {'origin':REPOSITORY,'head':head,'tree':tree,'formulas':formulas,'installFromApi':False}
 
-def prepare_core(run, save, env, hosted, pins):
+def prepare_core(run, save, env, hosted, pins, backup=None):
     assert hosted.get('GITHUB_ACTIONS')=='true' and hosted.get('RUNNER_ENVIRONMENT')=='github-hosted'
     assert hosted.get('RUNNER_OS')=='macOS' and hosted.get('RUNNER_ARCH')=='X64'
     assert pins['repository']==REPOSITORY
@@ -42,10 +42,18 @@ def prepare_core(run, save, env, hosted, pins):
         save(receipt)
     assert pathlib.Path(before['root']).resolve()==CORE.resolve(),'Unexpected git root'
     assert before['origin'] in (REPOSITORY,REPOSITORY+'.git'),'Nonofficial core origin'
-    assert not before['dirty'],'Dirty core checkout'
     assert re.fullmatch('[0-9a-f]{40}',before['head']) and re.fullmatch('[0-9a-f]{40}',before['tree'])
     current=CORE.lstat()
     assert (current.st_dev,current.st_ino,current.st_mode)==(st.st_dev,st.st_ino,st.st_mode),'Core directory changed'
+    if before['dirty']:
+        assert backup is not None,'Dirty core requires reversible backup'
+        backup.preserve()
+        run('core-replacement-tap',['brew','tap','homebrew/core'],timeout=600)
+        assert CORE.is_dir() and not CORE.is_symlink() and (CORE/'.git').is_dir() and not (CORE/'.git').is_symlink()
+        assert pathlib.Path(run('core-replacement-root',['git','-C',str(CORE),'rev-parse','--show-toplevel']).strip()).resolve()==CORE.resolve()
+        assert run('core-replacement-origin',['git','-C',str(CORE),'remote','get-url','origin']).strip() in (REPOSITORY,REPOSITORY+'.git')
+        assert not run('core-replacement-clean',['git','-C',str(CORE),'status','--porcelain']).strip()
+        backup.admit_replacement()
     run('core-fetch',['git','-C',str(CORE),'fetch','--depth=1','origin',pins['revision']],timeout=120)
     run('core-checkout',['git','-C',str(CORE),'checkout','--detach',pins['revision']])
     receipt['after']=validate_checkout(run,pins)

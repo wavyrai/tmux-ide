@@ -50,6 +50,7 @@ jobs:
             ${{ runner.temp }}/darwin-x64-inputs/preparation-status.json
             ${{ runner.temp }}/darwin-x64-inputs/openssl-*.json
             ${{ runner.temp }}/darwin-x64-inputs/core-tap.json
+            ${{ runner.temp }}/darwin-x64-inputs/core-restoration.json
             ${{ runner.temp }}/darwin-x64-inputs/stages.json
             ${{ runner.temp }}/darwin-x64-inputs/host-before.json
             ${{ runner.temp }}/darwin-x64-inputs/logs
