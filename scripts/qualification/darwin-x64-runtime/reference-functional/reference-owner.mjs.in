@@ -1,0 +1,62 @@
+// Private four-case prerequisite only. Uses the existing same-server fence and process parser.
+import assert from 'node:assert/strict';
+import {execFileSync,spawnSync} from 'node:child_process';
+import {lstatSync,existsSync,readFileSync,writeFileSync} from 'node:fs';
+import {basename,join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {parseMacPsSnapshot} from './process-cpu.mjs';
+import {fenceNativeTmuxCommand} from '__SOURCE__/packages/daemon/src/lib/tmux-server-generation-runner.ts';
+const digest=p=>createHash('sha256').update(readFileSync(p)).digest('hex');
+function processRow(pid){
+ const r=spawnSync('/bin/ps',['-p',String(pid),'-o','pid=','-o','lstart=','-o','state=','-o','time=','-o','command='],{encoding:'utf8',timeout:5000,env:{...process.env,LC_ALL:'C',TZ:'UTC'}});
+ if(r.status===1&&r.stdout.trim()===''&&r.stderr.trim()==='')return null;
+ assert.equal(r.status,0,r.stderr);return parseMacPsSnapshot(r.stdout,Number(pid));
+}
+const socketRow=p=>{const s=lstatSync(p);assert(s.isSocket());return {dev:s.dev,ino:s.ino,uid:s.uid};};
+const retired=(before,after)=>after===null||after.startIdentity!==before.startIdentity;
+export function createReferenceOwner(binary,socket,directory){
+ assert.equal(binary,'__REFERENCE__');assert.equal(digest(binary),'__REFERENCE_SHA__');
+ assert(!existsSync(socket),'New private socket required');
+ const receipt=join('__RECEIPTS__',basename(directory)+'.json');
+ let witness=null;
+ writeFileSync(receipt,JSON.stringify({binary,socket,initialSocketAbsent:true,attempted:false}),{flag:'wx',mode:0o600});
+ const tmux=(...args)=>{
+  const fence=witness?fenceNativeTmuxCommand(['-N',...args],witness.identity):null;
+  if(!witness){assert.equal(args[0],'new-session');writeFileSync(receipt,JSON.stringify({binary,socket,initialSocketAbsent:true,attempted:true}));}
+  try{const result=execFileSync(binary,['-S',socket,'-f','/dev/null',...(fence?.argv??args)],{encoding:'utf8',timeout:5000,env:{...process.env,TMUX:''}});return fence?fence.verify(result):result;}
+  finally{
+   if(!witness&&existsSync(socket)){
+    const raw=execFileSync(binary,['-N','-S',socket,'display-message','-p','#{pid}|#{start_time}|#{pane_pid}'],{encoding:'utf8',timeout:5000}).trim().split('|');
+    assert.equal(raw.length,3);assert(raw.every(x=>/^[1-9][0-9]*$/.test(x)));
+    const server=processRow(Number(raw[0])),app=processRow(Number(raw[2]));assert(server?.alive&&app?.alive);
+    witness={binary,binarySha256:digest(binary),socket,identity:{pid:raw[0],startTime:raw[1]},socketWitness:socketRow(socket),server,app};
+    writeFileSync(receipt,JSON.stringify({witness,cleanup:null}));
+   }
+  }
+ };
+ return {tmux,cleanup:async()=>{
+  assert(witness,'Missing positive owner witness; preserve attempt for review');
+  await retireReference(receipt);
+ }};
+}
+export async function retireReference(receipt){
+ const value=JSON.parse(readFileSync(receipt,'utf8'));if(value.cleanup?.retired)return;
+ const w=value.witness;assert(w,'Unbound allocation; no cleanup authority');
+ assert.equal(w.binary,'__REFERENCE__');assert.equal(digest(w.binary),'__REFERENCE_SHA__');
+ const save=cleanup=>writeFileSync(receipt,JSON.stringify({...value,cleanup}));
+ try{
+  const server=processRow(w.server.pid);
+  if(!retired(w.server,server)){
+   assert.equal(server.command,w.server.command);assert.deepEqual(socketRow(w.socket),w.socketWitness);
+   const fence=fenceNativeTmuxCommand(['-N','kill-server'],w.identity);
+   fence.verify(execFileSync(w.binary,['-S',w.socket,...fence.argv],{encoding:'utf8',timeout:5000}));
+  }
+  const deadline=Date.now()+5000;let observations;
+  do{
+   observations={server:processRow(w.server.pid),app:processRow(w.app.pid)};
+   if(retired(w.server,observations.server)&&retired(w.app,observations.app)){save({retired:true,observations});return;}
+   await new Promise(r=>setTimeout(r,20));
+  }while(Date.now()<deadline);
+  throw Error('Owned reference processes did not retire');
+ }catch(e){save({retired:false,error:String(e)});throw e;}
+}

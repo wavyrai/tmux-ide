@@ -21,9 +21,53 @@
     "cliReceiptSha256": "c658da54ad9f9fcb82aa5adbc958796c27495105c3136ffa822139073e7f04ea",
     "payloadProofSha256": "14c2e8b605c34190bdd529e7fc88f0472c0bea63a66143d3170ea0003637bd50",
     "evidenceScope": "Range CRC verified receipts; not local full ZIP/tar/member acceptance",
-    "matchedReference": null
+    "matchedReference": {
+      "accepted": true,
+      "buildOnly": true,
+      "functionalLiveTestsPending": true,
+      "artifactId": 11059409786,
+      "runId": 36624139102,
+      "zipBytes": 877768,
+      "zipSha256": "047fde1bf10feb62a82916c8b3ca3536a79774c5c02bf71f51d31dcdd2aa3e7e",
+      "tarBytes": 2068480,
+      "tarSha256": "2c657ac55f5909965b68ab3067e6a1caff723185728ae5267e7bdc7fb0bb80b8",
+      "tarMember": "matched-reference/matched-reference.tar",
+      "proofMember": "matched-reference/payload.json",
+      "payloadProofSha256": "798844ff415bccaa38174063e42989a1c51153cce0281060bc01e2029b3c3480",
+      "proofSha256": "798844ff415bccaa38174063e42989a1c51153cce0281060bc01e2029b3c3480",
+      "binaryRelativePath": "reference/bundle/tmux",
+      "binarySha256": "01bd78310db40d27c49d597c1afd3467709bda18538921647491d242d1d40a3f",
+      "nativeSha256": "4998ab3bde94e588a0c4ef300e0de657cfb39d7b0689f10627517a989b7fcaf7",
+      "libraryBytesMatchNative": true,
+      "journalPatch": null,
+      "payloadGitIncludedFieldKnownInaccurate": true
+    },
+    "executionAuthorized": false,
+    "sourceCommit": "c95f246ae4a87e86f5299a4d3b594f086f2333f2",
+    "tarMember": "darwin-x64-cli/cli-runtime.tar",
+    "proofMember": "darwin-x64-cli/payload-proof.json"
   },
-  "matchedGridReferenceArtifact": null,
+  "matchedGridReferenceArtifact": {
+    "accepted": true,
+    "buildOnly": true,
+    "functionalLiveTestsPending": true,
+    "artifactId": 11059409786,
+    "runId": 36624139102,
+    "zipBytes": 877768,
+    "zipSha256": "047fde1bf10feb62a82916c8b3ca3536a79774c5c02bf71f51d31dcdd2aa3e7e",
+    "tarBytes": 2068480,
+    "tarSha256": "2c657ac55f5909965b68ab3067e6a1caff723185728ae5267e7bdc7fb0bb80b8",
+    "tarMember": "matched-reference/matched-reference.tar",
+    "proofMember": "matched-reference/payload.json",
+    "payloadProofSha256": "798844ff415bccaa38174063e42989a1c51153cce0281060bc01e2029b3c3480",
+    "proofSha256": "798844ff415bccaa38174063e42989a1c51153cce0281060bc01e2029b3c3480",
+    "binaryRelativePath": "reference/bundle/tmux",
+    "binarySha256": "01bd78310db40d27c49d597c1afd3467709bda18538921647491d242d1d40a3f",
+    "nativeSha256": "4998ab3bde94e588a0c4ef300e0de657cfb39d7b0689f10627517a989b7fcaf7",
+    "libraryBytesMatchNative": true,
+    "journalPatch": null,
+    "payloadGitIncludedFieldKnownInaccurate": true
+  },
   "freshHost": null,
   "boundPaths": null,
   "frozenClosure": null,
@@ -104,5 +148,6 @@
     "TUI/startup",
     "new performance axes",
     "threshold changes"
-  ]
+  ],
+  "referenceFunctional": "Required existing4case live prerequisite runs once before CPU; not yet executed"
 }

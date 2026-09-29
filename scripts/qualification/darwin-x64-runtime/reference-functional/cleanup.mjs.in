@@ -1,0 +1,6 @@
+import {readdirSync} from 'node:fs';
+import {join} from 'node:path';
+import {retireReference} from './reference-owner.mjs';
+let failed=false;
+for(const name of readdirSync('__RECEIPTS__').filter(x=>x.endsWith('.json'))){try{await retireReference(join('__RECEIPTS__',name));}catch(e){failed=true;process.stderr.write(String(e)+'\n');}}
+if(failed)process.exitCode=1;

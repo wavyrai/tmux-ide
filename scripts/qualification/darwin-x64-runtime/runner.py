@@ -34,8 +34,13 @@ def run(output):
   pins=dict(pins,matchedReference=ref)
   admission={'root':str(runtime),'zip':str(runtime_zip),'tar':str(output/'runtime-transport/payload.tar'),'proof':str(output/'runtime-transport/payload-proof.json'),'pins':pins,'referenceRoot':str(reference)}
   binding=bind_runtime(admission['root'],admission['zip'],admission['tar'],admission['proof'],pins,reference)
-  overlay=output/'overlay';stage_sources(binding,overlay)
   binding_path=output/'binding.json';binding_path.write_text(json.dumps(binding,indent=2));admission_path=output/'admission.json';admission_path.write_text(json.dumps(admission,indent=2))
+  reference_output=output/'reference-functional'
+  module('reference_prerequisite',BASE/'reference-functional/run.py').run(binding_path,admission_path,BASE,reference_output)
+  functional_files=[reference_output/'accepted.json',reference_output/'terminal.json',reference_output/'vitest.json',*sorted((reference_output/'receipts').glob('*.json'))]
+  binding['referenceFunctional']={'referenceSha256':ref['binarySha256'],'files':{str(p):sha(p) for p in functional_files}}
+  binding_path.write_text(json.dumps(binding,indent=2))
+  overlay=output/'overlay';stage_sources(binding,overlay)
   frozen=output/'cpu';module('cpu_freeze',BASE/'freeze-cpu.py').freeze(binding_path,admission_path,overlay,frozen)
   spec=frozen/'frozen-cpu.json';authorization=output/'authorization.json'
   authorization.write_text(json.dumps({'executionAuthorized':True,'lane':'cpu','sourceCommit':pins['sourceCommit'],'frozenSpecSha256':sha(spec),'recipeManifestSha256':sha(BASE/'recipe-files.json'),'ciHead':os.environ.get('GITHUB_SHA'),'ciRun':os.environ.get('GITHUB_RUN_ID')}))
@@ -48,6 +53,7 @@ def run(output):
   for name in ['status.json','binding.json','admission.json','authorization.json']:
    if (output/name).exists():shutil.copyfile(output/name,evidence/name)
   if (output/'cpu').exists():shutil.copytree(output/'cpu',evidence/'cpu',ignore=shutil.ignore_patterns('home'),dirs_exist_ok=True)
+  if (output/'reference-functional').exists():shutil.copytree(output/'reference-functional',evidence/'reference-functional',ignore=shutil.ignore_patterns('node_modules','cache','home'),dirs_exist_ok=True)
   if (output/'overlay/binding.diff').exists():shutil.copyfile(output/'overlay/binding.diff',evidence/'binding.diff')
   for name in ['runtime-download','reference-download']:
    if (output/name/'metadata.json').exists():shutil.copyfile(output/name/'metadata.json',evidence/(name+'.json'))

@@ -6,6 +6,7 @@ PATHS={'source':'/private/new/source','cli':'/private/new/source/.tasks/qualifie
 class BindingTests(unittest.TestCase):
  def test_actual_receipts_have_consistent_identity_but_missing_reference_rejects(self):
   fixture=json.loads((BASE/'test-receipts.json').read_text());receipt=fixture['receipt'];binding=fixture['binding'];pins=json.loads((BASE/'held-spec.json').read_text())['runtimeArtifact']
+  pins=copy.deepcopy(pins);pins['matchedReference']=None
   with self.assertRaisesRegex(AssertionError,'Matched reference'):validate_receipts(binding,receipt,pins)
   pins=copy.deepcopy(pins);pins['matchedReference']={'accepted':True,'nativeSha256':NATIVE,'libraryBytesMatchNative':True,'journalPatch':None}
   validate_receipts(binding,receipt,pins)

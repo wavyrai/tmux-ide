@@ -31,6 +31,8 @@ def freeze(binding_path,admission_path,overlay,output):
    if p.is_symlink():links[str(p)]=os.readlink(p)
    elif p.is_file():closure[str(p)]=sha(p)
  for p in [binding_path,pathlib.Path(admission_path).resolve(),host,pathlib.Path(sys.executable).resolve()]:closure[str(p)]=sha(p)
+ for p,digest in b['referenceFunctional']['files'].items():
+  assert sha(p)==digest;closure[p]=digest
  for module in sys.modules.values():
   name=getattr(module,'__file__',None)
   if name and pathlib.Path(name).is_file():
