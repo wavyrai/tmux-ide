@@ -44,6 +44,20 @@ class EnvelopeTests(unittest.TestCase):
    finally:
     for n,handler in previous.items():signal.signal(n,handler)
    row=json.loads((root/'results/results.json').read_text())[0];self.assertTrue(row['timeout']);self.assertTrue(row['terminalKnown'])
+ def test_wait4_node_requires_explicit_admitted_path(self):
+  probe=module('test_wait4_aggregation')
+  with patch('sys.stderr',io.StringIO()):
+   for args in [[],['--node','node'],['--node','/missing/admitted/node']]:
+    with self.assertRaises(SystemExit):probe.node_arguments(args)
+  with tempfile.TemporaryDirectory() as t:
+   node=pathlib.Path(t)/'node';node.write_bytes(b'fixture only; never executed')
+   self.assertEqual(probe.node_arguments(['--node',str(node),'-v']),(str(node),['-v']))
+  # Inspect actual freeze invocation, not a duplicate helper's proposed argv.
+  tree=ast.parse((BASE/'freeze-cpu.py').read_text());calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='run']
+  selected=[c.args[0] for c in calls if c.args and 'test_wait4_aggregation.py' in ast.unparse(c.args[0])]
+  self.assertEqual(len(selected),1)
+  command=selected[0];self.assertEqual(command.elts[-2].value,'--node')
+  self.assertEqual(ast.unparse(command.elts[-1]),"paths['node']")
  def test_held_runner_rejects_before_transport(self):
   with tempfile.TemporaryDirectory() as t,patch('subprocess.run') as run:
    with self.assertRaisesRegex(AssertionError,'Held source'):module('runner').run(pathlib.Path(t)/'out')

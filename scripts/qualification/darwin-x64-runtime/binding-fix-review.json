@@ -1,0 +1,17 @@
+{
+  "baseCommit": "8aaa54874c3c9867a4e61ee68417390ccfe2fc7a",
+  "bindingTests": 7,
+  "envelopeTests": 5,
+  "resolvedImports": 50,
+  "stagedModules": 26,
+  "wait4WorkloadExecuted": false,
+  "runtimeExecuted": false,
+  "dependenciesInstalled": false,
+  "sourceRoot": "/Users/thijs/Developer/tmux-ide",
+  "sourceCheckNode": "/opt/homebrew/Cellar/node/26.8.2/bin/node",
+  "changes": [
+    "wait4 explicit admitted --node; no ARM fallback",
+    "promoted tests explicit inspected source/dependency root and source-check Node",
+    "missing/relative/nonexistent node rejection plus real freeze AST argv assertion"
+  ]
+}

@@ -1,10 +1,18 @@
 """Bounded platform regression: Node reaps CPU-consuming grandchild; Python waits Node."""
-import unittest,subprocess,os,time,json,signal
-NODE='/opt/homebrew/Cellar/node/26.8.2/bin/node'
+import unittest,subprocess,os,time,json,signal,argparse,pathlib,sys
+NODE=None
+def node_arguments(argv):
+ parser=argparse.ArgumentParser(description=__doc__)
+ parser.add_argument('--node',required=True)
+ args,remaining=parser.parse_known_args(argv)
+ path=pathlib.Path(args.node)
+ if not path.is_absolute() or not path.is_file():parser.error('--node must name the admitted absolute executable file')
+ return str(path),remaining
 class Wait4Aggregation(unittest.TestCase):
  def test_reaped_grandchild_cpu_is_in_node_wait4(self):
   burn='import time,json\ns=time.process_time()\nwhile time.process_time()-s<0.12: pass\nprint(json.dumps({"burnCpu":time.process_time()-s}))'
   code='const {execFileSync}=require("node:child_process"); const grandchild=JSON.parse(execFileSync("/usr/bin/python3",["-c",'+json.dumps(burn)+'],{timeout:2000,encoding:"utf8"})); const self=process.cpuUsage();console.log(JSON.stringify({grandchild,selfCpu:(self.user+self.system)/1e6}));'
+  self.assertIsNotNone(NODE,'Explicit admitted --node argument required')
   child=subprocess.Popen([NODE,'-e',code],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
   deadline=time.monotonic()+5;result=None
   try:
@@ -24,4 +32,6 @@ class Wait4Aggregation(unittest.TestCase):
    if child.returncode is None:
     os.killpg(child.pid,signal.SIGKILL)
     child.wait(timeout=2)
-if __name__=='__main__':unittest.main()
+if __name__=='__main__':
+ NODE,remaining=node_arguments(sys.argv[1:])
+ unittest.main(argv=[sys.argv[0],*remaining])

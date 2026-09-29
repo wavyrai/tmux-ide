@@ -59,16 +59,21 @@ class BindingTests(unittest.TestCase):
 class ImportRootTests(unittest.TestCase):
  def test_actual_staged_import_roots_resolve_without_evaluation(self):
   import subprocess
-  source=pathlib.Path(os.environ.get('TMUX_QUAL_SOURCE',str(BASE.parents[1]))).resolve()
+  self.assertIn('TMUX_QUAL_SOURCE',os.environ,'Pass the inspected source/dependency root explicitly; recipe depth is not source identity')
+  self.assertIn('TMUX_QUAL_NODE',os.environ,'Pass the source-check Node executable explicitly')
+  source=pathlib.Path(os.environ['TMUX_QUAL_SOURCE']).resolve(strict=True)
+  node=pathlib.Path(os.environ['TMUX_QUAL_NODE'])
+  self.assertTrue(node.is_absolute() and node.is_file())
+  self.assertTrue((source/'package.json').is_file() and (source/'packages').is_dir())
   with tempfile.TemporaryDirectory() as t:
    target=pathlib.Path(t)/'overlay';paths=dict(PATHS,source=str(source),cli=str(source/'.tasks/unused-qualified-cli.mjs'))
    stage_sources({'executionAuthorized':False,'runtimePatch':None,'paths':paths},target)
-   result=subprocess.run(['/opt/homebrew/Cellar/node/26.8.2/bin/node',str(BASE/'check-import-roots.mjs'),str(target),str(source)],capture_output=True,text=True,timeout=15)
+   result=subprocess.run([str(node),str(BASE/'check-import-roots.mjs'),str(target),str(source)],capture_output=True,text=True,timeout=15)
    self.assertEqual(result.returncode,0,result.stderr)
    print(result.stdout.strip())
    for lane in ['cpu','idle','parser']:
     entry='case.mjs' if lane!='parser' else 'echo.mjs'
-    result=subprocess.run(['/opt/homebrew/Cellar/node/26.8.2/bin/node','--check',str(target/lane/entry)],capture_output=True,text=True,timeout=15)
+    result=subprocess.run([str(node),'--check',str(target/lane/entry)],capture_output=True,text=True,timeout=15)
     self.assertEqual(result.returncode,0,result.stderr)
 
 if __name__=='__main__':unittest.main()

@@ -17,7 +17,7 @@ def freeze(binding_path,admission_path,overlay,output):
  assert not output.exists();output.mkdir(mode=0o700)
  host=output/'host.json';env=dict(os.environ,LC_ALL='C',TZ='UTC',PYTHONDONTWRITEBYTECODE='1')
  subprocess.run([paths['node'],str(base/'admit-host.mjs'),str(binding_path),str(host)],check=True,timeout=120,env=env)
- with (output/'wait4.log').open('xb') as log:subprocess.run([sys.executable,str(base/'test_wait4_aggregation.py')],stdout=log,stderr=subprocess.STDOUT,check=True,timeout=30,env=env)
+ with (output/'wait4.log').open('xb') as log:subprocess.run([sys.executable,str(base/'test_wait4_aggregation.py'),'--node',paths['node']],stdout=log,stderr=subprocess.STDOUT,check=True,timeout=30,env=env)
  # Preserve existing campaign ordering, wait4 accounting and exact 10% calculations.
  campaign=overlay/'cpu/campaign.py';text=supervisor_text(campaign.read_text())
  import difflib
