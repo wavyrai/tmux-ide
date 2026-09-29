@@ -1,0 +1,64 @@
+name: Darwin x64 closed CLI preparation (no campaign)
+on:
+  workflow_dispatch:
+  push:
+    branches: [qualification/darwin-x64-cli-c95f246a]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: darwin-x64-cli-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          path: recipe
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: c95f246ae4a87e86f5299a4d3b594f086f2333f2
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download exact accepted Intel input artifact
+        timeout-minutes: 12
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/darwin-cli-download"
+          gh api repos/wavyrai/tmux-ide/actions/artifacts/11052542881 > "$RUNNER_TEMP/darwin-cli-download/artifact.json"
+          gh api repos/wavyrai/tmux-ide/actions/artifacts/11052542881/zip > "$RUNNER_TEMP/darwin-cli-download/artifact.zip"
+      - name: Verify and unpack accepted payload transport
+        run: |
+          /usr/bin/python3 recipe/scripts/qualification/darwin-x64-cli/intake.py \
+            "$RUNNER_TEMP/darwin-cli-download/artifact.json" \
+            "$RUNNER_TEMP/darwin-cli-download/artifact.zip" \
+            "$RUNNER_TEMP/darwin-cli-input" \
+            recipe/scripts/qualification/darwin-x64-cli/pins.json
+      - name: Build current CLI with offline dependencies only
+        timeout-minutes: 20
+        run: |
+          /usr/bin/python3 recipe/scripts/qualification/darwin-x64-cli/prepare.py \
+            --pins recipe/scripts/qualification/darwin-x64-cli/pins.json \
+            --archive "$RUNNER_TEMP/darwin-cli-input/inputs.tar.gz" \
+            --payload-receipt "$RUNNER_TEMP/darwin-cli-input/payload-manifest.json" \
+            --source-checkout "$GITHUB_WORKSPACE/source" \
+            --output "$RUNNER_TEMP/darwin-x64-cli"
+      - name: Retain artifacts and failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: darwin-x64-cli-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/darwin-x64-cli/cli-runtime.tar
+            ${{ runner.temp }}/darwin-x64-cli/*.json
+            ${{ runner.temp }}/darwin-x64-cli/*.txt
+            ${{ runner.temp }}/darwin-x64-cli/logs
+            ${{ runner.temp }}/darwin-cli-download/artifact.json
+          if-no-files-found: error
+          retention-days: 7

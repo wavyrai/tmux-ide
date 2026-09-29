@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {externalNames} from './collect.mjs';
+test('actual metafile shape retains every external package and ignores Node builtins only',()=>{assert.deepEqual(externalNames({outputs:{'cli.mjs':{imports:[{path:'node:fs',external:true},{path:'ws',external:true},{path:'node-pty',external:true},{path:'local',external:false},{path:'ws',external:true}]}}}),['node-pty','ws']);});
