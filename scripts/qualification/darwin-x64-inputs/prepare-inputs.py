@@ -139,7 +139,7 @@ def main():
         run('brew-before',['brew','info','--json=v2','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'])
         stage='openssl-link-admission'
         remedy_known_openssl(run,lambda name,value:(out/name).write_text(json.dumps(value,indent=2)),os.environ)
-        run('brew-build-inputs',['brew','install','--build-from-source','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'],timeout=900)
+        run('brew-build-inputs',['brew','install','--build-from-source','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'],timeout=1800)
         run('brew-after',['brew','info','--json=v2','automake','autoconf','pkgconf','libevent','ncurses','utf8proc'])
         for name in ('libevent','ncurses','utf8proc'):
             prefix=run('prefix-'+name,['brew','--prefix',name]).strip()

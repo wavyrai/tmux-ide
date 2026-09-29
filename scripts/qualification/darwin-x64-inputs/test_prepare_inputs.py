@@ -17,6 +17,17 @@ class ExtractTests(unittest.TestCase):
         self.assertTrue(missing_bottles)
         self.assertTrue(missing_bottles<=requested)
         self.assertTrue('--build-from-source' in argv, 'Recorded Intel inputs have no bottle: implicit brew install cannot admit this host')
+    def test_preparation_timeout_keeps_room_for_remaining_stages_and_receipts(self):
+        recipe=pathlib.Path(__file__).with_name('prepare-inputs.py')
+        calls={node.args[0].value:node for node in ast.walk(ast.parse(recipe.read_text())) if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and node.func.id=='run' and node.args and isinstance(node.args[0],ast.Constant)}
+        def timeout(name):
+            return next(ast.literal_eval(k.value) for k in calls[name].keywords if k.arg=='timeout')
+        self.assertEqual(timeout('brew-build-inputs'),1800)
+        remaining=['fetch-offline-store','upstream-fetch','reference-offline-dependencies','build-grid-only-reference']
+        self.assertEqual([timeout(name) for name in remaining],[600,120,600,600])
+        workflow=recipe.parents[3]/'.github/workflows/darwin-x64-c4-inputs.yml'
+        minutes=int(next(line.split(':')[1] for line in workflow.read_text().splitlines() if 'timeout-minutes:' in line))
+        self.assertGreaterEqual(minutes*60,1800+sum(timeout(name) for name in remaining)+600)
     def archive(self, root, members):
         p=root/'input.tar'
         with tarfile.open(p,'w') as tar:
