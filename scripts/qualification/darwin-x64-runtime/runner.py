@@ -35,9 +35,12 @@ def run(output):
   admission={'root':str(runtime),'zip':str(runtime_zip),'tar':str(output/'runtime-transport/payload.tar'),'proof':str(output/'runtime-transport/payload-proof.json'),'pins':pins,'referenceRoot':str(reference)}
   binding=bind_runtime(admission['root'],admission['zip'],admission['tar'],admission['proof'],pins,reference)
   binding_path=output/'binding.json';binding_path.write_text(json.dumps(binding,indent=2));admission_path=output/'admission.json';admission_path.write_text(json.dumps(admission,indent=2))
+  # Fresh platform/tools/Mach/native-addon admission precedes even the reference-only live fixture.
+  with (output/'reference-host.log').open('xb') as log:
+   subprocess.run([binding['paths']['node'],str(BASE/'admit-host.mjs'),str(binding_path),str(output/'reference-host.json')],stdout=log,stderr=subprocess.STDOUT,check=True,timeout=120,env=dict(os.environ,LC_ALL='C',TZ='UTC'))
   reference_output=output/'reference-functional'
   module('reference_prerequisite',BASE/'reference-functional/run.py').run(binding_path,admission_path,BASE,reference_output)
-  functional_files=[reference_output/'accepted.json',reference_output/'terminal.json',reference_output/'vitest.json',*sorted((reference_output/'receipts').glob('*.json'))]
+  functional_files=[output/'reference-host.json',reference_output/'accepted.json',reference_output/'terminal.json',reference_output/'vitest.json',*sorted((reference_output/'receipts').glob('*.json'))]
   binding['referenceFunctional']={'referenceSha256':ref['binarySha256'],'files':{str(p):sha(p) for p in functional_files}}
   binding_path.write_text(json.dumps(binding,indent=2))
   overlay=output/'overlay';stage_sources(binding,overlay)
@@ -50,7 +53,7 @@ def run(output):
   status['finished']=time.time();(output/'status.json').write_text(json.dumps(status,indent=2))
   # Upload only receipts and existing case outputs, never mutate/remove admitted inputs for closure.
   evidence=output/'evidence';evidence.mkdir(exist_ok=True)
-  for name in ['status.json','binding.json','admission.json','authorization.json']:
+  for name in ['status.json','binding.json','admission.json','authorization.json','reference-host.json','reference-host.log']:
    if (output/name).exists():shutil.copyfile(output/name,evidence/name)
   if (output/'cpu').exists():shutil.copytree(output/'cpu',evidence/'cpu',ignore=shutil.ignore_patterns('home'),dirs_exist_ok=True)
   if (output/'reference-functional').exists():shutil.copytree(output/'reference-functional',evidence/'reference-functional',ignore=shutil.ignore_patterns('node_modules','cache','home'),dirs_exist_ok=True)

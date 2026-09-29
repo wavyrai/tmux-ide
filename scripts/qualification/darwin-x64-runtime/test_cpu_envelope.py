@@ -60,6 +60,8 @@ class EnvelopeTests(unittest.TestCase):
   self.assertEqual(ast.unparse(command.elts[-1]),"paths['node']")
  def test_held_runner_rejects_before_transport(self):
   with tempfile.TemporaryDirectory() as t,patch('subprocess.run') as run:
-   with self.assertRaisesRegex(AssertionError,'Held source'):module('runner').run(pathlib.Path(t)/'out')
+   root=pathlib.Path(t);recipe=root/'recipe';recipe.mkdir();(recipe/'pins.json').write_text(json.dumps({'executionAuthorized':False}));runner=module('runner')
+   with patch.object(runner,'BASE',recipe):
+    with self.assertRaisesRegex(AssertionError,'Held source'):runner.run(root/'out')
    run.assert_not_called()
 if __name__=='__main__':unittest.main()

@@ -6,14 +6,15 @@
   "sourceTests": {
     "bodyAndExternalPaths": 1,
     "mockOwnership": 3,
-    "failedPrerequisiteStopsCpuAndPreservesEvidence": 1
+    "failedPrerequisiteStopsCpuAndPreservesEvidence": 1,
+    "cpuEnvelope": 5
   },
   "files": {
-    "runner.py": "af97f5e4d23b6734952909efa1f66d133d818104c34a39e54abb96f4381159ca",
+    "runner.py": "58deee75e558f1023f0f2a30c3cf8ef2514aa82e10f9b21e16f9e951ca662882",
     "freeze-cpu.py": "47590d025007b529df07e25b15cfbbd6a40c1cf6a62dea784b43ab89cf5d7240",
-    "recipe-files.json": "2c3cd8aa00855ce17bb38d3a0dfa2ee43bc1eb79df1f00240fc1b18647a43852",
-    "test_reference_integration.py": "f5bac965e88184d36c4d8a3dfeecae692e79bc6afd400ddedadb3131ad0f70b9",
-    "pins.json": "4c868cedeb937f6a3de1f2d3c67af0fb274fe223f5b747e98bdf919aefee5013",
+    "recipe-files.json": "b1116b6c05afc0645f321a79f923e952a1ca171cee283e0bf7ff60040a428509",
+    "test_reference_integration.py": "f8a4aea1f90be9fb958407efcb9e2b6e2bd449e8b2d63f5a5cf28299b64fb84e",
+    "pins.json": "464f627051ab8aab219fb8286b8dfb5fbc0d1fcc7decb8ad2ffa011daa99c5cb",
     "reference-functional/run.py": "c632012783dfb66b034aec31b1bc81206a45962a2e7f844ecd66cf57ef6eb866",
     "reference-functional/test-owner.mjs": "9a2bb49c86c537499e30719a7973e192564b790559b5aea12553f4c326ab35bd",
     "reference-functional/cleanup.mjs.in": "51e1130e31321acad71370378a5d5ced75b2e4ad19228be1c19281e1c303560b",
@@ -22,5 +23,9 @@
     "reference-functional/reference-owner.mjs.in": "1f6d0932de9eec150d99600d5f5552b0a94057601f470898713bbc3b4e8627f5",
     "reference-functional/pins.json": "a5d06f563fd7e5b2be8dab34ba7c3bf28bbed11a36db6a498898471e6b3cc119",
     "reference-functional/prepare.py": "7a82a80a2f7688c51e62941914131352e8dbe42e72dc6f1dd7b3beb66747385a"
-  }
+  },
+  "freshHostBeforeReference": true,
+  "sourceExecutionAuthorized": true,
+  "pushExecuted": false,
+  "pushDestination": "qualification/darwin-x64-runtime-cpu-r1"
 }
