@@ -1,4 +1,4 @@
-"""One approved quiet-parser/backlog campaign in one exact-owned container. No build or retry."""
+"""One approved parser18 input-regression campaign in one exact-owned container. No build or retry."""
 import pathlib,json,subprocess,os,sys,uuid,hashlib
 from bounded import run_bounded
 admission=pathlib.Path(sys.argv[1]).resolve();d=json.loads(admission.read_text());e=pathlib.Path(sys.argv[2]).resolve();w=pathlib.Path(sys.argv[3]).resolve()
@@ -34,7 +34,7 @@ finally:
  if cid:
   x=owned();(e/'container-before-cleanup.json').write_text(json.dumps(x,indent=2))
   try:
-   (e/'container-log.txt').write_text(call(['logs','--parser','100',cid]))
+   (e/'container-log.txt').write_text(call(['logs','--tail','100',cid]))
   finally:
    owned();call(['rm','--force',cid]);remaining=call(['ps','--all','--no-trunc','--filter','id='+cid,'--format','{{.ID}}']);assert remaining==''
    (e/'cleanup.json').write_text(json.dumps({'containerId':cid,'name':name,'nonce':nonce,'exactIdentityChecked':True,'absenceConfirmed':True}))

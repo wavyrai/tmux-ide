@@ -1,5 +1,5 @@
 {
-  "tests": 11,
+  "tests": 12,
   "passed": true,
   "python": "3.13.11",
   "nodeSyntax": "26.8.2",
@@ -12,5 +12,6 @@
     "budgets"
   ],
   "originalBuildInputHashes": true,
-  "noRuntimeOrBuild": true
+  "noRuntimeOrBuild": true,
+  "postRunSourceOnlyFix": "Docker logs --tail preserved; actual argv AST regression; no rerun"
 }

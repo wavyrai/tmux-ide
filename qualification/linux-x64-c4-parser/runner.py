@@ -1,4 +1,4 @@
-"""Acquire only accepted immutable artifacts and launch one reviewed quiet-parser/backlog campaign."""
+"""Acquire only accepted immutable artifacts and launch one reviewed parser18 input-regression campaign."""
 import hashlib,json,os,pathlib,shutil,subprocess,sys,traceback,zipfile,tarfile
 from bounded import run_bounded
 P=pathlib.Path;Q=P(__file__).resolve().parent;T=P(os.environ['RUNNER_TEMP']);E=T/'x64-parser-evidence';I=T/'x64-parser-inputs';W=T/'x64-parser-work';R=T/'x64-parser-downloads'

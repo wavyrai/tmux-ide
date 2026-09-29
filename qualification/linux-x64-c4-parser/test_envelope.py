@@ -15,4 +15,12 @@ class Envelope(unittest.TestCase):
  def test_accepted_oracle_bytes(self):
   expected={'parser_gate.py': 'b84af41c4c1faab6e05fa4187d747b48133a5f9b2021c2a5dc439b473e81a3d9', 'gate-parser.py': '4147b50231eba8785ca90630e286d6c3e1364595beba2cda3281b84bb88bb9c0'}
   for n,h in expected.items():self.assertEqual(hashlib.sha256((Q/n).read_bytes()).hexdigest(),h)
+ def test_docker_log_argv_keeps_external_cli_option(self):
+  tree=ast.parse((Q/'launch.py').read_text())
+  calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=='call' and n.args and isinstance(n.args[0],ast.List) and n.args[0].elts and isinstance(n.args[0].elts[0],ast.Constant) and n.args[0].elts[0].value=='logs']
+  self.assertEqual(len(calls),1)
+  expression=ast.Expression(calls[0].args[0]);ast.fix_missing_locations(expression)
+  # Evaluate the actual launcher argv expression with only the exact owned CID.
+  argv=eval(compile(expression,'launcher-logs-argv','eval'),{'__builtins__':{}},{'cid':'owned-exact-cid'})
+  self.assertEqual(argv,['logs','--tail','100','owned-exact-cid'])
 if __name__=='__main__':unittest.main()
