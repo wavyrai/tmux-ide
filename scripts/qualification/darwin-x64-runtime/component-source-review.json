@@ -7,7 +7,12 @@
   "authorizedLane": null,
   "referenceArtifact": 11059409786,
   "functionalReceiptPending": true,
-  "sharedHelpersChanged": false,
-  "recipeManifestSha256": "4e4c9f79e8d7dc3886c5e22c5e84c03029bcde91611e1deca91668173ec60d2f",
-  "workflowSha256": "dec1c734047b707041986b7259fbe02b23376acee8b4a16e3f948bb8de174c62"
+  "sharedHelpersChanged": [
+    "intake-cpu.py (identical reviewed fix)"
+  ],
+  "recipeManifestSha256": "4268d654cf7c2ba8991b61aa567d305943bcd92ea0799899cdbb06c34cd72de5",
+  "workflowSha256": "dec1c734047b707041986b7259fbe02b23376acee8b4a16e3f948bb8de174c62",
+  "sharedIntakeFixCommit": "22b966fc7edc4046866bd6906a5cfbce4765638f",
+  "sharedEnvelopeTests": 6,
+  "componentTests": 6
 }
