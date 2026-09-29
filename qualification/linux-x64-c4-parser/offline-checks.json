@@ -1,0 +1,16 @@
+{
+  "tests": 11,
+  "passed": true,
+  "python": "3.13.11",
+  "nodeSyntax": "26.8.2",
+  "allPythonAst": true,
+  "allMjsSyntax": true,
+  "unchangedArtifactPins": true,
+  "changedPinFields": [
+    "scope",
+    "lane",
+    "budgets"
+  ],
+  "originalBuildInputHashes": true,
+  "noRuntimeOrBuild": true
+}

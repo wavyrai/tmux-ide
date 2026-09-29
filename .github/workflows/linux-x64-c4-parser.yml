@@ -1,0 +1,35 @@
+name: Linux x64 C4 parser18 once
+on:
+  push:
+    branches: [qualification/linux-x64-c4-parser-r1]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: linux-x64-c4-parser
+  cancel-in-progress: false
+jobs:
+  parser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify retained inputs and run one closed parser18 campaign
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 qualification/linux-x64-c4-parser/runner.py
+      - name: Independently finish exact-owned cleanup
+        if: always()
+        run: python3 qualification/linux-x64-c4-parser/cleanup.py
+      - name: Retain parser input-regression, closure and cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-x64-c4-parser-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/x64-parser-evidence
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
