@@ -31,7 +31,7 @@
     "journalPatch": null,
     "payloadGitIncludedFieldKnownInaccurate": true
   },
-  "executionAuthorized": false,
+  "executionAuthorized": true,
   "sourceCommit": "c95f246ae4a87e86f5299a4d3b594f086f2333f2",
   "tarMember": "darwin-x64-cli/cli-runtime.tar",
   "proofMember": "darwin-x64-cli/payload-proof.json",
