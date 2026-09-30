@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, realpathSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { assertIntelMachO } from './native-input.mjs';
-export function machInputs(roots, inspect = (args) => execFileSync('/usr/bin/otool', args, { encoding:'utf8', timeout:5000, maxBuffer:1048576 })) {
+export function machInputs(roots, inspect = (args) => execFileSync('/usr/bin/otool', args, { encoding:'utf8', timeout:30000, maxBuffer:1048576 })) {
   const files = {}, edges = [], selfIds = [], systemFiles = {}, raw = {}, system = new Set(), pending = roots.map(path => ({path:realpathSync(path), executable:realpathSync(path)}));
   for (const {path,executable} of pending) {
     if (files[path]) continue;

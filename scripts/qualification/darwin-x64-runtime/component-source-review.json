@@ -10,9 +10,10 @@
   "sharedHelpersChanged": [
     "intake-cpu.py (identical reviewed fix)"
   ],
-  "recipeManifestSha256": "4268d654cf7c2ba8991b61aa567d305943bcd92ea0799899cdbb06c34cd72de5",
+  "recipeManifestSha256": "d4ee4805363e5678a81f8a50478b56e737cd77716bb47f288726cb8d1b3ef406",
   "workflowSha256": "dec1c734047b707041986b7259fbe02b23376acee8b4a16e3f948bb8de174c62",
   "sharedIntakeFixCommit": "22b966fc7edc4046866bd6906a5cfbce4765638f",
   "sharedEnvelopeTests": 6,
-  "componentTests": 6
+  "componentTests": 6,
+  "machTimeoutSourceCommit": "5a4a715d"
 }
