@@ -11,7 +11,7 @@ def run(binding_path,admission_path,runtime_recipe,output):
  p=b['paths'];env={'HOME':str(output/'home'),'TMPDIR':str(output/'temp'),'PATH':str(pathlib.Path(p['node']).parent)+':/usr/bin:/bin:/usr/sbin:/sbin','LC_ALL':'en_US.UTF-8','TZ':'UTC','TMUX_IDE_NATIVE_GRID_TMUX':p['reference']}
  code=None;cleanup=None;post=False;timedout=False
  try:
-  command=[p['node'],str(pathlib.Path(p['source'])/'node_modules/vitest/vitest.mjs'),'run','--config',str(output/'vitest.config.mjs'),'--reporter=json','--outputFile',str(output/'vitest.json')]
+  command=[p['node'],str(pathlib.Path(p['source'])/'node_modules/vitest/vitest.mjs'),'run','--configLoader','native','--config',str(output/'vitest.config.mjs'),'--reporter=json','--outputFile',str(output/'vitest.json')]
   with (output/'vitest.log').open('xb') as log:
    child=subprocess.Popen(command,cwd=output,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
    try:code=child.wait(timeout=90)

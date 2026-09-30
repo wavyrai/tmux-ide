@@ -1,11 +1,28 @@
 """One closed hosted CPU envelope; no native/reference/CLI build, install or retries."""
-import pathlib,json,subprocess,os,sys,time,shutil,importlib.util
+import pathlib,json,subprocess,os,sys,time,shutil,importlib.util,stat
 from binding import sha,bind_runtime
 from stage import stage_sources
 BASE=pathlib.Path(__file__).resolve().parent
 
 def module(name,path):
  s=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
+
+def collect_reference_evidence(source,destination):
+ source=pathlib.Path(source);destination=pathlib.Path(destination);skipped=[]
+ def exclude(directory,names):
+  ignored=[]
+  for name in names:
+   path=pathlib.Path(directory)/name
+   if name in ('node_modules','cache','home'):ignored.append(name);continue
+   mode=path.lstat().st_mode
+   if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+    ignored.append(name);kind='socket' if stat.S_ISSOCK(mode) else 'symlink' if stat.S_ISLNK(mode) else 'fifo' if stat.S_ISFIFO(mode) else 'special'
+    skipped.append({'path':str(path.relative_to(source)),'type':kind,'mode':stat.S_IMODE(mode)})
+  return ignored
+ try:shutil.copytree(source,destination,ignore=exclude,dirs_exist_ok=True)
+ finally:
+  destination.mkdir(parents=True,exist_ok=True)
+  (destination/'collection-diagnostics.json').write_text(json.dumps({'skippedSpecialPaths':skipped,'cleanupInferred':False,'sourcePathsDeleted':False},indent=2))
 
 def download(pin,directory):
  directory.mkdir(mode=0o700)
@@ -56,7 +73,7 @@ def run(output):
   for name in ['status.json','binding.json','admission.json','authorization.json','reference-host.json','reference-host.log']:
    if (output/name).exists():shutil.copyfile(output/name,evidence/name)
   if (output/'cpu').exists():shutil.copytree(output/'cpu',evidence/'cpu',ignore=shutil.ignore_patterns('home'),dirs_exist_ok=True)
-  if (output/'reference-functional').exists():shutil.copytree(output/'reference-functional',evidence/'reference-functional',ignore=shutil.ignore_patterns('node_modules','cache','home'),dirs_exist_ok=True)
+  if (output/'reference-functional').exists():collect_reference_evidence(output/'reference-functional',evidence/'reference-functional')
   if (output/'overlay/binding.diff').exists():shutil.copyfile(output/'overlay/binding.diff',evidence/'binding.diff')
   for name in ['runtime-download','reference-download']:
    if (output/name/'metadata.json').exists():shutil.copyfile(output/name/'metadata.json',evidence/(name+'.json'))

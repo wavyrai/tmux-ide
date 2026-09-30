@@ -1,32 +1,37 @@
 {
   "base": "c4638a02fd91e04ddc9109c68b4b2782f2c422bf",
   "referenceArtifact": 11059409786,
-  "referenceFunctionalExecuted": false,
+  "referenceFunctionalExecuted": true,
   "runtimeExecuted": false,
   "sourceTests": {
     "bodyAndExternalPaths": 1,
     "mockOwnership": 3,
     "failedPrerequisiteStopsCpuAndPreservesEvidence": 1,
-    "cpuEnvelope": 6
+    "cpuEnvelope": 6,
+    "actualSocketCollection": 1,
+    "actualInstalledNativeConfigLoader": 1
   },
   "files": {
-    "runner.py": "58deee75e558f1023f0f2a30c3cf8ef2514aa82e10f9b21e16f9e951ca662882",
+    "runner.py": "e0fbbf0c151cba495b7b9add8864901ddd34127e0ee9641c1e37f3f51598f1dc",
     "freeze-cpu.py": "47590d025007b529df07e25b15cfbbd6a40c1cf6a62dea784b43ab89cf5d7240",
-    "recipe-files.json": "e6ce7ffb1d4c60b223c2764304b194b2d797497d5236f27a428584ef94985fff",
-    "test_reference_integration.py": "f8a4aea1f90be9fb958407efcb9e2b6e2bd449e8b2d63f5a5cf28299b64fb84e",
+    "recipe-files.json": "42f4c216c7be4e48d2f3baa57a4dbddf53748aa39bd10ccc9706dce13371bb41",
+    "test_reference_integration.py": "c3796f1683ae8f19bf4dcd36aa08d923dde604bfe5624099ef7095e3408e453a",
     "pins.json": "464f627051ab8aab219fb8286b8dfb5fbc0d1fcc7decb8ad2ffa011daa99c5cb",
-    "reference-functional/run.py": "c632012783dfb66b034aec31b1bc81206a45962a2e7f844ecd66cf57ef6eb866",
+    "reference-functional/run.py": "fa9a9e37d78e89b47f34fa4cb7d72473f3791aed96dec8c7aee38011723d036f",
     "reference-functional/test-owner.mjs": "9a2bb49c86c537499e30719a7973e192564b790559b5aea12553f4c326ab35bd",
     "reference-functional/cleanup.mjs.in": "51e1130e31321acad71370378a5d5ced75b2e4ad19228be1c19281e1c303560b",
     "reference-functional/process-cpu.mjs": "392bc56292b00618c1a6a08105471c762afa7bd6a57aa9b3b69247df4e1e8cda",
     "reference-functional/test_prepare.py": "a9c2f3e3e67db47f2f7826c7e85b66260952e619b77f72a03492e16efa3e5957",
     "reference-functional/reference-owner.mjs.in": "1f6d0932de9eec150d99600d5f5552b0a94057601f470898713bbc3b4e8627f5",
     "reference-functional/pins.json": "a5d06f563fd7e5b2be8dab34ba7c3bf28bbed11a36db6a498898471e6b3cc119",
-    "reference-functional/prepare.py": "7a82a80a2f7688c51e62941914131352e8dbe42e72dc6f1dd7b3beb66747385a"
+    "reference-functional/prepare.py": "7a82a80a2f7688c51e62941914131352e8dbe42e72dc6f1dd7b3beb66747385a",
+    "reference-functional/test_config_loader.py": "f1ebc76f8afd7e95b80bd3e228f47b5878a506f446f5d29dec60c4f1c17a9b60"
   },
   "freshHostBeforeReference": true,
   "sourceExecutionAuthorized": true,
   "pushExecuted": true,
   "pushDestination": "qualification/darwin-x64-runtime-cpu-r1",
-  "firstRunAdmissionFailure": 36626475919
+  "firstRunAdmissionFailure": 36626475919,
+  "referenceFunctionalAccepted": false,
+  "retainedFailureRun": 36678484112
 }

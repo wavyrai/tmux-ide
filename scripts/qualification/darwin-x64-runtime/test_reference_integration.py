@@ -2,6 +2,20 @@ import unittest,pathlib,tempfile,json,types,importlib.util
 from unittest.mock import patch
 BASE=pathlib.Path(__file__).resolve().parent
 class IntegrationTests(unittest.TestCase):
+ def test_socket_evidence_is_recorded_without_copy_or_retirement_claim(self):
+  import socket
+  spec=importlib.util.spec_from_file_location('collector_runner',BASE/'runner.py');runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
+  with tempfile.TemporaryDirectory() as t:
+   root=pathlib.Path(t);source=root/'s';source.mkdir();(source/'receipts').mkdir();(source/'receipts/owner.json').write_text('{"cleanup":{"retired":true}}');(source/'temp').mkdir();(source/'temp/paint.cjs').write_text('fixture');(source/'terminal.json').write_text('{"postclosure":false}')
+   endpoint=source/'temp/s';sock=socket.socket(socket.AF_UNIX);sock.bind(str(endpoint))
+   try:
+    runner.collect_reference_evidence(source,root/'out')
+    self.assertTrue(endpoint.is_socket());self.assertFalse((root/'out/temp/s').exists())
+    self.assertEqual((root/'out/receipts/owner.json').read_bytes(),(source/'receipts/owner.json').read_bytes())
+    self.assertEqual((root/'out/temp/paint.cjs').read_text(),'fixture')
+    self.assertFalse(json.loads((root/'out/terminal.json').read_text())['postclosure'])
+    receipt=json.loads((root/'out/collection-diagnostics.json').read_text());self.assertEqual([(x['path'],x['type']) for x in receipt['skippedSpecialPaths']],[('temp/s','socket')]);self.assertFalse(receipt['cleanupInferred']);self.assertFalse(receipt['sourcePathsDeleted'])
+   finally:sock.close()
  def test_failed_prerequisite_preserves_receipts_and_never_freezes_or_launches_cpu(self):
   spec=importlib.util.spec_from_file_location('reviewed_runner',BASE/'runner.py');runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
   with tempfile.TemporaryDirectory() as t:
