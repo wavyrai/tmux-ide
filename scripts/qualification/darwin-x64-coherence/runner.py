@@ -1,5 +1,5 @@
 """Held closed stock/native coherence envelope. No build, install, retry or performance claim."""
-import pathlib,json,subprocess,sys,os,time,importlib.util,signal
+import pathlib,json,subprocess,sys,os,time,importlib.util,signal,re
 from binding import bind,sha
 from stage import stage
 HERE=pathlib.Path(__file__).resolve().parent
@@ -10,8 +10,21 @@ def module(name,path):
 def download(pin,out):
  out.mkdir(mode=0o700)
  for endpoint,name in [(str(pin['artifactId']),'metadata.json'),(str(pin['artifactId'])+'/zip','artifact.zip')]:
-  with (out/name).open('xb') as log,(out/(name+'.stderr')).open('xb') as err:
-   subprocess.run(['gh','api','repos/wavyrai/tmux-ide/actions/artifacts/'+endpoint],stdout=log,stderr=err,check=True,timeout=1200)
+  try:
+   with (out/name).open('xb') as log,(out/(name+'.stderr')).open('xb') as err:
+    subprocess.run(['gh','api','repos/wavyrai/tmux-ide/actions/artifacts/'+endpoint],stdout=log,stderr=err,check=True,timeout=1200)
+  except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError) as error:
+   # Retain a bounded diagnostic even when artifact service upload also fails.
+   try:
+    with (out/(name+'.stderr')).open('rb') as f:raw=f.read(8193)
+    detail=raw[:8192].decode('utf-8',errors='replace')
+    for key in ['GH_TOKEN','GITHUB_TOKEN']:
+     if os.environ.get(key):detail=detail.replace(os.environ[key],'[token-redacted]')
+    detail=re.sub(r'https?://[^\s]+','[url-redacted]',detail)
+    print(json.dumps({'downloadFailure':name,'artifactId':pin['artifactId'],'exit':getattr(error,'returncode',None),'timeout':isinstance(error,subprocess.TimeoutExpired),'stderr':detail,'truncated':len(raw)>8192}),flush=True)
+   except BaseException:
+    pass # Diagnostic delivery must never replace the original failed command.
+   raise
   if name=='metadata.json':
    m=json.loads((out/name).read_text());assert m['id']==pin['artifactId'] and m['workflow_run']['id']==pin['runId'] and not m['expired']
    assert m['size_in_bytes']==pin['zipBytes'] and m['digest']=='sha256:'+pin['zipSha256']

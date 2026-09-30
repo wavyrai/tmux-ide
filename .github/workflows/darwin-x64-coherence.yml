@@ -30,6 +30,7 @@ jobs:
             ${{ runner.temp }}/coherence/*.json
             ${{ runner.temp }}/coherence/*.log
             ${{ runner.temp }}/coherence/*-download/metadata.json
+            ${{ runner.temp }}/coherence/*-download/*.stderr
             ${{ runner.temp }}/coherence/stock/*.json
             ${{ runner.temp }}/coherence/stock/*.log
             ${{ runner.temp }}/coherence/stock/results/**
