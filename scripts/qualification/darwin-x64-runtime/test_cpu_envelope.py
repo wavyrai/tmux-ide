@@ -45,7 +45,7 @@ class EnvelopeTests(unittest.TestCase):
   self.assertIn("1500",(BASE/'upstream/cpu/case.mjs').read_text())
   self.assertIn("all(x<=10 for x in deltas.values())",text)
   with tempfile.TemporaryDirectory() as t:
-   root=pathlib.Path(t);spec=root/'frozen.json';spec.write_text(json.dumps({'lane':'cpu','python':'fake-python','node':'fake-node','verifyScript':'fake-verify','output':str(root/'results'),'referenceBinary':'reference','referenceSha256':'x','systemPath':'/fake','cleanHome':str(root)}))
+   root=pathlib.Path(t);spec=root/'frozen.json';spec.write_text(json.dumps({'lane':'cpu','python':'fake-python','node':'fake-node','tsxLoader':'/admitted/tsx-loader.mjs','verifyScript':'fake-verify','output':str(root/'results'),'referenceBinary':'reference','referenceSha256':'x','systemPath':'/fake','cleanHome':str(root)}))
    child=types.SimpleNamespace(pid=2468,returncode=None);usage=types.SimpleNamespace(ru_utime=0,ru_stime=0);calls=0
    def wait4(pid,flags):
     nonlocal calls
@@ -56,7 +56,7 @@ class EnvelopeTests(unittest.TestCase):
    try:
     with patch.object(sys,'argv',['campaign.py','--approved-campaign',str(spec)]),patch('subprocess.run') as verify,patch('subprocess.Popen',return_value=child) as spawn,patch('os.wait4',side_effect=wait4),patch('os.kill') as kill,patch('os.killpg') as killpg:
      with self.assertRaises(SystemExit):exec(compile(text,'campaign.py','exec'),{'__file__':str(root/'campaign.py'),'__name__':'__main__'})
-     self.assertEqual(spawn.call_count,1);kill.assert_called_once_with(2468,15);killpg.assert_not_called();self.assertEqual(verify.call_count,1)
+     self.assertEqual(spawn.call_count,1);self.assertEqual(spawn.call_args.args[0][:3],['fake-node','--import','/admitted/tsx-loader.mjs']);self.assertEqual(spawn.call_args.kwargs['env']['TSX_DISABLE_CACHE'],'1');kill.assert_called_once_with(2468,15);killpg.assert_not_called();self.assertEqual(verify.call_count,1)
    finally:
     for n,handler in previous.items():signal.signal(n,handler)
    row=json.loads((root/'results/results.json').read_text())[0];self.assertTrue(row['timeout']);self.assertTrue(row['terminalKnown'])

@@ -68,6 +68,7 @@ def stage_sources(binding,output,base=None):
  sources=json.loads((base/'upstream.json').read_text())
  for name,row in sources.items():assert hashlib.sha256((base/name).read_bytes()).hexdigest()==row['sha256'],name
  paths=binding['paths'];output.mkdir(mode=0o700);diff=[];files={}
+ (output/'package.json').write_text('{"type":"module"}\n')
  (output/'node_modules').symlink_to(pathlib.Path(paths['source'])/'node_modules',target_is_directory=True)
  for lane in ['cpu','idle','parser','metadata','tail']:
   dest=output/lane;dest.mkdir()

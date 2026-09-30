@@ -9,14 +9,17 @@
     "failedPrerequisiteStopsCpuAndPreservesEvidence": 1,
     "cpuEnvelope": 6,
     "actualSocketCollection": 1,
-    "actualInstalledNativeConfigLoader": 1
+    "actualInstalledNativeConfigLoader": 1,
+    "actualStagedImportGraphs": 1,
+    "exactDerivedRuntime": 5,
+    "runnerReceiptDerivationOrder": 1
   },
   "files": {
-    "runner.py": "e0fbbf0c151cba495b7b9add8864901ddd34127e0ee9641c1e37f3f51598f1dc",
-    "freeze-cpu.py": "47590d025007b529df07e25b15cfbbd6a40c1cf6a62dea784b43ab89cf5d7240",
-    "recipe-files.json": "42f4c216c7be4e48d2f3baa57a4dbddf53748aa39bd10ccc9706dce13371bb41",
-    "test_reference_integration.py": "c3796f1683ae8f19bf4dcd36aa08d923dde604bfe5624099ef7095e3408e453a",
-    "pins.json": "464f627051ab8aab219fb8286b8dfb5fbc0d1fcc7decb8ad2ffa011daa99c5cb",
+    "runner.py": "4e5caa11263afd935f7758bbafad1705a897eb9774400f7cb75f53627441c60d",
+    "freeze-cpu.py": "d41b7dc6544c25f673fae90fb0f9091e461e64afc54fab1e1fda0c43ee16a35c",
+    "recipe-files.json": "2827e91d8eee851b155826b04311ea18e9e7588bd75de968218ce1a0b2146820",
+    "test_reference_integration.py": "77bbb03b80f2f69cf254f1bb63f8b0e72833f559937ce1c0c1f582ecbacba0de",
+    "pins.json": "9792e33f937d2cd5311cbbf2ac616d37b1521bc7cefbda01e33f580b290d516e",
     "reference-functional/run.py": "fa9a9e37d78e89b47f34fa4cb7d72473f3791aed96dec8c7aee38011723d036f",
     "reference-functional/test-owner.mjs": "9a2bb49c86c537499e30719a7973e192564b790559b5aea12553f4c326ab35bd",
     "reference-functional/cleanup.mjs.in": "51e1130e31321acad71370378a5d5ced75b2e4ad19228be1c19281e1c303560b",
@@ -28,10 +31,11 @@
     "reference-functional/test_config_loader.py": "f1ebc76f8afd7e95b80bd3e228f47b5878a506f446f5d29dec60c4f1c17a9b60"
   },
   "freshHostBeforeReference": true,
-  "sourceExecutionAuthorized": true,
+  "sourceExecutionAuthorized": false,
   "pushExecuted": true,
   "pushDestination": "qualification/darwin-x64-runtime-cpu-r1",
   "firstRunAdmissionFailure": 36626475919,
-  "referenceFunctionalAccepted": false,
-  "retainedFailureRun": 36678484112
+  "referenceFunctionalAccepted": true,
+  "retainedFailureRun": 36678484112,
+  "acceptedReferenceRun": 36680179337
 }

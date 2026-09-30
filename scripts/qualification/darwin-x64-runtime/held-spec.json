@@ -1,6 +1,6 @@
 {
-  "state": "SOURCE_AUTHORIZED_AWAITING_EXACT_PUSH_APPROVAL",
-  "authorization": "Exactly one original CPU campaign with mandatory reference-only4case prerequisite; push awaits final root SHA review",
+  "state": "HELD_SOURCE_REVIEW",
+  "authorization": "No new execution authorized; exact source review required",
   "platform": "darwin-x64",
   "runner": "macos-15-intel",
   "sourceCommit": "c95f246ae4a87e86f5299a4d3b594f086f2333f2",
@@ -42,10 +42,15 @@
       "journalPatch": null,
       "payloadGitIncludedFieldKnownInaccurate": true
     },
-    "executionAuthorized": true,
+    "executionAuthorized": false,
     "sourceCommit": "c95f246ae4a87e86f5299a4d3b594f086f2333f2",
     "tarMember": "darwin-x64-cli/cli-runtime.tar",
-    "proofMember": "darwin-x64-cli/payload-proof.json"
+    "proofMember": "darwin-x64-cli/payload-proof.json",
+    "referenceFunctionalReceipt": {
+      "file": "reference-functional-accepted.json",
+      "sha256": "568e6b3545133cd5a1dd3d62481fce990c5d06b7cfdcfa8da7045b66ccda49fb",
+      "runId": 36680179337
+    }
   },
   "matchedGridReferenceArtifact": {
     "accepted": true,
@@ -149,5 +154,5 @@
     "new performance axes",
     "threshold changes"
   ],
-  "referenceFunctional": "Required existing4case live prerequisite runs once before CPU; not yet executed"
+  "referenceFunctional": "Reviewed accepted receipt from36680179337; never rerun"
 }

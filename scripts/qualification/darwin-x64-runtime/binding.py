@@ -61,7 +61,7 @@ def validate_receipts(binding,receipt,pins):
  assert pins['matchedReference']['libraryBytesMatchNative'] is True
  assert pins['matchedReference']['journalPatch'] is None
 
-def bind_runtime(root,zip_path,tar_path,proof_path,pins,reference_root):
+def bind_runtime(root,zip_path,tar_path,proof_path,pins,reference_root,derivation=None):
  """Full actual ZIP/tar/member verification precedes binding, independently of local download."""
  for key in ['cliSha256','payloadProofSha256','cliReceiptSha256','matchedReference']:
   assert pins.get(key) is not None,('Unclosed pin',key)
@@ -72,14 +72,18 @@ def bind_runtime(root,zip_path,tar_path,proof_path,pins,reference_root):
  proof=json.loads(pathlib.Path(proof_path).read_text())
  assert proof['roundtripVerified'] is True and proof['gitIncluded'] is True and proof['absoluteSymlinksAllowed'] is False
  assert len(proof['ledger'])==proof['members']
- count=verify_tree(root,proof['ledger'])
+ if derivation is None:count=verify_tree(root,proof['ledger'])
+ else:
+  from derived_runtime import verify as verify_derived
+  count=verify_derived({'root':str(root),'zip':str(zip_path),'tar':str(tar_path),'proof':str(proof_path),'pins':pins},derivation,verify_tree)['members']
  assert sha(root/'cli-receipt.json')==pins['cliReceiptSha256']
  binding=json.loads((root/'binding.json').read_text());receipt=json.loads((root/'cli-receipt.json').read_text())
  validate_receipts(binding,receipt,pins)
  old_root=str(pathlib.PurePosixPath(receipt['cli']).parents[3])
  assert receipt['cli']==old_root+'/source/.tasks/qualified-cli/cli.mjs','Unexpected actual CLI layout'
  paths={name:rebind(root,old_root,binding[name]) for name in ['node','bun','pnpm','native']}
- paths.update(source=str(root/'source'),cli=rebind(root,old_root,receipt['cli']))
+ paths.update(source=str(root/'source'),cli=rebind(root,old_root,receipt['cli']),tsx=str(closed_path(root,'source/node_modules/tsx/dist/loader.mjs')))
+ assert json.loads((root/'source/node_modules/tsx/package.json').read_text())['version']=='4.21.0'
  for key,pin in [('node','actualNodeExecutableSha256'),('bun','actualBunExecutableSha256'),('pnpm','actualPnpmEntrySha256')]:assert sha(paths[key])==binding[pin]
  assert sha(paths['native'])==NATIVE and sha(paths['cli'])==pins['cliSha256']
  assert sha(root/'source/packages/daemon/src/lib/native-tmux-interaction-observer.ts')==OBSERVER
@@ -100,4 +104,4 @@ def bind_runtime(root,zip_path,tar_path,proof_path,pins,reference_root):
  reference_names={p.name for p in reference_lib.iterdir() if p.is_file()}
  assert native_names==reference_names and len(native_names)==3,'Matched dylib set differs'
  for name in native_names:assert sha(native_lib/name)==sha(reference_lib/name),('Matched dylib bytes differ',name)
- return {'executionAuthorized':False,'sourceCommit':SOURCE,'observerSha256':OBSERVER,'runtimePatch':None,'paths':paths,'payloadMembersVerified':count,'referenceMembersVerified':reference_count,'fullZipTarMembersVerified':True,'archivedHost':receipt['hostTools'],'freshHost':None,'closure':None,'archiveRoot':str(root),'referenceRoot':str(reference_root),'originalReceiptSha256':pins['cliReceiptSha256']}
+ return {'executionAuthorized':False,'sourceCommit':SOURCE,'observerSha256':OBSERVER,'runtimePatch':None,'dependencyModeDerivation':derivation,'paths':paths,'payloadMembersVerified':count,'referenceMembersVerified':reference_count,'fullZipTarMembersVerified':True,'archivedHost':receipt['hostTools'],'freshHost':None,'closure':None,'archiveRoot':str(root),'referenceRoot':str(reference_root),'originalReceiptSha256':pins['cliReceiptSha256']}

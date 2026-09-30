@@ -9,6 +9,8 @@ def supervisor_text(text):
  text=once(text,"import os,sys,json,time,subprocess,pathlib,hashlib","import os,sys,json,time,subprocess,pathlib,hashlib,signal\ncancelled=False\ndef request_stop(signum,frame):\n global cancelled\n cancelled=True\nsignal.signal(signal.SIGTERM,request_stop)\nsignal.signal(signal.SIGINT,request_stop)")
  text=once(text," for mode in order:\n  case="," for mode in order:\n  if cancelled:raise SystemExit('Cancelled before next owned case')\n  case=")
  text=once(text,"if time.monotonic()>=deadline:","if cancelled or time.monotonic()>=deadline:")
+ text=once(text,"[spec['node'],str(HERE/'case.mjs')","[spec['node'],'--import',spec['tsxLoader'],str(HERE/'case.mjs')")
+ text=once(text,"'TZ':'UTC'}","'TZ':'UTC','TSX_DISABLE_CACHE':'1'}")
  return text
 
 def freeze(binding_path,admission_path,overlay,output):
@@ -33,11 +35,13 @@ def freeze(binding_path,admission_path,overlay,output):
  for p in [binding_path,pathlib.Path(admission_path).resolve(),host,pathlib.Path(sys.executable).resolve()]:closure[str(p)]=sha(p)
  for p,digest in b['referenceFunctional']['files'].items():
   assert sha(p)==digest;closure[p]=digest
+ for key in ['receipt','ledger']:
+  p=pathlib.Path(b['dependencyModeDerivation'][key]);assert sha(p)==b['dependencyModeDerivation'][key+'Sha256'];closure[str(p)]=sha(p)
  for module in sys.modules.values():
   name=getattr(module,'__file__',None)
   if name and pathlib.Path(name).is_file():
    p=pathlib.Path(name).resolve();closure[str(p)]=sha(p)
- spec={'lane':'cpu','node':paths['node'],'python':str(pathlib.Path(sys.executable).resolve()),'binary':paths['native'],'binarySha256':sha(paths['native']),'referenceBinary':paths['reference'],'referenceSha256':sha(paths['reference']),'cli':paths['cli'],'cliSha256':sha(paths['cli']),'output':str(output/'results'),'cleanHome':str(home),'systemPath':str(pathlib.Path(paths['node']).parent)+':/usr/bin:/bin:/usr/sbin:/sbin','sourceCommit':b['sourceCommit'],'runtimePatch':None,'observerSha256':b['observerSha256'],'verifyScript':str(base/'verify-cpu.py'),'hostReceipt':str(host),'admission':json.loads(pathlib.Path(admission_path).read_text()),'closure':closure,'links':links,'executionAuthorized':False}
+ spec={'lane':'cpu','tsxLoader':paths['tsx'],'dependencyModeDerivation':b['dependencyModeDerivation'],'node':paths['node'],'python':str(pathlib.Path(sys.executable).resolve()),'binary':paths['native'],'binarySha256':sha(paths['native']),'referenceBinary':paths['reference'],'referenceSha256':sha(paths['reference']),'cli':paths['cli'],'cliSha256':sha(paths['cli']),'output':str(output/'results'),'cleanHome':str(home),'systemPath':str(pathlib.Path(paths['node']).parent)+':/usr/bin:/bin:/usr/sbin:/sbin','sourceCommit':b['sourceCommit'],'runtimePatch':None,'observerSha256':b['observerSha256'],'verifyScript':str(base/'verify-cpu.py'),'hostReceipt':str(host),'admission':json.loads(pathlib.Path(admission_path).read_text()),'closure':closure,'links':links,'executionAuthorized':False}
  (output/'frozen-cpu.json').write_text(json.dumps(spec,indent=2)+'\n')
  return spec
 if __name__=='__main__':freeze(*sys.argv[1:])
