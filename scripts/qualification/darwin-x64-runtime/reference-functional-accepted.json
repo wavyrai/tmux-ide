@@ -1,0 +1,1 @@
+{"passed": true, "cases": 4, "skipped": 0, "referenceSha256": "01bd78310db40d27c49d597c1afd3467709bda18538921647491d242d1d40a3f", "cleanup": true, "prepostFullAdmission": true, "scope": "Existing allocated backing/paint oracle only; no journal/sanitizer/performance"}

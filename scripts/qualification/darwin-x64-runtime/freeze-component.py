@@ -42,6 +42,10 @@ def freeze(lane,binding_path,admission_path,overlay,output):
    if p.is_symlink():links[str(p)]=os.readlink(p)
    elif p.is_file():closure[str(p)]=sha(p)
  for p in [binding_path,pathlib.Path(admission_path).resolve(),host,pathlib.Path(python)]:closure[str(p)]=sha(p)
+ admission=json.loads(pathlib.Path(admission_path).read_text())
+ assert b['dependencyModeDerivation']==admission['derivation']
+ for key in ['receipt','ledger']:
+  path=pathlib.Path(admission['derivation'][key]);closure[str(path)]=sha(path)
  for module in sys.modules.values():
   name=getattr(module,'__file__',None)
   if name and pathlib.Path(name).is_file():closure[str(pathlib.Path(name).resolve())]=sha(name)

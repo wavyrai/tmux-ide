@@ -57,8 +57,26 @@ class Components(unittest.TestCase):
    with self.assertRaisesRegex(AssertionError,'unpinned'):m.admit(pins,root)
    pins['referenceFunctionalReceipt']['sha256']='0'*64
    with self.assertRaisesRegex(AssertionError,'changed'):m.admit(pins,root)
+ def test_shared_verifier_threads_frozen_derivation(self):
+  m=load('verify-cpu')
+  with tempfile.TemporaryDirectory() as t:
+   root=pathlib.Path(t);host=root/'host.json';host.write_text(json.dumps({'boot':'boot','os':'os','tools':{},'mach':{'files':{},'systemFiles':{}},'resolutions':{}}))
+   derivation={'receipt':'/closed/receipt','receiptSha256':'a'*64,'ledger':'/closed/ledger','ledgerSha256':'b'*64}
+   admission={'root':'/runtime','zip':'/zip','tar':'/tar','proof':'/proof','pins':{},'referenceRoot':'/reference','derivation':derivation}
+   spec=root/'spec.json';spec.write_text(json.dumps({'admission':admission,'closure':{},'links':{},'hostReceipt':str(host)}))
+   def output(argv,**kwargs):
+    return 'x86_64' if argv[0]=='/usr/bin/uname' else 'os' if argv[0]=='/usr/bin/sw_vers' else 'boot' if argv[-1]=='kern.boottime' else '0'
+   with patch.object(m,'bind_runtime') as bind,patch.object(m.subprocess,'check_output',side_effect=output):m.verify(spec)
+   self.assertEqual(bind.call_args.args[-1],derivation)
+ def test_actual_accepted_reference_receipt_is_admitted_for_selected_lane(self):
+  pins=json.loads((BASE/'pins-components.json').read_text())
+  self.assertIsInstance(pins['executionAuthorized'],bool);self.assertEqual(pins['authorizedLane'],'parser')
+  receipt=load('component-prerequisite').admit(pins,BASE)
+  self.assertEqual(receipt['runId'],36680179337);self.assertEqual(receipt['cases'],4)
  def test_held_runner_refuses_before_transport(self):
   with tempfile.TemporaryDirectory() as t,patch('subprocess.run') as command:
-   with self.assertRaisesRegex(AssertionError,'Held component'):load('runner-component').run('metadata',pathlib.Path(t)/'out')
+   root=pathlib.Path(t);recipe=root/'recipe';recipe.mkdir();pins=json.loads((BASE/'pins-components.json').read_text());pins['executionAuthorized']=False;(recipe/'pins-components.json').write_text(json.dumps(pins))
+   runner=load('runner-component');runner.BASE=recipe
+   with self.assertRaisesRegex(AssertionError,'Held component'):runner.run('parser',root/'out')
    command.assert_not_called()
 if __name__=='__main__':unittest.main()

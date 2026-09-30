@@ -4,16 +4,22 @@
   "buildStarted": false,
   "workloadStarted": false,
   "executionAuthorized": false,
-  "authorizedLane": null,
+  "authorizedLane": "parser",
   "referenceArtifact": 11059409786,
-  "functionalReceiptPending": true,
+  "functionalReceiptPending": false,
   "sharedHelpersChanged": [
-    "intake-cpu.py (identical reviewed fix)"
+    "intake-cpu.py (reviewed identical mode fix)",
+    "mach-inputs.mjs (reviewed timeout only)",
+    "binding.py and verify-cpu.py (explicit derivation threading)"
   ],
-  "recipeManifestSha256": "d4ee4805363e5678a81f8a50478b56e737cd77716bb47f288726cb8d1b3ef406",
+  "recipeManifestSha256": "2f31c99c1ed6afc36b8a6ae62154223ae07173b0e06486bde487bd6166b12f27",
   "workflowSha256": "dec1c734047b707041986b7259fbe02b23376acee8b4a16e3f948bb8de174c62",
   "sharedIntakeFixCommit": "22b966fc7edc4046866bd6906a5cfbce4765638f",
   "sharedEnvelopeTests": 6,
-  "componentTests": 6,
-  "machTimeoutSourceCommit": "5a4a715d"
+  "componentTests": 8,
+  "machTimeoutSourceCommit": "5a4a715d",
+  "functionalReceiptRun": 36680179337,
+  "functionalReceiptSha256": "568e6b3545133cd5a1dd3d62481fce990c5d06b7cfdcfa8da7045b66ccda49fb",
+  "derivedRuntimeHelperSha256": "31d77b2d1dc760cbffd6f94a29b8a9da08f5a4f7c7fa0a3cc986ccf621f4369c",
+  "derivationTests": 5
 }

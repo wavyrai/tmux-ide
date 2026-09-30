@@ -4,7 +4,7 @@ from binding import bind_runtime,sha
 
 def verify(path):
  spec=json.loads(pathlib.Path(path).read_text());r=spec['admission']
- bind_runtime(r['root'],r['zip'],r['tar'],r['proof'],r['pins'],r['referenceRoot'])
+ bind_runtime(r['root'],r['zip'],r['tar'],r['proof'],r['pins'],r['referenceRoot'],r.get('derivation'))
  for p,digest in spec['closure'].items():assert sha(p)==digest,('Changed frozen file',p)
  for p,target in spec['links'].items():assert os.readlink(p)==target and pathlib.Path(p).resolve(strict=True)==(pathlib.Path(p).parent/target).resolve(strict=True),('Changed link',p)
  host=json.loads(pathlib.Path(spec['hostReceipt']).read_text())

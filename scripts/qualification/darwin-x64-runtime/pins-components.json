@@ -35,10 +35,10 @@
   "sourceCommit": "c95f246ae4a87e86f5299a4d3b594f086f2333f2",
   "tarMember": "darwin-x64-cli/cli-runtime.tar",
   "proofMember": "darwin-x64-cli/payload-proof.json",
-  "authorizedLane": null,
+  "authorizedLane": "parser",
   "referenceFunctionalReceipt": {
     "file": "reference-functional-accepted.json",
-    "sha256": null,
-    "runId": null
+    "sha256": "568e6b3545133cd5a1dd3d62481fce990c5d06b7cfdcfa8da7045b66ccda49fb",
+    "runId": 36680179337
   }
 }

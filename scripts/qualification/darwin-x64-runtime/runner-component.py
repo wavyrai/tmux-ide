@@ -1,6 +1,6 @@
 """Closed single lane: admit, prepare readers, freeze, verify, run. Pins remain held."""
 import pathlib,json,sys,os,time,shutil,importlib.util
-from binding import sha,bind_runtime
+from binding import sha,bind_runtime,verify_tree
 from stage import stage_sources
 BASE=pathlib.Path(__file__).resolve().parent
 
@@ -22,6 +22,9 @@ def run(lane,output):
   pins=dict(pins,matchedReference=ref)
   admission={'root':str(runtime),'zip':str(runtime_zip),'tar':str(output/'runtime-transport/payload.tar'),'proof':str(output/'runtime-transport/payload-proof.json'),'pins':pins,'referenceRoot':str(reference)}
   binding=bind_runtime(admission['root'],admission['zip'],admission['tar'],admission['proof'],pins,reference)
+  admission['derivation']=load('derived_runtime').prepare(admission,output/'derivation',verify_tree)
+  binding=bind_runtime(admission['root'],admission['zip'],admission['tar'],admission['proof'],pins,reference,admission['derivation'])
+  status['dependencyModeDerivation']=admission['derivation']
   overlay=output/'overlay';stage_sources(binding,overlay)
   bp=output/'binding.json';bp.write_text(json.dumps(binding,indent=2));ap=output/'admission.json';ap.write_text(json.dumps(admission,indent=2))
   status['phase']='reader-preparation';frozen=output/'lane';load('freeze-component').freeze(lane,bp,ap,overlay,frozen)
@@ -31,6 +34,7 @@ def run(lane,output):
   status['finished']=time.time();(output/'status.json').write_text(json.dumps(status,indent=2));evidence=output/'evidence';evidence.mkdir(exist_ok=True)
   for name in ['status.json','binding.json','admission.json','authorization.json']:
    if (output/name).exists():shutil.copyfile(output/name,evidence/name)
+  if (output/'derivation').exists():shutil.copytree(output/'derivation',evidence/'derivation',dirs_exist_ok=True)
   if (output/'lane').exists():shutil.copytree(output/'lane',evidence/'lane',ignore=shutil.ignore_patterns('home'),dirs_exist_ok=True)
   if (output/'overlay').exists():shutil.copytree(output/'overlay',evidence/'overlay',ignore=shutil.ignore_patterns('node_modules','__pycache__'),dirs_exist_ok=True)
   for name in ['runtime-download','reference-download']:
