@@ -1,0 +1,47 @@
+{
+  "runId": 36615931764,
+  "artifactId": 11056102558,
+  "zipSha256": "71e4c5f8bc267cb7cc5c2e03238f7e804c7699683f1d6b74f005f995e7201114",
+  "zipBytes": 933381361,
+  "tarSha256": "48041475fba75b067b9add9c4bea01b554a558db104526696c6e5695e9f492e4",
+  "tarBytes": 3084677120,
+  "sourceTree": "faf91085a562009c6b64e8fcea925ed92f861c06",
+  "cliSha256": "6fc2c68512bebec1ebc5b38f666390ee84e490ab12f2308f3d1273173aff4481",
+  "cliReceiptSha256": "c658da54ad9f9fcb82aa5adbc958796c27495105c3136ffa822139073e7f04ea",
+  "payloadProofSha256": "14c2e8b605c34190bdd529e7fc88f0472c0bea63a66143d3170ea0003637bd50",
+  "evidenceScope": "Range CRC verified receipts; not local full ZIP/tar/member acceptance",
+  "executionAuthorized": false,
+  "sourceCommit": "c95f246ae4a87e86f5299a4d3b594f086f2333f2",
+  "tarMember": "darwin-x64-cli/cli-runtime.tar",
+  "proofMember": "darwin-x64-cli/payload-proof.json",
+  "stock": {
+    "runId": 36626239009,
+    "artifactId": 11061058491,
+    "zipBytes": 871960,
+    "zipSha256": "e0df09675fd88704b8f6e2766b1c4a3ccb8c790b8ed336164b993a6f88fac3b2",
+    "tarBytes": 2099200,
+    "tarSha256": "ac17bf5f91a53c8db135d811914643a474dc5f01c4d651be28f323ba048ae48c",
+    "payloadProofSha256": "71f7fbc311ffa0d13eb4d82faaf6db0011ddda44716c805bfa0a40282c662dc9",
+    "tarMember": "stock/stock-runtime.tar",
+    "proofMember": "stock/payload.json",
+    "payloadRoots": [
+      "stock/bundle",
+      "stock/build-tools.json",
+      "stock/host-stock.json",
+      "stock/status.json",
+      "stock/stages.json",
+      "downloads.json",
+      "stock/source-proof.json"
+    ],
+    "binaryRelativePath": "stock/bundle/tmux",
+    "binarySha256": "b537d1b8cf484d7dad4c6cdd3461d71ca77f443ba1c9397fcbcf4c15326d1126",
+    "manifestRelativePath": "stock/bundle/manifest.json",
+    "manifestSha256": "8d5501e0a8bae14bbcf4ceb6855c93d95b383448a9817e98f1e4338f735564cf",
+    "manifestFilesOmissionDisclosed": true
+  },
+  "lanes": [
+    "stock",
+    "native"
+  ],
+  "scope": "canonical2/4/8; no performance claim"
+}

@@ -1,0 +1,8 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {retireServer} from './retire-server.mjs';
+const a={socketPath:'/private/owned/sock'},p={generation:{pid:'12',startTime:'1'},kernelWitness:'original',socketIdentity:{dev:1,ino:2}};
+function io(){let killed=0,time=0;return {uid:501,identify:async()=>killed?null:'original',socket:()=>({isSocket:true,uid:501,dev:1,ino:2}),kill:()=>{killed++;},now:()=>time,sleep:async n=>{time+=n;},killed:()=>killed,time:()=>time};}
+test('exact owner killed once and positive absence required',async()=>{const x=io();assert.deepEqual(await retireServer(a,p,x),{retired:true,alreadyAbsent:false});assert.equal(x.killed(),1);});
+test('changed kernel or socket refuses without signal',async()=>{for(const change of [{identify:async()=> 'replacement'},{socket:()=>({isSocket:true,uid:501,dev:1,ino:3})}]){const x=Object.assign(io(),change);await assert.rejects(retireServer(a,p,x));assert.equal(x.killed(),0);}});
+test('already absent never accesses pathname or signals',async()=>{const x=Object.assign(io(),{identify:async()=>null,socket:()=>{throw Error('must not touch');}});assert.equal((await retireServer(a,p,x)).alreadyAbsent,true);assert.equal(x.killed(),0);});
+test('permission error preserves refusal',async()=>{const x=Object.assign(io(),{identify:async()=>{throw Error('permission');}});await assert.rejects(retireServer(a,p,x),/permission/);assert.equal(x.killed(),0);});
+test('persistent owner stays bounded at unchanged five-second cleanup',async()=>{const x=Object.assign(io(),{identify:async()=> 'original'});await assert.rejects(retireServer(a,p,x),/exit unconfirmed/);assert.equal(x.time(),5000);assert.equal(x.killed(),1);});

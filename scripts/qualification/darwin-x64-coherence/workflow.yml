@@ -1,0 +1,38 @@
+name: Darwin x64 canonical coherence
+on:
+  workflow_dispatch:
+  push:
+    branches: [qualification/darwin-x64-coherence]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  coherence:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Admit current CLI and genuine stock, then one stock/native coherence attempt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: /usr/bin/python3 scripts/qualification/darwin-x64-coherence/runner.py "$RUNNER_TEMP/coherence"
+      - name: Preserve bounded diagnostics and results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: darwin-x64-coherence-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            ${{ runner.temp }}/coherence/*.json
+            ${{ runner.temp }}/coherence/*.log
+            ${{ runner.temp }}/coherence/*-download/metadata.json
+            ${{ runner.temp }}/coherence/stock/*.json
+            ${{ runner.temp }}/coherence/stock/*.log
+            ${{ runner.temp }}/coherence/stock/results/**
+            ${{ runner.temp }}/coherence/native/*.json
+            ${{ runner.temp }}/coherence/native/*.log
+            ${{ runner.temp }}/coherence/native/results/**

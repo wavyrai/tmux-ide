@@ -1,0 +1,86 @@
+{
+  "native": {
+    "coherence-canonical.ts": {
+      "origin": ".tasks/current-native-coherence-progress-66eb424f9e054d108e3c801cd415f9ec/coherence-canonical.ts",
+      "sha256": "b3c73ff900e8bbc63dabe807cfe975bbfa81ade553f2751c727e33c1ee792cff"
+    },
+    "daemon.ts": {
+      "origin": ".tasks/current-native-coherence-progress-66eb424f9e054d108e3c801cd415f9ec/daemon.ts",
+      "sha256": "0452d533564c608f7afeda6b0b9d74be3b45c53c5ba89c0365583b606170d8f0"
+    },
+    "scratch-fleet.ts": {
+      "origin": ".tasks/current-native-coherence-progress-66eb424f9e054d108e3c801cd415f9ec/scratch-fleet.ts",
+      "sha256": "ba41c3dda191c115d0215cdd011549afb0b0ac1124a64e95a5ec0e6eac82e592"
+    },
+    "owned-harness.mjs": {
+      "origin": ".tasks/current-native-coherence-progress-66eb424f9e054d108e3c801cd415f9ec/owned-harness.mjs",
+      "sha256": "e7c17d13b3fbce347ade062d5ca88b2505603da5bb42f9aca33bf64fd2aeb300"
+    },
+    "admission.mjs": {
+      "origin": ".tasks/current-native-coherence-progress-66eb424f9e054d108e3c801cd415f9ec/admission.mjs",
+      "sha256": "75a117415fd55aa38cae0eedc7b1fea230ccd7c0624e3d7f3a1f99a4c705f483"
+    },
+    "overlay.test.mjs": {
+      "origin": ".tasks/current-native-coherence-progress-66eb424f9e054d108e3c801cd415f9ec/overlay.test.mjs",
+      "sha256": "cb8b9ab6032b1a8f65e3eba6154f133fd1e22b9a4508523367ddf6499dd0368e"
+    },
+    "partial-allocation.test.ts": {
+      "origin": ".tasks/current-native-coherence-progress-66eb424f9e054d108e3c801cd415f9ec/partial-allocation.test.ts",
+      "sha256": "d819319a0967dfac9cb3b538005e4fcc495aa0a072161f8523cc7c742ae93a2a"
+    }
+  },
+  "stock": {
+    "coherence-canonical.ts": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/coherence-canonical.ts",
+      "sha256": "ead4e55a63d1b744daeb8efd833cf099ed51105bbe43a9e96fbf8d51d65f3b23"
+    },
+    "daemon.ts": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/daemon.ts",
+      "sha256": "0452d533564c608f7afeda6b0b9d74be3b45c53c5ba89c0365583b606170d8f0"
+    },
+    "scratch-fleet.ts": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/scratch-fleet.ts",
+      "sha256": "ba41c3dda191c115d0215cdd011549afb0b0ac1124a64e95a5ec0e6eac82e592"
+    },
+    "owned-harness.mjs": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/owned-harness.mjs",
+      "sha256": "e7c17d13b3fbce347ade062d5ca88b2505603da5bb42f9aca33bf64fd2aeb300"
+    },
+    "admission.mjs": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/admission.mjs",
+      "sha256": "9735c43edc8e406bc886542515da88dc224a63694e0ed3364a9054b9ff8a2652"
+    },
+    "overlay.test.mjs": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/overlay.test.mjs",
+      "sha256": "cb8b9ab6032b1a8f65e3eba6154f133fd1e22b9a4508523367ddf6499dd0368e"
+    },
+    "partial-allocation.test.ts": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/partial-allocation.test.ts",
+      "sha256": "d819319a0967dfac9cb3b538005e4fcc495aa0a072161f8523cc7c742ae93a2a"
+    },
+    "collect-stock.mjs": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/collect-stock.mjs",
+      "sha256": "cb52dafaef001582c93a3e25278225b59e8bf9ab934d63bd341331fc0f3e8351"
+    },
+    "collect-stock.test.mjs": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/collect-stock.test.mjs",
+      "sha256": "f4ac2632dc377f32f8e6cb9cc9e8ff720627b45915fb2507b75eea02931b897c"
+    },
+    "semantic-oracle.mjs": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/semantic-oracle.mjs",
+      "sha256": "3d18ad0f825cae4c4e14f69cf9a9d4b7fd9be724ad01cf38e6b73974509ba204"
+    },
+    "semantic-oracle.test.mjs": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/semantic-oracle.test.mjs",
+      "sha256": "3dac3665d4628c2d25e29ee86517130f6e8040e7e50bade926f644fb0f699900"
+    },
+    "stock-admission.mjs": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/stock-admission.mjs",
+      "sha256": "a9732e2598038021453f9aa6a87d039b4efa893feff6ae923a04de146ae5ed76"
+    },
+    "stock-admission.test.mjs": {
+      "origin": ".tasks/current-stock-coherence-progress-795ca34c2f9a41ab9e837bc2c9d31c2c/stock-admission.test.mjs",
+      "sha256": "5c285eb049926a3187e450f9b02eeb473ce4fb2e442d2d9027c0953e8ea1fee3"
+    }
+  }
+}
