@@ -14,7 +14,11 @@ class Adapter(unittest.TestCase):
    for mode in ['native','stock']:
     out=root/('out-'+mode);s=stage(b,mode,out)
     for p in (HERE/'accepted'/mode).iterdir():
-     if p.name not in ['daemon.ts','owned-harness.mjs','admission.mjs']:self.assertEqual(p.read_bytes(),(out/p.name).read_bytes(),p.name)
+     if p.name not in ['daemon.ts','owned-harness.mjs','admission.mjs','coherence-canonical.ts']:self.assertEqual(p.read_bytes(),(out/p.name).read_bytes(),p.name)
+    original=(HERE/'accepted'/mode/'coherence-canonical.ts').read_text();adapted=(out/'coherence-canonical.ts').read_text()
+    self.assertEqual(original[original.index('const records ='):original.index('const results:')],adapted[adapted.index('const records ='):adapted.index('const results:')])
+    self.assertEqual(original[original.index('      const slowBaseline ='):original.index('    } catch (error) {',original.index('      const slowBaseline ='))],adapted[adapted.index('      const slowBaseline ='):adapted.index('    } catch (error) {',adapted.index('      const slowBaseline ='))])
+    self.assertIn('owned PTY attachment',adapted)
     self.assertEqual(s['executionAuthorized'],False)
     self.assertEqual(json.loads((out/'package.json').read_text()),{'type':'module'})
     descriptor=json.loads((out/'admission.json').read_text())
@@ -33,9 +37,13 @@ class Adapter(unittest.TestCase):
    with self.assertRaises(AssertionError):stage(b,'stock',out)
    self.assertEqual((out/'old').read_text(),'preserved')
  def test_held_runner_allocates_nothing(self):
+  import runner
+  from unittest.mock import patch
   with tempfile.TemporaryDirectory() as t:
-   out=pathlib.Path(t)/'out';p=subprocess.run([sys.executable,str(HERE/'runner.py'),str(out)],capture_output=True)
-   self.assertNotEqual(p.returncode,0);self.assertIn(b'Held recipe',p.stderr);self.assertFalse(out.exists())
+   root=pathlib.Path(t);out=root/'out';(root/'pins.json').write_text(json.dumps({'executionAuthorized':False}))
+   with patch.object(runner,'HERE',root),self.assertRaisesRegex(AssertionError,'Held recipe'):runner.run(out)
+   self.assertFalse(out.exists())
+
  def test_actual_cli_and_stock_proof_shapes_keep_all_pinned_checks(self):
   # CLI payload proof14c2 has no sha256 field; stock payload proof carries it.
   with tempfile.TemporaryDirectory() as t:

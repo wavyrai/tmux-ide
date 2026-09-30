@@ -28,6 +28,7 @@ jobs:
           include-hidden-files: true
           path: |
             ${{ runner.temp }}/coherence/*.json
+            ${{ runner.temp }}/coherence/dependency-mode/*.json
             ${{ runner.temp }}/coherence/*.log
             ${{ runner.temp }}/coherence/*-download/metadata.json
             ${{ runner.temp }}/coherence/*-download/*.stderr

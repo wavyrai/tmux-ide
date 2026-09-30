@@ -1,5 +1,6 @@
 """Closed coherence admission. Reuses full accepted member verification; starts no process."""
 import pathlib,json,importlib.util
+import derived_runtime
 HERE=pathlib.Path(__file__).resolve().parent
 s=importlib.util.spec_from_file_location('accepted_binding',HERE/'upstream-binding.py');u=importlib.util.module_from_spec(s);s.loader.exec_module(u)
 sha=u.sha
@@ -15,10 +16,10 @@ def archive(root,zip_path,tar_path,proof_path,pin,roots):
  assert len(proof['ledger'])==proof['members']
  return u.verify_tree(root,proof['ledger'],roots)
 
-def bind(runtime,stock,pins):
+def bind(runtime,stock,pins,derivation=None):
  assert pins['sourceCommit']==u.SOURCE and pins['stock'] is not None
  root=pathlib.Path(runtime['root']).resolve(strict=True)
- count=archive(root,runtime['zip'],runtime['tar'],runtime['proof'],pins,u.ROOTS)
+ count=(archive(root,runtime['zip'],runtime['tar'],runtime['proof'],pins,u.ROOTS) if derivation is None else derived_runtime.verify(dict(runtime,pins=pins),derivation,u.verify_tree)['members'])
  receipt=json.loads((root/'cli-receipt.json').read_text());b=json.loads((root/'binding.json').read_text())
  assert sha(root/'cli-receipt.json')==pins['cliReceiptSha256']
  assert b['sourceCommit']==receipt['sourceCommit']==u.SOURCE
@@ -45,4 +46,4 @@ def bind(runtime,stock,pins):
  assert manifest['mode'] in ['host-stock','unpatched-source']
  assert manifest['patches']==([] if manifest['mode']=='unpatched-source' else None)
  status=json.loads((sr/'stock/status.json').read_text());assert status['ok'] is True and status['performanceQualified'] is False and status['native4998Rebuilt'] is False
- return {'executionAuthorized':False,'sourceCommit':u.SOURCE,'sourceTree':pins['sourceTree'],'paths':paths,'archiveRoot':str(root),'stockRoot':str(sr),'runtimeMembers':count,'stockMembers':sn,'observerDefaultBatchMs':32,'noRebuild':True,'stockManifest':manifest}
+ return {'executionAuthorized':False,'sourceCommit':u.SOURCE,'sourceTree':pins['sourceTree'],'paths':paths,'archiveRoot':str(root),'stockRoot':str(sr),'runtimeMembers':count,'stockMembers':sn,'observerDefaultBatchMs':32,'noRebuild':True,'stockManifest':manifest,'runtimePatch':None,'dependencyModeDerivation':derivation}

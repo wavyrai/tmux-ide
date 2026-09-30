@@ -10,7 +10,7 @@
   "cliReceiptSha256": "c658da54ad9f9fcb82aa5adbc958796c27495105c3136ffa822139073e7f04ea",
   "payloadProofSha256": "14c2e8b605c34190bdd529e7fc88f0472c0bea63a66143d3170ea0003637bd50",
   "evidenceScope": "Range CRC verified receipts; not local full ZIP/tar/member acceptance",
-  "executionAuthorized": true,
+  "executionAuthorized": false,
   "sourceCommit": "c95f246ae4a87e86f5299a4d3b594f086f2333f2",
   "tarMember": "darwin-x64-cli/cli-runtime.tar",
   "proofMember": "darwin-x64-cli/payload-proof.json",

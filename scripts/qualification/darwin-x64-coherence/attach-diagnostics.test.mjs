@@ -1,0 +1,7 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {createAttachDiagnostics} from './attach-diagnostics.mjs';
+const expected={pid:12,session:'owned',cols:100,rows:30};
+const row=(pid=12,width=100,control='0',session='owned')=>`client\t${pid}\t/dev/ttys004\t${width}\t30\t${control}\t${session}\n`;
+test('only actual owned terminal at requested geometry admits workload',()=>{const d=createAttachDiagnostics();assert.equal(d.observe(row(13),expected),false);assert.equal(d.observe(row(12,80),expected),false);assert.equal(d.observe(row(),expected),true);assert.equal(d.snapshot().ready.pid,12);});
+test('early attach exit preserves bounded terminal error and refuses resize admission',()=>{const d=createAttachDiagnostics();d.data('open terminal failed: cannot find terminfo database');d.exited({exitCode:1});assert.throws(()=>d.observe('',expected),/exited/);assert.match(d.snapshot().output,/terminfo/);assert.equal(d.snapshot().exit.duringCleanup,false);});
+test('wrong session, control client and duplicate PID cannot masquerade as attachment',()=>{for(const raw of [row(12,100,'0','other'),row(12,100,'1'),row()+row()])assert.throws(()=>createAttachDiagnostics().observe(raw,expected));});
+test('output bounded and cleanup exit distinguished',()=>{const d=createAttachDiagnostics();d.data(Buffer.alloc(70000,120));d.cleanupStarted();d.exited({exitCode:0});const s=d.snapshot();assert.equal(Buffer.byteLength(s.output),65536);assert.equal(s.outputBytes,70000);assert.equal(s.truncated,true);assert.equal(s.exit.duringCleanup,true);});

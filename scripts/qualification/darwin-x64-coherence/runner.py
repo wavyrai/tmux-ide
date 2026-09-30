@@ -1,6 +1,7 @@
 """Held closed stock/native coherence envelope. No build, install, retry or performance claim."""
 import pathlib,json,subprocess,sys,os,time,importlib.util,signal,re
-from binding import bind,sha
+from binding import bind,sha,u
+from derived_runtime import prepare as prepare_derivation
 from stage import stage
 HERE=pathlib.Path(__file__).resolve().parent
 
@@ -36,7 +37,7 @@ def run(output):
  assert pins['stock'] is not None and pins['lanes']==['stock','native']
  for rel,digest in json.loads((HERE/'recipe-files.json').read_text()).items():assert sha(HERE/rel)==digest,('Recipe changed',rel)
  output=pathlib.Path(output).resolve();assert not output.exists();output.mkdir(mode=0o700);os.umask(0o077)
- status={'ok':False,'singleAttempt':True,'started':time.time(),'performanceClaim':False};rows=[];runtime=stock=None
+ status={'ok':False,'singleAttempt':True,'started':time.time(),'performanceClaim':False};rows=[];runtime=stock=None;derivation=None
  try:
   intake=module('coherence_intake',HERE/'upstream-intake-cpu.py').intake
   admitted=[]
@@ -44,11 +45,15 @@ def run(output):
    archive=download(pin,output/(name+'-download'));transport=output/(name+'-transport');root=intake(archive,pin,transport)
    admitted.append({'root':str(root),'zip':str(archive),'tar':str(transport/'payload.tar'),'proof':str(transport/'payload-proof.json')})
   runtime,stock=admitted
-  b=bind(runtime,stock,pins);(output/'binding.json').write_text(json.dumps(b,indent=2))
+  bind(runtime,stock,pins) # Original full runtime AND stock admission precedes the declared mode-only preparation.
+  derivation=prepare_derivation(dict(runtime,pins=pins),output/'dependency-mode',u.verify_tree)
+  b=bind(runtime,stock,pins,derivation)
+  (output/'admission.json').write_text(json.dumps({'runtime':runtime,'stock':stock,'pins':pins,'dependencyModeDerivation':derivation},indent=2))
+  (output/'binding.json').write_text(json.dumps(b,indent=2))
   with (output/'host.log').open('xb') as log:
    subprocess.run([b['paths']['node'],str(HERE/'admit-host.mjs'),str(output/'binding.json'),str(output/'host.json')],stdout=log,stderr=subprocess.STDOUT,check=True,timeout=120)
   for mode in pins['lanes']:
-   bind(runtime,stock,pins);lane=output/mode;spec=stage(b,mode,lane)
+   bind(runtime,stock,pins,derivation);lane=output/mode;spec=stage(b,mode,lane)
    spec['executionAuthorized']=True;(lane/'command.json').write_text(json.dumps(spec,indent=2));(lane/'command.json').chmod(0o600)
    code=None;post=False
    try:
@@ -61,7 +66,7 @@ def run(output):
      finally:
       for n,h in old.items():signal.signal(n,h)
    finally:
-    try:bind(runtime,stock,pins);post=True
+    try:bind(runtime,stock,pins,derivation);post=True
     finally:
      row={'lane':mode,'exit':code,'postclosure':post};rows.append(row);(lane/'terminal.json').write_text(json.dumps(row))
    assert code==0 and post,'Failed lane retained; do not run next lane'
@@ -73,7 +78,7 @@ def run(output):
  finally:
   try:
    if runtime is not None and stock is not None:
-    bind(runtime,stock,pins);status['finalFullClosure']=True
+    bind(runtime,stock,pins,derivation);status['finalFullClosure']=True
   except BaseException as e:
    status['ok']=False;status['finalFullClosure']=False;status['closureError']=repr(e);raise
   finally:
