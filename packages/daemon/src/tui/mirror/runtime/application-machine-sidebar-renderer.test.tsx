@@ -510,6 +510,74 @@ it("offers keyboard and mouse connection controls for the focused remote only", 
   owner.dispose();
 });
 
+it.each([28, 34, 48])(
+  "shows complete missing-daemon recovery guidance at width %s",
+  async (width) => {
+    const [ready, setReady] = createSignal(false);
+    const calls: string[] = [];
+    const setup = await renderForTest(
+      () => (
+        <ApplicationMachineSidebar
+          width={width}
+          height={20}
+          agentRows={8}
+          agents={<text>Resident agents</text>}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          model={{
+            groups: () => [
+              {
+                id: "mini",
+                label: "Mini",
+                state: ready() ? "ready" : "connecting",
+                sessions: [],
+                diagnostic: ready()
+                  ? { phase: "ready", failure: null, attempt: 0, nextRetryAt: null }
+                  : {
+                      phase: "reconnecting",
+                      failure: "daemon-missing",
+                      attempt: 1,
+                      nextRetryAt: null,
+                    },
+              },
+            ],
+            activeMachineId: () => "mini",
+            activeSessionName: () => null,
+            focused: () => true,
+            onOpen: () => {},
+            onSelectMachine: () => {},
+            onRetryMachine: (id) => {
+              calls.push(id);
+            },
+            onDisconnectMachine: () => {},
+          }}
+        />
+      ),
+      { width, height: 20 },
+    );
+    try {
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame.replace(/\s/gu, "")).toContain("starttmux-ideonthismachineifneeded.");
+      expect(frame).toContain("Retry connection");
+      expect(frame).toContain("Disconnect");
+      expect(frame).toContain("Resident agents");
+      await setup.mockMouse.click(
+        6,
+        frame.split("\n").findIndex((line) => line.includes("Retry connection")),
+        MouseButtons.LEFT,
+      );
+      expect(calls).toEqual(["mini"]);
+      setReady(true);
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("Connected");
+      expect(setup.captureCharFrame()).not.toContain("No running daemon");
+      expect(setup.captureCharFrame()).toContain("Resident agents");
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
+
 it("keeps retained session tabs out of the agent-first sidebar", async () => {
   const calls: string[] = [];
   const setup = await renderForTest(

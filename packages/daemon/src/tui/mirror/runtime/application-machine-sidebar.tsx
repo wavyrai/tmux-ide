@@ -26,6 +26,7 @@ import {
   type JSX,
 } from "solid-js";
 import { friendlySessionLabel } from "../terminal-text.ts";
+import { wrapText } from "../dialog-model.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { KeyHint } from "../ui/key-hint.tsx";
 import { NavigationRow } from "../ui/navigation-row.tsx";
@@ -136,22 +137,22 @@ export function ApplicationMachineSidebar(props: {
   let scroll: ScrollBoxRenderable | undefined;
   const agentHeight = () =>
     (props.agentRows ?? 0) > 0
-      ? Math.min((props.agentRows ?? 0) + 2, Math.max(0, Math.floor(props.height / 2)))
+      ? Math.min(
+          (props.agentRows ?? 0) + 2,
+          Math.max(0, Math.floor(props.height / 2)),
+          Math.max(0, props.height - fixedHeight() - controlsHeight() - 2),
+        )
       : 0;
-  const controlsHeight = () => (props.height >= 8 && controlGroup() ? 4 : 0);
+  const controlsHeight = () => (props.height >= 8 && controlGroup() ? controlTextHeight() + 2 : 0);
   const searchHeight = () =>
     (props.model.onOpenSwitcher ? 1 : 0) + (props.model.onOpenAttention ? 1 : 0);
+  const fixedHeight = () => 1 + (props.model.onAddMachine ? 1 : 0) + searchHeight();
+  // Keep both action rows and at least two machine rows available on short terminals.
+  const controlTextHeight = () =>
+    Math.min(controlTextLines().length, Math.max(1, props.height - fixedHeight() - 4));
 
   const machineHeight = () =>
-    Math.max(
-      0,
-      props.height -
-        1 -
-        (props.model.onAddMachine ? 1 : 0) -
-        agentHeight() -
-        controlsHeight() -
-        searchHeight(),
-    );
+    Math.max(0, props.height - fixedHeight() - agentHeight() - controlsHeight());
   const active = (row: Row) =>
     row.group.id === props.model.activeMachineId() &&
     (row.agent
@@ -258,6 +259,15 @@ export function ApplicationMachineSidebar(props: {
         : "disconnected"
       : diagnostic.phase;
   };
+  const controlTextLines = createMemo(() => {
+    const group = controlGroup();
+    return group
+      ? wrapText(
+          group.diagnostic ? fleetConnectionMessage(group.diagnostic) : connectionDetail(group),
+          Math.max(1, props.width),
+        )
+      : [];
+  });
   const toggle = (
     group: ApplicationMachineGroup,
     value = !collapsed().has(preferenceKey(group)),
@@ -657,10 +667,8 @@ export function ApplicationMachineSidebar(props: {
       <Show when={controlsHeight() > 0 && controlGroup()}>
         {(group) => (
           <>
-            <text height={2} fg={props.theme.roles.text.secondary}>
-              {group().diagnostic
-                ? fleetConnectionMessage(group().diagnostic!)
-                : connectionDetail(group())}
+            <text height={controlTextHeight()} flexShrink={0} fg={props.theme.roles.text.secondary}>
+              {controlTextLines().join("\n")}
             </text>
             <KeyHint
               theme={props.theme}
