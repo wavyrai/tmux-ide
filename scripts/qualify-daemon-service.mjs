@@ -107,6 +107,26 @@ function cli(...args) {
   const result = run(process.execPath, [cliPath, "daemon", "service", ...args, "--json"]);
   const step = { action: args[0], exitCode: result.status, signal: result.signal };
   receipt.steps.push(step);
+  if (result.status !== 0) {
+    // These manager error messages contain only a fixed operation label, never
+    // subprocess output. Preserve the failing boundary without publishing logs.
+    step.managerFailureOperation =
+      result.stderr.match(
+        /(?:launchd|systemd) user service ([a-z /]+) failed; check the user manager/u,
+      )?.[1] ?? null;
+    step.failureCode = result.stderr.match(/code: '(DAEMON_[A-Z_]+)'/u)?.[1] ?? null;
+    if (!launchd) {
+      const inspected = run("systemctl", [
+        "--user",
+        "show",
+        target,
+        "--property=LoadState,ActiveState,MainPID,FragmentPath,Result",
+      ]);
+      step.managerState = inspected.stdout
+        .split("\n")
+        .filter((line) => /^(LoadState|ActiveState|MainPID|FragmentPath|Result)=/u.test(line));
+    }
+  }
   assert.equal(
     result.status,
     0,
