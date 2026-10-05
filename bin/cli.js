@@ -19481,8 +19481,8 @@ function boundedName(value) {
 function commandBasename(value) {
   const command3 = boundedName(value);
   if (!command3) return null;
-  const basename23 = command3.split("/").at(-1)?.trim() ?? "";
-  return basename23.length > 0 ? basename23 : null;
+  const basename22 = command3.split("/").at(-1)?.trim() ?? "";
+  return basename22.length > 0 ? basename22 : null;
 }
 function stableHash(value) {
   let hash = 2166136261;
@@ -28700,8 +28700,8 @@ function launchCommandForHarness(harness) {
 }
 function paneStartHostsShell(startCommand) {
   const token2 = startCommand.trim().split(/\s+/u)[0] ?? "";
-  const basename23 = token2.replace(/^-/, "").replace(/\\/gu, "/").split("/").pop()?.toLowerCase() ?? "";
-  return basename23 === "" || SHELLS.has(basename23.replace(/\.exe$/u, ""));
+  const basename22 = token2.replace(/^-/, "").replace(/\\/gu, "/").split("/").pop()?.toLowerCase() ?? "";
+  return basename22 === "" || SHELLS.has(basename22.replace(/\.exe$/u, ""));
 }
 function interruptArgs2(paneId) {
   return ["send-keys", "-t", paneId, "C-c"];
@@ -89421,7 +89421,7 @@ import {
   linkSync as linkSync4
 } from "node:fs";
 import { randomUUID as randomUUID40 } from "node:crypto";
-import { basename as basename20, dirname as dirname40, join as join50 } from "node:path";
+import { dirname as dirname40, join as join50 } from "node:path";
 import { homedir as homedir8 } from "node:os";
 import { z as z109 } from "zod";
 function defaults() {
@@ -89494,8 +89494,7 @@ async function manageDaemonService(action, executable, deps2 = defaults()) {
   };
   const inspectManager = async () => {
     const state = await manager.inspect();
-    const canonicalPath = (path2) => join50(realpathSync27(dirname40(path2)), basename20(path2));
-    if (state.loaded && (!state.definitionPath || canonicalPath(state.definitionPath) !== canonicalPath(plan.unitPath)))
+    if (state.loaded && (!state.definitionPath || realpathSync27(state.definitionPath) !== realpathSync27(plan.unitPath)))
       refused("The service manager loaded a different definition; refusing to control it");
     return state;
   };
@@ -93064,7 +93063,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync26 } from "node:child_process";
-import { basename as basename21, dirname as dirname44, isAbsolute as isAbsolute26, join as join52, resolve as resolve39 } from "node:path";
+import { basename as basename20, dirname as dirname44, isAbsolute as isAbsolute26, join as join52, resolve as resolve39 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -93073,7 +93072,7 @@ function worktreeSessionName(project, branch) {
 }
 function defaultWorktreeBaseDir(repoDir) {
   const abs = resolve39(repoDir);
-  return join52(dirname44(abs), `${basename21(abs)}-worktrees`);
+  return join52(dirname44(abs), `${basename20(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
   const base2 = configuredDir && configuredDir.length > 0 ? isAbsolute26(configuredDir) ? configuredDir : resolve39(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
@@ -93413,7 +93412,7 @@ __export(pane_widget_exports, {
   paneWidgetId: () => paneWidgetId,
   paneWidgetIdForFile: () => paneWidgetIdForFile
 });
-import { basename as basename22, extname } from "node:path";
+import { basename as basename21, extname } from "node:path";
 function imageMediaTypeFor(fileName) {
   return IMAGE_MEDIA_BY_EXTENSION.get(extname(fileName).toLowerCase()) ?? null;
 }
@@ -93431,7 +93430,7 @@ function buildMarkdownAnnouncement(text, title) {
   }
 }
 function buildImageAnnouncement(bytes, filePath) {
-  const name = basename22(filePath);
+  const name = basename21(filePath);
   const media = imageMediaTypeFor(name);
   if (media === null) {
     throw new PaneWidgetRefusal(
@@ -93485,7 +93484,7 @@ function paneWidgetIdForFile(fileName) {
   if ([".md", ".markdown"].includes(extension)) return "markdown";
   if (IMAGE_MEDIA_BY_EXTENSION.has(extension)) return "image";
   if (extension === ".json") return "card";
-  const name = basename22(fileName) || fileName || "input";
+  const name = basename21(fileName) || fileName || "input";
   throw new PaneWidgetRefusal(
     "unsupported-source",
     `tmux-ide cannot infer how to show "${name}". Supported: Markdown (.md, .markdown), raster images (${[...IMAGE_MEDIA_BY_EXTENSION.keys()].join(", ")}), and declarative cards (.json).`
@@ -95442,7 +95441,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       } = await Promise.resolve().then(() => (init_pane_widget(), pane_widget_exports));
       const { publishWidgetAsset: publishWidgetAsset2, WidgetAssetStoreError: WidgetAssetStoreError2 } = await Promise.resolve().then(() => (init_widget_asset_store(), widget_asset_store_exports));
       const { readFileSync: readFileSync40, watchFile, unwatchFile } = await import("node:fs");
-      const { basename: basename23 } = await import("node:path");
+      const { basename: basename22 } = await import("node:path");
       const readStdin = async () => {
         const chunks = [];
         for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
@@ -95463,9 +95462,9 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
             const publish = () => {
               const asset = publishWidgetAsset2(readFileSync40(file), {
                 media: "text/markdown",
-                name: basename23(file)
+                name: basename22(file)
               });
-              return buildMarkdownAssetAnnouncement2(asset.assetId, basename23(file));
+              return buildMarkdownAssetAnnouncement2(asset.assetId, basename22(file));
             };
             announcement = publish();
             watchedFile = file;
@@ -95480,14 +95479,14 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
             if (!media) {
               throw new PaneWidgetRefusal2(
                 "unsupported-media",
-                `"${basename23(file)}" is not a supported raster image.`
+                `"${basename22(file)}" is not a supported raster image.`
               );
             }
             const asset = publishWidgetAsset2(readFileSync40(file), {
               media,
-              name: basename23(file)
+              name: basename22(file)
             });
-            return buildImageAssetAnnouncement2(asset.assetId, { name: basename23(file) });
+            return buildImageAssetAnnouncement2(asset.assetId, { name: basename22(file) });
           };
           announcement = publish();
           watchedFile = file;

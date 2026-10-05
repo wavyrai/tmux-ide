@@ -7,6 +7,7 @@ import {
   existsSync,
   realpathSync,
   unlinkSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -225,6 +226,33 @@ describe("managed daemon service lifecycle", () => {
     });
     expect((await run("status")).status).toBe("running");
     await run("remove");
+  });
+
+  it("accepts a manager-created link to the owned definition, but refuses a different target", async () => {
+    const { run, plan, setState, manager } = fixture();
+    await run("install");
+    const managerLink = join(root, "manager-linked.service");
+    symlinkSync(plan.unitPath, managerLink);
+    setState({
+      loaded: true,
+      active: true,
+      pid: 2147483647,
+      definitionPath: managerLink,
+    });
+    expect((await run("status")).status).toBe("running");
+
+    const foreign = join(root, "foreign.service");
+    // Matching contents alone do not confer ownership of a different unit.
+    writeFileSync(foreign, plan.contents);
+    unlinkSync(managerLink);
+    symlinkSync(foreign, managerLink);
+    await expect(run("remove")).rejects.toThrow("different definition");
+    expect(manager.stop).not.toHaveBeenCalled();
+    expect(existsSync(plan.recordPath)).toBe(true);
+    unlinkSync(managerLink);
+    symlinkSync(plan.unitPath, managerLink);
+    expect((await run("remove")).status).toBe("removed");
+    expect(inspectCanonicalDaemonInfo().status).toBe("missing");
   });
 
   it("removes a never-loaded partial installation whose definition is absent", async () => {

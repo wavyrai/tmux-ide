@@ -14,7 +14,7 @@ import {
   linkSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
 import {
@@ -139,11 +139,12 @@ export async function manageDaemonService(
   };
   const inspectManager = async () => {
     const state = await manager.inspect();
-    const canonicalPath = (path: string) => join(realpathSync(dirname(path)), basename(path));
+    // systemd reports its generated search-path symlink for units enabled by
+    // absolute path. Resolve that link to the owned definition; the definition
+    // itself still has to pass our no-follow private-file and content checks.
     if (
       state.loaded &&
-      (!state.definitionPath ||
-        canonicalPath(state.definitionPath) !== canonicalPath(plan.unitPath))
+      (!state.definitionPath || realpathSync(state.definitionPath) !== realpathSync(plan.unitPath))
     )
       refused("The service manager loaded a different definition; refusing to control it");
     return state;
