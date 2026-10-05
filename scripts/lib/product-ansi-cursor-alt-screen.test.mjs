@@ -55,7 +55,7 @@ import {
 import {
   createScratchFleet,
   validateScratchInitialPaneCommand,
-} from "../../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
+} from "./product-fixtures/scratch-fleet.ts";
 
 test("workload progress renews only monotonically and remains absolutely bounded", () => {
   const empty = {

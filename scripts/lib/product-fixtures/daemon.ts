@@ -27,8 +27,7 @@ const DAEMON_READY_TIMEOUT_MS = 45_000;
 const LADDER_TIMEOUT_MS = 45_000;
 const BUNDLE_BUILD_TIMEOUT_MS = 120_000;
 
-export const repoRoot = resolve(import.meta.dirname, "..", "..", "..", "..");
-export const rendererRoot = resolve(import.meta.dirname, "..", "..");
+export const repoRoot = resolve(import.meta.dirname, "..", "..", "..");
 
 export type CanonicalDaemonRecord = CanonicalDaemonInfo & { readonly authToken: string };
 

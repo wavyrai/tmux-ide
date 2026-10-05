@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createScratchFleet } from "../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
+import { createScratchFleet } from "./lib/product-fixtures/scratch-fleet.ts";
 import {
   productCoherentFrameTimeoutObservation,
   summarizeProductInputDistribution,

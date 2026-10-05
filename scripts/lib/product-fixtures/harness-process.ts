@@ -1,5 +1,5 @@
 /**
- * Child-process discipline for the app-level suite.
+ * Child-process discipline shared by product qualification suites.
  *
  * Every process this suite starts is started `detached`, which puts it in its
  * own process group, and is stopped by signalling that whole group. The daemon

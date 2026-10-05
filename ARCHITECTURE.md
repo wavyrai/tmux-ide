@@ -15,7 +15,9 @@ The current product surface is deliberately narrow:
 
 The web and native desktop clients are future consumers of the daemon contract;
 they are not part of the 2.9 release cut. The retained Solid desktop renderer
-also provides the browser and cross-client fixtures used by terminal qualification.
+provides browser-specific fixtures used by cross-client qualification. Shared daemon,
+private tmux fleet, process ownership, and retirement fixtures live in
+`scripts/lib/product-fixtures`, independent of renderer packages.
 The separate experimental React workspace client and its Electron launch variants
 have been retired; shared contracts and native ownership checks remain supported.
 

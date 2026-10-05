@@ -30,18 +30,15 @@ import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import {
-  startDaemon,
-  waitForReadinessLadder,
-} from "../apps/desktop-renderer/e2e/fixtures/daemon.ts";
-import { verifyDaemonRetirement } from "../apps/desktop-renderer/e2e/fixtures/daemon-retirement.ts";
+import { startDaemon, waitForReadinessLadder } from "./lib/product-fixtures/daemon.ts";
+import { verifyDaemonRetirement } from "./lib/product-fixtures/daemon-retirement.ts";
 import { shellChromeLayout } from "../packages/daemon/src/tui/mirror/shell-chrome.ts";
 import { startDevServer } from "../apps/desktop-renderer/e2e/fixtures/dev-server.ts";
 import {
   SCRATCH_INITIAL_PANE_COMMAND_INVALID,
   createScratchFleet,
   validateScratchInitialPaneCommand,
-} from "../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
+} from "./lib/product-fixtures/scratch-fleet.ts";
 import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
   PRODUCT_RIG_SOURCE_INVENTORY_MAX_BYTES,
