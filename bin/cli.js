@@ -66251,17 +66251,15 @@ function subscribeLogs(handler) {
 function markStreamFailed(name, error) {
   if (streamState[name].failed) return;
   streamState[name].failed = true;
-  const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const detail = sanitizeLogMessage(
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    secrets,
+    budget
+  );
   const warning = `[log.ts] ${name} write failed (${detail}); further records are retained in memory only
 `;
   const other = name === "stdout" ? "stderr" : "stdout";
-  if (!streamState[other].failed) {
-    try {
-      process[other].write(warning);
-    } catch {
-      streamState[other].failed = true;
-    }
-  }
+  if (!streamState[other].failed) writeToStream(other, warning);
 }
 function writeToStream(name, line) {
   const state = streamState[name];
@@ -66305,7 +66303,11 @@ function writeStructuredLog(level, component, message, data) {
     } catch (err) {
       writeToStream(
         "stderr",
-        `[log.ts] subscriber threw: ${err instanceof Error ? err.message : String(err)}
+        `[log.ts] subscriber threw: ${sanitizeLogMessage(
+          err instanceof Error ? err.message : String(err),
+          secrets,
+          budget
+        )}
 `
       );
     }

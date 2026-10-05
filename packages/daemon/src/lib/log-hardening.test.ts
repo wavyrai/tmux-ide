@@ -184,3 +184,51 @@ describe("stream degradation", () => {
     expect(stderrLines.some((line) => line.includes('"msg":"three"'))).toBe(true);
   });
 });
+
+describe("failure diagnostic redaction", () => {
+  it("redacts and bounds writer errors before warning on the other stream", () => {
+    installCapture();
+    registerLogSecret("registered-error-secret");
+    _setLogBudgetForTests({ maxMessageBytes: 256 });
+    process.stdout.write = (() => {
+      throw Object.assign(
+        new Error(
+          "ENOSPC Bearer private-writer-credential registered-error-secret " + "x".repeat(5000),
+        ),
+        { code: "ENOSPC" },
+      );
+    }) as Writer;
+    logger.info("daemon", "retained after disk failure");
+    const warning = stderrLines.join("");
+    expect(warning).toContain("ENOSPC");
+    expect(warning).not.toContain("private-writer-credential");
+    expect(warning).not.toContain("registered-error-secret");
+    expect(Buffer.byteLength(warning)).toBeLessThan(512);
+    expect(getLogBuffer().at(-1)?.msg).toBe("retained after disk failure");
+  });
+  it("redacts and bounds subscriber exceptions while continuing other subscribers", () => {
+    installCapture();
+    registerLogSecret("registered-error-secret");
+    _setLogBudgetForTests({ maxMessageBytes: 256 });
+    const stop = subscribeLogs(() => {
+      throw new Error(
+        "Bearer private-subscriber-credential registered-error-secret " + "x".repeat(5000),
+      );
+    });
+    const received: string[] = [];
+    const stopNext = subscribeLogs((entry) => {
+      received.push(entry.msg);
+    });
+    try {
+      logger.info("daemon", "still delivered");
+      const warning = stderrLines.join("");
+      expect(warning).not.toContain("private-subscriber-credential");
+      expect(warning).not.toContain("registered-error-secret");
+      expect(Buffer.byteLength(warning)).toBeLessThan(512);
+      expect(received).toEqual(["still delivered"]);
+    } finally {
+      stop();
+      stopNext();
+    }
+  });
+});
