@@ -126,6 +126,7 @@ import {
   qualifyCanonicalSeedPaint,
   qualifyCoherentFrameCausality,
   qualifyPreseededPaneEvidence,
+  qualifyWorkspaceClientState,
   waitForCanonicalFrameFence,
   waitForQualifiedWorkspaceClientState,
 } from "./lib/product-configless-owner.mjs";
@@ -514,6 +515,52 @@ function partialProductRuntimeEvidence(state) {
   });
 }
 
+async function captureRuntimeDiagnosticState(state, captureEvidence) {
+  const processId = captureEvidence?.tuiStatus?.processId;
+  const generation = captureEvidence?.tuiStatus?.daemon?.instanceId;
+  if (!Number.isSafeInteger(processId) || generation !== state.daemon.instanceId)
+    throw new Error("runtime correlation has no exact captured renderer/daemon identity");
+  const records = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"));
+  const record = records.findLast(
+    (entry) =>
+      entry?.phase === "generation-workspace-client-state" &&
+      entry.processId === `opentui:${processId}` &&
+      entry.daemonGeneration === generation,
+  );
+  const selected = record?.workspaceClient?.committed?.terminalResources?.filter(
+    (entry) => entry.active,
+  );
+  if (selected?.length !== 1) throw new Error("runtime correlation has no unique selected pane");
+  const daemonRecord = await observePublicElectedDaemon(
+    state.runtimeNamespace.daemonInfoDir,
+    5_000,
+  );
+  if (daemonRecord.instanceId !== generation || daemonRecord.pid !== state.daemon.pid)
+    throw new Error("runtime correlation daemon changed during capture");
+  const identity = await card5ArtifactIdentity(
+    {
+      record: daemonRecord,
+      baseUrl: `http://${daemonRecord.bindHostname ?? "127.0.0.1"}:${daemonRecord.port}`,
+    },
+    state.session,
+    selected[0].semanticPaneId,
+  );
+  const workspaceClient = qualifyWorkspaceClientState([record], {
+    ...identity,
+    processId: `opentui:${processId}`,
+    daemonGeneration: generation,
+    canonicalGeneration: generation,
+    workspaceName: state.workspace,
+    sessionName: state.session,
+  });
+  return {
+    ...state,
+    daemon: { ...state.daemon, revision: identity.catalogRevision, revisionKind: "fleet-catalog" },
+    convergence: { ...state.convergence, workspaceClient },
+    journeyEvidence: { ...state.journeyEvidence, runtimeQualification: identity },
+  };
+}
+
 function productDiagnosticCorrelation(state, captureEvidence) {
   const tuiAvailable = Boolean(captureEvidence?.tuiPath && existsSync(captureEvidence.tuiPath));
   const webAvailable = Boolean(captureEvidence?.webPath && existsSync(captureEvidence.webPath));
@@ -579,7 +626,7 @@ function productDiagnosticCorrelation(state, captureEvidence) {
                           sessionRecreate.hostile?.tmuxServerRecreate?.identity?.catalogRevision,
                         semanticPaneId: sessionRecreate.hostile?.tmuxServerRecreate?.semanticPaneId,
                       }
-                    : null;
+                    : (state?.journeyEvidence?.runtimeQualification ?? null);
   return buildProductDiagnosticCorrelation({
     state,
     tuiAvailable,
@@ -9311,6 +9358,12 @@ async function diagnoseRuntimeQualification(planEntry) {
   );
   diagnosticCaptures.set(planEntry.runId, captureEvidence);
   diagnosticAttemptPhases.set(planEntry.runId, "report-correlation");
+  let runtimeCorrelationFailure = null;
+  try {
+    state = await captureRuntimeDiagnosticState(state, captureEvidence);
+  } catch (error) {
+    runtimeCorrelationFailure = error instanceof Error ? error.message : String(error);
+  }
   // A closed collector summary is the only truthful proof that trace
   // backpressure did not drop or oversize records. Stop the hosted TUI after
   // all visual journeys, then build the report from its final streams.
@@ -9378,7 +9431,7 @@ async function diagnoseRuntimeQualification(planEntry) {
     status: correlation.complete ? "passed" : "unmeasured",
     detail: correlation.complete
       ? "daemon revision, WorkspaceClient state and Web semantic state aligned"
-      : `missing ${correlation.missing.join(", ")}`,
+      : `missing ${correlation.missing.join(", ")}${runtimeCorrelationFailure ? `; ${runtimeCorrelationFailure}` : ""}`,
   };
   const report = {
     ...baseReport,
