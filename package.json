@@ -25,7 +25,11 @@
     "packages/presentation/package.json",
     "packages/tmux-bridge/src",
     "packages/tmux-bridge/package.json",
-    "packages/contracts/package.json"
+    "packages/contracts/package.json",
+    "!**/*.test.*",
+    "!**/*.spec.*",
+    "!**/__tests__/**",
+    "!**/__snapshots__/**"
   ],
   "scripts": {
     "build": "pnpm build:cli",

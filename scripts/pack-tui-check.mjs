@@ -44,6 +44,15 @@ const output = execFileSync(
 const report = JSON.parse(output)[0];
 const files = new Set(report.files.map((entry) => entry.path));
 
+const contributorTests = [...files].filter((path) =>
+  /(?:\.test\.|\.spec\.|\/(?:__tests__|__snapshots__)\/)/u.test(path),
+);
+if (contributorTests.length > 0) {
+  throw new Error(
+    `npm package leaked contributor tests or snapshots: ${contributorTests.join(", ")}`,
+  );
+}
+
 for (const required of [
   "bin/cli.js",
   "scripts/postinstall.js",

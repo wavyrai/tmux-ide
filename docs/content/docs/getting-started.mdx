@@ -48,6 +48,12 @@ tmux-ide update --daemon --if-running
 ```
 
 Package-manager installations can use `tmux-ide update` to update their package.
+
+If you installed a daemon supervisor service, remove it before uninstalling the
+launcher: `tmux-ide daemon service remove --yes --json`. Service removal preserves
+your tmux sessions. See [daemon supervision](/docs/app-surfaces) for service status
+and restart commands.
+
 For an installer-owned copy, use the same prefix with these recovery commands:
 
 ```bash
