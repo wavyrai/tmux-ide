@@ -892,6 +892,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
                   (line) =>
                     line.includes('"phase":"terminal-host-') ||
                     line.includes('"phase":"terminal-input-gate-') ||
+                    line.includes('"phase":"window-switch-') ||
                     line.includes('"phase":"generation-status"') ||
                     line.includes('"phase":"generation-host-internal-snapshot-publication"') ||
                     line.includes('"scenario":"terminal-input-to-paint"'),

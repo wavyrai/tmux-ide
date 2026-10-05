@@ -154,6 +154,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Upload OpenTUI diagnostic traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opentui-package-diagnostics-${{ env.RELEASE_CANDIDATE_SHA }}
+          path: |
+            ${{ runner.temp }}/opentui-package-proof/proof.json
+            ${{ runner.temp }}/opentui-package-proof/*.performance.jsonl
+          if-no-files-found: warn
+          retention-days: 30
+
   coverage:
     name: Vitest coverage (per package)
     runs-on: ubuntu-latest

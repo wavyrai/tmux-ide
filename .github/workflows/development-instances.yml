@@ -153,9 +153,11 @@ jobs:
             ${{ runner.temp }}/development-ci/*/receipt.json
             ${{ runner.temp }}/development-ci/*/*.log
             ${{ runner.temp }}/development-ci/*/package/proof.json
+            ${{ runner.temp }}/development-ci/*/package/*.performance.jsonl
             ${{ runner.temp }}/packed-interruption/receipt.json
             ${{ runner.temp }}/packed-interruption/*/run.private.log
             ${{ runner.temp }}/packed-interruption/*/package/proof.json
+            ${{ runner.temp }}/packed-interruption/*/package/*.performance.jsonl
             ${{ runner.temp }}/packed-interruption/*/package/interruption-ready.json
           retention-days: 7
           if-no-files-found: error
