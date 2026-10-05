@@ -175,6 +175,7 @@ export function createApplicationTerminalInteractionController(
   };
   type PendingWindowSwitch = {
     readonly selectionKind: "pane" | "window-link";
+    readonly windowLink?: WindowLinkTarget;
     readonly traceId: string;
     readonly target: string;
     readonly paneId: string;
@@ -635,11 +636,7 @@ export function createApplicationTerminalInteractionController(
     }
   };
 
-  const beginWindowSwitch = (
-    pane: string,
-    target: string,
-    selectionKind: "pane" | "window-link" = "pane",
-  ): void => {
+  const beginWindowSwitch = (pane: string, target: string, windowLink?: WindowLinkTarget): void => {
     pendingWindowSwitch = null;
     if (options.diagnosticsEnabled) {
       try {
@@ -655,7 +652,8 @@ export function createApplicationTerminalInteractionController(
           startedAtMicros !== null
         ) {
           pendingWindowSwitch = {
-            selectionKind,
+            selectionKind: windowLink ? "window-link" : "pane",
+            ...(windowLink ? { windowLink } : {}),
             traceId: createTraceId(),
             target,
             paneId: pane,
@@ -1109,7 +1107,7 @@ export function createApplicationTerminalInteractionController(
       )
         return;
       finishLinkSelection(false);
-      beginWindowSwitch(paneId, target.expectedSemanticWindowId, "window-link");
+      beginWindowSwitch(paneId, target.expectedSemanticWindowId, target);
       let resolve!: (selected: boolean) => void;
       const settled = new Promise<boolean>((done) => {
         resolve = done;

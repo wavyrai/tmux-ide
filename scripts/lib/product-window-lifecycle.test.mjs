@@ -1026,6 +1026,36 @@ test("qualifies only the latest exact same-record window WorkspaceClient project
       semanticPaneId: "pane.two",
     },
   };
+  const link = {
+    liveSessionId: "live-session.one",
+    linkId: "window-link.one",
+    linkRevision: 4,
+    expectedSemanticWindowId: "window.two",
+  };
+  const linkRecord = structuredClone(record);
+  linkRecord.workspaceClient.committed.lastReceipt.operationKind = "workspace.window.link.select";
+  linkRecord.workspaceClient.committed.lastReceipt.proof = {
+    operationKind: "workspace.window.link.select",
+    outcome: "applied",
+    target: link,
+  };
+  const linkExpected = {
+    ...expectedState,
+    receipt: {
+      operationId: expectedState.receipt.operationId,
+      operationKind: "workspace.window.link.select",
+      windowLink: { ...link },
+    },
+  };
+  assert.equal(qualifyWindowWorkspaceState([linkRecord], linkExpected).record, linkRecord);
+  linkRecord.workspaceClient.committed.lastReceipt.proof.target.linkRevision += 1;
+  assert.throws(() => qualifyWindowWorkspaceState([linkRecord], linkExpected));
+  assert.throws(() =>
+    qualifyWindowWorkspaceState([linkRecord], {
+      ...linkExpected,
+      receipt: { ...linkExpected.receipt, windowLink: undefined },
+    }),
+  );
   const qualified = qualifyWindowWorkspaceState([record], expectedState);
   assert.equal(qualified.record, record);
   assert.equal(qualified.committed, record.workspaceClient.committed);

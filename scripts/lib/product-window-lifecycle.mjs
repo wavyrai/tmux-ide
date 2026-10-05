@@ -879,6 +879,13 @@ export function qualifyWindowWorkspaceState(records, expected) {
       lastReceipt.phase === "observed" &&
       lastReceipt.proof?.operationKind === expected.receipt.operationKind &&
       lastReceipt.proof?.outcome === "applied" &&
+      (expected.receipt.operationKind !== "workspace.window.link.select" ||
+        (expected.receipt.windowLink &&
+          ["liveSessionId", "linkId", "linkRevision", "expectedSemanticWindowId"].every(
+            (key) =>
+              expected.receipt.windowLink[key] !== undefined &&
+              lastReceipt.proof.target?.[key] === expected.receipt.windowLink[key],
+          ))) &&
       (expected.receipt.semanticPaneId === undefined ||
         lastReceipt.proof.semanticPaneId === expected.receipt.semanticPaneId) &&
       (expected.receipt.scope === undefined || lastReceipt.proof.scope === expected.receipt.scope));

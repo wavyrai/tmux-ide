@@ -17906,8 +17906,15 @@ async function owner() {
             minimumTerminalResourceRevision: created.terminalResourceRevision,
             receipt: {
               operationId: settled.traceId,
-              operationKind: "workspace.pane.select",
-              semanticPaneId: created.selected.semanticPaneId,
+              ...(settled.selectionKind === "window-link"
+                ? {
+                    operationKind: "workspace.window.link.select",
+                    windowLink: settled.windowLink,
+                  }
+                : {
+                    operationKind: "workspace.pane.select",
+                    semanticPaneId: created.selected.semanticPaneId,
+                  }),
             },
           });
           const tmux = await exactWindowTmuxSnapshot(state, primedWindows);
