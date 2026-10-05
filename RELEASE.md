@@ -63,11 +63,18 @@ The native matrix also runs `node scripts/qualify-daemon-service.mjs <receipt.js
 against a packed candidate. It requires an available non-root launchd GUI or
 systemd user manager, installs into a temporary HOME, and verifies service
 installation, restart, removal, and preservation of an existing private tmux pane.
-The receipt records commit, dirty state, artifact hashes, and cleanup results;
-missing manager access or unverified cleanup fails qualification. Run
-`pnpm build:cli` and build the current platform's bundled tmux first. This check
-does not yet qualify service updates, cancellation, or recovery after a failed
-installer activation. CI enables lingering only for its disposable Linux runner.
+It also atomically switches a stable launcher to a second copy of the packed
+candidate, verifies the restarted daemon's actual entry path, interrupts a restart
+after an intentionally failing launcher runs, and restores the working launcher
+to verify recovery. Activation alone must leave the current daemon running;
+cancellation and startup failure must retain service ownership and the pane PID.
+The receipt records before/after source identity, tracked and untracked changes,
+artifact hashes, recovery results, and cleanup; source drift, missing manager
+access, or unverified cleanup fails qualification. Run `pnpm build:cli` and build
+the current platform's bundled tmux first. This check covers service launcher
+activation, not the installer's download/verification transaction or compatibility
+between different product versions. CI enables lingering only for its disposable
+Linux runner.
 
 ## Post-release
 

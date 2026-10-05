@@ -2,9 +2,18 @@
 // Real OS-manager qualification. Requires an existing non-root user manager;
 // never enables login lingering or touches the user's ordinary tmux server.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -180,9 +189,44 @@ try {
   receipt.tmuxSha256 = hash(readFileSync(tmux));
   const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
   const launcher = join(root, "launcher");
-  writeFileSync(launcher, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(cliPath)} "$@"\n`, {
-    mode: 0o700,
-  });
+  const launchReceipt = join(root, "launch.json");
+  const preload = join(root, "launch-receipt.mjs");
+  writeFileSync(
+    preload,
+    `import {writeFileSync} from 'node:fs';
+writeFileSync(${JSON.stringify(launchReceipt)}, JSON.stringify({pid:process.pid,entry:process.argv[1]}));
+`,
+  );
+  const firstLauncher = join(root, "release-one");
+  const nextLauncher = join(root, "release-two");
+  const failedLauncher = join(root, "release-failed");
+  const nextInstalled = join(root, "next-installed");
+  cpSync(installed, nextInstalled, { recursive: true });
+  const nextCliPath = join(nextInstalled, "node_modules", "tmux-ide", "bin", "cli.js");
+  for (const [path, entry] of [
+    [firstLauncher, cliPath],
+    [nextLauncher, nextCliPath],
+  ])
+    writeFileSync(
+      path,
+      `#!/bin/sh\nexec ${quote(process.execPath)} --import ${quote(preload)} ${quote(entry)} "$@"\n`,
+      { mode: 0o700 },
+    );
+  const failedLaunchMarker = join(root, "failed-launch-marker");
+  writeFileSync(
+    failedLauncher,
+    `#!/bin/sh\nprintf failed > ${quote(failedLaunchMarker)}\nexit 42\n`,
+    { mode: 0o700 },
+  );
+  const activate = (path) => {
+    const staged = `${launcher}.next`;
+    symlinkSync(path, staged);
+    renameSync(staged, launcher);
+  };
+  const assertLaunched = (result, entry) => {
+    assert.deepEqual(JSON.parse(readFileSync(launchReceipt, "utf8")), { pid: result.pid, entry });
+  };
+  activate(firstLauncher);
   tmuxAttempted = true;
   checked(tmux, ["-S", socket, "new-session", "-d", "-s", "service-fixture"]);
   const panePid = () =>
@@ -201,16 +245,87 @@ try {
   const first = cli("install", launcher);
   assert.equal(first.status, "running");
   assert.equal(first.target, target);
+  assertLaunched(first, cliPath);
   const status = cli("status");
   assert.equal(status.status, "running");
   assert.equal(status.pid, first.pid);
   assert.equal(status.reservationMatches, true);
+  activate(nextLauncher);
+  assert.equal(cli("status").pid, first.pid, "Activation must not retire a running service");
   const second = cli("restart");
   assert.equal(second.status, "running");
   assert.equal(typeof second.instanceId, "string");
   assert.notEqual(first.instanceId, second.instanceId);
   assert.notEqual(first.pid, second.pid);
+  assertLaunched(second, nextCliPath);
+  receipt.stableLauncherUpdate = true;
   assert.equal(panePid(), before, "Restart must preserve existing pane work");
+  activate(failedLauncher);
+  const interrupted = spawn(process.execPath, [cliPath, "daemon", "service", "restart", "--json"], {
+    cwd: home,
+    env,
+    stdio: "ignore",
+  });
+  const exited = new Promise((resolveExit, rejectExit) => {
+    interrupted.once("error", rejectExit);
+    interrupted.once("exit", (code, signal) => resolveExit({ code, signal }));
+  });
+  try {
+    const deadline = Date.now() + 10_000;
+    while (
+      !existsSync(failedLaunchMarker) &&
+      Date.now() < deadline &&
+      interrupted.exitCode === null &&
+      interrupted.signalCode === null
+    )
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    assert(
+      existsSync(failedLaunchMarker),
+      "Cancellation trigger must observe the failed replacement launch",
+    );
+  } finally {
+    interrupted.kill("SIGTERM");
+    const terminationDeadline = setTimeout(() => interrupted.kill("SIGKILL"), 5_000);
+    try {
+      const exit = await exited;
+      assert.equal(exit.signal, "SIGTERM", "Interrupted restart must terminate promptly");
+    } finally {
+      clearTimeout(terminationDeadline);
+    }
+  }
+  assert(existsSync(join(state, "service.json")), "Cancellation must retain service ownership");
+  assert.equal(cli("status").reservationMatches, true);
+  assert.equal(panePid(), before, "Cancellation must preserve pane work");
+  receipt.interruptedRestartPreservedOwnership = true;
+  const failedRestart = run(process.execPath, [cliPath, "daemon", "service", "restart", "--json"]);
+  assert.notEqual(failedRestart.status, 0, "Failed launcher must not report a ready daemon");
+  assert.equal(
+    failedRestart.signal,
+    null,
+    "Readiness refusal must finish without external termination",
+  );
+  assert.match(
+    failedRestart.stderr,
+    /Service did not publish a verified daemon before the deadline/u,
+  );
+  assert(
+    existsSync(join(state, "service.json")),
+    "Failed activation must retain service ownership",
+  );
+  assert.equal(cli("status").reservationMatches, true);
+  assert.equal(panePid(), before, "Failed service activation must preserve pane work");
+  receipt.failedRestart = {
+    exitCode: failedRestart.status,
+    signal: failedRestart.signal,
+    readinessRefused: true,
+  };
+  activate(nextLauncher);
+  const recovered = cli("restart");
+  assert.equal(recovered.status, "running");
+  assertLaunched(recovered, nextCliPath);
+  assert.notEqual(recovered.instanceId, second.instanceId);
+  assert.equal(panePid(), before, "Rollback and recovery must preserve pane work");
+  receipt.failedLauncherRecovery = true;
   assert.equal(cli("remove", "--yes").status, "removed");
   assert.equal(panePid(), before, "Service removal must preserve existing pane work");
   assert.equal(cli("status").status, "not-installed");
@@ -252,6 +367,9 @@ try {
     !receipt.failure &&
     receipt.sourceStable === true &&
     receipt.panePreserved === true &&
+    receipt.stableLauncherUpdate === true &&
+    receipt.failedLauncherRecovery === true &&
+    receipt.interruptedRestartPreservedOwnership === true &&
     receipt.cleanup.managerAbsent &&
     receipt.cleanup.serviceRecordAbsent &&
     receipt.cleanup.reservationAbsent &&
