@@ -12986,7 +12986,9 @@ import {
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { dirname as dirname12, join as join13 } from "node:path";
 function getCanonicalDaemonInfoPath() {
-  return runtimeOwnedPath(join13(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE));
+  const namespace = resolveRuntimeNamespace();
+  const path2 = join13(namespace.daemonInfoDir, DAEMON_INFO_FILE);
+  return namespace.development ? runtimeOwnedPath(path2) : path2;
 }
 function getCanonicalDaemonClaimPath() {
   return join13(dirname12(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
