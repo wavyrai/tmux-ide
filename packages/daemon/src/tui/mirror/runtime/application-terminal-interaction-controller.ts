@@ -684,6 +684,17 @@ export function createApplicationTerminalInteractionController(
           };
           armDiagnosticWindowFrame({ kind: "window-switch", ...pendingWindowSwitch });
           diagnose("window-switch-start", { ...pendingWindowSwitch });
+        } else {
+          diagnose("window-switch-untracked", {
+            paneId: pane,
+            target,
+            status: active?.status ?? null,
+            daemonGeneration: active?.daemonGeneration ?? null,
+            rendererEpoch: active?.rendererEpoch ?? null,
+            clientGeneration: clientGeneration ?? null,
+            identity: identity ?? null,
+            laneCounters: active?.fastLane?.lane.counters() ?? null,
+          });
         }
       } catch {
         pendingWindowSwitch = null;
