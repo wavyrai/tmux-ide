@@ -89225,7 +89225,7 @@ function createDaemonServiceManager(plan, run = runCommand) {
       if (launchd) await command3("bootstrap", ["bootstrap", domain, plan.unitPath]);
       else {
         await command3("reload", ["daemon-reload"]);
-        await command3("enable/start", ["enable", "--now", plan.target]);
+        await command3("enable/start", ["enable", "--now", plan.unitPath]);
       }
     },
     async restart(hasProcess = true) {

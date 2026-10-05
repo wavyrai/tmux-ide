@@ -117,7 +117,9 @@ export function createDaemonServiceManager(plan: DaemonServicePlan, run = runCom
       if (launchd) await command("bootstrap", ["bootstrap", domain, plan.unitPath]);
       else {
         await command("reload", ["daemon-reload"]);
-        await command("enable/start", ["enable", "--now", plan.target]);
+        // The manager may have a different XDG_CONFIG_HOME from the invoking
+        // shell. Enable the owned file explicitly so it is linked into its search path.
+        await command("enable/start", ["enable", "--now", plan.unitPath]);
       }
     },
     async restart(hasProcess = true): Promise<void> {

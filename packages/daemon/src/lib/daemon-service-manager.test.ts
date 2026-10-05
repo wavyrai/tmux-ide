@@ -45,7 +45,7 @@ describe("user service manager boundary", () => {
     expect(calls.map(({ args }) => args)).toEqual([
       ["--user", "show-environment"],
       ["--user", "daemon-reload"],
-      ["--user", "enable", "--now", plan.target],
+      ["--user", "enable", "--now", plan.unitPath],
       ["--user", "restart", plan.target],
       ["--user", "disable", "--now", plan.target],
       ["--user", "daemon-reload"],
