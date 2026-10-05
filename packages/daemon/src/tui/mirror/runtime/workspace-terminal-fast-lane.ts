@@ -28,6 +28,8 @@ export interface OpenTuiTerminalResourceSampler {
   dispose(): void;
 }
 
+// Limit outstanding low-water sampling chains, not completed observations over
+// the lifetime of a renderer. Each chain owns at most one pending timeout.
 const TERMINAL_RESOURCE_SAMPLE_LIMIT = 512;
 // The ProductRig idle proof reads after 10.1s. Emit just before that boundary
 // so the operation-scoped sample cannot race the proof read.
@@ -315,8 +317,7 @@ function createOpenTuiTerminalResourceSampler(
       }[];
     }>,
   ) => {
-    if (disposed || resourceEpochIdentity === null || ordinal >= TERMINAL_RESOURCE_SAMPLE_LIMIT)
-      return;
+    if (disposed || resourceEpochIdentity === null) return;
     ordinal += 1;
     const now = readDiagnosticNow();
     if (now === null) return;
@@ -474,7 +475,11 @@ function createOpenTuiTerminalResourceSampler(
   };
   return {
     afterFence(identity) {
-      if (disposed || ordinal >= TERMINAL_RESOURCE_SAMPLE_LIMIT) return;
+      if (disposed) return;
+      if (pending.size >= TERMINAL_RESOURCE_SAMPLE_LIMIT) {
+        recordSamplingFailure();
+        return;
+      }
       latestIdentity = identity;
       let now: number | null;
       if (resourceEpochIdentity === null) {

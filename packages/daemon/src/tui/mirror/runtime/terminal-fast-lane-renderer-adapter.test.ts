@@ -961,7 +961,7 @@ describe("TerminalFastLaneRendererAdapter", () => {
     }
   });
 
-  it("bounds exact seen identities at 256 and reports then resets the 257th drop", () => {
+  it("keeps publishing later exact identities after the bounded history fills", () => {
     const source = new Source();
     const lane = createTerminalFastLane({
       address: { workspaceName, generation },
@@ -1005,12 +1005,8 @@ describe("TerminalFastLaneRendererAdapter", () => {
         }
         paintViewport(adapter, "pane.editor", ordinal + 1, 2);
         const drained = adapter.drainCanonicalHostFrameIdentities();
-        if (ordinal < 256) {
-          expect(drained.identities).toHaveLength(1);
-          expect(drained.dropped).toBe(0);
-        } else {
-          expect(drained).toEqual({ identities: [], dropped: 1 });
-        }
+        expect(drained.identities).toHaveLength(1);
+        expect(drained.dropped).toBe(0);
       }
       expect(adapter.drainCanonicalHostFrameIdentities()).toEqual({ identities: [], dropped: 0 });
     } finally {
