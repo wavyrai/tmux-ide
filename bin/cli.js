@@ -362,28 +362,29 @@ function absolutePath(value, cwd, key2) {
   if (!isAbsolute3(path2)) throw new TypeError(`${key2} must resolve to an absolute path`);
   return path2;
 }
-function pathEntryExists(path2) {
+function pathEntryStat(path2) {
   try {
-    lstatSync4(path2);
-    return true;
+    return lstatSync4(path2);
   } catch (error) {
-    if (error.code === "ENOENT") return false;
+    if (error.code === "ENOENT") return void 0;
     throw error;
   }
 }
 function pathIdentity(path2) {
   let cursor2 = resolve4(path2);
   const suffix = [];
-  while (!pathEntryExists(cursor2)) {
+  let stat3 = pathEntryStat(cursor2);
+  while (!stat3) {
     const parent = dirname4(cursor2);
     if (parent === cursor2) break;
     suffix.unshift(basename2(cursor2));
     cursor2 = parent;
+    stat3 = pathEntryStat(cursor2);
   }
-  if (pathEntryExists(cursor2) && lstatSync4(cursor2).isSocket()) {
+  if (stat3?.isSocket()) {
     return resolve4(captureUnixSocketIdentity(cursor2).path, ...suffix);
   }
-  return resolve4(pathEntryExists(cursor2) ? realpathSync4(cursor2) : cursor2, ...suffix);
+  return resolve4(stat3 ? realpathSync4(cursor2) : cursor2, ...suffix);
 }
 function isInsideOrEqual(path2, parent) {
   const child = pathIdentity(path2);

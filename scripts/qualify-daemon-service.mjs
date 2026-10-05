@@ -12,6 +12,7 @@ import {
   readFileSync,
   renameSync,
   symlinkSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -263,6 +264,56 @@ writeFileSync(${JSON.stringify(launchReceipt)}, JSON.stringify({pid:process.pid,
   const assertLaunched = (result, entry) => {
     assert.deepEqual(JSON.parse(readFileSync(launchReceipt, "utf8")), { pid: result.pid, entry });
   };
+  const historicalLog = join(state, "headless.out");
+  const historicalBytes = "Canonical daemon ready: http://127.0.0.1:1 (pid 2147483647)\n";
+  mkdirSync(state, { recursive: true, mode: 0o700 });
+  writeFileSync(historicalLog, historicalBytes);
+  const assertProvenance = (owner, stage) => {
+    const wire = checked(process.execPath, [cliPath, "daemon", "info", "--json"]);
+    const record = JSON.parse(readFileSync(join(state, "daemon.json"), "utf8"));
+    assert(!wire.includes("authToken"), "Provenance must omit credential fields");
+    assert(
+      !record.authToken || !wire.includes(record.authToken),
+      "Provenance must omit credentials",
+    );
+    const report = JSON.parse(wire);
+    assert.equal(report.status, "running");
+    assert.equal(report.daemon.instanceId, owner.instanceId);
+    assert.equal(report.daemon.pid, owner.pid);
+    assert.equal(report.daemon.productVersion, record.productVersion);
+    assert.equal(report.daemon.supervisor, launchd ? "launchd" : "systemd");
+    assert.equal(report.daemon.launcher, "headless");
+    assert.equal(report.daemon.provenanceRecorded, true);
+    if (launchd) {
+      for (const stream of ["stdout", "stderr"]) {
+        const actual = statSync(join(state, `service.${stream}.log`));
+        assert.equal(report.daemon.logs[stream].kind, "file");
+        assert.equal(report.daemon.logs[stream].dev, actual.dev);
+        assert.equal(report.daemon.logs[stream].ino, actual.ino);
+        assert(
+          report.logFiles.some(
+            (file) =>
+              file.dev === actual.dev && file.ino === actual.ino && file.status === "current",
+          ),
+        );
+      }
+    } else {
+      assert(["socket", "pipe"].includes(report.daemon.logs.stdout.kind));
+      assert.match(report.daemon.logDestination, /journal/iu);
+    }
+    assert.equal(report.logFiles.find((file) => file.path === historicalLog)?.status, "historical");
+    assert.equal(readFileSync(historicalLog, "utf8"), historicalBytes);
+    (receipt.provenance ??= []).push({
+      stage,
+      instanceId: owner.instanceId,
+      pid: owner.pid,
+      supervisor: report.daemon.supervisor,
+      stdoutKind: report.daemon.logs.stdout.kind,
+      credentialsOmitted: true,
+      historicalLogPreserved: true,
+      actualDestinationVerified: true,
+    });
+  };
   activate(firstLauncher);
   tmuxAttempted = true;
   checked(tmux, ["-S", socket, "new-session", "-d", "-s", "service-fixture"]);
@@ -283,6 +334,7 @@ writeFileSync(${JSON.stringify(launchReceipt)}, JSON.stringify({pid:process.pid,
   assert.equal(first.status, "running");
   assert.equal(first.target, target);
   assertLaunched(first, cliPath);
+  assertProvenance(first, "installed");
   const status = cli("status");
   assert.equal(status.status, "running");
   assert.equal(status.pid, first.pid);
@@ -295,6 +347,7 @@ writeFileSync(${JSON.stringify(launchReceipt)}, JSON.stringify({pid:process.pid,
   assert.notEqual(first.instanceId, second.instanceId);
   assert.notEqual(first.pid, second.pid);
   assertLaunched(second, nextCliPath);
+  assertProvenance(second, "updated");
   receipt.stableLauncherUpdate = true;
   assert.equal(panePid(), before, "Restart must preserve existing pane work");
   activate(failedLauncher);
@@ -360,6 +413,7 @@ writeFileSync(${JSON.stringify(launchReceipt)}, JSON.stringify({pid:process.pid,
   const recovered = cli("restart");
   assert.equal(recovered.status, "running");
   assertLaunched(recovered, nextCliPath);
+  assertProvenance(recovered, "recovered");
   assert.notEqual(recovered.instanceId, second.instanceId);
   assert.equal(panePid(), before, "Rollback and recovery must preserve pane work");
   receipt.failedLauncherRecovery = true;
@@ -404,6 +458,7 @@ writeFileSync(${JSON.stringify(launchReceipt)}, JSON.stringify({pid:process.pid,
     !receipt.failure &&
     receipt.sourceStable === true &&
     receipt.panePreserved === true &&
+    receipt.provenance?.length === 3 &&
     receipt.stableLauncherUpdate === true &&
     receipt.failedLauncherRecovery === true &&
     receipt.interruptedRestartPreservedOwnership === true &&
