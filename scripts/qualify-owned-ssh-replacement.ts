@@ -72,12 +72,15 @@ type Plan = {
 };
 type Pty = {
   pid: number;
+  resize(cols: number, rows: number): void;
   write(text: string): void;
   kill(signal?: string): void;
   onData(callback: (text: string) => void): void;
   onExit(callback: (value: { exitCode: number }) => void): void;
 };
 type Vt = {
+  rows: number;
+  resize(cols: number, rows: number): void;
   write(text: string): void;
   dispose(): void;
   buffer: {
@@ -96,6 +99,7 @@ type Client = {
   vt: Vt;
   exited: boolean;
   exitCode?: number;
+  renderer?: { pid: number; identity: string };
   frame(): string;
 };
 type Allocation = { root: string; disposeFiles(): Promise<void>; diagnostics?(): unknown };
@@ -442,7 +446,7 @@ if (args[0] === "--client") {
       exited: false,
       frame: () =>
         Array.from(
-          { length: 32 },
+          { length: vt.rows },
           (_, n) => vt.buffer.active.getLine(n)?.translateToString(true) ?? "",
         ).join("\n"),
     };
@@ -488,12 +492,28 @@ if (args[0] === "--client") {
     child.write(`\x1b[<0;8;${sessionRow + 1}M\x1b[<0;8;${sessionRow + 1}m`);
     await wait(() => frameShowsTerminalFocus(client.frame()));
     await tracker.capture();
+    const executable = readDevelopmentBuild(i, {}).tui;
+    const rendererPids: number[] = [];
+    for (const row of tracker.snapshot().ancestry) {
+      if (row.rootPid !== child.pid) continue;
+      const command = await run("/bin/ps", ["-p", String(row.pid), "-o", "comm="], 1000).catch(
+        () => "",
+      );
+      if (command.trim() === executable) rendererPids.push(row.pid);
+    }
+    assert.equal(rendererPids.length, 1, "Expected one exact native TUI executable");
+    const rendererPid = rendererPids[0]!;
+    const rendererIdentity = await kernel.identify(rendererPid);
+    assert(rendererIdentity);
+    client.renderer = { pid: rendererPid, identity: rendererIdentity };
     await remember(role);
     save(side + "-selected-frame.json", { frame: client.frame(), target, alias: fixture.alias });
   }
   async function io(side: string, label: string) {
     const c = clients[side];
     assert(c && !c.exited);
+    assert(c.renderer);
+    assert.equal(await kernel.identify(c.renderer.pid), c.renderer.identity);
     const token = randomUUID().slice(0, 8),
       output = `d11_${side}_${token}_output_ok`,
       input = `d11_${side}_${token}_input_ok`;
@@ -515,12 +535,122 @@ if (args[0] === "--client") {
     await delay(100);
     c.child.write(`printf 'd11_${side}_${token}_input_\\157k\\n'\r`);
     await wait(() => c.frame().includes(input));
+    assert.equal(await kernel.identify(c.renderer.pid), c.renderer.identity);
     save(side + "-" + label + ".json", {
       frame: c.frame(),
       output,
       input,
+      renderer: c.renderer,
       elapsedMs: Date.now() - started,
     });
+  }
+  async function qualifyRemoteManualSizing() {
+    const client = clients.a;
+    const role = "target-a";
+    const source = `${descriptor.session}:0.0`;
+    const state = async (target: string) => {
+      const [window, cols, rows, panePid] = (
+        await tmux(role, [
+          "display-message",
+          "-p",
+          "-t",
+          target,
+          "#{window_id}|#{window_width}|#{window_height}|#{pane_pid}",
+        ])
+      ).split("|");
+      return { window: window!, cols: Number(cols), rows: Number(rows), panePid: panePid! };
+    };
+    const resize = (cols: number, rows: number) => {
+      client.vt.resize(cols, rows);
+      client.child.resize(cols, rows);
+    };
+    const before = await state(source);
+    const siblingBefore = await fingerprint("target-b");
+    const clientPid = client.child.pid;
+    const neighbour = await tmux(role, [
+      "new-window",
+      "-d",
+      "-t",
+      `=${descriptor.session}`,
+      "-n",
+      "idle-neighbor",
+      "-P",
+      "-F",
+      "#{window_id}",
+      "/bin/sh",
+    ]);
+    await remember(role);
+    await wait(() => client.frame().includes("idle-neighbor"));
+    await tmux(role, ["resize-window", "-t", neighbour, "-x", "90", "-y", "25"]);
+    const neighbourBefore = await state(neighbour);
+    const globalSizing = await tmux(role, ["show-options", "-gwv", "window-size"]);
+    const cases: Record<string, unknown>[] = [];
+    receipts.remoteManualSizing = {
+      cases,
+      before,
+      neighbour: neighbourBefore,
+      clientPid,
+      renderer: client.renderer,
+    };
+    try {
+      for (const [index, scope] of ["window", "inherited"].entries()) {
+        if (scope === "inherited") {
+          await tmux(role, ["set-option", "-gw", "window-size", "manual"]);
+          await tmux(role, ["set-option", "-wu", "-t", before.window, "window-size"]);
+        } else {
+          await tmux(role, ["set-option", "-w", "-t", before.window, "window-size", "manual"]);
+        }
+        const policyBefore = await tmux(role, [
+          "show-options",
+          "-Awv",
+          "-t",
+          before.window,
+          "window-size",
+        ]);
+        assert.equal(policyBefore, "manual");
+        const deltaCols = index === 0 ? 20 : 8;
+        const deltaRows = index === 0 ? 8 : 4;
+        const expected = { cols: before.cols + deltaCols, rows: before.rows + deltaRows };
+        resize(120 + deltaCols, 32 + deltaRows);
+        await wait(async () => {
+          const current = await state(source);
+          return (
+            current.cols === expected.cols &&
+            current.rows === expected.rows &&
+            (await tmux(role, ["show-options", "-Awv", "-t", before.window, "window-size"])) ===
+              "latest"
+          );
+        });
+        assert.deepEqual(await state(neighbour), neighbourBefore);
+        assert.equal(
+          await tmux(role, ["show-options", "-Awv", "-t", neighbour, "window-size"]),
+          "manual",
+        );
+        assert.equal((await state(source)).panePid, before.panePid);
+        assert.equal(client.child.pid, clientPid);
+        assert.equal(client.exited, false);
+        await io("a", `manual-${scope}`);
+        await io("b", `sibling-manual-${scope}`);
+        assert.deepEqual(await fingerprint("target-b"), siblingBefore);
+        cases.push({
+          scope,
+          policyBefore,
+          expected,
+          actual: await state(source),
+          neighbour: await state(neighbour),
+          clientPid,
+        });
+      }
+    } finally {
+      await tmux(role, ["set-option", "-gw", "window-size", globalSizing]);
+      resize(120, 32);
+    }
+    await wait(async () => {
+      const current = await state(source);
+      return current.cols === before.cols && current.rows === before.rows;
+    });
+    assert.deepEqual(await state(neighbour), neighbourBefore);
+    save("remote-manual-sizing.json", receipts.remoteManualSizing);
   }
   async function tunnel(side: string, remotePort: number) {
     await tracker.capture();
@@ -683,6 +813,9 @@ if (args[0] === "--client") {
       await openClient(side);
       await io(side, "before");
     }
+    stage = "remote-manual-sizing";
+    event(stage);
+    await qualifyRemoteManualSizing();
     const original = await fingerprint("target-a"),
       sibling = await fingerprint("target-b"),
       oldCanonical = await canonical("target-a"),

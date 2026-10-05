@@ -151,3 +151,25 @@ cleanup audit are retained under ignored local evidence
 from the clean worktrees. This proves native development-client recovery, not an
 npm-installed remote journey, registry hot reload, remote manual sizing or a CPU
 performance improvement.
+
+## Remote manual sizing
+
+The fixture also resizes the actual SSH client's PTY under explicit window-local
+and inherited global `window-size manual` policies. It checks exact remote window
+dimensions, repair to `latest`, fresh encoded output/input, preservation of an
+unselected 90×25 manual window and pane PIDs, and a responsive second connection.
+It restores the original geometry before replacing the daemon. Every IO witness
+checks the exact compiled TUI executable's PID and kernel identity before and
+after, so a surviving launcher cannot hide a renderer restart.
+
+Four clean `826dfe6a` native artifacts passed this combined journey on macOS arm64
+with Node 24.21.0/Bun 1.4.2. The selected remote window changed from 92×29 to 112×37
+and 100×33 for the two policies, then returned to 92×29; its neighbour stayed
+90×25/manual. Both native renderer identities survived the full journey. The run
+took 109,754ms including builds and cleanup, with zero credential-bearing trap
+requests. All cleanup fields passed; an independent audit found 66 captured PIDs
+absent and six checked ports closed. Exact fixture source, native manifests,
+frames and receipts are retained at
+`.tasks/sfora-foundation-mission/native-ssh-manual-sizing-renderer`. The manager
+was `826dfe6a` with the recorded fixture extension. This is a native localhost-SSH
+proof, not an npm-installed remote client, DGX-host test or performance benchmark.
