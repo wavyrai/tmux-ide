@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { SavedMachineRegistrySchema, SavedMachineSchema } from "@tmux-ide/contracts/saved-machines";
 import { loadSavedMachines, planSavedMachineMerge } from "./lib/saved-machines.ts";
 import { loadFleetClientState } from "./lib/fleet-client-state.ts";
-import { saveMachineProfiles } from "./lib/local-fleet-request.ts";
+import { changeSavedMachines } from "@tmux-ide/core";
+import { saveMachineProfiles, mutateMachineProfile } from "./lib/local-fleet-request.ts";
 import { remoteTmuxIdeCommand } from "./lib/remote-tmux-command.ts";
 
 export async function machines(
@@ -12,6 +13,30 @@ export async function machines(
   options: { write?: boolean; label?: string },
 ) {
   const current = loadSavedMachines();
+  if ((command === "enable" || command === "disable" || command === "remove") && argument) {
+    const key = argument.normalize("NFKC").toLowerCase();
+    const match =
+      current.machines.find((machine) => machine.id === key) ??
+      current.machines.find((machine) => machine.label.normalize("NFKC").toLowerCase() === key);
+    if (!match)
+      throw new Error("Saved machine not found; use machines ls to select its ID or label.");
+    const change = { id: match.id, operation: command } as const;
+    const preview = changeSavedMachines(
+      current,
+      command === "remove"
+        ? { type: "remove", id: match.id }
+        : { type: "update", id: match.id, patch: { enabled: command === "enable" } },
+    );
+    return {
+      written: options.write === true,
+      registry: options.write ? await mutateMachineProfile(change) : preview,
+      ...(!options.write
+        ? {
+            note: "Repeat with --write to change this saved profile. Remote sessions and daemons are preserved.",
+          }
+        : {}),
+    };
+  }
   if (command === "start" && argument) {
     SavedMachineSchema.shape.sshTarget.parse(argument);
     if (!options.write)
@@ -75,7 +100,7 @@ export async function machines(
     };
   } else
     throw new Error(
-      "Usage: tmux-ide machines ls|export|import <file>|add <alias> [--write] [--json]",
+      "Usage: tmux-ide machines ls|export|import <file>|add <alias>|enable|disable|remove <id-or-label> [--write] [--json]",
     );
   const preview = planSavedMachineMerge(current, incoming);
   if (!options.write)

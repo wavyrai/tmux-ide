@@ -275,6 +275,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide servers create <id>")} --session-name NAME [--dir PATH] [--ssh HOST] [--json]
   ${cyan("tmux-ide servers add")} --socket-name NAME|--socket-path /PATH [--name LABEL] [--ssh HOST]
   ${cyan("tmux-ide machines")} ls|export|import <file>|add <alias> [--write] [--json]
+  ${cyan("tmux-ide machines")} enable|disable|remove <id-or-label> [--write] [--json]
   ${cyan("tmux-ide machines start <alias> --write")} ${dim("Start the installed remote daemon explicitly")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
   ${cyan("tmux-ide update --daemon")}     ${dim("Upgrade the local daemon while preserving tmux sessions")}

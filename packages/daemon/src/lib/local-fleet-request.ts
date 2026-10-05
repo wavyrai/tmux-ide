@@ -1,4 +1,9 @@
-import { SavedMachineRegistrySchema, type SavedMachine } from "@tmux-ide/contracts/saved-machines";
+import {
+  SavedMachineRegistrySchema,
+  type SavedMachine,
+  SavedMachineMutationSchema,
+  type SavedMachineMutation,
+} from "@tmux-ide/contracts/saved-machines";
 import {
   canonicalDaemonUrl,
   isCanonicalDaemonAlive,
@@ -8,6 +13,17 @@ import {
 /** Intentional local registry mutation. Never uses selected-machine authority. */
 export async function saveMachineProfiles(machines: readonly SavedMachine[]) {
   const registry = SavedMachineRegistrySchema.parse({ version: 1, machines });
+  return writeLocalMachineRegistry("POST", { registry });
+}
+
+export async function mutateMachineProfile(change: SavedMachineMutation) {
+  return writeLocalMachineRegistry("PATCH", { change: SavedMachineMutationSchema.parse(change) });
+}
+
+async function writeLocalMachineRegistry(
+  method: "POST" | "PATCH",
+  payload: Record<string, unknown>,
+) {
   const daemon = readCanonicalDaemonInfo();
   if (!daemon?.authToken || !(await isCanonicalDaemonAlive(daemon)))
     throw new Error("Start a local tmux-ide daemon to save machine profiles.");
@@ -16,14 +32,14 @@ export async function saveMachineProfiles(machines: readonly SavedMachine[]) {
       canonicalDaemonUrl("http", daemon.bindHostname, daemon.port) +
         "/api/resources/saved-machines",
       {
-        method: "POST",
+        method,
         redirect: "error",
         signal: AbortSignal.timeout(5000),
         headers: {
           Authorization: `Bearer ${daemon.authToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ expectedInstanceId: daemon.instanceId, registry }),
+        body: JSON.stringify({ expectedInstanceId: daemon.instanceId, ...payload }),
       },
     );
     if (!response.ok) {

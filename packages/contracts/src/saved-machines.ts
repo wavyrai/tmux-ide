@@ -53,3 +53,10 @@ export const SavedMachineRegistrySchema = z
     });
   });
 export type SavedMachineRegistry = z.infer<typeof SavedMachineRegistrySchema>;
+
+/** Local owner actions; never a request to stop a remote daemon or tmux session. */
+export const SavedMachineMutationSchema = z.strictObject({
+  id: SavedMachineIdSchema,
+  operation: z.enum(["enable", "disable", "remove"]),
+});
+export type SavedMachineMutation = z.infer<typeof SavedMachineMutationSchema>;

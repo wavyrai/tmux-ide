@@ -9671,11 +9671,12 @@ __export(saved_machines_exports, {
   LOCAL_MACHINE_ID: () => LOCAL_MACHINE_ID,
   MAX_SAVED_MACHINES: () => MAX_SAVED_MACHINES,
   SavedMachineIdSchema: () => SavedMachineIdSchema,
+  SavedMachineMutationSchema: () => SavedMachineMutationSchema,
   SavedMachineRegistrySchema: () => SavedMachineRegistrySchema,
   SavedMachineSchema: () => SavedMachineSchema
 });
 import { z as z70 } from "zod";
-var LOCAL_MACHINE_ID, MAX_SAVED_MACHINES, SavedMachineIdSchema, SshTargetSchema, SavedMachineSchema, SavedMachineRegistrySchema;
+var LOCAL_MACHINE_ID, MAX_SAVED_MACHINES, SavedMachineIdSchema, SshTargetSchema, SavedMachineSchema, SavedMachineRegistrySchema, SavedMachineMutationSchema;
 var init_saved_machines = __esm({
   "packages/contracts/src/saved-machines.ts"() {
     "use strict";
@@ -9712,6 +9713,10 @@ var init_saved_machines = __esm({
         ids.add(machine.id);
         labels.add(label4);
       });
+    }))();
+    SavedMachineMutationSchema = /* @__PURE__ */ (() => z70.strictObject({
+      id: SavedMachineIdSchema,
+      operation: z70.enum(["enable", "disable", "remove"])
     }))();
   }
 });
@@ -77923,6 +77928,10 @@ function loadSavedMachines(path2 = savedMachinesPath()) {
     closeSync9(fd);
   }
 }
+function updateSavedMachines(change, path2 = savedMachinesPath()) {
+  const registry = changeSavedMachines(loadSavedMachines(path2), change);
+  return persistSavedMachines(registry, path2);
+}
 function persistSavedMachines(registry, path2) {
   const contents = JSON.stringify(registry, null, 2) + "\n";
   if (Buffer.byteLength(contents) > MAX_REGISTRY_BYTES)
@@ -78009,17 +78018,48 @@ function mountSavedMachineRoute(app, options) {
       );
     }
   });
+  app.patch("/api/resources/saved-machines", bodyLimit2({ maxSize: 1024 }), async (c) => {
+    const gate = authorize(c);
+    if (gate) return gate;
+    c.header("Cache-Control", "no-store");
+    let parsed;
+    try {
+      parsed = MutationRequest.safeParse(await c.req.json());
+    } catch {
+      return c.json({ error: "Invalid machine mutation" }, 400);
+    }
+    if (!parsed.success) return c.json({ error: "Invalid machine mutation" }, 400);
+    if (parsed.data.expectedInstanceId !== options.daemon.instanceId)
+      return c.json({ error: "Daemon generation changed" }, 409);
+    const { id: id2, operation } = parsed.data.change;
+    try {
+      const registry = (options.update ?? updateSavedMachines)(
+        operation === "remove" ? { type: "remove", id: id2 } : { type: "update", id: id2, patch: { enabled: operation === "enable" } }
+      );
+      return c.json({ daemon: options.daemon, registry });
+    } catch {
+      return c.json(
+        { error: "Machine was not found or its registry is unavailable; nothing changed" },
+        409
+      );
+    }
+  });
 }
-var Request2;
+var Request2, MutationRequest;
 var init_saved_machine_route = __esm({
   "packages/daemon/src/command-center/resources/saved-machine-route.ts"() {
     "use strict";
     init_src();
+    init_saved_machines();
     init_saved_machines3();
     init_owner_authority();
     Request2 = z105.strictObject({
       expectedInstanceId: z105.uuid(),
       registry: SavedMachineRegistrySchema
+    });
+    MutationRequest = z105.strictObject({
+      expectedInstanceId: z105.uuid(),
+      change: SavedMachineMutationSchema
     });
   }
 });
@@ -91058,6 +91098,12 @@ var init_tmux_servers_cli = __esm({
 // packages/daemon/src/lib/local-fleet-request.ts
 async function saveMachineProfiles(machines2) {
   const registry = SavedMachineRegistrySchema.parse({ version: 1, machines: machines2 });
+  return writeLocalMachineRegistry("POST", { registry });
+}
+async function mutateMachineProfile(change) {
+  return writeLocalMachineRegistry("PATCH", { change: SavedMachineMutationSchema.parse(change) });
+}
+async function writeLocalMachineRegistry(method, payload) {
   const daemon = readCanonicalDaemonInfo();
   if (!daemon?.authToken || !await isCanonicalDaemonAlive(daemon))
     throw new Error("Start a local tmux-ide daemon to save machine profiles.");
@@ -91065,14 +91111,14 @@ async function saveMachineProfiles(machines2) {
     const response3 = await fetch(
       canonicalDaemonUrl("http", daemon.bindHostname, daemon.port) + "/api/resources/saved-machines",
       {
-        method: "POST",
+        method,
         redirect: "error",
         signal: AbortSignal.timeout(5e3),
         headers: {
           Authorization: `Bearer ${daemon.authToken}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ expectedInstanceId: daemon.instanceId, registry })
+        body: JSON.stringify({ expectedInstanceId: daemon.instanceId, ...payload })
       }
     );
     if (!response3.ok) {
@@ -91177,6 +91223,24 @@ import { readFileSync as readFileSync37, statSync as statSync21 } from "node:fs"
 import { randomUUID as randomUUID41 } from "node:crypto";
 async function machines(command3, argument, options) {
   const current = loadSavedMachines();
+  if ((command3 === "enable" || command3 === "disable" || command3 === "remove") && argument) {
+    const key2 = argument.normalize("NFKC").toLowerCase();
+    const match = current.machines.find((machine) => machine.id === key2) ?? current.machines.find((machine) => machine.label.normalize("NFKC").toLowerCase() === key2);
+    if (!match)
+      throw new Error("Saved machine not found; use machines ls to select its ID or label.");
+    const change = { id: match.id, operation: command3 };
+    const preview2 = changeSavedMachines(
+      current,
+      command3 === "remove" ? { type: "remove", id: match.id } : { type: "update", id: match.id, patch: { enabled: command3 === "enable" } }
+    );
+    return {
+      written: options.write === true,
+      registry: options.write ? await mutateMachineProfile(change) : preview2,
+      ...!options.write ? {
+        note: "Repeat with --write to change this saved profile. Remote sessions and daemons are preserved."
+      } : {}
+    };
+  }
   if (command3 === "start" && argument) {
     SavedMachineSchema.shape.sshTarget.parse(argument);
     if (!options.write)
@@ -91236,7 +91300,7 @@ async function machines(command3, argument, options) {
     };
   } else
     throw new Error(
-      "Usage: tmux-ide machines ls|export|import <file>|add <alias> [--write] [--json]"
+      "Usage: tmux-ide machines ls|export|import <file>|add <alias>|enable|disable|remove <id-or-label> [--write] [--json]"
     );
   const preview = planSavedMachineMerge(current, incoming);
   if (!options.write)
@@ -91253,6 +91317,7 @@ var init_machines = __esm({
     init_saved_machines();
     init_saved_machines3();
     init_fleet_client_state3();
+    init_src3();
     init_local_fleet_request();
     init_remote_tmux_command();
   }
@@ -93256,6 +93321,7 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide servers create <id>")} --session-name NAME [--dir PATH] [--ssh HOST] [--json]
   ${cyan2("tmux-ide servers add")} --socket-name NAME|--socket-path /PATH [--name LABEL] [--ssh HOST]
   ${cyan2("tmux-ide machines")} ls|export|import <file>|add <alias> [--write] [--json]
+  ${cyan2("tmux-ide machines")} enable|disable|remove <id-or-label> [--write] [--json]
   ${cyan2("tmux-ide machines start <alias> --write")} ${dim3("Start the installed remote daemon explicitly")}
   ${cyan2("tmux-ide update")} [--dry-run] ${dim3("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
   ${cyan2("tmux-ide update --daemon")}     ${dim3("Upgrade the local daemon while preserving tmux sessions")}

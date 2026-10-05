@@ -198,6 +198,21 @@ The Missions panel is presentational in this beta. `harnesses`, `agents`, and
 that dispatches those mission defaults yet. `tmux-ide web` is also explicitly
 unavailable; the daemon remains renderer-neutral for future clients.
 
+## Manage saved machines
+
+Use `tmux-ide machines ls --json` to find a machine ID or label. These commands
+preview the change; add `--write` to apply it through the local daemon:
+
+```bash
+tmux-ide machines disable "Build host" --write --json
+tmux-ide machines enable "Build host" --write --json
+tmux-ide machines remove "Build host" --write --json
+```
+
+Open clients reconcile the saved directory automatically. Disabling or removing
+a machine retires its local connection; it does not stop the remote daemon or
+kill its tmux sessions. Enable a disabled profile to reconnect it.
+
 ## Supervised daemon upgrades
 
 For automatic upgrades under a supervisor, explicitly reserve
