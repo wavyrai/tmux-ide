@@ -2167,3 +2167,28 @@ test("production configless operations fail before public launch on contaminated
   await assert.rejects(runConfiglessProductJourneyOwnerBoot(operations), /contaminated/u);
   assert.equal(launched, false);
 });
+
+test("first-frame fence excludes later revisions at the same geometry, but rejects a duplicate seed fence", async () => {
+  const expected = {
+    processId: "opentui:1",
+    clockId: "clock",
+    daemonGeneration: "generation",
+    rendererEpoch: 1,
+    revision: 0,
+    stateHash: "0123456789abcdef",
+    incarnation: "incarnation",
+  };
+  const first = {
+    ...expected,
+    type: "performance.terminal-frame-fence",
+    clockKind: "performance-now",
+    writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+  };
+  const later = { ...first, revision: 2 };
+  const proof = await waitForCanonicalFrameFence(() => [first, later], expected);
+  assert.equal(proof.fence, first);
+  await assert.rejects(
+    waitForCanonicalFrameFence(() => [first, later, { ...first }], expected),
+    /duplicate/,
+  );
+});

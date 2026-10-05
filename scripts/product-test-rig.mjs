@@ -8089,6 +8089,21 @@ async function provePreseededPanePublication(state, seed, canonicalResources, ti
     });
     throw error;
   }
+  // Bind the first coherent publication to its seed identity. A later fit can
+  // return to the same geometry with a different revision; that is not a
+  // duplicate of the first frame and must not race this startup proof.
+  const initialSeed = readJsonLines(state.tui.performanceTracePath).find(
+    (record) =>
+      record?.type === "performance.terminal-canonical-publication" &&
+      record.updateType === "terminal.seed" &&
+      record.semanticPaneId === sample.semanticPaneId &&
+      record.generation === state.daemon.instanceId &&
+      record.processId === hostFrame.processId &&
+      record.clockId === hostFrame.clockId &&
+      record.clockKind === "performance-now" &&
+      record.sourceEpoch === 1,
+  );
+  if (!initialSeed) throw new Error("coherent frame is missing its canonical seed identity");
   const fencedTrace = await waitForCanonicalFrameFence(
     () => readJsonLines(state.tui.performanceTracePath),
     {
@@ -8097,6 +8112,9 @@ async function provePreseededPanePublication(state, seed, canonicalResources, ti
       daemonGeneration: state.daemon.instanceId,
       rendererEpoch: hostFrame.rendererEpoch,
       semanticPaneId: sample.semanticPaneId,
+      revision: initialSeed.revision,
+      stateHash: initialSeed.stateHash,
+      incarnation: initialSeed.incarnation,
       sourceEpoch: 1,
       canonicalCols: sample.geometry.width,
       canonicalRows: sample.geometry.height,
@@ -8104,7 +8122,10 @@ async function provePreseededPanePublication(state, seed, canonicalResources, ti
       viewportRows: sample.geometry.height,
     },
   );
-  const performanceRecords = fencedTrace.records;
+  // Preserve the complete trace on disk; only this first-frame proof ends at
+  // the exact consumed seed fence. Later resize/paint work has its own checks.
+  const fenceIndex = fencedTrace.records.indexOf(fencedTrace.fence);
+  const performanceRecords = fencedTrace.records.slice(0, fenceIndex + 1);
   let canonicalSeedPaint;
   try {
     const seedPublication = performanceRecords.find(

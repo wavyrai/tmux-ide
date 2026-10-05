@@ -663,6 +663,9 @@ export async function waitForCanonicalFrameFence(
           record.clockKind === "performance-now" &&
           record.daemonGeneration === expected.daemonGeneration &&
           record.rendererEpoch === expected.rendererEpoch &&
+          (expected.revision === undefined || record.revision === expected.revision) &&
+          (expected.stateHash === undefined || record.stateHash === expected.stateHash) &&
+          (expected.incarnation === undefined || record.incarnation === expected.incarnation) &&
           (expected.semanticPaneId === undefined ||
             record.semanticPaneId === expected.semanticPaneId) &&
           (expected.sourceEpoch === undefined || record.sourceEpoch === expected.sourceEpoch) &&
