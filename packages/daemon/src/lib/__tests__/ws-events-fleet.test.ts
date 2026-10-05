@@ -11,7 +11,7 @@ import {
 } from "../../command-center/ws-events.ts";
 import { _setTmuxRunner } from "../../command-center/discovery.ts";
 import {
-  AGENT_STATE_TMUX_ARGS,
+  FLEET_FACTS_TMUX_ARGS,
   parseSessionCompositionFacts,
   SESSION_COMPOSITION_TMUX_ARGS,
 } from "../../command-center/daemon-fleet-facts-observer.ts";
@@ -83,7 +83,7 @@ describe("/ws/events fleet composition invalidation", () => {
         finish = resolve;
       });
     setFleetFactsTmuxRunner(async (args) => {
-      expect(args).toEqual(SESSION_COMPOSITION_TMUX_ARGS);
+      expect(args).toEqual(FLEET_FACTS_TMUX_ARGS);
       return read();
     });
     const socket = new ProtocolWebSocket();
@@ -160,7 +160,7 @@ describe("/ws/events fleet composition invalidation", () => {
   it("pins Home catalog invalidation to its daemon tmux authority", async () => {
     let sessionRows = "alpha\t0\t41\t$0\t100\t@1\t%1\t1\t1\tpane.a\twindow.a";
     const runTmux = (args: readonly string[]) => {
-      expect(args).toEqual(SESSION_COMPOSITION_TMUX_ARGS);
+      expect(args).toEqual(FLEET_FACTS_TMUX_ARGS);
       return sessionRows;
     };
     setFleetFactsTmuxRunner(runTmux);
@@ -193,7 +193,7 @@ describe("/ws/events fleet composition invalidation", () => {
     const calls: string[][] = [];
     setFleetFactsTmuxRunner(async (args) => {
       calls.push([...args]);
-      return args === AGENT_STATE_TMUX_ARGS ? "alpha\t%1\tpane.a\tIDLE\tcodex" : "";
+      return "alpha\t0\t41\t$0\t100\t@1\t%1\t1\t1\tpane.a\twindow.a\tIDLE\tcodex";
     });
 
     const socket = new ProtocolWebSocket();
@@ -209,12 +209,53 @@ describe("/ws/events fleet composition invalidation", () => {
     );
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(calls).toContainEqual([...AGENT_STATE_TMUX_ARGS]);
+    expect(calls).toContainEqual([...FLEET_FACTS_TMUX_ARGS]);
     expect(
       frames(socket).some(
         (frame) => frame.type === "resource.interests-ack" && frame.interestRevision === 1,
       ),
     ).toBe(true);
+    socket.disconnect();
+  });
+
+  it("shares one authority read per cycle for catalog and application-shell interests", async () => {
+    const calls: string[][] = [];
+    let state = "BUSY";
+    setFleetFactsTmuxRunner(async (args) => {
+      calls.push([...args]);
+      return `alpha\t1\t41\t$0\t100\t@1\t%1\t1\t1\tpane.a\twindow.a\t${state}\tcodex`;
+    });
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity);
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: ["alpha"],
+        legacyEvents: true,
+        interestRevision: 1,
+        interests: [
+          { resource: "workspace-catalog", workspaceName: null },
+          { resource: "application-shell", workspaceName: "alpha" },
+        ],
+      }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(calls).toEqual([[...FLEET_FACTS_TMUX_ARGS]]);
+    expect(frames(socket).some((frame) => frame.type === "resource.interests-ack")).toBe(true);
+    socket.sent.length = 0;
+    state = "IDLE";
+    await _pollFleetFactsObserverForTests();
+    expect(calls).toHaveLength(2);
+    expect(
+      frames(socket).some(
+        (frame) => frame.type === "agent-status.changed" && frame.sessionName === "alpha",
+      ),
+    ).toBe(true);
+    expect(
+      frames(socket).some(
+        (frame) => frame.type === "resource.changed" && frame.resource === "workspace-catalog",
+      ),
+    ).toBe(false);
     socket.disconnect();
   });
 

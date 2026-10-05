@@ -71473,18 +71473,76 @@ function createDefaultFleetFactsReaders() {
       return null;
     }
   };
+  return createSharedFleetFactsReaders(execute2);
+}
+function createSharedFleetFactsReaders(run, isAbsentServer = () => false) {
+  let pending = null;
+  const read = async (signal) => {
+    if (signal?.aborted) return null;
+    if (!pending) {
+      const controller = new AbortController();
+      const entry2 = {
+        controller,
+        readers: 0,
+        result: Promise.resolve().then(() => run(FLEET_FACTS_TMUX_ARGS, controller.signal))
+      };
+      entry2.result = entry2.result.finally(() => {
+        if (pending === entry2) pending = null;
+      });
+      pending = entry2;
+    }
+    const entry = pending;
+    entry.readers += 1;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      entry.readers -= 1;
+      if (entry.readers === 0) {
+        if (pending === entry) pending = null;
+        entry.controller.abort();
+      }
+    };
+    signal?.addEventListener("abort", release, { once: true });
+    try {
+      const raw = await entry.result;
+      return signal?.aborted ? null : raw;
+    } catch (error) {
+      if (signal?.aborted) return null;
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", release);
+      release();
+    }
+  };
   return {
     readSessions: async (signal) => {
-      const raw = await execute2(SESSION_COMPOSITION_TMUX_ARGS, signal);
-      return raw === null ? null : parseSessionCompositionFacts(raw);
+      try {
+        const raw = await read(signal);
+        return raw === null ? null : parseSessionCompositionFacts(
+          raw.split("\n").map((line) => line.split("	").slice(0, 11).join("	")).join("\n")
+        );
+      } catch (error) {
+        return isAbsentServer(error) ? parseSessionCompositionFacts("") : null;
+      }
     },
     readAgents: async (signal) => {
-      const raw = await execute2(AGENT_STATE_TMUX_ARGS, signal);
-      return raw === null ? null : parseAgentStateFacts(raw);
+      try {
+        const raw = await read(signal);
+        return raw === null ? null : parseAgentStateFacts(
+          raw.split("\n").map((line) => {
+            const fields = line.split("	");
+            if (fields.length !== 13) return "";
+            return [fields[0], fields[6], fields[9], fields[11], fields[12]].join("	");
+          }).join("\n")
+        );
+      } catch {
+        return null;
+      }
     }
   };
 }
-var DaemonFleetFactsObserver, SESSION_COMPOSITION_TMUX_ARGS, AGENT_STATE_TMUX_ARGS;
+var DaemonFleetFactsObserver, SESSION_COMPOSITION_TMUX_ARGS, FLEET_FACTS_TMUX_ARGS;
 var init_daemon_fleet_facts_observer = __esm({
   "packages/daemon/src/command-center/daemon-fleet-facts-observer.ts"() {
     "use strict";
@@ -71875,11 +71933,11 @@ var init_daemon_fleet_facts_observer = __esm({
         "#{@tmux_ide_window_id}"
       ].join("	")
     ];
-    AGENT_STATE_TMUX_ARGS = [
+    FLEET_FACTS_TMUX_ARGS = [
       "list-panes",
       "-a",
       "-F",
-      "#{session_name}	#{pane_id}	#{@tmux_ide_pane_id}	#{@agent_state}	#{pane_current_command}"
+      `${SESSION_COMPOSITION_TMUX_ARGS[3]}	#{@agent_state}	#{pane_current_command}`
     ];
   }
 });
@@ -72577,20 +72635,9 @@ function setFleetFactsObserverDiagnostics(diagnostics) {
 }
 function setFleetFactsTmuxRunner(runTmux2) {
   stopFleetFactsObserver();
-  sessionCompositionReaderOverride = runTmux2 ? async (signal) => {
-    try {
-      return parseSessionCompositionFacts(await runTmux2(SESSION_COMPOSITION_TMUX_ARGS, signal));
-    } catch (error) {
-      return isTmuxServerUnavailableError(error) ? parseSessionCompositionFacts("") : null;
-    }
-  } : null;
-  agentStateReaderOverride = runTmux2 ? async (signal) => {
-    try {
-      return parseAgentStateFacts(await runTmux2(AGENT_STATE_TMUX_ARGS, signal));
-    } catch {
-      return null;
-    }
-  } : null;
+  const readers = runTmux2 ? createSharedFleetFactsReaders(runTmux2, isTmuxServerUnavailableError) : null;
+  sessionCompositionReaderOverride = readers?.readSessions ?? null;
+  agentStateReaderOverride = readers?.readAgents ?? null;
 }
 function acquireGlobalObserver(kind) {
   let releaseAuthority;

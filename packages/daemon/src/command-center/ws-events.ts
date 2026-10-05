@@ -17,11 +17,8 @@ import { discoverSessions, buildOverviews, buildProjectDetail } from "./discover
 import type { AgentTurnCompletion } from "./agent-status-watch.ts";
 import {
   DaemonFleetFactsObserver,
-  AGENT_STATE_TMUX_ARGS,
-  parseAgentStateFacts,
-  parseSessionCompositionFacts,
   createDefaultFleetFactsReaders,
-  SESSION_COMPOSITION_TMUX_ARGS,
+  createSharedFleetFactsReaders,
   type DaemonFleetFactsObserverOptions,
   type DaemonFleetFactsObserverDiagnostic,
 } from "./daemon-fleet-facts-observer.ts";
@@ -431,28 +428,11 @@ export function setFleetFactsTmuxRunner(
   runTmux: ((args: readonly string[], signal?: AbortSignal) => string | Promise<string>) | null,
 ): void {
   stopFleetFactsObserver();
-  sessionCompositionReaderOverride = runTmux
-    ? async (signal) => {
-        try {
-          return parseSessionCompositionFacts(await runTmux(SESSION_COMPOSITION_TMUX_ARGS, signal));
-        } catch (error) {
-          // A daemon may legitimately precede the first tmux server. Socket
-          // absence is an authoritative empty fleet baseline, not a failed
-          // observation: catalog clients must be allowed to render their
-          // actionable first-run state while the observer waits for tmux.
-          return isTmuxServerUnavailableError(error) ? parseSessionCompositionFacts("") : null;
-        }
-      }
+  const readers = runTmux
+    ? createSharedFleetFactsReaders(runTmux, isTmuxServerUnavailableError)
     : null;
-  agentStateReaderOverride = runTmux
-    ? async (signal) => {
-        try {
-          return parseAgentStateFacts(await runTmux(AGENT_STATE_TMUX_ARGS, signal));
-        } catch {
-          return null;
-        }
-      }
-    : null;
+  sessionCompositionReaderOverride = readers?.readSessions ?? null;
+  agentStateReaderOverride = readers?.readAgents ?? null;
 }
 
 interface ResourceObservationHandle {
