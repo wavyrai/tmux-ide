@@ -52,3 +52,35 @@ function graphemes(text: string): string[] {
     );
   return [...text];
 }
+
+/** PURE — greedy word-wrap for terminal prose (never returns empty for
+ *  non-empty text; words longer than the width hard-break). */
+export function wrapText(text: string, width: number): string[] {
+  if (width <= 0) return [text];
+  const out: string[] = [];
+  for (const para of text.split("\n")) {
+    let line = "";
+    for (const word of para.split(/\s+/).filter(Boolean)) {
+      if (line.length === 0) {
+        let w = word;
+        while (w.length > width) {
+          out.push(w.slice(0, width));
+          w = w.slice(width);
+        }
+        line = w;
+      } else if (line.length + 1 + word.length <= width) {
+        line += ` ${word}`;
+      } else {
+        out.push(line);
+        let w = word;
+        while (w.length > width) {
+          out.push(w.slice(0, width));
+          w = w.slice(width);
+        }
+        line = w;
+      }
+    }
+    if (line.length > 0 || para.length === 0) out.push(line);
+  }
+  return out.length > 0 ? out : [""];
+}

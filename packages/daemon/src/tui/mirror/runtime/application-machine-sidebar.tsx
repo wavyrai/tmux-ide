@@ -25,8 +25,7 @@ import {
   type Accessor,
   type JSX,
 } from "solid-js";
-import { friendlySessionLabel } from "../terminal-text.ts";
-import { wrapText } from "../dialog-model.ts";
+import { friendlySessionLabel, wrapText } from "../terminal-text.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { KeyHint } from "../ui/key-hint.tsx";
 import { NavigationRow } from "../ui/navigation-row.tsx";
