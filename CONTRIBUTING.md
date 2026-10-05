@@ -45,6 +45,27 @@ resource bounds and evidence requirements.
 - Live tests require their declared tmux/native prerequisites; a skipped platform case is not a qualification pass.
 - `pnpm docs:build` validates the docs app production build.
 
+Run a focused Vitest test from its owning package so that its configuration and
+runner exclusions apply. An unconfigured repository-root `vitest` search can
+collect ignored historical copies under `plans/` or worktrees.
+
+```bash
+# Daemon unit test, using the daemon's Vitest configuration
+pnpm --dir packages/daemon exec vitest run src/terminal/mirror/session-channel.test.ts
+# Real-process daemon tests use the separate, serial live lane
+pnpm --dir packages/daemon exec vitest run --config vitest.live.config.ts src/lib/__tests__/installed-daemon-upgrade-live.test.ts
+# Gallery fixtures use Bun and the production OpenTUI preload
+pnpm typecheck:tui-gallery
+pnpm test:tui-gallery
+```
+
+Keep a fixture with the owner it exercises: daemon renderer fixtures and preloads
+live in `packages/daemon/test-support`, shared package tests stay in that package,
+and installed-product fixture helpers live in `scripts/lib`. Renderer tests must
+not replace real-process ownership or installed-tarball qualification. Preserve the
+package-specific Vitest include/exclude lists when adding a suite; Bun renderer
+tests and real-process live tests have different runtime requirements.
+
 For a manual tmux smoke test:
 
 ```bash
