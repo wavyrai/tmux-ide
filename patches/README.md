@@ -16,6 +16,12 @@ verify them before an upgrade rather than assuming a patch is still necessary.
   animation deadline without removing the frame-rate ceiling. It also defers
   composition/baseline advancement while the destination feed is backpressured;
   split-footer capture retains its separate ordered commit contract.
+  Layout-resize callbacks mark buffers dirty for the current paint instead of
+  requesting an identical subsequent frame. Text viewport updates retain Yoga
+  invalidation and line-info notifications; property mutations from resize
+  listeners still request their own follow-up frames. This relies on layout
+  callbacks running before the current frame paints, and is covered by wrapped
+  text shrink/grow, resize-listener mutation and production window-rename tests.
   Regression evidence:
   [demand cadence](../packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx)
   and [backpressure](../packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx).

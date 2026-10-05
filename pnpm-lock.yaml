@@ -19,7 +19,7 @@ overrides:
 
 patchedDependencies:
   '@opentui/core@0.5.1':
-    hash: d0106687a1a1eb420f478380f560fd8056d1bee56c426ac5f2b6ae17725c0e32
+    hash: 6a4cfe9f659aa34319de14b1f49d645c9898d33d626699829a7452c046e6c319
     path: patches/@opentui__core@0.5.1.patch
   '@opentui/solid@0.5.1':
     hash: 942e37338af2c0680657e753a192d0664dc3c1b062278b64397e4493bd00c543
@@ -68,7 +68,7 @@ importers:
         version: 10.0.1(eslint@10.0.3(jiti@2.6.1))
       '@opentui/core':
         specifier: ^0.5.1
-        version: 0.5.1(patch_hash=d0106687a1a1eb420f478380f560fd8056d1bee56c426ac5f2b6ae17725c0e32)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+        version: 0.5.1(patch_hash=6a4cfe9f659aa34319de14b1f49d645c9898d33d626699829a7452c046e6c319)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@opentui/solid':
         specifier: ^0.5.1
         version: 0.5.1(patch_hash=942e37338af2c0680657e753a192d0664dc3c1b062278b64397e4493bd00c543)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
@@ -310,7 +310,7 @@ importers:
         version: 2.1.0
       '@opentui/core':
         specifier: ^0.5.1
-        version: 0.5.1(patch_hash=d0106687a1a1eb420f478380f560fd8056d1bee56c426ac5f2b6ae17725c0e32)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+        version: 0.5.1(patch_hash=6a4cfe9f659aa34319de14b1f49d645c9898d33d626699829a7452c046e6c319)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@opentui/solid':
         specifier: ^0.5.1
         version: 0.5.1(patch_hash=942e37338af2c0680657e753a192d0664dc3c1b062278b64397e4493bd00c543)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
@@ -5698,7 +5698,7 @@ snapshots:
   '@opentui/core-win32-x64@0.5.1':
     optional: true
 
-  '@opentui/core@0.5.1(patch_hash=d0106687a1a1eb420f478380f560fd8056d1bee56c426ac5f2b6ae17725c0e32)(typescript@5.9.3)(web-tree-sitter@0.25.10)':
+  '@opentui/core@0.5.1(patch_hash=6a4cfe9f659aa34319de14b1f49d645c9898d33d626699829a7452c046e6c319)(typescript@5.9.3)(web-tree-sitter@0.25.10)':
     dependencies:
       bun-ffi-structs: 0.3.1(typescript@5.9.3)
       diff: 9.0.0
@@ -5722,7 +5722,7 @@ snapshots:
     dependencies:
       '@babel/core': 7.29.6
       '@babel/preset-typescript': 7.27.1(@babel/core@7.29.6)
-      '@opentui/core': 0.5.1(patch_hash=d0106687a1a1eb420f478380f560fd8056d1bee56c426ac5f2b6ae17725c0e32)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+      '@opentui/core': 0.5.1(patch_hash=6a4cfe9f659aa34319de14b1f49d645c9898d33d626699829a7452c046e6c319)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       babel-plugin-module-resolver: 5.0.2
       babel-preset-solid: 1.9.12(@babel/core@7.29.6)(solid-js@1.9.12)
       entities: 7.0.1
