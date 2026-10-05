@@ -1750,7 +1750,22 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
         frame.includes(switchedWindowMarker)
       );
     },
-    one.diagnostics,
+    () =>
+      `${one.diagnostics()}\nswitched window witness: ${JSON.stringify({
+        expectedPane: switchedWindowPane,
+        activePane: activePane("journey-beta"),
+        marker: switchedWindowMarker,
+        terminalFocus: frameShowsTerminalFocus(capture(one.targetPane)),
+        sourceFrame: capture(switchedWindowPane),
+        inventory: tmuxResult([
+          "list-panes",
+          "-s",
+          "-t",
+          "=journey-beta",
+          "-F",
+          "#{pane_id}|#{window_id}|#{window_active}|#{pane_active}|#{pane_dead}|#{pane_current_command}",
+        ]).stdout,
+      })}`,
   );
 
   // Close is intentionally two activations: the first arms the destructive
