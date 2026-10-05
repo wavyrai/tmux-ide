@@ -36,6 +36,42 @@ const referenceHash = (value: unknown): string => {
 };
 
 describe("terminal canonical hash cache", () => {
+  it("keeps batch row hashes canonical with bounded encoding reuse and a JS fallback", () => {
+    const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
+    const base = blankTerminalReplicaSnapshot(1, 1).grid[0]!.cells[0]!;
+    try {
+      for (const fallback of [false, true]) {
+        if (fallback) factory.mockReturnValue(null);
+        const cache = new TerminalReplicaRunEncodingCache();
+        const first = { ...base, grapheme: "界e\u0301\ud800", width: 2 as const };
+        expect(cache.prepare(first).cacheMiss).toBe(true);
+        expect(cache.prepare(first).cacheMiss).toBe(false);
+        for (let index = 0; index < 1_100; index++) {
+          const cell = {
+            ...base,
+            grapheme: `row-${index}`,
+            foreground: { kind: "rgb" as const, value: index },
+            background: { kind: "indexed" as const, index: index % 256 },
+          };
+          const row = { wrapped: index % 2 === 0, cells: [first, cell, base] };
+          expect(hashTerminalReplicaRowCached(row, undefined, cache)).toBe(
+            hashTerminalReplicaRowCached(row),
+          );
+        }
+        const uncached = { ...base, grapheme: "after-cache-cap" };
+        expect(cache.prepare(uncached).cacheMiss).toBe(true);
+        expect(cache.prepare(uncached).cacheMiss).toBe(true);
+        expect(cache.prepare(first).cacheMiss).toBe(false);
+        const oversized = { ...base, grapheme: "x".repeat(70_000) };
+        const fresh = new TerminalReplicaRunEncodingCache();
+        expect(fresh.prepare(oversized).cacheMiss).toBe(true);
+        expect(fresh.prepare(oversized).cacheMiss).toBe(true);
+      }
+    } finally {
+      factory.mockRestore();
+    }
+  });
+
   it("accelerates substantial transactions without changing hashes or cooperative checkpoints", async () => {
     const cache = new TerminalReplicaRunEncodingCache();
     const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");

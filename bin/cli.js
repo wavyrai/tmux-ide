@@ -25073,8 +25073,8 @@ import { randomUUID as randomUUID11 } from "node:crypto";
 function createBackgroundNativeCapture(options) {
   return async (request3, signal) => {
     signal?.throwIfAborted();
-    const observer = options.observation(), native = request3.nativeIdentity ? { ...request3.nativeIdentity } : null;
-    if (!observer?.ownedOperationTransport || !observer.ownedOperationPaneGuard || !native || native.serverEpoch !== observer.nativeServerEpoch)
+    const observer = options.observation(), native2 = request3.nativeIdentity ? { ...request3.nativeIdentity } : null;
+    if (!observer?.ownedOperationTransport || !observer.ownedOperationPaneGuard || !native2 || native2.serverEpoch !== observer.nativeServerEpoch)
       return null;
     if (request3.sessionGuard && (!observer.ownedOperationSessionGuard || !supportsNativeSessionGuard(request3.sessionGuard)))
       return null;
@@ -25097,8 +25097,8 @@ function createBackgroundNativeCapture(options) {
       ...nativeOperationWrapperArgs(
         operationId,
         [command3],
-        native.serverEpoch,
-        { paneId: request3.paneId, paneBirthId: native.paneBirthId },
+        native2.serverEpoch,
+        { paneId: request3.paneId, paneBirthId: native2.paneBirthId },
         request3.sessionGuard
       )
     ];
@@ -25108,7 +25108,7 @@ function createBackgroundNativeCapture(options) {
         kind: "native-pane",
         environmentId: options.environmentId,
         serverScope: options.serverScope,
-        ...native
+        ...native2
       }
     });
     if (!permit) return null;
@@ -25132,7 +25132,7 @@ function createBackgroundNativeCapture(options) {
     };
     const observe = (output) => {
       const decoded = decodeNativeOperationInvocation(output, {
-        serverEpoch: native.serverEpoch,
+        serverEpoch: native2.serverEpoch,
         operationId
       });
       try {
@@ -25440,9 +25440,9 @@ function createAuthoredNativeCommandRunner(options) {
     const session = options.sessionGuard?.() ?? null;
     if (session && (!observer.ownedOperationSessionGuard || !supportsNativeSessionGuard(session)))
       return null;
-    const native = nativePaneIdentity(observer.nativeServerEpoch, request3.targetBirthId);
+    const native2 = nativePaneIdentity(observer.nativeServerEpoch, request3.targetBirthId);
     const destination = request3.context.interactionContext.destination;
-    if (!native || destination.kind !== "pane" || destination.environmentId !== options.environmentId || destination.serverScope.serverId !== options.serverScope.serverId || destination.serverScope.generation !== options.serverScope.generation)
+    if (!native2 || destination.kind !== "pane" || destination.environmentId !== options.environmentId || destination.serverScope.serverId !== options.serverScope.serverId || destination.serverScope.generation !== options.serverScope.generation)
       return null;
     const source = request3.context.interactionContext.source;
     const permit = observer.admitOwnedOperation({
@@ -25454,7 +25454,7 @@ function createAuthoredNativeCommandRunner(options) {
         kind: "native-pane",
         environmentId: options.environmentId,
         serverScope: options.serverScope,
-        ...native
+        ...native2
       },
       authoredDestination: destination,
       commands: request3.expectedKinds,
@@ -25467,7 +25467,7 @@ function createAuthoredNativeCommandRunner(options) {
       } catch {
       }
     };
-    const expected = { serverEpoch: native.serverEpoch, operationId: request3.operationId };
+    const expected = { serverEpoch: native2.serverEpoch, operationId: request3.operationId };
     const observe = (output2) => {
       const reply = decodeNativeOperationInvocation(output2, expected);
       try {
@@ -25494,10 +25494,10 @@ function createAuthoredNativeCommandRunner(options) {
           ...nativeOperationWrapperArgs(
             request3.operationId,
             request3.commands,
-            native.serverEpoch,
+            native2.serverEpoch,
             {
               paneId: request3.targetPaneId,
-              paneBirthId: native.paneBirthId
+              paneBirthId: native2.paneBirthId
             },
             session ?? void 0
           )
@@ -25839,8 +25839,8 @@ import { isDeepStrictEqual } from "node:util";
 function matchingProof(receipt, decision) {
   if (!InteractionReceiptSchemaZ.safeParse(receipt).success || !InteractionEvidenceSchemaZ.safeParse(decision.evidence).success)
     return null;
-  const proof = decision.proof, native = decision.evidence;
-  if (decision.disposition !== "authored" || !proof || !proof.authoredDestination || receipt.origin === "external" || receipt.operationKind !== "workspace.pane.read" && receipt.operationKind !== "workspace.pane.send" || receipt.operationId !== proof.acknowledgement.operationId || !receipt.evidence || !same2(receipt.evidence.endpoints.destination, proof.authoredDestination) || !same2(receipt.evidence.endpoints.source, proof.source?.endpoint ?? null) || native.observation.kind !== "native-journal" || native.actor.kind !== "native" || native.actor.identity !== "connection" || native.actor.classification.kind === "viewer" || native.observation.serverEpoch !== proof.acknowledgement.serverEpoch || !same2(native.endpoints.destination, proof.target) || !same2(native.endpoints.source, proof.source?.endpoint ?? null) || native.actor.sourceBindingId !== (proof.source?.bindingId ?? null))
+  const proof = decision.proof, native2 = decision.evidence;
+  if (decision.disposition !== "authored" || !proof || !proof.authoredDestination || receipt.origin === "external" || receipt.operationKind !== "workspace.pane.read" && receipt.operationKind !== "workspace.pane.send" || receipt.operationId !== proof.acknowledgement.operationId || !receipt.evidence || !same2(receipt.evidence.endpoints.destination, proof.authoredDestination) || !same2(receipt.evidence.endpoints.source, proof.source?.endpoint ?? null) || native2.observation.kind !== "native-journal" || native2.actor.kind !== "native" || native2.actor.identity !== "connection" || native2.actor.classification.kind === "viewer" || native2.observation.serverEpoch !== proof.acknowledgement.serverEpoch || !same2(native2.endpoints.destination, proof.target) || !same2(native2.endpoints.source, proof.source?.endpoint ?? null) || native2.actor.sourceBindingId !== (proof.source?.bindingId ?? null))
     return null;
   const ack = NativeOperationIdentitySchemaZ.safeParse(proof.acknowledgement);
   if (!ack.success || proof.target.environmentId !== proof.authoredDestination.environmentId || !same2(proof.target.serverScope, proof.authoredDestination.serverScope))
@@ -25853,26 +25853,26 @@ function matchingProof(receipt, decision) {
     kind,
     value
   ]);
-  if (native.actor.issuerId !== reference("issuer", ack.data.connectionId) || native.observation.parentCommandId !== reference("command", ack.data.wrapperCommandId))
+  if (native2.actor.issuerId !== reference("issuer", ack.data.connectionId) || native2.observation.parentCommandId !== reference("command", ack.data.wrapperCommandId))
     return null;
   return proof;
 }
 function correlatedEvidence(receipt, decision) {
   const proof = matchingProof(receipt, decision);
   if (!proof) return null;
-  const native = decision.evidence;
-  if (native.observation.kind !== "native-journal") return null;
+  const native2 = decision.evidence;
+  if (native2.observation.kind !== "native-journal") return null;
   const before = receipt.evidence;
   const next = InteractionEvidenceSchemaZ.safeParse({
-    ...native,
+    ...native2,
     interactionId: receipt.operationId,
     revision: before.revision + 1,
     endpoints: { source: before.endpoints.source, destination: proof.authoredDestination },
     occurredAt: before.occurredAt,
     timeBasis: before.timeBasis,
-    receivedAt: Date.parse(native.receivedAt) >= Date.parse(before.receivedAt) ? native.receivedAt : before.receivedAt,
-    observation: { ...native.observation, correlatedOperationId: receipt.operationId },
-    effect: native.effect.kind === "unknown" ? before.effect : native.effect
+    receivedAt: Date.parse(native2.receivedAt) >= Date.parse(before.receivedAt) ? native2.receivedAt : before.receivedAt,
+    observation: { ...native2.observation, correlatedOperationId: receipt.operationId },
+    effect: native2.effect.kind === "unknown" ? before.effect : native2.effect
   });
   if (!next.success || !canEnrichInteractionEvidence(before, next.data)) return null;
   if (same2(before.observation, next.data.observation) && same2(before.actor, next.data.actor) && same2(before.effect, next.data.effect))
@@ -31677,7 +31677,7 @@ function decodeNativeAtomicDualSnapshot(reply, expected, maxBytes = NATIVE_ATOMI
       } else if (chunks.length) return unknown;
     }
     if (bytes !== end.bytes || chunks.length !== end.chunks || bytes > maxBytes / 2) return unknown;
-    const native = decodeNativeAtomicSnapshot(
+    const native2 = decodeNativeAtomicSnapshot(
       {
         ok: true,
         lines: [
@@ -31696,11 +31696,11 @@ function decodeNativeAtomicDualSnapshot(reply, expected, maxBytes = NATIVE_ATOMI
       expected,
       maxBytes
     );
-    if (native.status !== "ok") return unknown;
+    if (native2.status !== "ok") return unknown;
     const ansiCapture = Buffer.allocUnsafe(bytes);
     let offset = 0;
     for (const chunk of chunks) offset += ansiCapture.write(chunk, offset, "hex");
-    return { ...native, ansiCapture };
+    return { ...native2, ansiCapture };
   } catch {
     return unknown;
   }
@@ -32585,7 +32585,7 @@ var init_pane_feed = __esm({
        */
       cursorReply(epoch, line, fallbackSize = null) {
         if (epoch !== this.epoch || this.state !== "awaiting-cursor") return [];
-        const native = this.nativeSeed;
+        const native2 = this.nativeSeed;
         const seed = seedBytesFromCapture(this.seedLines ?? []);
         const held = this.held;
         this.state = "live";
@@ -32599,7 +32599,7 @@ var init_pane_feed = __esm({
         else if (fallbackSize) {
           events.push({ type: "reset", cols: fallbackSize.cols, rows: fallbackSize.rows });
         }
-        events.push({ type: "seed", data: seed, ...native ? { native } : {} });
+        events.push({ type: "seed", data: seed, ...native2 ? { native: native2 } : {} });
         for (const data of held) events.push({ type: "delta", data });
         if (probe) {
           const fields = line.trim().split(/\s+/);
@@ -32685,9 +32685,9 @@ var init_pane_feed = __esm({
 // packages/daemon/src/terminal/mirror/session-channel.ts
 import { createHash as createHash18, randomBytes as randomBytes3 } from "node:crypto";
 import { hostname as hostname2 } from "node:os";
-function nativeBootstrapUnsupported(ok2, lines, native) {
+function nativeBootstrapUnsupported(ok2, lines, native2) {
   if (ok2)
-    return native !== null && (native.version !== 2 || native.currentAttributes === void 0);
+    return native2 !== null && (native2.version !== 2 || native2.currentAttributes === void 0);
   return lines.some(
     (line) => /^(?:parse error: )?(?:command capture-pane: )?unknown flag -R$/.test(line.trim())
   );
@@ -33548,8 +33548,8 @@ var init_session_channel = __esm({
           },
           (reply) => {
             if (settled) return;
-            const native = sub.nativeBootstrap && reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
-            if (sub.nativeBootstrap && (!native || !isNativeBootstrapCapture(native)) && !nativeBootstrapUnsupported(reply.ok, reply.lines, native)) {
+            const native2 = sub.nativeBootstrap && reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
+            if (sub.nativeBootstrap && (!native2 || !isNativeBootstrapCapture(native2)) && !nativeBootstrapUnsupported(reply.ok, reply.lines, native2)) {
               if (!this.nativeBootstrapConfirmed && !this.nativeProbeRetried.has(sub) && this.recoveryNowMs() < deadlineAt) {
                 this.nativeProbeRetried.add(sub);
                 settled = true;
@@ -33565,7 +33565,7 @@ var init_session_channel = __esm({
               settle(FAILED_RESEED_RESULT);
               return;
             }
-            if (sub.nativeBootstrap && (!native || !isNativeBootstrapCapture(native))) {
+            if (sub.nativeBootstrap && (!native2 || !isNativeBootstrapCapture(native2))) {
               settled = true;
               retireMarker();
               sub.feed.abort(epoch);
@@ -33589,11 +33589,11 @@ var init_session_channel = __esm({
               return;
             }
             captureLines = [...reply.lines];
-            if (native) {
+            if (native2) {
               this.nativeBootstrapConfirmed = true;
-              capturedNativeSize = { cols: native.cols, rows: native.rows };
+              capturedNativeSize = { cols: native2.cols, rows: native2.rows };
             }
-            if (native) sub.feed.captureNativeReply(epoch, native);
+            if (native2) sub.feed.captureNativeReply(epoch, native2);
             else sub.feed.captureReply(epoch, reply.lines);
           }
         );
@@ -34206,18 +34206,18 @@ var init_session_channel = __esm({
               return;
             }
             captureLines = Object.freeze([...reply.lines]);
-            const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
-            if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
-              if (nativeBootstrapUnsupported(true, captureLines, native)) {
+            const native2 = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
+            if (nativeCapture && (!native2 || !isNativeBootstrapCapture(native2))) {
+              if (nativeBootstrapUnsupported(true, captureLines, native2)) {
                 this.nativeBootstrapUnavailable = true;
                 for (const { sub } of participants) sub.nativeBootstrap = false;
               }
               fail2();
               return;
             }
-            if (native) this.nativeBootstrapConfirmed = true;
+            if (native2) this.nativeBootstrapConfirmed = true;
             for (const { sub, epoch } of participants) {
-              if (native) sub.feed.captureNativeReply(epoch, native);
+              if (native2) sub.feed.captureNativeReply(epoch, native2);
               else sub.feed.captureReply(epoch, captureLines);
             }
           }
@@ -34411,18 +34411,18 @@ var init_session_channel = __esm({
                   return;
                 }
                 const captureLines = Object.freeze([...result2.captureLines]);
-                const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
-                if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
-                  if (nativeBootstrapUnsupported(true, captureLines, native)) {
+                const native2 = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
+                if (nativeCapture && (!native2 || !isNativeBootstrapCapture(native2))) {
+                  if (nativeBootstrapUnsupported(true, captureLines, native2)) {
                     this.nativeBootstrapUnavailable = true;
                     for (const { sub } of participants) sub.nativeBootstrap = false;
                   }
                   fail2(result2.statusObserved);
                   return;
                 }
-                if (native) this.nativeBootstrapConfirmed = true;
+                if (native2) this.nativeBootstrapConfirmed = true;
                 for (const { sub, epoch } of participants) {
-                  if (native) sub.feed.captureNativeReply(epoch, native);
+                  if (native2) sub.feed.captureNativeReply(epoch, native2);
                   else sub.feed.captureReply(epoch, captureLines);
                 }
                 const fallbackSize = this.layoutSizeFor(pane.runtimeId);
@@ -37533,10 +37533,82 @@ var init_terminal_fnv64_wasm_bytes = __esm({
 });
 
 // packages/core/src/terminal-fnv64-wasm.ts
+function initialize() {
+  if (initialized) return native;
+  initialized = true;
+  try {
+    if (typeof WebAssembly === "undefined") return null;
+    const exports = new WebAssembly.Instance(new WebAssembly.Module(TERMINAL_FNV64_WASM_BYTES)).exports;
+    if (!(exports.memory instanceof WebAssembly.Memory) || typeof exports.scratch_ptr !== "function" || typeof exports.update !== "function")
+      return null;
+    const pointer = exports.scratch_ptr();
+    if (typeof pointer !== "number" || !Number.isInteger(pointer) || pointer < 0 || exports.memory.buffer.byteLength > 128 * 1024 || pointer + SCRATCH_BYTES > exports.memory.buffer.byteLength)
+      return null;
+    const update = exports.update;
+    if (BigInt.asUintN(64, update(OFFSET_BASIS, 0)) !== OFFSET_BASIS) return null;
+    native = { scratch: new Uint8Array(exports.memory.buffer, pointer, SCRATCH_BYTES), update };
+  } catch {
+  }
+  return native;
+}
+function createBufferedFnv64() {
+  const hasher = initialize();
+  return hasher ? new BufferedHasher(hasher) : null;
+}
+var SCRATCH_BYTES, OFFSET_BASIS, initialized, native, BufferedHasher;
 var init_terminal_fnv64_wasm = __esm({
   "packages/core/src/terminal-fnv64-wasm.ts"() {
     "use strict";
     init_terminal_fnv64_wasm_bytes();
+    SCRATCH_BYTES = 4096;
+    OFFSET_BASIS = 0xcbf29ce484222325n;
+    initialized = false;
+    native = null;
+    BufferedHasher = class {
+      #native;
+      #buffer = new Uint8Array(SCRATCH_BYTES);
+      #length = 0;
+      #state = OFFSET_BASIS;
+      constructor(hasher) {
+        this.#native = hasher;
+      }
+      #flush() {
+        if (this.#length === 0) return;
+        this.#native.scratch.set(this.#buffer.subarray(0, this.#length));
+        this.#state = BigInt.asUintN(64, this.#native.update(this.#state, this.#length));
+        this.#length = 0;
+      }
+      ascii(value) {
+        let offset = 0;
+        while (offset < value.length) {
+          const count = Math.min(SCRATCH_BYTES - this.#length, value.length - offset);
+          const start2 = this.#length;
+          for (let index = 0; index < count; index++)
+            this.#buffer[start2 + index] = value.charCodeAt(offset + index);
+          this.#length += count;
+          offset += count;
+          if (this.#length === SCRATCH_BYTES) this.#flush();
+        }
+        return value.length;
+      }
+      bytes(value) {
+        let offset = 0;
+        while (offset < value.length) {
+          const count = Math.min(SCRATCH_BYTES - this.#length, value.length - offset);
+          this.#buffer.set(value.subarray(offset, offset + count), this.#length);
+          this.#length += count;
+          offset += count;
+          if (this.#length === SCRATCH_BYTES) this.#flush();
+        }
+      }
+      boolean(value) {
+        this.ascii(value ? "b1;" : "b0;");
+      }
+      digest() {
+        this.#flush();
+        return this.#state.toString(16).padStart(16, "0");
+      }
+    };
   }
 });
 
@@ -37618,25 +37690,36 @@ function writeColor(hash, color3) {
     hash.ascii(";");
   }
 }
-function hashTerminalReplicaRowCached(row, onMiss) {
+function hashTerminalReplicaRowCached(row, onMiss, encodingCache) {
   const cached2 = ROW_HASH_CACHE.get(row);
   if (cached2) return cached2;
   onMiss?.();
-  const hash = new CanonicalFnv64();
+  const hash = encodingCache?.createHash() ?? new CanonicalFnv64();
+  let canonicalBytes = 10 + String(row.cells.length).length;
   hash.ascii("a2:");
   hash.boolean(row.wrapped);
   hash.ascii(`a${row.cells.length}:`);
   for (const cell of row.cells) {
-    hash.ascii("a5:");
-    hash.string(cell.grapheme);
-    hash.number(cell.width);
-    writeColor(hash, cell.foreground);
-    writeColor(hash, cell.background);
-    hash.number(cell.attributes);
-    hash.ascii(";");
+    if (encodingCache) {
+      const { prepared } = encodingCache.prepare(cell);
+      hash.ascii(prepared.prefix);
+      hash.bytes(prepared.graphemeBytes);
+      hash.ascii(prepared.suffix);
+      canonicalBytes += prepared.prefix.length + prepared.graphemeBytes.length + prepared.suffix.length;
+    } else {
+      const direct = hash;
+      direct.ascii("a5:");
+      direct.string(cell.grapheme);
+      direct.number(cell.width);
+      writeColor(direct, cell.foreground);
+      writeColor(direct, cell.background);
+      direct.number(cell.attributes);
+      direct.ascii(";");
+    }
   }
   hash.ascii(";;");
   const digest3 = hash.digest();
+  encodingCache?.recordCanonicalBytes(canonicalBytes);
   if (isTerminalReplicaRowDeeplyFrozen(row)) {
     DEEPLY_FROZEN_ROWS.add(row);
     ROW_HASH_CACHE.set(row, digest3);
@@ -37682,7 +37765,7 @@ function isTerminalReplicaRowDeeplyFrozen(row) {
   DEEPLY_FROZEN_ROWS.add(row);
   return true;
 }
-var ROW_HASH_CACHE, DEEPLY_FROZEN_ROWS, UTF8_ENCODER, CanonicalFnv64;
+var ROW_HASH_CACHE, DEEPLY_FROZEN_ROWS, UTF8_ENCODER, CanonicalFnv64, compactColorKey, TerminalReplicaRunEncodingCache;
 var init_terminal_replica_hash_cache = __esm({
   "packages/core/src/terminal-replica-hash-cache.ts"() {
     "use strict";
@@ -37777,6 +37860,58 @@ var init_terminal_replica_hash_cache = __esm({
       }
       digest() {
         return `${this.#high.toString(16).padStart(8, "0")}${this.#low.toString(16).padStart(8, "0")}`;
+      }
+    };
+    compactColorKey = (color3) => color3.kind === "default" ? -1 : color3.kind === "indexed" ? color3.index : 256 + color3.value;
+    TerminalReplicaRunEncodingCache = class {
+      #canonicalBytes = 0;
+      #cachedCells = 0;
+      #retainedEncodingBytes = 0;
+      createHash() {
+        return (this.#canonicalBytes >= 64 * 1024 ? createBufferedFnv64() : null) ?? new CanonicalFnv64();
+      }
+      recordCanonicalBytes(bytes) {
+        this.#canonicalBytes = Math.min(64 * 1024, this.#canonicalBytes + bytes);
+      }
+      #entries = /* @__PURE__ */ new Map();
+      prepare(cell) {
+        const foregroundKey = compactColorKey(cell.foreground);
+        const backgroundKey = compactColorKey(cell.background);
+        const cached2 = this.#entries.get(cell.grapheme)?.get(cell.width)?.get(foregroundKey)?.get(backgroundKey)?.get(cell.attributes);
+        if (cached2) return { prepared: cached2, allocatedBytes: 0, cacheMiss: false };
+        const graphemeBytes = UTF8_ENCODER.encode(cell.grapheme);
+        const numberText = (value) => {
+          const text = String(value);
+          return `d${text.length}:${text};`;
+        };
+        const colorText = (color3) => {
+          if (color3.kind === "default") return "o1:s4:kind;s7:default;;";
+          if (color3.kind === "indexed")
+            return `o2:s5:index;${numberText(color3.index)}s4:kind;s7:indexed;;`;
+          return `o2:s4:kind;s3:rgb;s5:value;${numberText(color3.value)};`;
+        };
+        const prepared = Object.freeze({
+          prefix: `a5:s${graphemeBytes.byteLength}:`,
+          graphemeBytes,
+          suffix: `;${numberText(cell.width)}${colorText(cell.foreground)}${colorText(
+            cell.background
+          )}${numberText(cell.attributes)};`
+        });
+        const retainedBytes = graphemeBytes.byteLength + 2 * (cell.grapheme.length + prepared.prefix.length + prepared.suffix.length);
+        if (this.#cachedCells < 1024 && this.#retainedEncodingBytes + retainedBytes <= 64 * 1024) {
+          const widths = this.#entries.get(cell.grapheme) ?? /* @__PURE__ */ new Map();
+          this.#entries.set(cell.grapheme, widths);
+          const foregrounds = widths.get(cell.width) ?? /* @__PURE__ */ new Map();
+          widths.set(cell.width, foregrounds);
+          const backgrounds = foregrounds.get(foregroundKey) ?? /* @__PURE__ */ new Map();
+          foregrounds.set(foregroundKey, backgrounds);
+          const attributes = backgrounds.get(backgroundKey) ?? /* @__PURE__ */ new Map();
+          backgrounds.set(backgroundKey, attributes);
+          attributes.set(cell.attributes, prepared);
+          this.#cachedCells++;
+          this.#retainedEncodingBytes += retainedBytes;
+        }
+        return { prepared, allocatedBytes: graphemeBytes.byteLength, cacheMiss: true };
       }
     };
   }
@@ -38442,11 +38577,12 @@ function isNewerIncarnation(current, candidate) {
   const candidateEpoch = /:([0-9]+)$/u.exec(candidate)?.[1];
   return currentEpoch !== void 0 && candidateEpoch !== void 0 && Number(candidateEpoch) > Number(currentEpoch);
 }
-function hashTerminalReplicaRow(row, profile, instrumentation) {
+function hashTerminalReplicaRow(row, profile, instrumentation, encodingCache) {
   const started = readProfileClock(instrumentation);
   const hash = hashTerminalReplicaRowCached(
     row,
-    profile ? () => profile.counts.rowHashMisses += 1 : void 0
+    profile ? () => profile.counts.rowHashMisses += 1 : void 0,
+    encodingCache
   );
   addProfileDuration(profile, "rowHash", started, instrumentation);
   return hash;
@@ -38454,11 +38590,12 @@ function hashTerminalReplicaRow(row, profile, instrumentation) {
 function hashTerminalReplicaRows(rows, profile, instrumentation) {
   const cached2 = ROW_ARRAY_HASH_CACHE.get(rows);
   if (cached2) return cached2.hash.toString(16).padStart(16, "0");
+  const encodingCache = rows.length >= 64 ? new TerminalReplicaRunEncodingCache() : void 0;
   let hash = 0n;
   for (const row of rows)
     hash = BigInt.asUintN(
       64,
-      hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row, profile, instrumentation)}`)
+      hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row, profile, instrumentation, encodingCache)}`)
     );
   if (Object.isFrozen(rows) && rows.every(isTerminalReplicaRowDeeplyFrozen))
     ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
@@ -38490,10 +38627,11 @@ function registerTerminalReplicaRowsDeltaHash(previous, next, trim, append) {
     );
     hash = BigInt.asUintN(64, hash - contribution);
   }
+  const encodingCache = append.length >= 64 ? new TerminalReplicaRunEncodingCache() : void 0;
   for (const row of append)
     hash = BigInt.asUintN(
       64,
-      hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row)}`)
+      hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row, void 0, void 0, encodingCache)}`)
     );
   if (Object.isFrozen(next) && next.every(isTerminalReplicaRowDeeplyFrozen))
     ROW_ARRAY_HASH_CACHE.set(next, { hash, length: next.length });
@@ -39442,20 +39580,20 @@ function projectNativeGridRow(source, columns, startColumn = 0, wrapped = false)
   const cells = Array(columns).fill(empty);
   for (let x = 0; x < columns; x++) {
     const index = startColumn + x;
-    const native = source?.cells[index];
-    if (!native) continue;
+    const native2 = source?.cells[index];
+    if (!native2) continue;
     const previous = source?.cells[index - 1];
-    const clippedOwner = x === 0 && (native.flags & 4) !== 0 && previous?.width === 2 && !(previous.flags & 4);
-    const styled = paint(clippedOwner ? previous : native);
-    if (native.flags & (4 | 64 | 128) || native.width < 1 || native.width > 2 || x + native.width > columns) {
-      const span = native.flags & 128 ? Math.max(1, Math.min(native.width, columns - x)) : 1;
+    const clippedOwner = x === 0 && (native2.flags & 4) !== 0 && previous?.width === 2 && !(previous.flags & 4);
+    const styled = paint(clippedOwner ? previous : native2);
+    if (native2.flags & (4 | 64 | 128) || native2.width < 1 || native2.width > 2 || x + native2.width > columns) {
+      const span = native2.flags & 128 ? Math.max(1, Math.min(native2.width, columns - x)) : 1;
       const blank = Object.freeze({ ...styled, grapheme: "", width: 1 });
       for (let offset = 0; offset < span; offset++) cells[x + offset] = blank;
       x += span - 1;
       continue;
     }
     cells[x] = styled;
-    if (native.width === 2) {
+    if (native2.width === 2) {
       cells[++x] = Object.freeze({ ...styled, grapheme: "", width: 0 });
     }
   }
@@ -39488,21 +39626,21 @@ var init_native_grid_projection = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/native-seed-backing.ts
-function rememberNativeSeedBacking(canonical, native) {
-  if (native.version !== 2 || native.cols !== canonical.cols || native.rows !== canonical.rows || native.history !== canonical.history.length || Math.min(native.cursor[0], native.cols - 1) !== canonical.cursor.x || native.cursor[1] !== canonical.cursor.y)
+function rememberNativeSeedBacking(canonical, native2) {
+  if (native2.version !== 2 || native2.cols !== canonical.cols || native2.rows !== canonical.rows || native2.history !== canonical.history.length || Math.min(native2.cursor[0], native2.cols - 1) !== canonical.cursor.x || native2.cursor[1] !== canonical.cursor.y)
     return false;
-  if (native.grid.length !== canonical.history.length + canonical.grid.length) return false;
-  for (let index = 0; index < native.grid.length; index++) {
+  if (native2.grid.length !== canonical.history.length + canonical.grid.length) return false;
+  for (let index = 0; index < native2.grid.length; index++) {
     const row = index < canonical.history.length ? canonical.history[index] : canonical.grid[index - canonical.history.length];
     const projected = projectNativeGridRow(
-      native.grid[index],
-      native.cols,
+      native2.grid[index],
+      native2.cols,
       0,
-      index > 0 && (native.grid[index - 1].flags & 1) !== 0
+      index > 0 && (native2.grid[index - 1].flags & 1) !== 0
     );
     if (!projected || !terminalReplicaRowsEqual(row, projected)) return false;
   }
-  const serialized = encodeNativeGridCapture(native);
+  const serialized = encodeNativeGridCapture(native2);
   if (serialized === null) return false;
   const encoded = new TextEncoder().encode(serialized);
   const chargedBytes = encoded.byteLength + 256;
@@ -53639,18 +53777,18 @@ var init_terminal_replica_owner = __esm({
           return !this.#disposed && this.#upstream === upstream && this.#subscriptionEpoch === epoch && !this.#reseed && !this.#waitingForGeometryCapture && captured.isCurrent() && current?.incarnation === initial.incarnation && current.revision === initial.revision && current.stateHash === initial.stateHash;
         };
         if (!isCurrent()) return { status: "changed" };
-        const native = captured.snapshot;
-        if (native.version === 1) return { status: "unsupported" };
+        const native2 = captured.snapshot;
+        if (native2.version === 1) return { status: "unsupported" };
         const canonical = initial.snapshot;
-        if (native.cols !== canonical.cols || native.rows !== canonical.rows || native.history !== canonical.history.length || Math.min(native.cursor[0], native.cols - 1) !== canonical.cursor.x || native.cursor[1] !== canonical.cursor.y)
+        if (native2.cols !== canonical.cols || native2.rows !== canonical.rows || native2.history !== canonical.history.length || Math.min(native2.cursor[0], native2.cols - 1) !== canonical.cursor.x || native2.cursor[1] !== canonical.cursor.y)
           return { status: "mismatch" };
         const rows = [...canonical.history, ...canonical.grid];
         for (let index = 0; index < rows.length; index++) {
           const projected = projectNativeGridRow(
-            native.grid[index],
-            native.cols,
+            native2.grid[index],
+            native2.cols,
             0,
-            index > 0 && (native.grid[index - 1].flags & 1) !== 0
+            index > 0 && (native2.grid[index - 1].flags & 1) !== 0
           );
           if (!projected || !terminalReplicaRowsEqual(rows[index], projected))
             return { status: "mismatch" };
@@ -63454,8 +63592,8 @@ function createTmuxAgentStatusProbe(deps2) {
         continue;
       }
       capturesUsed += 1;
-      const native = await deps2.captureNative?.(pane, signal);
-      const captured = native ? native.output : await capture(pane.runtimePaneId, SCRAPE_LINES, signal);
+      const native2 = await deps2.captureNative?.(pane, signal);
+      const captured = native2 ? native2.output : await capture(pane.runtimePaneId, SCRAPE_LINES, signal);
       throwIfAborted(signal);
       const snapshot2 = parseSnapshot(captured ?? "", { lines: SCRAPE_LINES });
       const verdict = classifyInstant({ ...snapshot2, title: pane.title }, manifest);
@@ -69883,9 +70021,9 @@ var init_owner_authority = __esm({
 import { z as z101 } from "zod";
 import { bodyLimit } from "hono/body-limit";
 import { stripVTControlCharacters } from "node:util";
-function createFleetPreviewCapture(run, native) {
+function createFleetPreviewCapture(run, native2) {
   const snapshot2 = async (liveSessionId, signal, windowId, paneId) => {
-    const nativeEpoch = native?.serverEpoch() ?? null;
+    const nativeEpoch = native2?.serverEpoch() ?? null;
     let sessionGuard;
     const readSessions = async () => {
       const raw = await run(
@@ -69969,10 +70107,10 @@ function createFleetPreviewCapture(run, native) {
     const pane = paneId ?? candidates.find((r) => r[2] === "1")?.[0] ?? candidates[0]?.[0];
     if (!pane || !/^%\d+$/u.test(pane)) return null;
     const identity2 = nativePaneIdentity(
-      nativeEpoch === native?.serverEpoch() ? nativeEpoch : null,
+      nativeEpoch === native2?.serverEpoch() ? nativeEpoch : null,
       candidates.find((row) => row[0] === pane)?.[5]
     );
-    const owned = native && identity2 && sessionGuard ? await native.capture(
+    const owned = native2 && identity2 && sessionGuard ? await native2.capture(
       { paneId: pane, nativeIdentity: identity2, sessionGuard, mode: "fleet-preview" },
       signal
     ) : null;
@@ -69981,7 +70119,7 @@ function createFleetPreviewCapture(run, native) {
     if (!currentSessions.some((s) => s.liveSessionId === liveSessionId)) return null;
     if (selectedWindowId && !currentPanes.some((r) => r[3] === selectedWindowId && r[0] === pane))
       return null;
-    if (identity2 && (native?.serverEpoch() !== identity2.serverEpoch || !currentPanes.some(
+    if (identity2 && (native2?.serverEpoch() !== identity2.serverEpoch || !currentPanes.some(
       (row) => row[0] === pane && (!selectedWindowId || row[3] === selectedWindowId) && row[5] === identity2.paneBirthId
     )))
       return null;
@@ -71072,7 +71210,7 @@ function shutdownPtyBridges() {
 function handlePtyWebSocket(ws, id2, options = {}) {
   const socket = ws;
   let bridge = null;
-  let initialized = false;
+  let initialized2 = false;
   let ptyExited = false;
   let killTimer = null;
   let drainTimer = null;
@@ -71144,7 +71282,7 @@ function handlePtyWebSocket(ws, id2, options = {}) {
     exitListener = null;
   };
   socket.on("message", (data, isBinary) => {
-    if (!initialized) {
+    if (!initialized2) {
       if (!isJsonControlFrame(data, isBinary)) {
         closeWithError("init frame required before input");
         return;
@@ -71193,7 +71331,7 @@ function handlePtyWebSocket(ws, id2, options = {}) {
             socket.send(JSON.stringify({ type: "replay-end", bytes: replay.byteLength }));
           }
         }
-        initialized = true;
+        initialized2 = true;
       } catch (err) {
         detachBridgeEvents();
         releaseBridge?.();
@@ -72002,8 +72140,8 @@ function fsWatchDirectory(dir, onChange, ignore2, debounceMs, requireInstalled, 
 async function watchDirectory(dir, onChange, options) {
   const debounceMs = options?.debounceMs ?? 300;
   const ignore2 = options?.ignore ?? ["node_modules", ".git", "dist", "build", ".next"];
-  const native = await loadParcel();
-  if (!native) {
+  const native2 = await loadParcel();
+  if (!native2) {
     return fsWatchDirectory(
       dir,
       onChange,
@@ -72021,7 +72159,7 @@ async function watchDirectory(dir, onChange, options) {
     unavailable = true;
     options?.onUnavailable?.(error);
   };
-  const subscription = await native.subscribe(
+  const subscription = await native2.subscribe(
     dir,
     (err, events) => {
       if (err) {

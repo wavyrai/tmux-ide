@@ -215,6 +215,8 @@ const compactColorKey = (color: TerminalReplicaColor): number =>
 /** Package-private per-decode cache for exact canonical cell byte segments. */
 export class TerminalReplicaRunEncodingCache {
   #canonicalBytes = 0;
+  #cachedCells = 0;
+  #retainedEncodingBytes = 0;
 
   createHash(): CanonicalFnv64 | NonNullable<ReturnType<typeof createBufferedFnv64>> {
     // Small deliveries benefit more from row reuse than from crossing into
@@ -238,17 +240,14 @@ export class TerminalReplicaRunEncodingCache {
     readonly allocatedBytes: number;
     readonly cacheMiss: boolean;
   } {
-    const widths = this.#entries.get(cell.grapheme) ?? new Map();
-    this.#entries.set(cell.grapheme, widths);
     const foregroundKey = compactColorKey(cell.foreground);
-    const foregrounds = widths.get(cell.width) ?? new Map();
-    widths.set(cell.width, foregrounds);
     const backgroundKey = compactColorKey(cell.background);
-    const backgrounds = foregrounds.get(foregroundKey) ?? new Map();
-    foregrounds.set(foregroundKey, backgrounds);
-    const attributes = backgrounds.get(backgroundKey) ?? new Map();
-    backgrounds.set(backgroundKey, attributes);
-    const cached = attributes.get(cell.attributes);
+    const cached = this.#entries
+      .get(cell.grapheme)
+      ?.get(cell.width)
+      ?.get(foregroundKey)
+      ?.get(backgroundKey)
+      ?.get(cell.attributes);
     if (cached) return { prepared: cached, allocatedBytes: 0, cacheMiss: false };
     const graphemeBytes = UTF8_ENCODER.encode(cell.grapheme);
     const numberText = (value: number): string => {
@@ -268,30 +267,63 @@ export class TerminalReplicaRunEncodingCache {
         cell.background,
       )}${numberText(cell.attributes)};`,
     });
-    attributes.set(cell.attributes, prepared);
+    // A transaction may contain arbitrary text and RGB values. Bound both
+    // entry count and retained string/byte payload; uncached cells hash identically.
+    const retainedBytes =
+      graphemeBytes.byteLength +
+      2 * (cell.grapheme.length + prepared.prefix.length + prepared.suffix.length);
+    if (this.#cachedCells < 1_024 && this.#retainedEncodingBytes + retainedBytes <= 64 * 1_024) {
+      const widths = this.#entries.get(cell.grapheme) ?? new Map();
+      this.#entries.set(cell.grapheme, widths);
+      const foregrounds = widths.get(cell.width) ?? new Map();
+      widths.set(cell.width, foregrounds);
+      const backgrounds = foregrounds.get(foregroundKey) ?? new Map();
+      foregrounds.set(foregroundKey, backgrounds);
+      const attributes = backgrounds.get(backgroundKey) ?? new Map();
+      backgrounds.set(backgroundKey, attributes);
+      attributes.set(cell.attributes, prepared);
+      this.#cachedCells++;
+      this.#retainedEncodingBytes += retainedBytes;
+    }
     return { prepared, allocatedBytes: graphemeBytes.byteLength, cacheMiss: true };
   }
 }
 
-export function hashTerminalReplicaRowCached(row: TerminalReplicaRow, onMiss?: () => void): string {
+export function hashTerminalReplicaRowCached(
+  row: TerminalReplicaRow,
+  onMiss?: () => void,
+  encodingCache?: TerminalReplicaRunEncodingCache,
+): string {
   const cached = ROW_HASH_CACHE.get(row);
   if (cached) return cached;
   onMiss?.();
-  const hash = new CanonicalFnv64();
+  const hash = encodingCache?.createHash() ?? new CanonicalFnv64();
+  let canonicalBytes = 10 + String(row.cells.length).length;
   hash.ascii("a2:");
   hash.boolean(row.wrapped);
   hash.ascii(`a${row.cells.length}:`);
   for (const cell of row.cells) {
-    hash.ascii("a5:");
-    hash.string(cell.grapheme);
-    hash.number(cell.width);
-    writeColor(hash, cell.foreground);
-    writeColor(hash, cell.background);
-    hash.number(cell.attributes);
-    hash.ascii(";");
+    if (encodingCache) {
+      const { prepared } = encodingCache.prepare(cell);
+      hash.ascii(prepared.prefix);
+      hash.bytes(prepared.graphemeBytes);
+      hash.ascii(prepared.suffix);
+      canonicalBytes +=
+        prepared.prefix.length + prepared.graphemeBytes.length + prepared.suffix.length;
+    } else {
+      const direct = hash as CanonicalFnv64;
+      direct.ascii("a5:");
+      direct.string(cell.grapheme);
+      direct.number(cell.width);
+      writeColor(direct, cell.foreground);
+      writeColor(direct, cell.background);
+      direct.number(cell.attributes);
+      direct.ascii(";");
+    }
   }
   hash.ascii(";;");
   const digest = hash.digest();
+  encodingCache?.recordCanonicalBytes(canonicalBytes);
   if (isTerminalReplicaRowDeeplyFrozen(row)) {
     DEEPLY_FROZEN_ROWS.add(row);
     ROW_HASH_CACHE.set(row, digest);
