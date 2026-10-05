@@ -25,7 +25,7 @@ direct controls. Close the app and the underlying sessions keep running.
 ## Install
 
 ```bash
-curl -fsSL https://tmux.thijsverreck.com/install.sh | sh
+curl -fsSL https://tmux-ide.com/install.sh | sh
 tmux-ide app
 ```
 
