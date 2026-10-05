@@ -126,18 +126,10 @@ async function ensureBuild() {
     }
   }
   log("building the desktop app (renderer + shell)");
-  await execFileAsync(
-    "pnpm",
-    [
-      "--filter",
-      "@tmux-ide/electron-shell",
-      renderer === "workspace" ? "build:workspace" : "build",
-    ],
-    {
-      cwd: repoRoot,
-      maxBuffer: 32 * 1024 * 1024,
-    },
-  );
+  await execFileAsync("pnpm", ["--filter", "@tmux-ide/electron-shell", "build"], {
+    cwd: repoRoot,
+    maxBuffer: 32 * 1024 * 1024,
+  });
   const rebuilt = await Promise.all(artifacts.map(exists));
   const missing = artifacts.filter((_path, index) => !rebuilt[index]);
   if (missing.length > 0) {

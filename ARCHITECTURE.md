@@ -14,7 +14,10 @@ The current product surface is deliberately narrow:
 - the minimal command palette
 
 The web and native desktop clients are future consumers of the daemon contract;
-they are not part of the 2.9 release cut.
+they are not part of the 2.9 release cut. The retained Solid desktop renderer
+also provides the browser and cross-client fixtures used by terminal qualification.
+The separate experimental React workspace client and its Electron launch variants
+have been retired; shared contracts and native ownership checks remain supported.
 
 ## Runtime shape
 

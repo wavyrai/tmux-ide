@@ -9,7 +9,7 @@ const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = join(packageRoot, "..", "..");
 const dist = join(packageRoot, "dist");
 const renderer = selectRenderer(process.argv.slice(2));
-const rendererName = renderer === "workspace" ? "web-workspace" : "desktop-renderer";
+const rendererName = "desktop-renderer";
 const rendererDist = join(packageRoot, "..", rendererName, "dist");
 
 await rm(dist, { recursive: true, force: true });

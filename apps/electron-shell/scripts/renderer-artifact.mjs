@@ -4,13 +4,10 @@ import { join } from "node:path";
 
 export function selectRenderer(args) {
   const flags = args.filter((arg) => arg.startsWith("--renderer="));
-  if (
-    flags.length > 1 ||
-    (flags.length && !["--renderer=workspace", "--renderer=desktop"].includes(flags[0]))
-  ) {
-    throw new Error("Select exactly one renderer: workspace or desktop");
+  if (flags.length > 1 || (flags.length && flags[0] !== "--renderer=desktop")) {
+    throw new Error("Only the desktop renderer is retained; select --renderer=desktop");
   }
-  return flags[0] === "--renderer=workspace" ? "workspace" : "desktop";
+  return "desktop";
 }
 
 async function rendererFiles(root, prefix = "") {
