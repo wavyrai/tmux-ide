@@ -26,10 +26,14 @@
     "packages/tmux-bridge/src",
     "packages/tmux-bridge/package.json",
     "packages/contracts/package.json",
-    "!**/*.test.*",
-    "!**/*.spec.*",
-    "!**/__tests__/**",
-    "!**/__snapshots__/**"
+    "!packages/*/src/**/*.test.*",
+    "!packages/*/src/**/*.spec.*",
+    "!packages/*/src/**/__tests__/**",
+    "!packages/*/src/**/__snapshots__/**",
+    "!packages/daemon/dist/**/*.test.*",
+    "!packages/daemon/dist/**/*.spec.*",
+    "!packages/daemon/dist/**/__tests__/**",
+    "!packages/daemon/dist/**/__snapshots__/**"
   ],
   "scripts": {
     "build": "pnpm build:cli",
