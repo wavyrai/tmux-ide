@@ -224,7 +224,12 @@ async function closeTransport(transport: Awaited<ReturnType<typeof connect>>) {
   await waitForPort(Number(new URL(transport.baseUrl).port), false);
 }
 let expectedFailureCode: string | undefined;
-async function refused(config: string, signal?: AbortSignal, minMs = 0) {
+async function refused(
+  config: string,
+  signal?: AbortSignal,
+  minMs = 0,
+  expectedCode: SshConnectionError["code"] = "unavailable",
+) {
   const before = sshChildren.length,
     started = Date.now();
   let rejected = false;
@@ -235,7 +240,7 @@ async function refused(config: string, signal?: AbortSignal, minMs = 0) {
     if (!(error instanceof SshConnectionError)) throw error;
     expectedFailureCode = error.code;
     caseFacts.step = "error-code";
-    assert(error.code === "unavailable");
+    assert(error.code === expectedCode);
     rejected = true;
   }
   caseFacts.elapsedMs = Date.now() - started;
@@ -446,7 +451,12 @@ try {
     target.files.capture(name + "_config");
     await runCase(name, async () => {
       const requests = target.metrics().requests;
-      await refused(path);
+      await refused(
+        path,
+        undefined,
+        0,
+        name === "wrong-key" ? "ssh-authentication" : "ssh-host-key",
+      );
       assert(target.metrics().requests === requests);
       await marker();
     });
@@ -458,7 +468,7 @@ try {
   });
   const missing = await fixture({ targetPort, missingPath: true, handshake: () => ({}) });
   await runCase("missing-path-no-installed-fallback", async () => {
-    await refused(missing.config);
+    await refused(missing.config, undefined, 0, "remote-cli-missing");
     assert(missing.metrics().requests === 0);
     await marker();
   });
