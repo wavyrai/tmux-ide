@@ -189,8 +189,6 @@ process.on('SIGWINCH', () => {}); process.stdout.write('HOLD');`,
 describe.skipIf(!available)("native transient capture recovery", () => {
   it("recovers a failed initial capture through the retained control channel", async () => {
     const session = "transient-capture";
-    const script = join(directory, `${session}.mjs`);
-    writeFileSync(script, "process.stdout.write('TRUTH');setInterval(()=>{},10000);");
     tmux(
       "new-session",
       "-d",
@@ -200,7 +198,9 @@ describe.skipIf(!available)("native transient capture recovery", () => {
       "40",
       "-y",
       "12",
-      `${process.execPath} ${script}`,
+      // This fixture needs static native content, not a second Node startup.
+      // Keep the initial marker independent of runtime/module loading on CI.
+      "printf TRUTH; exec sleep 120",
     );
     tmux("set-option", "-t", session, "status", "off");
     await vi.waitFor(() => expect(tmux("capture-pane", "-p", "-t", session)).toBe("TRUTH"));
