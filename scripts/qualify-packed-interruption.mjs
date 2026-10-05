@@ -162,6 +162,17 @@ try {
           throw new Error("artifact-mismatch");
         entry.artifactsVerified++;
       }
+      entry.diagnosticArtifactsVerified = 0;
+      const diagnosticArtifacts = proof.diagnosticArtifacts ?? [];
+      if (!Array.isArray(diagnosticArtifacts)) throw new Error("diagnostic-inventory");
+      for (const artifact of diagnosticArtifacts) {
+        if (!/^(?:journey-\d+|installed-tui)\.performance\.jsonl$/u.test(artifact.name))
+          throw new Error("diagnostic-name");
+        const bytes = readFileSync(join(evidence, artifact.name));
+        if (bytes.length !== artifact.bytes || sha(bytes) !== artifact.sha256)
+          throw new Error("diagnostic-mismatch");
+        entry.diagnosticArtifactsVerified++;
+      }
       if (!audit.ok) throw new Error("owned-cleanup-unconfirmed");
       if (!clean()) throw new Error("source-changed");
       entry.ok = true;

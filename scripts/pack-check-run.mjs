@@ -2358,6 +2358,7 @@ try {
   if (evidenceDir) {
     mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
     const copied = [];
+    const diagnosticArtifacts = [];
     for (const source of [
       rootTarball,
       automationObservations?.sdkTarballPath ?? null,
@@ -2375,7 +2376,8 @@ try {
       const name = source.endsWith("/cli.js") ? "tmux-ide-cli.js" : source.split("/").at(-1);
       const destination = join(evidenceDir, name);
       copyFileSync(source, destination);
-      copied.push({
+      const inventory = name.endsWith(".performance.jsonl") ? diagnosticArtifacts : copied;
+      inventory.push({
         name,
         bytes: readFileSync(destination).byteLength,
         sha256: sha256File(destination),
@@ -2402,6 +2404,7 @@ try {
       installedVersion,
       runtime: runtimeEvidence,
       artifacts: copied,
+      diagnosticArtifacts,
       journey: journeyObservations,
       automation: automationObservations,
       homeDiagnostics,
