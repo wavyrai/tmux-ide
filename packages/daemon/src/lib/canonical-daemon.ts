@@ -115,7 +115,12 @@ export type CanonicalDaemonInfoState =
     };
 
 export function getCanonicalDaemonInfoPath(): string {
-  return runtimeOwnedPath(join(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE));
+  const namespace = resolveRuntimeNamespace();
+  const path = join(namespace.daemonInfoDir, DAEMON_INFO_FILE);
+  // Resolution already validates ordinary and isolated namespaces. Only
+  // development adds a per-path containment check; do not resolve twice on
+  // every ordinary daemon read. Each call still resolves the current namespace.
+  return namespace.development ? runtimeOwnedPath(path) : path;
 }
 
 export function getCanonicalDaemonClaimPath(): string {
