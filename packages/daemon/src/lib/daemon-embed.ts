@@ -1436,6 +1436,7 @@ async function startEmbeddedDaemonGeneration(
               if (!sessionRuntimeRegistry) throw new Error("Session runtime unavailable");
               return sessionRuntimeRegistry.executeWindowLinkAction(session, action);
             },
+            timing,
           );
         }
         if (intent.verb === "workspace.pane.resize") {

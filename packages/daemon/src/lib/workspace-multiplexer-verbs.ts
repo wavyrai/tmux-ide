@@ -468,6 +468,7 @@ export class WorkspaceMultiplexerAuthority {
       session: string,
       action: AuthoritativeWindowLinkAction,
     ) => Promise<AuthoritativeWindowLinkActionResult>,
+    timing?: WorkspaceMultiplexerOperationTiming,
   ): Promise<WorkspaceMultiplexerMutationResult> {
     if (this.#disposed) throw new WorkspaceMultiplexerError("workspace_unavailable");
     const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
@@ -480,7 +481,26 @@ export class WorkspaceMultiplexerAuthority {
       intent.verb !== "workspace.pane.select"
     )
       throw new TypeError("Expected a window-link selection or unlink intent");
+    const now = () => {
+      try {
+        return timing?.nowMicros() ?? null;
+      } catch {
+        return null;
+      }
+    };
+    const record = (operation: string, start: number | null) => {
+      const end = now();
+      if (start !== null && end !== null) {
+        try {
+          timing?.record(operation, start, end);
+        } catch {
+          /* Diagnostics cannot own selection. */
+        }
+      }
+    };
+    const lookupStarted = now();
     const workspace = this.#registry.get(intent.workspaceName);
+    record("semantic-workspace-lookup", lookupStarted);
     if (!workspace) throw new WorkspaceMultiplexerError("workspace_not_found");
     const envelope = {
       operationId: request.operationId,
@@ -488,6 +508,7 @@ export class WorkspaceMultiplexerAuthority {
       workspaceName: intent.workspaceName,
     };
     try {
+      const effectStarted = now();
       const result = await execute(
         workspace.sessionName,
         intent.verb === "workspace.pane.select"
@@ -501,6 +522,7 @@ export class WorkspaceMultiplexerAuthority {
               target: intent.target,
             },
       );
+      record("window-link-effect-proof", effectStarted);
       if (result.outcome !== "applied") {
         throw new WorkspaceMultiplexerError(
           result.outcome === "stale"

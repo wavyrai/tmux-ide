@@ -268,6 +268,7 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
           return multiplexer.mutateWindowLink(
             { operationId, expectedDaemonInstanceId: generation, intent },
             (session, action) => sessionRuntimeRegistry.executeWindowLinkAction(session, action),
+            timing,
           );
         }
         if (intent.verb === "workspace.pane.resize") {

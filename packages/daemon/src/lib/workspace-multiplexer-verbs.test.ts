@@ -582,6 +582,33 @@ describe("the multiplexer authority", () => {
       });
       expect(tmux.calls).toEqual([]);
     });
+    it("times canonical link work without letting a failed diagnostic own selection", async () => {
+      const execute = vi.fn(async () => ({ outcome: "applied" as const, windowLinks: null }));
+      const record = vi.fn();
+      let micros = 0;
+      await authority.mutateWindowLink(
+        request({ verb: "workspace.window.link.select", target }),
+        execute,
+        { nowMicros: () => ++micros, record },
+      );
+      expect(record.mock.calls).toEqual([
+        ["semantic-workspace-lookup", 1, 2],
+        ["window-link-effect-proof", 3, 4],
+      ]);
+      await expect(
+        authority.mutateWindowLink(
+          request({ verb: "workspace.window.link.select", target }),
+          execute,
+          {
+            nowMicros: () => {
+              throw new Error("unavailable clock");
+            },
+            record,
+          },
+        ),
+      ).resolves.toMatchObject({ outcome: "applied" });
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
     it("forwards explicit pane context and leaves legacy ambiguity to the link authority", async () => {
       const execute = vi.fn(async () => ({ outcome: "applied" as const, windowLinks: null }));
       await authority.mutateWindowLink(

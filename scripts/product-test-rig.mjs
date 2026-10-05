@@ -2708,12 +2708,15 @@ function exactWindowSwitchDaemonTiming(records, started) {
     throw error;
   };
   if (!Array.isArray(records) || records.length > 4_096) fail("record-cardinality");
-  const operations = [
-    "semantic-pane-inventory-lookup",
-    "semantic-pane-resolution",
-    "tmux-selection-effect-proof",
-    "semantic-mutation-effect",
-  ];
+  const operations =
+    started.selectionKind === "window-link"
+      ? ["semantic-workspace-lookup", "window-link-effect-proof", "semantic-mutation-effect"]
+      : [
+          "semantic-pane-inventory-lookup",
+          "semantic-pane-resolution",
+          "tmux-selection-effect-proof",
+          "semantic-mutation-effect",
+        ];
   const exact = records.filter(
     (record) =>
       record?.type === "performance.stage" &&
@@ -2721,7 +2724,7 @@ function exactWindowSwitchDaemonTiming(records, started) {
       record.scenario === "window-switch",
   );
   if (exact.length !== operations.length) fail("phase-cardinality");
-  const values = {};
+  const values = { selectionKind: started.selectionKind ?? "pane" };
   const spans = [];
   let clockIdentity = null;
   for (const operation of operations) {
@@ -2758,12 +2761,14 @@ function exactWindowSwitchDaemonTiming(records, started) {
     values[`${operation.replaceAll("-", "_")}Ms`] =
       (span.endedAtMicros - span.startedAtMicros) / 1_000;
   }
-  const [inventory, resolution, selection, total] = spans;
+  const total = spans.at(-1);
+  const phases = spans.slice(0, -1);
   if (
-    total.startedAtMicros > inventory.startedAtMicros ||
-    inventory.endedAtMicros > resolution.startedAtMicros ||
-    resolution.endedAtMicros > selection.startedAtMicros ||
-    selection.endedAtMicros > total.endedAtMicros
+    total.startedAtMicros > phases[0].startedAtMicros ||
+    phases.at(-1).endedAtMicros > total.endedAtMicros ||
+    phases.some(
+      (span, index) => index > 0 && phases[index - 1].endedAtMicros > span.startedAtMicros,
+    )
   )
     fail("phase-order");
   return Object.freeze(values);

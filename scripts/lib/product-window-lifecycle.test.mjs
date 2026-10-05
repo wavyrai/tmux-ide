@@ -1303,3 +1303,23 @@ test("window lifecycle writer failures seal bounded health and transport pressur
     },
   );
 });
+
+test("window-link phase evidence requires its own measured operations and preserves arithmetic checks", () => {
+  const evidence = exactEvidence();
+  for (const sample of evidence.switches)
+    sample.phaseTiming.daemon = {
+      selectionKind: "window-link",
+      semantic_workspace_lookupMs: 1,
+      window_link_effect_proofMs: 1,
+      semantic_mutation_effectMs: 3,
+    };
+  const outliers = summarizeWindowSwitchPhaseOutliers(evidence.switches);
+  assert.equal(outliers.length, 5);
+  assert.equal(outliers[0].daemonSelectionKind, "window-link");
+  assert.equal(outliers[0].daemonWindowLinkProofMs, 1);
+  assert.equal(Object.hasOwn(outliers[0], "daemonPaneResolutionMs"), false);
+  evidence.switches[0].phaseTiming.daemon.semantic_mutation_effectMs = 0;
+  assert.equal(summarizeWindowSwitchPhaseOutliers([evidence.switches[0]]).length, 0);
+  delete evidence.switches[1].phaseTiming.daemon.window_link_effect_proofMs;
+  assert.equal(summarizeWindowSwitchPhaseOutliers([evidence.switches[1]]).length, 0);
+});

@@ -509,7 +509,9 @@ export class SessionSemanticMutationExecutor {
     if (this.#observability.enabled && this.#options.traceAuthority) {
       try {
         trace = this.#observability.beginTrace(
-          intent.verb === "workspace.pane.select" ? "window-switch" : "semantic-mutation",
+          intent.verb === "workspace.pane.select" || intent.verb === "workspace.window.link.select"
+            ? "window-switch"
+            : "semantic-mutation",
           this.#options.traceAuthority,
           operationId,
         );

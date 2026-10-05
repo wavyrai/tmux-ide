@@ -36622,7 +36622,7 @@ var init_semantic_mutation_executor = __esm({
         if (this.#observability.enabled && this.#options.traceAuthority) {
           try {
             trace = this.#observability.beginTrace(
-              intent.verb === "workspace.pane.select" ? "window-switch" : "semantic-mutation",
+              intent.verb === "workspace.pane.select" || intent.verb === "workspace.window.link.select" ? "window-switch" : "semantic-mutation",
               this.#options.traceAuthority,
               operationId
             );
@@ -67064,7 +67064,7 @@ var init_workspace_multiplexer_verbs = __esm({
         }
       }
       /** Runs only inside the existing semantic mutation lane; never rediscovers a stale link. */
-      async mutateWindowLink(raw, execute2) {
+      async mutateWindowLink(raw, execute2, timing) {
         if (this.#disposed) throw new WorkspaceMultiplexerError("workspace_unavailable");
         const request3 = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
         if (request3.expectedDaemonInstanceId !== this.#daemonInstanceId)
@@ -67072,7 +67072,25 @@ var init_workspace_multiplexer_verbs = __esm({
         const intent = request3.intent;
         if (intent.verb !== "workspace.window.link.select" && intent.verb !== "workspace.window.link.unlink" && intent.verb !== "workspace.pane.select")
           throw new TypeError("Expected a window-link selection or unlink intent");
+        const now = () => {
+          try {
+            return timing?.nowMicros() ?? null;
+          } catch {
+            return null;
+          }
+        };
+        const record = (operation, start2) => {
+          const end = now();
+          if (start2 !== null && end !== null) {
+            try {
+              timing?.record(operation, start2, end);
+            } catch {
+            }
+          }
+        };
+        const lookupStarted = now();
         const workspace = this.#registry.get(intent.workspaceName);
+        record("semantic-workspace-lookup", lookupStarted);
         if (!workspace) throw new WorkspaceMultiplexerError("workspace_not_found");
         const envelope = {
           operationId: request3.operationId,
@@ -67080,6 +67098,7 @@ var init_workspace_multiplexer_verbs = __esm({
           workspaceName: intent.workspaceName
         };
         try {
+          const effectStarted = now();
           const result2 = await execute2(
             workspace.sessionName,
             intent.verb === "workspace.pane.select" ? {
@@ -67091,6 +67110,7 @@ var init_workspace_multiplexer_verbs = __esm({
               target: intent.target
             }
           );
+          record("window-link-effect-proof", effectStarted);
           if (result2.outcome !== "applied") {
             throw new WorkspaceMultiplexerError(
               result2.outcome === "stale" ? "window_link_stale" : result2.outcome === "native-refused" ? "mutation_failed" : "mutation_unverified",
@@ -68879,7 +68899,8 @@ async function createNativeTmuxServerOwner(options) {
         if (intent.verb === "workspace.window.link.select" || intent.verb === "workspace.window.link.unlink" || intent.verb === "workspace.pane.select") {
           return multiplexer.mutateWindowLink(
             { operationId, expectedDaemonInstanceId: generation, intent },
-            (session, action) => sessionRuntimeRegistry.executeWindowLinkAction(session, action)
+            (session, action) => sessionRuntimeRegistry.executeWindowLinkAction(session, action),
+            timing
           );
         }
         if (intent.verb === "workspace.pane.resize") {
@@ -87468,7 +87489,8 @@ async function startEmbeddedDaemonGeneration(opts) {
             (session, action) => {
               if (!sessionRuntimeRegistry) throw new Error("Session runtime unavailable");
               return sessionRuntimeRegistry.executeWindowLinkAction(session, action);
-            }
+            },
+            timing
           );
         }
         if (intent.verb === "workspace.pane.resize") {

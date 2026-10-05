@@ -405,12 +405,15 @@ function exactWindowSwitchPhaseTiming(timing, durationMs) {
   if (!timing || typeof timing !== "object") return false;
   const phases = WINDOW_SWITCH_PHASE_KEYS.map((key) => timing[key]);
   const daemon = timing.daemon;
-  const daemonKeys = [
-    "semantic_pane_inventory_lookupMs",
-    "semantic_pane_resolutionMs",
-    "tmux_selection_effect_proofMs",
-    "semantic_mutation_effectMs",
-  ];
+  const daemonKeys =
+    daemon?.selectionKind === "window-link"
+      ? ["semantic_workspace_lookupMs", "window_link_effect_proofMs", "semantic_mutation_effectMs"]
+      : [
+          "semantic_pane_inventory_lookupMs",
+          "semantic_pane_resolutionMs",
+          "tmux_selection_effect_proofMs",
+          "semantic_mutation_effectMs",
+        ];
   const orderExact =
     (timing.receiptLayoutOrder === "receipt-before-layout" &&
       timing.startToSemanticReceiptMs < timing.startToCanonicalLayoutMs) ||
@@ -439,9 +442,7 @@ function exactWindowSwitchPhaseTiming(timing, durationMs) {
       (key) => Number.isFinite(daemon[key]) && daemon[key] >= 0 && daemon[key] <= 10_000,
     ) &&
     daemon.semantic_mutation_effectMs + 0.002 >=
-      daemon.semantic_pane_inventory_lookupMs +
-        daemon.semantic_pane_resolutionMs +
-        daemon.tmux_selection_effect_proofMs
+      daemonKeys.slice(0, -1).reduce((sum, key) => sum + daemon[key], 0)
   );
 }
 
@@ -460,9 +461,17 @@ export function summarizeWindowSwitchPhaseOutliers(samples, limit = 5) {
           ),
           receiptLayoutOrder: sample.phaseTiming.receiptLayoutOrder,
           daemonSemanticMutationMs: sample.phaseTiming.daemon.semantic_mutation_effectMs,
-          daemonInventoryLookupMs: sample.phaseTiming.daemon.semantic_pane_inventory_lookupMs,
-          daemonPaneResolutionMs: sample.phaseTiming.daemon.semantic_pane_resolutionMs,
-          daemonTmuxSelectionProofMs: sample.phaseTiming.daemon.tmux_selection_effect_proofMs,
+          ...(sample.phaseTiming.daemon.selectionKind === "window-link"
+            ? {
+                daemonSelectionKind: "window-link",
+                daemonWorkspaceLookupMs: sample.phaseTiming.daemon.semantic_workspace_lookupMs,
+                daemonWindowLinkProofMs: sample.phaseTiming.daemon.window_link_effect_proofMs,
+              }
+            : {
+                daemonInventoryLookupMs: sample.phaseTiming.daemon.semantic_pane_inventory_lookupMs,
+                daemonPaneResolutionMs: sample.phaseTiming.daemon.semantic_pane_resolutionMs,
+                daemonTmuxSelectionProofMs: sample.phaseTiming.daemon.tmux_selection_effect_proofMs,
+              }),
         }),
       )
       .sort((left, right) => right.totalMs - left.totalMs || left.ordinal - right.ordinal)
