@@ -22,7 +22,7 @@ patchedDependencies:
     hash: d0106687a1a1eb420f478380f560fd8056d1bee56c426ac5f2b6ae17725c0e32
     path: patches/@opentui__core@0.5.1.patch
   '@opentui/solid@0.5.1':
-    hash: 5ce38678f62441c16742735006c64fe8e1fc0d378f6327073c95ef9fcb75f126
+    hash: 942e37338af2c0680657e753a192d0664dc3c1b062278b64397e4493bd00c543
     path: patches/@opentui__solid@0.5.1.patch
 
 importers:
@@ -71,7 +71,7 @@ importers:
         version: 0.5.1(patch_hash=d0106687a1a1eb420f478380f560fd8056d1bee56c426ac5f2b6ae17725c0e32)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@opentui/solid':
         specifier: ^0.5.1
-        version: 0.5.1(patch_hash=5ce38678f62441c16742735006c64fe8e1fc0d378f6327073c95ef9fcb75f126)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+        version: 0.5.1(patch_hash=942e37338af2c0680657e753a192d0664dc3c1b062278b64397e4493bd00c543)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@tmux-ide/contracts':
         specifier: workspace:*
         version: link:packages/contracts
@@ -313,7 +313,7 @@ importers:
         version: 0.5.1(patch_hash=d0106687a1a1eb420f478380f560fd8056d1bee56c426ac5f2b6ae17725c0e32)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@opentui/solid':
         specifier: ^0.5.1
-        version: 0.5.1(patch_hash=5ce38678f62441c16742735006c64fe8e1fc0d378f6327073c95ef9fcb75f126)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+        version: 0.5.1(patch_hash=942e37338af2c0680657e753a192d0664dc3c1b062278b64397e4493bd00c543)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
@@ -5718,7 +5718,7 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  '@opentui/solid@0.5.1(patch_hash=5ce38678f62441c16742735006c64fe8e1fc0d378f6327073c95ef9fcb75f126)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)':
+  '@opentui/solid@0.5.1(patch_hash=942e37338af2c0680657e753a192d0664dc3c1b062278b64397e4493bd00c543)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)':
     dependencies:
       '@babel/core': 7.29.6
       '@babel/preset-typescript': 7.27.1(@babel/core@7.29.6)

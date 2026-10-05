@@ -1,7 +1,8 @@
 diff --git a/index.bun.js b/index.bun.js
+index 9d91f5d1387f38d7df8b10950ef45102c3c382c4..95ecb604affd14ad9af99862a0deb33a032dc258 100644
 --- a/index.bun.js
 +++ b/index.bun.js
-@@ -570,7 +570,7 @@ function _insertNode(parent, node, anchor) {
+@@ -572,7 +572,7 @@ function _insertNode(parent, node, anchor) {
    if (anchorIndex === -1) {
      log("[INSERT]", "Could not find anchor", logId(parent), logId(anchor), "[children]", ...children.map((c) => c.id));
    }
@@ -11,9 +12,10 @@ diff --git a/index.bun.js b/index.bun.js
  function _removeNode(parent, node) {
    log("Removing node:", logId(node), "from parent:", logId(parent));
 diff --git a/index.js b/index.js
+index 24ceb58922eac6287b2b93bae768f6705a332b76..cf68609d19249889714aa3944ecdaa2b35c28af4 100644
 --- a/index.js
 +++ b/index.js
-@@ -542,7 +542,7 @@ function _insertNode(parent, node, anchor) {
+@@ -544,7 +544,7 @@ function _insertNode(parent, node, anchor) {
    if (anchorIndex === -1) {
      log("[INSERT]", "Could not find anchor", logId(parent), logId(anchor), "[children]", ...children.map((c) => c.id));
    }
@@ -22,3 +24,36 @@ diff --git a/index.js b/index.js
  }
  function _removeNode(parent, node) {
    log("Removing node:", logId(node), "from parent:", logId(parent));
+diff --git a/scripts/solid-transform.js b/scripts/solid-transform.js
+index 6987446ee22b4fc9e6544e913524b1f243dc36db..3c211300d22d94c0f47c1c8877155bfe9a4fc7f2 100644
+--- a/scripts/solid-transform.js
++++ b/scripts/solid-transform.js
+@@ -1,4 +1,4 @@
+-import { transformAsync } from "@babel/core";
++import { transformAsync, types as t } from "@babel/core";
+ // @ts-expect-error - Types not important.
+ import ts from "@babel/preset-typescript";
+ // @ts-expect-error - Types not important.
+@@ -41,6 +41,22 @@ export async function transformSolidSource(code, options) {
+             ],
+         ]
+         : [];
++    // Keep conditional child memoization, but never construct a memo each time
++    // a prop getter is read. The preset recognizes this zero-argument function
++    // as a getter body and leaves its expression to the consuming computation.
++    plugins.push(() => ({
++        visitor: {
++            JSXElement(path) {
++                for (const attribute of path.node.openingElement.attributes) {
++                    if (!t.isJSXAttribute(attribute) || !t.isJSXExpressionContainer(attribute.value)) continue;
++                    const expression = attribute.value.expression;
++                    if (t.isConditionalExpression(expression) || t.isLogicalExpression(expression)) {
++                        attribute.value.expression = t.callExpression(t.arrowFunctionExpression([], expression), []);
++                    }
++                }
++            },
++        },
++    }));
+     const presets = [];
+     if (jsxPattern.test(filename)) {
+         presets.push([
