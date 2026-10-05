@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
+import { projectHomeFleet } from "./application-home-fleet.ts";
 import { createApplicationMachineAgents } from "./application-machine-agents.ts";
 import type { ApplicationMachineAuthorityHandle } from "./application-machine-authority.ts";
 import type { ApplicationMachineCatalogSnapshot } from "./application-machine-catalog.ts";
@@ -21,13 +22,16 @@ const row: HomeAgentRow = {
   attention: false,
   projectName: "project",
 };
-const value = (rows: readonly HomeAgentRow[]): HomeAgentSnapshot => ({
-  phase: "live",
+const value = (
+  rows: readonly HomeAgentRow[],
+  phase: HomeAgentSnapshot["phase"] = "live",
+): HomeAgentSnapshot => ({
+  phase,
   rows,
-  observedSessions: 1,
+  observedSessions: phase === "live" ? 1 : 0,
   totalSessions: 1,
-  loadingSessions: 0,
-  unavailableSessions: 0,
+  loadingSessions: phase === "loading" ? 1 : 0,
+  unavailableSessions: phase === "unavailable" ? 1 : 0,
   truncatedSessions: 0,
   refreshingSessionKeys: [],
   unavailableSessionKeys: [],
@@ -82,7 +86,7 @@ function fixture() {
   const observers: Array<{
     machineId: string;
     observer: ApplicationHomeAgentObserver;
-    emit(rows: readonly HomeAgentRow[]): void;
+    emit(rows: readonly HomeAgentRow[], phase?: HomeAgentSnapshot["phase"]): void;
   }> = [];
   const owner = createApplicationMachineAgents({
     catalog: {
@@ -98,6 +102,7 @@ function fixture() {
     manager: { getMachine: (id) => handles.get(id) ?? null },
     createObserver(handle) {
       let current: readonly HomeAgentRow[] = [];
+      let phase: HomeAgentSnapshot["phase"] = "live";
       let disposed = false;
       const callbacks: Array<(snapshot: HomeAgentSnapshot) => void> = [];
       const observer: ApplicationHomeAgentObserver = {
@@ -106,7 +111,7 @@ function fixture() {
         invalidate: vi.fn(),
         retry: vi.fn(),
         loadMore: vi.fn(),
-        getSnapshot: () => value(current),
+        getSnapshot: () => value(current, phase),
         isCurrentTarget: (target) => !disposed && current.includes(target as HomeAgentRow),
         subscribe: (listener) => {
           callbacks.push(listener);
@@ -119,9 +124,10 @@ function fixture() {
       observers.push({
         machineId: handle.id,
         observer,
-        emit(rows) {
+        emit(rows, nextPhase = "live") {
           current = rows;
-          for (const cb of callbacks) cb(value(rows));
+          phase = nextPhase;
+          for (const cb of callbacks) cb(value(rows, phase));
         },
       });
       return observer;
@@ -190,4 +196,33 @@ describe("machine agent metadata", () => {
     f.observers[2]!.emit([]);
     expect(f.owner.getSnapshot()).toBe(last);
   });
+});
+
+it("distinguishes connected activity loading from failure and clears the warning on the same observer", () => {
+  const f = fixture();
+  const observer = f.observers[1]!;
+  const view = () =>
+    projectHomeFleet(f.snapshot(), f.owner.getSnapshot(), {
+      machineId: remote,
+      attentionOnly: false,
+    });
+  try {
+    observer.emit([], "loading");
+    expect(view().phase).toBe("loading");
+    expect(view().note).toContain("connected; loading agent activity");
+    expect(view().note).not.toContain("unavailable");
+    observer.emit([], "unavailable");
+    expect(view().note).toContain("connected; agent activity unavailable");
+    observer.emit([row], "partial");
+    expect(view().phase).toBe("partial");
+    expect(view().note).toContain("connected; agent activity incomplete");
+    observer.emit([row], "live");
+    expect(view().phase).toBe("live");
+    expect(view().note).toBeNull();
+    expect(view().rows).toHaveLength(1);
+    expect(view().rows[0]!.disabled).toBe(false);
+    expect(f.observers).toHaveLength(2);
+  } finally {
+    f.owner.dispose();
+  }
 });

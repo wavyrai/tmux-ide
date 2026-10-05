@@ -80,6 +80,22 @@ export function projectHomeFleet(
       machine.state !== "ready" ||
       !groups.find((group) => group.machineId === machine.id)?.available,
   );
+  const activityPending = (machineId: string) => {
+    const observation = groups.find((group) => group.machineId === machineId)?.observation;
+    // A live observation whose binding is no longer available belongs to a
+    // retiring endpoint; its replacement must publish before it is current.
+    return !observation || observation.phase === "loading" || observation.phase === "live";
+  };
+  const coverageNotes = missing.map((machine) => {
+    if (machine.state !== "ready") return `${machine.label}: ${machine.state}`;
+    const observation = groups.find((group) => group.machineId === machine.id)?.observation;
+    const status = activityPending(machine.id)
+      ? "loading agent activity"
+      : observation?.phase === "partial"
+        ? "agent activity incomplete"
+        : "agent activity unavailable";
+    return `${machine.label}: connected; ${status}`;
+  });
   const query = filter.query?.trim().toLocaleLowerCase() ?? "";
   const matching = query
     ? rows.filter((row) =>
@@ -98,7 +114,8 @@ export function projectHomeFleet(
     phase: missing.length
       ? rows.length || observedSessions
         ? "partial"
-        : machines.some((machine) => machine.state === "connecting")
+        : machines.some((machine) => machine.state === "connecting") ||
+            missing.some((machine) => machine.state === "ready" && activityPending(machine.id))
           ? "loading"
           : "unavailable"
       : "live",
@@ -111,7 +128,7 @@ export function projectHomeFleet(
     refreshingSessionKeys: [],
     unavailableSessionKeys: [...unavailable],
     note: missing.length
-      ? `${missing.map((machine) => `${machine.label}: ${machine.state === "ready" ? "partial observations" : machine.state}`).join(" · ")} · unavailable rows show last observed activity`
+      ? `${coverageNotes.join(" · ")}${unavailable.size > 0 ? " · unavailable rows show last observed activity" : ""}`
       : rows.length === 0 && filter.attentionOnly
         ? "No agents need attention in this view."
         : null,
