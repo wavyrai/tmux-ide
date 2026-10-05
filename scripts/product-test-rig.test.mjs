@@ -2523,6 +2523,57 @@ test("resource evidence joins modern samples without inventing memory on client 
   assert.equal(summarizeProductResources([], [], missing).rssGrowthBytes, null);
 });
 
+test("resource summary preserves peaks across traces exceeding the argument limit", () => {
+  const records = Array.from({ length: 200_000 }, () => ({
+    inputPending: 0,
+    inputPendingBytes: 0,
+    inputInFlight: 0,
+    queuePeak: 0,
+    queueCapacity: 1,
+    settledQueueDepth: 0,
+    revisionLagPeak: 0,
+    rssBytes: 100,
+    heapUsedBytes: 50,
+  }));
+  records[123_456] = {
+    ...records[123_456],
+    inputPending: 7,
+    inputPendingBytes: 99,
+    inputInFlight: 3,
+    queuePeak: 4,
+    queueCapacity: 8,
+    settledQueueDepth: 2,
+    revisionLagPeak: 6,
+    rssBytes: 900,
+    heapUsedBytes: 700,
+  };
+  const summary = summarizeProductResources(records, records, {
+    workloadMemorySamples: records,
+    memorySamples: [records[0], records.at(-1)],
+    missingEndpointTraceIds: [],
+  });
+  assert.equal(summary.inputPendingPeak, 7);
+  assert.equal(summary.inputPendingBytesPeak, 99);
+  assert.equal(summary.inputInFlightPeak, 3);
+  assert.equal(summary.settledInputPending, 0);
+  assert.equal(summary.deliveryQueuePeak, 4);
+  assert.equal(summary.deliveryQueueCapacity, 8);
+  assert.equal(summary.settledDeliveryQueueDepth, 2);
+  assert.equal(summary.revisionLagPeak, 6);
+  assert.equal(summary.rssWorkloadPeakBytes, 900);
+  assert.equal(summary.heapWorkloadPeakBytes, 700);
+  assert.equal(summary.rssPeakBytes, 100);
+  assert.equal(summary.heapPeakBytes, 50);
+  assert.equal(summary.workloadMemorySampleCount, records.length);
+  const malformed = summarizeProductResources([], [], {
+    workloadMemorySamples: [{}],
+    memorySamples: [{}],
+    missingEndpointTraceIds: [],
+  });
+  assert.ok(Number.isNaN(malformed.rssWorkloadPeakBytes));
+  assert.ok(Number.isNaN(malformed.heapPeakBytes));
+});
+
 test("resource evidence rejects stale, ambiguous and incomplete frame/sample joins", () => {
   const mutations = [
     (r) => {

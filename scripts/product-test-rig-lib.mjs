@@ -1986,6 +1986,12 @@ export function collectProductResourceEvidence(records, endpointTraceIds) {
 }
 
 export function summarizeProductResources(clientStages, deliveries, evidence) {
+  const peak = (records, field, optional = true) => {
+    let maximum = 0;
+    for (const record of records)
+      maximum = Math.max(maximum, optional ? (record[field] ?? 0) : record[field]);
+    return maximum;
+  };
   const { workloadMemorySamples, memorySamples, missingEndpointTraceIds } = evidence;
   const rss = memorySamples.map(({ rssBytes }) => rssBytes);
   const heap = memorySamples.map(({ heapUsedBytes }) => heapUsedBytes);
@@ -1993,31 +1999,22 @@ export function summarizeProductResources(clientStages, deliveries, evidence) {
     (record) => Number.isFinite(record.inputPending) && Number.isFinite(record.inputInFlight),
   );
   return Object.freeze({
-    inputPendingPeak: Math.max(0, ...clientStages.map((record) => record.inputPending ?? 0)),
-    inputPendingBytesPeak: Math.max(
-      0,
-      ...clientStages.map((record) => record.inputPendingBytes ?? 0),
-    ),
-    inputInFlightPeak: Math.max(0, ...clientStages.map((record) => record.inputInFlight ?? 0)),
+    inputPendingPeak: peak(clientStages, "inputPending"),
+    inputPendingBytesPeak: peak(clientStages, "inputPendingBytes"),
+    inputInFlightPeak: peak(clientStages, "inputInFlight"),
     settledInputPending: settledInput?.inputPending ?? null,
     settledInputInFlight: settledInput?.inputInFlight ?? null,
-    deliveryQueuePeak: Math.max(0, ...deliveries.map((record) => record.queuePeak ?? 0)),
-    deliveryQueueCapacity: Math.max(0, ...deliveries.map((record) => record.queueCapacity ?? 0)),
-    settledDeliveryQueueDepth: Math.max(
-      0,
-      ...deliveries.map((record) => record.settledQueueDepth ?? 0),
-    ),
-    revisionLagPeak: Math.max(0, ...deliveries.map((record) => record.revisionLagPeak ?? 0)),
+    deliveryQueuePeak: peak(deliveries, "queuePeak"),
+    deliveryQueueCapacity: peak(deliveries, "queueCapacity"),
+    settledDeliveryQueueDepth: peak(deliveries, "settledQueueDepth"),
+    revisionLagPeak: peak(deliveries, "revisionLagPeak"),
     memorySampleCount: memorySamples.length,
     missingEndpointTraceIds,
     workloadMemorySampleCount: workloadMemorySamples.length,
-    rssWorkloadPeakBytes: Math.max(0, ...workloadMemorySamples.map(({ rssBytes }) => rssBytes)),
-    heapWorkloadPeakBytes: Math.max(
-      0,
-      ...workloadMemorySamples.map(({ heapUsedBytes }) => heapUsedBytes),
-    ),
-    rssPeakBytes: Math.max(0, ...rss),
-    heapPeakBytes: Math.max(0, ...heap),
+    rssWorkloadPeakBytes: peak(workloadMemorySamples, "rssBytes", false),
+    heapWorkloadPeakBytes: peak(workloadMemorySamples, "heapUsedBytes", false),
+    rssPeakBytes: peak(memorySamples, "rssBytes", false),
+    heapPeakBytes: peak(memorySamples, "heapUsedBytes", false),
     // Growth is an ordered quiescent endpoint delta. max-min misclassifies a
     // normal GC cycle (large early heap, smaller later heap) as retained growth.
     // Transient high-water remains visible through the explicit peak fields.
