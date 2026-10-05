@@ -73,6 +73,18 @@ function checked(file, args, options) {
   );
   return result.stdout;
 }
+function sourceIdentity() {
+  const git = (...args) => checked("git", args, { cwd: repo });
+  return {
+    commit: git("rev-parse", "HEAD").trim(),
+    tree: git("rev-parse", "HEAD^{tree}").trim(),
+    trackedDiffSha256: hash(git("diff", "--binary", "HEAD", "--")),
+    trackedChanges: git("diff", "--name-only", "-z", "HEAD", "--").split("\0").filter(Boolean),
+    untrackedPaths: git("ls-files", "--others", "--exclude-standard", "-z")
+      .split("\0")
+      .filter(Boolean),
+  };
+}
 function managerAbsent() {
   if (launchd) {
     const result = run("/bin/launchctl", ["print", target]);
@@ -142,8 +154,10 @@ function cli(...args) {
 let serviceAttempted = false;
 let tmuxAttempted = false;
 try {
-  receipt.commit = checked("git", ["rev-parse", "HEAD"], { cwd: repo }).trim();
-  receipt.dirty = checked("git", ["status", "--porcelain"], { cwd: repo }).trim() !== "";
+  receipt.source = sourceIdentity();
+  receipt.commit = receipt.source.commit;
+  receipt.dirty =
+    receipt.source.trackedChanges.length > 0 || receipt.source.untrackedPaths.length > 0;
   checked(
     launchd ? "/bin/launchctl" : "systemctl",
     launchd ? ["print-disabled", `gui/${process.getuid()}`] : ["--user", "show-environment"],
@@ -201,6 +215,11 @@ try {
   assert.equal(panePid(), before, "Service removal must preserve existing pane work");
   assert.equal(cli("status").status, "not-installed");
   receipt.panePreserved = true;
+  receipt.sourceAfter = sourceIdentity();
+  receipt.sourceStable =
+    receipt.source.commit === receipt.sourceAfter.commit &&
+    receipt.source.trackedDiffSha256 === receipt.sourceAfter.trackedDiffSha256;
+  assert(receipt.sourceStable, "Tracked source changed during service qualification");
 } catch (error) {
   receipt.failure = error.message;
 } finally {
@@ -231,6 +250,7 @@ try {
   }
   receipt.passed =
     !receipt.failure &&
+    receipt.sourceStable === true &&
     receipt.panePreserved === true &&
     receipt.cleanup.managerAbsent &&
     receipt.cleanup.serviceRecordAbsent &&
