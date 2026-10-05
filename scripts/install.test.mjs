@@ -255,7 +255,9 @@ for (const signal of ["SIGTERM", "SIGINT"])
       if (child.exitCode === null && child.signalCode === null) {
         try {
           process.kill(-child.pid, "SIGKILL");
-        } catch {}
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
       }
     });
     const deadline = Date.now() + 10000;
