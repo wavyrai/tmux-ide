@@ -102,3 +102,30 @@ it("rejects shutdown marks and closes a real file stream exactly once", async ()
     .map((line) => JSON.parse(line));
   expect(records.map((record) => record.phase)).toEqual(["before-close"]);
 });
+
+it("preserves a short file-stream backpressure burst through immediate close", async () => {
+  directory = await mkdtemp(join(tmpdir(), "tmi-log-burst-"));
+  const path = join(directory, "trace.jsonl");
+  vi.stubEnv("TMUX_IDE_TUI_PERF_LOG", path);
+  vi.resetModules();
+  logger = await import("./application-performance-log.ts");
+  // More than the file stream's 64 KiB watermark, within the bounded backlog.
+  for (let index = 0; index < 90; index += 1) {
+    logger.tuiPerfMark("burst", { index, payload: "x".repeat(1000) });
+  }
+  expect(logger.tuiPerfCriticalMark("end", "burst-end")).toBe(true);
+  await logger.closeTuiPerfMarks();
+  expect(logger.tuiPerfDiagnostics()).toEqual({
+    droppedRecords: 0,
+    failed: false,
+    pendingCriticalRecords: 0,
+  });
+  const records = (await readFile(path, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(
+    records.filter((record) => record.phase === "burst").map((record) => record.index),
+  ).toEqual(Array.from({ length: 90 }, (_, index) => index));
+  expect(records.at(-1)?.phase).toBe("burst-end");
+});

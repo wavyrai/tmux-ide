@@ -172,6 +172,7 @@ export function closeTuiPerfMarks(): Promise<void> {
   closing = true;
   closePromise = (async () => {
     if (!stream) return;
+    await writer?.flush();
     await flushTuiPerfMarks();
     // No drain callback may enqueue another critical record after end().
     stream.off("drain", drain);
