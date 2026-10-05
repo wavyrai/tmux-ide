@@ -2,6 +2,10 @@ import { spawn, spawnSync } from "node:child_process";
 import { runPackedAutomationJourney } from "./lib/packed-automation-journey.mjs";
 import { assertNoPackagedContributorTests } from "./lib/packaged-runtime-files.mjs";
 import { createPackedCancellation } from "./lib/packed-cancellation.mjs";
+import {
+  capturePackedGeneratedSource,
+  restorePackedGeneratedSource,
+} from "./lib/packed-generated-source.mjs";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -275,6 +279,7 @@ let proofCompleted = false;
 let installationScenarios = null;
 let postinstallEvidence = null;
 let npmVersion = null;
+let generatedSource = null;
 let tmuxWitness = null;
 let tmuxStarted = false;
 const tmuxGenerations = [];
@@ -384,9 +389,8 @@ async function runInstalledTuiGate(installedCli) {
     "bin",
     `tmux-ide-tui-${platformTag}-${packageVersion}`,
   );
-  // `npm pack` compiles the tracked CLI before the runtime build. Capture that
-  // post-pack source state so the assertion describes the exact compiled input
-  // while the evidence record still proves qualification began from `sourceState`.
+  // The packed CLI is retained in the tarball; its tracked build output has
+  // already been restored. Capture the actual input state of the TUI build.
   const compiledSourceState = checkedReleaseSourceState(
     boundedSpawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
       cwd: root,
@@ -1954,12 +1958,19 @@ try {
   // workspace-owned TypeScript. The private @tmux-ide/daemon workspace package
   // is not an installed runtime dependency of that CLI and must not mask an
   // incomplete root tarball in this smoke test.
+  const originalCli = capturePackedGeneratedSource(join(root, "bin/cli.js"));
   await runAsync("pnpm", ["build:cli"], { stdio: "inherit" });
   // Match release.yml's npm publisher. pnpm's packlist has different files/ignore
   // semantics and can retain files excluded from the actual npm release.
   await runAsync("npm", ["pack", "--pack-destination", tarballDir], { stdio: "inherit" });
 
   rootTarball = findTarball("tmux-ide-");
+  const packagedCli = boundedSpawnSync("tar", ["-xOzf", rootTarball, "package/bin/cli.js"], {
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (packagedCli.error || packagedCli.status !== 0 || packagedCli.signal !== null)
+    throw new Error("Could not verify generated CLI against the completed package");
+  generatedSource = restorePackedGeneratedSource(originalCli, packagedCli.stdout);
   assertNoPackagedContributorTests(run("tar", ["-tzf", rootTarball]).stdout.trim().split("\n"));
   npmVersion = run("npm", ["--version"]).stdout.trim();
   await runAsync("npm", ["init", "-y"], { cwd: projectDir });
@@ -2323,6 +2334,7 @@ try {
       commit: releaseCommit,
       platform: platformTag,
       sourceState,
+      generatedSource,
       installedVersion,
       runtime: runtimeEvidence,
       artifacts: copied,
