@@ -52,6 +52,23 @@ describe("user service manager boundary", () => {
     ]);
   });
 
+  it("clears a stopped systemd unit's start limit before explicit recovery", async () => {
+    const { manager, calls, plan } = fixture("linux");
+    await manager.restart(false);
+    expect(calls.map(({ args }) => args)).toEqual([
+      ["--user", "reset-failed", plan.target],
+      ["--user", "restart", plan.target],
+    ]);
+  });
+
+  it("does not restart when the owned systemd failure state cannot be reset", async () => {
+    const { manager, calls, plan } = fixture("linux", [
+      { code: 1, stdout: "", stderr: "PRIVATE_TOKEN" },
+    ]);
+    await expect(manager.restart(false)).rejects.toThrow("reset failed state failed");
+    expect(calls.map(({ args }) => args)).toEqual([["--user", "reset-failed", plan.target]]);
+  });
+
   it("recognizes launchd absence without treating permission/transport failures as absent", async () => {
     const { manager } = fixture("darwin", [
       {

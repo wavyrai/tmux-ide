@@ -89287,6 +89287,8 @@ function createDaemonServiceManager(plan, run = runCommand) {
       }
     },
     async restart(hasProcess = true) {
+      if (!launchd && !hasProcess)
+        await command3("reset failed state", ["reset-failed", plan.target]);
       await command3(
         "restart",
         launchd ? hasProcess ? ["kill", "SIGTERM", plan.target] : ["kickstart", plan.target] : ["restart", plan.target]

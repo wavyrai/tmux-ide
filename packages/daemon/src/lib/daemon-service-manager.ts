@@ -123,6 +123,11 @@ export function createDaemonServiceManager(plan: DaemonServicePlan, run = runCom
       }
     },
     async restart(hasProcess = true): Promise<void> {
+      // An explicit recovery after a failed launcher must also clear systemd's
+      // start-rate counter. The lifecycle owner has already verified this unit's
+      // private definition and reservation; never reset all user units.
+      if (!launchd && !hasProcess)
+        await command("reset failed state", ["reset-failed", plan.target]);
       // KeepAlive relaunches after a graceful TERM. kickstart -k would force-kill
       // the daemon instead of allowing canonical ownership to be released.
       await command(
