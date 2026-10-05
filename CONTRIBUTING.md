@@ -66,20 +66,27 @@ not replace real-process ownership or installed-tarball qualification. Preserve 
 package-specific Vitest include/exclude lists when adding a suite; Bun renderer
 tests and real-process live tests have different runtime requirements.
 
-For a manual tmux smoke test:
+For a manual smoke test, prepare the patched native bundle and pinned Bun using
+the worktree guide, then create a named development instance:
 
 ```bash
-node bin/cli.js init
-node bin/cli.js inspect --json
-node bin/cli.js
+pnpm --silent dev:instance rebuild --name smoke --bun /absolute/path/to/pinned/bun --json
+pnpm --silent dev:instance up --name smoke --json
+pnpm dev:instance app --name smoke
 ```
 
-Then in another shell:
+Inspect that same instance from another shell in the same worktree:
 
 ```bash
-node bin/cli.js status --json
-node bin/cli.js stop --json
+pnpm --silent dev:instance status --name smoke --json
+pnpm --silent dev:instance diagnostics --name smoke --json
 ```
+
+Closing the app preserves the instance and pane work. When its test processes
+are no longer needed, `pnpm --silent dev:instance down --name smoke --json`
+stops that instance, including its pane commands. Use an unused instance name
+for disposable smoke work; commands with that name select the same durable
+instance within this worktree.
 
 ## Pull Requests
 
