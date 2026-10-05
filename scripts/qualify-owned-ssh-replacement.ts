@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { cleanupOwnedSshRegistry } from "./lib/owned-ssh-registry-cleanup.ts";
 import { qualifyCanonicalSshAttribution } from "./lib/owned-ssh-attribution.ts";
+import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
@@ -462,11 +463,14 @@ if (args[0] === "--client") {
     await wait(() => {
       const frame = client.frame();
       return (
-        frame.includes("Your agents, across your machines") && frame.includes(descriptor.session)
+        frame.includes("Your agents, across your machines") &&
+        frame.includes("Open terminals F2") &&
+        frame.includes("1 session live")
       );
     });
-    // Home now selects agents directly; there is no session sidebar here.
-    child.write("\r");
+    // This fixture owns a plain shell, not an agent. Home lists agents; F2 opens
+    // the live session through the supported terminal navigation.
+    child.write("\x1bOQ");
     await wait(() => {
       const frame = client.frame();
       return (
@@ -476,6 +480,13 @@ if (args[0] === "--client") {
         frame.includes(descriptor.session)
       );
     });
+    const sessionRow = client
+      .frame()
+      .split("\n")
+      .findIndex((line: string) => line.trimStart().startsWith(descriptor.session));
+    assert(sessionRow >= 0, "Owned remote session must be visible in the sidebar");
+    child.write(`\x1b[<0;8;${sessionRow + 1}M\x1b[<0;8;${sessionRow + 1}m`);
+    await wait(() => frameShowsTerminalFocus(client.frame()));
     await tracker.capture();
     await remember(role);
     save(side + "-selected-frame.json", { frame: client.frame(), target, alias: fixture.alias });

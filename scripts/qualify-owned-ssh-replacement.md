@@ -133,3 +133,21 @@ not a long soak, native Linux/x64 proof, terminal-reader performance benchmark o
 defense against a malicious listener copying the public identity. Generic paused
 HTTP-reader and configured fleet-scheduler cases have separate receipts described
 in [the transport qualification](qualify-owned-ssh.md).
+
+The foundation candidate `8ec99ddb` passed again with four clean native source
+instances on macOS arm64, Node 24.11.1 and Bun 1.4.2. The fixture now opens F2
+Terminals and selects its plain shell session from the sidebar; Home's agent list
+does not contain a shell without an agent. Terminal focus is checked before the
+encoded output and input witnesses. The two earlier navigation failures are
+retained with successful cleanup, separately from the passing recovery run.
+
+The run took 103,710ms including builds and teardown. Both trap requests were
+credential-free (one identity probe and one independent witness). All cleanup
+fields passed; an independent audit found 64 captured PIDs absent and six checked
+ports closed. The fixture source hash, clean native manifests, terminal frames and
+cleanup audit are retained under ignored local evidence
+`.tasks/sfora-foundation-mission/native-ssh-replacement-selected`. Its manager was
+`8ec99ddb` with only the recorded fixture navigation patch; runtime artifacts came
+from the clean worktrees. This proves native development-client recovery, not an
+npm-installed remote journey, registry hot reload, remote manual sizing or a CPU
+performance improvement.
