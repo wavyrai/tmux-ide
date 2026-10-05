@@ -345,9 +345,26 @@ function spawnInstalledCli(installedCli) {
   return child;
 }
 
-async function waitForChild(child, timeoutMs = 20_000) {
-  const exit = await cancellation.waitFor(childExits.get(child), timeoutMs);
-  return { ...exit, ...childOutput.get(child) };
+async function waitForChild(child, phase, timeoutMs = 20_000) {
+  try {
+    const exit = await cancellation.waitFor(childExits.get(child), timeoutMs);
+    return { ...exit, ...childOutput.get(child) };
+  } catch (cause) {
+    const output = childOutput.get(child);
+    throw new Error(
+      `Installed daemon did not close during ${phase}: ${JSON.stringify({
+        pid: child.pid,
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+        signalSent: child.killed,
+        stdoutClosed: child.stdout?.closed,
+        stderrClosed: child.stderr?.closed,
+        stdout: output?.stdout.slice(-4096),
+        stderr: output?.stderr.slice(-4096),
+      })}`,
+      { cause },
+    );
+  }
 }
 
 async function runInstalledTuiGate(installedCli) {
@@ -957,7 +974,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // waiting for app readiness before that restart would never reach the chooser.
   await createSession("_tmux-ide-pack-empty-seed");
   initialOwner.kill("SIGTERM");
-  await waitForChild(initialOwner);
+  await waitForChild(initialOwner, "empty chooser server rebind");
   const emptyCatalogOwner = spawnInstalledCli(installedCli);
   await observe(
     "daemon binds empty chooser tmux server",
@@ -993,7 +1010,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // server. Restart the installed daemon so its tmux observer is bound to the
   // new server generation before asserting catalog-driven chooser behavior.
   emptyCatalogOwner.kill("SIGTERM");
-  await waitForChild(emptyCatalogOwner);
+  await waitForChild(emptyCatalogOwner, "populated catalog server rebind");
   const catalogOwner = spawnInstalledCli(installedCli);
   await observe(
     "daemon binds recreated tmux server",
@@ -1585,7 +1602,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"),
   ).instanceId;
   catalogOwner.kill("SIGTERM");
-  await waitForChild(catalogOwner);
+  await waitForChild(catalogOwner, "live client daemon replacement");
   const replacement = spawnInstalledCli(installedCli);
   let replacementInstanceId = null;
   await observe(
@@ -2024,7 +2041,9 @@ try {
   }
 
   const losers = contenders.filter((candidate) => candidate !== owner);
-  const loserResults = await Promise.all(losers.map((candidate) => waitForChild(candidate)));
+  const loserResults = await Promise.all(
+    losers.map((candidate) => waitForChild(candidate, "concurrent owner election")),
+  );
   for (const result of loserResults) {
     if (result.code !== 0) {
       throw new Error(
