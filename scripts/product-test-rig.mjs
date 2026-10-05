@@ -97,6 +97,7 @@ import {
   runCausalFixtureTeardownGate,
   selectProductResourceEndpoint,
   summarizeProductResources,
+  collectProductResourceEvidence,
   shouldCaptureWebConsoleMessage,
   waitForLifecycleEntry,
   writeJsonAtomic,
@@ -9281,7 +9282,7 @@ async function diagnoseRuntimeQualification(planEntry) {
     resourceObservation = summarizeProductResources(
       clientStages,
       deliveries,
-      resourceEndpointTraceIds,
+      collectProductResourceEvidence(loadRecords, resourceEndpointTraceIds),
     );
     const settledIdle = await observeProductIdleProcessWindow(
       state,

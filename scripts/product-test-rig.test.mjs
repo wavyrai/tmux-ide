@@ -77,6 +77,7 @@ import {
   resolvePaneBodyRect,
   selectProductResourceEndpoint,
   summarizeProductResources,
+  collectProductResourceEvidence,
   shouldCaptureWebConsoleMessage,
   waitForLifecycleEntry,
   writeJsonAtomic,
@@ -2455,6 +2456,151 @@ test("extracts proof only from the pane body rectangle", () => {
   );
 });
 
+function resourceEndpointRecords() {
+  const identity = {
+    processId: "opentui:123",
+    clockId: "opentui-performance-now",
+    clockKind: "performance-now",
+    generation: "generation",
+    incarnation: "incarnation",
+    semanticPaneId: "pane",
+    revision: 3,
+    stateHash: "state",
+    sourceEpoch: 1,
+    rendererEpoch: 5,
+    viewportCols: 80,
+    viewportRows: 24,
+  };
+  return [
+    {
+      type: "performance.stage",
+      stage: "input",
+      traceId: "probe",
+      ...identity,
+      startedAtMicros: 10,
+    },
+    { type: "performance.stage", stage: "paint", traceId: "probe", ...identity, endedAtMicros: 20 },
+    { type: "performance.terminal-canonical-host-frame", ...identity, atMicros: 21 },
+    {
+      type: "performance.terminal-frame-fence",
+      ...identity,
+      daemonGeneration: "generation",
+      identityDrops: 0,
+    },
+    {
+      type: "performance.terminal-resource-sample",
+      ...identity,
+      operation: "post-fence",
+      atMicros: 60_000,
+      resourceEpochArmed: true,
+      resourceEpochIdentity: identity,
+      resourceSamplingFailureCount: 0,
+      lowWaterFirstSampleOrdinal: 1,
+      lowWaterLastSampleOrdinal: 8,
+      lowWaterSampleCount: 8,
+      lowWaterWindowMicros: 56_000,
+      inputPending: 0,
+      inputInFlight: 0,
+      inputPendingBytes: 0,
+      rssBytes: 1000,
+      heapUsedBytes: 500,
+    },
+  ];
+}
+
+test("resource evidence joins modern samples without inventing memory on client stages", () => {
+  const records = resourceEndpointRecords();
+  const evidence = collectProductResourceEvidence(records, ["probe"]);
+  assert.deepEqual(evidence.missingEndpointTraceIds, []);
+  assert.equal(evidence.memorySamples.length, 1);
+  const summary = summarizeProductResources([], [], evidence);
+  assert.equal(summary.memorySampleCount, 1);
+  assert.equal(summary.rssPeakBytes, 1000);
+  assert.equal(summary.heapPeakBytes, 500);
+  const missing = collectProductResourceEvidence(records.slice(0, -1), ["probe"]);
+  assert.equal(missing.memorySamples.length, 0);
+  assert.deepEqual(missing.missingEndpointTraceIds, ["probe"]);
+  assert.equal(summarizeProductResources([], [], missing).rssGrowthBytes, null);
+});
+
+test("resource evidence rejects stale, ambiguous and incomplete frame/sample joins", () => {
+  const mutations = [
+    (r) => {
+      r[4].revision += 1;
+    },
+    (r) => {
+      r[4].stateHash = "other";
+    },
+    (r) => {
+      r[4].processId = "opentui:other";
+    },
+    (r) => {
+      r[4].generation = "other";
+    },
+    (r) => {
+      r[4].incarnation = "other";
+    },
+    (r) => {
+      r[4].sourceEpoch += 1;
+    },
+    (r) => {
+      r[4].rendererEpoch += 1;
+    },
+    (r) => {
+      r[4].viewportCols += 1;
+    },
+    (r) => {
+      r[4].clockId = "other";
+    },
+    (r) => {
+      r[4].atMicros = 19;
+    },
+    (r) => {
+      r[2].atMicros = 19;
+    },
+    (r) => {
+      r[3].identityDrops = 1;
+    },
+    (r) => {
+      r[4].resourceSamplingFailureCount = 1;
+    },
+    (r) => {
+      r[4].lowWaterSampleCount = 7;
+    },
+    (r) => {
+      r[4].lowWaterWindowMicros = 0;
+    },
+    (r) => {
+      r[4].resourceEpochArmed = false;
+    },
+    (r) => {
+      r[4].resourceEpochIdentity = { ...r[4].resourceEpochIdentity, generation: "other" };
+    },
+    (r) => {
+      r[4].inputInFlight = 1;
+    },
+    (r) => {
+      r.push({ ...r[4] });
+    },
+    (r) => {
+      r.push({ ...r[3] });
+    },
+    (r) => {
+      r.push({ ...r[2] });
+    },
+  ];
+  for (const mutate of mutations) {
+    const records = resourceEndpointRecords();
+    mutate(records);
+    const evidence = collectProductResourceEvidence(records, ["probe"]);
+    assert.equal(evidence.memorySamples.length, 0, String(mutate));
+    assert.deepEqual(evidence.missingEndpointTraceIds, ["probe"]);
+  }
+  const duplicate = collectProductResourceEvidence(resourceEndpointRecords(), ["probe", "probe"]);
+  assert.equal(duplicate.memorySamples.length, 1);
+  assert.deepEqual(duplicate.missingEndpointTraceIds, ["probe"]);
+});
+
 test("resource evidence requires a distribution and proves queues settle", () => {
   const clientStages = Array.from({ length: 16 }, (_, index) => ({
     rssBytes: 100_000 + index,
@@ -2463,14 +2609,22 @@ test("resource evidence requires a distribution and proves queues settle", () =>
     inputInFlight: index === 15 ? 0 : 1,
     inputPendingBytes: index === 15 ? 0 : 1,
   }));
-  const observation = summarizeProductResources(clientStages, [
+  const observation = summarizeProductResources(
+    clientStages,
+    [
+      {
+        queuePeak: 1,
+        queueCapacity: 1,
+        settledQueueDepth: 0,
+        revisionLagPeak: 0,
+      },
+    ],
     {
-      queuePeak: 1,
-      queueCapacity: 1,
-      settledQueueDepth: 0,
-      revisionLagPeak: 0,
+      workloadMemorySamples: clientStages,
+      memorySamples: clientStages,
+      missingEndpointTraceIds: [],
     },
-  ]);
+  );
   assert.equal(observation.memorySampleCount, 16);
   assert.equal(observation.settledInputPending, 0);
   assert.equal(observation.settledInputInFlight, 0);
@@ -3478,7 +3632,7 @@ test("resource conditioning remains in peak and queue evidence but not memory sl
         revisionLagPeak: 4,
       },
     ],
-    Array.from({ length: 16 }, (_, index) => `endpoint-${index}`),
+    { workloadMemorySamples: stages, memorySamples: stages.slice(8), missingEndpointTraceIds: [] },
   );
   assert.equal(observation.memorySampleCount, 16);
   assert.equal(observation.workloadMemorySampleCount, 24);
@@ -3510,7 +3664,11 @@ test("resource growth uses ordered quiescent endpoints, not a GC max-min range",
     inputInFlight: 0,
     inputPendingBytes: 0,
   }));
-  const observation = summarizeProductResources(clientStages, []);
+  const observation = summarizeProductResources(clientStages, [], {
+    workloadMemorySamples: clientStages,
+    memorySamples: clientStages,
+    missingEndpointTraceIds: [],
+  });
   assert.equal(observation.rssPeakBytes, 200_000);
   assert.equal(observation.rssGrowthBytes, 15);
   assert.equal(observation.heapPeakBytes, 150_000);

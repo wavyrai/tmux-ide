@@ -1885,30 +1885,108 @@ export async function runCausalFixtureTeardownGate(options) {
   );
 }
 
-export function summarizeProductResources(clientStages, deliveries, endpointTraceIds = null) {
-  const workloadMemorySamples = clientStages.flatMap((record, ordinal) =>
-    Number.isFinite(record.rssBytes) && Number.isFinite(record.heapUsedBytes)
-      ? [
-          {
-            traceKey: record.traceId ?? `untraced:${ordinal}`,
-            rssBytes: record.rssBytes,
-            heapUsedBytes: record.heapUsedBytes,
-          },
-        ]
-      : [],
+/** Join changed-cell probes to exact host fences and deferred resource samples.
+ * Resource events do not carry trace IDs; temporal proximity alone is not proof.
+ */
+export function collectProductResourceEvidence(records, endpointTraceIds) {
+  const validMemory = (record) =>
+    Number.isSafeInteger(record.rssBytes) &&
+    record.rssBytes > 0 &&
+    Number.isSafeInteger(record.heapUsedBytes) &&
+    record.heapUsedBytes >= 0;
+  const resources = records.filter(
+    (record) => record?.type === "performance.terminal-resource-sample" && validMemory(record),
   );
-  // A trace emits several causal stage records with the same process-memory
-  // observation. Retained growth is evaluated from the final observation of
-  // each bounded post-workload probe, not from the native allocator's
-  // transient first-render/flood high-water. The full workload peak remains in
-  // the report so a transient regression is still visible rather than hidden.
-  const byTrace = new Map();
-  for (const sample of workloadMemorySamples) byTrace.set(sample.traceKey, sample);
-  const endpointSet = endpointTraceIds ? new Set(endpointTraceIds) : null;
-  const memorySamples = [...byTrace.values()]
-    .filter((sample) => endpointSet === null || endpointSet.has(sample.traceKey))
-    .slice(endpointSet === null ? -16 : 0)
-    .map(({ rssBytes, heapUsedBytes }) => ({ rssBytes, heapUsedBytes }));
+  const paired = inputPaintSamples(records);
+  const paneFields = [
+    "processId",
+    "clockId",
+    "generation",
+    "incarnation",
+    "semanticPaneId",
+    "revision",
+    "stateHash",
+  ];
+  const frameFields = [
+    ...paneFields,
+    "sourceEpoch",
+    "rendererEpoch",
+    "viewportCols",
+    "viewportRows",
+  ];
+  const same = (left, right, fields) =>
+    fields.every(
+      (key) => left[key] !== undefined && left[key] !== null && left[key] === right[key],
+    );
+  const memorySamples = [];
+  const missingEndpointTraceIds = [];
+  const used = new Set();
+  for (const traceId of endpointTraceIds) {
+    const endpoint = paired.find((sample) => sample.traceId === traceId);
+    const paint = records.find(
+      (record) =>
+        record?.type === "performance.stage" &&
+        record.stage === "paint" &&
+        record.traceId === traceId,
+    );
+    const hosts = endpoint
+      ? records.filter(
+          (record) =>
+            record?.type === "performance.terminal-canonical-host-frame" &&
+            record.clockKind === "performance-now" &&
+            same(record, endpoint, paneFields) &&
+            Number.isFinite(record.atMicros) &&
+            record.atMicros >= paint.endedAtMicros,
+        )
+      : [];
+    const host = hosts.length === 1 ? hosts[0] : null;
+    const fences = host
+      ? records.filter(
+          (record) =>
+            record?.type === "performance.terminal-frame-fence" &&
+            record.daemonGeneration === host.generation &&
+            record.identityDrops === 0 &&
+            same(record, host, frameFields),
+        )
+      : [];
+    const samples =
+      host && fences.length === 1
+        ? resources.filter(
+            (record) =>
+              record.operation === "post-fence" &&
+              record.clockKind === "performance-now" &&
+              same(record, host, frameFields) &&
+              record.atMicros >= host.atMicros &&
+              record.resourceEpochArmed === true &&
+              record.resourceSamplingFailureCount === 0 &&
+              record.resourceEpochIdentity?.generation === host.generation &&
+              record.resourceEpochIdentity?.processId === host.processId &&
+              record.resourceEpochIdentity?.sourceEpoch === host.sourceEpoch &&
+              record.lowWaterFirstSampleOrdinal === 1 &&
+              record.lowWaterLastSampleOrdinal === 8 &&
+              record.lowWaterSampleCount === 8 &&
+              Number.isSafeInteger(record.lowWaterWindowMicros) &&
+              record.lowWaterWindowMicros >= 40_000 &&
+              record.lowWaterWindowMicros <= 2_000_000 &&
+              record.inputPending === 0 &&
+              record.inputInFlight === 0 &&
+              record.inputPendingBytes === 0,
+          )
+        : [];
+    if (samples.length === 1 && !used.has(samples[0])) {
+      used.add(samples[0]);
+      memorySamples.push(samples[0]);
+    } else missingEndpointTraceIds.push(traceId);
+  }
+  return Object.freeze({
+    workloadMemorySamples: Object.freeze(resources),
+    memorySamples: Object.freeze(memorySamples),
+    missingEndpointTraceIds: Object.freeze(missingEndpointTraceIds),
+  });
+}
+
+export function summarizeProductResources(clientStages, deliveries, evidence) {
+  const { workloadMemorySamples, memorySamples, missingEndpointTraceIds } = evidence;
   const rss = memorySamples.map(({ rssBytes }) => rssBytes);
   const heap = memorySamples.map(({ heapUsedBytes }) => heapUsedBytes);
   const settledInput = clientStages.findLast(
@@ -1931,6 +2009,7 @@ export function summarizeProductResources(clientStages, deliveries, endpointTrac
     ),
     revisionLagPeak: Math.max(0, ...deliveries.map((record) => record.revisionLagPeak ?? 0)),
     memorySampleCount: memorySamples.length,
+    missingEndpointTraceIds,
     workloadMemorySampleCount: workloadMemorySamples.length,
     rssWorkloadPeakBytes: Math.max(0, ...workloadMemorySamples.map(({ rssBytes }) => rssBytes)),
     heapWorkloadPeakBytes: Math.max(
@@ -1947,7 +2026,9 @@ export function summarizeProductResources(clientStages, deliveries, endpointTrac
     rssRobustSlopeBytesPerSample: rss.length >= 4 ? theilSenSlope(rss) : null,
     heapRobustSlopeBytesPerSample: heap.length >= 4 ? theilSenSlope(heap) : null,
     deliverySamples: deliveries.length,
-    memorySamples: Object.freeze(memorySamples),
+    memorySamples: Object.freeze(
+      memorySamples.map(({ rssBytes, heapUsedBytes }) => ({ rssBytes, heapUsedBytes })),
+    ),
   });
 }
 
