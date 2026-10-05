@@ -69491,11 +69491,22 @@ function createTmuxServerProbe(executable) {
       { env, encoding: "utf8", timeout: 500, maxBuffer: 8192 }
     )).stdout.trimEnd();
     try {
-      const first = await read(args);
+      let pinned = null;
+      if (selector.kind === "path") {
+        try {
+          pinned = captureUnixSocketIdentity(selector.path);
+        } catch {
+        }
+      }
+      const first = await read(pinned ? ["-S", pinned.path] : args);
       const match = /^(.*)\|([1-9][0-9]*)\|([1-9][0-9]*)$/u.exec(first);
       if (!match) return null;
-      const socket = captureUnixSocketIdentity(match[1]);
-      if (await read(["-S", socket.path]) !== first) return null;
+      const reportedSocket = captureUnixSocketIdentity(match[1]);
+      const socket = pinned ?? reportedSocket;
+      if (pinned) {
+        if (reportedSocket.path !== pinned.path || reportedSocket.dev !== pinned.dev || reportedSocket.ino !== pinned.ino)
+          return null;
+      } else if (await read(["-S", socket.path]) !== first) return null;
       revalidateUnixSocketIdentity(socket);
       return {
         nativeServerIdentity: { pid: match[2], startTime: match[3] },
