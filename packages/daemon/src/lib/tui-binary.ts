@@ -28,7 +28,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { acquireTuiDownloadLock } from "./tui-download-lock.ts";
+import { acquirePrivateOperationLock } from "./private-operation-lock.ts";
 import { getCurrentVersion } from "./update-check.ts";
 
 /** The `<os>-<arch>` tags we publish a prebuilt TUI binary for. */
@@ -360,7 +360,7 @@ export async function downloadTuiBinary(
     timeoutMs: opts.timeoutMs ?? TUI_DOWNLOAD_TIMEOUT_MS,
   };
   mkdirSync(dirname(dest), { recursive: true });
-  const releaseLock = await acquireTuiDownloadLock(
+  const releaseLock = await acquirePrivateOperationLock(
     downloadLockPath(dest),
     limits.timeoutMs * 2 + 5_000,
   );

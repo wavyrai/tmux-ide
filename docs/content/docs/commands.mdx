@@ -249,6 +249,13 @@ commands.
 
 ## Identity and log provenance
 
+`tmux-ide daemon service install <absolute-stable-launcher> --json` opts into a
+launchd or systemd user service. Use `daemon service status --json` to inspect it,
+`daemon service restart --json` to load the activated installation in a new
+process, and `daemon service remove --yes --json` before uninstalling the launcher.
+See [supervised daemon upgrades](/docs/app-surfaces#supervised-daemon-upgrades) for
+namespace ownership, failure recovery and session preservation.
+
 `tmux-ide daemon info --json` reports the current daemon instance id, version,
 pid and liveness, how it was launched (manual, launchd, systemd or embedded in a
 host) and where its stdout/stderr actually go. The destination is stamped into

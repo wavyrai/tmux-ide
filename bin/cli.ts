@@ -226,6 +226,8 @@ ${bold("Usage:")}
   ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold .tmux-ide/workspace.yml (auto-detects stack)")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
   ${cyan("tmux-ide daemon reserve-supervisor <id>")} ${dim("Reserve this namespace before installing a supervisor")}
+  ${cyan("tmux-ide daemon service install <absolute-launcher>")} ${dim("Install an opt-in user service using a stable CLI launcher")}
+  ${cyan("tmux-ide daemon service <status|restart|remove>")} ${dim("Manage the owned user service; remove requires --yes")}
   ${cyan("tmux-ide daemon release-supervisor <id> --yes")} ${dim("Release after removing the stopped service")}
   ${cyan("tmux-ide daemon restart")}     ${dim("Reset the daemon runtime; preserve its process and tmux sessions")}
   ${cyan("tmux-ide daemon info")} [--json] ${dim("Daemon identity, supervisor and actual log destination (credential-free)")}
@@ -838,6 +840,26 @@ try {
       break;
 
     case "daemon": {
+      if (positionals[1] === "service") {
+        const action = positionals[2];
+        if (
+          !["install", "status", "restart", "remove"].includes(action ?? "") ||
+          positionals.length !== (action === "install" ? 4 : 3) ||
+          (action === "remove" && values.yes !== true)
+        )
+          throw new IdeError(
+            "Usage: tmux-ide daemon service install <absolute-stable-launcher> | status | restart | remove --yes [--json]",
+            { code: "USAGE", exitCode: 2 },
+          );
+        const { manageDaemonService } =
+          await import("../packages/daemon/src/lib/daemon-service.ts");
+        const result = await manageDaemonService(
+          action as "install" | "status" | "restart" | "remove",
+          positionals[3],
+        );
+        console.log(json ? JSON.stringify(result) : `Daemon service: ${result.status}`);
+        break;
+      }
       if (positionals[1] === "reserve-supervisor" || positionals[1] === "release-supervisor") {
         const release = positionals[1] === "release-supervisor";
         if (positionals.length !== 3 || (release && values.yes !== true))

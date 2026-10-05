@@ -37,6 +37,22 @@ function cli(args: string[]) {
     },
   );
 }
+it("service status is read-only and service mutations require complete arguments", () => {
+  const status = cli(["daemon", "service", "status"]);
+  expect(status.status).toBe(0);
+  expect(JSON.parse(status.stdout)).toEqual({ status: "not-installed" });
+  expect(existsSync(join(root, "service.json"))).toBe(false);
+  expect(existsSync(join(root, "daemon.json"))).toBe(false);
+  for (const args of [
+    ["daemon", "service", "install"],
+    ["daemon", "service", "remove"],
+    ["daemon", "service", "restart", "extra"],
+    ["daemon", "service", "unknown"],
+  ]) {
+    expect(cli(args).status).toBe(2);
+    expect(existsSync(join(root, "daemon.json"))).toBe(false);
+  }
+});
 it("explicit reserve is idempotent and release requires confirmation and exact ID", () => {
   expect(cli(["daemon", "reserve-supervisor", "fixture"]).status).toBe(0);
   const path = join(root, "daemon.json"),

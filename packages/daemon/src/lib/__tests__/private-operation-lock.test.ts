@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acquireTuiDownloadLock } from "../tui-download-lock.ts";
+import { acquirePrivateOperationLock } from "../private-operation-lock.ts";
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();
@@ -36,7 +36,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
-describe("TUI download owner lock", () => {
+describe("private operation owner lock", () => {
   it("recovers a fresh dead legacy lock and serializes concurrent claimers", async () => {
     const { lock, root } = fixture();
     writeFileSync(lock, "1234567\n", { mode: 0o600 });
@@ -48,7 +48,7 @@ describe("TUI download owner lock", () => {
     let peak = 0;
     await Promise.all(
       Array.from({ length: 4 }, async () => {
-        const release = await acquireTuiDownloadLock(lock, 1000);
+        const release = await acquirePrivateOperationLock(lock, 1000);
         active++;
         peak = Math.max(peak, active);
         await new Promise((resolve) => setTimeout(resolve, 10));
@@ -63,7 +63,7 @@ describe("TUI download owner lock", () => {
     const { lock } = fixture();
     writeFileSync(lock, `${process.pid}\n`, { mode: 0o600 });
     utimesSync(lock, new Date(0), new Date(0));
-    await expect(acquireTuiDownloadLock(lock, 15)).rejects.toThrow("timed out");
+    await expect(acquirePrivateOperationLock(lock, 15)).rejects.toThrow("timed out");
     expect(readFileSync(lock, "utf8")).toBe(`${process.pid}\n`);
   });
   it("refuses uncertain liveness without deleting the owner", async () => {
@@ -72,7 +72,7 @@ describe("TUI download owner lock", () => {
     vi.spyOn(process, "kill").mockImplementation(() => {
       throw Object.assign(new Error("unknown"), { code: "EPERM" });
     });
-    await expect(acquireTuiDownloadLock(lock, 15)).rejects.toThrow("timed out");
+    await expect(acquirePrivateOperationLock(lock, 15)).rejects.toThrow("timed out");
     expect(existsSync(lock)).toBe(true);
   });
   it.each(["garbage", "0\n", "999999999999999999\n", "1".repeat(100)])(
@@ -80,7 +80,7 @@ describe("TUI download owner lock", () => {
     async (body) => {
       const { lock } = fixture();
       writeFileSync(lock, body, { mode: 0o600 });
-      await expect(acquireTuiDownloadLock(lock, 15)).rejects.toThrow();
+      await expect(acquirePrivateOperationLock(lock, 15)).rejects.toThrow();
       expect(readFileSync(lock, "utf8")).toBe(body);
     },
   );
@@ -89,18 +89,18 @@ describe("TUI download owner lock", () => {
     const target = join(root, "target");
     writeFileSync(target, "1234567\n", { mode: 0o600 });
     symlinkSync(target, lock);
-    await expect(acquireTuiDownloadLock(lock, 15)).rejects.toThrow("unsafe");
+    await expect(acquirePrivateOperationLock(lock, 15)).rejects.toThrow("unsafe");
     rmSync(lock);
     writeFileSync(lock, "1234567\n", { mode: 0o600 });
     chmodSync(lock, 0o666);
-    await expect(acquireTuiDownloadLock(lock, 15)).rejects.toThrow("unsafe");
+    await expect(acquirePrivateOperationLock(lock, 15)).rejects.toThrow("unsafe");
   });
   it("does not let an obsolete release callback remove a successor", async () => {
     const { lock, root } = fixture();
-    const oldRelease = await acquireTuiDownloadLock(lock, 100);
+    const oldRelease = await acquirePrivateOperationLock(lock, 100);
     // Retain the exact former directory to model an obsolete release callback.
     renameSync(lock, join(root, "retired"));
-    const release = await acquireTuiDownloadLock(lock, 100);
+    const release = await acquirePrivateOperationLock(lock, 100);
     const owner = readdirSync(lock);
     oldRelease();
     expect(readdirSync(lock)).toEqual(owner);
@@ -118,7 +118,7 @@ describe("TUI download owner lock", () => {
       if (pid === 1234567) return missing();
       return true;
     });
-    const release = await acquireTuiDownloadLock(lock, 100);
+    const release = await acquirePrivateOperationLock(lock, 100);
     release();
     expect(existsSync(lock)).toBe(false);
   });
@@ -126,7 +126,7 @@ describe("TUI download owner lock", () => {
     const { lock } = fixture();
     mkdirSync(lock, { mode: 0o700 });
     writeFileSync(join(lock, "unknown"), "evidence");
-    await expect(acquireTuiDownloadLock(lock, 15)).rejects.toThrow("inventory");
+    await expect(acquirePrivateOperationLock(lock, 15)).rejects.toThrow("inventory");
     expect(readFileSync(join(lock, "unknown"), "utf8")).toBe("evidence");
   });
   it("refuses an unsafe empty directory before atomic publication", async () => {
@@ -134,14 +134,14 @@ describe("TUI download owner lock", () => {
     mkdirSync(lock, { mode: 0o700 });
     chmodSync(lock, 0o777);
     const inode = fs.lstatSync(lock).ino;
-    await expect(acquireTuiDownloadLock(lock, 20)).rejects.toThrow("unsafe");
+    await expect(acquirePrivateOperationLock(lock, 20)).rejects.toThrow("unsafe");
     expect(fs.lstatSync(lock).ino).toBe(inode);
   });
   it("refuses hard-linked legacy owner files", async () => {
     const { lock, root } = fixture();
     writeFileSync(lock, "1234567\n", { mode: 0o600 });
     linkSync(lock, join(root, "other"));
-    await expect(acquireTuiDownloadLock(lock, 20)).rejects.toThrow("unsafe");
+    await expect(acquirePrivateOperationLock(lock, 20)).rejects.toThrow("unsafe");
     expect(fs.lstatSync(lock).nlink).toBe(2);
   });
   it("preserves a write error while cleaning only its unpublished staging", async () => {
@@ -150,7 +150,7 @@ describe("TUI download owner lock", () => {
     vi.mocked(fs.writeFileSync).mockImplementationOnce(() => {
       throw failure;
     });
-    await expect(acquireTuiDownloadLock(lock, 20)).rejects.toBe(failure);
+    await expect(acquirePrivateOperationLock(lock, 20)).rejects.toBe(failure);
     expect(readdirSync(root)).toEqual([]);
   });
   it("serializes contenders reclaiming a dead nonce directory", async () => {
@@ -167,7 +167,7 @@ describe("TUI download owner lock", () => {
     let peak = 0;
     await Promise.all(
       Array.from({ length: 4 }, async () => {
-        const release = await acquireTuiDownloadLock(lock, 1000);
+        const release = await acquirePrivateOperationLock(lock, 1000);
         peak = Math.max(peak, ++active);
         await new Promise((resolve) => setTimeout(resolve, 5));
         --active;
@@ -186,7 +186,7 @@ describe("TUI download owner lock", () => {
       mkdirSync(staging, { mode: 0o700 });
       throw failure;
     });
-    await expect(acquireTuiDownloadLock(lock, 20)).rejects.toBe(failure);
+    await expect(acquirePrivateOperationLock(lock, 20)).rejects.toBe(failure);
     expect(readdirSync(root)).toHaveLength(2);
   });
 });

@@ -26,7 +26,7 @@ function trusted(path: string, directory: boolean) {
     (value.mode & 0o777) !== (directory ? 0o700 : 0o600) ||
     (!directory && value.nlink !== 1)
   )
-    throw new Error("unsafe TUI download lock");
+    throw new Error("unsafe private operation lock");
   return value;
 }
 function readOwner(path: string): { pid: number; ino: number; dev: number } {
@@ -35,15 +35,15 @@ function readOwner(path: string): { pid: number; ino: number; dev: number } {
   try {
     const actual = fstatSync(fd);
     if (actual.ino !== before.ino || actual.dev !== before.dev || actual.size > 32) {
-      throw new Error("unsafe TUI download lock");
+      throw new Error("unsafe private operation lock");
     }
     const bytes = Buffer.alloc(33);
     const length = readSync(fd, bytes, 0, bytes.length, 0);
     const text = bytes.subarray(0, length).toString("utf8");
-    if (!/^[1-9][0-9]*\n$/.test(text)) throw new Error("invalid TUI download lock owner");
+    if (!/^[1-9][0-9]*\n$/.test(text)) throw new Error("invalid private operation lock owner");
     const pid = Number(text.trim());
     if (!Number.isSafeInteger(pid) || pid > 2147483647)
-      throw new Error("invalid TUI download lock owner");
+      throw new Error("invalid private operation lock owner");
     return { pid, ino: actual.ino, dev: actual.dev };
   } finally {
     closeSync(fd);
@@ -88,7 +88,7 @@ function cleanStaging(
   try {
     const current = trusted(path, true);
     if (current.ino !== expected.ino || current.dev !== expected.dev)
-      throw new Error("TUI download staging lock changed");
+      throw new Error("private operation staging lock changed");
     try {
       unlinkSync(join(path, name));
     } catch (error) {
@@ -102,7 +102,10 @@ function cleanStaging(
 }
 
 /** Publish a populated private directory atomically; age never proves owner death. */
-export async function acquireTuiDownloadLock(lock: string, waitMs: number): Promise<() => void> {
+export async function acquirePrivateOperationLock(
+  lock: string,
+  waitMs: number,
+): Promise<() => void> {
   const deadline = Date.now() + waitMs;
   const nonce = randomUUID();
   const name = `owner-${nonce}`;
@@ -116,7 +119,7 @@ export async function acquireTuiDownloadLock(lock: string, waitMs: number): Prom
     writeFileSync(join(staging, name), `${process.pid}\n`, { flag: "wx", mode: 0o600 });
     while (true) {
       if (attempted && Date.now() >= deadline)
-        throw new Error("timed out waiting for another TUI download");
+        throw new Error("timed out waiting for another private operation");
       attempted = true;
       try {
         const existing = lstatSync(lock);
@@ -154,7 +157,7 @@ export async function acquireTuiDownloadLock(lock: string, waitMs: number): Prom
           }
           if (names.length !== 1 || !/^owner-[0-9a-f-]{36}$/.test(names[0]!)) {
             // Empty is only a retirement gap; the next atomic rename can claim it.
-            if (names.length !== 0) throw new Error("invalid TUI download lock inventory");
+            if (names.length !== 0) throw new Error("invalid private operation lock inventory");
           } else {
             const owner = readOwner(join(lock, names[0]!));
             if (dead(owner.pid)) {
@@ -164,7 +167,7 @@ export async function acquireTuiDownloadLock(lock: string, waitMs: number): Prom
                 current.dev !== owner.dev ||
                 current.pid !== owner.pid
               ) {
-                throw new Error("TUI download lock changed");
+                throw new Error("private operation lock changed");
               }
               retire(lock, names[0]!, entry);
             }
@@ -182,7 +185,7 @@ export async function acquireTuiDownloadLock(lock: string, waitMs: number): Prom
               current.dev !== owner.dev ||
               current.pid !== owner.pid
             ) {
-              throw new Error("TUI download lock changed");
+              throw new Error("private operation lock changed");
             }
             try {
               unlinkSync(lock);
@@ -194,7 +197,8 @@ export async function acquireTuiDownloadLock(lock: string, waitMs: number): Prom
       } catch (error) {
         if (code(error) !== "ENOENT") throw error;
       }
-      if (Date.now() >= deadline) throw new Error("timed out waiting for another TUI download");
+      if (Date.now() >= deadline)
+        throw new Error("timed out waiting for another private operation");
       await new Promise((resolve) =>
         setTimeout(resolve, Math.min(50, Math.max(0, deadline - Date.now()))),
       );
