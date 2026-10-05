@@ -13,6 +13,61 @@ import {
 } from "./application-machine-sidebar.tsx";
 
 describe("machine sidebar", () => {
+  it("renders agent and session rows from one coherent reactive group snapshot", async () => {
+    const [revision, setRevision] = createSignal(0);
+    let reads = 0;
+    const groups = (): ApplicationMachineGroup[] => {
+      const current = revision();
+      const name = ++reads === 1 ? `current${current}` : "mixed-generation";
+      return [
+        {
+          id: "local",
+          label: "Local",
+          state: "ready",
+          sessions: [{ id: "session", name, paneCount: 1 }],
+          agents: [
+            {
+              id: "agent",
+              name: `${name} agent`,
+              sessionName: name,
+              paneId: "%1",
+              activity: "idle",
+              attention: false,
+              nativeIdentity: null,
+              interactionEndpoint: null,
+            },
+          ],
+        },
+      ];
+    };
+    const setup = await renderForTest(
+      () => (
+        <ApplicationMachineSidebar
+          width={40}
+          height={16}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          model={{
+            groups,
+            activeMachineId: () => "local",
+            activeSessionName: () => null,
+            onOpen: () => {},
+            onSelectMachine: () => {},
+          }}
+        />
+      ),
+      { width: 40, height: 16 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("current0");
+    expect(setup.captureCharFrame()).not.toContain("mixed-generation");
+    reads = 0;
+    setRevision(1);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("current1");
+    expect(setup.captureCharFrame()).not.toContain("current0");
+    expect(setup.captureCharFrame()).not.toContain("mixed-generation");
+  });
+
   it("retains keyed rows across fresh snapshots and reorder while actions use current data", async () => {
     const initial: ApplicationMachineGroup[] = [
       {

@@ -124,6 +124,9 @@ export function ApplicationMachineSidebar(props: {
   readonly agentRows?: number;
   readonly onHelp?: (source: "keyboard" | "mouse") => void;
 }) {
+  // All visible sections share one projection for the current reactive inputs.
+  // Event handlers retain the model's fresh authority checks at action time.
+  const groups = createMemo(() => props.model.groups());
   const [localFocused, setLocalFocused] = createSignal(false);
   const focused = () => props.model.focused?.() ?? localFocused();
   const [localCollapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
@@ -170,7 +173,7 @@ export function ApplicationMachineSidebar(props: {
         : row.session?.name === props.model.activeSessionName());
   const preferenceKey = (group: ApplicationMachineGroup) => group.environmentId ?? group.id;
   const rows = createMemo<readonly Row[]>(() => [
-    ...props.model.groups().flatMap((group) =>
+    ...groups().flatMap((group) =>
       groupApplicationTeamRows(group.agents ?? []).map((agent) => ({
         key: JSON.stringify([
           group.id,
@@ -183,7 +186,7 @@ export function ApplicationMachineSidebar(props: {
         agent,
       })),
     ),
-    ...props.model.groups().flatMap((group) => [
+    ...groups().flatMap((group) => [
       { key: JSON.stringify([group.id]), group },
       ...group.sessions
         .filter(
@@ -303,7 +306,7 @@ export function ApplicationMachineSidebar(props: {
   const rowHeight = (row: Row) =>
     (row.agent ? 2 : row.serverHeading ? 2 : 1) +
     sectionGap(row) +
-    (hasAgents() && row.key === JSON.stringify([props.model.groups()[0]?.id]) ? 1 : 0);
+    (hasAgents() && row.key === JSON.stringify([groups()[0]?.id]) ? 1 : 0);
   const revealFocusedRow = () => {
     if (!focused() || !scroll) return;
     const y = rows()
@@ -528,9 +531,7 @@ export function ApplicationMachineSidebar(props: {
                     }}
                   />
                 </Show>
-                <Show
-                  when={hasAgents() && row.key === JSON.stringify([props.model.groups()[0]?.id])}
-                >
+                <Show when={hasAgents() && row.key === JSON.stringify([groups()[0]?.id])}>
                   <text height={1} fg={props.theme.roles.text.secondary}>
                     {" "}
                     Machines
@@ -646,7 +647,7 @@ export function ApplicationMachineSidebar(props: {
         <KeyHint
           theme={props.theme}
           keys={CHROME_ACTIONS.attention.keys}
-          label={`${CHROME_ACTIONS.attention.label} (${props.model.groups().reduce((sum, group) => sum + (group.state === "ready" ? (group.agents ?? []).filter((agent) => agent.attention && !agent.disabled).length : 0), 0)})`}
+          label={`${CHROME_ACTIONS.attention.label} (${groups().reduce((sum, group) => sum + (group.state === "ready" ? (group.agents ?? []).filter((agent) => agent.attention && !agent.disabled).length : 0), 0)})`}
           width={props.width}
           quiet
           button
