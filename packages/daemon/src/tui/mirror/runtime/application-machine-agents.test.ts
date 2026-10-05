@@ -226,3 +226,38 @@ it("distinguishes connected activity loading from failure and clears the warning
     f.owner.dispose();
   }
 });
+
+it("keeps agent publication stable across unchanged catalog refreshes and equivalent observations", () => {
+  const f = fixture();
+  const observed = vi.fn();
+  const scoped = { ...row, server: { serverId: "tmux-server.fixture", generation: "generation" } };
+  try {
+    f.observers[0]!.emit([scoped]);
+    f.observers[1]!.emit([scoped]);
+    f.owner.subscribe(observed);
+    observed.mockClear();
+    const stable = f.owner.getSnapshot();
+    for (let i = 0; i < 10; i++) {
+      f.emit({
+        ...f.snapshot(),
+        groups: f.snapshot().groups.map((group) => ({ ...group, lastSeenAt: i })),
+      });
+      for (const observer of f.observers) observer.emit([structuredClone(scoped)]);
+    }
+    expect(observed).not.toHaveBeenCalled();
+    expect(f.owner.getSnapshot()).toBe(stable);
+
+    // Nested routing identity is part of equality, not just visible label/activity.
+    f.observers[1]!.emit([{ ...scoped, server: { ...scoped.server, generation: "replacement" } }]);
+    expect(observed).toHaveBeenCalledOnce();
+    expect(f.owner.getSnapshot()[1]!.agents[0]!.server?.generation).toBe("replacement");
+    observed.mockClear();
+    f.epochs.set(remote, 2);
+    f.emit(f.snapshot());
+    expect(observed).toHaveBeenCalled();
+    expect(f.owner.getSnapshot()[1]!.agents[0]!.disabled).toBe(true);
+    expect(f.owner.isCurrentTarget(remote, scoped)).toBe(false);
+  } finally {
+    f.owner.dispose();
+  }
+});
