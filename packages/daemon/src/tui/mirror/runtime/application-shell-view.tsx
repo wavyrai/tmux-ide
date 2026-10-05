@@ -497,52 +497,53 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                     />
                   }
                 >
-                  {(model) => (
-                    <ApplicationMachineSidebar
-                      model={model()}
-                      paneName={(endpoint) =>
-                        nameForCurrentEndpoint(
-                          model()
-                            .groups()
-                            .flatMap((group) => group.agents ?? []),
-                          endpoint,
-                        )
-                      }
-                      interactionForAgent={(agent) =>
-                        interactionForCurrentPane(
-                          props.paneInteractions?.(),
-                          agent.interactionEndpoint,
-                          agent.nativeIdentity,
-                        )
-                      }
-                      onHelp={(source) => {
-                        props.onSetPaletteOpen(true, source);
-                        props.onPaletteReferenceChange?.("help");
-                      }}
-                      agentRows={
-                        model()
-                          .groups()
-                          .some((group) => group.agents !== undefined)
-                          ? 0
-                          : shell.semantic.sidebar.agents.length
-                      }
-                      agents={
-                        <ApplicationSidebarAgents
-                          shell={shell}
-                          theme={appearance.theme}
-                          width={Math.max(1, shell.layout.sidebar.width - 1)}
-                          onIntent={(intent) => {
-                            if (intent.type !== "agent.open") return;
-                            model().onBlur?.();
-                            props.onOpenAgent?.(intent.sessionName, intent.paneId, intent.source);
-                          }}
-                        />
-                      }
-                      width={shell.layout.sidebar.width}
-                      height={shell.layout.sidebar.height}
-                      theme={appearance.theme}
-                    />
-                  )}
+                  {(model) => {
+                    // Sizing, rows and pane labels share this render projection.
+                    // Keep the navigation model and its action-time reads intact.
+                    const groups = createMemo(() => model().groups());
+                    return (
+                      <ApplicationMachineSidebar
+                        model={{ ...model(), groups }}
+                        paneName={(endpoint) =>
+                          nameForCurrentEndpoint(
+                            groups().flatMap((group) => group.agents ?? []),
+                            endpoint,
+                          )
+                        }
+                        interactionForAgent={(agent) =>
+                          interactionForCurrentPane(
+                            props.paneInteractions?.(),
+                            agent.interactionEndpoint,
+                            agent.nativeIdentity,
+                          )
+                        }
+                        onHelp={(source) => {
+                          props.onSetPaletteOpen(true, source);
+                          props.onPaletteReferenceChange?.("help");
+                        }}
+                        agentRows={
+                          groups().some((group) => group.agents !== undefined)
+                            ? 0
+                            : shell.semantic.sidebar.agents.length
+                        }
+                        agents={
+                          <ApplicationSidebarAgents
+                            shell={shell}
+                            theme={appearance.theme}
+                            width={Math.max(1, shell.layout.sidebar.width - 1)}
+                            onIntent={(intent) => {
+                              if (intent.type !== "agent.open") return;
+                              model().onBlur?.();
+                              props.onOpenAgent?.(intent.sessionName, intent.paneId, intent.source);
+                            }}
+                          />
+                        }
+                        width={shell.layout.sidebar.width}
+                        height={shell.layout.sidebar.height}
+                        theme={appearance.theme}
+                      />
+                    );
+                  }}
                 </Show>
               }
             >

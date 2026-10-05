@@ -1641,6 +1641,60 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
+  it("shares grouped sidebar reads across rows and sizing while rendering catalog changes", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const canonical = semantic();
+    let groupReads = 0;
+    const [groupLabel, setGroupLabel] = createSignal("Before replacement");
+    const legacyOpens: string[] = [];
+    const surfaces: string[] = [];
+    const setup = await renderForTest(
+      () => (
+        <ApplicationShellView
+          dimensions={() => ({ width: 120, height: 40 })}
+          surface={() => "terminals"}
+          semantic={() => canonical}
+          generationStatus={() => "live"}
+          sessions={["main", "website"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => null}
+          layout={() => ({ current: null, windows: [] })}
+          focusedPane={() => null}
+          theme={theme}
+          palette={createTerminalPaletteProjection(theme)}
+          onOpenSurface={(name) => surfaces.push(name)}
+          onOpenSession={(name) => legacyOpens.push(name)}
+          onSetPaletteOpen={() => {}}
+          onSelectPane={() => {}}
+          onResizePreview={() => {}}
+          onResizePane={() => {}}
+          machineSidebar={{
+            groups: () => {
+              groupReads++;
+              return [{ id: "remote", label: groupLabel(), state: "ready" as const, sessions: [] }];
+            },
+            activeMachineId: () => "remote",
+            activeSessionName: () => null,
+            onOpen: () => {},
+            onSelectMachine: () => {},
+          }}
+        />
+      ),
+      { width: 120, height: 40 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Before replacement");
+    expect(groupReads).toBe(1);
+    setGroupLabel("After replacement");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("After replacement");
+    expect(setup.captureCharFrame()).not.toContain("Before replacement");
+    expect(groupReads).toBe(2);
+    setup.renderer.destroy();
+  });
+
   it("never opens a stale flat session when grouped sidebar background receives a pointer", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const canonical = semantic();
