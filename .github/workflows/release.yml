@@ -121,6 +121,25 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Qualify installer transactions on this platform
         run: pnpm test:installer
+      - name: Prepare Linux user service manager
+        if: runner.os == 'Linux'
+        run: |
+          # Ephemeral CI runner only. The product never changes login lingering.
+          sudo loginctl enable-linger "$(id -un)"
+          sudo systemctl start "user@$(id -u).service"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+      - name: Qualify installed daemon service and session preservation
+        run: |
+          pnpm build:cli
+          node scripts/qualify-daemon-service.mjs "$RUNNER_TEMP/daemon-service-receipt.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: daemon-service-${{ matrix.platform }}
+          path: ${{ runner.temp }}/daemon-service-receipt.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Qualify native grid and daemon client transport
         run: |
           bundle="$PWD/packages/daemon/dist/native/tmux/$(node -p 'process.platform + "-" + process.arch')"

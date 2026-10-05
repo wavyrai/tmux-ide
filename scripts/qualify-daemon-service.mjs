@@ -1,0 +1,226 @@
+#!/usr/bin/env node
+// Real OS-manager qualification. Requires an existing non-root user manager;
+// never enables login lingering or touches the user's ordinary tmux server.
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+assert(["darwin", "linux"].includes(process.platform), "Unsupported service platform");
+assert(process.getuid() > 0, "Run as a non-root user with an available user manager");
+const repo = resolve(import.meta.dirname, "..");
+const root = mkdtempSync(join(tmpdir(), "tmux-ide-svc-"));
+const home = join(root, "home");
+const state = join(root, "state");
+const socket = join(root, "tmux.sock");
+const installed = join(root, "installed");
+mkdirSync(home);
+mkdirSync(installed);
+const env = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([key]) =>
+      !/^(TMUX_IDE_|BUN_|NODE_)/u.test(key) &&
+      !["TMUX", "XPC_SERVICE_NAME", "INVOCATION_ID", "XDG_CONFIG_HOME"].includes(key),
+  ),
+);
+Object.assign(env, {
+  HOME: home,
+  XDG_CONFIG_HOME: join(home, ".config"),
+  TMUX_IDE_HOME: state,
+  TMUX_IDE_DAEMON_INFO_DIR: state,
+  TMUX_IDE_REGISTRY_DIR: state,
+  TMUX_IDE_SETTINGS_DIR: state,
+  TMUX_IDE_TMUX_SOCKET_PATH: socket,
+  LC_ALL: "C",
+  LANG: "C",
+});
+const hash = (data) => createHash("sha256").update(data).digest("hex");
+const identity = hash(state).slice(0, 24);
+const launchd = process.platform === "darwin";
+const target = launchd
+  ? `gui/${process.getuid()}/com.tmux-ide.${identity}`
+  : `tmux-ide.${identity}.service`;
+const unitPath = launchd
+  ? join(home, "Library", "LaunchAgents", `com.tmux-ide.${identity}.plist`)
+  : join(home, ".config", "systemd", "user", target);
+const receipt = {
+  root,
+  platform: `${process.platform}-${process.arch}`,
+  target,
+  startedAt: new Date().toISOString(),
+  steps: [],
+  cleanup: {},
+};
+const output = resolve(process.argv[2] ?? join(root, "receipt.json"));
+const run = (file, args, options = {}) =>
+  spawnSync(file, args, {
+    cwd: home,
+    env,
+    encoding: "utf8",
+    timeout: 60_000,
+    maxBuffer: 2 * 1024 * 1024,
+    ...options,
+  });
+function checked(file, args, options) {
+  const result = run(file, args, options);
+  // Do not copy subprocess output into errors: manager output can contain secrets.
+  assert.equal(
+    result.status,
+    0,
+    `${file} ${args[0]} failed (${result.status ?? result.error?.code})`,
+  );
+  return result.stdout;
+}
+function managerAbsent() {
+  if (launchd) {
+    const result = run("/bin/launchctl", ["print", target]);
+    return result.status === 113 && result.stderr.includes("Could not find service");
+  }
+  const result = run("systemctl", [
+    "--user",
+    "show",
+    target,
+    "--property=LoadState,ActiveState,MainPID",
+  ]);
+  return (
+    [0, 4].includes(result.status) &&
+    /^LoadState=not-found$/mu.test(result.stdout) &&
+    /^MainPID=0$/mu.test(result.stdout)
+  );
+}
+const cliPath = join(installed, "node_modules", "tmux-ide", "bin", "cli.js");
+const tmux = join(
+  installed,
+  "node_modules",
+  "tmux-ide",
+  "packages",
+  "daemon",
+  "dist",
+  "native",
+  "tmux",
+  receipt.platform,
+  "tmux",
+);
+function cli(...args) {
+  const result = run(process.execPath, [cliPath, "daemon", "service", ...args, "--json"]);
+  const step = { action: args[0], exitCode: result.status, signal: result.signal };
+  receipt.steps.push(step);
+  assert.equal(
+    result.status,
+    0,
+    `Service ${args[0]} failed (${result.status ?? result.error?.code})`,
+  );
+  const value = JSON.parse(result.stdout);
+  // Only publish known non-secret service identity fields.
+  for (const key of ["status", "pid", "instanceId", "reservationMatches"]) {
+    if (value[key] !== undefined) step[key] = value[key];
+  }
+  return value;
+}
+let serviceAttempted = false;
+let tmuxAttempted = false;
+try {
+  receipt.commit = checked("git", ["rev-parse", "HEAD"], { cwd: repo }).trim();
+  receipt.dirty = checked("git", ["status", "--porcelain"], { cwd: repo }).trim() !== "";
+  checked(
+    launchd ? "/bin/launchctl" : "systemctl",
+    launchd ? ["print-disabled", `gui/${process.getuid()}`] : ["--user", "show-environment"],
+  );
+  assert(managerAbsent(), "Fresh private service target must be absent");
+  const packed = JSON.parse(
+    checked("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root], {
+      cwd: repo,
+      timeout: 180_000,
+    }),
+  );
+  const tarball = join(root, packed[0].filename);
+  receipt.packageSha256 = hash(readFileSync(tarball));
+  checked(
+    "npm",
+    ["install", "--prefix", installed, "--ignore-scripts", "--no-audit", "--no-fund", tarball],
+    { timeout: 180_000 },
+  );
+  receipt.cliSha256 = hash(readFileSync(cliPath));
+  receipt.tmuxSha256 = hash(readFileSync(tmux));
+  const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+  const launcher = join(root, "launcher");
+  writeFileSync(launcher, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(cliPath)} "$@"\n`, {
+    mode: 0o700,
+  });
+  tmuxAttempted = true;
+  checked(tmux, ["-S", socket, "new-session", "-d", "-s", "service-fixture"]);
+  const panePid = () =>
+    checked(tmux, [
+      "-S",
+      socket,
+      "display-message",
+      "-p",
+      "-t",
+      "service-fixture",
+      "#{pane_pid}",
+    ]).trim();
+  const before = panePid();
+  assert.match(before, /^[1-9][0-9]*$/u);
+  serviceAttempted = true;
+  const first = cli("install", launcher);
+  assert.equal(first.status, "running");
+  assert.equal(first.target, target);
+  const status = cli("status");
+  assert.equal(status.status, "running");
+  assert.equal(status.pid, first.pid);
+  assert.equal(status.reservationMatches, true);
+  const second = cli("restart");
+  assert.equal(second.status, "running");
+  assert.equal(typeof second.instanceId, "string");
+  assert.notEqual(first.instanceId, second.instanceId);
+  assert.notEqual(first.pid, second.pid);
+  assert.equal(panePid(), before, "Restart must preserve existing pane work");
+  assert.equal(cli("remove", "--yes").status, "removed");
+  assert.equal(panePid(), before, "Service removal must preserve existing pane work");
+  assert.equal(cli("status").status, "not-installed");
+  receipt.panePreserved = true;
+} catch (error) {
+  receipt.failure = error.message;
+} finally {
+  if (serviceAttempted && existsSync(join(state, "service.json"))) {
+    try {
+      cli("remove", "--yes");
+    } catch {
+      receipt.cleanup.publicRemoveFailed = true;
+    }
+  }
+  // Emergency cleanup is restricted to the unique target created by this run.
+  if (serviceAttempted && !managerAbsent()) {
+    run(
+      launchd ? "/bin/launchctl" : "systemctl",
+      launchd ? ["bootout", target] : ["--user", "disable", "--now", target],
+    );
+  }
+  receipt.cleanup.managerAbsent = managerAbsent();
+  receipt.cleanup.serviceRecordAbsent = !existsSync(join(state, "service.json"));
+  receipt.cleanup.reservationAbsent = !existsSync(join(state, "daemon.json"));
+  receipt.cleanup.unitAbsent = !existsSync(unitPath);
+  if (tmuxAttempted) {
+    run(tmux, ["-S", socket, "kill-server"]);
+    const result = run(tmux, ["-S", socket, "list-sessions"]);
+    receipt.cleanup.tmuxStopped =
+      result.status === 1 &&
+      /no server running|error connecting|failed to connect/u.test(result.stderr);
+  }
+  receipt.passed =
+    !receipt.failure &&
+    receipt.panePreserved === true &&
+    receipt.cleanup.managerAbsent &&
+    receipt.cleanup.serviceRecordAbsent &&
+    receipt.cleanup.reservationAbsent &&
+    receipt.cleanup.unitAbsent &&
+    receipt.cleanup.tmuxStopped;
+  receipt.finishedAt = new Date().toISOString();
+  writeFileSync(output, `${JSON.stringify(receipt, null, 2)}\n`);
+  console.log(
+    JSON.stringify({ passed: receipt.passed, receipt: output, failure: receipt.failure }),
+  );
+  if (!receipt.passed) process.exitCode = 1;
+}

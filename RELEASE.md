@@ -59,6 +59,16 @@ For installer or native packaging changes, first run `release.yml` with
 prefix, including an upgrade and failed-download recovery. `pnpm test:installer`
 covers staged activation and failure preservation without touching real daemons.
 
+The native matrix also runs `node scripts/qualify-daemon-service.mjs <receipt.json>`
+against a packed candidate. It requires an available non-root launchd GUI or
+systemd user manager, installs into a temporary HOME, and verifies service
+installation, restart, removal, and preservation of an existing private tmux pane.
+The receipt records commit, dirty state, artifact hashes, and cleanup results;
+missing manager access or unverified cleanup fails qualification. Run
+`pnpm build:cli` and build the current platform's bundled tmux first. This check
+does not yet qualify service updates, cancellation, or recovery after a failed
+installer activation. CI enables lingering only for its disposable Linux runner.
+
 ## Post-release
 
 1. Install from npm in an empty user environment.
