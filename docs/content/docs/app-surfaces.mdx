@@ -112,8 +112,11 @@ rows are recognized; this does not open links merely because a program prints th
 ## Connect to another machine over SSH
 
 Install the same tmux-ide beta build on both machines. The remote machine needs
-Node.js and tmux, and `tmux-ide` must be available on the PATH used by noninteractive
-SSH commands. Configure an SSH alias, key authentication, and host trust first:
+Node.js and tmux. Discovery and explicit remote start respect the noninteractive
+SSH PATH, then check the installer default (`~/.local/bin`), Homebrew
+(`/opt/homebrew/bin` and `/usr/local/bin`), Linuxbrew and `~/.npm-global/bin`.
+Custom installation prefixes must be on the noninteractive SSH PATH; interactive
+shell profiles are not sourced. Configure an SSH alias, key authentication, and host trust first:
 the app uses `BatchMode=yes`, so it cannot prompt for a password or accept an
 unknown host key.
 

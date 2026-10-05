@@ -89954,6 +89954,19 @@ var init_doctor = __esm({
   }
 });
 
+// packages/daemon/src/lib/remote-tmux-command.ts
+function remoteTmuxIdeCommand(operation) {
+  const args = operation === "discover" ? "remote-daemon-info --json" : "update --daemon --json";
+  const script = `export PATH="\${PATH:-/usr/bin:/bin}:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HOME/.npm-global/bin"; exec tmux-ide ${args}`;
+  return `/bin/sh -c ${shellEscape(script)}`;
+}
+var init_remote_tmux_command = __esm({
+  "packages/daemon/src/lib/remote-tmux-command.ts"() {
+    "use strict";
+    init_shell();
+  }
+});
+
 // packages/daemon/src/lib/ssh-daemon-relay.ts
 import {
   Agent,
@@ -90547,9 +90560,7 @@ async function openSshDaemonTransport(options, dependencies = defaults2) {
       "ForkAfterAuthentication=no",
       "--",
       options.alias,
-      "tmux-ide",
-      "remote-daemon-info",
-      "--json"
+      remoteTmuxIdeCommand("discover")
     ]);
     const daemon = await discover(child, signal);
     const port = await cancellable(dependencies.allocatePort(), signal);
@@ -90626,6 +90637,7 @@ var RemoteDaemonHandshakeSchema, RemoteDaemonHandshakeFailureSchema, SshConnecti
 var init_ssh_daemon_transport = __esm({
   "packages/daemon/src/lib/ssh-daemon-transport.ts"() {
     "use strict";
+    init_remote_tmux_command();
     init_ssh_daemon_relay();
     init_src();
     RemoteDaemonHandshakeSchema = z109.object({
@@ -91107,12 +91119,11 @@ async function startInstalledRemoteDaemon(alias, options = {}) {
         "BatchMode=yes",
         "-o",
         "ConnectTimeout=10",
+        "-o",
+        "ForkAfterAuthentication=no",
         "--",
         alias,
-        "tmux-ide",
-        "update",
-        "--daemon",
-        "--json"
+        remoteTmuxIdeCommand("start")
       ],
       { stdio: ["ignore", "pipe", "pipe"] }
     );
@@ -91153,6 +91164,7 @@ var init_remote_daemon_lifecycle = __esm({
   "packages/daemon/src/lib/remote-daemon-lifecycle.ts"() {
     "use strict";
     init_saved_machines();
+    init_remote_tmux_command();
   }
 });
 
@@ -91170,7 +91182,7 @@ async function machines(command3, argument, options) {
     if (!options.write)
       return {
         written: false,
-        command: ["ssh", "--", argument, "tmux-ide", "update", "--daemon", "--json"],
+        command: ["ssh", "--", argument, remoteTmuxIdeCommand("start")],
         note: "Repeat with --write to start the installed daemon. No package installation occurs."
       };
     await (await Promise.resolve().then(() => (init_remote_daemon_lifecycle(), remote_daemon_lifecycle_exports))).startInstalledRemoteDaemon(argument);
@@ -91242,6 +91254,7 @@ var init_machines = __esm({
     init_saved_machines3();
     init_fleet_client_state3();
     init_local_fleet_request();
+    init_remote_tmux_command();
   }
 });
 

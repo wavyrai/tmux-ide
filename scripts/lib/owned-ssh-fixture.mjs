@@ -1,3 +1,4 @@
+import { remoteTmuxIdeCommand } from "../../packages/daemon/src/lib/remote-tmux-command.ts";
 /** Opt-in test infrastructure. Never uses the user's SSH config, agent or default sockets. */
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -693,7 +694,7 @@ export async function createOwnedSshFixture({
     write("home/.zshenv", "export TMUX_IDE_D11_PRIVATE_SHELL=1\n");
     write(
       "dispatch.mjs",
-      `import{spawn}from'node:child_process';if(process.env.TMUX_IDE_D11_PRIVATE_SHELL!=='1'||process.env.SSH_ORIGINAL_COMMAND!=='tmux-ide remote-daemon-info --json'||process.env.HOME!==${JSON.stringify(join(root, "home"))}||process.env.ZDOTDIR!==${JSON.stringify(join(root, "home"))}||process.env.PATH!==${JSON.stringify(join(root, missingPath ? "empty" : "bin"))})process.exit(64);const c=spawn('tmux-ide',['remote-daemon-info','--json'],{stdio:'inherit',env:{HOME:process.env.HOME,ZDOTDIR:process.env.ZDOTDIR,PATH:process.env.PATH}});c.on('error',()=>{process.exitCode=127;});c.on('exit',(code)=>{process.exitCode=code??1;});\n`,
+      `import{spawn}from'node:child_process';if(process.env.TMUX_IDE_D11_PRIVATE_SHELL!=='1'||process.env.SSH_ORIGINAL_COMMAND!==${JSON.stringify(remoteTmuxIdeCommand("discover"))}||process.env.HOME!==${JSON.stringify(join(root, "home"))}||process.env.ZDOTDIR!==${JSON.stringify(join(root, "home"))}||process.env.PATH!==${JSON.stringify(join(root, missingPath ? "empty" : "bin"))})process.exit(64);const c=spawn('tmux-ide',['remote-daemon-info','--json'],{stdio:'inherit',env:{HOME:process.env.HOME,ZDOTDIR:process.env.ZDOTDIR,PATH:process.env.PATH}});c.on('error',()=>{process.exitCode=127;});c.on('exit',(code)=>{process.exitCode=code??1;});\n`,
     );
     stage = "configuration";
     const spec = { root, node, account, port: listenPort, targetPort, jump, missingPath };

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { SavedMachineSchema } from "@tmux-ide/contracts/saved-machines";
+import { remoteTmuxIdeCommand } from "./remote-tmux-command.ts";
 
 /** Only explicit user actions call this; catalog discovery and retries never do. */
 export async function startInstalledRemoteDaemon(
@@ -21,12 +22,11 @@ export async function startInstalledRemoteDaemon(
         "BatchMode=yes",
         "-o",
         "ConnectTimeout=10",
+        "-o",
+        "ForkAfterAuthentication=no",
         "--",
         alias,
-        "tmux-ide",
-        "update",
-        "--daemon",
-        "--json",
+        remoteTmuxIdeCommand("start"),
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );

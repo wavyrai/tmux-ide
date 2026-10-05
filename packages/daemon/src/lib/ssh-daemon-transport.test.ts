@@ -1,3 +1,4 @@
+import { remoteTmuxIdeCommand } from "./remote-tmux-command.ts";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
@@ -100,9 +101,7 @@ describe("owned SSH daemon transport", () => {
       "ForkAfterAuthentication=no",
       "--",
       "work-machine",
-      "tmux-ide",
-      "remote-daemon-info",
-      "--json",
+      remoteTmuxIdeCommand("discover"),
     ]);
     expect(f.argv[1]).toContain("127.0.0.1:43210:127.0.0.1:7331");
     expect(f.argv[1]).toEqual(

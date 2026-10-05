@@ -4,6 +4,7 @@ import { SavedMachineRegistrySchema, SavedMachineSchema } from "@tmux-ide/contra
 import { loadSavedMachines, planSavedMachineMerge } from "./lib/saved-machines.ts";
 import { loadFleetClientState } from "./lib/fleet-client-state.ts";
 import { saveMachineProfiles } from "./lib/local-fleet-request.ts";
+import { remoteTmuxIdeCommand } from "./lib/remote-tmux-command.ts";
 
 export async function machines(
   command: string | undefined,
@@ -16,7 +17,7 @@ export async function machines(
     if (!options.write)
       return {
         written: false,
-        command: ["ssh", "--", argument, "tmux-ide", "update", "--daemon", "--json"],
+        command: ["ssh", "--", argument, remoteTmuxIdeCommand("start")],
         note: "Repeat with --write to start the installed daemon. No package installation occurs.",
       };
     await (await import("./lib/remote-daemon-lifecycle.ts")).startInstalledRemoteDaemon(argument);

@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import type { Readable } from "node:stream";
 import { z } from "zod";
+import { remoteTmuxIdeCommand } from "./remote-tmux-command.ts";
 import { createSshDaemonRelay, type SshDaemonRelay } from "./ssh-daemon-relay.ts";
 import {
   CanonicalDaemonInfoSchema,
@@ -284,9 +285,7 @@ export async function openSshDaemonTransport(
       "ForkAfterAuthentication=no",
       "--",
       options.alias,
-      "tmux-ide",
-      "remote-daemon-info",
-      "--json",
+      remoteTmuxIdeCommand("discover"),
     ]);
     const daemon = await discover(child, signal);
     const port = await cancellable(dependencies.allocatePort(), signal);
