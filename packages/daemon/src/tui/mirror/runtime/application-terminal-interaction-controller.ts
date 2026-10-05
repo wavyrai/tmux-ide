@@ -173,7 +173,7 @@ export function createApplicationTerminalInteractionController(
       // Critical diagnostic retention still cannot own semantic interaction.
     }
   };
-  let pendingWindowSwitch: {
+  type PendingWindowSwitch = {
     readonly traceId: string;
     readonly target: string;
     readonly paneId: string;
@@ -197,7 +197,8 @@ export function createApplicationTerminalInteractionController(
       layoutAtMicros: number | null;
       presentationAtMicros: number | null;
     };
-  } | null = null;
+  };
+  let pendingWindowSwitch: PendingWindowSwitch | null = null;
   let pendingWindowRename: {
     readonly traceId: string;
     readonly target: string;
@@ -633,11 +634,65 @@ export function createApplicationTerminalInteractionController(
     }
   };
 
+  const beginWindowSwitch = (pane: string, target: string): void => {
+    pendingWindowSwitch = null;
+    if (options.diagnosticsEnabled) {
+      try {
+        const active = options.generation();
+        const identity = active?.adapter?.paneCanonicalIdentity(pane);
+        const clientGeneration = active?.client?.getSnapshot().generation;
+        const startedAtMicros = diagnosticNowMicros();
+        if (
+          active?.status === "live" &&
+          active.daemonGeneration &&
+          identity &&
+          Number.isSafeInteger(clientGeneration) &&
+          startedAtMicros !== null
+        ) {
+          pendingWindowSwitch = {
+            traceId: createTraceId(),
+            target,
+            paneId: pane,
+            startedAtMicros,
+            daemonGeneration: active.daemonGeneration,
+            clientGeneration: clientGeneration!,
+            rendererEpoch: active.rendererEpoch,
+            sourceEpoch: identity.sourceEpoch,
+            generation: identity.generation,
+            incarnation: identity.incarnation,
+            revision: identity.revision,
+            stateHash: identity.stateHash,
+            cols: identity.cols,
+            rows: identity.rows,
+            layoutPublished: false,
+            selectionApplied: false,
+            presentationPublished: false,
+            followUpRequested: false,
+            ...(options.detailedWindowSwitchTiming
+              ? {
+                  timing: {
+                    receiptAtMicros: null,
+                    layoutAtMicros: null,
+                    presentationAtMicros: null,
+                  },
+                }
+              : {}),
+          };
+          armDiagnosticWindowFrame({ kind: "window-switch", ...pendingWindowSwitch });
+          diagnose("window-switch-start", { ...pendingWindowSwitch });
+        }
+      } catch {
+        pendingWindowSwitch = null;
+      }
+    }
+  };
+
   let linkSelection: {
     target: WindowLinkTarget;
     paneId: string;
     layout: OpenTuiWorkspaceLayoutSnapshot;
     received: boolean;
+    diagnostic: PendingWindowSwitch | null;
     resolve: (selected: boolean) => void;
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
@@ -646,6 +701,19 @@ export function createApplicationTerminalInteractionController(
     if (!pending) return;
     linkSelection = null;
     clearTimeout(pending.timer);
+    const diagnostic = pending.diagnostic;
+    if (diagnostic && pendingWindowSwitch === diagnostic) {
+      if (selected) {
+        diagnostic.selectionApplied = true;
+        maybeRequestWindowSwitchFrame();
+      } else {
+        diagnoseCritical(`window-switch:${diagnostic.traceId}:failed`, "window-switch-failed", {
+          ...diagnostic,
+          reason: "window-link-selection-not-applied",
+        });
+        pendingWindowSwitch = null;
+      }
+    }
     pending.resolve(selected);
   };
   const reconcileLinkSelection = (snapshot: OpenTuiWorkspaceLayoutSnapshot) => {
@@ -1035,6 +1103,7 @@ export function createApplicationTerminalInteractionController(
       )
         return;
       finishLinkSelection(false);
+      beginWindowSwitch(paneId, target.expectedSemanticWindowId);
       let resolve!: (selected: boolean) => void;
       const settled = new Promise<boolean>((done) => {
         resolve = done;
@@ -1044,6 +1113,7 @@ export function createApplicationTerminalInteractionController(
         paneId,
         layout: snapshot,
         received: false,
+        diagnostic: pendingWindowSwitch,
         resolve,
         timer: setTimeout(() => {
           if (linkSelection === pending) finishLinkSelection(false);
@@ -1072,6 +1142,7 @@ export function createApplicationTerminalInteractionController(
         }
         const wrapper = (await expected.client.dispatch({
           kind: "semantic-intent",
+          ...(pending.diagnostic ? { operationId: pending.diagnostic.traceId } : {}),
           intent: {
             verb: "workspace.window.link.select",
             workspaceName: expected.workspaceName,
@@ -1084,6 +1155,7 @@ export function createApplicationTerminalInteractionController(
           wrapper.kind !== "semantic-intent" ||
           !result.success ||
           result.data.operationId !== wrapper.operationId ||
+          (pending.diagnostic && wrapper.operationId !== pending.diagnostic.traceId) ||
           result.data.daemonInstanceId !== expected.daemonGeneration ||
           result.data.workspaceName !== expected.workspaceName ||
           result.data.target.linkId !== target.linkId ||
@@ -1093,6 +1165,18 @@ export function createApplicationTerminalInteractionController(
         ) {
           finishLinkSelection(false);
           return;
+        }
+        if (pending.diagnostic) {
+          const receiptAtMicros = diagnosticNowMicros();
+          if (pending.diagnostic.timing)
+            pending.diagnostic.timing.receiptAtMicros = receiptAtMicros;
+          diagnose("window-switch-receipt", {
+            ...pending.diagnostic,
+            operationId: wrapper.operationId,
+            selected: true,
+            applied: true,
+            ...(options.detailedWindowSwitchTiming ? { phaseAtMicros: receiptAtMicros } : {}),
+          });
         }
         pending.received = true;
         reconcileLinkSelection(pending.layout);
@@ -1335,55 +1419,7 @@ export function createApplicationTerminalInteractionController(
       const pane = next ? paneForWindow(next) : null;
       const target = next?.semanticWindowId ?? next?.windowName;
       if (!pane || !target) return;
-      if (options.diagnosticsEnabled) {
-        try {
-          const active = options.generation();
-          const identity = active?.adapter?.paneCanonicalIdentity(pane);
-          const clientGeneration = active?.client?.getSnapshot().generation;
-          const startedAtMicros = diagnosticNowMicros();
-          if (
-            active?.status === "live" &&
-            active.daemonGeneration &&
-            identity &&
-            Number.isSafeInteger(clientGeneration) &&
-            startedAtMicros !== null
-          ) {
-            pendingWindowSwitch = {
-              traceId: createTraceId(),
-              target,
-              paneId: pane,
-              startedAtMicros,
-              daemonGeneration: active.daemonGeneration,
-              clientGeneration: clientGeneration!,
-              rendererEpoch: active.rendererEpoch,
-              sourceEpoch: identity.sourceEpoch,
-              generation: identity.generation,
-              incarnation: identity.incarnation,
-              revision: identity.revision,
-              stateHash: identity.stateHash,
-              cols: identity.cols,
-              rows: identity.rows,
-              layoutPublished: false,
-              selectionApplied: false,
-              presentationPublished: false,
-              followUpRequested: false,
-              ...(options.detailedWindowSwitchTiming
-                ? {
-                    timing: {
-                      receiptAtMicros: null,
-                      layoutAtMicros: null,
-                      presentationAtMicros: null,
-                    },
-                  }
-                : {}),
-            };
-            armDiagnosticWindowFrame({ kind: "window-switch", ...pendingWindowSwitch });
-            diagnose("window-switch-start", { ...pendingWindowSwitch });
-          }
-        } catch {
-          pendingWindowSwitch = null;
-        }
-      }
+      beginWindowSwitch(pane, target);
       paneInput.selectPane(pane, { presentOptimistically: false });
     },
     async zoomPane(targetPane) {
@@ -1583,6 +1619,7 @@ export function createApplicationTerminalInteractionController(
           ? {}
           : { phaseAtMicros: pending.timing.presentationAtMicros }),
       });
+      maybeRequestWindowSwitchFrame();
     },
     observeDiagnosticWindowFrame() {
       if (!options.diagnosticsEnabled) return null;

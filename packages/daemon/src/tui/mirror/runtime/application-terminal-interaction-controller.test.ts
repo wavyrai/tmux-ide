@@ -763,146 +763,178 @@ describe("application terminal interaction controller", () => {
     }
   });
 
-  it("owns the window-switch trace from selection through the matching layout frame", async () => {
-    let snapshot = layout(0);
-    let micros = 100;
-    let presentedFocusedPane: string | null = "pane.main";
-    let rendererFocused = true;
-    let shellPresentation: readonly (string | number | boolean | null)[] = ["project", "one"];
-    const diagnostics: Array<{ phase: string; details?: Readonly<Record<string, unknown>> }> = [];
-    const focused = vi.fn((paneId: string | null) => (presentedFocusedPane = paneId));
-    const dispatch = vi.fn(async () => ({
-      kind: "semantic-intent",
-      operationId: "switch-trace",
-      result: {
-        verb: "workspace.pane.select",
-        semanticPaneId: "pane.logs",
-        workspaceName: "workspace.alpha",
-        daemonInstanceId: "generation-a",
-        operationId: "switch-trace",
-        outcome: "applied",
-      },
-    }));
-    const requestRender = vi.fn();
-    const generation = {
-      status: "live",
-      daemonGeneration: "generation-a",
-      rendererEpoch: 7,
-      connection: { workspaceName: "workspace.alpha" },
-      client: {
-        ownsRuntimeAuthority: () => true,
-        requestAuthority: async () => ({}),
-        dispatch,
-        getSnapshot: () => ({ generation: 4 }),
-      },
-      adapter: {
-        paneCanonicalIdentity: () => ({
-          sourceEpoch: 2,
-          generation: "generation-a",
+  it.each([false, true])(
+    "owns the window-switch trace through the matching frame (links=%s)",
+    async (links) => {
+      const ids = ["a", "b"].map((letter) => `window-link.${letter.repeat(32)}`);
+      const snapshotAt = (index: number): OpenTuiWorkspaceLayoutSnapshot => ({
+        ...layout(index),
+        ...(links
+          ? {
+              windowLinks: {
+                liveSessionId: `live-session.${"a".repeat(20)}`,
+                linkRevision: 1,
+                activeLinkId: ids[index]!,
+                links: layout().windows.map((window, n) => ({
+                  linkId: ids[n]!,
+                  displayIndex: n,
+                  semanticWindowId: window.semanticWindowId,
+                })),
+              },
+            }
+          : {}),
+      });
+      let snapshot = snapshotAt(0);
+      let micros = 100;
+      let presentedFocusedPane: string | null = "pane.main";
+      let rendererFocused = true;
+      let shellPresentation: readonly (string | number | boolean | null)[] = ["project", "one"];
+      const diagnostics: Array<{ phase: string; details?: Readonly<Record<string, unknown>> }> = [];
+      const focused = vi.fn((paneId: string | null) => (presentedFocusedPane = paneId));
+      const dispatch = vi.fn(async () => ({
+        kind: "semantic-intent",
+        operationId: "22222222-2222-4222-8222-222222222222",
+        result: {
+          ...(links
+            ? {
+                verb: "workspace.window.link.select",
+                target: {
+                  liveSessionId: `live-session.${"a".repeat(20)}`,
+                  linkRevision: 1,
+                  linkId: ids[1]!,
+                  expectedSemanticWindowId: "window.logs",
+                },
+              }
+            : { verb: "workspace.pane.select", semanticPaneId: "pane.logs" }),
+          workspaceName: "workspace.alpha",
+          daemonInstanceId: "11111111-1111-4111-8111-111111111111",
+          operationId: "22222222-2222-4222-8222-222222222222",
+          outcome: "applied",
+        },
+      }));
+      const requestRender = vi.fn();
+      const generation = {
+        status: "live",
+        daemonGeneration: "11111111-1111-4111-8111-111111111111",
+        rendererEpoch: 7,
+        connection: { workspaceName: "workspace.alpha" },
+        client: {
+          ownsRuntimeAuthority: () => true,
+          requestAuthority: async () => ({}),
+          dispatch,
+          getSnapshot: () => ({ generation: 4 }),
+        },
+        adapter: {
+          paneCanonicalIdentity: () => ({
+            sourceEpoch: 2,
+            generation: "11111111-1111-4111-8111-111111111111",
+            incarnation: "incarnation-a",
+            revision: 9,
+            stateHash: "0123456789abcdef",
+            cols: 20,
+            rows: 8,
+          }),
+        },
+      };
+      const controller = createApplicationTerminalInteractionController({
+        generation: () => generation as never,
+        layout: () => snapshot,
+        focusedPane: () => presentedFocusedPane,
+        rendererFocused: () => rendererFocused,
+        shellPresentation: () => shellPresentation,
+        setFocusedPane: focused,
+        diagnosticsEnabled: true,
+        detailedWindowSwitchTiming: true,
+        diagnose: (phase, details) => diagnostics.push({ phase, details }),
+        createTraceId: () => "22222222-2222-4222-8222-222222222222",
+        nowMicros: () => micros,
+        requestRender,
+      });
+
+      expect(controller.observeDiagnosticWindowFrame()).toBeNull();
+      controller.cycleWindow();
+      expect(focused).not.toHaveBeenCalled();
+      expect(diagnostics[0]).toMatchObject({
+        phase: "window-switch-start",
+        details: {
+          traceId: "22222222-2222-4222-8222-222222222222",
+          target: "window.logs",
+          paneId: "pane.logs",
+          daemonGeneration: "11111111-1111-4111-8111-111111111111",
+          clientGeneration: 4,
+          rendererEpoch: 7,
+          generation: "11111111-1111-4111-8111-111111111111",
           incarnation: "incarnation-a",
           revision: 9,
           stateHash: "0123456789abcdef",
           cols: 20,
           rows: 8,
+        },
+      });
+      await Promise.resolve();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: "22222222-2222-4222-8222-222222222222" }),
+      );
+      controller.settleWindowSwitchFrame();
+      expect(diagnostics.some(({ phase }) => phase === "window-switch-settled")).toBe(false);
+
+      snapshot = snapshotAt(1);
+      controller.adoptLayout(snapshot);
+      expect(diagnostics).toContainEqual({
+        phase: "window-switch-layout",
+        details: expect.objectContaining({ phaseAtMicros: 100 }),
+      });
+      expect(focused).toHaveBeenCalledWith("pane.logs");
+      micros = 175;
+      controller.settleWindowSwitchFrame();
+      expect(diagnostics.some(({ phase }) => phase === "window-switch-settled")).toBe(false);
+      controller.observeWindowPresentation("window.logs", "pane.logs");
+      expect(diagnostics).toContainEqual({
+        phase: "window-switch-presentation",
+        details: expect.objectContaining({ phaseAtMicros: 175 }),
+      });
+      await Promise.resolve();
+      expect(requestRender).toHaveBeenCalledOnce();
+      const settlingFrame = controller.observeDiagnosticWindowFrame();
+      expect(settlingFrame).toMatchObject({
+        kind: "window-switch",
+        traceId: "22222222-2222-4222-8222-222222222222",
+        targetVisible: true,
+        presentationChanged: true,
+        settledTargetFrame: true,
+      });
+      expect(settlingFrame).not.toHaveProperty("target");
+      expect(settlingFrame).not.toHaveProperty("paneId");
+      controller.settleWindowSwitchFrame();
+      expect(diagnostics).toContainEqual({
+        phase: "window-switch-settled",
+        details: expect.objectContaining({
+          traceId: "22222222-2222-4222-8222-222222222222",
+          target: "window.logs",
+          durationMicros: 75,
+          phaseAtMicros: 175,
         }),
-      },
-    };
-    const controller = createApplicationTerminalInteractionController({
-      generation: () => generation as never,
-      layout: () => snapshot,
-      focusedPane: () => presentedFocusedPane,
-      rendererFocused: () => rendererFocused,
-      shellPresentation: () => shellPresentation,
-      setFocusedPane: focused,
-      diagnosticsEnabled: true,
-      detailedWindowSwitchTiming: true,
-      diagnose: (phase, details) => diagnostics.push({ phase, details }),
-      createTraceId: () => "switch-trace",
-      nowMicros: () => micros,
-      requestRender,
-    });
-
-    expect(controller.observeDiagnosticWindowFrame()).toBeNull();
-    controller.cycleWindow();
-    expect(focused).not.toHaveBeenCalled();
-    expect(diagnostics[0]).toMatchObject({
-      phase: "window-switch-start",
-      details: {
-        traceId: "switch-trace",
-        target: "window.logs",
-        paneId: "pane.logs",
-        daemonGeneration: "generation-a",
-        clientGeneration: 4,
-        rendererEpoch: 7,
-        generation: "generation-a",
-        incarnation: "incarnation-a",
-        revision: 9,
-        stateHash: "0123456789abcdef",
-        cols: 20,
-        rows: 8,
-      },
-    });
-    await Promise.resolve();
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ operationId: "switch-trace" }));
-    controller.settleWindowSwitchFrame();
-    expect(diagnostics.some(({ phase }) => phase === "window-switch-settled")).toBe(false);
-
-    snapshot = layout(1);
-    controller.adoptLayout(snapshot);
-    expect(diagnostics).toContainEqual({
-      phase: "window-switch-layout",
-      details: expect.objectContaining({ phaseAtMicros: 100 }),
-    });
-    expect(focused).toHaveBeenCalledWith("pane.logs");
-    micros = 175;
-    controller.settleWindowSwitchFrame();
-    expect(diagnostics.some(({ phase }) => phase === "window-switch-settled")).toBe(false);
-    controller.observeWindowPresentation("window.logs", "pane.logs");
-    expect(diagnostics).toContainEqual({
-      phase: "window-switch-presentation",
-      details: expect.objectContaining({ phaseAtMicros: 175 }),
-    });
-    await Promise.resolve();
-    expect(requestRender).toHaveBeenCalledOnce();
-    const settlingFrame = controller.observeDiagnosticWindowFrame();
-    expect(settlingFrame).toMatchObject({
-      kind: "window-switch",
-      traceId: "switch-trace",
-      targetVisible: true,
-      presentationChanged: true,
-      settledTargetFrame: true,
-    });
-    expect(settlingFrame).not.toHaveProperty("target");
-    expect(settlingFrame).not.toHaveProperty("paneId");
-    controller.settleWindowSwitchFrame();
-    expect(diagnostics).toContainEqual({
-      phase: "window-switch-settled",
-      details: expect.objectContaining({
-        traceId: "switch-trace",
-        target: "window.logs",
-        durationMicros: 75,
-        phaseAtMicros: 175,
-      }),
-    });
-    expect(controller.observeDiagnosticWindowFrame()).toMatchObject({
-      traceId: "switch-trace",
-      presentationDigest: settlingFrame?.presentationDigest,
-      presentationChanged: false,
-      settledTargetFrame: false,
-    });
-    shellPresentation = ["project", "two"];
-    const shellFrame = controller.observeDiagnosticWindowFrame();
-    expect(shellFrame).toMatchObject({ presentationChanged: true, settledTargetFrame: false });
-    expect(shellFrame?.presentationDigest).not.toBe(settlingFrame?.presentationDigest);
-    rendererFocused = false;
-    const blurredFrame = controller.observeDiagnosticWindowFrame();
-    expect(blurredFrame).toMatchObject({ presentationChanged: true, settledTargetFrame: false });
-    expect(blurredFrame?.presentationDigest).not.toBe(shellFrame?.presentationDigest);
-    expect(JSON.stringify(blurredFrame)).not.toContain("pane.logs");
-    micros = 1_000_176;
-    expect(controller.observeDiagnosticWindowFrame()).toBeNull();
-    await Promise.resolve();
-  });
+      });
+      expect(controller.observeDiagnosticWindowFrame()).toMatchObject({
+        traceId: "22222222-2222-4222-8222-222222222222",
+        presentationDigest: settlingFrame?.presentationDigest,
+        presentationChanged: false,
+        settledTargetFrame: false,
+      });
+      shellPresentation = ["project", "two"];
+      const shellFrame = controller.observeDiagnosticWindowFrame();
+      expect(shellFrame).toMatchObject({ presentationChanged: true, settledTargetFrame: false });
+      expect(shellFrame?.presentationDigest).not.toBe(settlingFrame?.presentationDigest);
+      rendererFocused = false;
+      const blurredFrame = controller.observeDiagnosticWindowFrame();
+      expect(blurredFrame).toMatchObject({ presentationChanged: true, settledTargetFrame: false });
+      expect(blurredFrame?.presentationDigest).not.toBe(shellFrame?.presentationDigest);
+      expect(JSON.stringify(blurredFrame)).not.toContain("pane.logs");
+      micros = 1_000_176;
+      expect(controller.observeDiagnosticWindowFrame()).toBeNull();
+      await Promise.resolve();
+    },
+  );
 
   it("requests one post-prerequisite frame when the applied receipt arrives last", async () => {
     let snapshot = layout(0);
@@ -1345,7 +1377,7 @@ describe("application terminal interaction controller", () => {
     snapshot = layout(1);
     controller.adoptLayout(snapshot);
     controller.observeWindowPresentation("window.logs", "pane.logs");
-    expect(requestRender).not.toHaveBeenCalled();
+    expect(requestRender).toHaveBeenCalledOnce();
     cols = 21;
     expect(controller.observeDiagnosticWindowFrame()).toMatchObject({
       identityExact: false,
