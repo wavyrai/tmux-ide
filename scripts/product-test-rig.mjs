@@ -17928,6 +17928,7 @@ async function owner() {
             traceId: settled.traceId,
             operationId: settled.traceId,
             selectionApplied: settled.selectionApplied,
+            selectionKind: settled.selectionKind,
             canonicalIdentity: Object.freeze({
               sourceEpoch: settled.sourceEpoch,
               generation: settled.generation,
@@ -18042,7 +18043,9 @@ async function owner() {
             primed?.visibleFrame?.semanticPaneId !== created.selected.semanticPaneId ||
             primed?.workspaceClient?.committed?.lastReceipt?.operationId !== primed?.traceId ||
             primed?.workspaceClient?.committed?.lastReceipt?.operationKind !==
-              "workspace.pane.select" ||
+              (primed.selectionKind === "window-link"
+                ? "workspace.window.link.select"
+                : "workspace.pane.select") ||
             primed?.workspaceClient?.committed?.lastReceipt?.phase !== "observed" ||
             primed?.workspaceClient?.committed?.lastReceipt?.proof?.outcome !== "applied" ||
             !Number.isSafeInteger(primed?.workspaceClient?.record?.monotonicMicros) ||
