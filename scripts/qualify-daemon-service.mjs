@@ -141,11 +141,48 @@ function cli(...args) {
         "--user",
         "show",
         target,
-        "--property=LoadState,ActiveState,MainPID,FragmentPath,Result",
+        "--property=LoadState,ActiveState,MainPID,FragmentPath,Result,ExecMainCode,ExecMainStatus,NRestarts",
       ]);
       step.managerState = inspected.stdout
         .split("\n")
-        .filter((line) => /^(LoadState|ActiveState|MainPID|FragmentPath|Result)=/u.test(line));
+        .filter((line) =>
+          /^(LoadState|ActiveState|MainPID|FragmentPath|Result|ExecMainCode|ExecMainStatus|NRestarts)=/u.test(
+            line,
+          ),
+        );
+      const journal = run("journalctl", [
+        "--user",
+        "--unit",
+        target,
+        "--lines=60",
+        "--no-pager",
+        "--output=cat",
+      ]);
+      // Extract fixed manager classifications, never arbitrary application logs.
+      step.managerFailureFacts = {
+        startLimitHit: /Start request repeated too quickly/u.test(journal.stdout),
+        startJobCancelled: /[Jj]ob .* canceled/u.test(journal.stdout),
+        exits: [
+          ...journal.stdout.matchAll(
+            /Main process exited, code=([a-z]+), status=([0-9]+)(?:\/([A-Z0-9_-]+))?/gu,
+          ),
+        ].map((match) => ({ code: match[1], status: Number(match[2]), label: match[3] ?? null })),
+      };
+    }
+    const serviceErrorLog = join(state, "service.stderr.log");
+    if (existsSync(serviceErrorLog)) {
+      const stderr = readFileSync(serviceErrorLog, "utf8");
+      step.serviceErrorLogSha256 = hash(stderr);
+      step.serviceErrorCodes = [
+        ...new Set(
+          [...stderr.matchAll(/\bcode: ['"]([A-Z][A-Z0-9_]{1,80})['"]/gu)].map((match) => match[1]),
+        ),
+      ];
+      step.serviceErrorClasses = [
+        ...new Set(
+          [...stderr.matchAll(/^([A-Za-z][A-Za-z0-9]*Error):/gmu)].map((match) => match[1]),
+        ),
+      ];
     }
   }
   assert.equal(
