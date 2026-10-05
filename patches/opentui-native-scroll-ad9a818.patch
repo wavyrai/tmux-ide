@@ -1270,3 +1270,38 @@ index 36a9aca..df8b22b 100644
 +    try testing.expect(std.mem.indexOf(u8, nested_writer.getWritten(), "?69$p") == null);
 +    try testing.expect(!nested.declrmm_query_sent);
 +}
+diff --git a/packages/core/src/zig/tests/wrap-cache-perf_test.zig b/packages/core/src/zig/tests/wrap-cache-perf_test.zig
+--- a/packages/core/src/zig/tests/wrap-cache-perf_test.zig
++++ b/packages/core/src/zig/tests/wrap-cache-perf_test.zig
+@@ -32,6 +32,7 @@
+     // Run multiple iterations and use median to reduce noise from CI variability
+     const iterations = 5;
+     var median_times: [widths.len]u64 = undefined;
++    var sample_times: [widths.len][iterations]u64 = undefined;
+ 
+     for (widths, 0..) |width, width_idx| {
+         var iter_times: [iterations]u64 = undefined;
+@@ -47,6 +48,7 @@
+             iter_times[iter] = timer.read();
+         }
+ 
++        sample_times[width_idx] = iter_times;
+         // Sort and take median
+         std.mem.sort(u64, &iter_times, {}, std.sort.asc(u64));
+         median_times[width_idx] = iter_times[iterations / 2];
+@@ -60,6 +62,15 @@
+     }
+ 
+     const ratio = @as(f64, @floatFromInt(max_time)) / @as(f64, @floatFromInt(min_time));
++
++    if (!(ratio < 5.0)) {
++        for (widths, 0..) |width, idx| {
++            std.debug.print("WRAP_COMPLEXITY width={d} samples_ns={any} median_ns={d}\n", .{
++                width, sample_times[idx], median_times[idx],
++            });
++        }
++        std.debug.print("WRAP_COMPLEXITY ratio={d} threshold=5\n", .{ratio});
++    }
+ 
+     // All times should be roughly similar since text size is constant.
+     // Use a generous threshold (5x) to account for CI runner variability.

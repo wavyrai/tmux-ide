@@ -47,7 +47,9 @@ alongside the native ABI checks below; do not update only a version string.
 [Release pins](../scripts/lib/native-scroll-release-manifest.mjs) specify source
 `ad9a818d7a9d73f3386e92a445d0feb4b395c69e`, Core 0.5.1 and Zig 0.15.2.
 [The native scroll patch](./opentui-native-scroll-ad9a818.patch) adds guarded
-scroll-region support and its native tests. The
+scroll-region support and its native tests. Failed upstream word-wrap complexity
+checks also retain their five raw samples per width, medians and ratio; the
+workload and 5× threshold are unchanged. The
 [builder](../scripts/native/build-opentui-scroll.mjs) accepts an explicit clean
 checkout and Zig executable, supports `--preflight`, applies the patch in an
 output checkout, runs the native test suite, and emits build provenance and a
