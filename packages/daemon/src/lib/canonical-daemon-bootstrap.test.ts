@@ -138,6 +138,78 @@ describe("canonical daemon bootstrap adapter", () => {
     expect(result).toMatchObject({ source: "started", candidate: current });
   });
 
+  it.each(["systemd", "launchd"] as const)(
+    "preserves an unregistered %s owner during an upgrade",
+    async (supervisor) => {
+      const older: CanonicalDaemonInfo = {
+        ...info,
+        productVersion: "2.7.0",
+        provenance: {
+          launcher: "headless",
+          supervisor,
+          parentPid: 1,
+          stdout: { kind: "unknown" },
+          stderr: { kind: "unknown" },
+        },
+      };
+      const shutdownOlderOwner = vi.fn(async () => undefined);
+      const spawnOwner = vi.fn(async () => undefined);
+      await expect(
+        ensureCanonicalDaemon(
+          { entryPath: "/tmp/cli.js", expectedProductVersion: info.productVersion, timeoutMs: 20 },
+          {
+            inspect: () => ({
+              status: "valid",
+              info: older,
+              observation: { path: "/tmp/daemon.json" },
+            }),
+            alive: async () => true,
+            identity: async () => ({ ok: true, ...older }),
+            health: async () => ({
+              ok: true,
+              protocolVersion: older.protocolVersion,
+              productVersion: older.productVersion,
+              uptime: 1,
+            }),
+            shutdownOlderOwner,
+            spawnOwner,
+            now: (() => {
+              let now = 0;
+              return () => now++;
+            })(),
+            sleep: async () => undefined,
+          },
+        ),
+      ).rejects.toThrow(/supervisor reservation/);
+      expect(shutdownOlderOwner).not.toHaveBeenCalled();
+      expect(spawnOwner).not.toHaveBeenCalled();
+      await expect(
+        ensureCanonicalDaemon(
+          { entryPath: "/tmp/cli.js", expectedProductVersion: older.productVersion, timeoutMs: 20 },
+          {
+            inspect: () => ({
+              status: "valid",
+              info: older,
+              observation: { path: "/tmp/daemon.json" },
+            }),
+            alive: async () => true,
+            identity: async () => ({ ok: true, ...older }),
+            health: async () => ({
+              ok: true,
+              protocolVersion: older.protocolVersion,
+              productVersion: older.productVersion,
+              uptime: 1,
+            }),
+            shutdownOlderOwner,
+            spawnOwner,
+          },
+        ),
+      ).resolves.toMatchObject({ source: "existing", candidate: older });
+      expect(shutdownOlderOwner).not.toHaveBeenCalled();
+      expect(spawnOwner).not.toHaveBeenCalled();
+    },
+  );
+
   it("never lets an older client retire a newer protocol owner", async () => {
     const newer = { ...info, protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION + 1 };
     const shutdownOlderOwner = vi.fn(async () => undefined);

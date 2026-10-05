@@ -20,9 +20,11 @@ const root = fileURLToPath(new URL("../../../../../", import.meta.url));
 const available = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 const packageVersion: string = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 
-it.skipIf(!available)(
-  "upgrades a running daemon once under concurrent installed CLI updates without replacing tmux panes",
-  async () => {
+it
+  .skipIf(!available)
+  .each(["manual", "systemd", ...(process.platform === "darwin" ? ["launchd"] : [])])(
+  "handles concurrent installed CLI updates for %s provenance without replacing tmux panes",
+  async (supervisor) => {
     const directory = mkdtempSync(join(tmpdir(), "tmux-ide-upgrade-"));
     const socket = `tmux-ide-upgrade-${process.pid}-${randomUUID().slice(0, 8)}`;
     const state = join(directory, "state");
@@ -45,6 +47,14 @@ it.skipIf(!available)(
       NO_COLOR: "1",
     };
     delete env.TMUX_IDE_TMUX_SOCKET_PATH;
+    // Exercise real record stamping and public upgrade commands. These markers
+    // model service provenance; this fixture does not run an OS service manager.
+    delete env.INVOCATION_ID;
+    delete env.JOURNAL_STREAM;
+    delete env.SYSTEMD_EXEC_PID;
+    delete env.XPC_SERVICE_NAME;
+    if (supervisor === "systemd") env.INVOCATION_ID = randomUUID();
+    if (supervisor === "launchd") env.XPC_SERVICE_NAME = "org.tmux-ide.fixture";
     const infoPath = join(state, "daemon.json");
     const info = (): CanonicalDaemonInfo | null => {
       try {
@@ -191,6 +201,22 @@ it.skipIf(!available)(
         Promise.all(commands.map((child) => exits.get(child)!)),
         "concurrent updates",
       );
+      expect(prior.provenance?.supervisor).toBe(supervisor);
+      if (supervisor !== "manual") {
+        for (const result of results) {
+          expect(result.code).not.toBe(0);
+          expect(result.stdout + result.stderr).toContain("supervisor reservation");
+        }
+        expect(info()?.instanceId).toBe(prior.instanceId);
+        expect(old.exitCode).toBeNull();
+        const identity = await (await fetch(`http://127.0.0.1:${prior.port}/identity`)).json();
+        expect(identity).toMatchObject({ instanceId: prior.instanceId });
+        expect(tmux("display-message", "-p", "-t", "keep", "#{pid}|#{pane_id}|#{pane_pid}")).toBe(
+          pane,
+        );
+        expect(tmux("capture-pane", "-p", "-S", "-", "-t", "keep")).toBe(history);
+        return;
+      }
       for (const result of results) {
         expect(result.code, result.stderr).toBe(0);
         expect(JSON.parse(result.stdout)).toMatchObject({

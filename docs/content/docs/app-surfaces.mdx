@@ -244,7 +244,10 @@ tmux-ide daemon release-supervisor my-service --yes --json
 Release refuses live or uncertain owners. It does not verify that the operating-system service was removed; that is an operator precondition. Existing unmarked services require a
 one-time migration: stop and remove/disable the old service, reserve the stopped
 namespace, then configure and start the supervised command. There is no implicit
-migration or supervisor detection from process ancestry. Plain `--headless`
+migration or supervisor detection from process ancestry. When an older daemon’s
+startup record identifies systemd or launchd but has no reservation, an upgrade
+refuses to stop it and prints migration guidance. Older records without that
+provenance cannot provide this protection. Plain `--headless`
 remains a foreground process and does not provide this automatic-upgrade contract.
 Retained PID reuse after a cold boot remains conservatively refused pending
 separate qualification. For systemd, also choose a process-group policy that
