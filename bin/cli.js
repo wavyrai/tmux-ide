@@ -37702,7 +37702,7 @@ async function hashCanonicalTerminalValueCooperatively(value, yieldControl, work
       continue;
     }
     const record = entry;
-    const keys = Object.keys(record).sort();
+    const keys = hash.keys(record);
     if (checkpoint(hash.ascii(`o${keys.length}:`) + keys.length)) await yieldControl();
     stack.push({ kind: "ascii", value: ";" });
     for (let index = keys.length - 1; index >= 0; index -= 1) {
@@ -37812,6 +37812,29 @@ var init_terminal_replica_hash_cache = __esm({
     CanonicalFnv64 = class {
       #high = 3421674724;
       #low = 2216829733;
+      // Per-hash only: terminal objects repeat a handful of small field layouts.
+      // Reuse their sorted keys without retaining records, values, or future calls.
+      #keyOrders = null;
+      keys(record) {
+        const keys = Object.keys(record);
+        if (keys.length < 2) return keys;
+        if (keys.length > 32) return keys.sort();
+        for (const order of this.#keyOrders ?? []) {
+          if (order.original.length !== keys.length) continue;
+          let matches = true;
+          for (let index = 0; index < keys.length; index++) {
+            if (order.original[index] !== keys[index]) {
+              matches = false;
+              break;
+            }
+          }
+          if (matches) return order.sorted;
+        }
+        if ((this.#keyOrders?.length ?? 0) >= 16) return keys.sort();
+        const sorted = keys.slice().sort();
+        (this.#keyOrders ??= []).push({ original: keys, sorted });
+        return sorted;
+      }
       #byte(value) {
         const low = (this.#low ^ value) >>> 0;
         const product = low * 435;
@@ -37886,7 +37909,7 @@ var init_terminal_replica_hash_cache = __esm({
           return;
         }
         const record = value;
-        const keys = Object.keys(record).sort();
+        const keys = this.keys(record);
         this.ascii(`o${keys.length}:`);
         for (const key2 of keys) {
           this.string(key2);

@@ -4,6 +4,7 @@ import type { TerminalReplicaRow, TerminalReplicaSnapshot } from "@tmux-ide/cont
 import { blankTerminalReplicaSnapshot, hashTerminalReplicaSnapshot } from "./terminal-replica.ts";
 import {
   hashCanonicalTerminalValue,
+  hashCanonicalTerminalValueCooperatively,
   hashTerminalReplicaRowCached,
   hashTerminalReplicaRowRunsCooperatively,
   TerminalReplicaRunEncodingCache,
@@ -36,6 +37,35 @@ const referenceHash = (value: unknown): string => {
 };
 
 describe("terminal canonical hash cache", () => {
+  it("preserves canonical hashes across repeated, reordered and overflowing object shapes", async () => {
+    const inherited = Object.assign(Object.create({ inherited: "excluded" }), { z: 7, a: "界" });
+    Object.defineProperty(inherited, "hidden", { value: "excluded", enumerable: false });
+    const values = [
+      ...Array.from({ length: 80 }, (_, index) =>
+        index % 2 ? { z: index, a: "界" } : { a: "界", z: index },
+      ),
+      ...Array.from({ length: 20 }, (_, index) => ({ ["shape" + index]: index, tail: true })),
+      Object.fromEntries(Array.from({ length: 40 }, (_, index) => ["key" + (40 - index), index])),
+      inherited,
+      { z: 999, a: "changed" },
+    ];
+    const expected = referenceHash(values);
+    expect(hashCanonicalTerminalValue(values)).toBe(expected);
+    let yields = 0;
+    expect(
+      await hashCanonicalTerminalValueCooperatively(
+        values,
+        async () => {
+          yields++;
+        },
+        32,
+      ),
+    ).toBe(expected);
+    expect(yields).toBeGreaterThan(0);
+    values[0] = { z: -1, a: "fresh call" };
+    expect(hashCanonicalTerminalValue(values)).toBe(referenceHash(values));
+  });
+
   it("keeps batch row hashes canonical with bounded encoding reuse and a JS fallback", () => {
     const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
     const base = blankTerminalReplicaSnapshot(1, 1).grid[0]!.cells[0]!;

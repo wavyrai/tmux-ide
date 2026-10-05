@@ -14,6 +14,30 @@ const UTF8_ENCODER = new TextEncoder();
 class CanonicalFnv64 {
   #high = 0xcbf29ce4;
   #low = 0x84222325;
+  // Per-hash only: terminal objects repeat a handful of small field layouts.
+  // Reuse their sorted keys without retaining records, values, or future calls.
+  #keyOrders: Array<{ original: string[]; sorted: string[] }> | null = null;
+
+  keys(record: Record<string, unknown>): readonly string[] {
+    const keys = Object.keys(record);
+    if (keys.length < 2) return keys;
+    if (keys.length > 32) return keys.sort();
+    for (const order of this.#keyOrders ?? []) {
+      if (order.original.length !== keys.length) continue;
+      let matches = true;
+      for (let index = 0; index < keys.length; index++) {
+        if (order.original[index] !== keys[index]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) return order.sorted;
+    }
+    if ((this.#keyOrders?.length ?? 0) >= 16) return keys.sort();
+    const sorted = keys.slice().sort();
+    (this.#keyOrders ??= []).push({ original: keys, sorted });
+    return sorted;
+  }
 
   #byte(value: number): void {
     const low = (this.#low ^ value) >>> 0;
@@ -99,7 +123,7 @@ class CanonicalFnv64 {
       return;
     }
     const record = value as Record<string, unknown>;
-    const keys = Object.keys(record).sort();
+    const keys = this.keys(record);
     this.ascii(`o${keys.length}:`);
     for (const key of keys) {
       this.string(key);
@@ -175,7 +199,7 @@ export async function hashCanonicalTerminalValueCooperatively(
       continue;
     }
     const record = entry as Record<string, unknown>;
-    const keys = Object.keys(record).sort();
+    const keys = hash.keys(record);
     if (checkpoint(hash.ascii(`o${keys.length}:`) + keys.length)) await yieldControl();
     stack.push({ kind: "ascii", value: ";" });
     for (let index = keys.length - 1; index >= 0; index -= 1) {
