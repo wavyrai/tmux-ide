@@ -334,9 +334,33 @@ try {
   if (geometryBWhileA !== null) throw new Error("sticky geometry oscillated to web-b");
   webA.setPresence("background");
   webB.setPresence("foreground");
+  // Presence is sent over separate sockets. A's background message need not
+  // arrive before B's authority request, even though it was sent first here.
+  // Observe both transitions before asserting the resulting handoff.
+  await waitFor("foreground/background presence convergence", () => {
+    const snapshot = snapshots.get("web-b");
+    return (
+      snapshot?.generation === generation &&
+      snapshot.clients.some(
+        (client) => client.clientId === "product-rig:web-a" && client.state === "background",
+      ) &&
+      snapshot.clients.some(
+        (client) => client.clientId === "product-rig:web-b" && client.state === "foreground",
+      )
+    );
+  });
   const geometryB = await webB.requestAuthority("geometry");
   if (!geometryB || geometryB.clientId !== "product-rig:web-b") {
-    throw new Error("foreground geometry did not converge on web-b");
+    const snapshot = snapshots.get("web-b");
+    throw new Error(
+      `foreground geometry did not converge on web-b: ${JSON.stringify({
+        owner: geometryB?.clientId ?? null,
+        generation: snapshot?.generation,
+        revision: snapshot?.revision,
+        owners: snapshot?.owners,
+        clients: snapshot?.clients.map(({ clientId, state }) => ({ clientId, state })),
+      })}`,
+    );
   }
 
   const nativeStartedAt = performance.now();
