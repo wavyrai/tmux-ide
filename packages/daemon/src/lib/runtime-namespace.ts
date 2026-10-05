@@ -107,9 +107,9 @@ function pathIdentity(path: string): string {
   return resolve(stat ? realpathSync(cursor) : cursor, ...suffix);
 }
 
-function isInsideOrEqual(path: string, parent: string): boolean {
-  const child = pathIdentity(path);
-  const root = pathIdentity(parent);
+function isInsideOrEqual(path: string, parent: string, identity = pathIdentity): boolean {
+  const child = identity(path);
+  const root = identity(parent);
   const offset = relative(root, child);
   return offset === "" || (!offset.startsWith(`..${sep}`) && offset !== "..");
 }
@@ -125,6 +125,17 @@ function runtimeMode(env: NodeJS.ProcessEnv): RuntimeMode {
 export function resolveRuntimeNamespace(
   options: RuntimeNamespaceResolutionOptions = {},
 ): RuntimeNamespace {
+  // Reuse a path's identity only within this synchronous resolution. Every
+  // subsequent resolution must see new ancestors and replaced symlinks.
+  let identities: Map<string, string> | undefined;
+  const identity = (path: string): string => {
+    const cached = identities?.get(path);
+    if (cached !== undefined) return cached;
+    const resolved = pathIdentity(path);
+    (identities ??= new Map()).set(path, resolved);
+    return resolved;
+  };
+  const within = (path: string, parent: string) => isInsideOrEqual(path, parent, identity);
   const env = options.env ?? process.env;
   const userHome = options.userHome ?? homedir();
   const cwd = options.cwd ?? process.cwd();
@@ -206,16 +217,13 @@ export function resolveRuntimeNamespace(
   if (isolated && tmuxSocket.kind === "name" && tmuxSocket.name === "default") {
     throw new TypeError(`${mode} runtime requires a non-default ${TMUX_SOCKET_NAME_ENV}`);
   }
-  if (isolated && isInsideOrEqual(stateHome, canonicalHome)) {
+  if (isolated && within(stateHome, canonicalHome)) {
     throw new TypeError(`${mode} runtime cannot use the canonical tmux-ide state home`);
   }
-  if (
-    isolated &&
-    (isInsideOrEqual(registryDir, canonicalHome) || isInsideOrEqual(daemonInfoDir, canonicalHome))
-  ) {
+  if (isolated && (within(registryDir, canonicalHome) || within(daemonInfoDir, canonicalHome))) {
     throw new TypeError(`${mode} runtime cannot use canonical registry or daemon state`);
   }
-  if (isolated && tmuxSocket.kind === "path" && isInsideOrEqual(tmuxSocket.path, canonicalHome)) {
+  if (isolated && tmuxSocket.kind === "path" && within(tmuxSocket.path, canonicalHome)) {
     throw new TypeError(`${mode} runtime cannot use a tmux socket inside canonical state`);
   }
   if (isolated && cleanupToken === null) {
@@ -230,7 +238,7 @@ export function resolveRuntimeNamespace(
       (key === "TMUX_IDE_CONFIG" || key === "TMUX_IDE_SETTINGS_DIR"
         ? env[key]
         : nonEmpty(env, key)) ?? fallback;
-    if (development && (!isAbsolute(value) || !isInsideOrEqual(value, development.root)))
+    if (development && (!isAbsolute(value) || !within(value, development.root)))
       throw new TypeError(`development ${key} escapes instance`);
     return value;
   };
@@ -268,7 +276,7 @@ export function resolveRuntimeNamespace(
       if (nonEmpty(env, key)) scoped(key, "");
     if (env.TMUX) {
       const socket = /^(.*),[0-9]+,[0-9]+$/u.exec(env.TMUX)?.[1];
-      if (!socket || pathIdentity(socket) !== pathIdentity(join(runtimeDir, "tmux.sock")))
+      if (!socket || identity(socket) !== identity(join(runtimeDir, "tmux.sock")))
         throw new TypeError("development rejects inherited foreign TMUX authority");
     }
   }
