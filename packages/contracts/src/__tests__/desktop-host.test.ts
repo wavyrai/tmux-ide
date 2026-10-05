@@ -12,6 +12,7 @@ import {
   DesktopDaemonPreflightSchemaZ,
   DesktopDaemonHostDescriptorSchemaZ,
   DesktopHostBootstrapSchemaZ,
+  DesktopEnvironmentSummarySchemaZ,
 } from "../desktop-host.ts";
 
 describe("desktop host contract", () => {
@@ -267,3 +268,19 @@ describe("desktop host contract", () => {
     expect(DesktopDaemonEventSchemaZ.parse(event)).toEqual(event);
   });
 });
+
+it.each(["ssh-authentication", "ssh-host-key", "remote-cli-missing"])(
+  "preserves credential-free SSH diagnostics across the host boundary: %s",
+  (failure) => {
+    expect(
+      DesktopEnvironmentSummarySchemaZ.parse({
+        connectionId: "11111111-1111-4111-8111-111111111111",
+        label: "Development host",
+        kind: "ssh",
+        phase: "needs-attention",
+        daemon: null,
+        failure,
+      }).failure,
+    ).toBe(failure);
+  },
+);

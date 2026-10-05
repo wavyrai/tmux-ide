@@ -691,6 +691,9 @@ export const DesktopEnvironmentSummarySchemaZ = z
         "incompatible",
         "daemon-missing",
         "identity-mismatch",
+        "ssh-authentication",
+        "ssh-host-key",
+        "remote-cli-missing",
       ])
       .nullable(),
   })
