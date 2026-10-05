@@ -1725,30 +1725,29 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     one.diagnostics,
   );
 
-  // Backend selection can precede the replacement terminal's first frame.
+  // Backend selection can precede the selected terminal's first frame.
   // Qualify the actual visible target before arming a destructive command.
-  const newWindowPane = activePane("journey-beta");
-  const newWindowMarker = `PACK_NEW_WINDOW_${process.pid}`;
-  const encodedMarker = [...Buffer.from(`${newWindowMarker}\n`)]
-    .map((byte) => `\\${byte.toString(8).padStart(3, "0")}`)
-    .join("");
+  const switchedWindowPane = activePane("journey-beta");
+  const switchedWindowMarker = `PACK_SWITCHED_WINDOW_${process.pid}`;
+  // This pane may run the echoing agent fixture rather than a shell. The
+  // literal marker witnesses output from this exact pane in either case.
   for (const args of [
-    ["send-keys", "-l", "-t", newWindowPane, `printf '${encodedMarker}'`],
-    ["send-keys", "-t", newWindowPane, "Enter"],
+    ["send-keys", "-l", "-t", switchedWindowPane, `printf '${switchedWindowMarker}\\n'`],
+    ["send-keys", "-t", switchedWindowPane, "Enter"],
   ]) {
     const result = tmuxResult(args);
     if (result.status !== 0)
-      throw new Error(`Could not prepare the new window output witness: ${result.stderr}`);
+      throw new Error(`Could not prepare the switched window output witness: ${result.stderr}`);
   }
   await observe(
-    "new window rendered before close confirmation",
+    "switched window rendered before close confirmation",
     10_000,
     () => {
       const frame = capture(one.targetPane);
       return (
-        activePane("journey-beta") === newWindowPane &&
+        activePane("journey-beta") === switchedWindowPane &&
         frameShowsTerminalFocus(frame) &&
-        frame.includes(newWindowMarker)
+        frame.includes(switchedWindowMarker)
       );
     },
     one.diagnostics,
