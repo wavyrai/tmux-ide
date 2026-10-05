@@ -12076,6 +12076,7 @@ var require_package = __commonJS({
         "@eslint/js": "^10.0.1",
         "@opentui/core": "^0.5.1",
         "@opentui/solid": "^0.5.1",
+        "@tmux-ide/contracts": "workspace:*",
         "@tsconfig/bun": "^1.0.10",
         "@types/node": "^25.5.0",
         "@types/ws": "^8.18.1",
@@ -32843,6 +32844,7 @@ var init_session_channel = __esm({
       nativeClientProbePending = false;
       // Native captures fence every geometry event; inventory fences identity only.
       windowAuthorityOrdinal = 0;
+      layoutNotificationOrdinals = /* @__PURE__ */ new Map();
       windowIdentityOrdinal = 0;
       paneIncarnation = 0;
       recoveryOrdinal = 0;
@@ -33440,6 +33442,7 @@ var init_session_channel = __esm({
           pane.subs.clear();
         }
         this.pendingLayoutOutput.clear();
+        this.layoutNotificationOrdinals.clear();
         this.layoutSubscribers.clear();
         this.layoutAuthoritySubscribers.clear();
         await this.io.dispose();
@@ -34835,6 +34838,7 @@ var init_session_channel = __esm({
             this.scheduleSync();
             return;
           }
+          this.layoutNotificationOrdinals.set(change.windowId, this.windowAuthorityOrdinal);
           const pendingLayout = {
             ...parsed,
             zoomed: change.zoomed,
@@ -35071,8 +35075,10 @@ var init_session_channel = __esm({
           previousCurrentWindow,
           syncOrdinal
         );
-        for (const pane of this.panesByRuntime.values())
+        for (const pane of this.panesByRuntime.values()) {
+          if (pane.windowRuntimeId && this.pendingLayoutOutput.has(pane.windowRuntimeId)) continue;
           for (const sub of pane.subs) sub.resumeLayoutCapture?.(syncOrdinal);
+        }
         this.discovery.discover(listed);
       }
       applyPaneTruth(truth) {
@@ -35284,6 +35290,24 @@ var init_session_channel = __esm({
         return stage.repairedIdentity;
       }
       commitWindowStage(stage, requiredLayoutEmits = /* @__PURE__ */ new Set(), previousCurrentWindow = this.currentWindow, syncOrdinal) {
+        const newerLayouts = new Set(
+          [...this.layoutNotificationOrdinals].filter(([, ordinal]) => ordinal > stage.observedAuthorityOrdinal).map(([runtimeId]) => runtimeId)
+        );
+        if (newerLayouts.size > 0) {
+          stage = { ...stage, windows: new Map(stage.windows), layouts: new Map(stage.layouts) };
+          for (const runtimeId of newerLayouts) {
+            const currentLayout = this.layoutByWindow.get(runtimeId);
+            const currentWindow = this.windowsByRuntime.get(runtimeId);
+            const stagedWindow = stage.windows.get(runtimeId);
+            if (currentLayout && currentWindow && stagedWindow) {
+              stage.layouts.set(runtimeId, currentLayout);
+              stage.windows.set(runtimeId, {
+                ...stagedWindow,
+                paneBorderStatus: currentWindow.paneBorderStatus
+              });
+            }
+          }
+        }
         this.windowLinkAuthority?.reconcile(stage.links);
         this.latestWindowStage = stage;
         const changedWindows = /* @__PURE__ */ new Set();
@@ -35316,8 +35340,14 @@ var init_session_channel = __esm({
           )
         );
         for (const runtimeId of this.pendingLayoutOutput.keys())
-          if (!stage.windows.has(runtimeId)) this.pendingLayoutOutput.delete(runtimeId);
-        for (const runtimeId of layoutEmits) this.releasePendingLayout(runtimeId, syncOrdinal);
+          if (!stage.windows.has(runtimeId) && !newerLayouts.has(runtimeId))
+            this.pendingLayoutOutput.delete(runtimeId);
+        for (const runtimeId of this.layoutNotificationOrdinals.keys())
+          if (!stage.windows.has(runtimeId) && !newerLayouts.has(runtimeId))
+            this.layoutNotificationOrdinals.delete(runtimeId);
+        for (const runtimeId of layoutEmits)
+          if (!newerLayouts.has(runtimeId) || !this.pendingLayoutOutput.has(runtimeId))
+            this.releasePendingLayout(runtimeId, syncOrdinal);
         this.emitLayoutAuthority();
       }
       // Inventory establishes pane/window identity, not a frozen terminal size.
@@ -35339,6 +35369,7 @@ var init_session_channel = __esm({
         return true;
       }
       async stageWindows(target = this.opts.session) {
+        const observedAuthorityOrdinal = this.windowAuthorityOrdinal;
         const lines = await this.io.request(
           `list-windows -t "${target}" -F "#{window_id}	#{qa:@tmux_ide_window_id}	#{qa:window_name}	#{window_active}	#{window_visible_layout}	#{?window_zoomed_flag,1,0}	#{pane-border-status}	#{window_layout}	#{mode-keys}	#{window_index}"`
         );
@@ -35461,6 +35492,7 @@ var init_session_channel = __esm({
           });
         }
         return {
+          observedAuthorityOrdinal,
           windows: next,
           layouts: nextLayoutByWindow,
           currentWindow: nextCurrentWindow,

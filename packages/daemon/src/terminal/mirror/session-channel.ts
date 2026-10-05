@@ -441,6 +441,7 @@ function layoutIdentitiesEqual(left: WindowLayout, right: WindowLayout): boolean
 }
 
 interface WindowSyncStage {
+  readonly observedAuthorityOrdinal: number;
   readonly windows: Map<string, WindowRecord>;
   readonly layouts: Map<string, ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }>;
   readonly currentWindow: string;
@@ -502,6 +503,7 @@ export class SessionChannel {
   private nativeClientProbePending = false;
   // Native captures fence every geometry event; inventory fences identity only.
   private windowAuthorityOrdinal = 0;
+  private readonly layoutNotificationOrdinals = new Map<string, number>();
   private windowIdentityOrdinal = 0;
   private paneIncarnation = 0;
   private recoveryOrdinal = 0;
@@ -1302,6 +1304,7 @@ export class SessionChannel {
       pane.subs.clear();
     }
     this.pendingLayoutOutput.clear();
+    this.layoutNotificationOrdinals.clear();
     this.layoutSubscribers.clear();
     this.layoutAuthoritySubscribers.clear();
     await this.io.dispose();
@@ -2990,6 +2993,7 @@ export class SessionChannel {
         this.scheduleSync(); // never guess from a failed parse
         return;
       }
+      this.layoutNotificationOrdinals.set(change.windowId, this.windowAuthorityOrdinal);
       const pendingLayout = {
         ...parsed,
         zoomed: change.zoomed,
@@ -3308,8 +3312,10 @@ export class SessionChannel {
       previousCurrentWindow,
       syncOrdinal,
     );
-    for (const pane of this.panesByRuntime.values())
+    for (const pane of this.panesByRuntime.values()) {
+      if (pane.windowRuntimeId && this.pendingLayoutOutput.has(pane.windowRuntimeId)) continue;
       for (const sub of pane.subs) sub.resumeLayoutCapture?.(syncOrdinal);
+    }
     this.discovery.discover(listed);
   }
 
@@ -3607,6 +3613,29 @@ export class SessionChannel {
     previousCurrentWindow = this.currentWindow,
     syncOrdinal?: number,
   ): void {
+    // Control notifications in the same read chunk run before a promise-based
+    // inventory read resumes. Preserve newer geometry (and its pending border
+    // query) rather than letting that older inventory erase the notification.
+    const newerLayouts = new Set(
+      [...this.layoutNotificationOrdinals]
+        .filter(([, ordinal]) => ordinal > stage.observedAuthorityOrdinal)
+        .map(([runtimeId]) => runtimeId),
+    );
+    if (newerLayouts.size > 0) {
+      stage = { ...stage, windows: new Map(stage.windows), layouts: new Map(stage.layouts) };
+      for (const runtimeId of newerLayouts) {
+        const currentLayout = this.layoutByWindow.get(runtimeId);
+        const currentWindow = this.windowsByRuntime.get(runtimeId);
+        const stagedWindow = stage.windows.get(runtimeId);
+        if (currentLayout && currentWindow && stagedWindow) {
+          stage.layouts.set(runtimeId, currentLayout);
+          stage.windows.set(runtimeId, {
+            ...stagedWindow,
+            paneBorderStatus: currentWindow.paneBorderStatus,
+          });
+        }
+      }
+    }
     this.windowLinkAuthority?.reconcile(stage.links);
     this.latestWindowStage = stage;
     const changedWindows = new Set<string>();
@@ -3661,8 +3690,14 @@ export class SessionChannel {
           ),
         );
     for (const runtimeId of this.pendingLayoutOutput.keys())
-      if (!stage.windows.has(runtimeId)) this.pendingLayoutOutput.delete(runtimeId);
-    for (const runtimeId of layoutEmits) this.releasePendingLayout(runtimeId, syncOrdinal);
+      if (!stage.windows.has(runtimeId) && !newerLayouts.has(runtimeId))
+        this.pendingLayoutOutput.delete(runtimeId);
+    for (const runtimeId of this.layoutNotificationOrdinals.keys())
+      if (!stage.windows.has(runtimeId) && !newerLayouts.has(runtimeId))
+        this.layoutNotificationOrdinals.delete(runtimeId);
+    for (const runtimeId of layoutEmits)
+      if (!newerLayouts.has(runtimeId) || !this.pendingLayoutOutput.has(runtimeId))
+        this.releasePendingLayout(runtimeId, syncOrdinal);
     this.emitLayoutAuthority();
   }
 
@@ -3700,6 +3735,7 @@ export class SessionChannel {
   }
 
   private async stageWindows(target = this.opts.session): Promise<WindowSyncStage> {
+    const observedAuthorityOrdinal = this.windowAuthorityOrdinal;
     const lines = await this.io.request(
       `list-windows -t "${target}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}\t#{window_layout}\t#{mode-keys}\t#{window_index}"`,
     );
@@ -3860,6 +3896,7 @@ export class SessionChannel {
       });
     }
     return {
+      observedAuthorityOrdinal,
       windows: next,
       layouts: nextLayoutByWindow,
       currentWindow: nextCurrentWindow,
