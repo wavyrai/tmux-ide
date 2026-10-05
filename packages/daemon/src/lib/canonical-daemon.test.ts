@@ -11,7 +11,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import {
   canonicalDaemonUrl,
@@ -122,36 +123,45 @@ function listen(): Promise<number> {
 
 describe("canonical daemon info", () => {
   it("revalidates isolated state redirection on the next daemon-path read", () => {
-    const keys = [
-      "TMUX_IDE_RUNTIME_MODE",
-      "TMUX_IDE_HOME",
-      "TMUX_IDE_REGISTRY_DIR",
-      "TMUX_IDE_TMUX_SOCKET_NAME",
-      "TMUX_IDE_TMUX_SOCKET_PATH",
-      "TMUX_IDE_CLEANUP_TOKEN",
-    ];
-    const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
     const state = join(tempDir, "state");
+    const privateHome = join(tempDir, "home");
+    const canonicalHome = join(privateHome, ".tmux-ide");
     mkdirSync(state);
-    try {
-      process.env.TMUX_IDE_RUNTIME_MODE = "test";
-      process.env.TMUX_IDE_HOME = state;
-      process.env.TMUX_IDE_REGISTRY_DIR = state;
-      process.env.TMUX_IDE_DAEMON_INFO_DIR = state;
-      process.env.TMUX_IDE_TMUX_SOCKET_NAME = "canonical-path-test";
-      delete process.env.TMUX_IDE_TMUX_SOCKET_PATH;
-      process.env.TMUX_IDE_CLEANUP_TOKEN = "canonical-path-test";
-      expect(getCanonicalDaemonInfoPath()).toBe(join(state, "daemon.json"));
-      renameSync(state, join(tempDir, "original-state"));
-      symlinkSync(join(homedir(), ".tmux-ide"), state);
-      expect(() => getCanonicalDaemonInfoPath()).toThrow(/canonical/);
-    } finally {
-      for (const key of keys) {
-        if (previous[key] === undefined) delete process.env[key];
-        else process.env[key] = previous[key];
-      }
-      process.env.TMUX_IDE_DAEMON_INFO_DIR = tempDir;
-    }
+    mkdirSync(canonicalHome, { recursive: true });
+    // Bun captures homedir at process startup. A child gives this fixture an
+    // existing private canonical home without depending on the user's state.
+    const script = `
+      import assert from "node:assert/strict";
+      import { renameSync, symlinkSync } from "node:fs";
+      import { homedir } from "node:os";
+      import { join } from "node:path";
+      import { getCanonicalDaemonInfoPath } from ${JSON.stringify(new URL("./canonical-daemon.ts", import.meta.url).href)};
+      const state = ${JSON.stringify(state)};
+      const canonicalHome = ${JSON.stringify(canonicalHome)};
+      assert.equal(join(homedir(), ".tmux-ide"), canonicalHome);
+      assert.equal(getCanonicalDaemonInfoPath(), join(state, "daemon.json"));
+      renameSync(state, ${JSON.stringify(join(tempDir, "original-state"))});
+      symlinkSync(canonicalHome, state);
+      assert.throws(() => getCanonicalDaemonInfoPath(), /canonical/);
+      console.log("revalidated");
+    `;
+    expect(
+      execFileSync(process.execPath, ["--eval", script], {
+        encoding: "utf8",
+        timeout: 5_000,
+        env: {
+          ...process.env,
+          HOME: privateHome,
+          TMUX_IDE_RUNTIME_MODE: "test",
+          TMUX_IDE_HOME: state,
+          TMUX_IDE_REGISTRY_DIR: state,
+          TMUX_IDE_DAEMON_INFO_DIR: state,
+          TMUX_IDE_TMUX_SOCKET_NAME: "canonical-path-test",
+          TMUX_IDE_TMUX_SOCKET_PATH: "",
+          TMUX_IDE_CLEANUP_TOKEN: "canonical-path-test",
+        },
+      }).trim(),
+    ).toBe("revalidated");
   });
 
   it("atomically writes, reads, probes, and clears daemon info", async () => {
