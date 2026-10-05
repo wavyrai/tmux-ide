@@ -102,8 +102,8 @@ JS
   # Bound disk growth without guessing which old runtime a live process uses.
   # Cleanup is explicit because unlinking a loaded runtime can break later I/O.
   retained=0
-  for candidate in "$root"/releases/install-*; do
-    [ -d "$candidate" ] && [ ! -L "$candidate" ] && [ -f "$candidate/.installer-release-v1" ] || continue
+  for retained_release in "$root"/releases/install-*; do
+    [ -d "$retained_release" ] && [ ! -L "$retained_release" ] && [ -f "$retained_release/.installer-release-v1" ] || continue
     retained=$((retained + 1))
   done
   [ "$retained" -lt 8 ] || fail 'Eight retained releases reached. Stop tmux-ide processes and services, then rerun this script with the same --prefix and --prune --yes. Ordinary tmux sessions may remain running.'

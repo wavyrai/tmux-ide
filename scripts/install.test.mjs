@@ -222,16 +222,37 @@ test("retention cap refuses another install until explicit cleanup", (t) => {
   const root = path.join(prefix, "share/tmux-ide");
   const current = fs.readlinkSync(path.join(root, "current"));
   for (let i = 0; i < 7; i++) {
-    const retired = path.join(root, "releases", `install-OLD00${i}`);
+    const retired = path.join(root, "releases", i === 6 ? "install-zzzzzzzz" : `install-OLD00${i}`);
     fs.mkdirSync(retired);
     fs.writeFileSync(path.join(retired, ".installer-release-v1"), "1\n");
   }
+  const retainedBefore = fs.readdirSync(path.join(root, "releases"));
   const refused = run();
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /Eight retained releases/);
+  assert.deepEqual(fs.readdirSync(path.join(root, "releases")), retainedBefore);
   assert.equal(fs.readlinkSync(path.join(root, "current")), current);
   assert.equal(run({}, ["--prune", "--yes"]).status, 0);
   assert.equal(run().status, 0);
+});
+
+test("pre-staging failure preserves every retained runtime", (t) => {
+  const { prefix, run } = fixture(t);
+  assert.equal(run().status, 0);
+  const root = path.join(prefix, "share/tmux-ide");
+  const retired = path.join(root, "releases", "install-zzzzzzzz");
+  fs.mkdirSync(retired);
+  fs.writeFileSync(path.join(retired, ".installer-release-v1"), "1\n");
+  fs.writeFileSync(path.join(retired, "live-runtime"), "still needed by a running daemon");
+  const releases = fs.readdirSync(path.join(root, "releases"));
+  const failed = run({ MOCK_OS: "FreeBSD" });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /Supported systems/);
+  assert.deepEqual(fs.readdirSync(path.join(root, "releases")), releases);
+  assert.equal(
+    fs.readFileSync(path.join(retired, "live-runtime"), "utf8"),
+    "still needed by a running daemon",
+  );
 });
 
 for (const signal of ["SIGTERM", "SIGINT"])
