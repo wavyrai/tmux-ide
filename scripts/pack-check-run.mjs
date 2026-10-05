@@ -1574,6 +1574,130 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     one.diagnostics,
   );
 
+  // Resize the actual terminal hosting the installed app, not its mirror API.
+  // Both inherited and explicit manual policies must recover in this viewer.
+  const sizingCommand = (...args) => {
+    const result = tmuxResult(args);
+    if (result.status !== 0) throw new Error(`Manual sizing fixture failed: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  const sizingState = (target) => {
+    const [window, cols, rows, panePid] = sizingCommand(
+      "display-message",
+      "-p",
+      "-t",
+      target,
+      "#{window_id}|#{window_width}|#{window_height}|#{pane_pid}",
+    ).split("|");
+    return { window, cols: Number(cols), rows: Number(rows), panePid };
+  };
+  const sourceSize = sizingState(focused);
+  const hostSize = sizingState(one.targetPane);
+  const neighbour = sizingCommand("list-windows", "-t", "=journey-beta", "-F", "#{window_id}")
+    .split("\n")
+    .find((id) => id !== sourceSize.window);
+  if (!neighbour) throw new Error("Manual sizing proof needs an unrelated window");
+  sizingCommand("resize-window", "-t", neighbour, "-x", "90", "-y", "25");
+  const neighbourSize = sizingState(neighbour);
+  const globalSizing = sizingCommand("show-options", "-gwv", "window-size");
+  const viewerPid = sizingState(one.targetPane).panePid;
+  const manualSizing = [];
+  try {
+    for (const [index, scope] of ["window", "inherited"].entries()) {
+      if (scope === "inherited") {
+        sizingCommand("set-option", "-gw", "window-size", "manual");
+        sizingCommand("set-option", "-wu", "-t", sourceSize.window, "window-size");
+      } else {
+        sizingCommand("set-option", "-w", "-t", sourceSize.window, "window-size", "manual");
+      }
+      const policyBefore = sizingCommand(
+        "show-options",
+        "-Awv",
+        "-t",
+        sourceSize.window,
+        "window-size",
+      );
+      if (policyBefore !== "manual")
+        throw new Error(`Fixture did not establish ${scope} manual sizing`);
+      const deltaCols = index === 0 ? 20 : 8;
+      const deltaRows = index === 0 ? 8 : 4;
+      sizingCommand(
+        "resize-window",
+        "-t",
+        hostSize.window,
+        "-x",
+        String(hostSize.cols + deltaCols),
+        "-y",
+        String(hostSize.rows + deltaRows),
+      );
+      const expected = { cols: sourceSize.cols + deltaCols, rows: sourceSize.rows + deltaRows };
+      await observe(
+        `installed viewport repairs ${scope} manual sizing`,
+        10_000,
+        () => {
+          const actual = sizingState(focused);
+          return (
+            actual.cols === expected.cols &&
+            actual.rows === expected.rows &&
+            sizingCommand("show-options", "-Awv", "-t", sourceSize.window, "window-size") ===
+              "latest"
+          );
+        },
+        () =>
+          `${one.diagnostics()}\nmanual sizing: ${JSON.stringify({ scope, expected, actual: sizingState(focused) })}`,
+      );
+      if (
+        JSON.stringify(sizingState(neighbour)) !== JSON.stringify(neighbourSize) ||
+        sizingCommand("show-options", "-Awv", "-t", neighbour, "window-size") !== "manual"
+      )
+        throw new Error(
+          `Viewport repair changed the unrelated manual window: ${JSON.stringify({ scope, before: neighbourSize, after: sizingState(neighbour), policy: sizingCommand("show-options", "-Awv", "-t", neighbour, "window-size") })}`,
+        );
+      if (
+        sizingState(focused).panePid !== sourceSize.panePid ||
+        sizingState(one.targetPane).panePid !== viewerPid
+      )
+        throw new Error("Viewport repair replaced the viewer or pane process");
+      const marker = `PACK_MANUAL_${scope}_${process.pid}`;
+      typeCommand(one, `printf 'PACK_MANUAL_%s\\n' '${scope}_${process.pid}'`);
+      await observe(
+        `input after ${scope} manual sizing repair`,
+        10_000,
+        () => capture(focused).includes(marker),
+        one.diagnostics,
+      );
+      manualSizing.push({
+        scope,
+        policyBefore,
+        expected,
+        actual: sizingState(focused),
+        neighbour: neighbourSize,
+        viewerPid,
+      });
+    }
+  } finally {
+    sizingCommand("set-option", "-gw", "window-size", globalSizing);
+    sizingCommand(
+      "resize-window",
+      "-t",
+      hostSize.window,
+      "-x",
+      String(hostSize.cols),
+      "-y",
+      String(hostSize.rows),
+    );
+  }
+  await observe(
+    "installed viewport restores original dimensions",
+    10_000,
+    () => {
+      const actual = sizingState(focused);
+      return actual.cols === sourceSize.cols && actual.rows === sourceSize.rows;
+    },
+    one.diagnostics,
+  );
+  observations.push({ name: "manual sizing policies and process continuity", cases: manualSizing });
+
   send(one, "C-t");
   await observe(
     "keyboard window switch",

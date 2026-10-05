@@ -7,7 +7,7 @@ import { MirrorService } from "./mirror-service.ts";
 const available = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 
 describe.skipIf(!available)("managed viewport recovery from manual sizing", () => {
-  it.each(["window", "session"])(
+  it.each(["window", "inherited"])(
     "repairs a %s pin through the retained control client",
     async (scope) => {
       const socket = `tmux-ide-manual-${process.pid}-${randomUUID().slice(0, 8)}`;
@@ -31,14 +31,11 @@ describe.skipIf(!available)("managed viewport recovery from manual sizing", () =
         const window = run("display-message", "-p", "-t", "proof", "#{window_id}");
         const neighbour = run("new-window", "-d", "-t", "proof", "-P", "-F", "#{window_id}", "cat");
         run("set-option", "-w", "-t", neighbour, "window-size", "manual");
-        run(
-          "set-option",
-          ...(scope === "window" ? ["-w"] : []),
-          "-t",
-          "proof",
-          "window-size",
-          "manual",
-        );
+        if (scope === "inherited") {
+          run("set-option", "-gw", "window-size", "manual");
+          run("set-option", "-wu", "-t", window, "window-size");
+        } else run("set-option", "-w", "-t", window, "window-size", "manual");
+        run("resize-window", "-t", neighbour, "-x", "90", "-y", "25");
         const identity = run("display-message", "-p", "-t", "proof", "#{pid}:#{pane_pid}");
         await service.retainSession("proof");
         service.setGeometryParticipation("proof", true);
@@ -52,6 +49,22 @@ describe.skipIf(!available)("managed viewport recovery from manual sizing", () =
         );
         expect(run("show-option", "-w", "-v", "-t", window, "window-size")).toBe("latest");
         expect(run("show-option", "-w", "-v", "-t", neighbour, "window-size")).toBe("manual");
+        // The installed shell pre-fits hidden windows too. Those requests must
+        // not release a user's manual pin on a background window.
+        const hidden = run("show-option", "-wv", "-t", neighbour, "@tmux_ide_window_id");
+        expect(hidden).toMatch(/^window\./);
+        service.fitWindowViewport("proof", hidden, 120, 40);
+        // A later resize on the same retained connection fences the hidden fit.
+        service.fitViewport("proof", 121, 41);
+        await vi.waitFor(() =>
+          expect(
+            run("display-message", "-p", "-t", window, "#{window_width}x#{window_height}"),
+          ).toBe("121x41"),
+        );
+        expect(run("show-option", "-Awv", "-t", neighbour, "window-size")).toBe("manual");
+        expect(
+          run("display-message", "-p", "-t", neighbour, "#{window_width}x#{window_height}"),
+        ).toBe("90x25");
         // Re-pinning an already open window must also recover on the next fit.
         run("resize-window", "-t", window, "-x", "90", "-y", "25");
         service.fitViewport("proof", 130, 42);

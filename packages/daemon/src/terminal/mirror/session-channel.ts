@@ -1196,10 +1196,11 @@ export class SessionChannel {
     if (!this.geometryParticipating) return;
     // resize-window pins a window (including through inherited session options).
     // Evaluate inside the existing control connection: no shell, polling, or extra
-    // request/response round trip. Only the actively fitted window is changed.
+    // request/response round trip. The shell also pre-fits hidden windows;
+    // only the active window may have its manual policy repaired.
     const quoted = tmuxSingleQuote(target);
     this.io.send(
-      `if-shell -F -t ${quoted} '#{==:#{window-size},manual}' ` +
+      `if-shell -F -t ${quoted} '#{&&:#{window_active},#{==:#{window-size},manual}}' ` +
         tmuxSingleQuote(`set-option -w -t ${quoted} window-size latest`),
     );
   }
