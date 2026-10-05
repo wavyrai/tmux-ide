@@ -105,3 +105,26 @@ it("supervised flag cannot silently affect another command and fresh ordinary if
   expect(JSON.parse(result.stdout)).toEqual({ ok: true, status: "not-running" });
   expect(existsSync(join(root, "daemon.json"))).toBe(false);
 });
+
+it("explains a reservation's recorded owner without changing it or exposing credentials", () => {
+  const path = join(root, "daemon.json");
+  const record = {
+    pid: process.pid,
+    port: 9,
+    protocolVersion: 1,
+    productVersion: "2.9.2",
+    instanceId: "11111111-1111-4111-8111-111111111111",
+    startedAt: new Date().toISOString(),
+    bindHostname: "127.0.0.1",
+    authToken: "fixture-secret-must-not-be-printed",
+  };
+  writeFileSync(path, JSON.stringify(record), { mode: 0o600 });
+  const before = readFileSync(path, "utf8");
+  const result = cli(["daemon", "reserve-supervisor", "fixture"]);
+  expect(result.status).toBe(1);
+  const output = result.stdout + result.stderr;
+  expect(output).toContain(`unsupervised daemon (PID ${process.pid})`);
+  expect(output).toContain("tmux-ide daemon info --json");
+  expect(output).not.toContain(record.authToken);
+  expect(readFileSync(path, "utf8")).toBe(before);
+});

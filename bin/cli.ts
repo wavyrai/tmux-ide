@@ -208,7 +208,18 @@ const cyan = (s: string) => (noColor ? s : `\x1b[36m${s}\x1b[39m`);
 const dim = (s: string) => (noColor ? s : `\x1b[2m${s}\x1b[22m`);
 
 if (values.help && command !== "automation") {
-  printHelp();
+  if (
+    command === "daemon" &&
+    ["reserve-supervisor", "release-supervisor"].includes(positionals[1] ?? "")
+  ) {
+    const release = positionals[1] === "release-supervisor";
+    console.log(`Usage: tmux-ide daemon ${release ? "release-supervisor <id> --yes" : "reserve-supervisor <id>"} [--json]
+
+${release ? "Release the exact supervisor reservation after removing its service and stopping its owners." : "Reserve the current daemon namespace for an external supervisor after stopping its existing owner."}
+IDs: 1–128 characters; start with a letter or digit, then letters, digits, periods, underscores or hyphens.
+Inspect ownership: tmux-ide daemon info --json
+Managed service setup: tmux-ide daemon service install <absolute-stable-launcher>`);
+  } else printHelp();
   process.exit(0);
 }
 
@@ -867,16 +878,21 @@ try {
             "Usage: tmux-ide daemon reserve-supervisor <id> [--json] | daemon release-supervisor <id> --yes [--json]",
             { code: "USAGE", exitCode: 2 },
           );
-        const { reserveCanonicalDaemonSupervision, releaseCanonicalDaemonSupervision } =
-          await import("../packages/daemon/src/lib/canonical-daemon.ts");
+        const {
+          reserveCanonicalDaemonSupervision,
+          releaseCanonicalDaemonSupervision,
+          CanonicalDaemonReservationError,
+        } = await import("../packages/daemon/src/lib/canonical-daemon.ts");
         try {
           if (release) releaseCanonicalDaemonSupervision(positionals[2]!);
           else reserveCanonicalDaemonSupervision(positionals[2]!);
-        } catch {
+        } catch (error) {
           throw new IdeError(
-            release
-              ? "Supervisor release refused: remove the service first and verify its exact ID and stopped owners."
-              : "Supervisor reservation refused: use a valid ID and a private namespace without a live or unknown owner.",
+            error instanceof CanonicalDaemonReservationError
+              ? error.message
+              : release
+                ? "Supervisor release refused: remove the service first and verify its exact ID and stopped owners."
+                : "Supervisor reservation refused: use a valid ID and a private namespace without a live or unknown owner.",
             { code: "DAEMON_SUPERVISION_REFUSED", exitCode: 1 },
           );
         }
