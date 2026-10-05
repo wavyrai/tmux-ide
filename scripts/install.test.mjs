@@ -34,16 +34,20 @@ case "$url" in *SHASUMS256.txt) printf '%s  node-v24.1.0-${target}.tar.gz\\n' '$
   const npm = path.join(root, "npm.mjs");
   fs.writeFileSync(
     npm,
-    `import fs from 'node:fs'; import path from 'node:path';
+    `import fs from 'node:fs'; import path from 'node:path'; import {createHash} from 'node:crypto';
 if (process.env.MOCK_NPM_FAIL) process.exit(1);
 const prefix=process.argv[process.argv.indexOf('--prefix')+1];
 const root=path.join(prefix,'lib/node_modules/tmux-ide');
 for (const dir of ['bin','scripts','packages/daemon/dist/native/tmux/${target}']) fs.mkdirSync(path.join(root,dir),{recursive:true});
-fs.writeFileSync(path.join(root,'package.json'),JSON.stringify({version:'2.9.0'}));
-fs.writeFileSync(path.join(root,'bin/cli.js'), "if(process.env.MOCK_TUI_FAIL && process.argv.includes('--tui-binary')) process.exit(1); console.log(process.env.MOCK_BAD_VERSION ? 'tmux-ide v0.0.0' : 'tmux-ide v2.9.0');");
-fs.writeFileSync(path.join(root,'scripts/postinstall.js'), "require('node:fs').appendFileSync(process.env.HOME+'/postinstall', 'installed\\\\n');");
-fs.writeFileSync(path.join(root,'packages/daemon/dist/native/tmux/${target}/manifest.json'),JSON.stringify({minimumMacOS:'1.0',minimumGlibc:'1.0'}));
+const version = process.env.MOCK_VERSION || '2.9.0';
+fs.writeFileSync(path.join(root,'package.json'),JSON.stringify({version}));
+fs.writeFileSync(path.join(root,'bin/cli.js'), "if(process.env.MOCK_RELOCATED_FAIL && !__filename.includes('.install.')) process.exit(1); if(process.env.MOCK_TUI_FAIL && process.argv.includes('--tui-binary')) process.exit(1); console.log(process.env.MOCK_BAD_VERSION ? 'tmux-ide v0.0.0' : 'tmux-ide v"+version+"');");
+fs.writeFileSync(path.join(root,'scripts/postinstall.js'), "if(process.env.MOCK_POSTINSTALL_FAIL) process.exit(1); if(process.env.npm_config_global === 'true') throw new Error('must not update the daemon implicitly'); require('node:fs').appendFileSync(process.env.HOME+'/postinstall', 'installed\\\\n');");
+
 if (!process.env.MOCK_MISSING_TMUX) fs.writeFileSync(path.join(root,'packages/daemon/dist/native/tmux/${target}/tmux'),'#!/bin/sh\\necho tmux '+(process.env.MOCK_OLD_TMUX ? '3.4' : '3.7c')+'\\n');
+const native=path.join(root,'packages/daemon/dist/native/tmux/${target}/tmux');
+fs.writeFileSync(path.join(root,'packages/daemon/dist/native/tmux/${target}/manifest.json'),JSON.stringify({platform:'${platform}',arch:'${arch}',minimumMacOS:'1.0',minimumGlibc:'1.0',files:{tmux:fs.existsSync(native)?createHash('sha256').update(fs.readFileSync(native)).digest('hex'):'0'.repeat(64)}}));
+if(process.env.MOCK_NATIVE_CORRUPT) fs.appendFileSync(native,'corrupt');
 `,
   );
   const node = process.execPath;
@@ -78,12 +82,16 @@ test("fresh install and upgrade work with spaces and shell punctuation", (t) => 
   const launch = spawnSync(path.join(prefix, "bin/tmux-ide"), ["--version"], { encoding: "utf8" });
   assert.equal(launch.status, 0, launch.stderr);
   assert.match(launch.stdout, /v2.9.0/);
-  assert.equal(run().status, 0);
+  const upgraded = run();
+  assert.equal(upgraded.status, 0, upgraded.stderr);
   assert.notEqual(fs.readlinkSync(current), previous);
   assert.ok(fs.existsSync(previous), "keep runtime files for existing processes");
   assert.ok(fs.existsSync(path.join(root, "postinstall")));
 });
 for (const [label, failure] of [
+  ["postinstall failure", { MOCK_POSTINSTALL_FAIL: "1" }],
+  ["relocated CLI failure", { MOCK_RELOCATED_FAIL: "1" }],
+  ["native checksum mismatch", { MOCK_NATIVE_CORRUPT: "1" }],
   ["checksum mismatch", { MOCK_ARCHIVE: "corrupt" }],
   ["npm failure", { MOCK_NPM_FAIL: "1" }],
   ["mismatched CLI version", { MOCK_BAD_VERSION: "1" }],
@@ -109,4 +117,62 @@ test("unmanaged launcher is preserved", (t) => {
   fs.writeFileSync(launcher, "existing");
   assert.notEqual(run().status, 0);
   assert.equal(fs.readFileSync(launcher, "utf8"), "existing");
+});
+
+test("rollback swaps verified releases offline and uninstall preserves user data", (t) => {
+  const { root, prefix, run } = fixture(t);
+  assert.equal(run().status, 0);
+  const managed = path.join(prefix, "share/tmux-ide");
+  const first = fs.readlinkSync(path.join(managed, "current"));
+  assert.equal(run({ MOCK_VERSION: "2.9.1" }, ["--version", "2.9.1"]).status, 0);
+  const second = fs.readlinkSync(path.join(managed, "current"));
+  assert.equal(fs.readlinkSync(path.join(managed, "previous")), first);
+  const rollback = run({ MOCK_NPM_FAIL: "1", MOCK_ARCHIVE: "invalid" }, ["--rollback"]);
+  assert.equal(rollback.status, 0, rollback.stderr);
+  assert.equal(fs.realpathSync(path.join(managed, "current")), fs.realpathSync(first));
+  assert.equal(fs.realpathSync(path.join(managed, "previous")), fs.realpathSync(second));
+  const data = path.join(root, ".tmux-ide");
+  fs.mkdirSync(data);
+  fs.writeFileSync(path.join(data, "machines.json"), "keep");
+  const remove = run({ MOCK_NPM_FAIL: "1" }, ["--uninstall"]);
+  assert.equal(remove.status, 0, remove.stderr);
+  assert.equal(fs.existsSync(path.join(prefix, "bin/tmux-ide")), false);
+  assert.equal(fs.readFileSync(path.join(data, "machines.json"), "utf8"), "keep");
+  assert.ok(fs.existsSync(first) && fs.existsSync(second));
+  assert.equal(run().status, 0, "reinstall after uninstall");
+});
+
+test("missing or corrupt rollback target leaves the current release active", (t) => {
+  const { prefix, run } = fixture(t);
+  assert.equal(run().status, 0);
+  const root = path.join(prefix, "share/tmux-ide");
+  const first = fs.readlinkSync(path.join(root, "current"));
+  assert.notEqual(run({}, ["--rollback"]).status, 0);
+  assert.equal(fs.readlinkSync(path.join(root, "current")), first);
+  assert.equal(run().status, 0);
+  const active = fs.readlinkSync(path.join(root, "current"));
+  fs.writeFileSync(path.join(first, "npm/lib/node_modules/tmux-ide/bin/cli.js"), "process.exit(1)");
+  assert.notEqual(run({}, ["--rollback"]).status, 0);
+  assert.equal(fs.readlinkSync(path.join(root, "current")), active);
+});
+
+test("late failure on a fresh install leaves no managed launcher or release", (t) => {
+  const { prefix, run } = fixture(t);
+  assert.notEqual(run({ MOCK_POSTINSTALL_FAIL: "1" }).status, 0);
+  assert.equal(fs.existsSync(path.join(prefix, "bin/tmux-ide")), false);
+  const root = path.join(prefix, "share/tmux-ide");
+  assert.equal(fs.existsSync(path.join(root, "installer-v1")), false);
+  assert.deepEqual(fs.readdirSync(path.join(root, "releases")), []);
+});
+
+test("an active installation lock prevents all mutations", (t) => {
+  const { prefix, run } = fixture(t);
+  assert.equal(run().status, 0);
+  const root = path.join(prefix, "share/tmux-ide");
+  const active = fs.readlinkSync(path.join(root, "current"));
+  fs.mkdirSync(path.join(root, "install.lock"));
+  for (const args of [[], ["--rollback"], ["--uninstall"]]) {
+    assert.notEqual(run({}, args).status, 0);
+    assert.equal(fs.readlinkSync(path.join(root, "current")), active);
+  }
 });

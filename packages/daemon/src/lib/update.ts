@@ -63,6 +63,8 @@ export function planUpdate(input: {
     };
   }
   const guidance: Record<Exclude<InstallOrigin, PackageManager>, string> = {
+    installer:
+      "Rerun https://tmux-ide.com/install.sh with the same --prefix to update atomically and retain rollback. This managed release must not be modified by npm in place.",
     dev: "Update this checkout with git pull, then follow its build instructions.",
     homebrew: "Update with brew upgrade tmux-ide (using the tap/formula you installed).",
     yarn: `Update this Yarn global installation with yarn global add tmux-ide@${channel}.`,

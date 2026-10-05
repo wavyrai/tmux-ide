@@ -11973,8 +11973,8 @@ var require_package = __commonJS({
         "dev:instance": "node scripts/development-instance.mjs",
         "dev:pilotty": "node scripts/pilotty-dev.mjs",
         "dev:web": "node scripts/dev-web.mjs",
-        test: "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/web-workspace --filter @tmux-ide/electron-shell run test",
-        "test:unit": "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/web-workspace --filter @tmux-ide/electron-shell run test",
+        test: "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
+        "test:unit": "pnpm -r --workspace-concurrency=1 --filter @tmux-ide/daemon --filter @tmux-ide/contracts --filter @tmux-ide/core --filter @tmux-ide/daemon-client --filter @tmux-ide/sdk --filter @tmux-ide/desktop-renderer --filter @tmux-ide/electron-shell run test",
         "test:daemon-bun": "bun test ./packages/daemon/src/lib/canonical-daemon-supervision.test.ts ./packages/daemon/src/lib/canonical-daemon.test.ts ./packages/daemon/src/lib/auth/middleware.test.ts ./packages/daemon/src/command-center/actions/handlers/daemon-shutdown.test.ts ./packages/daemon/src/command-center/resources/application-shell.test.ts ./packages/daemon/src/command-center/resources/agent-graph-overlay.test.ts ./packages/daemon/src/tui/mirror/runtime/runtime-layout-presentation.test.ts ./packages/daemon/src/tui/mirror/runtime/terminal-fast-lane-renderer-adapter.test.ts ./packages/daemon/src/tui/mirror/runtime/terminal-pane-input-router.test.ts",
         lint: "eslint bin scripts packages/contracts/src packages/core/src packages/daemon-client/src packages/sdk/src packages/tmux-bridge/src packages/daemon/src",
         "lint:workspace": "turbo run lint",
@@ -92602,6 +92602,8 @@ import { existsSync as existsSync38, readFileSync as readFileSync38, realpathSyn
 import { dirname as dirname44, join as join51 } from "node:path";
 import { fileURLToPath as fileURLToPath13 } from "node:url";
 function detectPackageManager(path2) {
+  if (/\/share\/tmux-ide\/releases\/install-[^/]+\/npm\/lib\/node_modules\/tmux-ide\/bin$/.test(path2))
+    return "installer";
   if (/\/(?:Cellar|Caskroom)\//.test(path2)) return "homebrew";
   if (/\/_npx\//.test(path2)) return "npx";
   if (/\/(?:\.yarn|yarn)\//.test(path2)) return "yarn";
@@ -92689,6 +92691,7 @@ function planUpdate(input) {
     };
   }
   const guidance = {
+    installer: "Rerun https://tmux-ide.com/install.sh with the same --prefix to update atomically and retain rollback. This managed release must not be modified by npm in place.",
     dev: "Update this checkout with git pull, then follow its build instructions.",
     homebrew: "Update with brew upgrade tmux-ide (using the tap/formula you installed).",
     yarn: `Update this Yarn global installation with yarn global add tmux-ide@${channel}.`,

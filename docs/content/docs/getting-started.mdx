@@ -22,7 +22,7 @@ with `TMUX_IDE_TUI_SOURCE=1`.
 ## Install
 
 ```bash
-curl -fsSL https://tmux.thijsverreck.com/install.sh | sh
+curl -fsSL https://tmux-ide.com/install.sh | sh
 tmux-ide app
 ```
 
@@ -33,17 +33,32 @@ sessions. To inspect it before running, download `install.sh` and read it first.
 To choose a version or a different user-owned location:
 
 ```bash
-curl -fsSL https://tmux.thijsverreck.com/install.sh -o install.sh
+curl -fsSL https://tmux-ide.com/install.sh -o install.sh
 sh install.sh --version 2.9.0 --prefix "$HOME/.local"
 ```
 
 With Node.js 20+ already installed, `npm install -g tmux-ide` is also supported.
-To update, rerun the installer or use `tmux-ide update`. Reopen the TUI afterwards.
-The installer refreshes an already-running daemon; it does not replace a tmux server.
+To update an installer-owned copy, rerun the installer. It verifies the new
+release before switching the launcher, and retains the previous release for rollback.
+It does not restart a daemon or replace a tmux server during installation.
+After installing, reopen the TUI. To explicitly refresh a running daemon:
 
-To uninstall this installer-owned copy, remove `~/.local/bin/tmux-ide` and
-`~/.local/share/tmux-ide`. Your settings and runtime state in `~/.tmux-ide` remain.
-Older installation directories are retained so running processes can finish.
+```bash
+tmux-ide update --daemon --if-running
+```
+
+Package-manager installations can use `tmux-ide update` to update their package.
+For an installer-owned copy, use the same prefix with these recovery commands:
+
+```bash
+sh install.sh --rollback --prefix "$HOME/.local"
+sh install.sh --uninstall --prefix "$HOME/.local"
+```
+
+Rollback selects the previous verified release without a download. Uninstall
+removes the launcher, preserves sessions and settings in `~/.tmux-ide`, and leaves
+runtime files available for processes that are still running. After those processes
+have exited, you can remove `~/.local/share/tmux-ide/releases` to reclaim the space.
 
 For package-manager installations, if the exact-version runtime is not already installed, the first explicit app
 launch downloads it, verifies its release metadata and SHA-256 digest, and

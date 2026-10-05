@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 export type InstallOrigin =
+  | "installer"
   | "npm"
   | "pnpm"
   | "bun"
@@ -12,6 +13,10 @@ export type InstallOrigin =
   | "unknown";
 /** Conservative layout evidence; an arbitrary node_modules directory is not a global install. */
 export function detectPackageManager(path: string): Exclude<InstallOrigin, "dev"> {
+  if (
+    /\/share\/tmux-ide\/releases\/install-[^/]+\/npm\/lib\/node_modules\/tmux-ide\/bin$/.test(path)
+  )
+    return "installer";
   if (/\/(?:Cellar|Caskroom)\//.test(path)) return "homebrew";
   if (/\/_npx\//.test(path)) return "npx";
   if (/\/(?:\.yarn|yarn)\//.test(path)) return "yarn";
