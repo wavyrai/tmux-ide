@@ -139,6 +139,7 @@
     "@eslint/js": "^10.0.1",
     "@opentui/core": "^0.5.1",
     "@opentui/solid": "^0.5.1",
+    "@tmux-ide/contracts": "workspace:*",
     "@tsconfig/bun": "^1.0.10",
     "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",

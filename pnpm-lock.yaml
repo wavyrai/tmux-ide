@@ -72,6 +72,9 @@ importers:
       '@opentui/solid':
         specifier: ^0.5.1
         version: 0.5.1(patch_hash=5ce38678f62441c16742735006c64fe8e1fc0d378f6327073c95ef9fcb75f126)(solid-js@1.9.12)(typescript@5.9.3)(web-tree-sitter@0.25.10)
+      '@tmux-ide/contracts':
+        specifier: workspace:*
+        version: link:packages/contracts
       '@tsconfig/bun':
         specifier: ^1.0.10
         version: 1.0.10
