@@ -2365,6 +2365,11 @@ try {
       mockReleaseAssetPath,
       mockReleaseManifestPath,
       installedCliPath ? join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js") : null,
+      // Keep the complete existing diagnostic stream: filtered timeout tails
+      // can omit the frame-delivery events needed to explain stale output.
+      ...readdirSync(tmpRoot)
+        .filter((name) => /^(?:journey-\d+|installed-tui)\.performance\.jsonl$/u.test(name))
+        .map((name) => join(tmpRoot, name)),
     ]) {
       if (!source || !existsSync(source)) continue;
       const name = source.endsWith("/cli.js") ? "tmux-ide-cli.js" : source.split("/").at(-1);
