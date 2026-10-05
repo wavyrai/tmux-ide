@@ -81,12 +81,11 @@ function absolutePath(value: string, cwd: string, key: string): string {
   return path;
 }
 
-function pathEntryExists(path: string): boolean {
+function pathEntryStat(path: string) {
   try {
-    lstatSync(path);
-    return true;
+    return lstatSync(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
 }
@@ -94,16 +93,18 @@ function pathEntryExists(path: string): boolean {
 function pathIdentity(path: string): string {
   let cursor = resolve(path);
   const suffix: string[] = [];
-  while (!pathEntryExists(cursor)) {
+  let stat = pathEntryStat(cursor);
+  while (!stat) {
     const parent = dirname(cursor);
     if (parent === cursor) break;
     suffix.unshift(basename(cursor));
     cursor = parent;
+    stat = pathEntryStat(cursor);
   }
-  if (pathEntryExists(cursor) && lstatSync(cursor).isSocket()) {
+  if (stat?.isSocket()) {
     return resolve(captureUnixSocketIdentity(cursor).path, ...suffix);
   }
-  return resolve(pathEntryExists(cursor) ? realpathSync(cursor) : cursor, ...suffix);
+  return resolve(stat ? realpathSync(cursor) : cursor, ...suffix);
 }
 
 function isInsideOrEqual(path: string, parent: string): boolean {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -177,6 +177,35 @@ describe("RuntimeNamespace", () => {
       ).toThrow("requires a non-default TMUX_IDE_TMUX_SOCKET_NAME");
     },
   );
+
+  it("revalidates newly created ancestors and replaced symlinks on every resolution", () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-runtime-path-"));
+    const home = join(root, "user");
+    const canonical = join(home, ".tmux-ide");
+    const parent = join(root, "future");
+    const options = {
+      env: {
+        TMUX_IDE_RUNTIME_MODE: "performance",
+        TMUX_IDE_HOME: join(parent, "state"),
+        TMUX_IDE_TMUX_SOCKET_NAME: "private-runtime",
+        TMUX_IDE_CLEANUP_TOKEN: "runtime:path:test",
+      },
+      userHome: home,
+    };
+    try {
+      mkdirSync(canonical, { recursive: true });
+      expect(resolveRuntimeNamespace(options).stateHome).toBe(join(parent, "state"));
+      symlinkSync(canonical, parent);
+      expect(() => resolveRuntimeNamespace(options)).toThrow("cannot use the canonical");
+      unlinkSync(parent);
+      mkdirSync(parent);
+      expect(resolveRuntimeNamespace(options).stateHome).toBe(join(parent, "state"));
+      symlinkSync(canonical, join(parent, "state"));
+      expect(() => resolveRuntimeNamespace(options)).toThrow("cannot use the canonical");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("exports one coherent environment bundle", () => {
     const namespace = resolveRuntimeNamespace({
