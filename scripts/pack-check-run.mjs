@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { runPackedAutomationJourney } from "./lib/packed-automation-journey.mjs";
+import { assertNoPackagedContributorTests } from "./lib/packaged-runtime-files.mjs";
 import { createPackedCancellation } from "./lib/packed-cancellation.mjs";
 import { createHash } from "node:crypto";
 import {
@@ -1830,9 +1831,12 @@ try {
   // is not an installed runtime dependency of that CLI and must not mask an
   // incomplete root tarball in this smoke test.
   await runAsync("pnpm", ["build:cli"], { stdio: "inherit" });
-  await runAsync("pnpm", ["pack", "--pack-destination", tarballDir], { stdio: "inherit" });
+  // Match release.yml's npm publisher. pnpm's packlist has different files/ignore
+  // semantics and can retain files excluded from the actual npm release.
+  await runAsync("npm", ["pack", "--pack-destination", tarballDir], { stdio: "inherit" });
 
   rootTarball = findTarball("tmux-ide-");
+  assertNoPackagedContributorTests(run("tar", ["-tzf", rootTarball]).stdout.trim().split("\n"));
   npmVersion = run("npm", ["--version"]).stdout.trim();
   await runAsync("npm", ["init", "-y"], { cwd: projectDir });
   await runAsync("npm", ["install", rootTarball], { cwd: projectDir, stdio: "inherit" });

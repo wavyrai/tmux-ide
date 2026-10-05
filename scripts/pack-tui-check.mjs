@@ -2,6 +2,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { assertNoPackagedContributorTests } from "./lib/packaged-runtime-files.mjs";
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 for (const script of ["build", "prepack", "pack:check"]) {
@@ -44,14 +45,7 @@ const output = execFileSync(
 const report = JSON.parse(output)[0];
 const files = new Set(report.files.map((entry) => entry.path));
 
-const contributorTests = [...files].filter((path) =>
-  /(?:\.test\.|\.spec\.|\/(?:__tests__|__snapshots__)\/)/u.test(path),
-);
-if (contributorTests.length > 0) {
-  throw new Error(
-    `npm package leaked contributor tests or snapshots: ${contributorTests.join(", ")}`,
-  );
-}
+assertNoPackagedContributorTests(files);
 
 for (const required of [
   "bin/cli.js",
