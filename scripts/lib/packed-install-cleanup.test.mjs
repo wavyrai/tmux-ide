@@ -536,3 +536,34 @@ test("a signalled runtime can pass through a short zombie state before positive 
   assert.deepEqual(signals, ["SIGTERM"]);
   assert.equal(livenessReads, 3);
 });
+
+for (const retirementRead of [1, 2]) {
+  test(`a runtime retiring before identity read ${retirementRead} is observed without new signals`, async () => {
+    let reads = 0;
+    let absent = false;
+    let livenessReads = 0;
+    const signals = [];
+    const cleanup = createInstalledRuntimeCleanup("/private/fixture/tui", undefined, {
+      inspect(args) {
+        if (args[0] === "-axo")
+          return { status: 0, stdout: absent ? "" : "101 /private/fixture/tui" };
+        return {
+          status: 0,
+          stdout:
+            ++reads >= retirementRead ? "birth [tui] <defunct>" : "birth /private/fixture/tui",
+        };
+      },
+      kill(_pid, signal) {
+        if (signal !== 0) signals.push(signal);
+        else if (++livenessReads >= 3) {
+          absent = true;
+          throw Object.assign(new Error(), { code: "ESRCH" });
+        }
+      },
+      pause: async () => {},
+    });
+    await cleanup();
+    assert.equal(absent, true);
+    assert.deepEqual(signals, []);
+  });
+}

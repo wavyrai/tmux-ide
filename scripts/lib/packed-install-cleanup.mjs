@@ -178,14 +178,12 @@ export function createInstalledRuntimeCleanup(downloadedTui, readyPath, dependen
           // refused and are never granted additional signal authority.
           try {
             if (dead(pid)) return;
-            // A just-signalled runtime may briefly appear as a zombie without
-            // its binary path. Wait only for positive disappearance; an altered
-            // identity never regains permission to send another signal.
-            if (phases.get(pid) === "exit-confirmation") {
-              for (let attempt = 0; attempt < 20; attempt++) {
-                await pause(25);
-                if (dead(pid)) return;
-              }
+            // A runtime may exit itself before either identity check, or after
+            // our signal. In every phase, observe only positive disappearance;
+            // an altered identity never regains permission to send a signal.
+            for (let attempt = 0; attempt < 20; attempt++) {
+              await pause(25);
+              if (dead(pid)) return;
             }
           } catch {
             // Preserve the original refusal when liveness is uncertain.
