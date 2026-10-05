@@ -57,6 +57,7 @@ import {
   buildProductDiagnosticReport,
   buildWebStartupEvidence,
   causalFixtureBaselineReadiness,
+  causalCellMatchesCapture,
   causalInputSamples,
   causalInputSampleHasIncarnation,
   causalProbeEpochState,
@@ -8919,8 +8920,8 @@ async function diagnoseRuntimeQualification(planEntry) {
             candidate &&
             geometryStable &&
             exactProof &&
-            beforeNativeCell === causalPainted.beforeGrapheme &&
-            beforeTuiCell === causalPainted.beforeGrapheme &&
+            causalCellMatchesCapture(beforeNativeCell, causalPainted.beforeGrapheme) &&
+            causalCellMatchesCapture(beforeTuiCell, causalPainted.beforeGrapheme) &&
             afterNativeCell === expectedCell &&
             afterTuiCell === expectedCell &&
             causalPainted.afterGrapheme === expectedCell
@@ -11369,8 +11370,8 @@ async function owner() {
           if (
             activeAfter.paneId !== namespace.paneId ||
             paneGeometryIdentity([baseline.active]) !== paneGeometryIdentity([activeAfter]) ||
-            terminalCellAt(nativeBefore, row, column) !== beforeGrapheme ||
-            terminalCellAt(bodyBefore, row, column) !== beforeGrapheme ||
+            !causalCellMatchesCapture(terminalCellAt(nativeBefore, row, column), beforeGrapheme) ||
+            !causalCellMatchesCapture(terminalCellAt(bodyBefore, row, column), beforeGrapheme) ||
             terminalCellAt(nativeAfter, row, column) !== afterGrapheme ||
             terminalCellAt(bodyAfter, row, column) !== afterGrapheme
           )

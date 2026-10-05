@@ -1016,6 +1016,14 @@ export function causalFixtureBaselineReadiness(observation) {
   });
 }
 
+/** Native width-1 erased cells use an empty grapheme; text captures show a space.
+ * Call only after the causal proof has validated its cell width and identity.
+ * Missing evidence and every nonblank grapheme still require exact equality.
+ */
+export function causalCellMatchesCapture(captured, grapheme) {
+  return typeof grapheme === "string" && captured === (grapheme === "" ? " " : grapheme);
+}
+
 export function productInputQueuesSettled(records, processId) {
   const observation = productInputQueueObservation(records, processId);
   return (

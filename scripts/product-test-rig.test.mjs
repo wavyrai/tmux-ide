@@ -37,6 +37,7 @@ import {
   buildProductDiagnosticReport,
   buildWebStartupEvidence,
   causalFixtureBaselineReadiness,
+  causalCellMatchesCapture,
   causalFixtureTeardownDiagnostic,
   causalInputSamples,
   causalInputSampleHasIncarnation,
@@ -3652,4 +3653,15 @@ test("checked-in product baseline is honest and safe to inventory", () => {
   assert.equal(baseline.portablePerformance.inputToPaint, "not-measured");
   assert.ok(baseline.knownDefects.every((defect) => defect.reproduce.length > 0));
   assert.match(baseline.completionPolicy, /not Done/u);
+});
+
+test("causal capture compares native erased cells as blanks without accepting absent or different evidence", () => {
+  assert.equal(causalCellMatchesCapture(" ", ""), true);
+  assert.equal(causalCellMatchesCapture(" ", " "), true);
+  assert.equal(causalCellMatchesCapture("x", "x"), true);
+  assert.equal(causalCellMatchesCapture("x", ""), false);
+  assert.equal(causalCellMatchesCapture(" ", "x"), false);
+  assert.equal(causalCellMatchesCapture(" ", undefined), false);
+  assert.equal(causalCellMatchesCapture(" ", null), false);
+  assert.equal(causalCellMatchesCapture(null, ""), false);
 });
