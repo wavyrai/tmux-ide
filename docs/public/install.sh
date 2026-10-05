@@ -8,6 +8,7 @@ digest() {
 }
 main() {
   action=install
+  confirmed=false
   version=latest
   prefix=${TMUX_IDE_INSTALL_PREFIX:-"$HOME/.local"}
   while [ "$#" -gt 0 ]; do
@@ -16,11 +17,14 @@ main() {
         [ "$#" -ge 2 ] || fail "$1 requires a value"
         case "$1" in --version) version=$2 ;; --prefix) prefix=$2 ;; esac
         shift 2 ;;
-      --rollback|--uninstall) [ "$action" = install ] || fail 'Choose one action'; action=${1#--}; shift ;;
-      --help) printf 'Usage: install.sh [--version VERSION|beta|latest] [--prefix ABSOLUTE_PATH] [--rollback|--uninstall]\nRollback needs a previous successful install. Uninstall removes the launcher, preserves sessions and data, and retains runtime files for running processes.\n'; return ;;
+      --rollback|--uninstall|--prune) [ "$action" = install ] || fail 'Choose one action'; action=${1#--}; shift ;;
+      --yes) confirmed=true; shift ;;
+      --help) printf 'Usage: install.sh [--version VERSION|beta|latest] [--prefix ABSOLUTE_PATH] [--rollback|--uninstall|--prune --yes]\nPrune requires all tmux-ide processes and services to be stopped; it keeps current and previous releases.\nRollback needs a previous successful install. Uninstall removes the launcher, preserves sessions and data, and retains runtime files for running processes.\n'; return ;;
       *) fail "Unknown option: $1" ;;
     esac
   done
+  [ "$confirmed" = false ] || [ "$action" = prune ] || fail '--yes is only valid with --prune'
+  [ "$action" != prune ] || [ "$confirmed" = true ] || fail 'Prune requires --yes after stopping all tmux-ide processes and services; ordinary tmux sessions may remain running'
   case "$prefix" in /*) ;; *) fail 'Install prefix must be absolute' ;; esac
   case "$version" in ''|*[!a-zA-Z0-9.+-]*) fail 'Invalid version or channel' ;; esac
   root="$prefix/share/tmux-ide"
@@ -31,7 +35,8 @@ main() {
   mkdir -p "$root/releases" "$prefix/bin"
   mkdir "$root/install.lock" 2>/dev/null || fail "Another installation is running (lock: $root/install.lock)"
   stage=''
-  trap '[ -z "$stage" ] || rm -rf "$stage"; rmdir "$root/install.lock" 2>/dev/null || true' 0
+  candidate=''
+  trap '[ -z "$stage" ] || rm -rf "$stage"; if [ -n "$candidate" ] && [ ! "$candidate" -ef "$root/current" ] && [ ! "$candidate" -ef "$root/previous" ]; then rm -rf "$candidate"; fi; rmdir "$root/install.lock" 2>/dev/null || true' 0
   trap 'exit 1' INT TERM
   if [ "$action" != install ]; then
     [ -f "$root/installer-v1" ] || fail 'No managed installation found at this prefix'
@@ -67,6 +72,22 @@ if (action === 'rollback') {
   switchLink(target, current);
   try { switchLink(active, previous); } catch (error) { switchLink(active, current); throw error; }
   console.log(`Rolled back to ${version}. Existing sessions are preserved. Reopen tmux-ide to use this release.`);
+} else if (action === 'prune') {
+  const keep = new Set([release(current)]);
+  try { keep.add(release(previous)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  let removed = 0;
+  for (const entry of fs.readdirSync(path.join(root, 'releases'), {withFileTypes: true})) {
+    if (!entry.isDirectory() || !/^install-[A-Za-z0-9]{6}$/.test(entry.name)) continue;
+    const target = path.join(root, 'releases', entry.name);
+    if (keep.has(fs.realpathSync(target))) continue;
+    const marker = path.join(target, '.installer-release-v1');
+    try {
+      if (!fs.lstatSync(marker).isFile() || fs.readFileSync(marker, 'utf8') !== '1\n') continue;
+    } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    fs.rmSync(target, {recursive: true});
+    removed++;
+  }
+  console.log(`Removed ${removed} retired releases; current, rollback and unrecognized files are preserved.`);
 } else {
   release(current);
   fs.unlinkSync(launcher);
@@ -78,6 +99,14 @@ if (action === 'rollback') {
 JS
     return
   fi
+  # Bound disk growth without guessing which old runtime a live process uses.
+  # Cleanup is explicit because unlinking a loaded runtime can break later I/O.
+  retained=0
+  for candidate in "$root"/releases/install-*; do
+    [ -d "$candidate" ] && [ ! -L "$candidate" ] && [ -f "$candidate/.installer-release-v1" ] || continue
+    retained=$((retained + 1))
+  done
+  [ "$retained" -lt 8 ] || fail 'Eight retained releases reached. Stop tmux-ide processes and services, then rerun this script with the same --prefix and --prune --yes. Ordinary tmux sessions may remain running.'
   case "$(uname -s)" in
     Darwin) os=darwin ;;
     Linux) os=linux; getconf GNU_LIBC_VERSION >/dev/null 2>&1 || fail 'Linux requires glibc (musl/Alpine is not supported)' ;;
@@ -87,6 +116,7 @@ JS
   for tool in curl tar gzip awk mktemp grep; do command -v "$tool" >/dev/null 2>&1 || fail "Missing required tool: $tool"; done
   command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail 'A SHA-256 tool is required'
   stage=$(mktemp -d "$root/releases/.install.XXXXXX")
+  candidate="$root/releases/install-${stage##*.install.}"
   printf 'Installing tmux-ide@%s for %s-%s…\n' "$version" "$os" "$arch"
   fetch https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt "$stage/SHASUMS256.txt"
   archive=$(awk -v suffix="-$os-$arch.tar.gz" '$2 ~ /^node-v24\.[0-9]+\.[0-9]+-/ && substr($2,length($2)-length(suffix)+1)==suffix {print $2}' "$stage/SHASUMS256.txt")
@@ -183,6 +213,7 @@ try {
   execFileSync(node, [path.join(pkg, 'scripts/postinstall.js')], {env, stdio: 'inherit', timeout: 60000});
   const actual = execFileSync(node, [path.join(pkg, 'bin/cli.js'), '--version'], {env, encoding: 'utf8', timeout: 30000}).trim();
   if (actual !== `tmux-ide v${version}`) throw new Error('Relocated CLI failed its version check');
+  fs.writeFileSync(path.join(destination, '.installer-release-v1'), '1\n', {mode: 0o600, flag: 'wx'});
   fs.writeFileSync(temporaryLauncher, launcher, {mode: 0o755});
   fs.writeFileSync(marker, '1\n');
   if (oldCurrent) replaceLink(oldCurrent, previous);

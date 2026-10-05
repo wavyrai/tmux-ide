@@ -60,6 +60,19 @@ removes the launcher, preserves sessions and settings in `~/.tmux-ide`, and leav
 runtime files available for processes that are still running. After those processes
 have exited, you can remove `~/.local/share/tmux-ide/releases` to reclaim the space.
 
+The installer retains at most eight marked releases and refuses a ninth until
+cleanup. To reclaim retired versions, first close every tmux-ide app and stop its
+daemon and any supervisor service. Ordinary tmux sessions may stay running. Then:
+
+```bash
+sh install.sh --prune --yes --prefix "$HOME/.local"
+```
+
+`--yes` confirms that those processes have stopped; the installer does not stop
+or detect them for you. Cleanup preserves the current and previous rollback
+releases, settings, and unrecognized files. Releases installed by an older script
+without a release marker are left for manual review.
+
 For package-manager installations, if the exact-version runtime is not already installed, the first explicit app
 launch downloads it, verifies its release metadata and SHA-256 digest, and
 caches it under `~/.tmux-ide/bin`. The daemon starts only after a runnable TUI

@@ -119,6 +119,8 @@ jobs:
       - uses: pnpm/action-setup@v4
       - name: Install qualification dependencies
         run: pnpm install --frozen-lockfile
+      - name: Qualify installer transactions on this platform
+        run: pnpm test:installer
       - name: Qualify native grid and daemon client transport
         run: |
           bundle="$PWD/packages/daemon/dist/native/tmux/$(node -p 'process.platform + "-" + process.arch')"

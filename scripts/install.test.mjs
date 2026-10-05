@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 const installer = path.resolve("docs/public/install.sh");
@@ -22,13 +22,15 @@ function fixture(t) {
   }
   script(
     "uname",
-    `case "$1" in -s) echo ${platform === "darwin" ? "Darwin" : "Linux"} ;; -m) echo ${arch === "arm64" ? "arm64" : "x86_64"} ;; esac\n`,
+    `case "$1" in -s) echo "\${MOCK_OS:-${platform === "darwin" ? "Darwin" : "Linux"}}" ;; -m) echo "\${MOCK_ARCH:-${arch === "arm64" ? "arm64" : "x86_64"}}" ;; esac\n`,
   );
+  script("getconf", '[ -z "${MOCK_MUSL:-}" ] || exit 1; exec /usr/bin/getconf "$@"\n');
   script("tmux-ide", "echo stale-PATH-version; exit 99\n");
   const sha = createHash("sha256").update("archive").digest("hex");
   script(
     "curl",
-    `url=''; out=''; while [ "$#" -gt 0 ]; do case "$1" in https:*) url=$1 ;; -o) shift; out=$1 ;; esac; shift; done
+    `[ -z "\${MOCK_NETWORK_FAIL:-}" ] || exit 7
+url=''; out=''; while [ "$#" -gt 0 ]; do case "$1" in https:*) url=$1 ;; -o) shift; out=$1 ;; esac; shift; done
 case "$url" in *SHASUMS256.txt) printf '%s  node-v24.1.0-${target}.tar.gz\\n' '${sha}' > "$out" ;; *) printf '%s' "\${MOCK_ARCHIVE:-archive}" > "$out" ;; esac\n`,
   );
   const npm = path.join(root, "npm.mjs");
@@ -42,7 +44,7 @@ for (const dir of ['bin','scripts','packages/daemon/dist/native/tmux/${target}']
 const version = process.env.MOCK_VERSION || '2.9.0';
 fs.writeFileSync(path.join(root,'package.json'),JSON.stringify({version}));
 fs.writeFileSync(path.join(root,'bin/cli.js'), "if(process.env.MOCK_RELOCATED_FAIL && !__filename.includes('.install.')) process.exit(1); if(process.env.MOCK_TUI_FAIL && process.argv.includes('--tui-binary')) process.exit(1); console.log(process.env.MOCK_BAD_VERSION ? 'tmux-ide v0.0.0' : 'tmux-ide v"+version+"');");
-fs.writeFileSync(path.join(root,'scripts/postinstall.js'), "if(process.env.MOCK_POSTINSTALL_FAIL) process.exit(1); if(process.env.npm_config_global === 'true') throw new Error('must not update the daemon implicitly'); require('node:fs').appendFileSync(process.env.HOME+'/postinstall', 'installed\\\\n');");
+fs.writeFileSync(path.join(root,'scripts/postinstall.js'), "if(process.env.MOCK_POSTINSTALL_HOLD) { require('node:fs').writeFileSync(process.env.MOCK_POSTINSTALL_HOLD, 'ready'); setInterval(()=>{}, 1000); } if(process.env.MOCK_POSTINSTALL_FAIL) process.exit(1); if(process.env.npm_config_global === 'true') throw new Error('must not update the daemon implicitly'); require('node:fs').appendFileSync(process.env.HOME+'/postinstall', 'installed\\\\n');");
 
 if (!process.env.MOCK_MISSING_TMUX) fs.writeFileSync(path.join(root,'packages/daemon/dist/native/tmux/${target}/tmux'),'#!/bin/sh\\necho tmux '+(process.env.MOCK_OLD_TMUX ? '3.4' : '3.7c')+'\\n');
 const native=path.join(root,'packages/daemon/dist/native/tmux/${target}/tmux');
@@ -53,7 +55,8 @@ if(process.env.MOCK_NATIVE_CORRUPT) fs.appendFileSync(native,'corrupt');
   const node = process.execPath;
   script(
     "tar",
-    `while [ "$1" != '-C' ]; do shift; done; shift
+    `[ -z "\${MOCK_TAR_FAIL:-}" ] || exit 2
+while [ "$1" != '-C' ]; do shift; done; shift
 mkdir -p "$1/bin"
 ln -s ${quote(node)} "$1/bin/node"
 printf '%s\\n' '#!/bin/sh' 'exec ${node} ${quote(npm).replaceAll("'", "'\\''")} "$@"' > "$1/bin/npm"
@@ -70,7 +73,7 @@ chmod +x "$1/bin/npm"\n`,
       env: { ...env, ...extra },
       encoding: "utf8",
     });
-  return { root, prefix, run };
+  return { root, prefix, run, env };
 }
 
 test("fresh install and upgrade work with spaces and shell punctuation", (t) => {
@@ -94,6 +97,14 @@ for (const [label, failure] of [
   ["native checksum mismatch", { MOCK_NATIVE_CORRUPT: "1" }],
   ["checksum mismatch", { MOCK_ARCHIVE: "corrupt" }],
   ["npm failure", { MOCK_NPM_FAIL: "1" }],
+  [
+    "offline or proxy transport failure",
+    { MOCK_NETWORK_FAIL: "1", HTTPS_PROXY: "http://127.0.0.1:1" },
+  ],
+  ["archive extraction failure", { MOCK_TAR_FAIL: "1" }],
+  ["unsupported operating system", { MOCK_OS: "FreeBSD" }],
+  ["unsupported architecture", { MOCK_ARCH: "riscv64" }],
+  ["unsupported libc", { MOCK_OS: "Linux", MOCK_MUSL: "1" }],
   ["mismatched CLI version", { MOCK_BAD_VERSION: "1" }],
   ["TUI download failure", { MOCK_TUI_FAIL: "1" }],
   ["missing platform bundle", { MOCK_MISSING_TMUX: "1" }],
@@ -176,3 +187,97 @@ test("an active installation lock prevents all mutations", (t) => {
     assert.equal(fs.readlinkSync(path.join(root, "current")), active);
   }
 });
+
+test("explicit pruning retains current and rollback, skips unknown files, and works offline", (t) => {
+  const { prefix, run } = fixture(t);
+  assert.equal(run().status, 0);
+  const root = path.join(prefix, "share/tmux-ide");
+  const releases = path.join(root, "releases");
+  const retired = fs.readlinkSync(path.join(root, "current"));
+  assert.equal(run().status, 0);
+  const previous = fs.readlinkSync(path.join(root, "current"));
+  assert.equal(run().status, 0);
+  const current = fs.readlinkSync(path.join(root, "current"));
+  const unknown = path.join(releases, "install-ABCDEF");
+  fs.mkdirSync(unknown);
+  fs.writeFileSync(path.join(unknown, "user-data"), "keep");
+  const linked = path.join(releases, "install-SYMLNK");
+  fs.symlinkSync(retired, linked);
+  assert.notEqual(run({}, ["--prune"]).status, 0);
+  assert.ok(fs.existsSync(retired));
+  const result = run({ MOCK_NPM_FAIL: "1", MOCK_ARCHIVE: "invalid" }, ["--prune", "--yes"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(retired), false);
+  assert.ok(fs.existsSync(current) && fs.existsSync(previous));
+  assert.equal(fs.readFileSync(path.join(unknown, "user-data"), "utf8"), "keep");
+  assert.ok(fs.lstatSync(linked).isSymbolicLink());
+  assert.equal(fs.readlinkSync(path.join(root, "current")), current);
+  assert.equal(fs.readlinkSync(path.join(root, "previous")), previous);
+  assert.equal(run({}, ["--prune", "--yes"]).status, 0, "pruning is idempotent");
+});
+
+test("retention cap refuses another install until explicit cleanup", (t) => {
+  const { prefix, run } = fixture(t);
+  assert.equal(run().status, 0);
+  const root = path.join(prefix, "share/tmux-ide");
+  const current = fs.readlinkSync(path.join(root, "current"));
+  for (let i = 0; i < 7; i++) {
+    const retired = path.join(root, "releases", `install-OLD00${i}`);
+    fs.mkdirSync(retired);
+    fs.writeFileSync(path.join(retired, ".installer-release-v1"), "1\n");
+  }
+  const refused = run();
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Eight retained releases/);
+  assert.equal(fs.readlinkSync(path.join(root, "current")), current);
+  assert.equal(run({}, ["--prune", "--yes"]).status, 0);
+  assert.equal(run().status, 0);
+});
+
+for (const signal of ["SIGTERM", "SIGINT"])
+  test(`${signal} during relocated setup removes the candidate and preserves the old release`, async (t) => {
+    const { root, prefix, run, env } = fixture(t);
+    assert.equal(run().status, 0);
+    const managed = path.join(prefix, "share/tmux-ide");
+    const current = fs.readlinkSync(path.join(managed, "current"));
+    const releases = fs.readdirSync(path.join(managed, "releases"));
+    const ready = path.join(root, "postinstall-ready");
+    const child = spawn("/bin/sh", [installer, "--prefix", prefix], {
+      env: { ...env, MOCK_POSTINSTALL_HOLD: ready },
+      detached: true,
+      stdio: "ignore",
+    });
+    const closed = new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code) => resolve(code));
+    });
+    t.after(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {}
+      }
+    });
+    const deadline = Date.now() + 10000;
+    while (!fs.existsSync(ready)) {
+      assert.ok(Date.now() < deadline, "fixture reached relocated postinstall");
+      assert.equal(child.exitCode, null);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    process.kill(-child.pid, signal);
+    let timer;
+    try {
+      await Promise.race([
+        closed,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("installer did not terminate")), 5000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    assert.equal(fs.readlinkSync(path.join(managed, "current")), current);
+    assert.deepEqual(fs.readdirSync(path.join(managed, "releases")), releases);
+    assert.equal(fs.existsSync(path.join(managed, "install.lock")), false);
+    assert.equal(run().status, 0, "a subsequent installation succeeds");
+  });
