@@ -3,9 +3,9 @@ import { runPackedAutomationJourney } from "./lib/packed-automation-journey.mjs"
 import { assertNoPackagedContributorTests } from "./lib/packaged-runtime-files.mjs";
 import { createPackedCancellation } from "./lib/packed-cancellation.mjs";
 import {
-  capturePackedGeneratedSource,
-  restorePackedGeneratedSource,
-} from "./lib/packed-generated-source.mjs";
+  captureGeneratedCliSource,
+  restoreGeneratedCliSource,
+} from "./lib/generated-cli-source.mjs";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -1958,7 +1958,7 @@ try {
   // workspace-owned TypeScript. The private @tmux-ide/daemon workspace package
   // is not an installed runtime dependency of that CLI and must not mask an
   // incomplete root tarball in this smoke test.
-  const originalCli = capturePackedGeneratedSource(join(root, "bin/cli.js"));
+  const originalCli = captureGeneratedCliSource(join(root, "bin/cli.js"));
   await runAsync("pnpm", ["build:cli"], { stdio: "inherit" });
   // Match release.yml's npm publisher. pnpm's packlist has different files/ignore
   // semantics and can retain files excluded from the actual npm release.
@@ -1970,7 +1970,8 @@ try {
   });
   if (packagedCli.error || packagedCli.status !== 0 || packagedCli.signal !== null)
     throw new Error("Could not verify generated CLI against the completed package");
-  generatedSource = restorePackedGeneratedSource(originalCli, packagedCli.stdout);
+  generatedSource = restoreGeneratedCliSource(originalCli, packagedCli.stdout);
+  generatedSource.packagedSha256 = generatedSource.generatedSha256;
   assertNoPackagedContributorTests(run("tar", ["-tzf", rootTarball]).stdout.trim().split("\n"));
   npmVersion = run("npm", ["--version"]).stdout.trim();
   await runAsync("npm", ["init", "-y"], { cwd: projectDir });

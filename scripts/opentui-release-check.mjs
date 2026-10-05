@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  captureGeneratedCliSource,
+  restoreGeneratedCliSource,
+} from "./lib/generated-cli-source.mjs";
 
 // Hermetic SSH proofs: no remote host, real SSH process, or live tmux mutation.
 const sshTests = [
@@ -239,6 +245,7 @@ const checks = [
   },
   {
     boundary: "OpenTUI current CLI build",
+    buildsCli: true,
     command: "pnpm",
     args: ["build:cli"],
   },
@@ -387,28 +394,49 @@ const checks = [
   },
   {
     boundary: "OpenTUI installed-package journey",
+    requiresCleanSource: true,
     command: "pnpm",
     args: ["test:pack-installed"],
   },
 ];
 
-for (const check of checks) {
-  process.stdout.write(`\n[release:opentui] ${check.boundary}\n`);
-  const result = spawnSync(check.command, check.args, {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: "inherit",
-  });
-  if (result.error) {
-    throw new Error(`${check.boundary} could not start: ${result.error.message}`, {
-      cause: result.error,
+const cliPath = join(process.cwd(), "bin/cli.js");
+let originalCli = null;
+let generatedCli = null;
+const restoreCli = () => {
+  if (!originalCli || !generatedCli) return;
+  restoreGeneratedCliSource(originalCli, generatedCli);
+  originalCli = null;
+  generatedCli = null;
+};
+
+try {
+  for (const check of checks) {
+    // Keep the freshly built CLI for live checks, but retire this gate's build
+    // output before the independently source-bound installed-package journey.
+    if (check.requiresCleanSource) restoreCli();
+    if (check.buildsCli) originalCli = captureGeneratedCliSource(cliPath);
+    process.stdout.write(`\n[release:opentui] ${check.boundary}\n`);
+    const result = spawnSync(check.command, check.args, {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: "inherit",
     });
+    if (result.error) {
+      throw new Error(`${check.boundary} could not start: ${result.error.message}`, {
+        cause: result.error,
+      });
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `${check.boundary} failed (${result.signal ? `signal ${result.signal}` : `exit ${result.status}`})`,
+      );
+    }
+    if (check.buildsCli) generatedCli = readFileSync(cliPath);
   }
-  if (result.status !== 0) {
-    throw new Error(
-      `${check.boundary} failed (${result.signal ? `signal ${result.signal}` : `exit ${result.status}`})`,
-    );
-  }
+} finally {
+  // Never erase a later edit: restoration requires the exact successful build.
+  restoreCli();
 }
 
 process.stdout.write("\n[release:opentui] focused release gate passed\n");
