@@ -28,7 +28,7 @@ const value = (
 ): HomeAgentSnapshot => ({
   phase,
   rows,
-  observedSessions: phase === "live" ? 1 : 0,
+  observedSessions: phase === "live" || rows.length > 0 ? 1 : 0,
   totalSessions: 1,
   loadingSessions: phase === "loading" ? 1 : 0,
   unavailableSessions: phase === "unavailable" ? 1 : 0,

@@ -269,25 +269,27 @@ export function createApplicationMachineNavigation(options: {
     for (const tab of tabs.snapshot().tabs) tabs.observe(tab.key, tabAgents(tab));
   });
   const sidebar: ApplicationMachineSidebarModel = {
-    groups: () =>
-      snapshot().groups.map((group) => ({
-        ...group,
-        agentsAvailable:
-          group.sessions.some((session) => isDefaultSession(group.id, session)) &&
-          (agentGroups().find((value) => value.machineId === group.id)?.available ?? false),
-        agents: !group.sessions.some((session) => isDefaultSession(group.id, session))
-          ? []
-          : (agentGroups().find((value) => value.machineId === group.id)?.agents ?? []).map(
-              (agent) => ({
-                ...agent,
-                server: group.sessions.find(
-                  (session) =>
-                    session.liveSessionId === agent.liveSessionId &&
-                    isDefaultSession(group.id, session),
-                )?.server,
-              }),
-            ),
-      })),
+    groups: () => {
+      const groupsById = new Map(agentGroups().map((group) => [group.machineId, group]));
+      return snapshot().groups.map((group) => {
+        // Read once per projection: local authority reads validate the record on disk.
+        // The next projection (and action admission) still observes replacement immediately.
+        const instanceId = manager.getMachine(group.id)?.read()?.instanceId;
+        const defaultSessions = group.sessions.filter(
+          (session) => !session.server || session.server.generation === instanceId,
+        );
+        const agents = defaultSessions.length ? groupsById.get(group.id) : undefined;
+        return {
+          ...group,
+          agentsAvailable: agents?.available ?? false,
+          agents: (agents?.agents ?? []).map((agent) => ({
+            ...agent,
+            server: defaultSessions.find((session) => session.liveSessionId === agent.liveSessionId)
+              ?.server,
+          })),
+        };
+      });
+    },
     tabs: () => {
       tabRevision();
       const value = tabs.snapshot();
@@ -479,7 +481,10 @@ export function createApplicationMachineNavigation(options: {
     paletteCommands(): readonly ApplicationPaletteCommand[] {
       const groupsById = new Map(agentGroups().map((group) => [group.machineId, group]));
       return snapshot().groups.flatMap((group) => {
-        const agentGroup = !group.sessions.some((session) => isDefaultSession(group.id, session))
+        const daemon = manager.getMachine(group.id)?.read();
+        const isDefault = (session: { server?: TmuxServerScope }) =>
+          !session.server || session.server.generation === daemon?.instanceId;
+        const agentGroup = !group.sessions.some((session) => isDefault(session))
           ? undefined
           : groupsById.get(group.id);
         const agentsBySession = new Map<string, ApplicationMachineAgent[]>();
@@ -489,7 +494,6 @@ export function createApplicationMachineNavigation(options: {
           list.push(agent);
           agentsBySession.set(agent.liveSessionId, list);
         }
-        const daemon = manager.getMachine(group.id)?.read();
         const sessions = group.sessions.flatMap((session): ApplicationPaletteCommand[] => {
           if (!session.liveSessionId) return [];
           const fleet = {
@@ -502,7 +506,7 @@ export function createApplicationMachineNavigation(options: {
             server: session.server,
             hostLabel: `${group.label}${session.serverLabel ? ` / ${session.serverLabel}` : ""}`,
             agentActivities:
-              isDefaultSession(group.id, session) && agentGroup?.available
+              isDefault(session) && agentGroup?.available
                 ? (agentsBySession.get(session.liveSessionId) ?? []).map((a) => ({
                     paneId: a.paneId!,
                     attention: a.attention,
@@ -514,16 +518,15 @@ export function createApplicationMachineNavigation(options: {
           };
           return [
             { kind: "open-session", sessionName: session.name, label: session.name, fleet },
-            ...(isDefaultSession(group.id, session)
-              ? (agentsBySession.get(session.liveSessionId) ?? [])
-              : []
-            ).map((a) => ({
-              kind: "jump-agent" as const,
-              sessionName: session.name,
-              paneId: a.paneId!,
-              label: a.name,
-              fleet: { ...fleet, disabled: fleet.disabled || a.disabled },
-            })),
+            ...(isDefault(session) ? (agentsBySession.get(session.liveSessionId) ?? []) : []).map(
+              (a) => ({
+                kind: "jump-agent" as const,
+                sessionName: session.name,
+                paneId: a.paneId!,
+                label: a.name,
+                fleet: { ...fleet, disabled: fleet.disabled || a.disabled },
+              }),
+            ),
           ];
         });
         return [
