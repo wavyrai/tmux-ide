@@ -182,7 +182,8 @@ describe.skipIf(!tmuxAvailable)("installed stock observer overflow", () => {
       daemonInstanceId: daemon.info.instanceId,
       daemonPid: daemon.child.pid,
       retainedBytes,
-      gap: stream.getObservationStatus()?.lastGap?.reason,
+      gapReasons,
+      recoveredReceipt: recovered(),
       observedReceipts: receipts.length,
       panePidPreserved: true,
     });
