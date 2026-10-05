@@ -1608,24 +1608,35 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   const manualSizing = [];
   try {
     for (const [index, scope] of ["window", "inherited"].entries()) {
-      if (scope === "inherited") {
-        sizingCommand("set-option", "-gw", "window-size", "manual");
-        sizingCommand("set-option", "-wu", "-t", sourceSize.window, "window-size");
-      } else {
-        sizingCommand("set-option", "-w", "-t", sourceSize.window, "window-size", "manual");
-      }
+      const deltaCols = index === 0 ? 20 : 8;
+      const deltaRows = index === 0 ? 8 : 4;
+      // Keep setup, readback and the host resize in one tmux command queue.
+      // Separate CLI invocations let the live viewer repair manual sizing
+      // between establishing the fixture policy and triggering the resize.
+      const policyArgs =
+        scope === "inherited"
+          ? [
+              "set-option",
+              "-gw",
+              "window-size",
+              "manual",
+              ";",
+              "set-option",
+              "-wu",
+              "-t",
+              sourceSize.window,
+              "window-size",
+            ]
+          : ["set-option", "-w", "-t", sourceSize.window, "window-size", "manual"];
       const policyBefore = sizingCommand(
+        ...policyArgs,
+        ";",
         "show-options",
         "-Awv",
         "-t",
         sourceSize.window,
         "window-size",
-      );
-      if (policyBefore !== "manual")
-        throw new Error(`Fixture did not establish ${scope} manual sizing`);
-      const deltaCols = index === 0 ? 20 : 8;
-      const deltaRows = index === 0 ? 8 : 4;
-      sizingCommand(
+        ";",
         "resize-window",
         "-t",
         hostSize.window,
@@ -1634,6 +1645,10 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
         "-y",
         String(hostSize.rows + deltaRows),
       );
+      if (policyBefore !== "manual")
+        throw new Error(
+          `Fixture did not establish ${scope} manual sizing: ${JSON.stringify({ policyBefore, source: sizingState(focused), host: sizingState(one.targetPane) })}\n${one.diagnostics()}`,
+        );
       const expected = { cols: sourceSize.cols + deltaCols, rows: sourceSize.rows + deltaRows };
       await observe(
         `installed viewport repairs ${scope} manual sizing`,
