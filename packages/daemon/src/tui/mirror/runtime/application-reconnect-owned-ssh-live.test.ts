@@ -2,11 +2,19 @@
 import { serve } from "@hono/node-server";
 import { randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { DAEMON_WIRE_PROTOCOL_VERSION, type CanonicalDaemonInfo } from "@tmux-ide/contracts";
+import { loadSavedMachines, watchSavedMachines } from "../../../lib/saved-machines.ts";
 import { TmuxServerOwners } from "../../../lib/tmux-server-owners.ts";
 import type { NativeTmuxServerOwner } from "../../../lib/tmux-server-owner.ts";
 import { createApp } from "../../../command-center/server.ts";
@@ -49,6 +57,9 @@ it.skipIf(process.env.TMUX_IDE_OWNED_RECONNECT_SSH !== "1" || process.platform !
     const transports: Awaited<ReturnType<typeof openSshDaemonTransport>>[] = [];
     let current: CanonicalDaemonInfo | null = null;
     let missingHandshakes = 0;
+    let handshakeGate: Promise<void> | null = null;
+    let releaseHandshake: (() => void) | null = null;
+    let gatedHandshakes = 0;
     const environmentId = randomUUID();
     async function backend() {
       const identity = {
@@ -113,7 +124,11 @@ it.skipIf(process.env.TMUX_IDE_OWNED_RECONNECT_SSH !== "1" || process.platform !
         node: process.execPath,
         targetPort: first.info.port,
         processes: tracker,
-        handshake: () => {
+        handshake: async () => {
+          if (handshakeGate) {
+            gatedHandshakes++;
+            await handshakeGate;
+          }
           if (!current) missingHandshakes++;
           return current
             ? { version: 1, daemon: current }
@@ -192,7 +207,18 @@ it.skipIf(process.env.TMUX_IDE_OWNED_RECONNECT_SSH !== "1" || process.platform !
         sshTarget: index === 0 ? "target" : "alternate",
         enabled: true,
       }));
-      manager.initialize(profiles);
+      const registryPath = join(root, "machines.json");
+      const replaceProfiles = (machines: typeof profiles) => {
+        const temporary = join(root, "machines.next");
+        writeFileSync(temporary, JSON.stringify({ version: 1, machines }), { mode: 0o600 });
+        renameSync(temporary, registryPath);
+      };
+      replaceProfiles(profiles);
+      manager.initialize(loadSavedMachines(registryPath).machines);
+      const registryError = vi.fn();
+      manager.followProfiles((onChange) =>
+        watchSavedMachines((registry) => onChange(registry.machines), registryError, registryPath),
+      );
       expect(await Promise.all(profiles.map(({ id }) => manager!.getMachine(id)!.ready))).toEqual([
         true,
         true,
@@ -213,7 +239,7 @@ it.skipIf(process.env.TMUX_IDE_OWNED_RECONNECT_SSH !== "1" || process.platform !
       );
       const survivor = manager.getMachine(profiles[1]!.id)!;
       const survivingEpoch = survivor.endpoint().epoch;
-      manager.reconcile([{ ...profiles[0]!, enabled: false }, profiles[1]!]);
+      replaceProfiles([{ ...profiles[0]!, enabled: false }, profiles[1]!]);
       await vi.waitFor(() => {
         const remote = catalog!.getSnapshot().groups.filter((group) => group.id !== "local");
         expect(remote).toHaveLength(1);
@@ -223,6 +249,97 @@ it.skipIf(process.env.TMUX_IDE_OWNED_RECONNECT_SSH !== "1" || process.platform !
       expect(manager.getMachine(profiles[1]!.id)).toBe(survivor);
       expect(survivor.endpoint().epoch).toBe(survivingEpoch);
       expect(await survivor.isAlive(survivor.read()!)).toBe(true);
+
+      // Re-enable through another atomic replacement, then edit the SSH target
+      // while both routes are connected. The unaffected route must survive.
+      replaceProfiles(profiles);
+      await vi.waitFor(() =>
+        expect(manager!.getMachine(profiles[0]!.id)?.read()?.instanceId).toBe(
+          second.info.instanceId,
+        ),
+      );
+      const beforeEdit = manager.getMachine(profiles[0]!.id)!;
+      expect(await beforeEdit.ready).toBe(true);
+      replaceProfiles([{ ...profiles[0]!, sshTarget: "alternate" }, profiles[1]!]);
+      await vi.waitFor(
+        () => {
+          const edited = manager!.getMachine(profiles[0]!.id);
+          expect(edited).not.toBeNull();
+          expect(edited).not.toBe(beforeEdit);
+          expect(edited!.read()?.instanceId).toBe(second.info.instanceId);
+        },
+        { timeout: 10000 },
+      );
+      expect(beforeEdit.read()).toBeNull();
+      expect(beforeEdit.endpoint().state).toBe("disconnected");
+      expect(manager.getMachine(profiles[1]!.id)).toBe(survivor);
+      expect(survivor.endpoint().epoch).toBe(survivingEpoch);
+
+      // A partially written registry must not destroy healthy connections.
+      const edited = manager.getMachine(profiles[0]!.id)!;
+      writeFileSync(registryPath, "{", { mode: 0o600 });
+      await vi.waitFor(() => expect(registryError).toHaveBeenCalled());
+      expect(manager.getMachine(profiles[0]!.id)).toBe(edited);
+      expect(manager.getMachine(profiles[1]!.id)).toBe(survivor);
+      expect(await survivor.isAlive(survivor.read()!)).toBe(true);
+
+      replaceProfiles([profiles[1]!]);
+      await vi.waitFor(
+        () => {
+          expect(manager!.getMachine(profiles[0]!.id)).toBeNull();
+          const remote = catalog!.getSnapshot().groups.filter((group) => group.id !== "local");
+          expect(remote).toHaveLength(1);
+          expect(remote[0]).toMatchObject({ state: "ready", routeIds: [profiles[1]!.id] });
+        },
+        { timeout: 10000 },
+      );
+      expect(edited.read()).toBeNull();
+      expect(manager.getMachine(profiles[1]!.id)).toBe(survivor);
+      expect(survivor.endpoint().epoch).toBe(survivingEpoch);
+      expect(await survivor.isAlive(survivor.read()!)).toBe(true);
+
+      for (const mutation of ["disable", "remove", "edit"] as const) {
+        const beforeGate = gatedHandshakes;
+        handshakeGate = new Promise<void>((resolve) => {
+          releaseHandshake = resolve;
+        });
+        replaceProfiles(profiles);
+        await vi.waitFor(() => expect(gatedHandshakes).toBeGreaterThan(beforeGate), {
+          timeout: 10000,
+        });
+        const pending = manager.getMachine(profiles[0]!.id)!;
+        expect(pending).not.toBeNull();
+        expect(pending.read()).toBeNull();
+        replaceProfiles(
+          mutation === "remove"
+            ? [profiles[1]!]
+            : [
+                {
+                  ...profiles[0]!,
+                  ...(mutation === "disable" ? { enabled: false } : { sshTarget: "alternate" }),
+                },
+                profiles[1]!,
+              ],
+        );
+        await vi.waitFor(() => expect(manager!.getMachine(profiles[0]!.id)).not.toBe(pending));
+        expect(await pending.ready).toBe(false);
+        releaseHandshake!();
+        releaseHandshake = null;
+        handshakeGate = null;
+        if (mutation === "edit") {
+          await vi.waitFor(
+            () =>
+              expect(manager!.getMachine(profiles[0]!.id)?.read()?.instanceId).toBe(
+                second.info.instanceId,
+              ),
+            { timeout: 10000 },
+          );
+        } else expect(manager.getMachine(profiles[0]!.id)).toBeNull();
+        expect(pending.read()).toBeNull();
+        expect(manager.getMachine(profiles[1]!.id)).toBe(survivor);
+        expect(survivor.endpoint().epoch).toBe(survivingEpoch);
+        expect(await survivor.isAlive(survivor.read()!)).toBe(true);
+      }
     } catch (error) {
       if (catalog)
         console.error(
@@ -243,6 +360,7 @@ it.skipIf(process.env.TMUX_IDE_OWNED_RECONNECT_SSH !== "1" || process.platform !
       );
       throw error;
     } finally {
+      releaseHandshake?.();
       process.umask(previousUmask);
       catalog?.dispose();
       manager?.dispose();
