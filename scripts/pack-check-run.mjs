@@ -1710,6 +1710,35 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     one.diagnostics,
   );
 
+  // Backend selection can precede the replacement terminal's first frame.
+  // Qualify the actual visible target before arming a destructive command.
+  const newWindowPane = activePane("journey-beta");
+  const newWindowMarker = `PACK_NEW_WINDOW_${process.pid}`;
+  const encodedMarker = [...Buffer.from(`${newWindowMarker}\n`)]
+    .map((byte) => `\\${byte.toString(8).padStart(3, "0")}`)
+    .join("");
+  for (const args of [
+    ["send-keys", "-l", "-t", newWindowPane, `printf '${encodedMarker}'`],
+    ["send-keys", "-t", newWindowPane, "Enter"],
+  ]) {
+    const result = tmuxResult(args);
+    if (result.status !== 0)
+      throw new Error(`Could not prepare the new window output witness: ${result.stderr}`);
+  }
+  await observe(
+    "new window rendered before close confirmation",
+    10_000,
+    () => {
+      const frame = capture(one.targetPane);
+      return (
+        activePane("journey-beta") === newWindowPane &&
+        frameShowsTerminalFocus(frame) &&
+        frame.includes(newWindowMarker)
+      );
+    },
+    one.diagnostics,
+  );
+
   // Close is intentionally two activations: the first arms the destructive
   // palette row; only the second dispatches the daemon mutation.
   await selectPaletteCommand(one, "Close pane");
