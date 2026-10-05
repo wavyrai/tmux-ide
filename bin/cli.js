@@ -19474,8 +19474,8 @@ function boundedName(value) {
 function commandBasename(value) {
   const command3 = boundedName(value);
   if (!command3) return null;
-  const basename21 = command3.split("/").at(-1)?.trim() ?? "";
-  return basename21.length > 0 ? basename21 : null;
+  const basename22 = command3.split("/").at(-1)?.trim() ?? "";
+  return basename22.length > 0 ? basename22 : null;
 }
 function stableHash(value) {
   let hash = 2166136261;
@@ -28685,8 +28685,8 @@ function launchCommandForHarness(harness) {
 }
 function paneStartHostsShell(startCommand) {
   const token2 = startCommand.trim().split(/\s+/u)[0] ?? "";
-  const basename21 = token2.replace(/^-/, "").replace(/\\/gu, "/").split("/").pop()?.toLowerCase() ?? "";
-  return basename21 === "" || SHELLS.has(basename21.replace(/\.exe$/u, ""));
+  const basename22 = token2.replace(/^-/, "").replace(/\\/gu, "/").split("/").pop()?.toLowerCase() ?? "";
+  return basename22 === "" || SHELLS.has(basename22.replace(/\.exe$/u, ""));
 }
 function interruptArgs2(paneId) {
   return ["send-keys", "-t", paneId, "C-c"];
@@ -33332,7 +33332,15 @@ var init_session_channel = __esm({
         }
         this.input.flush();
         this.clearWindowViewports();
+        this.restoreWindowSizing(this.attachedIdentity?.runtimeSessionId ?? `=${this.opts.session}`);
         this.io.send(`refresh-client -C ${cols}x${rows}`);
+      }
+      restoreWindowSizing(target) {
+        if (!this.geometryParticipating) return;
+        const quoted = tmuxSingleQuote(target);
+        this.io.send(
+          `if-shell -F -t ${quoted} '#{==:#{window-size},manual}' ` + tmuxSingleQuote(`set-option -w -t ${quoted} window-size latest`)
+        );
       }
       /**
        * Experimental: window-specific overrides stay private to this control client.
@@ -33352,6 +33360,7 @@ var init_session_channel = __esm({
         const previous = this.fittedWindows.get(window2.runtimeId);
         if (previous?.cols === cols && previous.rows === rows) return;
         this.input.flush();
+        this.restoreWindowSizing(window2.runtimeId);
         this.io.send(`refresh-client -C ${window2.runtimeId}:${cols}x${rows}`);
         this.fittedWindows.set(window2.runtimeId, { cols, rows });
       }
@@ -72044,7 +72053,7 @@ var init_workspace_resource_observer = __esm({
         };
       }
       state() {
-        const active2 = (watch) => watch.stop !== null || watch.start !== null;
+        const active2 = (watch2) => watch2.stop !== null || watch2.start !== null;
         return [...this.#entries.values()].map((entry) => ({
           workspaceName: entry.workspaceName,
           references: refCount(entry),
@@ -72095,7 +72104,7 @@ var init_workspace_resource_observer = __esm({
         const relevant = waitingFor === "workspace-missions" ? [entry.slots.missions] : waitingFor === "workspace-changes" ? [entry.slots.project, entry.slots.git] : [entry.slots.project];
         await Promise.all(waits);
         return {
-          status: relevant.every((watch) => watch.status === "installed") ? "installed" : "unavailable"
+          status: relevant.every((watch2) => watch2.status === "installed") ? "installed" : "unavailable"
         };
       }
       #ensureMissionSlot(entry, projectDir) {
@@ -77891,9 +77900,10 @@ import {
   readFileSync as readFileSync27,
   renameSync as renameSync15,
   unlinkSync as unlinkSync7,
-  writeFileSync as writeFileSync22
+  writeFileSync as writeFileSync22,
+  watch
 } from "node:fs";
-import { dirname as dirname33, join as join39 } from "node:path";
+import { basename as basename14, dirname as dirname33, join as join39 } from "node:path";
 function savedMachinesPath() {
   return runtimeOwnedPath(join39(resolveRuntimeNamespace().registryDir, "machines.json"));
 }
@@ -81566,7 +81576,7 @@ __export(detect_exports, {
   detectStack: () => detectStack,
   suggestConfig: () => suggestConfig
 });
-import { resolve as resolve30, basename as basename14 } from "node:path";
+import { resolve as resolve30, basename as basename15 } from "node:path";
 import { readFileSync as readFileSync31, existsSync as existsSync31 } from "node:fs";
 function fileExists(dir, name) {
   return existsSync31(resolve30(dir, name));
@@ -81668,7 +81678,7 @@ function detectStack(dir) {
   return detected;
 }
 function suggestConfig(dir, detected) {
-  const name = basename14(dir);
+  const name = basename15(dir);
   const pm = detected.packageManager ?? "npm";
   const run = pm === "npm" ? "npm run" : pm;
   const config2 = {
@@ -81972,7 +81982,7 @@ var init_workspace_resource_ids = __esm({
 
 // packages/daemon/src/command-center/resources/workspace-files-authority.ts
 import { lstatSync as lstatSync13, readdirSync as readdirSync7, readFileSync as readFileSync32, realpathSync as realpathSync23 } from "node:fs";
-import { basename as basename15, dirname as dirname37, resolve as resolvePath, sep as sep11 } from "node:path";
+import { basename as basename16, dirname as dirname37, resolve as resolvePath, sep as sep11 } from "node:path";
 import ignore from "ignore";
 function extensionOf(name) {
   const dot = name.lastIndexOf(".");
@@ -82225,7 +82235,7 @@ var init_workspace_files_authority = __esm({
           if (WorkspaceFileEntrySafe(entry)) entries.push(entry);
         }
         const truncated = totalEntries > entries.length;
-        const rootLabel = safeName(basename15(realRoot), "workspace");
+        const rootLabel = safeName(basename16(realRoot), "workspace");
         const revision = filesRevision(
           JSON.stringify({ dir: relPath, entries: entries.map((e) => `${e.name}:${e.kind}`) })
         );
@@ -82235,7 +82245,7 @@ var init_workspace_files_authority = __esm({
         }
         const directory = relPath === "" ? { id: rootId, name: rootLabel, relativePath: null, parentId: null } : {
           id: targetId,
-          name: safeName(basename15(relPath), rootLabel),
+          name: safeName(basename16(relPath), rootLabel),
           relativePath: relPath,
           parentId: this.parentId(rootId, relPath)
         };
@@ -82328,7 +82338,7 @@ var init_workspace_files_authority = __esm({
             "The requested file is unavailable."
           );
         }
-        if (!isWithin2(realRoot, resolvePath(realParent, basename15(abs)))) {
+        if (!isWithin2(realRoot, resolvePath(realParent, basename16(abs)))) {
           return this.previewUnavailable(
             fileId,
             "outside-workspace",
@@ -82338,7 +82348,7 @@ var init_workspace_files_authority = __esm({
         if (stat3.isDirectory() || !stat3.isFile()) {
           return this.previewUnavailable(fileId, "not-a-file", "The resource is not a regular file.");
         }
-        const name = basename15(relPath);
+        const name = basename16(relPath);
         const catalogRevision = filesRevision(`${relPath}:${stat3.size}:${stat3.mtimeMs}`);
         const totalBytes = stat3.size;
         if (totalBytes > WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS) {
@@ -82646,7 +82656,7 @@ var init_workspace_changes_git = __esm({
 // packages/daemon/src/command-center/resources/workspace-changes-authority.ts
 import { spawnSync } from "node:child_process";
 import { readFileSync as readFileSync33, realpathSync as realpathSync24, statSync as statSync20 } from "node:fs";
-import { basename as basename16, isAbsolute as isAbsolute22, relative as relative7, resolve as resolvePath2 } from "node:path";
+import { basename as basename17, isAbsolute as isAbsolute22, relative as relative7, resolve as resolvePath2 } from "node:path";
 function runGit(args, cwd) {
   const result2 = spawnSync("git", args, {
     cwd,
@@ -82700,7 +82710,7 @@ function buildChangeEntry(raw, displayPath, originPath, counts) {
     id: changeResourceId(raw.group, displayPath),
     group: raw.group,
     status: raw.status,
-    name: basename16(displayPath),
+    name: basename17(displayPath),
     relativePath: displayPath,
     originPath: carriesOrigin ? originPath ?? null : null,
     binary: counts.binary,
@@ -85073,7 +85083,7 @@ __export(server_exports2, {
 import { execFile as execFile14 } from "node:child_process";
 import { promisify as promisify4 } from "node:util";
 import { existsSync as existsSync34, readdirSync as readdirSync9 } from "node:fs";
-import { join as join45, dirname as dirname38, basename as basename17 } from "node:path";
+import { join as join45, dirname as dirname38, basename as basename18 } from "node:path";
 import { fileURLToPath as fileURLToPath9 } from "node:url";
 import { Hono as Hono3 } from "hono";
 import { streamSSE as streamSSE3 } from "hono/streaming";
@@ -85500,7 +85510,7 @@ function createApp(options = {}) {
   app.post("/api/workspaces", zValidator("json", AddWorkspaceRequestSchemaZ), async (c) => {
     const body = c.req.valid("json");
     const registry = getDefaultWorkspaceRegistry();
-    const name = body.name ?? basename17(body.projectDir);
+    const name = body.name ?? basename18(body.projectDir);
     if (!name || name.length === 0) {
       return c.json({ error: "Cannot derive workspace name from projectDir" }, 400);
     }
@@ -88805,7 +88815,7 @@ import {
   readdirSync as readdirSync10,
   copyFileSync as copyFileSync2
 } from "node:fs";
-import { resolve as resolve32, join as join48, basename as basename18, dirname as dirname39 } from "node:path";
+import { resolve as resolve32, join as join48, basename as basename19, dirname as dirname39 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 function copyTemplateSkills(targetDir) {
   const created = [];
@@ -88907,7 +88917,7 @@ async function init({
       outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
     let content = readFileSync35(templatePath, "utf-8");
-    const name2 = basename18(dir);
+    const name2 = basename19(dir);
     content = content.replace(/^name: .+/m, `name: ${name2}`);
     const yaml6 = (await import("js-yaml")).default;
     const workspace = WorkspaceConfigV1SchemaZ.parse(yaml6.load(content));
@@ -88936,7 +88946,7 @@ async function init({
     return;
   }
   const detected = detectStack(dir);
-  const name = basename18(dir);
+  const name = basename19(dir);
   if (detected.frameworks.length > 0) {
     const config2 = suggestConfig(dir, detected);
     writeConfig(dir, config2);
@@ -90340,6 +90350,21 @@ import { z as z109 } from "zod";
 function failure3(message, code2 = "unavailable") {
   return new SshConnectionError(message, code2);
 }
+function observeSshFailure(child) {
+  let tail = "";
+  let code2 = "unavailable";
+  child.stderr?.on("data", (chunk) => {
+    tail = (tail + chunk.toString("utf8")).slice(-4096);
+    if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(tail))
+      code2 = "ssh-host-key";
+    else if (/Permission denied \((?:publickey|password|keyboard-interactive)[^)]*\)/i.test(tail))
+      code2 = "ssh-authentication";
+  });
+  child.once("close", () => {
+    tail = "";
+  });
+  return () => code2;
+}
 function stop2(child) {
   if (stoppedChildren.has(child) || child.exitCode !== null || child.signalCode !== null) return;
   stoppedChildren.add(child);
@@ -90414,6 +90439,7 @@ function cancellable(work, signal) {
   });
 }
 function discover(child, signal) {
+  const sshFailure = observeSshFailure(child);
   return new Promise((resolve41, reject) => {
     const chunks = [];
     let bytes = 0;
@@ -90438,14 +90464,14 @@ function discover(child, signal) {
       }
       chunks.push(Buffer.from(chunk));
     });
-    child.stderr?.resume();
     child.once("error", () => finish(failure3("could not start OpenSSH")));
     child.once("close", (code2) => {
       if (settled) return;
       if (code2 !== 0) {
         finish(
           failure3(
-            "discovery failed; check SSH authentication, host trust, and remote tmux-ide installation"
+            "discovery failed; check SSH authentication, host trust, and remote tmux-ide installation",
+            code2 === 127 ? "remote-cli-missing" : sshFailure()
           )
         );
         return;
@@ -90553,7 +90579,7 @@ async function openSshDaemonTransport(options, dependencies = defaults2) {
       options.alias
     ]);
     child.stdout?.resume();
-    child.stderr?.resume();
+    const sshFailure = observeSshFailure(child);
     child.once("exit", dispose2);
     const tunnelClosed = new Promise((resolve41) => {
       child.once("close", () => {
@@ -90587,7 +90613,8 @@ async function openSshDaemonTransport(options, dependencies = defaults2) {
       await delay4(signal);
     }
     throw failure3(
-      "tunnel could not authenticate the expected daemon before cancellation or timeout"
+      "tunnel could not authenticate the expected daemon before cancellation or timeout",
+      sshFailure()
     );
   } catch (error) {
     dispose2();
@@ -90619,7 +90646,7 @@ var init_ssh_daemon_transport = __esm({
       }
       code;
       get retryable() {
-        return this.code === "unavailable";
+        return this.code === "unavailable" || this.code === "daemon-missing";
       }
     };
     stoppedChildren = /* @__PURE__ */ new WeakSet();
@@ -92411,7 +92438,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync26 } from "node:child_process";
-import { basename as basename19, dirname as dirname43, isAbsolute as isAbsolute25, join as join50, resolve as resolve39 } from "node:path";
+import { basename as basename20, dirname as dirname43, isAbsolute as isAbsolute25, join as join50, resolve as resolve39 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -92420,7 +92447,7 @@ function worktreeSessionName(project, branch) {
 }
 function defaultWorktreeBaseDir(repoDir) {
   const abs = resolve39(repoDir);
-  return join50(dirname43(abs), `${basename19(abs)}-worktrees`);
+  return join50(dirname43(abs), `${basename20(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
   const base2 = configuredDir && configuredDir.length > 0 ? isAbsolute25(configuredDir) ? configuredDir : resolve39(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
@@ -92757,7 +92784,7 @@ __export(pane_widget_exports, {
   paneWidgetId: () => paneWidgetId,
   paneWidgetIdForFile: () => paneWidgetIdForFile
 });
-import { basename as basename20, extname } from "node:path";
+import { basename as basename21, extname } from "node:path";
 function imageMediaTypeFor(fileName) {
   return IMAGE_MEDIA_BY_EXTENSION.get(extname(fileName).toLowerCase()) ?? null;
 }
@@ -92775,7 +92802,7 @@ function buildMarkdownAnnouncement(text, title) {
   }
 }
 function buildImageAnnouncement(bytes, filePath) {
-  const name = basename20(filePath);
+  const name = basename21(filePath);
   const media = imageMediaTypeFor(name);
   if (media === null) {
     throw new PaneWidgetRefusal(
@@ -92829,7 +92856,7 @@ function paneWidgetIdForFile(fileName) {
   if ([".md", ".markdown"].includes(extension)) return "markdown";
   if (IMAGE_MEDIA_BY_EXTENSION.has(extension)) return "image";
   if (extension === ".json") return "card";
-  const name = basename20(fileName) || fileName || "input";
+  const name = basename21(fileName) || fileName || "input";
   throw new PaneWidgetRefusal(
     "unsupported-source",
     `tmux-ide cannot infer how to show "${name}". Supported: Markdown (.md, .markdown), raster images (${[...IMAGE_MEDIA_BY_EXTENSION.keys()].join(", ")}), and declarative cards (.json).`
@@ -94768,7 +94795,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       } = await Promise.resolve().then(() => (init_pane_widget(), pane_widget_exports));
       const { publishWidgetAsset: publishWidgetAsset2, WidgetAssetStoreError: WidgetAssetStoreError2 } = await Promise.resolve().then(() => (init_widget_asset_store(), widget_asset_store_exports));
       const { readFileSync: readFileSync39, watchFile, unwatchFile } = await import("node:fs");
-      const { basename: basename21 } = await import("node:path");
+      const { basename: basename22 } = await import("node:path");
       const readStdin = async () => {
         const chunks = [];
         for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
@@ -94789,9 +94816,9 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
             const publish = () => {
               const asset = publishWidgetAsset2(readFileSync39(file), {
                 media: "text/markdown",
-                name: basename21(file)
+                name: basename22(file)
               });
-              return buildMarkdownAssetAnnouncement2(asset.assetId, basename21(file));
+              return buildMarkdownAssetAnnouncement2(asset.assetId, basename22(file));
             };
             announcement = publish();
             watchedFile = file;
@@ -94806,14 +94833,14 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
             if (!media) {
               throw new PaneWidgetRefusal2(
                 "unsupported-media",
-                `"${basename21(file)}" is not a supported raster image.`
+                `"${basename22(file)}" is not a supported raster image.`
               );
             }
             const asset = publishWidgetAsset2(readFileSync39(file), {
               media,
-              name: basename21(file)
+              name: basename22(file)
             });
-            return buildImageAssetAnnouncement2(asset.assetId, { name: basename21(file) });
+            return buildImageAssetAnnouncement2(asset.assetId, { name: basename22(file) });
           };
           announcement = publish();
           watchedFile = file;

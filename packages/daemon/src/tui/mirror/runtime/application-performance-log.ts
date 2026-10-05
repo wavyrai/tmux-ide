@@ -34,6 +34,8 @@ export const tuiLifecycleStream = stream ? Object.freeze({ enabled: true as cons
 export const tuiPerfStream = TUI_PERF_LOG ? tuiLifecycleStream : null;
 
 const LIFECYCLE_PHASES = new Set([
+  "machine-connection-status",
+  "machine-registry-error",
   "generation-status",
   "generation-connection-start",
   "generation-connection-resolved",

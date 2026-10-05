@@ -20,6 +20,7 @@ import {
   openSshDaemonTransport,
   probeSshDaemonIdentity,
 } from "../../../lib/ssh-daemon-transport.ts";
+import { tuiPerfMark } from "./application-performance-log.ts";
 
 type Connection = Awaited<ReturnType<typeof openSshDaemonTransport>>;
 type Listener = (generation: string | null) => void;
@@ -136,6 +137,13 @@ export function createApplicationDaemonAuthority(
   const statusListeners = new Set<() => void>();
   const updateStatus = (next: FleetConnectionStatus) => {
     diagnostic = Object.freeze(next);
+    tuiPerfMark("machine-connection-status", {
+      machine: label,
+      ...next,
+      instanceId: remote?.instanceId ?? null,
+      pid: remote?.pid ?? null,
+      port: remote?.port ?? null,
+    });
     for (const listener of statusListeners) {
       try {
         listener();

@@ -31,6 +31,11 @@ it.each([false, true])(
     logger.markGenerationStatus({ status: "connecting", daemonGeneration: null });
     logger.tuiPerfMark("generation-runtime-fault", { message: "connection closed" });
     logger.tuiPerfMark("generation-runtime-progress", { runtimePhase: "coherent" });
+    logger.tuiPerfMark("machine-connection-status", {
+      status: "retrying",
+      failureCode: "daemon-missing",
+    });
+    logger.tuiPerfMark("machine-registry-error", { reason: "registry-unavailable-or-invalid" });
     for (const phase of [
       "renderer-frame",
       "terminal-wheel-route",
@@ -57,6 +62,13 @@ it.each([false, true])(
       ),
     ).toBe(true);
     expect(records.some((record) => record.runtimePhase === "coherent")).toBe(true);
+    expect(
+      records.some(
+        (record) =>
+          record.phase === "machine-connection-status" && record.failureCode === "daemon-missing",
+      ),
+    ).toBe(true);
+    expect(records.some((record) => record.phase === "machine-registry-error")).toBe(true);
     expect(records.some((record) => record.runtimePhase === "compact-decode")).toBe(explicit);
     expect(
       records.some((record) => record.phase === "terminal-host-focus-control-binding-ready"),

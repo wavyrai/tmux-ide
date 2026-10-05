@@ -1186,7 +1186,20 @@ export class SessionChannel {
     }
     this.input.flush();
     this.clearWindowViewports();
+    this.restoreWindowSizing(this.attachedIdentity?.runtimeSessionId ?? `=${this.opts.session}`);
     this.io.send(`refresh-client -C ${cols}x${rows}`);
+  }
+
+  private restoreWindowSizing(target: string): void {
+    if (!this.geometryParticipating) return;
+    // resize-window pins a window (including through inherited session options).
+    // Evaluate inside the existing control connection: no shell, polling, or extra
+    // request/response round trip. Only the actively fitted window is changed.
+    const quoted = tmuxSingleQuote(target);
+    this.io.send(
+      `if-shell -F -t ${quoted} '#{==:#{window-size},manual}' ` +
+        tmuxSingleQuote(`set-option -w -t ${quoted} window-size latest`),
+    );
   }
 
   /**
@@ -1214,6 +1227,7 @@ export class SessionChannel {
     const previous = this.fittedWindows.get(window.runtimeId);
     if (previous?.cols === cols && previous.rows === rows) return;
     this.input.flush();
+    this.restoreWindowSizing(window.runtimeId);
     this.io.send(`refresh-client -C ${window.runtimeId}:${cols}x${rows}`);
     this.fittedWindows.set(window.runtimeId, { cols, rows });
   }

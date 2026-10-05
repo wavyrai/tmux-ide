@@ -51,6 +51,7 @@ interface Machine {
   stopObserver: (() => void) | null;
   observingOwner: Owner | null;
   stopStatus: (() => void) | null;
+  retired: boolean;
 }
 
 /** Owns independent transport lifetimes; selecting a machine changes only the active route. */
@@ -67,6 +68,7 @@ export function createApplicationMachineAuthorityManager(
   let selectedId: string = LOCAL_MACHINE_ID;
   let selectedEpoch = 0;
   let disposed = false;
+  let stopProfiles: (() => void) | null = null;
   const safe = (callback: () => void) => {
     try {
       callback();
@@ -81,7 +83,7 @@ export function createApplicationMachineAuthorityManager(
     for (const listener of selectedObservers) safe(() => listener(generation));
   };
   const changed = (machine: Machine, generation: string | null) => {
-    if (disposed) return;
+    if (disposed || machine.retired) return;
     machine.epoch++;
     for (const listener of machine.listeners) safe(() => listener(generation));
     if (machine.id === selectedId) {
@@ -99,7 +101,7 @@ export function createApplicationMachineAuthorityManager(
       })
       .then(
         (stop) => {
-          if (disposed || machine.owner !== owner) stop();
+          if (disposed || machine.retired || machine.owner !== owner) stop();
           else machine.stopObserver = stop;
         },
         () => {
@@ -127,25 +129,28 @@ export function createApplicationMachineAuthorityManager(
       stopObserver: null,
       observingOwner: null,
       stopStatus: null,
+      retired: false,
     } as Machine;
     const handle: ApplicationMachineAuthorityHandle = Object.freeze({
       id,
       label,
       kind: machine.kind,
       ready,
-      read: () => (disposed ? null : machine.owner.read()),
+      read: () => (disposed || machine.retired ? null : machine.owner.read()),
       isAlive: (info: CanonicalDaemonInfo) =>
-        disposed ? Promise.resolve(false) : machine.owner.isAlive(info),
+        disposed || machine.retired ? Promise.resolve(false) : machine.owner.isAlive(info),
       endpoint: () =>
         Object.freeze({
           ...machine.owner.endpoint(),
           kind: machine.kind,
           label: profile ? label : null,
           epoch: machine.epoch,
-          ...(disposed ? { state: "disconnected" as const, remote: null, localBaseUrl: null } : {}),
+          ...(disposed || machine.retired
+            ? { state: "disconnected" as const, remote: null, localBaseUrl: null }
+            : {}),
         }),
       observe: async (listener: GenerationListener) => {
-        if (disposed) return () => {};
+        if (disposed || machine.retired) return () => {};
         if (machine.kind === "local") observe(machine, machine.owner);
         listeners.add(listener);
         return () => {
@@ -166,7 +171,7 @@ export function createApplicationMachineAuthorityManager(
     observe(machine, owner);
     publish();
     void initializing.then(
-      () => settle(!disposed),
+      () => settle(!disposed && !machine.retired),
       () => settle(false),
     );
     return machine;
@@ -255,6 +260,36 @@ export function createApplicationMachineAuthorityManager(
       SavedMachineRegistrySchema.parse({ version: 1, machines: profiles });
       for (const profile of profiles) if (profile.enabled) manager.add(profile);
     },
+    reconcile(profiles: readonly SavedMachine[]): void {
+      if (disposed) return;
+      const next = SavedMachineRegistrySchema.parse({ version: 1, machines: profiles });
+      const previousSelection = selectedId;
+      for (const machine of [...machines.values()]) {
+        if (!machine.profile) continue;
+        const profile = next.machines.find(
+          (candidate) => candidate.id === machine.id && candidate.enabled,
+        );
+        if (profile && JSON.stringify(profile) === JSON.stringify(machine.profile)) continue;
+        if (selectedId === machine.id) manager.select(LOCAL_MACHINE_ID);
+        machine.retired = true;
+        machine.stopStatus?.();
+        machine.stopObserver?.();
+        for (const listener of machine.listeners) safe(() => listener(null));
+        machine.owner.dispose();
+        machine.listeners.clear();
+        machines.delete(machine.id);
+      }
+      for (const profile of next.machines) if (profile.enabled) manager.add(profile);
+      if (machines.has(previousSelection)) manager.select(previousSelection);
+      publish();
+    },
+    followProfiles(
+      subscribe: (onChange: (profiles: readonly SavedMachine[]) => void) => () => void,
+    ): void {
+      if (disposed) return;
+      stopProfiles?.();
+      stopProfiles = subscribe(manager.reconcile);
+    },
     read: (): CanonicalDaemonInfo | null => machines.get(selectedId)?.handle.read() ?? null,
     isAlive: (info: CanonicalDaemonInfo): Promise<boolean> =>
       machines.get(selectedId)?.handle.isAlive(info) ?? Promise.resolve(false),
@@ -272,6 +307,8 @@ export function createApplicationMachineAuthorityManager(
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      stopProfiles?.();
+      stopProfiles = null;
       lifetime.abort();
       selectedEpoch++;
       selectedGeneration(null);

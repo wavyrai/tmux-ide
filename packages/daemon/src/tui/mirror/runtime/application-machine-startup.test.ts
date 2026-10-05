@@ -1,9 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SavedMachine } from "@tmux-ide/contracts";
-const mocks = vi.hoisted(() => ({ load: vi.fn(), initialize: vi.fn(), select: vi.fn() }));
-vi.mock("../../../lib/saved-machines.ts", () => ({ loadSavedMachines: mocks.load }));
+import { SavedMachineRegistrySchema, type SavedMachine } from "@tmux-ide/contracts";
+const mocks = vi.hoisted(() => ({
+  load: vi.fn(),
+  initialize: vi.fn(),
+  select: vi.fn(),
+  follow: vi.fn(),
+  watch: vi.fn(),
+}));
+vi.mock("../../../lib/saved-machines.ts", () => ({
+  loadSavedMachines: mocks.load,
+  watchSavedMachines: mocks.watch,
+}));
 vi.mock("./application-machine-authority.ts", () => ({
-  applicationMachineAuthorityManager: { initialize: mocks.initialize, select: mocks.select },
+  applicationMachineAuthorityManager: {
+    initialize: mocks.initialize,
+    select: mocks.select,
+    followProfiles: mocks.follow,
+  },
 }));
 import {
   ephemeralMachineProfile,
@@ -19,8 +32,26 @@ beforeEach(() => {
   mocks.load.mockReset().mockReturnValue({ version: 1, machines: [] });
   mocks.initialize.mockReset();
   mocks.select.mockReset();
+  mocks.follow.mockReset();
+  mocks.watch.mockReset().mockReturnValue(() => {});
 });
 describe("simultaneous machine startup", () => {
+  it("follows saved edits while preserving explicit routes when labels collide", () => {
+    const changed = vi.fn();
+    mocks.follow.mockImplementation((subscribe) => subscribe(changed));
+    initializeApplicationMachines(["build"]);
+    const initial = mocks.initialize.mock.calls[0]![0] as SavedMachine[];
+    const refresh = mocks.watch.mock.calls[0]![0];
+    refresh({ version: 1, machines: [saved] });
+    const profiles = changed.mock.calls[0]![0] as SavedMachine[];
+    expect(SavedMachineRegistrySchema.safeParse({ version: 1, machines: profiles }).success).toBe(
+      true,
+    );
+    expect(profiles[1]).toMatchObject({ id: initial[0]!.id, sshTarget: "build", enabled: true });
+    expect(profiles[1]!.label.toLowerCase()).not.toBe("build");
+    refresh({ version: 1, machines: [] });
+    expect(changed.mock.lastCall![0]).toEqual([profiles[1]]);
+  });
   it("initializes saved profiles without waiting on remote connections or changing local selection", () => {
     mocks.load.mockReturnValue({ version: 1, machines: [saved] });
     mocks.initialize.mockReturnValue(new Promise(() => {}));

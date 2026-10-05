@@ -3572,6 +3572,7 @@ describe("window viewport scope", () => {
     rig.channel.setGeometryParticipation(false);
     rig.channel.fitWindowViewport("window.test.one", 120, 40);
     expect(rig.sim.written.slice(before)).toEqual([
+      expect.stringContaining("if-shell -F -t '@1'"),
       "refresh-client -C @1:120x40",
       "refresh-client -C @1:",
       "refresh-client -f ignore-size",

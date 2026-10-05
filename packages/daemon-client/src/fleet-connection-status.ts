@@ -5,6 +5,9 @@ export type FleetConnectionFailureCode =
   | "invalid-target"
   | "invalid-descriptor"
   | "incompatible"
+  | "ssh-authentication"
+  | "ssh-host-key"
+  | "remote-cli-missing"
   | "daemon-missing";
 
 export interface FleetConnectionStatus {
@@ -26,7 +29,13 @@ export function fleetConnectionMessage(status: FleetConnectionStatus): string {
     case "invalid-descriptor":
       return "Remote daemon discovery returned an invalid response. Check the installation.";
     case "daemon-missing":
-      return "No running daemon. Start tmux-ide on this machine, then retry.";
+      return "No running daemon. Retrying automatically; start tmux-ide on this machine if needed.";
+    case "ssh-authentication":
+      return "SSH authentication failed. Check the machine's SSH credentials, then retry.";
+    case "ssh-host-key":
+      return "SSH host key verification failed. Verify the host in your terminal, then retry.";
+    case "remote-cli-missing":
+      return "Remote tmux-ide command not found. Check its installation and non-interactive SSH PATH.";
     case "unavailable":
       return "Connection failed. Check reachability, SSH authentication and host trust.";
     default:

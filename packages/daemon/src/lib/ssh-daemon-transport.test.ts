@@ -67,6 +67,28 @@ function fixture(payload: unknown = { version: 1, daemon }) {
   return { dependencies, children, argv };
 }
 describe("owned SSH daemon transport", () => {
+  it.each([
+    ["Host key verification failed.", 255, "ssh-host-key"],
+    ["Permission denied (publickey).", 255, "ssh-authentication"],
+    ["zsh: command not found: tmux-ide", 127, "remote-cli-missing"],
+  ])("classifies %s without exposing stderr", async (message, exitCode, expected) => {
+    const f = fixture();
+    f.dependencies.spawn = () => {
+      const child = new FakeChild();
+      queueMicrotask(() => {
+        child.stderr.write(`private-banner-token ${message}`);
+        child.finish("", Number(exitCode));
+      });
+      return child as unknown as SshTransportChild;
+    };
+    const error = await openSshDaemonTransport({ alias: "build" }, f.dependencies).catch(
+      (error) => error,
+    );
+    expect(error).toBeInstanceOf(SshConnectionError);
+    expect(error.code).toBe(expected);
+    expect(error.retryable).toBe(false);
+    expect(String(error)).not.toContain("private-banner-token");
+  });
   it("uses fixed remote command and loopback forward without relaxing SSH trust", async () => {
     const f = fixture();
     const result = await openSshDaemonTransport({ alias: "work-machine" }, f.dependencies);
@@ -432,7 +454,7 @@ it("uses structured preflight failures without opening a tunnel", async () => {
     );
     expect(error).toBeInstanceOf(SshConnectionError);
     expect((error as SshConnectionError).code).toBe(code);
-    expect((error as SshConnectionError).retryable).toBe(code === "unavailable");
+    expect((error as SshConnectionError).retryable).toBe(code !== "incompatible");
     expect(f.children).toHaveLength(1);
   }
 });

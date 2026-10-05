@@ -64,6 +64,55 @@ function fixture() {
   return { manager, connect, readLocal, first, second, localObservers, stopped };
 }
 describe("simultaneous machine authority", () => {
+  it("reconciles edited profiles without reconnecting unchanged machines or retaining disabled routes", async () => {
+    const f = fixture();
+    try {
+      const first = f.manager.add(firstProfile);
+      const second = f.manager.add(secondProfile);
+      await Promise.all([first.ready, second.ready]);
+      const retired = vi.fn();
+      await first.observe(retired);
+      f.manager.select(first.id);
+      f.manager.reconcile([{ ...firstProfile, enabled: false }, secondProfile]);
+      expect(f.manager.snapshot().selectedMachineId).toBe("local");
+      expect(f.manager.getMachine(first.id)).toBeNull();
+      expect(first.read()).toBeNull();
+      expect(retired).toHaveBeenCalledWith(null);
+      expect(first.endpoint().state).toBe("disconnected");
+      expect(f.first.dispose).toHaveBeenCalledOnce();
+      expect(f.manager.getMachine(second.id)).toBe(second);
+      expect(second.read()?.port).toBe(43211);
+      expect(f.second.dispose).not.toHaveBeenCalled();
+      f.manager.reconcile([secondProfile]);
+      expect(f.connect).toHaveBeenCalledTimes(2);
+      f.manager.reconcile([]);
+      expect(f.manager.snapshot().machines.map((m) => m.id)).toEqual(["local"]);
+      expect(f.second.dispose).toHaveBeenCalledOnce();
+    } finally {
+      f.manager.dispose();
+    }
+  });
+  it("cancels late connections for removed profiles and closes the profile watcher", async () => {
+    const f = fixture();
+    let deliver!: (value: typeof f.first) => void;
+    const stop = vi.fn();
+    f.connect.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+    );
+    f.manager.followProfiles(() => stop);
+    const handle = f.manager.add(firstProfile);
+    f.manager.reconcile([]);
+    deliver(f.first);
+    expect(await handle.ready).toBe(false);
+    await vi.waitFor(() => expect(f.first.dispose).toHaveBeenCalledOnce());
+    expect(handle.read()).toBeNull();
+    expect(f.manager.getMachine(firstProfile.id)).toBeNull();
+    f.manager.dispose();
+    expect(stop).toHaveBeenCalledOnce();
+  });
   it("keeps local usable while independent remote profiles connect concurrently", async () => {
     const f = fixture();
     let resolveFirst!: (value: typeof f.first) => void;
