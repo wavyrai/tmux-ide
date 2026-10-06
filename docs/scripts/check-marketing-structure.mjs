@@ -62,17 +62,30 @@ for (const role of [
   "type-marketing-lede",
   "type-marketing-subtitle",
   "type-page-title",
+  "type-card-title",
 ]) {
   if (!new RegExp(`@utility ${role} \\{`, "u").test(globalCss)) {
     failures.push(`the type ramp must define ${role}`);
   }
 }
-if (
-  !/:where\(h1, h2, h3, h4, h5, h6\)\s*\{[^}]*--font-display[^}]*calc\(0\.5px - 0\.028em\)/su.test(
-    globalCss,
-  )
-) {
-  failures.push("every heading must use the display face and the shared tracking formula");
+if (!/:where\(h1, h2, h3, h4, h5, h6\)\s*\{[^}]*--font-display/su.test(globalCss)) {
+  failures.push("every heading must use the display face");
+}
+// Display and title roles (24px and up) share one measured tracking value;
+// smaller roles keep the face's natural spacing.
+for (const role of [
+  "type-large-title",
+  "type-display-1",
+  "type-display-2",
+  "type-display-3",
+  "type-display-4",
+  "type-title-1",
+  "type-page-title",
+]) {
+  const body = globalCss.match(new RegExp(`@utility ${role} \\{([^}]*)`, "u"))?.[1] ?? "";
+  if (!body.includes("letter-spacing: -0.02em")) {
+    failures.push(`${role} must track at -0.02em`);
+  }
 }
 
 if (
