@@ -377,6 +377,14 @@ the new raw receiver accepts only fresh input. Both runtime session and pane IDs
 must differ. This proves isolation after observed closure, not rejection of input
 already queued before deletion or controller-generation authorization.
 
+The same fixture separately replaces the public SessionRuntimeRegistry while
+the physical pane and client ID survive. An old controller lease must reject
+text, bytes and named keys with a typed stale-lease error, without issuing input
+commands or changing receiver bytes; fresh authority must deliver exact bytes.
+A separately labelled fault case changes only the generation on a fresh lease
+to isolate that check from token/revision mismatches. This exercises the registry
+boundary, not a complete daemon restart or WebSocket reconnection.
+
 `terminal-native-input-death-live.test.ts` exercises the production owned-viewer
 route without custom IO. A real tmux lock holds accepted input behind a waiting
 command while another client deletes the target pane. After unlocking, native
