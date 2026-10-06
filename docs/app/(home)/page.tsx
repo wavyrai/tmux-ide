@@ -18,6 +18,7 @@ import {
 import { SectionHeader } from "@/components/marketing/section-header";
 import { TechnicalCaption } from "@/components/marketing/technical-caption";
 import { TuiMiniFigure, type TuiFigureVariant } from "@/components/marketing/tui-mini-figure";
+import tuiDemoSize from "@/components/marketing/tui-demo-size.json";
 import {
   LANDING_AGENT_FEATURES,
   LANDING_ARCHITECTURE,
@@ -146,10 +147,11 @@ export default async function HomePage() {
                 <Image
                   src="/tui-demo.svg"
                   alt="Animated production tmux-ide OpenTUI showing agent status, terminal panes, window controls, and the command palette"
-                  width={1344}
-                  height={792}
+                  width={tuiDemoSize.width}
+                  height={tuiDemoSize.height}
                   unoptimized
                   loading="eager"
+                  fetchPriority="high"
                   className="h-auto w-full"
                 />
               </div>
