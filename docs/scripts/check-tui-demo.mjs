@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,8 +26,33 @@ if (!/<title id="t">[^<]+<\/title>/u.test(svg) || !/<desc id="d">[^<]+<\/desc>/u
 if (!/@media \(prefers-reduced-motion:reduce\)/u.test(svg))
   failures.push("tui-demo.svg needs a reduced-motion still frame");
 
+// The landing mini-figures: one sprite, one cursor performance per figure.
+const frames = JSON.parse(
+  readFileSync(resolve(docsDir, "components/marketing/tui-mini-figure-frames.json"), "utf8"),
+);
+const sprite = readFileSync(resolve(docsDir, "public/tui-figures.svg"));
+const spriteHash = createHash("sha256").update(sprite).digest("hex").slice(0, 10);
+if (frames.sprite !== `/tui-figures.svg?v=${spriteHash}`)
+  failures.push(
+    "tui-mini-figure-frames.json does not match public/tui-figures.svg; run `pnpm demo:tui`",
+  );
+const variants = Object.keys(frames.figures).sort();
+for (const variant of variants)
+  for (const state of ["before", "after"])
+    if (!sprite.includes(`id="${variant}-${state}"`))
+      failures.push(`tui-figures.svg lacks #${variant}-${state}`);
+const cursors = readdirSync(resolve(docsDir, "public/mockup-motion"))
+  .map((file) => file.replace(/\.svg$/u, ""))
+  .sort();
+if (JSON.stringify(cursors) !== JSON.stringify(variants))
+  failures.push(
+    `public/mockup-motion must hold one cursor per figure (${variants.join(", ")}); run \`pnpm --dir docs generate\``,
+  );
+
 if (failures.length > 0) {
   console.error(`TUI demo check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
 }
-console.log("TUI demo verified: current with the app's presentation code, self-contained glyphs.");
+console.log(
+  `TUI demo verified: current with the app's presentation code, self-contained glyphs, ${variants.length} figures with cursors.`,
+);

@@ -18,15 +18,15 @@ export interface DemoLine {
 }
 
 /** One terminal line from plain or colored segments. */
-function line(...segments: Segment[]): DemoLine {
+export function line(...segments: Segment[]): DemoLine {
   return {
     segments: segments.map((segment) =>
       typeof segment === "string" ? ([segment, null] as const) : segment,
     ),
   };
 }
-const bold = (...segments: Segment[]): DemoLine => ({ ...line(...segments), bold: true });
-const blank = line("");
+export const bold = (...segments: Segment[]): DemoLine => ({ ...line(...segments), bold: true });
+export const blank = line("");
 
 /** Claude Code's rounded welcome box, sized from its widest row. */
 function welcomeBox(rows: readonly Segment[][]): DemoLine[] {
@@ -66,17 +66,19 @@ export interface DemoPane {
   readonly lines: readonly DemoLine[];
 }
 
-/** Terminal ink, picked from the dark terminal palette the app projects. */
+/**
+ * Terminal ink as a real terminal would resolve it: ANSI indices go through the
+ * app's theme-aware terminal palette (so light and dark renders both stay
+ * faithful); `rgb` is a program's own truecolor, which the palette keeps.
+ */
 export const INK = {
-  text: 0xdedee6,
-  muted: 0x8b8b99,
-  faint: 0x5c5c6b,
-  accent: 0x62d9e8,
-  green: 0x72d49b,
-  red: 0xf07178,
-  yellow: 0xe6c07b,
-  violet: 0xb4a1ff,
-  orange: 0xe8925f,
+  muted: { ansi: 8 },
+  red: { ansi: 1 },
+  green: { ansi: 2 },
+  yellow: { ansi: 3 },
+  violet: { ansi: 5 },
+  accent: { ansi: 6 },
+  orange: { rgb: 0xd77757 },
 } as const;
 
 export const MACHINE = { id: "local", label: "Local" } as const;

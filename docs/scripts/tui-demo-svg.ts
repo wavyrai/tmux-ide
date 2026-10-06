@@ -9,9 +9,9 @@ export interface DemoFrame {
 }
 
 /** Geist Mono: 600/1000 advance, 1005 ascent + 295 descent, drawn at 14px. */
-const FONT_SIZE = 14;
-const CELL_WIDTH = 8.4;
-const CELL_HEIGHT = 18.2;
+export const FONT_SIZE = 14;
+export const CELL_WIDTH = 8.4;
+export const CELL_HEIGHT = 18.2;
 const BASELINE = 14.07;
 /** One working-spinner frame every 80ms, exactly like the app's marker clock. */
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -33,17 +33,17 @@ function escapeXml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-const x = (column: number) => +(column * CELL_WIDTH).toFixed(1);
-const y = (row: number) => +(row * CELL_HEIGHT).toFixed(1);
+export const x = (column: number) => +(column * CELL_WIDTH).toFixed(1);
+export const y = (row: number) => +(row * CELL_HEIGHT).toFixed(1);
 
-interface Cell {
+export interface Cell {
   readonly char: string;
   readonly fg: string;
   readonly bg: string;
   readonly bold: boolean;
 }
 
-function cells(frame: CapturedFrame): Cell[][] {
+export function cells(frame: CapturedFrame): Cell[][] {
   return frame.lines.map((line) =>
     line.spans.flatMap((span) => {
       const fg = hex(span, "fg");
@@ -61,10 +61,10 @@ function cells(frame: CapturedFrame): Cell[][] {
   );
 }
 
-type Grid = (Cell | null)[][];
+export type Grid = (Cell | null)[][];
 
 /** The app's modal backdrop: black at alpha 150 (MODAL_BACKDROP in theme.ts). */
-const SCRIM_ALPHA = 150 / 255;
+export const SCRIM_ALPHA = 150 / 255;
 
 function near(left: string, right: string): boolean {
   for (let offset = 1; offset < 7; offset += 2)
@@ -89,7 +89,7 @@ function dim(color: string, alpha: number): string {
     .join("")}`;
 }
 
-const sameCell = (a: Cell, b: Cell, alpha: number) =>
+export const sameCell = (a: Cell, b: Cell, alpha: number) =>
   a.char === b.char &&
   a.bold === b.bold &&
   (a.char === " " || near(a.fg, dim(b.fg, alpha))) &&
@@ -126,8 +126,15 @@ function dominant(grid: Cell[][]): string {
   return [...counts].sort((a, b) => b[1] - a[1])[0]![0];
 }
 
-/** Background runs, merged across cells and then across identical rows. */
-function backgrounds(grid: Grid, base: string | null): string[] {
+/** How a colour is applied: a literal fill, or a themed class for the figures. */
+export type Paint = (color: string) => string;
+const fill: Paint = (color) => `fill="${color}"`;
+
+/**
+ * Background runs, merged across cells and then across identical rows, as one
+ * path per colour in cell units (wrap them in `scale(CELL_WIDTH CELL_HEIGHT)`).
+ */
+export function backgrounds(grid: Grid, base: string | null, paint: Paint = fill): string[] {
   const open = new Map<string, { row: number; rows: number }>();
   const done: { key: string; row: number; rows: number }[] = [];
   grid.forEach((cellsInRow, row) => {
@@ -151,60 +158,88 @@ function backgrounds(grid: Grid, base: string | null): string[] {
     }
   });
   for (const [key, run] of open) done.push({ key, ...run });
-  return done.map(({ key, row, rows }) => {
-    const [start, width, color] = key.split(",");
-    return `<rect x="${x(+start!)}" y="${y(row)}" width="${x(+width!)}" height="${y(rows)}" fill="${color}"/>`;
-  });
+  const paths = new Map<string, string>();
+  for (const { key, row, rows } of done) {
+    const [start, width, color] = key.split(",") as [string, string, string];
+    paths.set(color, `${paths.get(color) ?? ""}M${start} ${row}h${width}v${rows}H${start}z`);
+  }
+  return [...paths].map(([color, d]) => `<path d="${d}" ${paint(color)}/>`);
 }
 
-function text(grid: Grid): string[] {
+/** Wrap `backgrounds()` output so its cell units land on the pixel grid. */
+export const cellUnits = (paths: readonly string[]) =>
+  paths.length ? `<g transform="scale(${CELL_WIDTH} ${CELL_HEIGHT})">${paths.join("")}</g>` : "";
+
+export function text(grid: Grid, paint: Paint = fill, animateSpinner = true): string[] {
   const out: string[] = [];
+  const blank = (cell: Cell | null | undefined) => cell?.char === " ";
+  const spinning = (char: string) => animateSpinner && SPINNER.includes(char);
   grid.forEach((cellsInRow, row) => {
     for (let start = 0; start < cellsInRow.length; ) {
       const head = cellsInRow[start];
-      let end = start + 1;
-      if (!head) {
-        start = end;
+      if (!head || blank(head)) {
+        start += 1;
         continue;
       }
-      while (
-        end < cellsInRow.length &&
-        cellsInRow[end]?.fg === head.fg &&
-        cellsInRow[end]?.bold === head.bold
-      )
+      // A run keeps going across single blank cells: a space paints nothing,
+      // so the next glyph of the same ink can share this <text>. Wider gaps
+      // start a new run, so the markup never depends on whitespace handling
+      // (the landing figures are <use> clones, where `white-space` is lost).
+      let end = start + 1;
+      let last = start;
+      while (end < cellsInRow.length) {
+        const cell = cellsInRow[end];
+        if (!cell) break;
+        if (!blank(cell)) {
+          if (cell.fg !== head.fg || cell.bold !== head.bold || end - last > 2) break;
+          last = end;
+        }
         end += 1;
-      const run = cellsInRow.slice(start, end).map((cell) => cell!.char);
-      const first = run.findIndex((char) => char !== " ");
-      if (first >= 0) {
-        const last = run.findLastIndex((char) => char !== " ");
-        const column = start + first;
-        const chars = run.slice(first, last + 1);
-        const weight = head.bold ? ' font-weight="700"' : "";
-        const plain = chars.map((char) => (SPINNER.includes(char) ? " " : char)).join("");
-        if (plain.trim())
-          out.push(
-            `<text x="${x(column)}" y="${(y(row) + BASELINE).toFixed(1)}" fill="${head.fg}"${weight}>${escapeXml(plain)}</text>`,
-          );
-        chars.forEach((char, offset) => {
-          if (!SPINNER.includes(char)) return;
-          // Rendered frame is ⠋; the SVG replays the app's full 10-frame cycle.
-          out.push(
-            `<g class="sp" fill="${head.fg}"${weight} transform="translate(${x(column + offset)} ${(y(row) + BASELINE).toFixed(1)})">${[
-              ...SPINNER,
-              SPINNER_STILL,
-            ]
-              .map((glyph) => `<text>${glyph}</text>`)
-              .join("")}</g>`,
-          );
-        });
       }
-      start = end;
+      const chars = cellsInRow.slice(start, last + 1).map((cell) => cell!.char);
+      const weight = head.bold ? ' font-weight="700"' : "";
+      const plain = chars.map((char) => (spinning(char) ? " " : char)).join("");
+      if (plain.trim())
+        out.push(
+          `<text x="${x(start + plain.search(/\S/u))}" y="${(y(row) + BASELINE).toFixed(1)}" ${paint(head.fg)}${weight}>${escapeXml(plain.trim())}</text>`,
+        );
+      chars.forEach((char, offset) => {
+        if (!spinning(char)) return;
+        // Rendered frame is ⠋; the SVG replays the app's full 10-frame cycle.
+        out.push(
+          `<g class="sp" transform="translate(${x(start + offset)} ${(y(row) + BASELINE).toFixed(1)})"><g ${paint(head.fg)}${weight}>${[
+            ...SPINNER,
+            SPINNER_STILL,
+          ]
+            .map((glyph) => `<text>${glyph}</text>`)
+            .join("")}</g></g>`,
+        );
+      });
+      start = last + 1;
     }
   });
   return out;
 }
 
-function checkGlyphs(label: string, grid: Cell[][]): void {
+/**
+ * The working spinner's 10-frame, 80ms cycle; under reduced motion the
+ * theme's still glyph (●) shows instead, as in the app. `scope` prefixes
+ * every selector so the rules can live in a page stylesheet.
+ */
+export function spinnerCss(scope: string): string {
+  const sp = `${scope}.sp text`;
+  return [
+    `${sp}{opacity:0;animation:tui-sp .8s steps(1,end) infinite}`,
+    ...SPINNER.map(
+      (_, index) => `${sp}:nth-child(${index + 1}){animation-delay:${(index * 0.08).toFixed(2)}s}`,
+    ),
+    `@keyframes tui-sp{0%{opacity:1}10%,100%{opacity:0}}`,
+    `${sp}:last-child{animation:none;opacity:0}`,
+    `@media (prefers-reduced-motion:reduce){${sp}{animation:none}${sp}:last-child{opacity:1}}`,
+  ].join("\n");
+}
+
+export function checkGlyphs(label: string, grid: Cell[][]): void {
   for (const row of grid)
     for (const cell of row)
       if (!FONT_CHARS.has(cell.char))
@@ -213,6 +248,9 @@ function checkGlyphs(label: string, grid: Cell[][]): void {
             `lacks. Add it to docs/scripts/tui-demo-font/chars.txt and run \`pnpm demo:font\`.`,
         );
 }
+
+export const FONT_FILES = { 400: "regular.woff2", 700: "bold.woff2" } as const;
+export const FONT_DIR_PATH = FONT_DIR;
 
 function fontFace(weight: number, file: string): string {
   const data = readFileSync(resolve(FONT_DIR, file)).toString("base64");
@@ -256,16 +294,13 @@ export async function svgDocument(
         `.f${index}{animation:f${layer.slots} ${cycle}s steps(1,end) infinite;animation-delay:${index * FRAME_SECONDS - cycle}s}`,
     )
     .join("\n");
-  const spinner = SPINNER.map(
-    (_, index) => `.sp text:nth-child(${index + 1}){animation-delay:${(index * 0.08).toFixed(2)}s}`,
-  ).join("");
   const body = layers.map(
     (layer, index) =>
       `<g class="f f${index}">${[
         ...(layer.scrim
           ? [`<rect width="100%" height="100%" fill-opacity="${layer.scrim.toFixed(3)}"/>`]
           : []),
-        ...backgrounds(layer.grid, layer.overlay ? null : base),
+        cellUnits(backgrounds(layer.grid, layer.overlay ? null : base)),
         ...text(layer.grid),
       ].join("")}</g>`,
   );
@@ -280,10 +315,8 @@ text{font-family:d,ui-monospace,monospace;font-size:${FONT_SIZE}px;white-space:p
 .f{opacity:0}
 ${rules}
 ${keyframes}
-.sp text{opacity:0;animation:s .8s steps(1,end) infinite}${spinner}
-@keyframes s{0%{opacity:1}10%,100%{opacity:0}}
-.sp text:last-child{animation:none;opacity:0}
-@media (prefers-reduced-motion:reduce){.f,.sp text{animation:none}${[...still].map((index) => `.f${index}`).join(",")},.sp text:last-child{opacity:1}}
+${spinnerCss("")}
+@media (prefers-reduced-motion:reduce){.f{animation:none}${[...still].map((index) => `.f${index}`).join(",")}{opacity:1}}
 </style>
 <rect width="100%" height="100%" rx="8" fill="${base}"/>
 ${body.join("\n")}
