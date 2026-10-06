@@ -4,7 +4,7 @@ import { cn } from "@/lib/cn";
 
 const sizeClasses = {
   hero: "h-auto w-full max-w-[630px]",
-  nav: "h-auto w-[62px] sm:w-[68px]",
+  nav: "h-auto w-[88px] sm:w-[96px]",
   footer: "h-auto w-[105px] sm:w-[115px]",
 } as const;
 

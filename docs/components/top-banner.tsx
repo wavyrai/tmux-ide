@@ -40,12 +40,12 @@ export function TopBanner() {
           WebkitMaskImage: DITHER_MASK_RIGHT,
         }}
       />
-      {/* Same rail the fumadocs nav uses (layouts/home/client.js): the
-          --fd-layout-width container with px-4, so the wordmark lands on the
-          same left edge as the tmux-ide logo below it. The var is only defined
+      {/* Same rail as the landing nav: the --fd-layout-width container with
+          the 24px inset global.css gives #nd-nav, so the wordmark lands on
+          the same left edge as the tmux-ide logo below it. The var is only defined
           inside the fumadocs layout and this banner sits above it, hence the
           explicit 1400px fallback — fumadocs' own default. */}
-      <div className="relative mx-auto flex h-10 w-full max-w-[var(--fd-layout-width,1400px)] items-center px-4">
+      <div className="relative mx-auto flex h-10 w-full max-w-[var(--fd-layout-width,1400px)] items-center px-6">
         <Link
           href="https://www.prototyper.co"
           target="_blank"

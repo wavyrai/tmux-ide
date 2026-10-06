@@ -317,6 +317,28 @@ body {
   top: 2.5rem !important;
 }
 
+/* A taller header (72px) with a 24px side inset: the landing nav, and the
+   docs mobile header through Fumadocs' --fd-header-height so the sticky
+   sidebar, TOC and banner rows stay aligned. The banner rail matches the
+   inset (px-6 in top-banner.tsx). */
+[data-slot="marketing-home"] #nd-nav,
+[data-slot="marketing-home"] #nd-nav nav {
+  height: 4.5rem;
+}
+
+[data-slot="marketing-home"] #nd-nav nav {
+  padding-inline: 1.5rem;
+}
+
+@media (width < 48rem) {
+  [data-slot="docs-site"] #nd-docs-layout {
+    --fd-header-height: 4.5rem !important;
+  }
+
+  [data-slot="docs-site"] #nd-subnav {
+    padding-inline: 1.5rem 1rem;
+  }
+}
 
 [data-slot="docs-site"] {
   --fd-banner-height: 2.5rem;

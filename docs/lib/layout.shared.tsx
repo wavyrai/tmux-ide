@@ -1,5 +1,4 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
-import { AppIcon } from "@/components/app-icon";
 import { AsciiWordmark } from "@/components/ascii-wordmark";
 
 export const gitConfig = {
@@ -11,10 +10,12 @@ export const gitConfig = {
 export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
+      // Wordmark only; the app icon stays for the favicon and social cards.
+      // The link's accessible name reads "tmux-ide home".
       title: (
-        <span className="flex items-center gap-2">
-          <AppIcon size={22} priority />
+        <span className="flex items-center">
           <AsciiWordmark size="nav" />
+          <span className="sr-only"> home</span>
         </span>
       ),
     },
