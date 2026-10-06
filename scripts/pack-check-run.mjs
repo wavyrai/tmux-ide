@@ -55,6 +55,7 @@ function boundedSpawnSync(file, args, options = {}) {
 
 // Read only intentional top-level selectors before dropping all ambient child overrides.
 const gateEvidenceDir = process.env.TMUX_IDE_PACK_EVIDENCE_DIR;
+const runtimeTraceEnabled = process.env.TMUX_IDE_PACK_RUNTIME_TRACE === "1";
 const interruptionMode = process.env.TMUX_IDE_PACK_INTERRUPT_AT;
 if (interruptionMode && !["hold-input-ready", "fail-input-ready"].includes(interruptionMode))
   throw new Error("Unknown packed interruption fixture");
@@ -213,6 +214,9 @@ function tmuxEnv(runtimePath, fetchMode = "success", includeBun = false) {
     TMUX: "",
     TMUX_IDE_TMUX_SOCKET_PATH: installedTmuxSocketPath,
     TMUX_IDE_HOME: join(homeDir, ".tmux-ide"),
+    ...(runtimeTraceEnabled
+      ? { TMUX_IDE_SESSION_RUNTIME_TRACE_LOG: join(tmpRoot, "installed-daemon.performance.jsonl") }
+      : {}),
     NODE_PATH: "",
     BUN_INSTALL: "",
     NODE_OPTIONS: `--import=${mockFetchPreloadPath}`,
@@ -2370,7 +2374,9 @@ try {
       // Keep the complete existing diagnostic stream: filtered timeout tails
       // can omit the frame-delivery events needed to explain stale output.
       ...readdirSync(tmpRoot)
-        .filter((name) => /^(?:journey-\d+|installed-tui)\.performance\.jsonl$/u.test(name))
+        .filter((name) =>
+          /^(?:journey-\d+|installed-tui|installed-daemon)\.performance\.jsonl$/u.test(name),
+        )
         .map((name) => join(tmpRoot, name)),
     ]) {
       if (!source || !existsSync(source)) continue;

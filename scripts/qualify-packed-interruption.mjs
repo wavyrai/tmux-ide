@@ -166,7 +166,11 @@ try {
       const diagnosticArtifacts = proof.diagnosticArtifacts ?? [];
       if (!Array.isArray(diagnosticArtifacts)) throw new Error("diagnostic-inventory");
       for (const artifact of diagnosticArtifacts) {
-        if (!/^(?:journey-\d+|installed-tui)\.performance\.jsonl$/u.test(artifact.name))
+        if (
+          !/^(?:journey-\d+|installed-tui|installed-daemon)\.performance\.jsonl$/u.test(
+            artifact.name,
+          )
+        )
           throw new Error("diagnostic-name");
         const bytes = readFileSync(join(evidence, artifact.name));
         if (bytes.length !== artifact.bytes || sha(bytes) !== artifact.sha256)
