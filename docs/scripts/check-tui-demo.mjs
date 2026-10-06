@@ -70,8 +70,9 @@ for (const [variant, figure] of Object.entries(frames.figures)) {
       `${variant} figure needs a named cursor with from/at/to points inside the figure`,
     );
 }
-if (!sprite.includes('<symbol id="cursor"'))
-  failures.push("tui-figures.svg lacks the shared #cursor arrow symbol");
+const icons = readFileSync(resolve(docsDir, "components/icons/sprite.svg"), "utf8");
+if (!icons.includes('<symbol id="cursor-arrow"'))
+  failures.push("components/icons/sprite.svg lacks the #cursor-arrow symbol the cursors draw");
 
 if (failures.length > 0) {
   console.error(`TUI demo check failed:\n- ${failures.join("\n- ")}`);
