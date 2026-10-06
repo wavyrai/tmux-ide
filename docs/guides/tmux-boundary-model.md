@@ -1,9 +1,8 @@
 # Executable tmux boundary contract
 
-This is the first correctness gate for the tmux integration: one pane's capture
-and output delivery, followed by a real attach/output/resize/reconnect journey.
-It adds test infrastructure, not another production state store. It does not
-establish performance parity or complete terminal correctness.
+This correctness gate covers capture/output delivery, a real
+attach/output/resize/reconnect journey, and cross-pane control scheduling.
+It does not establish performance parity or complete terminal correctness.
 
 ## Run
 
@@ -16,7 +15,10 @@ TMUX_IDE_BOUNDARY_TEST_BINARY="$PWD/packages/daemon/dist/native/tmux/darwin-arm6
 ```
 
 The command requires an absolute executable path, prints its version and SHA-256,
-and runs both layers. A missing binary fails the command. The ordinary daemon
+and runs the transcript model, both application journeys, and the scheduler wire
+cases. Python 3 is required for the wire cases; their raw traces and JSON receipts
+are retained in the printed temporary evidence directory. A missing binary fails
+the command. The ordinary daemon
 suite always collects the model; its live lane skips this optional qualification
 when no binary was selected. The explicit gate cannot pass by skipping it.
 
@@ -50,7 +52,7 @@ the patches listed there; the test command records the actual binary identity.
 | Capture and cursor are separate observations            | `session-channel.ts` reseed probe and geometry checks                                                                                           | A generation/geometry change invalidates the candidate; a command receipt alone proves neither parsed PTY output nor rendering |
 | Disconnect invalidates delivery                         | `PaneFeed.abortCurrent` and owner/service disposal                                                                                              | No updates reach a retired consumer; reattachment requires a new seed                                                          |
 
-The live proof here has **one active output pane**. A separate isolated wire
+The initial journey has **one active output pane**. A separate isolated wire
 experiment has confirmed that a sibling pane's backlog can allow post-capture
 output to overtake the capture reply. It reproduces on the bundled tmux 3.7c
 and a clean build of the pinned upstream commit. With control stdout temporarily
@@ -70,6 +72,22 @@ the native pane changes from `BEFORE` to `AFTER!`, while the replica remains
 native `-R` reseeding, not every application recovery path. The specialized
 native atomic snapshot path requires a paused target and an empty global block
 queue before committing snapshot and stream offsets; preserve those guards.
+
+The retained `tmux-boundary-ordering-live.test.ts` asserts the correct final
+canonical content in this two-pane failure. It fails on the original bundled
+server and clean pinned stock server. The ordered
+`native/tmux/control-output-barriers.patch` corrects the bundled scheduler:
+panes share a scheduling budget within each segment between queued control lines,
+and no later segment can drain before the preceding line. Lines exposed by
+age-triggered pause or discard are flushed before scheduling again.
+`scripts/check-tmux-control-barriers.py` additionally exercises adjacent replies,
+age-triggered pause, pane off/death and service of both flooding panes.
+
+The server format `#{tmux_ide_control_output_barriers}` returns `1` only for the
+patched scheduler. A new client connected to an old server does not provide this
+guarantee. Stock/old-server reseeding remains an open TM02 requirement; do not
+infer it from a passing test with the new bundled server. Local native builds
+also require separate supported-platform and release-artifact qualification.
 
 These contracts do not establish a global atomic snapshot across independent
 clients or panes. `%pause`/`%continue`, capture failure and pane disappearance need
@@ -168,8 +186,8 @@ renderer, flow recovery and linked-window tests remain necessary.
 
 ## Next extensions, in order
 
-- Prove the application impact of the reproduced cross-pane capture overtake,
-  correct the responsible boundary with a failing regression, then
+- Correct the stock/old-server capture boundary and retain the bundled-server
+  regression, then
   connect a generated legal wire-event schedule to SessionChannel, retaining the
   independent oracle and shrinking. Cover response failures and bounded overflow.
 - Add native physical-cell and mode checkpoints, alternate screens, wrapping,

@@ -14,6 +14,10 @@
     {
       "patch": "interaction-journal-v1.patch",
       "patchSha256": "fab780c9ca4a8452fbf73d5ed04e0d9420c887c6006c84b9d0c83a89af80aa0d"
+    },
+    {
+      "patch": "control-output-barriers.patch",
+      "patchSha256": "00ce678017ce94fd8ca1374b956d8db5cc4f6cdbe1309eddceed8fddb1adf6a8"
     }
   ],
   "experimentalExtensions": ["tmux-ide-interaction-journal-v2"]

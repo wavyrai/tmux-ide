@@ -87,6 +87,20 @@ Production bundle qualification rejects test-only journal injection commands.
 The journal adds in-process C code: observer overflow/disconnect is isolated from
 input, but a native memory-safety failure cannot be isolated from the tmux server.
 
+The third patch,
+[control-output-barriers.patch](../native/tmux/control-output-barriers.patch),
+prevents later pane output from passing a queued control reply while another
+pane holds up that reply. Output remains round-robin within each segment between
+control lines. Pausing or discarding a pane still allows exposed replies to drain.
+The live server advertises `#{tmux_ide_control_output_barriers}` as `1`; probe the
+server being used, never infer this capability from the client executable or
+version. Old and stock servers remain affected, so this patch alone does not
+qualify ordinary-session capture ordering across all supported servers. It does
+not change the native atomic snapshot's empty-queue requirement. Regression:
+[ordinary reseed behind sibling backlog](../packages/daemon/src/terminal/mirror/tmux-boundary-ordering-live.test.ts).
+Remove this patch only after an upstream replacement passes the same wire and
+canonical replica ordering checks, including pause/discard and fairness cases.
+
 Regression evidence includes
 [native-grid capture](../packages/daemon/src/terminal/mirror/native-grid-capture.test.ts),
 [native-grid projection](../packages/daemon/src/terminal/mirror/native-grid-projection.test.ts),

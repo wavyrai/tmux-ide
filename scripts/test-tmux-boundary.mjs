@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const binary = process.env.TMUX_IDE_BOUNDARY_TEST_BINARY;
@@ -34,3 +35,17 @@ for (const [config, test] of [
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
+const evidence = join(mkdtempSync(join(tmpdir(), "tmux-boundary-wire-")), "evidence");
+console.log(`Control scheduler wire evidence: ${evidence}`);
+const wire = spawnSync(
+  "python3",
+  [
+    fileURLToPath(new URL("./check-tmux-control-barriers.py", import.meta.url)),
+    binary,
+    "--output",
+    evidence,
+  ],
+  { env: process.env, stdio: "inherit" },
+);
+if (wire.error) throw wire.error;
+if (wire.status !== 0) process.exit(wire.status ?? 1);

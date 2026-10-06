@@ -1,0 +1,88 @@
+diff --git a/control.c b/control.c
+--- a/control.c
++++ b/control.c
+@@ -45,6 +45,7 @@
+ 	size_t				 size;
+ 	char				*line;
+ 	uint64_t			 t;
++	uint64_t			 generation;
+ 
+ 	TAILQ_ENTRY(control_block)	 entry;
+ 	TAILQ_ENTRY(control_block)	 all_entry;
+@@ -113,6 +114,7 @@
+ 
+ /* Control client state. */
+ struct control_state {
++	uint64_t			 generation;
+ 	int journal_busy;
+ 	struct control_panes		 panes;
+ 
+@@ -491,6 +493,8 @@
+ 
+ 	cb = xcalloc(1, sizeof *cb);
+ 	xvasprintf(&cb->line, fmt, ap);
++	/* Later pane output must not pass this queued control line. */
++	cb->generation = cs->generation++;
+ 	TAILQ_INSERT_TAIL(&cs->all_blocks, cb, all_entry);
+ 	cb->t = get_timer();
+ 
+@@ -566,6 +570,7 @@
+ 
+ 	cb = xcalloc(1, sizeof *cb);
+ 	cb->size = new_size;
++	cb->generation = cs->generation;
+ 	TAILQ_INSERT_TAIL(&cs->all_blocks, cb, all_entry);
+ 	cb->t = get_timer();
+ 
+@@ -870,6 +875,12 @@
+ 		}
+ 
+ 		cb = TAILQ_FIRST(&cp->blocks);
++		/* Share the budget among panes before the next control line, but
++		 * never drain a later segment ahead of that line. The global
++		 * head exists because this pane block is also on all_blocks. */
++		if (cb->generation !=
++		    TAILQ_FIRST(&cs->all_blocks)->generation)
++			break;
+ 		if (cb->t < t)
+ 			age = t - cb->t;
+ 		else
+@@ -924,6 +935,11 @@
+ 	control_flush_all_blocks(c);
+ 
+ 	while (EVBUFFER_LENGTH(evb) < CONTROL_BUFFER_HIGH) {
++		/* Age/pause/discard can expose a line without writing data.
++		 * Flush it before retrying barrier-blocked panes. */
++		control_flush_all_blocks(c);
++		if (EVBUFFER_LENGTH(evb) >= CONTROL_BUFFER_HIGH)
++			break;
+ 		if (cs->pending_count == 0)
+ 			break;
+ 		space = CONTROL_BUFFER_HIGH - EVBUFFER_LENGTH(evb);
+diff --git a/format.c b/format.c
+--- a/format.c
++++ b/format.c
+@@ -2701,6 +2701,13 @@
+ 	return (xstrdup(socket_path));
+ }
+ 
++/* Server capability: pane output cannot cross queued control lines. */
++static void *
++format_cb_tmux_ide_control_output_barriers(__unused struct format_tree *ft)
++{
++	return (xstrdup("1"));
++}
++
+ /* Callback for version. */
+ static void *
+ format_cb_version(__unused struct format_tree *ft)
+@@ -3658,6 +3665,9 @@
+ 	},
+ 	{ "synchronized_output_flag", FORMAT_TABLE_STRING,
+ 	  format_cb_synchronized_output_flag
++	},
++	{ "tmux_ide_control_output_barriers", FORMAT_TABLE_STRING,
++	  format_cb_tmux_ide_control_output_barriers
+ 	},
+ 	{ "tree_mode_format", FORMAT_TABLE_STRING,
+ 	  format_cb_tree_mode_format
