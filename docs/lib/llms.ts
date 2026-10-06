@@ -45,17 +45,38 @@ function isOptional(node: Node): boolean {
 
 /** The /llms.txt index (llmstxt.org): H1, summary, then link sections in sidebar order. */
 export function llmsIndex(): string {
-  const sections: { title: string; nodes: Node[] }[] = [{ title: "Docs", nodes: [] }];
+  const groups: { title: string; nodes: Node[] }[] = [{ title: "Docs", nodes: [] }];
   const optional: Node[] = [];
   for (const node of source.pageTree.children) {
     if (node.type === "separator") {
-      sections.push({ title: typeof node.name === "string" ? node.name : "More", nodes: [] });
+      groups.push({ title: typeof node.name === "string" ? node.name : "More", nodes: [] });
     } else if (isOptional(node)) {
       optional.push(node);
     } else {
-      sections.at(-1)!.nodes.push(node);
+      groups.at(-1)!.nodes.push(node);
     }
   }
+
+  // Sections are keyed by title so the project links join a "Project" nav group
+  // instead of repeating the heading.
+  const sections = new Map<string, string[]>();
+  const add = (title: string, lines: string[]) => {
+    if (lines.length) sections.set(title, [...(sections.get(title) ?? []), ...lines]);
+  };
+  for (const group of groups) add(group.title, pageLines(group.nodes));
+  add("Project", [
+    `- [Source code on GitHub](${SITE_REPOSITORY}): issues, releases, and the MIT license`,
+    `- [npm package](${SOFTWARE_DOWNLOAD_URL}): the published \`tmux-ide\` CLI`,
+    `- [${PUBLISHER_NAME}](${PUBLISHER_URL}): the team that builds tmux-ide`,
+  ]);
+  add("Optional", [
+    link("Full documentation as one file", "/llms-full.txt", "every docs page in Markdown"),
+    ...pageLines(optional),
+  ]);
+  // llmstxt.org: "Optional" is the last section; agents may skip it.
+  const optionalLines = sections.get("Optional")!;
+  sections.delete("Optional");
+  sections.set("Optional", optionalLines);
 
   const out = [
     `# ${SITE_NAME}`,
@@ -71,23 +92,7 @@ export function llmsIndex(): string {
     "Every documentation page is also available as Markdown: append `.mdx` to its URL " +
       `(for example ${absoluteUrl("/docs/getting-started.mdx")}).`,
   ];
-  for (const section of sections) {
-    const lines = pageLines(section.nodes);
-    if (lines.length) out.push("", `## ${section.title}`, "", ...lines);
-  }
-  out.push(
-    "",
-    "## Project",
-    "",
-    `- [Source code on GitHub](${SITE_REPOSITORY}): issues, releases, and the MIT license`,
-    `- [npm package](${SOFTWARE_DOWNLOAD_URL}): the published \`tmux-ide\` CLI`,
-    `- [${PUBLISHER_NAME}](${PUBLISHER_URL}): the team that builds tmux-ide`,
-    "",
-    "## Optional",
-    "",
-    link("Full documentation as one file", "/llms-full.txt", "every docs page in Markdown"),
-    ...pageLines(optional),
-    "",
-  );
+  for (const [title, lines] of sections) out.push("", `## ${title}`, "", ...lines);
+  out.push("");
   return out.join("\n");
 }
