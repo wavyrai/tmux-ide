@@ -5,10 +5,7 @@ import { TopBanner } from "@/components/top-banner";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      data-slot="marketing-home"
-      className="flex min-h-screen flex-col overflow-x-clip font-light"
-    >
+    <div data-slot="marketing-home" className="flex min-h-screen flex-col overflow-x-clip">
       <TopBanner />
       <HomeLayout {...baseOptions()}>
         {children}

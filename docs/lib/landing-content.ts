@@ -1,3 +1,38 @@
+import { INSTALL_COMMAND } from "@/lib/site";
+
+/**
+ * The hero is one constant so the headline can change in a single place.
+ * The eyebrow is a sentence-case label, not an uppercase flag.
+ */
+export const LANDING_HERO = {
+  eyebrow: "Build your team of agents",
+  title: "A dedicated workspace for your coding agents.",
+  lede: "Build, coordinate, and navigate a team of coding agents from one agent-aware communication plane. See what every agent is doing and jump directly to the one that needs you.",
+} as const;
+
+export interface InstallMethod {
+  readonly id: "curl" | "npm";
+  readonly label: string;
+  readonly command: string;
+  readonly note: string;
+}
+
+/** Only methods the release actually supports (see public/install.sh and the README). */
+export const INSTALL_METHODS: readonly InstallMethod[] = [
+  {
+    id: "curl",
+    label: "curl",
+    command: INSTALL_COMMAND,
+    note: "macOS and glibc Linux. Installs under ~/.local without sudo.",
+  },
+  {
+    id: "npm",
+    label: "npm",
+    command: "npm install -g tmux-ide",
+    note: "Requires Node.js 20 or newer.",
+  },
+] as const;
+
 export interface LandingFaqItem {
   readonly question: string;
   readonly answer: string;

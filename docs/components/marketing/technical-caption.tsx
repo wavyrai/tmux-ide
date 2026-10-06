@@ -21,13 +21,13 @@ export function TechnicalCaption({
     <figcaption
       id={id}
       className={cn(
-        "marketing-type-micro flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 font-mono text-fd-muted-foreground",
+        "type-caption-1 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 text-fd-muted-foreground",
         ruled && "border-t border-marketing-line",
         className,
       )}
     >
       <span>
-        <span className="mr-3 text-fd-foreground">Fig. {number}.</span>
+        <span className="mr-3 font-mono text-fd-foreground">Fig. {number}.</span>
         {children}
       </span>
       {action}

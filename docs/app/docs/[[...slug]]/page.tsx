@@ -1,16 +1,10 @@
 import { getPageImage, source } from "@/lib/source";
-import {
-  DocsBody,
-  DocsDescription,
-  DocsPage,
-  DocsTitle,
-  MarkdownCopyButton,
-  ViewOptionsPopover,
-} from "fumadocs-ui/layouts/docs/page";
+import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/docs/page";
 import { notFound } from "next/navigation";
 import { getMDXComponents } from "@/mdx-components";
 import type { Metadata } from "next";
 import { createRelativeLink } from "fumadocs-ui/mdx";
+import { PageActions } from "@/components/docs/page-actions";
 import { gitConfig } from "@/lib/layout.shared";
 import { docLastModified } from "@/lib/git-dates";
 import { PUBLISHER_ID, SITE_DESCRIPTION, SITE_URL, absoluteUrl } from "@/lib/site";
@@ -79,15 +73,15 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
         full={page.data.full}
         className="docs-article"
       >
+        {/* First child of the article, so it sits above the title on every page. */}
+        <PageActions
+          pageUrl={pageUrl}
+          markdownUrl={`${page.url}.mdx`}
+          sourceUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/content/docs/${page.path}`}
+        />
         <DocsTitle className="docs-title">{page.data.title}</DocsTitle>
         <DocsDescription className="docs-description mb-0">{description}</DocsDescription>
-        <div className="flex flex-row gap-2 items-center border-b pb-6">
-          <MarkdownCopyButton markdownUrl={`${page.url}.mdx`} />
-          <ViewOptionsPopover
-            markdownUrl={`${page.url}.mdx`}
-            githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/content/docs/${page.path}`}
-          />
-        </div>
+        <hr className="border-fd-border" />
         <DocsBody className="docs-prose">
           <MDX
             components={getMDXComponents({

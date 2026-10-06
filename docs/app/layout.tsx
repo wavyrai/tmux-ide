@@ -1,6 +1,6 @@
 import { RootProvider } from "fumadocs-ui/provider/next";
 import "./global.css";
-import { GeistSans } from "geist/font/sans";
+import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import { GeistMono } from "geist/font/mono";
 import { GeistPixelSquare } from "geist/font/pixel";
 import { Analytics } from "@vercel/analytics/next";
@@ -21,6 +21,16 @@ import {
   SOFTWARE_VERSION,
   absoluteUrl,
 } from "@/lib/site";
+
+// Faces by role: Inter carries body and interface text, Plus Jakarta Sans
+// carries every heading, Geist Mono carries machine tokens, and Geist Pixel is
+// reserved for the brand mark. global.css maps these variables onto roles.
+const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
+const jakarta = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-plus-jakarta",
+});
 
 const image = {
   url: SITE_IMAGE,
@@ -155,7 +165,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${GeistSans.variable} ${GeistMono.variable} ${GeistPixelSquare.variable}`}
+      className={`${inter.variable} ${jakarta.variable} ${GeistMono.variable} ${GeistPixelSquare.variable}`}
       suppressHydrationWarning
     >
       <body className="flex flex-col min-h-screen">

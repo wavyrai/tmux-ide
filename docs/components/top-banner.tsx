@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PrototyperWordmark } from "@/components/prototyper-wordmark";
 import { DITHER_MASK_RIGHT, DITHER_SIZE, DITHER_URL } from "@/components/dither";
+import { SITE_REPOSITORY } from "@/lib/site";
 
 /** The arrow nudges out on hover — the only motion in the bar. */
 function ArrowUpRight() {
@@ -53,25 +54,27 @@ export function TopBanner() {
           className="marketing-logo-action flex items-center gap-2 text-white"
         >
           <PrototyperWordmark width={92} />
-          <span className="marketing-type-caption font-mono text-white/60">oss</span>
+          <span className="type-caption-3 rounded-full border border-white/25 px-1.5 text-white/75">
+            oss
+          </span>
         </Link>
 
-        <Link
-          href="https://www.prototyper.co"
-          target="_blank"
-          rel="noreferrer"
-          className="group marketing-banner-link-action ml-auto flex items-center gap-1.5 text-xs text-white/70"
-        >
-          <span className="max-sm:hidden">
-            <span className="font-normal text-white">tmux-ide</span> is open source, built at{" "}
-            <span className="font-normal text-white">Prototyper</span>.
+        <p className="type-caption-1 ml-auto flex items-center gap-3 text-white/70">
+          <span className="max-md:hidden">
+            <span className="text-white">tmux-ide</span> is an open-source project by{" "}
+            <span className="text-white">Prototyper</span>.
           </span>
-          <span className="inline-flex items-center gap-1 font-normal text-white">
-            Learn more
+          <Link
+            href={SITE_REPOSITORY}
+            target="_blank"
+            rel="noreferrer"
+            className="group marketing-banner-link-action inline-flex items-center gap-1 text-white"
+          >
+            View source
             <ArrowUpRight />
-          </span>
-          <span className="sr-only">(opens in a new tab)</span>
-        </Link>
+            <span className="sr-only">(opens in a new tab)</span>
+          </Link>
+        </p>
       </div>
     </div>
   );
