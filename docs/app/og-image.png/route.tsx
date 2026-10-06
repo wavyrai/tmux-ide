@@ -1,6 +1,7 @@
 import { ImageResponse } from "@takumi-rs/image-response";
 
 import { SocialCard } from "@/components/social-card";
+import { OG_FONTS } from "@/lib/og-fonts";
 import { SITE_DESCRIPTION, SITE_TAGLINE } from "@/lib/site";
 
 /**
@@ -14,11 +15,7 @@ export const dynamic = "force-static";
 
 export function GET() {
   return new ImageResponse(
-    <SocialCard
-      eyebrow="Build your team of agents"
-      title={SITE_TAGLINE}
-      description={SITE_DESCRIPTION}
-    />,
-    { width: 1200, height: 630, format: "png" },
+    <SocialCard eyebrow="Open source · MIT" title={SITE_TAGLINE} description={SITE_DESCRIPTION} />,
+    { width: 1200, height: 630, format: "png", fonts: OG_FONTS, loadDefaultFonts: true },
   );
 }
