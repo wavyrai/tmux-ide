@@ -15,8 +15,11 @@ import { TreeFigure } from "@/components/figures/tree-figure";
 const TEAM_SUBTITLE = (
   <>
     One agent per tmux pane, across harnesses. Coordinate them with <code>tmux-ide send</code> and{" "}
-    <code>wait</code>, or use Claude Code agent teams for all-Claude teams; tmux-ide shows every
-    agent and its status. It does not orchestrate them.
+    <code>wait</code>, or use{" "}
+    <a href="/docs/claude-code-agent-teams" className="marketing-link-action text-fd-primary">
+      Claude Code agent teams
+    </a>{" "}
+    for all-Claude teams; tmux-ide shows every agent and its status. It does not orchestrate them.
   </>
 );
 const TEAM_CAPTION =

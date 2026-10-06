@@ -102,7 +102,7 @@ Claude Code agent teams: set \`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1\` and \`te
 in the installer; split-pane teammates then appear in tmux-ide grouped under their team, named as the
 lead named them, with normal agent status. tmux-ide reads
 \`~/.claude/teams/<team>/config.json\` read-only; Claude Code owns spawning, tasks and messaging.
-Docs: ${SITE_URL}/docs/multi-agent-teams#claude-code-agent-teams
+Docs: ${SITE_URL}/docs/claude-code-agent-teams
 
 ## Recover and branch
 

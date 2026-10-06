@@ -68,7 +68,7 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
     question: "Does it work with Claude Code agent teams?",
     answer:
-      "Yes. With teammateMode set to tmux, or auto when Claude Code runs inside tmux, each teammate opens in its own pane, and tmux-ide groups them under their team with their teammate names and live status. Claude Code still owns the team, tasks and messaging; in-process teammates have no pane of their own.",
+      "Yes. With teammateMode set to tmux, or auto when Claude Code runs inside tmux, each teammate opens in its own pane, and tmux-ide groups them under their team with their teammate names and live status. Claude Code still owns the team, tasks and messaging; in-process teammates have no pane of their own. See [Claude Code agent teams](/docs/claude-code-agent-teams).",
   },
   {
     question: "Can I jump directly to a specific agent?",
