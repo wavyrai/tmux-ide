@@ -16,14 +16,15 @@ describe.skipIf(!available)("managed viewport recovery from manual sizing", () =
           encoding: "utf8",
           env: { ...process.env, TMUX: "" },
         }).trim();
+      let control!: MirrorControlChannel;
       const service = new MirrorService({
         createIo: (session, handlers) =>
-          new MirrorControlChannel({
+          (control = new MirrorControlChannel({
             session,
             handlers,
             socketName: socket,
             configFile: "/dev/null",
-          }),
+          })),
       });
       try {
         run("new-session", "-d", "-s", "proof", "-x", "100", "-y", "30", "cat");
@@ -48,6 +49,9 @@ describe.skipIf(!available)("managed viewport recovery from manual sizing", () =
           { timeout: 1500 },
         );
         expect(run("show-option", "-w", "-v", "-t", window, "window-size")).toBe("latest");
+        expect(await control.request('display-message -p "after-manual-repair"')).toEqual([
+          "after-manual-repair",
+        ]);
         expect(run("show-option", "-w", "-v", "-t", neighbour, "window-size")).toBe("manual");
         // The installed shell pre-fits hidden windows too. Those requests must
         // not release a user's manual pin on a background window.
@@ -62,6 +66,9 @@ describe.skipIf(!available)("managed viewport recovery from manual sizing", () =
           ).toBe("121x41"),
         );
         expect(run("show-option", "-Awv", "-t", neighbour, "window-size")).toBe("manual");
+        expect(await control.request('display-message -p "after-hidden-fit"')).toEqual([
+          "after-hidden-fit",
+        ]);
         expect(
           run("display-message", "-p", "-t", neighbour, "#{window_width}x#{window_height}"),
         ).toBe("90x25");
@@ -74,6 +81,7 @@ describe.skipIf(!available)("managed viewport recovery from manual sizing", () =
           ).toBe("130x42"),
         );
         // Existing arbitration choices are not rewritten by an ordinary fit.
+        expect(await control.request('display-message -p "after-repin"')).toEqual(["after-repin"]);
         run("set-option", "-w", "-t", window, "window-size", "smallest");
         service.fitViewport("proof", 110, 32);
         await vi.waitFor(() =>
@@ -82,6 +90,9 @@ describe.skipIf(!available)("managed viewport recovery from manual sizing", () =
           ).toBe("110x32"),
         );
         expect(run("show-option", "-w", "-v", "-t", window, "window-size")).toBe("smallest");
+        expect(await control.request('display-message -p "after-smallest-fit"')).toEqual([
+          "after-smallest-fit",
+        ]);
         expect(run("display-message", "-p", "-t", "proof", "#{pid}:#{pane_pid}")).toBe(identity);
       } finally {
         await service.dispose();

@@ -1207,9 +1207,17 @@ export class SessionChannel {
     // request/response round trip. The shell also pre-fits hidden windows;
     // only the active window may have its manual policy repaired.
     const quoted = tmuxSingleQuote(target);
-    this.io.send(
+    // if-shell emits its own reply and the selected branch emits another.
+    // Keep both branches at one command so either policy consumes exactly two
+    // FIFO slots; a discard-only send would misroute the next capture replies.
+    this.io.commandListInline(
       `if-shell -F -t ${quoted} '#{&&:#{window_active},#{==:#{window-size},manual}}' ` +
-        tmuxSingleQuote(`set-option -w -t ${quoted} window-size latest`),
+        tmuxSingleQuote(`set-option -w -t ${quoted} window-size latest`) +
+        " " +
+        tmuxSingleQuote(`display-message -p -t ${quoted} ''`),
+      2,
+      1,
+      () => {},
     );
   }
 
