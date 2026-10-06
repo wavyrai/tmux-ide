@@ -19,6 +19,16 @@ node --import tsx scripts/qualify-owned-ssh.ts --run-owned-local --root "$fixtur
 cat "$fixture_root/qualification.json"
 ```
 
+To additionally exercise actual CLI discovery with no daemon installed in the
+fixture home, pass `--public-cli /absolute/path/to/verified/bin/cli.js`. Use an
+installed or independently source-verified CLI artifact and retain its receipt.
+This adds `public-cli-absent-daemon`: the SSH-side process runs that CLI with
+`remote-daemon-info --json`, an explicit private `TMUX_IDE_HOME`, and no inherited
+runtime credentials or namespace settings. The case verifies `daemon-missing`,
+zero synthetic-handshake requests, and no files created in the private home.
+The receipt records the CLI hash. Other identity/protocol cases remain synthetic;
+this mode does not start a daemon or qualify installation or incompatible servers.
+
 Use an absolute Node executable when qualifying a specific runtime. The root
 must already exist, belong to the current user, and have private permissions.
 Paths must contain only letters, digits, underscores, dots, slashes and hyphens.

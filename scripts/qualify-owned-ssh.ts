@@ -5,8 +5,8 @@ import { createServer as httpServer, request, type IncomingMessage } from "node:
 import { createFinitePressureWriter } from "./lib/owned-ssh-pressure.mjs";
 import { createFleetDialScheduler } from "../packages/daemon-client/src/fleet-dial-scheduler.ts";
 import { createServer as tcpServer, type Socket } from "node:net";
-import { randomBytes, randomUUID } from "node:crypto";
-import { writeFileSync, realpathSync, lstatSync } from "node:fs";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { writeFileSync, readFileSync, readdirSync, realpathSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "../packages/contracts/src/index.ts";
 import {
@@ -28,10 +28,19 @@ process.umask(0o077);
 const runStarted = Date.now();
 const execute = promisify(execFile);
 const args = process.argv.slice(2);
-if (args.length !== 3 || args[0] !== "--run-owned-local" || args[1] !== "--root")
+if (
+  ![3, 5].includes(args.length) ||
+  args[0] !== "--run-owned-local" ||
+  args[1] !== "--root" ||
+  (args.length === 5 && args[3] !== "--public-cli")
+)
   throw new Error(
-    "Usage: qualify-owned-ssh --run-owned-local --root EXISTING_PRIVATE_SHORT_DIRECTORY",
+    "Usage: qualify-owned-ssh --run-owned-local --root EXISTING_PRIVATE_SHORT_DIRECTORY [--public-cli ABSOLUTE_CLI_PATH]",
   );
+const publicDiscoveryCli = args[4] ? realpathSync(args[4]) : null;
+const publicCliSha256 = publicDiscoveryCli
+  ? createHash("sha256").update(readFileSync(publicDiscoveryCli)).digest("hex")
+  : null;
 const root = fixturePath(realpathSync(args[2]!));
 const rootStat = lstatSync(root);
 if (!rootStat.isDirectory() || rootStat.uid !== process.getuid!() || rootStat.mode & 0o077)
@@ -163,6 +172,7 @@ async function fixture(options: {
   handshake(): unknown;
   jump?: boolean;
   missingPath?: boolean;
+  publicDiscoveryCli?: string;
 }) {
   currentStage = options.jump
     ? "jump-fixture"
@@ -489,6 +499,24 @@ try {
       await marker();
     });
   }
+  if (publicDiscoveryCli) {
+    const absent = await fixture({
+      targetPort,
+      publicDiscoveryCli,
+      handshake: () => {
+        throw new Error("Public CLI must not use the synthetic handshake");
+      },
+    });
+    await runCase("public-cli-absent-daemon", async () => {
+      await refused(absent.config, undefined, 0, "daemon-missing");
+      assert(absent.metrics().requests === 0);
+      assert(
+        JSON.stringify(readdirSync(join(absent.root, "home"))) === JSON.stringify([".zshenv"]),
+      );
+      caseFacts = { publicCliSha256, syntheticHandshakeRequests: 0, privateHomeUnchanged: true };
+      await marker();
+    });
+  }
   const unreachablePort = await unusedLoopbackPort();
   const unreachableConfig = join(target.root, "unreachable_config");
   privateWrite(
@@ -765,6 +793,14 @@ try {
     ok: overall && Object.values(cleanup).every(Boolean),
     scope: "synthetic-identity-production-ssh-transport-only",
     realDaemon: false,
+    publicDiscovery: publicDiscoveryCli
+      ? {
+          cli: publicDiscoveryCli,
+          sha256: publicCliSha256,
+          scope:
+            "Actual CLI executed by the private SSH server; no daemon exists or is started in its private HOME. Other protocol cases remain synthetic.",
+        }
+      : null,
     failureStage: overall ? null : currentStage,
     proxyChildObserved,
     sshDiagnostics: sshDiagnostics.map((item) => ({ role: item.role, ...item.snapshot() })),
