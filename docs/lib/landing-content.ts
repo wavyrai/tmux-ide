@@ -78,7 +78,7 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
     question: "Can it restore my sessions after the tmux server crashes?",
     answer:
-      "Yes. While tmux-ide's background updater runs, which starts once you adopt a session or create one from the app, it snapshots your sessions about every 30 seconds. After a crash, `tmux-ide restore --resume-agents` rebuilds windows, layouts and directories and resumes supported agent conversations such as Claude Code.",
+      "Yes. While tmux-ide's background updater runs, which starts once you adopt a session or create one from the app, it snapshots your sessions about every 30 seconds. After a crash, `tmux-ide restore --resume-agents` rebuilds windows, layouts and directories and resumes supported agent conversations, such as Claude Code once `tmux-ide integration install claude` is set up.",
   },
   {
     question: "Do I need a workspace configuration file?",
