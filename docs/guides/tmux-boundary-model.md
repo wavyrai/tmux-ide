@@ -393,7 +393,7 @@ replacement receiver must remain empty. Fresh native input then succeeds. This
 tests physical target death with a different replacement ID and birth, not
 runtime-ID reuse or every input-admission race.
 
-## Coverage matrix
+## Historical first-slice coverage
 
 `native-physical-cell-oracle-live.test.ts` adds an independent, deliberately small
 8×4 physical-cell checkpoint. Both raw native JSON and delivered canonical cells
@@ -417,12 +417,16 @@ next-row continuation. Raw tmux's end-column cursor and the canonical visible
 cursor are asserted separately; their different representations are not treated
 as equal. This fixture does not scroll or establish custom tab-stop state.
 
-**Known stock snapshot discrepancy:** the ANSI capture includes a tab preceded
-by a background-color sequence, but replay moves across existing cells without
-painting that background. The stock canonical tab span therefore loses the
-fixture's pre-erased background; bundled native capture preserves it. Stock
-text/cursor/mode checks passing do not resolve this visible style mismatch. The
-independent fixture retains that limitation while capture replay is investigated.
+**Historical stock snapshot discrepancy:** the original ANSI replay moved across
+an HT span without painting the preceding background color, losing the fixture's
+pre-erased background; bundled native capture preserved it. Passing stock
+text/cursor/mode checks did not resolve that visible style mismatch. This retained
+first-slice evidence led to the current [explicit unavailable-pane policy for
+stock capture tabs](#stock-capture-tabs-explicit-unavailable-pane): affected stock
+captures are rejected before seed publication rather than replayed inaccurately.
+
+The table below records the initial slice, not the current mission status;
+later sections describe subsequent validation and remaining limits.
 
 | Evidence                               | First-slice status                                                                 | Remaining boundary                                                   |
 | -------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
