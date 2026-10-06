@@ -1,0 +1,41 @@
+---
+title: tmux-ide 2.9.3
+description: More reliable connections, resizing, installation, and recovery
+---
+
+Version `2.9.3` strengthens the terminal-first Home and Terminals experience.
+Existing tmux sessions remain running when you update or close the viewer.
+
+## Connections and session recovery
+
+The running app recovers after remote daemon replacement and applies saved-machine
+edits. Connection errors and lifecycle logs provide clearer diagnostics. Managed
+services preserve ownership through restart, interrupted updates, and failed
+launcher recovery.
+
+Managed windows recover from manual sizing policies. Linked windows that would
+create competing control owners are refused with guidance to unlink and retry.
+Agent completion stays associated with the correct agent identity, and interaction
+observation reports gaps rather than silently losing retained events.
+
+## Installation and updates
+
+```bash
+curl -fsSL https://tmux-ide.com/install.sh | sh
+```
+
+The managed installer supplies Node.js, bundled tmux, and the matching terminal
+runtime. Updates preserve the current installation when downloads fail. Rollback
+and uninstall are supported, including prefixes containing spaces. See
+[Getting started](/docs/getting-started) for requirements and commands.
+
+The published package no longer includes the retired experimental React web
+client or contributor test files.
+
+## Scope and remaining limits
+
+Supported platform requirements and the terminal-first scope remain those of
+[2.9.2](/docs/release-2-9-2). This release does not claim native performance parity.
+Duplicate link-event handling is fixed and covered by renderer and hosted-terminal
+tests; physical terminal-emulator modifier handling remains a manual qualification
+item. Native interaction observation remains experimental and opt-in.
