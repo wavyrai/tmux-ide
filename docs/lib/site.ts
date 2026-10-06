@@ -6,7 +6,7 @@ export const SITE_URL = (configuredUrl || "https://tmux-ide.com").replace(/\/+$/
 export const SITE_NAME = "tmux-ide";
 export const SITE_TITLE = "tmux-ide — a dedicated workspace for coding agents";
 export const SITE_DESCRIPTION =
-  "Give coding agents a dedicated tmux workspace with memorable names, live status, exact pane navigation, terminal-native controls, durable sessions, and SSH support.";
+  "Give coding agents a dedicated tmux workspace with named agents, live status, exact pane navigation, terminal-native controls, durable sessions, and SSH support.";
 export const SITE_IMAGE = "/og-image.png";
 export const SITE_REPOSITORY = "https://github.com/wavyrai/tmux-ide";
 export const SOFTWARE_DOWNLOAD_URL = "https://www.npmjs.com/package/tmux-ide";
