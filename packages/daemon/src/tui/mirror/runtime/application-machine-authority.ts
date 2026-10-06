@@ -41,9 +41,9 @@ export interface ApplicationMachineAuthorityManagerDependencies {
 }
 interface Machine {
   readonly id: string;
-  readonly label: string;
+  label: string;
   readonly kind: "local" | "ssh";
-  readonly profile?: SavedMachine;
+  profile?: SavedMachine;
   owner: Owner;
   readonly handle: ApplicationMachineAuthorityHandle;
   readonly listeners: Set<GenerationListener>;
@@ -133,7 +133,9 @@ export function createApplicationMachineAuthorityManager(
     } as Machine;
     const handle: ApplicationMachineAuthorityHandle = Object.freeze({
       id,
-      label,
+      get label() {
+        return machine.label;
+      },
       kind: machine.kind,
       ready,
       read: () => (disposed || machine.retired ? null : machine.owner.read()),
@@ -143,7 +145,7 @@ export function createApplicationMachineAuthorityManager(
         Object.freeze({
           ...machine.owner.endpoint(),
           kind: machine.kind,
-          label: profile ? label : null,
+          label: machine.profile ? machine.label : null,
           epoch: machine.epoch,
           ...(disposed || machine.retired
             ? { state: "disconnected" as const, remote: null, localBaseUrl: null }
@@ -269,7 +271,17 @@ export function createApplicationMachineAuthorityManager(
         const profile = next.machines.find(
           (candidate) => candidate.id === machine.id && candidate.enabled,
         );
-        if (profile && JSON.stringify(profile) === JSON.stringify(machine.profile)) continue;
+        if (
+          profile &&
+          profile.sshTarget === machine.profile.sshTarget &&
+          profile.expectedEnvironmentId === machine.profile.expectedEnvironmentId
+        ) {
+          // Labels are presentation metadata, not transport identity. Preserve
+          // the connected owner and every consumer holding its stable handle.
+          machine.label = profile.label;
+          machine.profile = profile;
+          continue;
+        }
         if (selectedId === machine.id) manager.select(LOCAL_MACHINE_ID);
         machine.retired = true;
         machine.stopStatus?.();

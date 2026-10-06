@@ -79,17 +79,26 @@ export function mountSavedMachineRoute(
     if (!parsed.success) return c.json({ error: "Invalid machine mutation" }, 400);
     if (parsed.data.expectedInstanceId !== options.daemon.instanceId)
       return c.json({ error: "Daemon generation changed" }, 409);
-    const { id, operation } = parsed.data.change;
+    const change = parsed.data.change;
+    const { id, operation } = change;
     try {
       const registry = (options.update ?? updateSavedMachines)(
         operation === "remove"
           ? { type: "remove", id }
-          : { type: "update", id, patch: { enabled: operation === "enable" } },
+          : {
+              type: "update",
+              id,
+              patch:
+                change.operation === "edit" ? change.patch : { enabled: operation === "enable" },
+            },
       );
       return c.json({ daemon: options.daemon, registry });
     } catch {
       return c.json(
-        { error: "Machine was not found or its registry is unavailable; nothing changed" },
+        {
+          error:
+            "Machine not found, edit conflicts with another profile, or registry unavailable; nothing changed",
+        },
         409,
       );
     }

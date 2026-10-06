@@ -1,6 +1,10 @@
 import { readFileSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { SavedMachineRegistrySchema, SavedMachineSchema } from "@tmux-ide/contracts/saved-machines";
+import {
+  SavedMachineRegistrySchema,
+  SavedMachineSchema,
+  SavedMachineMutationSchema,
+} from "@tmux-ide/contracts/saved-machines";
 import { loadSavedMachines, planSavedMachineMerge } from "./lib/saved-machines.ts";
 import { loadFleetClientState } from "./lib/fleet-client-state.ts";
 import { changeSavedMachines } from "@tmux-ide/core";
@@ -10,22 +14,40 @@ import { remoteTmuxIdeCommand } from "./lib/remote-tmux-command.ts";
 export async function machines(
   command: string | undefined,
   argument: string | undefined,
-  options: { write?: boolean; label?: string },
+  options: { write?: boolean; label?: string; sshTarget?: string },
 ) {
   const current = loadSavedMachines();
-  if ((command === "enable" || command === "disable" || command === "remove") && argument) {
+  if (
+    (command === "enable" || command === "disable" || command === "remove" || command === "edit") &&
+    argument
+  ) {
     const key = argument.normalize("NFKC").toLowerCase();
     const match =
       current.machines.find((machine) => machine.id === key) ??
       current.machines.find((machine) => machine.label.normalize("NFKC").toLowerCase() === key);
     if (!match)
       throw new Error("Saved machine not found; use machines ls to select its ID or label.");
-    const change = { id: match.id, operation: command } as const;
+    const change = SavedMachineMutationSchema.parse(
+      command === "edit"
+        ? {
+            id: match.id,
+            operation: command,
+            patch: {
+              ...(options.label !== undefined ? { label: options.label } : {}),
+              ...(options.sshTarget !== undefined ? { sshTarget: options.sshTarget } : {}),
+            },
+          }
+        : { id: match.id, operation: command },
+    );
     const preview = changeSavedMachines(
       current,
       command === "remove"
         ? { type: "remove", id: match.id }
-        : { type: "update", id: match.id, patch: { enabled: command === "enable" } },
+        : {
+            type: "update",
+            id: match.id,
+            patch: change.operation === "edit" ? change.patch : { enabled: command === "enable" },
+          },
     );
     return {
       written: options.write === true,
@@ -100,7 +122,7 @@ export async function machines(
     };
   } else
     throw new Error(
-      "Usage: tmux-ide machines ls|export|import <file>|add <alias>|enable|disable|remove <id-or-label> [--write] [--json]",
+      "Usage: tmux-ide machines ls|export|import <file>|add <alias>|edit|enable|disable|remove <id-or-label> [--write] [--json]",
     );
   const preview = planSavedMachineMerge(current, incoming);
   if (!options.write)

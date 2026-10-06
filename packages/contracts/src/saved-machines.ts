@@ -55,8 +55,20 @@ export const SavedMachineRegistrySchema = z
 export type SavedMachineRegistry = z.infer<typeof SavedMachineRegistrySchema>;
 
 /** Local owner actions; never a request to stop a remote daemon or tmux session. */
-export const SavedMachineMutationSchema = z.strictObject({
-  id: SavedMachineIdSchema,
-  operation: z.enum(["enable", "disable", "remove"]),
-});
+export const SavedMachineMutationSchema = z.discriminatedUnion("operation", [
+  z.strictObject({
+    id: SavedMachineIdSchema,
+    operation: z.enum(["enable", "disable", "remove"]),
+  }),
+  z.strictObject({
+    id: SavedMachineIdSchema,
+    operation: z.literal("edit"),
+    patch: SavedMachineSchema.pick({ label: true, sshTarget: true })
+      .partial()
+      .refine(
+        (patch) => patch.label !== undefined || patch.sshTarget !== undefined,
+        "Provide a label or SSH target",
+      ),
+  }),
+]);
 export type SavedMachineMutation = z.infer<typeof SavedMachineMutationSchema>;

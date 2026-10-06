@@ -872,6 +872,20 @@ if (args[0] === "--client") {
       assert.deepEqual(await fingerprint("target-b"), originalB);
       facts.push({ operation: label, retained, sibling, renderer: clients.a.renderer });
     }
+    for (const [operation, label] of [
+      ["selected-rename", "Owned renamed a"],
+      ["selected-rename-restore", registry.machines[0].label],
+    ] as const) {
+      stage = "installed-registry-" + operation;
+      event(stage);
+      await request("PATCH", {
+        change: { id: registry.machines[0].id, operation: "edit", patch: { label } },
+      });
+      await wait(() => clients.a.frame().includes(label));
+      await unchanged(operation);
+      save("registry-" + operation + "-frame.json", { frame: clients.a.frame() });
+    }
+
     stage = "installed-registry-add";
     event(stage);
     await request("POST", { registry: { version: 1, machines: [profile] } });

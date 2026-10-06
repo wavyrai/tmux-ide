@@ -82,6 +82,21 @@ it("fences profile mutations by local owner and generation", async () => {
         : { type: "update", id, patch: { enabled: operation === "enable" } },
     );
   }
+  for (const patchValue of [
+    {},
+    { label: "Renamed", authToken: "secret" },
+    { sshTarget: "bad;target" },
+  ])
+    expect((await patch({ id, operation: "edit", patch: patchValue })).status).toBe(400);
+  expect(
+    (await patch({ id, operation: "edit", patch: { label: "Renamed", sshTarget: "next-host" } }))
+      .status,
+  ).toBe(200);
+  expect(update).toHaveBeenLastCalledWith({
+    type: "update",
+    id,
+    patch: { label: "Renamed", sshTarget: "next-host" },
+  });
   update.mockImplementationOnce(() => {
     throw new Error("private registry path");
   });
@@ -90,7 +105,7 @@ it("fences profile mutations by local owner and generation", async () => {
   expect(await conflict.text()).not.toContain("private registry path");
 });
 
-it("publishes persisted enable/disable/removal to an existing registry observer", async () => {
+it("publishes persisted edits and enable/disable/removal to an existing registry observer", async () => {
   const root = mkdtempSync(join(tmpdir(), "machine-route-"));
   const path = join(root, "machines.json");
   const id = "22222222-2222-4222-8222-222222222222";
@@ -120,6 +135,18 @@ it("publishes persisted enable/disable/removal to an existing registry observer"
       ownerToken: "owner",
       update: (change) => updateSavedMachines(change, path),
     });
+    const edit = await app.request("/api/resources/saved-machines", {
+      method: "PATCH",
+      headers: { Authorization: "Bearer owner", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        expectedInstanceId: daemon.instanceId,
+        change: { id, operation: "edit", patch: { label: "Renamed", sshTarget: "next-builder" } },
+      }),
+    });
+    expect(edit.status).toBe(200);
+    const edited = { id, label: "Renamed", sshTarget: "next-builder", enabled: true };
+    expect(loadSavedMachines(path).machines).toEqual([edited]);
+    await vi.waitFor(() => expect(observed.machines).toEqual([edited]));
     for (const operation of ["disable", "enable", "remove"] as const) {
       const response = await app.request("/api/resources/saved-machines", {
         method: "PATCH",
@@ -128,9 +155,7 @@ it("publishes persisted enable/disable/removal to an existing registry observer"
       });
       expect(response.status).toBe(200);
       const expected =
-        operation === "remove"
-          ? []
-          : [{ id, label: "Build", sshTarget: "builder", enabled: operation === "enable" }];
+        operation === "remove" ? [] : [{ ...edited, enabled: operation === "enable" }];
       expect(loadSavedMachines(path).machines).toEqual(expected);
       await vi.waitFor(() => expect(observed.machines).toEqual(expected));
     }

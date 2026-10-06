@@ -52,3 +52,36 @@ it("rejects missing and local targets before a mutation", async () => {
     await expect(machines("remove", target, { write: true })).rejects.toThrow("not found");
   expect(state.mutate).not.toHaveBeenCalled();
 });
+
+it("previews route edits and keeps the stable ID and unrelated profiles", async () => {
+  const result = await machines("edit", "Build host", {
+    label: "Renamed",
+    sshTarget: "new-builder",
+  });
+  expect(result).toMatchObject({
+    written: false,
+    registry: {
+      machines: [
+        { ...state.registry.machines[0], label: "Renamed", sshTarget: "new-builder" },
+        state.registry.machines[1],
+      ],
+    },
+  });
+  expect(state.mutate).not.toHaveBeenCalled();
+  await machines("edit", "Build host", { label: "Renamed", write: true });
+  expect(state.mutate).toHaveBeenCalledWith({
+    id: state.registry.machines[0]!.id,
+    operation: "edit",
+    patch: { label: "Renamed" },
+  });
+});
+it("rejects empty, conflicting and invalid route edits without writing", async () => {
+  for (const options of [
+    {},
+    { label: "Other" },
+    { label: "Local" },
+    { sshTarget: "-oProxyCommand=bad" },
+  ])
+    await expect(machines("edit", "Build host", { ...options, write: true })).rejects.toThrow();
+  expect(state.mutate).not.toHaveBeenCalled();
+});

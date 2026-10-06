@@ -64,6 +64,61 @@ function fixture() {
   return { manager, connect, readLocal, first, second, localObservers, stopped };
 }
 describe("simultaneous machine authority", () => {
+  it("retires only the edited SSH route and preserves the other connected host", async () => {
+    const f = fixture();
+    const replacement = connection(43212);
+    try {
+      const first = f.manager.add(firstProfile);
+      const second = f.manager.add(secondProfile);
+      await Promise.all([first.ready, second.ready]);
+      f.manager.select(first.id);
+      f.connect.mockImplementation(async ({ alias }) =>
+        alias === "next-build" ? replacement : f.second,
+      );
+      f.manager.reconcile([{ ...firstProfile, sshTarget: "next-build" }, secondProfile]);
+      const next = f.manager.getMachine(first.id)!;
+      await next.ready;
+      expect(next).not.toBe(first);
+      expect(first.read()).toBeNull();
+      expect(f.first.dispose).toHaveBeenCalledOnce();
+      expect(next.read()?.port).toBe(43212);
+      expect(f.manager.getMachine(second.id)).toBe(second);
+      expect(f.second.dispose).not.toHaveBeenCalled();
+      expect(f.connect).toHaveBeenCalledTimes(3);
+      expect(f.manager.snapshot().selectedMachineId).toBe(first.id);
+    } finally {
+      f.manager.dispose();
+    }
+  });
+
+  it("renames a selected profile without retiring its connection or changing selection", async () => {
+    const f = fixture();
+    try {
+      const first = f.manager.add(firstProfile);
+      const second = f.manager.add(secondProfile);
+      await Promise.all([first.ready, second.ready]);
+      f.manager.select(first.id);
+      const generation = vi.fn();
+      const stop = await first.observe(generation);
+      f.manager.reconcile([{ ...firstProfile, label: "Renamed build" }, secondProfile]);
+      expect(f.manager.getMachine(first.id)).toBe(first);
+      expect(f.manager.getMachine(second.id)).toBe(second);
+      expect(f.manager.snapshot().selectedMachineId).toBe(first.id);
+      expect(first.label).toBe("Renamed build");
+      expect(first.endpoint().label).toBe("Renamed build");
+      expect(f.manager.snapshot().machines.find((machine) => machine.id === first.id)?.label).toBe(
+        "Renamed build",
+      );
+      expect(f.connect).toHaveBeenCalledTimes(2);
+      expect(f.first.dispose).not.toHaveBeenCalled();
+      expect(f.second.dispose).not.toHaveBeenCalled();
+      expect(generation).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      f.manager.dispose();
+    }
+  });
+
   it("reconciles edited profiles without reconnecting unchanged machines or retaining disabled routes", async () => {
     const f = fixture();
     try {

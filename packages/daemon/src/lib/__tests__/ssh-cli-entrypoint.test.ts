@@ -120,6 +120,41 @@ function expectExistingLocalDaemonVerified() {
   expect(readFileSync(environment.TEST_DAEMON_PROBES!, "utf8")).toContain("/health");
 }
 describe("SSH app CLI entry", () => {
+  it("previews a machine route edit without connecting or launching a daemon", () => {
+    const path = join(environment.TMUX_IDE_REGISTRY_DIR!, "machines.json");
+    const profile = {
+      id: "11111111-1111-4111-8111-111111111111",
+      label: "Build",
+      sshTarget: "builder",
+      enabled: true,
+    };
+    const original = JSON.stringify({ version: 1, machines: [profile] });
+    writeFileSync(path, original, { mode: 0o600 });
+    const result = run([
+      "machines",
+      "edit",
+      "Build",
+      "--name",
+      "Renamed",
+      "--ssh",
+      "next-builder",
+      "--json",
+    ]);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      written: false,
+      registry: { machines: [{ ...profile, label: "Renamed", sshTarget: "next-builder" }] },
+    });
+    expect(readFileSync(path, "utf8")).toBe(original);
+    expectNoLocalMutation();
+    expect(existsSync(launchedPath)).toBe(false);
+    expect(existsSync(environment.TEST_DAEMON_RECORD!)).toBe(false);
+    const invalid = run(["machines", "edit", "Build", "--ssh", "a", "--ssh", "b", "--json"]);
+    expect(invalid.status).toBe(2);
+    expect(invalid.stderr).toContain("one --ssh target");
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
   it("rejects non-app commands and headless before any local mutation or TUI launch", () => {
     for (const args of [
       ["init", "--ssh=build"],

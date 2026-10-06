@@ -200,10 +200,17 @@ unavailable; the daemon remains renderer-neutral for future clients.
 
 ## Manage saved machines
 
+Renaming a saved profile keeps its existing connection. Editing its SSH target
+reconnects that profile while other connected hosts stay open. Imported environment
+identity hints remain in force; a new SSH target must still reach the expected
+environment. Use a new profile when connecting to a different environment.
+
 Use `tmux-ide machines ls --json` to find a machine ID or label. These commands
 preview the change; add `--write` to apply it through the local daemon:
 
 ```bash
+tmux-ide machines edit "Build host" --name "Build server" --json
+tmux-ide machines edit "Build host" --ssh build-alias --write --json
 tmux-ide machines disable "Build host" --write --json
 tmux-ide machines enable "Build host" --write --json
 tmux-ide machines remove "Build host" --write --json

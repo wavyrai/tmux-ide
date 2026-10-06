@@ -85,8 +85,11 @@ discard its state. The installed mode also adds, disables, enables, removes and 
 saved host through the authenticated local registry API while the app stays open.
 It checks persisted responses, background tunnel retirement/replacement, unchanged
 selected-host and sibling-app tunnel identities, retained renderers and terminal
-IO. These background-profile operations do not prove selected-profile removal,
-route edits, duplicate-route presentation, remote installation or external hosts.
+IO. The installed mode also renames and restores the selected profile through the
+registry API, checking updated labels, unchanged tunnel and renderer identities,
+and continued input in both apps. Selected-profile disable/remove and restoration
+are exercised before daemon replacement. Route edits, duplicate-route presentation,
+remote installation and external hosts remain separate acceptance cases.
 
 The runner selects actual terminal views, verifies encoded shell output and typed
 input, then stops only A's daemon. It confirms the original SSH tunnel and forward

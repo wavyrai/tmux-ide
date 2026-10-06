@@ -288,6 +288,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide servers create <id>")} --session-name NAME [--dir PATH] [--ssh HOST] [--json]
   ${cyan("tmux-ide servers add")} --socket-name NAME|--socket-path /PATH [--name LABEL] [--ssh HOST]
   ${cyan("tmux-ide machines")} ls|export|import <file>|add <alias> [--write] [--json]
+  ${cyan("tmux-ide machines")} edit <id-or-label> [--name <label>] [--ssh <alias>] [--write]
   ${cyan("tmux-ide machines")} enable|disable|remove <id-or-label> [--write] [--json]
   ${cyan("tmux-ide machines start <alias> --write")} ${dim("Start the installed remote daemon explicitly")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
@@ -718,8 +719,11 @@ try {
     });
   if (values.supervised !== undefined && !values.headless)
     throw new IdeError("--supervised requires --headless", { code: "USAGE", exitCode: 2 });
-  if (values.ssh !== undefined && (!["app", "servers"].includes(command ?? "") || values.headless))
-    throw new IdeError("--ssh is supported only by tmux-ide app or servers", {
+  const acceptsSshTarget =
+    ["app", "servers"].includes(command ?? "") ||
+    (command === "machines" && positionals[1] === "edit");
+  if (values.ssh !== undefined && (!acceptsSshTarget || values.headless))
+    throw new IdeError("--ssh is supported only by tmux-ide app, servers or machines edit", {
       code: "USAGE",
       exitCode: 2,
     });
@@ -996,10 +1000,16 @@ try {
     }
 
     case "machines": {
+      if (positionals[1] === "edit" && (values.ssh?.length ?? 0) > 1)
+        throw new IdeError("Machine edits accept one --ssh target.", {
+          code: "USAGE",
+          exitCode: 2,
+        });
       const { machines } = await import("../packages/daemon/src/machines.ts");
       const result = await machines(positionals[1], positionals[2], {
         write: values.write === true,
         label: typeof values.name === "string" ? values.name : undefined,
+        sshTarget: values.ssh?.[0],
       });
       process.stdout.write(`${JSON.stringify(result, null, json ? undefined : 2)}\n`);
       break;

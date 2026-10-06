@@ -154,13 +154,14 @@ See [The dock & keys](/docs/the-dock) for the matching tmux bindings.
 
 ## Saved SSH machines
 
-| Command                                              | What it does                                                    |
-| ---------------------------------------------------- | --------------------------------------------------------------- |
-| `tmux-ide machines ls [--json]`                      | List saved machine profiles                                     |
-| `tmux-ide machines export [--json]`                  | Print the portable profile registry                             |
-| `tmux-ide machines import <file> [--write] [--json]` | Preview an add-only import, then save explicitly with `--write` |
-| `tmux-ide machines add <alias> [--write] [--json]`   | Preview or save an SSH target                                   |
-| `tmux-ide machines start <alias> [--write] [--json]` | Preview or explicitly start the already-installed remote daemon |
+| Command                                                                                    | What it does                                                    |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `tmux-ide machines ls [--json]`                                                            | List saved machine profiles                                     |
+| `tmux-ide machines export [--json]`                                                        | Print the portable profile registry                             |
+| `tmux-ide machines import <file> [--write] [--json]`                                       | Preview an add-only import, then save explicitly with `--write` |
+| `tmux-ide machines add <alias> [--write] [--json]`                                         | Preview or save an SSH target                                   |
+| `tmux-ide machines edit <id-or-label> [--name <label>] [--ssh <alias>] [--write] [--json]` | Preview or edit an existing profile, preserving its ID          |
+| `tmux-ide machines start <alias> [--write] [--json]`                                       | Preview or explicitly start the already-installed remote daemon |
 
 Profiles do not grant SSH access or copy credentials. Review aliases on the
 receiving computer before applying an import. An ordinary SSH connection expects
