@@ -7,7 +7,6 @@
     "names": {
       "label": "Renaming an agent's pane so the team can refer to it by name",
       "cursor": {
-        "actor": "You",
         "kind": "click",
         "from": [67.5, 89.29],
         "at": [15.83, 60.71],
@@ -16,18 +15,11 @@
     },
     "status": {
       "label": "Agent states in the sidebar and in each pane header",
-      "cursor": {
-        "actor": "Codex",
-        "kind": "hover",
-        "from": [67.5, 67.86],
-        "at": [5.83, 25],
-        "to": [10.83, 25]
-      }
+      "cursor": { "kind": "hover", "from": [67.5, 67.86], "at": [5.83, 25], "to": [10.83, 25] }
     },
     "navigate": {
       "label": "Choosing an agent on Home opens its exact pane",
       "cursor": {
-        "actor": "You",
         "kind": "click",
         "from": [67.5, 46.43],
         "at": [15.83, 82.14],
@@ -37,7 +29,6 @@
     "tmux": {
       "label": "After the app quits, the same sessions are still running in tmux",
       "cursor": {
-        "actor": "You",
         "kind": "hover",
         "from": [67.5, 67.86],
         "at": [24.17, 10.71],
@@ -46,28 +37,15 @@
     },
     "daemon": {
       "label": "Daemon-observed agent state across every session on Home",
-      "cursor": {
-        "actor": "Codex",
-        "kind": "hover",
-        "from": [67.5, 89.29],
-        "at": [5.83, 82.14],
-        "to": [9.17, 82.14]
-      }
+      "cursor": { "kind": "hover", "from": [67.5, 89.29], "at": [5.83, 82.14], "to": [9.17, 82.14] }
     },
     "opentui": {
       "label": "The command palette over agent-aware panes",
-      "cursor": {
-        "actor": "You",
-        "kind": "click",
-        "from": [50.83, 75],
-        "at": [84.17, 96.43],
-        "to": [20.83, 39.29]
-      }
+      "cursor": { "kind": "click", "from": [50.83, 75], "at": [84.17, 96.43], "to": [20.83, 39.29] }
     },
     "window": {
       "label": "Adding a window from the window strip",
       "cursor": {
-        "actor": "You",
         "kind": "click",
         "from": [67.5, 60.71],
         "at": [97.5, 10.71],
@@ -76,23 +54,11 @@
     },
     "resize": {
       "label": "Dragging the divider between two panes",
-      "cursor": {
-        "actor": "You",
-        "kind": "drag",
-        "from": [50.83, 75],
-        "at": [50.83, 46.43],
-        "to": [67.5, 46.43]
-      }
+      "cursor": { "kind": "drag", "from": [50.83, 75], "at": [50.83, 46.43], "to": [67.5, 46.43] }
     },
     "focus": {
       "label": "Moving focus to another pane",
-      "cursor": {
-        "actor": "You",
-        "kind": "click",
-        "from": [24.17, 75],
-        "at": [67.5, 46.43],
-        "to": [70.83, 53.57]
-      }
+      "cursor": { "kind": "click", "from": [24.17, 75], "at": [67.5, 46.43], "to": [70.83, 53.57] }
     }
   }
 }

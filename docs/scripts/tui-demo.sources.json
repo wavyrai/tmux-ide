@@ -2,8 +2,8 @@
   "regenerate": "pnpm demo:tui",
   "sources": {
     "docs/scripts/render-tui-demo.tsx": "ddd4be5bace81bf4",
-    "docs/scripts/tui-demo-figure-markup.ts": "292161663ff46ea0",
-    "docs/scripts/tui-demo-figures.ts": "605b5e56d5bd9d4f",
+    "docs/scripts/tui-demo-figure-markup.ts": "c2225d815a58d3e0",
+    "docs/scripts/tui-demo-figures.ts": "ad80e3944fd615b7",
     "docs/scripts/tui-demo-fixture.ts": "db87220a3f7c7d9f",
     "docs/scripts/tui-demo-font/bold.woff2": "18b769317e0618e3",
     "docs/scripts/tui-demo-font/chars.txt": "0e9a80fe8e8d35f6",
