@@ -219,7 +219,10 @@ export default async function HomePage() {
               ))}
             </Mosaic>
             <div className="type-body mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-              <Link href="/docs/agent-detection" className="marketing-link-action text-fd-primary">
+              <Link
+                href="/docs/agent-detection#which-agents-are-detected"
+                className="marketing-link-action text-fd-primary"
+              >
                 How agent status is detected →
               </Link>
               <Link
@@ -273,10 +276,7 @@ export default async function HomePage() {
               <Link href="/docs/restore-resume" className="marketing-link-action text-fd-primary">
                 Restore sessions after a crash →
               </Link>
-              <Link
-                href="/docs/app-surfaces#connect-to-another-machine-over-ssh"
-                className="marketing-link-action text-fd-primary"
-              >
+              <Link href="/docs/remote-machines" className="marketing-link-action text-fd-primary">
                 Connect to a machine over SSH →
               </Link>
             </div>
