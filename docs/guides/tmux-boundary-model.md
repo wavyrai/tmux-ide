@@ -112,6 +112,18 @@ server while its reader is paused, cancels before the start reply is observed,
 then drains and successfully invokes another hook on the same connection. The
 previous implementation fails this test by admitting the replacement too soon.
 
+`session-channel-cancellation-live.test.ts` checks the same ownership boundary
+through real `MirrorService` subscriptions and `SessionChannel` admission on both
+stock and bundled servers. It holds the actual control reader after A's snapshot
+executes, queues B, and closes A before observing A's start reply. The trace must
+show the exact ordinary drain-fence reply, then A's `onDrained`, then B's admission.
+A receives no late seed or delta; B's canonical baseline and subsequent unique
+suffix are exact, and a final ordinary command remains aligned. The receipt
+retains commands, wire bytes, event order, binary/source hashes and private-server
+cleanup. This qualifies the stock-compatible path, including native capture when
+available; native-Q recovery and arbitrary disconnect schedules are separate
+proof obligations.
+
 ### Stock-server snapshot protocol
 
 One connection-wide lease serializes snapshot work across panes. Cancellation

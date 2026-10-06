@@ -29,6 +29,7 @@ for (const [config, test] of [
   ["vitest.live.config.ts", "tmux-boundary-ordering-live.test.ts"],
   ["vitest.live.config.ts", "control-collector-retirement-live.test.ts"],
   ["vitest.live.config.ts", "control-owned-pause-live.test.ts"],
+  ["vitest.live.config.ts", "session-channel-cancellation-live.test.ts"],
 ]) {
   const result = spawnSync(
     "pnpm",
