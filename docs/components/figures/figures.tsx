@@ -39,20 +39,22 @@ const TEAM_NOTES = [
   },
 ] as const;
 
-/* The team builds over one loop: the orchestrator opens and takes the goal,
-   the goal agent opens, three researchers open in parallel, results flow
-   back up, and the outcome reaches the orchestrator. */
+/* The team builds over one 18 s loop: the orchestrator opens and takes the
+   goal, the goal agent opens, three researchers open in parallel, and two
+   report back. The third needs input, so the goal agent waits on it until
+   you answer in its pane; then findings flow up, the goal agent integrates,
+   and the outcome reaches the orchestrator. */
 const RESEARCH: readonly Pane[] = [
   {
     id: "%3",
     cmd: "claude",
     role: "Research · A",
     mark: "claude-code",
-    open: "o39",
+    open: "o38",
     lines: [{ text: "$ claude" }, { text: "› architecture & existing code", tone: "dim" }],
     states: [
-      { status: "working", text: "researching…", t: "v39-56", spin: true },
-      { status: "done", text: "findings sent", t: "v56-94" },
+      { status: "working", text: "researching…", t: "v38-52", spin: true },
+      { status: "done", text: "findings sent", t: "v52-94" },
     ],
   },
   {
@@ -60,11 +62,11 @@ const RESEARCH: readonly Pane[] = [
     cmd: "opencode",
     role: "Research · B",
     mark: "opencode",
-    open: "o42",
+    open: "o40",
     lines: [{ text: "$ opencode" }, { text: "› APIs & documentation", tone: "dim" }],
     states: [
-      { status: "working", text: "researching…", t: "v42-60", spin: true },
-      { status: "done", text: "findings sent", t: "v60-94" },
+      { status: "working", text: "researching…", t: "v40-55", spin: true },
+      { status: "done", text: "findings sent", t: "v55-94" },
     ],
   },
   {
@@ -72,12 +74,18 @@ const RESEARCH: readonly Pane[] = [
     cmd: "codex",
     role: "Research · C",
     mark: "codex",
-    open: "o45",
-    alert: "v62-94",
-    lines: [{ text: "$ codex" }, { text: "› edge cases & validation", tone: "dim" }],
+    open: "o42",
+    alert: "v57-73",
+    cursor: { show: "v60-94", move: "m60-66", click: "k67" },
+    lines: [
+      { text: "$ codex" },
+      { text: "› edge cases & validation", tone: "dim" },
+      { text: "› yes, use the token bucket", typed: true, t: "t68-72" },
+    ],
     states: [
-      { status: "working", text: "researching…", t: "v45-62", spin: true },
-      { status: "blocked", text: "needs your input", t: "v62-94" },
+      { status: "working", text: "researching…", t: "v42-57", spin: true },
+      { status: "blocked", text: "needs your input", t: "v57-73" },
+      { status: "done", text: "findings sent", t: "v73-94" },
     ],
   },
 ];
@@ -95,49 +103,50 @@ const TEAM_ROWS: readonly PaneRow[] = [
         open: "o4",
         lines: [
           { text: "$ claude" },
-          { text: "› add rate limiting to /api/upload", typed: true, t: "t8-18" },
+          { text: "› add rate limiting to /api/upload", typed: true, t: "t8-17" },
         ],
         states: [
           { status: "idle", text: "ready", t: "v4-14" },
-          { status: "working", text: "planning the team…", t: "v14-27", spin: true },
-          { status: "idle", text: "waiting for results", t: "v27-78" },
-          { status: "done", text: "outcome + proof received", t: "v78-94" },
+          { status: "working", text: "planning the team…", t: "v14-26", spin: true },
+          { status: "idle", text: "waiting for results", t: "v26-84" },
+          { status: "done", text: "outcome + proof received", t: "v84-94" },
         ],
       },
     ],
   },
   {
     win: "2:goal",
-    tab: "v27-94",
+    tab: "v26-94",
     panes: [
       {
         id: "%2",
         cmd: "codex",
         role: "Goal agent",
         mark: "codex",
-        open: "o27",
+        open: "o26",
         lines: [{ text: "$ codex" }, { text: "› plan · delegate · integrate", tone: "dim" }],
         states: [
-          { status: "working", text: "working…", t: "v27-66", spin: true },
-          { status: "working", text: "integrating findings…", t: "v66-74", spin: true },
-          { status: "done", text: "outcome + proof sent", t: "v74-94" },
+          { status: "working", text: "working…", t: "v26-57", spin: true },
+          { status: "idle", text: "waiting on %5", t: "v57-75" },
+          { status: "working", text: "integrating findings…", t: "v75-81", spin: true },
+          { status: "done", text: "outcome + proof sent", t: "v81-94" },
         ],
       },
     ],
   },
-  { win: "3:research", tab: "v39-94", panes: RESEARCH },
+  { win: "3:research", tab: "v38-94", panes: RESEARCH },
 ];
 
 const TEAM_LINKS: readonly PaneLink[] = [
   {
     down: "goal + acceptance criteria",
     up: "outcome + proof",
-    t: { down: "d22", dl: "v24-94", up: "u74", ul: "v76-94" },
+    t: { down: "d22", dl: "v24-94", up: "u81", ul: "v83-94" },
   },
   {
     down: "scoped research tasks",
     up: "findings + recommendations",
-    t: { down: "d34", dl: "v36-94", up: "u58", ul: "v60-94" },
+    t: { down: "d33", dl: "v35-94", up: "u73", ul: "v75-94" },
   },
 ];
 
@@ -145,14 +154,14 @@ export function AgentTeamsFigure() {
   return (
     <PaneFigure
       id="agent-teams-figure"
-      story="pf-loop"
+      story="pf-loop pf-team"
       number="5"
       kicker="Systems / Agent coordination"
       title="Claude Code, Codex and opencode"
       accent="in one agent team."
       subtitle={TEAM_SUBTITLE}
       session="agent-team"
-      label="An agent team in five tmux panes: a Claude Code orchestrator hands a goal to a Codex goal agent, which splits research across Claude Code, opencode and Codex panes; findings flow back up and one researcher needs your input."
+      label="An agent team in five tmux panes: a Claude Code orchestrator hands a goal to a Codex goal agent, which splits research across Claude Code, opencode and Codex panes; two researchers report back, the third needs your input, you answer in its pane, and the outcome flows back up to the orchestrator."
       rows={TEAM_ROWS}
       links={TEAM_LINKS}
       notes={TEAM_NOTES}

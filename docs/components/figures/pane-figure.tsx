@@ -1,6 +1,7 @@
 import "./pane-figure.css";
 import type { ReactNode } from "react";
 import { SPRITE } from "@/components/icons/sprite-url";
+import { TuiCursor } from "@/components/marketing/tui-cursor";
 
 /**
  * A figure drawn as a tmux-ide session: a top bar with window tabs, pane
@@ -14,6 +15,8 @@ import { SPRITE } from "@/components/icons/sprite-url";
  * - vA-B    visible from A% to B%; B = 94 means it stays until the reset
  * - dA, uA  a bus draws downward / upward from A%
  * - tA-B    a typed line reveals from A% to B%
+ * - mA-B    the "You" cursor travels into its pane from A% to B%
+ * - kA      the cursor clicks at A%
  * Base styles are the settled final frame, so reduced motion (and any
  * renderer without animation) shows the finished state.
  */
@@ -46,6 +49,8 @@ export type Pane = {
   states?: readonly PaneState[];
   /** Timing class for the attention frame. */
   alert?: string;
+  /** The reader's "You" cursor answering in this pane: show, move and click classes. */
+  cursor?: { show: string; move: string; click: string };
 };
 
 export type PaneRow = { win: string; tab?: string; panes: readonly Pane[] };
@@ -97,6 +102,13 @@ function PaneFrame({ pane }: { pane: Pane }) {
   return (
     <li className={cls("pf-pane", pane.open)}>
       {pane.alert ? <i className={cls("pf-alert", pane.alert)} /> : null}
+      {pane.cursor ? (
+        <span className={cls("pf-you", pane.cursor.show)} aria-hidden>
+          <span className={cls("pf-press", pane.cursor.click)}>
+            <TuiCursor className={pane.cursor.move} />
+          </span>
+        </span>
+      ) : null}
       <p className="pf-head">
         <span className="pf-stack">
           {states.map((state) => (
