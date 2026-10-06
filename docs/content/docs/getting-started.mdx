@@ -38,7 +38,10 @@ sh install.sh --version 2.9.0 --prefix "$HOME/.local"
 ```
 
 With Node.js 20+ already installed, `npm install -g tmux-ide` is also supported.
-To update an installer-owned copy, rerun the installer. It verifies the new
+To update an installer-owned copy, run `tmux-ide update`. It remembers your
+installation prefix and keeps stable installs on `latest` and beta installs on
+`beta`. Use `tmux-ide update --dry-run` to preview the operation. The command
+downloads and runs the same installer used for first-time setup. It verifies the new
 release before switching the launcher, and retains the previous release for rollback.
 It does not restart a daemon or replace a tmux server during installation.
 After installing, reopen the TUI. To explicitly refresh a running daemon:

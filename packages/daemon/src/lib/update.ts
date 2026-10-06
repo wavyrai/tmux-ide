@@ -1,3 +1,8 @@
+import {
+  managedInstallerPrefix,
+  runManagedInstallerUpdate,
+  MANAGED_INSTALLER_URL,
+} from "./managed-installer-update.ts";
 import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 import { parseStrictSemver } from "./semver.ts";
 /** Origin-aware update planning; unsupported origins never fall back to npm. */
@@ -28,6 +33,7 @@ export interface UpdatePlan {
   args?: string[];
   guidance?: string;
   proposedCommand?: string;
+  installerPrefix?: string;
 }
 export const UPDATE_COMMANDS: Record<PackageManager, string> = {
   npm: "npm install -g tmux-ide@latest",
@@ -61,6 +67,18 @@ export function planUpdate(input: {
       channel,
       reason: `global ${method} layout (${input.cliPath})`,
     };
+  }
+  if (method === "installer") {
+    const prefix = managedInstallerPrefix(input.cliPath);
+    if (prefix) {
+      return {
+        method,
+        channel,
+        installerPrefix: prefix,
+        command: `installer ${MANAGED_INSTALLER_URL} --prefix ${JSON.stringify(prefix)} --version ${channel}`,
+        reason: `verified active managed installation (${prefix})`,
+      };
+    }
   }
   const guidance: Record<Exclude<InstallOrigin, PackageManager>, string> = {
     installer:
@@ -167,6 +185,10 @@ export function runUpdate(
     (dependencies.execute ?? execFileSync)(plan.executable, plan.args, {
       stdio: json ? ["ignore", 2, 2] : "inherit",
     });
+    executed = true;
+  }
+  if (!dryRun && plan.installerPrefix && plan.channel) {
+    runManagedInstallerUpdate(plan.installerPrefix, plan.channel, json, dependencies.execute);
     executed = true;
   }
   if (json) output(JSON.stringify({ ...plan, current, latest, dryRun, executed }));
