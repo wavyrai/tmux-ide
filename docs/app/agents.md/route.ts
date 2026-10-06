@@ -58,6 +58,8 @@ tmux set-option -p @agent_display_name "reviewer"         # optional name shown 
 tmux set-option -p @agent_session_id "<id>"               # optional, used by restore --resume-agents
 \`\`\`
 
+The status text and display name are honored only while \`@agent_state\` is fresh.
+
 The value of \`@agent_state\` is \`<state>:<unix-epoch>\`. A working or blocked report older than
 about 10 minutes is treated as stale, so re-stamp while you work. Claude Code gets this
 automatically after \`tmux-ide integration install claude\` (new sessions only).
@@ -76,9 +78,10 @@ tmux-ide events --follow --json                    # stream agent-status transit
 tmux-ide serve                                     # local control socket for long-running loops
 \`\`\`
 
-Claude Code agent teams: set \`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1\` and \`teammateMode "tmux"\` in
-\`~/.claude/settings.json\`; split-pane teammates then appear in tmux-ide grouped under their team, named
-as the lead named them, with normal agent status. tmux-ide reads
+Claude Code agent teams: set \`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1\` and \`teammateMode\`
+\`"tmux"\` (or \`"auto"\` inside tmux) in \`~/.claude/settings.json\`; releases after 2.9.3 set this up
+in the installer; split-pane teammates then appear in tmux-ide grouped under their team, named as the
+lead named them, with normal agent status. tmux-ide reads
 \`~/.claude/teams/<team>/config.json\` read-only; Claude Code owns spawning, tasks and messaging.
 Docs: ${SITE_URL}/docs/multi-agent-teams#claude-code-agent-teams
 

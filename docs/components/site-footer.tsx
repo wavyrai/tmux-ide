@@ -12,7 +12,7 @@ const columns = [
     links: [
       ["Getting started", "/docs/getting-started"],
       ["Documentation", "/docs"],
-      ["TUI demo", "/docs/demo"],
+      ["App demo", "/docs/demo"],
       ["CLI reference", "/docs/commands"],
     ],
   },
@@ -20,9 +20,9 @@ const columns = [
     title: "Agent workspace",
     links: [
       ["Agent detection", "/docs/agent-detection"],
-      ["Agent teams", "/docs/multi-agent-teams"],
+      ["Multi-agent teams", "/docs/multi-agent-teams"],
       ["Configuration", "/docs/configuration"],
-      ["Restore & resume", "/docs/restore-resume"],
+      ["Restore and resume", "/docs/restore-resume"],
     ],
   },
   {
@@ -54,8 +54,7 @@ export function SiteFooter() {
               <AsciiWordmark size="footer" inverted />
             </Link>
             <p className="footer-muted type-body mt-5 max-w-md">
-              The agent-aware communication plane for building and coordinating a team of coding
-              agents on durable tmux sessions.
+              The open-source workspace for coding agents, built on durable tmux sessions.
             </p>
             <code className="footer-foreground type-caption-1 mt-7 inline-block font-mono">
               {INSTALL_COMMAND}
