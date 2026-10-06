@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { HOME_SOURCES, docLastModified, lastModified } from "@/lib/git-dates";
+import { docLastModified, homeLastModified } from "@/lib/git-dates";
 import { source } from "@/lib/source";
 import { absoluteUrl } from "@/lib/site";
 
@@ -14,7 +14,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const routes: MetadataRoute.Sitemap = [
     {
       url: absoluteUrl("/"),
-      lastModified: lastModified(HOME_SOURCES),
+      lastModified: homeLastModified(),
       changeFrequency: "weekly",
       priority: 1,
     },
