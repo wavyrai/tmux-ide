@@ -2467,6 +2467,7 @@ export class SessionChannel {
       ` ; ${sentinel("complete")}`;
     this.input.flush();
     const invoke = (reply: { ok: boolean }): void => {
+      if (settled) return;
       if (!reply.ok || !participantsExact()) {
         fail();
         return;
@@ -2595,6 +2596,7 @@ export class SessionChannel {
     this.io.commandInline(
       `set-option -po -t ${pane.runtimeId} ${ownerName} ${nonce}`,
       (ownerReply) => {
+        if (settled) return;
         if (!ownerReply.ok || !participantsExact()) {
           fail();
           return;
@@ -2602,6 +2604,7 @@ export class SessionChannel {
         this.io.commandInline(
           `set-option -po -t ${pane.runtimeId} ${expectedName} ${tmuxSingleQuote(body)}`,
           (expectedReply) => {
+            if (settled) return;
             if (!expectedReply.ok || !participantsExact()) {
               fail();
               return;

@@ -95,6 +95,21 @@ their own recovery contracts. ANSI captures do not reconstruct every terminal
 mode, hyperlink, hidden screen or exact physical backing cell. Preserve the native
 capture path and its capability checks.
 
+### Cancelled collector ownership
+
+Cancelling a snapshot invalidates delivery immediately, but does not erase its
+in-flight hook replies. The control connection retains the cancelled collector
+as a drain owner and refuses another collector until a separately queued,
+nonce-bearing ordinary reply proves that earlier hook replies have passed. Raw
+capture rows cannot satisfy that fence. A bounded drain failure retires the
+connection. Admission uses the collector's `onDrained` notification rather than
+its earlier `onSettled` delivery result.
+
+`control-collector-retirement-live.test.ts` executes a real hook on a private
+server while its reader is paused, cancels before the start reply is observed,
+then drains and successfully invokes another hook on the same connection. The
+previous implementation fails this test by admitting the replacement too soon.
+
 ### First-slice operation inventory
 
 The inventory covers the current live fixture and its production owners, not every

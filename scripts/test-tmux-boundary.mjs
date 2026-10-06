@@ -26,6 +26,7 @@ for (const [config, test] of [
   ["vitest.config.ts", "pane-feed-model.test.ts"],
   ["vitest.live.config.ts", "tmux-boundary-model-live.test.ts"],
   ["vitest.live.config.ts", "tmux-boundary-ordering-live.test.ts"],
+  ["vitest.live.config.ts", "control-collector-retirement-live.test.ts"],
 ]) {
   const result = spawnSync(
     "pnpm",

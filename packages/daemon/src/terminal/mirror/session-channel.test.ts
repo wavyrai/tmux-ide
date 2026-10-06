@@ -121,9 +121,40 @@ async function startedRig(
           : autoReply(command);
       });
       if (options.atomicHook) {
+        // Native stdout cannot reenter its own read callback. Cleanup commands
+        // sent during collector settlement get their replies after that block
+        // finishes and the collector emits onDrained, just like the real pipe.
+        let settlingCollector = false;
+        let feedDepth = 0;
+        const deferredReplies: Array<() => void> = [];
+        const reply = sim.reply.bind(sim);
+        const feedLines = sim.feedLines.bind(sim);
+        sim.reply = (lines, ok = true) => {
+          if (settlingCollector) deferredReplies.push(() => reply(lines, ok));
+          else reply(lines, ok);
+        };
+        sim.feedLines = (...lines) => {
+          feedDepth += 1;
+          try {
+            feedLines(...lines);
+          } finally {
+            feedDepth -= 1;
+            if (feedDepth === 0) while (deferredReplies.length > 0) deferredReplies.shift()!();
+          }
+        };
         Object.assign(sim, {
           armAtomicPaneSnapshotCollector: (spec: AtomicPaneSnapshotCollector) =>
-            sim!.core.armAtomicPaneSnapshotCollector(spec),
+            sim!.core.armAtomicPaneSnapshotCollector({
+              ...spec,
+              onSettled: (result) => {
+                settlingCollector = true;
+                try {
+                  spec.onSettled(result);
+                } finally {
+                  settlingCollector = false;
+                }
+              },
+            }),
           retireAtomicPaneSnapshotCollector: (nonce: string) =>
             sim!.core.retireAtomicPaneSnapshotCollector(nonce),
         });
@@ -278,6 +309,26 @@ function completeAtomicRecoveryPhase(
   }
   rig.sim.feedLines(...bodyLines);
   return marker!;
+}
+
+/** Model the transport's separately queued ordinary fence, not an inline
+ * callback that would incorrectly release ownership before native guards drain. */
+function drainRetiredAtomicCollector(rig: Rig, nonce: string): void {
+  const fence = `tmux-ide-collector-drain-v1:${nonce}`;
+  const observed = vi.fn();
+  rig.sim.commandInline(`display-message -p -l ${fence}`, (reply) => {
+    expect(reply).toEqual({ ok: true, lines: [fence] });
+    expect(rig.sim.core.releaseRetiredCollector(nonce)).toBe(true);
+    observed();
+  });
+  // Late flags=0 hook output, even a row equal to the fence, does not
+  // consume the ordinary flags=1 reply or release the retired owner.
+  rig.sim.feedLines("%begin 1 1901 0", fence, "%end 1 1901 0");
+  expect(observed).not.toHaveBeenCalled();
+  rig.sim.output("%2", "BEFORE-DRAIN-FENCE");
+  rig.sim.reply([fence]);
+  expect(observed).toHaveBeenCalledOnce();
+  rig.sim.output("%2", "AFTER-DRAIN-FENCE");
 }
 
 function acknowledgeContinue(rig: Rig, runtime: string): void {
@@ -1326,7 +1377,8 @@ describe("flow control", () => {
   });
 
   it("retires an armed atomic collector immediately when all participants freeze", async () => {
-    const rig = await startedRig({ atomicHook: true });
+    const onOutputObserved = vi.fn();
+    const rig = await startedRig({ atomicHook: true, onOutputObserved });
     const alpha = collect();
     const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
     rig.sim.reply(["initial"]);
@@ -1336,17 +1388,21 @@ describe("flow control", () => {
     rig.sim.feedLines("%pause %1");
     handle.freeze();
     const settled = vi.fn();
-    expect(
-      rig.sim.core.armAtomicPaneSnapshotCollector({
-        nonce: "f".repeat(32),
-        runtimePaneId: "%1",
-        maxCaptureBytes: 1024,
-        maxCaptureLines: 16,
-        maxCursorBytes: 256,
-        observerCommandCount: 2,
-        onSettled: settled,
-      }),
-    ).toBe(true);
+    const replacementSpec = {
+      nonce: "f".repeat(32),
+      runtimePaneId: "%1",
+      maxCaptureBytes: 1024,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: settled,
+    };
+    expect(rig.sim.core.armAtomicPaneSnapshotCollector(replacementSpec)).toBe(false);
+    const install = rig.sim.written.find((command) => command.includes("@tmux_ide_atomic_owner_"))!;
+    const retiredNonce = /@tmux_ide_atomic_owner_([0-9a-f]{32,128})/u.exec(install)![1]!;
+    drainRetiredAtomicCollector(rig, retiredNonce);
+    expect(onOutputObserved.mock.calls.map((call) => call[0])).toEqual(["pane.beta", "pane.beta"]);
+    expect(rig.sim.core.armAtomicPaneSnapshotCollector(replacementSpec)).toBe(true);
     rig.sim.core.retireAtomicPaneSnapshotCollector("f".repeat(32));
     expect(settled).toHaveBeenCalledOnce();
     expect(bytesOf(alpha.events)).toEqual([]);
@@ -1355,8 +1411,10 @@ describe("flow control", () => {
 
   it("retires the exact collector on a silent 3s gap and does not rearm for foreign framing", async () => {
     const observations: MirrorFlowRecoveryObservation[] = [];
+    const onOutputObserved = vi.fn();
     const rig = await startedRig({
       atomicHook: true,
+      onOutputObserved,
       onFlowRecoveryObserved: (observation) => observations.push(observation),
     });
     const alpha = collect();
@@ -1386,17 +1444,19 @@ describe("flow control", () => {
     });
     expect(bytesOf(alpha.events)).toEqual([]);
     const replacement = vi.fn();
-    expect(
-      rig.sim.core.armAtomicPaneSnapshotCollector({
-        nonce: "e".repeat(32),
-        runtimePaneId: "%1",
-        maxCaptureBytes: 1024,
-        maxCaptureLines: 16,
-        maxCursorBytes: 256,
-        observerCommandCount: 2,
-        onSettled: replacement,
-      }),
-    ).toBe(true);
+    const replacementSpec = {
+      nonce: "e".repeat(32),
+      runtimePaneId: "%1",
+      maxCaptureBytes: 1024,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: replacement,
+    };
+    expect(rig.sim.core.armAtomicPaneSnapshotCollector(replacementSpec)).toBe(false);
+    drainRetiredAtomicCollector(rig, nonce);
+    expect(onOutputObserved.mock.calls.map((call) => call[0])).toEqual(["pane.beta", "pane.beta"]);
+    expect(rig.sim.core.armAtomicPaneSnapshotCollector(replacementSpec)).toBe(true);
     rig.sim.core.retireAtomicPaneSnapshotCollector("e".repeat(32));
     await rig.channel.dispose();
   });
