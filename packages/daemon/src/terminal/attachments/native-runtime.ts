@@ -2142,12 +2142,13 @@ export class NativeTerminalAttachmentRuntime {
       resolveGeometry: (descriptor, client) => geometry.resolve(descriptor, client),
       ...(options.sessionRuntimeRegistry
         ? {
-            bindSessionRuntime: (descriptor: AttachmentLeaseDescriptor) => {
+            bindSessionRuntime: async (descriptor: AttachmentLeaseDescriptor) => {
               const workspace = options.registry.get(descriptor.target.workspaceName);
               if (!workspace) throw new Error("Terminal attachment workspace is unavailable");
               if (!descriptor.hostClientId) {
                 throw new Error("Interactive terminal attachment lacks trusted host identity");
               }
+              await options.sessionRuntimeRegistry!.verifyWindowOwnership();
               return new SessionRuntimeTransportBinder(options.sessionRuntimeRegistry!).bind({
                 transport: "terminal-attachment",
                 transportLeaseId: descriptor.leaseId,
