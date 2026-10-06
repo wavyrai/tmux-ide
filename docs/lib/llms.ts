@@ -25,7 +25,7 @@ function pageLines(nodes: Node[]): string[] {
     if (node.type === "page") {
       const page = source.getNodePage(node);
       if (!page) continue;
-      lines.push(link(page.data.title, page.url, page.data.description));
+      lines.push(link(page.data.metaTitle ?? page.data.title, page.url, page.data.description));
     } else if (node.type === "folder") {
       if (node.index) lines.push(...pageLines([node.index]));
       lines.push(...pageLines(node.children));
@@ -97,13 +97,14 @@ export function llmsIndex(): string {
     `AI agents: read ${absoluteUrl("/agents.md")} first — install, status reporting, and coordination commands in one page.`,
     "",
     "Claude Code agent teams: set `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` and `teammateMode` " +
-      '`"tmux"` in `~/.claude/settings.json`; split-pane teammates then appear in tmux-ide grouped under ' +
+      '`"tmux"` (or `"auto"` inside tmux) in `~/.claude/settings.json` (releases after 2.9.3 set this ' +
+      "up in the installer); split-pane teammates then appear in tmux-ide grouped under " +
       "their team, named as the lead named them, with normal agent status. tmux-ide reads " +
       "`~/.claude/teams/<team>/config.json` read-only; Claude Code owns spawning, tasks and messaging. " +
       `Docs: ${absoluteUrl("/docs/multi-agent-teams#claude-code-agent-teams")}`,
     "",
-    "Every documentation page is also available as Markdown: append `.mdx` to its URL " +
-      `(for example ${absoluteUrl("/docs/getting-started.mdx")}).`,
+    "Every documentation page is also available as Markdown: append `.md` (or `.mdx`) to its URL " +
+      `(for example ${absoluteUrl("/docs/getting-started.md")}).`,
   ];
   for (const [title, lines] of sections) out.push("", `## ${title}`, "", ...lines);
   out.push("");

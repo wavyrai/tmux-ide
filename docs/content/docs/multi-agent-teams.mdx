@@ -29,8 +29,8 @@ tmux-ide events --follow           # live stream of session-status transitions (
 tmux-ide agent explain %2 --json   # one pane's status (+ exactly why it was classified that way)
 ```
 
-(`team --json` and `events` report at session/window granularity; use
-`agent explain <pane>` — or the per-pane border chips — for an individual pane.)
+`team --json` includes a per-pane `agents` array; `events` reports session-level
+transitions. `agent explain <pane>` shows how one pane was classified.
 
 Any agent joins the bus by self-reporting — no integration required:
 
@@ -39,7 +39,7 @@ tmux set-option -p @agent_state "working:$(date +%s)"   # working | blocked | do
 ```
 
 Claude Code does this automatically once you run
-`tmux-ide integration install claude`. For codex, cursor-agent, or any other
+`tmux-ide integration install claude`. For Codex, cursor-agent, or any other
 tool, either drop that one line into the agent's own lifecycle or rely on the
 fallback detector (process-tree + screen manifests). See
 [Agent detection](/docs/agent-detection).
@@ -86,8 +86,8 @@ tmux-ide worktree create feature/login   # give a teammate an isolated checkout 
 
 ## Worked example: a Claude Code lead dispatching to Codex
 
-Picture a Claude Code agent running as the **lead** in pane `%0`, with a codex
-worker in `%2`. The lead can drive the whole loop from its own shell:
+Picture a Claude Code agent running as the **lead** in pane `%0`, with a Codex
+agent in `%2`. The lead can drive the whole loop from its own shell:
 
 ```bash
 # 1. Read the fleet rollup, then check the codex pane specifically
@@ -105,8 +105,8 @@ tmux-ide wait output %2 --match "Tests:.*passed" --timeout 300000 \
 tmux-ide agent explain %2 --json | jq -r .classification
 ```
 
-Step 2 puts text into codex's prompt exactly as if the lead had typed it. Step 3
-watches codex's own output. Steps 1 and 4 read the shared bus. None of it is
+Step 2 puts text into Codex's prompt exactly as if the lead had typed it. Step 3
+watches Codex's own output. Steps 1 and 4 read the shared bus. None of it is
 Claude-specific — swap `%2` for a cursor-agent or `aider` pane and the same
 commands hold. To wait on a whole session, such as a worktree running one agent,
 use `tmux-ide wait agent-status <session> --status done` instead of
@@ -145,8 +145,8 @@ session the same fleet looks like this (illustrative):
 └──────────────────────────────┴──────────────────────────────┘
 ```
 
-One glance tells the lead (human or agent): the API worker is `done`, the UI
-worker is `blocked` and needs attention. That state is the handoff signal.
+One glance tells the lead (human or agent): the API agent is `done`, the UI
+agent is `blocked` and needs attention. That state is the handoff signal.
 
 ## Group panes into a named team
 
@@ -194,10 +194,8 @@ others, with their team context added.
 
 ### Run a team inside tmux-ide
 
-Agent teams are experimental in Claude Code and off by default there. The
-tmux-ide installer turns them on for you when Claude Code is installed, unless
-you opted out. It adds two keys to `~/.claude/settings.json`, each only if it is
-missing:
+Agent teams are experimental in Claude Code and off by default. Turn them on in
+`~/.claude/settings.json`:
 
 ```json
 {
@@ -208,12 +206,12 @@ missing:
 
 `"auto"` opens teammates as split panes when Claude Code runs inside tmux, and
 in-process elsewhere. `"tmux"` always asks for split panes; Claude Code's
-default, `"in-process"`, keeps every teammate inside the lead's terminal. The
-installer never overrides a value you already set, including an explicit `"0"`.
-The step and the command below need a tmux-ide release newer than 2.9.3; with
-2.9.3, add the two keys to `~/.claude/settings.json` yourself.
+default, `"in-process"`, keeps every teammate inside the lead's terminal.
 
-Check or change the setting at any time:
+Needs a release newer than 2.9.3: the tmux-ide installer adds these two keys for
+you when Claude Code is installed, each only if it is missing, and never
+overrides a value you already set, including an explicit `"0"`. The same
+release adds a command to check or change the setting:
 
 ```bash
 tmux-ide integration agent-teams status
@@ -246,9 +244,10 @@ teammate's name only when both of these hold:
 - the file lists that member with a tmux backend and this pane;
 - the live `claude` process in the pane carries the matching team, agent id and
   agent name.
-  Anything else — a removed or unrecognized file,
-  an iTerm2 backend, an ambiguous match — falls back to ordinary pane naming.
-  Each machine's daemon reads that machine's files.
+
+Anything else, such as a removed or unrecognized file, an iTerm2 backend or an
+ambiguous match, falls back to ordinary pane naming. Each machine's daemon reads
+that machine's files.
 
 ### What it does not do
 

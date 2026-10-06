@@ -69,8 +69,10 @@
   --marketing-raise: oklch(1 0 0);
   --marketing-panel: oklch(0.967 0.001 286.4);
   --marketing-line: oklch(0.92 0.004 286.3);
-  --terminal-stage: #0f0f14;
-  --terminal-line: rgb(255 255 255 / 10%);
+  /* The hero demo's mat follows the site theme, like the demo inside it:
+     a light panel with a hairline here, the dark stage in .dark. */
+  --terminal-stage: var(--marketing-panel);
+  --terminal-line: var(--marketing-line);
   /* Long-form docs text sits one step softer than headings. */
   --docs-prose-body: oklch(0.3247 0.0017 106.5);
   /* Accent hues for flourishes (the copy beam) and success. */
@@ -1612,6 +1614,12 @@
 
 .marketing-faq-answer {
   animation-name: marketing-enter;
+}
+
+/* Inline commands in FAQ answers: one step under the body size, so the mono
+   face does not read heavier than the sentence around it. */
+.marketing-faq-answer code {
+  font-size: 0.9em;
 }
 
 .marketing-feedback-enter {

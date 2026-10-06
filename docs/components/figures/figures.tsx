@@ -14,7 +14,7 @@ export function AgentTeamsFigure({
 }: {
   id?: string;
   number?: string;
-  heading?: "h2" | "h3";
+  heading?: "h2" | "h3" | "p";
   compact?: boolean;
   /** The shared-workspace strip (on by default). */
   foundation?: boolean;
@@ -26,8 +26,8 @@ export function AgentTeamsFigure({
       compact={compact}
       number={number}
       kicker="Systems / Agent coordination"
-      title="Heterogeneous"
-      accent="agent teams."
+      title="Claude Code, Codex and opencode"
+      accent="in one agent team."
       subtitle={
         <>
           One agent per tmux pane, across harnesses. Coordinate them with <code>tmux-ide send</code>{" "}
@@ -235,7 +235,7 @@ export function AgentDetectionFigure({ id = "detection-figure" }: { id?: string 
   return (
     <AcademicFigure
       id={id}
-      heading="h3"
+      heading="p"
       kicker="Systems / Agent detection"
       title="Two layers,"
       accent="one status."
