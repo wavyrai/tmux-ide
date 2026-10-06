@@ -21,6 +21,19 @@
   --color-hero-ink: var(--hero-ink);
   --color-hero-body: var(--hero-body);
 
+  /* Corners are either square or fully rounded: every radius step is 0,
+     and pills use --radius-pill (or rounded-full). Fumadocs' rounded-*
+     classes resolve through these tokens too. */
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+  --radius-4xl: 0;
+  --radius-pill: 9999px;
+
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out-fluid: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-in-quart: cubic-bezier(0.895, 0.03, 0.685, 0.22);
@@ -420,7 +433,7 @@
 [data-slot="marketing-home"] [data-marketing-button] {
   font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
   font-weight: 500;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
 }
 
 [data-slot="docs-site"] button {
@@ -498,6 +511,7 @@
 }
 
 .docs-prose :where(:not(pre) > code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  border-radius: 0;
   font-size: 0.8125rem;
 }
 
@@ -523,10 +537,10 @@
   color: var(--color-fd-primary-foreground);
 }
 
-/* A command can wrap on narrow screens, so it keeps a rounded rectangle
-   rather than the pill shape other marketing buttons use. */
+/* The install command is a square box (it can wrap on narrow screens),
+   not a pill like the other marketing buttons. */
 [data-slot="marketing-home"] .marketing-command {
-  border-radius: 0.875rem;
+  border-radius: 0;
 }
 
 /* Install method switch: native radios, so it works before hydration and
@@ -555,7 +569,7 @@
 
 .install-tab {
   cursor: pointer;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   padding: 0.25rem 0.75rem;
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 0.75rem;
@@ -573,13 +587,24 @@
   outline-offset: 2px;
 }
 
+/* Corner mapping: controls are pills (search triggers, theme toggles and
+   the sidebar toolbar that holds them); surfaces stay square through the
+   zeroed radius tokens. Fumadocs gives some of these controls stepped radii,
+   so they are set here explicitly. */
+[data-search-full],
+[data-theme-toggle],
+[data-theme-toggle] > *,
+:has(> [data-theme-toggle]) {
+  border-radius: var(--radius-pill) !important;
+}
+
 /* Docs page actions: quiet outlined pills above the title. */
 .docs-action {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
   border: 1px solid var(--color-fd-border);
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   padding: 0.25rem 0.75rem;
   font-size: 0.8125rem;
   line-height: 1.1875rem;
@@ -668,7 +693,7 @@
 .prompt-frame {
   position: relative;
   display: inline-flex;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   isolation: isolate;
 }
 
@@ -677,7 +702,7 @@
   height: 2.25rem;
   align-items: center;
   gap: 0.375rem;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   background-color: var(--pill-fill);
   padding: 0 0.875rem;
   font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;

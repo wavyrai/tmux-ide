@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = process.cwd();
@@ -188,11 +188,46 @@ expectAbsent(
   "the permanent dark footer must not depend on page-theme utility inheritance",
 );
 
+// Corners are square or fully rounded, nothing in between. Site code may
+// use rounded-full / rounded-none only; CSS radii must be 0, a pill
+// (9999px or --radius-pill) or inherit; every theme radius step is 0.
+const siteFiles = [];
+const collectSite = (directory) => {
+  for (const entry of readdirSync(directory)) {
+    const path = resolve(directory, entry);
+    if (statSync(path).isDirectory()) collectSite(path);
+    else if (/\.(tsx?|css)$/u.test(entry)) siteFiles.push(path);
+  }
+};
+for (const directory of ["app", "components", "lib"]) collectSite(resolve(root, directory));
+for (const path of siteFiles) {
+  const source = readFileSync(path, "utf8");
+  const name = path.replace(`${root}/`, "");
+  const steppedClass =
+    source.match(
+      /(?<![\w-])rounded-(?:(?:t|r|b|l|s|e|tl|tr|bl|br|ss|se|es|ee)-)?(?!full\b|none\b)[\w[\]().%-]+/u,
+    ) ?? source.match(/class(?:Name)?=["'{`][^"'`]*(?<![\w-])rounded(?![\w-])/u);
+  if (steppedClass)
+    failures.push(`${name}: corners must be square or pill, found "${steppedClass[0]}"`);
+  for (const match of source.matchAll(
+    /border(?:-[a-z]+)?-radius:\s*([^;]+);|borderRadius:\s*["'`]?([^,"'`}]+)/gu,
+  )) {
+    const value = (match[1] ?? match[2]).trim();
+    if (!/^(?:0|0px|9999px|var\(--radius-pill\)|inherit)(?:\s*!important)?$/u.test(value)) {
+      failures.push(`${name}: border radius must be 0 or a pill, found "${value}"`);
+    }
+  }
+}
+for (const match of globalCss.matchAll(/--radius-([\w-]+):\s*([^;]+);/gu)) {
+  const ok = match[1] === "pill" ? match[2].trim() === "9999px" : match[2].trim() === "0";
+  if (!ok) failures.push(`radius token --radius-${match[1]} must be 0 (or 9999px for the pill)`);
+}
+
 if (failures.length > 0) {
   console.error(`Marketing structure check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
 }
 
 console.log(
-  `Marketing structure verified: ${stretchCount} ground stretches, ${customBandBodyCount} intentional spacing exceptions, stable technical figures, the role-based type ramp, semantic colors, and server-rendered branding.`,
+  `Marketing structure verified: ${stretchCount} ground stretches, ${customBandBodyCount} intentional spacing exceptions, stable technical figures, the role-based type ramp, square-or-pill corners, semantic colors, and server-rendered branding.`,
 );
