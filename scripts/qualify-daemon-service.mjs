@@ -2,6 +2,7 @@
 // Real OS-manager qualification. Requires an existing non-root user manager;
 // never enables login lingering or touches the user's ordinary tmux server.
 import assert from "node:assert/strict";
+import { qualifyLegacySystemd } from "./lib/qualify-legacy-systemd.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -329,6 +330,8 @@ writeFileSync(${JSON.stringify(launchReceipt)}, JSON.stringify({pid:process.pid,
     ]).trim();
   const before = panePid();
   assert.match(before, /^[1-9][0-9]*$/u);
+  if (!launchd)
+    await qualifyLegacySystemd({ repo, cliPath, state, env, run, panePid, before, receipt });
   serviceAttempted = true;
   const first = cli("install", launcher);
   assert.equal(first.status, "running");
@@ -458,6 +461,7 @@ writeFileSync(${JSON.stringify(launchReceipt)}, JSON.stringify({pid:process.pid,
     !receipt.failure &&
     receipt.sourceStable === true &&
     receipt.panePreserved === true &&
+    (launchd || receipt.legacySystemd?.passed === true) &&
     receipt.provenance?.length === 3 &&
     receipt.stableLauncherUpdate === true &&
     receipt.failedLauncherRecovery === true &&

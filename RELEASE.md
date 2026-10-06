@@ -76,6 +76,14 @@ activation, not the installer's download/verification transaction or compatibili
 between different product versions. CI enables lingering only for its disposable
 Linux runner.
 
+The Linux service qualification also starts a private transient systemd unit
+without a supervisor reservation. It runs current CLI code with deliberately
+older version metadata, then verifies that repeated public daemon-update attempts
+refuse retirement while preserving its PID, record and existing tmux pane. It
+stops the exact unit and verifies owner/record removal before the registered
+service journey. This proves real-manager ownership protection, not backward
+compatibility with a historical published binary.
+
 Qualification-only dispatches additionally run
 `node scripts/qualify-installer-service.mjs <new-evidence-directory>` on all four
 platforms. This uses the reviewed installer in an isolated HOME and a prefix
