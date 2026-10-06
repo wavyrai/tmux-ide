@@ -180,6 +180,8 @@ jobs:
           name: opentui-package-proof-${{ env.RELEASE_CANDIDATE_SHA }}
           path: |
             ${{ runner.temp }}/opentui-package-proof/proof.json
+            ${{ runner.temp }}/opentui-package-proof/cli-resolution-case.json
+            ${{ runner.temp }}/opentui-package-proof/cli-resolution-vitest.json
             ${{ runner.temp }}/opentui-package-proof/tmux-ide-*.tgz
             ${{ runner.temp }}/opentui-package-proof/tmux-ide-cli.js
             ${{ runner.temp }}/opentui-package-proof/tmux-ide-tui-linux-x64
@@ -195,6 +197,8 @@ jobs:
           name: opentui-package-diagnostics-${{ env.RELEASE_CANDIDATE_SHA }}
           path: |
             ${{ runner.temp }}/opentui-package-proof/proof.json
+            ${{ runner.temp }}/opentui-package-proof/cli-resolution-case.json
+            ${{ runner.temp }}/opentui-package-proof/cli-resolution-vitest.json
             ${{ runner.temp }}/opentui-package-proof/*.performance.jsonl
             ${{ runner.temp }}/opentui-package-proof/linked-*-frame.txt
             ${{ runner.temp }}/opentui-package-proof/linked-installed-result.json
