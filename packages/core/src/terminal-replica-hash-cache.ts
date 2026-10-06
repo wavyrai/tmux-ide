@@ -198,22 +198,22 @@ export async function hashCanonicalTerminalValueCooperatively(
     work = 0;
     return true;
   };
-  type WorkItem =
-    | { readonly kind: "value"; readonly value: unknown }
-    | { readonly kind: "ascii"; readonly value: string }
-    | { readonly kind: "string"; readonly value: string };
-  const stack: WorkItem[] = [{ kind: "value", value }];
-  while (stack.length > 0) {
-    const item = stack.pop()!;
-    if (item.kind === "ascii") {
-      if (checkpoint(hash.ascii(item.value))) await yieldControl();
+  // Parallel stacks preserve the traversal and yield order without allocating
+  // a wrapper object for every value/key/token. pop() drops consumed references.
+  const kinds: ("value" | "ascii" | "string")[] = ["value"];
+  const values: unknown[] = [value];
+  while (values.length > 0) {
+    const kind = kinds.pop()!;
+    const value = values.pop();
+    if (kind === "ascii") {
+      if (checkpoint(hash.ascii(value as string))) await yieldControl();
       continue;
     }
-    if (item.kind === "string") {
-      if (checkpoint(hash.string(item.value) + 8)) await yieldControl();
+    if (kind === "string") {
+      if (checkpoint(hash.string(value as string) + 8)) await yieldControl();
       continue;
     }
-    const entry = item.value;
+    const entry = value;
     if (entry === null) {
       hash.ascii("n;");
       if (checkpoint(2)) await yieldControl();
@@ -235,19 +235,23 @@ export async function hashCanonicalTerminalValueCooperatively(
     }
     if (Array.isArray(entry)) {
       if (checkpoint(hash.ascii(`a${entry.length}:`) + 1)) await yieldControl();
-      stack.push({ kind: "ascii", value: ";" });
-      for (let index = entry.length - 1; index >= 0; index -= 1)
-        stack.push({ kind: "value", value: entry[index] });
+      kinds.push("ascii");
+      values.push(";");
+      for (let index = entry.length - 1; index >= 0; index -= 1) {
+        kinds.push("value");
+        values.push(entry[index]);
+      }
       continue;
     }
     const record = entry as Record<string, unknown>;
     const keys = hash.keyOrder(record).sorted;
     if (checkpoint(hash.ascii(`o${keys.length}:`) + keys.length)) await yieldControl();
-    stack.push({ kind: "ascii", value: ";" });
+    kinds.push("ascii");
+    values.push(";");
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key = keys[index]!;
-      stack.push({ kind: "value", value: record[key] });
-      stack.push({ kind: "string", value: key });
+      kinds.push("value", "string");
+      values.push(record[key], key);
     }
   }
   return hash.digest();

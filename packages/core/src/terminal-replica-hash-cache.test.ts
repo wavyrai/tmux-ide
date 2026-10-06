@@ -131,6 +131,54 @@ describe("terminal canonical hash cache", () => {
     expect(hashCanonicalTerminalValue(values)).toBe(referenceHash(values));
   });
 
+  it("preserves eager reverse property reads across cooperative yields and cancellation", async () => {
+    const reads: string[] = [];
+    const record = Object.fromEntries(["a", "b", "c"].map((key) => [key, 0]));
+    for (const [index, key] of ["a", "b", "c"].entries()) {
+      Object.defineProperty(record, key, {
+        enumerable: true,
+        get() {
+          reads.push(key);
+          return index;
+        },
+      });
+    }
+    let yields = 0;
+    const digest = await hashCanonicalTerminalValueCooperatively(
+      record,
+      async () => {
+        reads.push(`yield${++yields}`);
+      },
+      1,
+    );
+    expect(digest).toBe(referenceHash({ a: 0, b: 1, c: 2 }));
+    expect(reads).toEqual([
+      "yield1",
+      "c",
+      "b",
+      "a",
+      "yield2",
+      "yield3",
+      "yield4",
+      "yield5",
+      "yield6",
+      "yield7",
+      "yield8",
+    ]);
+    reads.length = 0;
+    const failure = new Error("cancel hash slice");
+    await expect(
+      hashCanonicalTerminalValueCooperatively(
+        record,
+        async () => {
+          throw failure;
+        },
+        1,
+      ),
+    ).rejects.toBe(failure);
+    expect(reads).toEqual([]);
+  });
+
   it("keeps batch row hashes canonical with bounded encoding reuse and a JS fallback", () => {
     const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
     const base = blankTerminalReplicaSnapshot(1, 1).grid[0]!.cells[0]!;
