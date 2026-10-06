@@ -78,18 +78,23 @@ Linux runner.
 
 Qualification-only dispatches additionally run
 `node scripts/qualify-installer-service.mjs <new-evidence-directory>` on all four
-platforms. This uses the reviewed installer to download published
-`2.9.0-beta.50` and `2.9.2` into an isolated HOME and a prefix containing spaces,
-with only `/usr/bin:/bin` on the installer's PATH. The packed candidate controls
+platforms. This uses the reviewed installer in an isolated HOME and a prefix
+containing spaces, with only `/usr/bin:/bin` on the installer's PATH. Apple Silicon
+uses published `2.9.0-beta.50` → `2.9.2` for cross-version coverage. The older
+package lacks native bundles for the other three platforms; those use two real
+`2.9.2` installations and additionally verify that attempting beta.50 fails
+without changing the active installation or daemon. The packed candidate controls
 the private service through its public CLI. The journey covers first install,
 upgrade without implicit daemon replacement, required installed doctor checks,
 failed-version preservation, explicit manager restart, rollback, roll-forward,
 service removal and uninstall while preserving the original tmux pane. Receipts
 distinguish the candidate controller from downloaded published runtimes and
-record source, artifact, process and cleanup identities. This proves a real
-cross-version transaction; it does not substitute for installing the unpublished
-candidate or running its TUI. It requires network access and an existing user
-manager, and never changes production services or login lingering.
+record source, artifact, process and cleanup identities. Receipts explicitly mark
+whether cross-version coverage was exercised. Same-version reinstall coverage
+cannot close the cross-version requirement on Linux or Intel Mac. Neither
+journey substitutes for installing the unpublished candidate or running its TUI.
+It requires network access and an existing user manager, and never changes
+production services or login lingering.
 
 ## Post-release
 

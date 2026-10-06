@@ -140,7 +140,7 @@ jobs:
           path: ${{ runner.temp }}/daemon-service-receipt.json
           if-no-files-found: error
           retention-days: 14
-      - name: Qualify published installer upgrade and managed rollback
+      - name: Qualify published installer transactions and managed rollback
         if: ${{ inputs.qualification_only }}
         timeout-minutes: 35
         run: node scripts/qualify-installer-service.mjs "$RUNNER_TEMP/installer-service"

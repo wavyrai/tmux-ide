@@ -115,19 +115,52 @@ for (const target of [
           const { incarnation, revision, stateHash } = owner.qualificationSnapshot();
           expect(result.authority).toMatchObject({ incarnation, revision, stateHash });
           expect(result.isCurrent()).toBe(true);
+          const captureObservations: unknown[] = [];
+          let httpObservation: unknown;
+          const currentAuthority = () => {
+            const { incarnation, revision, stateHash } = owner!.qualificationSnapshot();
+            return { incarnation, revision, stateHash };
+          };
           const app = new Hono();
           mountTerminalNativeBackingRoute(app, {
             generation: result.authority.generation,
             ownerToken: "test-owner",
             resolveSession: (workspace) => (workspace === "backing" ? "backing" : null),
-            capture: () => owner!.captureNativeBacking(),
+            capture: async () => {
+              const before = currentAuthority();
+              try {
+                const capture = await owner!.captureNativeBacking();
+                captureObservations.push({
+                  before,
+                  after: currentAuthority(),
+                  status: capture.status,
+                  authority: capture.status === "captured" ? capture.authority : null,
+                  current: capture.status === "captured" ? capture.isCurrent() : null,
+                });
+                return capture;
+              } catch (error) {
+                captureObservations.push({
+                  before,
+                  after: currentAuthority(),
+                  error: String(error),
+                });
+                throw error;
+              }
+            },
           });
           server = createServer(async (request, response) => {
             const result = await app.request(`http://127.0.0.1${request.url}`, {
               headers: { authorization: request.headers.authorization ?? "" },
             });
+            const body = Buffer.from(await result.arrayBuffer());
+            httpObservation = {
+              status: result.status,
+              contentType: result.headers.get("content-type"),
+              // Fixture-only authority/refusal evidence, never owner credentials.
+              prefix: body.toString("utf8", 0, Math.min(body.length, 4096)).split("\n")[0],
+            };
             response.writeHead(result.status, Object.fromEntries(result.headers));
-            response.end(Buffer.from(await result.arrayBuffer()));
+            response.end(body);
           });
           await new Promise<void>((resolve, reject) => {
             server!.once("error", reject);
@@ -149,7 +182,15 @@ for (const target of [
             },
             signal: new AbortController().signal,
           });
-          expect(transported).toEqual(result.snapshot);
+          expect(
+            transported,
+            JSON.stringify({
+              expected: result.authority,
+              captureObservations,
+              httpObservation,
+              current: currentAuthority(),
+            }),
+          ).toEqual(result.snapshot);
 
           if (mode === "history") expect(result.snapshot.history).toBeGreaterThan(30);
           tmux("send-keys", "-t", "backing", "-l", "X");

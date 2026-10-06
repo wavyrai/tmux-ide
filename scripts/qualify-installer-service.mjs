@@ -47,6 +47,11 @@ const managed = join(prefix, "share/tmux-ide"),
 const cli = join(controller, "node_modules/tmux-ide/bin/cli.js");
 const platform = `${process.platform}-${process.arch}`;
 const launchd = process.platform === "darwin";
+// beta.50 shipped only the Apple Silicon native bundle. Other platforms can
+// qualify real install/reinstall transactions, but cannot claim version skew.
+const crossVersionCovered = platform === "darwin-arm64";
+const initialVersion = crossVersionCovered ? "2.9.0-beta.50" : "2.9.2";
+const nextVersion = "2.9.2";
 const hash = (data) => createHash("sha256").update(data).digest("hex");
 const target = launchd
   ? `gui/${process.getuid()}/com.tmux-ide.${hash(state).slice(0, 24)}`
@@ -80,9 +85,13 @@ const receipt = {
   root,
   target,
   startedAt: new Date().toISOString(),
-  scope:
-    "Published 2.9.0-beta.50 to 2.9.2 install/managed restart/rollback; candidate supplies service controller, not downloaded runtime",
-  runtimeVersions: ["2.9.0-beta.50", "2.9.2"],
+  scope: crossVersionCovered
+    ? "Published beta.50 to 2.9.2 upgrade/managed restart/rollback"
+    : "Published 2.9.2 first install/reinstall/managed restart/rollback; cross-version coverage remains incomplete",
+  candidateDownloaded: false,
+  candidateRole: "Packed public service controller only",
+  crossVersionCovered,
+  runtimeVersions: [initialVersion, nextVersion],
   runtimeArtifacts: [],
   installerSha256: hash(readFileSync(installer)),
   steps: [],
@@ -254,10 +263,10 @@ try {
   );
   receipt.controllerCliSha256 = hash(readFileSync(cli));
   assert.equal(receipt.controllerCliSha256, receipt.sourceCliSha256);
-  install("install-beta50", ["--version", "2.9.0-beta.50"]);
-  assert.equal(checked(launcher, ["--version"]), "tmux-ide v2.9.0-beta.50");
+  install("first-install", ["--version", initialVersion]);
+  assert.equal(checked(launcher, ["--version"]), `tmux-ide v${initialVersion}`);
   const oldRelease = realpathSync(join(managed, "current"));
-  recordRuntime(oldRelease, "2.9.0-beta.50");
+  recordRuntime(oldRelease, initialVersion);
   tmux = join(
     oldRelease,
     "npm/lib/node_modules/tmux-ide/packages/daemon/dist/native/tmux",
@@ -282,19 +291,31 @@ try {
   serviceAttempted = true;
   const first = service("install", launcher);
   assert.equal(first.status, "running");
-  await health(first, "2.9.0-beta.50");
-  install("update-2.9.2", ["--version", "2.9.2"]);
+  await health(first, initialVersion);
+  install(crossVersionCovered ? "upgrade" : "reinstall", ["--version", nextVersion]);
   assert.equal(checked(launcher, ["--version"]), "tmux-ide v2.9.2");
   const newRelease = realpathSync(join(managed, "current"));
   recordRuntime(newRelease, "2.9.2");
   assert.notEqual(newRelease, oldRelease);
-  await health(first, "2.9.0-beta.50");
+  await health(first, initialVersion);
   const doctor = JSON.parse(checked(launcher, ["doctor", "--json"]));
   assert.equal(doctor.ok, true, "Installed required doctor checks must pass");
   receipt.doctor = doctor.checks.map(({ label, pass, optional }) => ({ label, pass, optional }));
   install("failed-update", ["--version", "0.0.0-pf01-nonexistent"], false);
   assert.equal(realpathSync(join(managed, "current")), newRelease);
-  await health(first, "2.9.0-beta.50");
+  await health(first, initialVersion);
+  if (!crossVersionCovered) {
+    install("unsupported-native-version", ["--version", "2.9.0-beta.50"], false);
+    assert(
+      readFileSync(join(evidence, "unsupported-native-version.log"), "utf8").includes(
+        `This version does not bundle tmux for ${platform}`,
+      ),
+      "Unsupported package must fail at native platform validation",
+    );
+    assert.equal(realpathSync(join(managed, "current")), newRelease);
+    assert.equal(checked(launcher, ["--version"]), `tmux-ide v${nextVersion}`);
+    await health(first, initialVersion);
+  }
   const second = service("restart");
   assert.notEqual(second.pid, first.pid);
   assert.notEqual(second.instanceId, first.instanceId);
@@ -303,10 +324,10 @@ try {
   assert.equal(realpathSync(join(managed, "current")), oldRelease);
   await health(second, "2.9.2");
   const rolled = service("restart");
-  await health(rolled, "2.9.0-beta.50");
+  await health(rolled, initialVersion);
   install("roll-forward", ["--rollback"]);
   assert.equal(realpathSync(join(managed, "current")), newRelease);
-  await health(rolled, "2.9.0-beta.50");
+  await health(rolled, initialVersion);
   const forward = service("restart");
   await health(forward, "2.9.2");
   assert.equal(service("remove", "--yes").status, "removed");
