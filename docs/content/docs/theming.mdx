@@ -1,30 +1,88 @@
 ---
-title: Appearance
-description: Light, dark, and system appearance in the OpenTUI
+title: Appearance and themes
+metaTitle: "Themes: 22 presets, dark, light and contrast"
+description: "Pick System, Dark, Light or one of 22 tmux-ide theme presets such as Tokyo Night, Dracula or Catppuccin, and control automatic text contrast in panes."
 ---
 
-The OpenTUI has one appearance authority. Home, application chrome, sidebars,
-tabs, pane headers, status bars, dialogs, and overlays all consume the same
-semantic token snapshot.
+Choose how the tmux-ide app looks: follow your terminal, force dark or light, or
+pick one of 22 theme presets. One setting colors every part of the app, from
+Home and the sidebar to pane headers, dialogs and terminal panes.
+
+## Choose a theme
+
+Open **Commands** (`F5`) → **Appearance…**. The picker lists **System · follow terminal**, **Dark**, **Light**
+and the theme presets below.
+
+| Key             | Action                                             |
+| --------------- | -------------------------------------------------- |
+| Type            | Filter themes; matching themes preview live        |
+| `↑` `↓` / `Tab` | Move and preview                                   |
+| `Enter`         | Apply and save                                     |
+| `Esc`           | Cancel and restore the previous theme and contrast |
+| `Ctrl+A`        | Toggle automatic contrast                          |
+
+A switch repaints every part of the app at once. The choice is saved to
+`theme.mode` and `theme.preset` in [`~/.tmux-ide/config.json`](/docs/configuration#theme).
+
+### How System mode detects light or dark
 
 New or unset appearance settings follow the terminal (**system**). Saved light,
 dark, and named theme choices stay selected. System mode uses the terminal's
-reported default background and foreground; ANSI black and white are palette
-colors, so partial palette replies do not decide whether the canvas is light
+reported default background and foreground. ANSI black and white are palette
+colors, so a partial palette reply does not decide whether the canvas is light
 or dark. If color queries are unavailable, terminal mode notifications still
 update the app using built-in defaults.
 
-Choose **light**, **dark**, or **system** from the command palette's Settings
-group. A switch publishes one new appearance generation and repaints every
-app-owned surface atomically.
+## Theme presets
 
-Terminal panes follow the selected appearance too: default foreground/background
+| Preset id         | Name             | Appearance |
+| ----------------- | ---------------- | ---------- |
+| `amber`           | Amber            | dark       |
+| `green`           | Green Phosphor   | dark       |
+| `cyan`            | Cyan             | dark       |
+| `red`             | Red Phosphor     | dark       |
+| `blue`            | Blue Phosphor    | dark       |
+| `purple`          | Purple Phosphor  | dark       |
+| `pink`            | Hot Pink         | dark       |
+| `white`           | White Phosphor   | dark       |
+| `paper`           | Paper            | light      |
+| `github-light`    | GitHub Light     | light      |
+| `solarized-light` | Solarized Light  | light      |
+| `gruvbox-light`   | Gruvbox Light    | light      |
+| `nord-light`      | Nord Light       | light      |
+| `tokyo`           | Tokyo Night      | dark       |
+| `solarized`       | Solarized Dark   | dark       |
+| `dracula`         | Dracula          | dark       |
+| `nord`            | Nord             | dark       |
+| `monokai`         | Monokai          | dark       |
+| `catppuccin`      | Catppuccin Mocha | dark       |
+| `gruvbox`         | Gruvbox Dark     | dark       |
+| `rosepine`        | Rose Pine        | dark       |
+| `midnight`        | Midnight Blue    | dark       |
+
+To set one by hand:
+
+```json
+{ "theme": { "preset": "catppuccin" } }
+```
+
+An unknown preset id is ignored. Theme presets color the app; the
+[tmux chrome](/docs/the-dock) uses its own `theme.accent`, `theme.status` and
+`theme.glyphs` tokens. To color one workspace's tmux panes from
+`.tmux-ide/workspace.yml`, see
+[per-session theme](/docs/configuration#per-session-theme).
+
+## Terminal panes
+
+Terminal panes follow the selected appearance: default foreground/background
 and standard ANSI colors (slots 0–15) use the theme palette. System appearance
 uses detected host ANSI colors where available. Named themes derive basic colors
 from their semantic palette, including status and accent colors.
 
+## Automatic contrast
+
 Automatic contrast correction is enabled by default for every appearance. It
-checks text against its rendered background across the TUI, including menus,
+checks text against its rendered background across the app, including menus,
 syntax previews, and applications inside terminal panes. Low-contrast text is
 adjusted for readability; already readable color pairs stay unchanged.
 
@@ -35,7 +93,7 @@ does not force an application's explicitly dark background to become light.
 In **Appearance**, click **Contrast** or press **Ctrl+A** to turn correction
 off and preserve the original foreground colors after theme palette mapping. The setting is saved as
 `theme.automaticContrast` in the app configuration. Theme previews and contrast
-changes apply immediately; cancelling Appearance restores the previous settings.
+changes apply immediately; canceling Appearance restores the previous settings.
 
 Correction targets the [4.5:1 text contrast ratio](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum)
 for opaque text color pairs. Dim text
@@ -49,6 +107,8 @@ Corrections are cached with a fixed size limit. Each frame uses perceptual
 lightness correction for up to 128 new low-contrast pairs; additional new pairs
 use a cheaper verified color blend. This bounds expensive work when applications
 produce thousands of different colors.
+
+## Terminal environment
 
 Fresh sessions advertise:
 
@@ -64,3 +124,9 @@ running retain the environment with which they started.
 Appearance changes repaint existing terminal content, including scrollback and
 reverse-video text. They do not restart panes or change running programs'
 environment or their own theme settings.
+
+## See also
+
+- [Configuration](/docs/configuration#theme) — the `theme` settings
+- [tmux chrome](/docs/the-dock) — status-bar colors and glyphs
+- [App tour](/docs/app-surfaces) — the views a theme colors

@@ -1,18 +1,17 @@
 import { getPageImage, source } from "@/lib/source";
-import {
-  DocsBody,
-  DocsDescription,
-  DocsPage,
-  DocsTitle,
-  MarkdownCopyButton,
-  ViewOptionsPopover,
-} from "fumadocs-ui/layouts/docs/page";
+import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/docs/page";
 import { notFound } from "next/navigation";
 import { getMDXComponents } from "@/mdx-components";
 import type { Metadata } from "next";
 import { createRelativeLink } from "fumadocs-ui/mdx";
+import { PageActions, RailActions } from "@/components/docs/page-actions";
 import { gitConfig } from "@/lib/layout.shared";
-import { SITE_DESCRIPTION, SITE_URL, absoluteUrl } from "@/lib/site";
+import { docLastModified, docPublished } from "@/lib/git-dates";
+import { PUBLISHER_ID, SITE_DESCRIPTION, SITE_URL, absoluteUrl } from "@/lib/site";
+
+// The docs index's frontmatter title is the bare product name; give the
+// document a distinct title instead of "tmux-ide | tmux-ide".
+const DOCS_INDEX_TITLE = "tmux-ide documentation";
 
 export default async function Page(props: { params: Promise<{ slug?: string[] }> }) {
   const params = await props.params;
@@ -22,6 +21,8 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
   const MDX = page.data.body;
   const description = page.data.description ?? SITE_DESCRIPTION;
   const pageUrl = absoluteUrl(page.url);
+  const modified = docLastModified(page.path);
+  const published = docPublished(page.path);
   const breadcrumbs = [
     { "@type": "ListItem", position: 1, name: "Home", item: absoluteUrl("/") },
     {
@@ -44,9 +45,14 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
         description,
         url: pageUrl,
         mainEntityOfPage: pageUrl,
+        image: absoluteUrl(getPageImage(page).url),
+        ...(published ? { datePublished: published.toISOString() } : {}),
+        ...(modified ? { dateModified: modified.toISOString() } : {}),
         inLanguage: "en",
         isPartOf: { "@id": `${SITE_URL}/#website` },
-        publisher: { "@id": `${SITE_URL}/#organization` },
+        about: { "@id": `${SITE_URL}/#software` },
+        author: { "@id": PUBLISHER_ID },
+        publisher: { "@id": PUBLISHER_ID },
       },
       {
         "@type": "BreadcrumbList",
@@ -54,6 +60,12 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
         itemListElement: breadcrumbs,
       },
     ],
+  };
+
+  const actions = {
+    pageUrl,
+    markdownUrl: `${page.url}.mdx`,
+    sourceUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/content/docs/${page.path}`,
   };
 
   return (
@@ -67,17 +79,17 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
         tabIndex={-1}
         toc={page.data.toc}
         full={page.data.full}
+        tableOfContent={{ footer: <RailActions {...actions} /> }}
         className="docs-article"
       >
+        {/* First child of the article, so it sits above the title on every page. */}
+        {/* The table-of-contents rail carries the page actions from xl up;
+            this compact row stands in when the rail is hidden (narrow
+            screens, full-width pages). */}
+        <PageActions {...actions} className={page.data.full ? "" : "xl:hidden"} />
         <DocsTitle className="docs-title">{page.data.title}</DocsTitle>
         <DocsDescription className="docs-description mb-0">{description}</DocsDescription>
-        <div className="flex flex-row gap-2 items-center border-b pb-6">
-          <MarkdownCopyButton markdownUrl={`${page.url}.mdx`} />
-          <ViewOptionsPopover
-            markdownUrl={`${page.url}.mdx`}
-            githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/content/docs/${page.path}`}
-          />
-        </div>
+        <hr className="border-fd-border" />
         <DocsBody className="docs-prose">
           <MDX
             components={getMDXComponents({
@@ -102,14 +114,28 @@ export async function generateMetadata(props: {
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
+  const modified = docLastModified(page.path);
+  const published = docPublished(page.path);
+  // `metaTitle` carries the search wording; `title` stays the short H1/sidebar label.
+  const metaTitle = page.data.metaTitle ?? page.data.title;
+  const noindex = { index: false, follow: true };
+
   return {
-    title: page.data.title,
+    title:
+      page.data.metaTitle ??
+      (page.url === "/docs" ? { absolute: DOCS_INDEX_TITLE } : page.data.title),
     description: page.data.description,
-    alternates: { canonical: page.url },
+    ...(page.data.noindex ? { robots: { ...noindex, googleBot: noindex } } : {}),
+    alternates: {
+      canonical: page.url,
+      types: { "text/markdown": `${page.url}.mdx` },
+    },
     openGraph: {
       type: "article",
       url: absoluteUrl(page.url),
-      title: page.data.title,
+      ...(published ? { publishedTime: published.toISOString() } : {}),
+      ...(modified ? { modifiedTime: modified.toISOString() } : {}),
+      title: metaTitle,
       description: page.data.description,
       images: [
         {
@@ -124,7 +150,7 @@ export async function generateMetadata(props: {
       card: "summary_large_image",
       creator: "@prototyper_co",
       site: "@prototyper_co",
-      title: page.data.title,
+      title: metaTitle,
       description: page.data.description,
       images: [getPageImage(page).url],
     },

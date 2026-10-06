@@ -1,6 +1,6 @@
 # tmux-ide
 
-**The terminal that understands your agents.** tmux-ide is a terminal-native IDE and agent cockpit built _around_ tmux: one command adds a native chrome (the dock) to any existing tmux session — fleet tabs with live agent-status glyphs, ground-truth working/blocked/done detection, notifications when an agent needs you, and crash-proof restore that revives whole fleets including Claude conversations. Nothing to migrate into, nothing to lock into: the chrome is tmux options; `unadopt` reverts; if tmux-ide dies your sessions are ordinary tmux.
+**The open-source workspace for coding agents.** tmux-ide is a terminal app built _around_ tmux: Home shows every coding agent across your local and SSH machines with ground-truth working/blocked/done status, and Terminals drives the live tmux session with clickable windows, pane headers and direct controls. Around it: notifications when an agent needs you, crash-proof restore that revives whole fleets including Claude conversations, and an optional tmux chrome (`adopt`) that brings the status bar, keys and menus to plain tmux clients. Nothing to migrate into, nothing to lock into: tmux owns every process and pane, the chrome is tmux options (`unadopt` reverts), and if tmux-ide dies your sessions are ordinary tmux.
 
 Positioning: other tools rebuild the terminal to understand agents; tmux-ide teaches the terminal you already use to understand them. Never reference competitor projects by name in code, comments, commits, or docs.
 
@@ -9,9 +9,9 @@ Positioning: other tools rebuild the terminal to understand agents; tmux-ide tea
 ```bash
 tmux-ide adopt <session>            # add the dock to a session you already have
 tmux-ide integration install claude # ground-truth agent status via Claude Code hooks (+ skill sync)
-tmux-ide                            # home screen (fleet cockpit) — or launches project config if present
+tmux-ide                            # the app (Home + Terminals) — or launches project config if present
 tmux-ide restore --resume-agents    # after a tmux server death: rebuild everything, revive claudes
-tmux-ide app [session]              # the unified app: a terminal IDE over the fleet (needs bun, or update --tui-binary)
+tmux-ide app [session]              # the app explicitly; installed releases ship the compiled runtime (retry: update --tui-binary)
 ```
 
 ## Keys & surfaces (prefix-first)
@@ -29,9 +29,9 @@ The PRIMARY key form is the tmux prefix + letter — it survives every keyboard 
 
 All keys configurable via `~/.tmux-ide/config.json` (`keys.*`); re-adopt applies changes. Letters were chosen to never clobber tmux prefix defaults (hence menu=u, switcher=j, config=v).
 
-## The unified app (v2.7) — `tmux-ide app`
+## The app (2.9) — `tmux-ide app`
 
-Full-screen IDE via tmux control mode (`tui/mirror/`): tmux owns PTYs/layout/persistence, the app renders. Tabs F1 ⌂ Home · F2 ⌨ Terminal (live SessionMirror — streams while backgrounded) · F3 🗎 Files (native editor: ^s/^z, click-cursor) · F4 ± Diff (^e → editor) · F5 palette. Mouse-native: hover, right-click context menus (pane/window/session verbs incl. layouts + synchronize-panes, confirmed destructive), border-drag resize, drag-select → OSC52 clipboard (ssh-transparent, written to /dev/tty — the renderer owns stdout), scrollbars, buttons. `/` scrollback search, `[⛶]` zoom, paste-buffer picker. ^q detaches clean. State persists (~/.tmux-ide/app-state.json). **Read the app.tsx header before touching mouse/render code — the OpenTUI landmine laws there are measured, not folklore.** Perf: targetFps 60 explicitly; F12 opens the demand-only local HUD; `pnpm test:performance-qualification` runs the deterministic gate.
+Full-screen OpenTUI app (production entry `tui/mirror/runtime/application-entry.ts` → `application-root-v2.tsx`): tmux owns PTYs/layout/persistence, the daemon publishes state and pane streams, the app renders. **Root surfaces are only Home (F1) and Terminals (F2)** — `runtime/product-surface-policy.ts` quarantines Files, Diff/Changes, Missions and Activity (source kept, never in navigation/bootstrap/input/reconnect), and `app.views` in workspace.yml is schema-only. Overlays: F5 Commands · F6 Sessions · F7 Attention · F8/⇧F8 session history · F9/⇧F9 session tabs (^F9 closes) · F10 sidebar · ^G sidebar/Sessions · ^O/^T next pane/window · Alt+Arrow resize · ^Q quit/detach. Right-click a pane → pane menu (select text, rename, split, zoom, confirmed close); Shift+click opens links, Shift+drag selects inside mouse apps; OSC52/macOS clipboard. Appearance… (System/Dark/Light + 22 presets) persists to `theme.mode`/`theme.preset`. Canonical key truth: `workspace/application-shortcuts.ts` + `application-action-descriptions.ts` + the root-v2 handlers; `mirror/application-keybindings.ts` and `mirror/input-lifecycle.ts` (F3/F4, ^P palette, ^E editor, F12 HUD) are legacy and NOT wired into the production root. Feature/status map for docs: `docs/contributing/product-truth-ledger.md`. Perf: renderer `targetFps` 60 (`runtime/renderer-cadence.ts`); `pnpm test:performance-qualification` runs the deterministic gate.
 
 ## The agent contract (two-layer detection)
 
@@ -63,7 +63,7 @@ terminal:
         - { title: Editor, command: claude, focus: true, size: 50% }
         - { title: Shell }
     - panes:
-        - { title: Changes, type: changes } # widget panes: explorer|changes|preview|setup|config|sidebar
+        - { title: Changes, type: changes } # widget panes: explorer|changes|preview|config|sidebar
         - { title: Dev, command: pnpm dev, dir: apps/web, env: { PORT: "3000" } }
 ```
 
@@ -77,7 +77,7 @@ Always `tmux-ide validate --json` after config mutations. When helping a user de
   - `tui/detect/` — two-layer detection: classify (authority parse + tracker), process-tree, manifest(+loader/corpus), snapshot.
   - `tui/team/` — the cockpit app (index.tsx: standalone home screen / picker / popup modes), sessions/projects data layer, home, tree/fuzzy/nav/mouse/keymap, report (fleet JSON), CONTROL.md.
   - `tui/integrations/` — claude.ts (hooks install/uninstall, settings merge; `TMUX_IDE_CLAUDE_SETTINGS` override).
-  - `tui/mirror/` — the control-mode (tmux -C) render layer: ships as `tmux-ide app`. The tmux protocol library it and `terminal/mirror` share now lives in the engine at `terminal/protocol/` (see its README); imports flow adapter → core only, enforced by `src/__tests__/engine-import-dag.test.ts`.
+  - `tui/mirror/` — the app (`tmux-ide app`); production code is `runtime/` + `workspace/` (see the app section above). The tmux protocol library it and `terminal/mirror` share now lives in the engine at `terminal/protocol/` (see its README); imports flow adapter → core only, enforced by `src/__tests__/engine-import-dag.test.ts`.
   - `tui/main.ts` + `tui/compiled.ts` + `scripts/build-tui.mjs` — the single-binary TUI (`bun build --compile` → dist/tui/tmux-ide-tui; resolution order: dev checkout → compiled binary → honest error).
   - `widgets/` — OpenTUI/Solid panels (explorer/changes/preview/config/setup/sidebar) + lib (theme mapped to app-config tokens, grammar, help-overlay); resolve.ts maps workspace `type:` panes (bundle-safe paths, spawns from REPO root for the bunfig preload).
   - `lib/` — app-config (THE typed config: keys/theme/updater/notifications/restore/updates/integrations; `TMUX_IDE_CONFIG` path override), restore, worktree, update(+check), agent-discovery, skill-sync, project-registry.

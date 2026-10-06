@@ -1,17 +1,25 @@
 ---
-title: Notifications & Events
-description: The who-needs-me loop — toasts, the JSONL event stream, and wait primitives for coordinating agents
+title: Notifications and events
+metaTitle: tmux notifications when an agent needs you
+description: "tmux notifications when an agent is blocked or done: toasts on attached clients, macOS and terminal banners, sound, a JSONL event stream and wait commands."
 ---
 
-The reason to know your fleet's status is to act on it. tmux-ide surfaces every
-agent-status transition three ways: **toasts** for humans, an **event stream**
-for scripts, and **wait** primitives for coordination.
+tmux-ide tells you when an agent becomes blocked or done. Every agent-status
+change reaches you three ways: **notifications** for you, an **event stream**
+for scripts, and **wait** commands for coordination.
 
-## Toasts — the who-needs-me loop
+Notifications and the event stream come from the background updater described
+in [tmux chrome](/docs/the-dock#the-background-updater). It runs once any
+session is adopted or created from the app. Inside the app itself, Home's
+**Needs attention** filter and Attention (`F7`) show the same signal. For exact
+Claude Code states, run `tmux-ide integration install claude` once; see
+[Agent detection](/docs/agent-detection).
+
+## Get notified when an agent is blocked or done
 
 When an agent anywhere in the fleet goes **blocked** or **done**, tmux-ide fires
-a toast. Because the chrome lives server-side, the toast appears on **every
-client attached to the session** — the laptop and the phone both light up.
+a toast. The toast is a tmux message, so it appears on **every tmux client
+attached to the session**, including one on another device.
 
 Notifications are configured in `~/.tmux-ide/config.json`:
 
@@ -19,13 +27,21 @@ Notifications are configured in `~/.tmux-ide/config.json`:
 {
   "notifications": {
     "toast": true,
-    "macos": false
+    "macos": false,
+    "terminal": true,
+    "delaySeconds": 2,
+    "sound": "blocked"
   }
 }
 ```
 
-- `toast` (default `true`) — the in-tmux toast.
-- `macos` (default `false`) — also post a native macOS notification.
+| Channel        | Default     | What it does                                                                                   |
+| -------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `toast`        | `true`      | A tmux toast on attached clients                                                               |
+| `macos`        | `false`     | A native macOS notification                                                                    |
+| `terminal`     | `true`      | A terminal banner (OSC 9, or OSC 99 for kitty) — works over SSH in terminals that support it   |
+| `sound`        | `"blocked"` | A sound plus terminal bell on `blocked`, on `all` notifications, or `none`                     |
+| `delaySeconds` | `2`         | OS-level channels wait this long and skip if the agent already moved on; the toast never waits |
 
 The macOS helper is bundled with tmux-ide—there is nothing else to install.
 Its banners use the tmux-ide app icon, follow the system's light/dark icon
@@ -33,15 +49,15 @@ appearance, and jump to the session that needs you when clicked. On first use,
 macOS may show its permission card instead of the agent banner. Choose
 **Options → Allow**; subsequent agent notifications then appear normally.
 
-See [Theming & config](/docs/theming) for the full file.
+See [Configuration](/docs/configuration#notifications) for the full file.
 
-## Per-pane chips
+## Ambient status
 
-Beyond fleet-wide toasts, each pane's border chip continuously reflects that
-pane's agent, e.g. `claude · working`. It's the ambient version of the same
-signal — no interruption, always visible.
+In the app, pane headers, the sidebar and Home show each agent's state. In
+[tmux chrome](/docs/the-dock) sessions, each pane's border chip reflects its
+agent, e.g. `claude · working`.
 
-## The event stream
+## Stream status changes as JSONL
 
 Every status transition is also an append-only JSONL event. Follow it live or
 snapshot it:
@@ -51,10 +67,12 @@ tmux-ide events --follow        # stream transitions as they happen
 tmux-ide events --json          # print recent events as JSON
 ```
 
-`events` needs an adopted session (that's where the status tracking runs). Pipe
-the stream anywhere — a log, a webhook relay, a status bar of your own.
+`events` reads what the background updater writes, so it needs an adopted
+session or one created from the app. Pipe the stream anywhere — a log, a webhook
+relay, a status bar of your own. With `tmux-ide serve` running, `events --socket`
+receives pushed events from its local control socket instead.
 
-## Coordination primitives
+## Wait for an agent in scripts
 
 Two `wait` commands block until a condition is met, so you can script the fleet.
 Both exit `0` on match and `1` on timeout.
@@ -82,4 +100,6 @@ way to wait on a dev server booting, a build finishing, or an error appearing.
 ## See also
 
 - [Agent detection](/docs/agent-detection) — where the transitions come from
-- [The dock & keys](/docs/the-dock) — the always-on status surface
+- [tmux chrome](/docs/the-dock) — the status bar and the background updater
+- [Multi-agent teams](/docs/multi-agent-teams) — use `done` and `blocked` as the handoff signal
+- [Configuration](/docs/configuration#notifications) — every notification option

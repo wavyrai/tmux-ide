@@ -1,13 +1,24 @@
 ---
-title: Contributing
-description: Development workflow, release checks, and open source project conventions
+title: Contributing to tmux-ide
+metaTitle: "Contributing: setup, checks and releases"
+description: "How to contribute to tmux-ide: the development workflow, the checks every change must pass, release quality gates and open source project conventions."
 ---
 
-## Local Setup
+tmux-ide is open source under the MIT license on
+[GitHub](https://github.com/wavyrai/tmux-ide). This page covers local setup, the
+checks every pull request must pass, isolated development worktrees, and the
+release workflow.
+
+## Local setup
+
+```bash
+git clone https://github.com/wavyrai/tmux-ide
+cd tmux-ide
+```
 
 Requirements:
 
-- A supported Node.js runtime; keep the same executable and ABI for installation, builds and tests
+- Node.js 20 or newer; keep the same executable and ABI for installation, builds and tests
 - The pnpm version pinned in `package.json` and Bun version in `.bun-version`
 - The native toolchain and pinned, patched tmux bundle for TUI and installed-runtime checks
 
@@ -17,7 +28,7 @@ Install dependencies from the repo root:
 pnpm install --frozen-lockfile
 ```
 
-## Independent Worktrees
+## Independent worktrees
 
 The repository's [isolated worktree quickstart](https://github.com/wavyrai/tmux-ide/blob/main/docs/guides/development-worktrees.md)
 walks through two branches with separate daemons, tmux servers, state and immutable
@@ -26,7 +37,7 @@ reset. The same instance name in different worktrees selects different instances
 The guide also covers Docker/SSH fixtures and migration from ad-hoc scripts.
 Production ownership and disposable test fixtures remain separate workflows.
 
-## Main Commands
+## Main commands
 
 Run these from the repository root:
 
@@ -54,7 +65,7 @@ and `scripts/prepublish-opentui-check.mjs`. It does not run the broad `pnpm chec
 gate automatically. Deferred web/desktop checks remain independent CI signals.
 See the [native and dependency maintenance inventory](https://github.com/wavyrai/tmux-ide/blob/main/patches/README.md) before changing native inputs or dependency patches.
 
-## Manual Smoke Tests
+## Manual smoke tests
 
 If tmux is available locally, run a manual smoke test:
 
@@ -71,72 +82,18 @@ node bin/cli.js status --json
 node bin/cli.js stop --json
 ```
 
-## Comparative Terminal Smoke Benchmark
+## Comparative terminal smoke benchmark
 
-The isolated comparison runner exercises native tmux, tmux-ide, and Herdr with
-the same producer and terminal parser. Build the tmux-ide CLI and TUI first, then
-save an options file outside the checkout with absolute paths to the artifacts:
+`pnpm benchmark:comparative <options.json> <results-directory>` runs an isolated
+smoke comparison of native tmux and tmux-ide. It uses private tmux sockets, the
+same producer and terminal parser for each target, and writes `report.json` and
+`report.md` with raw output and artifact hashes. `pnpm test:benchmark-comparative`
+tests the harness itself. The options are defined in
+`scripts/comparative-terminal.mjs`.
 
-```json
-{
-  "targets": ["tmux", "tmux-ide", "herdr"],
-  "cols": 66,
-  "rows": 41,
-  "samples": 2,
-  "rounds": 1,
-  "inputMode": "key",
-  "tuiRenderer": "release-default",
-  "resizeSamples": 4,
-  "resources": true,
-  "binaries": {
-    "tmux": "/absolute/path/to/tmux",
-    "cli": "/absolute/path/to/tmux-ide/bin/cli.js",
-    "tui": "/absolute/path/to/tmux-ide-tui",
-    "herdr": "/absolute/path/to/herdr"
-  }
-}
-```
-
-```bash
-pnpm benchmark:comparative /absolute/options.json /absolute/results-directory
-pnpm test:benchmark-comparative
-```
-
-Set `"inputMode": "key"` to measure one literal `x` key per sample. The default
-`"inputMode": "line"` sends `CBINPUT:000001` plus carriage return (15 bytes total);
-its latency includes delivery of the entire burst and is not single-key latency.
-Both modes use the same producer redraw and marker oracle, and reports record
-the selected mode.
-
-The default `"tuiRenderer": "release-default"` preserves the binary's own rendering
-settings. Explicit `standard`, `framed`, and `scroll-preview` modes are diagnostic
-lanes and must not be presented as release defaults. Supply artifact source details
-in an optional `provenance` object keyed by binary name; hashes are recorded automatically.
-
-`resizeSamples` (0–100, default 0) alternates content dimensions and checks the
-producer's reported geometry after each resize. `resources: true` takes three
-process-tree snapshots around input and resize, counting shared servers once and
-excluding the identical workload producer. RSS can double-count shared pages;
-these snapshots are neither physical footprint measurements nor a memory-leak soak.
-
-Use a fresh results directory for each run. The runner creates private tmux
-sockets and configuration directories, matches content dimensions, checks ordered
-input echoes, and cleans up the processes it starts. Reports preserve artifact
-hashes, raw terminal output, geometry, samples, and cleanup outcomes. Temporary
-configuration directories remain available for diagnosis.
-
-The runner writes raw `report.json` and readable `report.md`, retaining failures
-and sample counts. Round order rotates and reverses to balance product positions.
-For exploratory comparisons use six rounds with at least 100 input samples;
-reported percentiles describe those observations, not confidence bounds or a
-universal product ranking. Startup is reported separately because adapters provision
-their panes differently.
-
-This small configuration checks harness correctness. Startup includes provisioning;
-latency ends when the shared terminal parser observes an echo. It does not measure
-physical display refresh, whole-frame coherence, scrolling smoothness, throughput,
-or remote behavior. Resource snapshots cover only the owned process trees. Run comparisons without concurrent builds or
-tests, and do not interpret a small smoke run as a performance ranking.
+A small run checks harness correctness. It does not measure display refresh,
+scrolling smoothness, throughput or remote behavior, and it is not a
+performance ranking. Run it without concurrent builds or tests.
 
 ## CI
 
@@ -152,7 +109,7 @@ Its [CI guide](https://github.com/wavyrai/tmux-ide/blob/main/scripts/development
 explains resource bounds, evidence and cancellation limits. These jobs supplement
 `pnpm check`; their configuration alone is not evidence of a passing run.
 
-## Release Workflow
+## Release workflow
 
 Follow the current [terminal release checklist](https://github.com/wavyrai/tmux-ide/blob/main/RELEASE.md).
 Confirm the intended version, dist-tag and release notes; run
@@ -173,9 +130,17 @@ The repository root also includes:
 - `CHANGELOG.md` for release notes
 - `SECURITY.md` for vulnerability reporting
 
-## Pull Request Expectations
+## Pull request expectations
 
 - Keep CLI behavior changes covered by tests.
 - Update docs when command behavior or output changes.
 - Prefer focused pull requests over mixed refactors.
 - Run `pnpm check` before opening or updating a pull request.
+- Follow `docs/contributing/writing-guide.md` and keep
+  `docs/contributing/product-truth-ledger.md` current when you change docs.
+
+## See also
+
+- [Getting started](/docs/getting-started) — install and run the released app
+- [CLI reference](/docs/commands) — every public command
+- [Release notes](/docs/release-2-9-3) — what the current release ships

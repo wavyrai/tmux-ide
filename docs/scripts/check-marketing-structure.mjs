@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = process.cwd();
@@ -18,16 +18,23 @@ const technicalCaption = readFileSync(
   resolve(root, "components/marketing/technical-caption.tsx"),
   "utf8",
 );
+const installTabs = readFileSync(resolve(root, "components/marketing/install-tabs.tsx"), "utf8");
+const marketingSources = [page, sectionHeader, footer, banner, technicalCaption, installTabs].join(
+  "\n",
+);
 
 const failures = [];
 const expectAbsent = (source, pattern, message) => {
   if (pattern.test(source)) failures.push(message);
 };
 
+// Labels are sentence case. Uppercase eyebrows and flags were retired with
+// the role ramp; no marketing source may reintroduce them.
+expectAbsent(marketingSources, /\buppercase\b/u, "labels must be sentence case, not uppercase");
 expectAbsent(
-  page,
-  /\buppercase\b/u,
-  "uppercase must be scoped through the shared marketing-flag role",
+  `${marketingSources}\n${globalCss}`,
+  /\bmarketing-flag\b|text-transform:\s*uppercase/u,
+  "the retired uppercase marketing-flag role must not return",
 );
 expectAbsent(
   page,
@@ -35,12 +42,56 @@ expectAbsent(
   "one-pixel separator grids must use Mosaic, not MarketingGrid",
 );
 
-if (!/\.marketing-flag\s*\{[^}]*text-transform:\s*uppercase;/su.test(globalCss)) {
-  failures.push("marketing flags must resolve uppercase through their shared role");
+for (const role of [
+  "type-large-title",
+  "type-display-1",
+  "type-display-2",
+  "type-display-3",
+  "type-display-4",
+  "type-title-1",
+  "type-title-2",
+  "type-title-3",
+  "type-headline",
+  "type-subheadline",
+  "type-body",
+  "type-body-2",
+  "type-caption-1",
+  "type-caption-2",
+  "type-caption-3",
+  "type-marketing-body",
+  "type-marketing-lede",
+  "type-marketing-subtitle",
+  "type-page-title",
+  "type-card-title",
+  "type-hero-title",
+  "type-hero-lede",
+]) {
+  if (!new RegExp(`@utility ${role} \\{`, "u").test(globalCss)) {
+    failures.push(`the type ramp must define ${role}`);
+  }
+}
+if (!/:where\(h1, h2, h3, h4, h5, h6\)\s*\{[^}]*--font-display/su.test(globalCss)) {
+  failures.push("every heading must use the display face");
+}
+// Display and title roles (24px and up) share one measured tracking value;
+// smaller roles keep the face's natural spacing.
+for (const role of [
+  "type-large-title",
+  "type-display-1",
+  "type-display-2",
+  "type-display-3",
+  "type-display-4",
+  "type-title-1",
+  "type-page-title",
+]) {
+  const body = globalCss.match(new RegExp(`@utility ${role} \\{([^}]*)`, "u"))?.[1] ?? "";
+  if (!body.includes("letter-spacing: -0.02em")) {
+    failures.push(`${role} must track at -0.02em`);
+  }
 }
 
 if (
-  !/bleed\s*\?\s*["'][^"']*-mx-6[^"']*border-y[^"']*xl:-mx-10[^"']*["']\s*:\s*["']border["']/u.test(
+  !/bleed\s*\?\s*["'][^"']*-mx-\[var\(--site-gutter\)\][^"']*border-y[^"']*["']\s*:\s*["']border["']/u.test(
     lattice,
   )
 ) {
@@ -63,14 +114,16 @@ expectAbsent(
 );
 expectAbsent(logo, /^["']use client["'];/mu, "the static ASCII logo must remain server-rendered");
 expectAbsent(
-  `${page}\n${sectionHeader}\n${footer}`,
-  /\btext-\[(?:\d|clamp\()/u,
-  "landing typography must use semantic type roles, not local numeric sizes",
+  marketingSources,
+  /\btext-(?:\[(?:\d|clamp\()|(?:xs|sm|base|lg|xl|[2-9]xl)\b)/u,
+  "marketing typography must pick a type role, not a raw or Tailwind size",
 );
+// Weight is part of each type role (display medium, titles semibold, body
+// regular), so call sites never set it directly.
 expectAbsent(
-  `${page}\n${sectionHeader}\n${footer}\n${banner}`,
-  /\b(?:font-(?:medium|semibold|bold)|lowercase)\b/u,
-  "marketing typography must stay light, with mono flags resolved uppercase by their shared role",
+  marketingSources,
+  /\b(?:font-(?:thin|extralight|light|medium|semibold|bold|extrabold|black)|lowercase)\b/u,
+  "font weight must come from the type role, not the call site",
 );
 
 const stretchCount = page.match(/<Stretch\b/gu)?.length ?? 0;
@@ -85,36 +138,29 @@ if (customBandBodyCount > 3) {
   );
 }
 
-const expectedFigureNumbers = [
-  "02.1",
-  "02.2",
-  "02.3",
-  "03.1",
-  "03.2",
-  "03.3",
-  "04.1",
-  "04.2",
-  "04.3",
-];
+// Landing figures are numbered 1, 2, 3 … in reading order: the hero demo
+// (1), the agent cards (2-4), the agent-teams and architecture figures (5,
+// 6) and the capability cards (7-9). The cards' numbers live in content.
+const expectedFigureNumbers = ["2", "3", "4", "7", "8", "9"];
 const modeledFigureNumbers = [...landingContent.matchAll(/number:\s*"([0-9.]+)"/gu)]
   .map((match) => match[1])
   .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
 if (JSON.stringify(modeledFigureNumbers) !== JSON.stringify(expectedFigureNumbers)) {
-  failures.push("landing figures must keep the stable 02.1–04.3 technical sequence");
+  failures.push("landing figures must keep the sequential 1-9 numbering");
 }
 if (!tuiFigure.includes("<figure") || !tuiFigure.includes("<TechnicalCaption")) {
   failures.push("TUI diagrams must render as semantic figures through TechnicalCaption");
 }
-if (!technicalCaption.includes("Fig. {number}.")) {
+if (!technicalCaption.includes("Fig {number}.")) {
   failures.push("technical captions must share the canonical figure label");
 }
-if (!technicalCaption.includes("marketing-type-micro")) {
+if (!technicalCaption.includes("type-caption-1")) {
   failures.push("technical captions must use a merge-safe type role");
 }
 expectAbsent(
-  `${page}\n${sectionHeader}\n${footer}\n${banner}\n${technicalCaption}`,
-  /\btext-marketing-(?:title|subtitle|body|caption|micro)\b/u,
-  "marketing type roles must not use Tailwind's ambiguous text-* namespace",
+  marketingSources,
+  /\b(?:text-marketing-[a-z]+|marketing-type-[a-z]+)\b/u,
+  "type roles use the type-* namespace (never Tailwind's ambiguous text-*, nor the retired names)",
 );
 
 for (const role of [
@@ -135,11 +181,46 @@ expectAbsent(
   "the permanent dark footer must not depend on page-theme utility inheritance",
 );
 
+// Corners are square or fully rounded, nothing in between. Site code may
+// use rounded-full / rounded-none only; CSS radii must be 0, a pill
+// (9999px or --radius-pill) or inherit; every theme radius step is 0.
+const siteFiles = [];
+const collectSite = (directory) => {
+  for (const entry of readdirSync(directory)) {
+    const path = resolve(directory, entry);
+    if (statSync(path).isDirectory()) collectSite(path);
+    else if (/\.(tsx?|css)$/u.test(entry)) siteFiles.push(path);
+  }
+};
+for (const directory of ["app", "components", "lib"]) collectSite(resolve(root, directory));
+for (const path of siteFiles) {
+  const source = readFileSync(path, "utf8");
+  const name = path.replace(`${root}/`, "");
+  const steppedClass =
+    source.match(
+      /(?<![\w-])rounded-(?:(?:t|r|b|l|s|e|tl|tr|bl|br|ss|se|es|ee)-)?(?!full\b|none\b)[\w[\]().%-]+/u,
+    ) ?? source.match(/class(?:Name)?=["'{`][^"'`]*(?<![\w-])rounded(?![\w-])/u);
+  if (steppedClass)
+    failures.push(`${name}: corners must be square or pill, found "${steppedClass[0]}"`);
+  for (const match of source.matchAll(
+    /border(?:-[a-z]+)?-radius:\s*([^;]+);|borderRadius:\s*["'`]?([^,"'`}]+)/gu,
+  )) {
+    const value = (match[1] ?? match[2]).trim();
+    if (!/^(?:0|0px|9999px|var\(--radius-pill\)|inherit)(?:\s*!important)?$/u.test(value)) {
+      failures.push(`${name}: border radius must be 0 or a pill, found "${value}"`);
+    }
+  }
+}
+for (const match of globalCss.matchAll(/--radius-([\w-]+):\s*([^;]+);/gu)) {
+  const ok = match[1] === "pill" ? match[2].trim() === "9999px" : match[2].trim() === "0";
+  if (!ok) failures.push(`radius token --radius-${match[1]} must be 0 (or 9999px for the pill)`);
+}
+
 if (failures.length > 0) {
   console.error(`Marketing structure check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
 }
 
 console.log(
-  `Marketing structure verified: ${stretchCount} ground stretches, ${customBandBodyCount} intentional spacing exceptions, stable technical figures, role-based typography, semantic colors, and server-rendered branding.`,
+  `Marketing structure verified: ${stretchCount} ground stretches, ${customBandBodyCount} intentional spacing exceptions, stable technical figures, the role-based type ramp, square-or-pill corners, semantic colors, and server-rendered branding.`,
 );

@@ -1,0 +1,172 @@
+---
+title: Claude Code agent teams
+metaTitle: "Claude Code agent teams in tmux: setup and status"
+description: "Run Claude Code agent teams in tmux split panes: enable them in settings.json, then see each teammate by name, grouped by team, with live status."
+---
+
+Claude Code agent teams let one Claude Code session lead several teammate
+sessions that share a task list and message each other. Inside tmux, Claude Code
+can open each teammate in its own split pane. tmux-ide shows those panes with
+the teammate's name, its team and live working, blocked, done or idle status.
+Claude Code runs the team; tmux-ide shows it.
+
+## What Claude Code agent teams are
+
+An agent team is a Claude Code lead plus teammates, each a full Claude Code
+session with its own context. The lead assigns work through a shared task list,
+and teammates message each other directly. Agent teams are experimental in
+Claude Code and off by default. Anthropic's
+[agent teams guide](https://code.claude.com/docs/en/agent-teams) covers how to
+prompt and manage a team.
+
+## Turn on agent teams in tmux
+
+Add two keys to `~/.claude/settings.json`:
+
+```json
+{
+  "env": { "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1" },
+  "teammateMode": "auto"
+}
+```
+
+`teammateMode` decides where teammates appear:
+
+| `teammateMode`           | Where teammates open                                                        |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `"auto"`                 | Split panes when Claude Code already runs inside tmux; in-process otherwise |
+| `"tmux"`                 | Split panes; Claude Code picks tmux or iTerm2 from your terminal            |
+| `"in-process"` (default) | Inside the lead's terminal, with no panes of their own                      |
+
+tmux-ide works with teammates in tmux split panes, so use `"auto"` or `"tmux"`
+and run Claude Code inside a tmux-ide session.
+
+## Start a team in a tmux-ide session
+
+For exact status, install the Claude Code hooks once:
+
+```bash
+tmux-ide integration install claude
+```
+
+Then start `claude` in any tmux-ide session and ask it for teammates, for
+example "Spawn three teammates to review this PR: one for security, one for
+performance, one for tests." Claude Code opens each teammate
+in its own pane. Hooks are read when a session starts, so restart
+Claude Code sessions that were running before you installed them.
+
+## What tmux-ide shows
+
+| What                | How it works                                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Teammate names**  | Each teammate pane shows the name the lead gave it, in pane headers, the sidebar, Home and agent rows, instead of a generic "Claude Code"                                 |
+| **Team grouping**   | Teammates appear together under their team in Home and the sidebar, and Home search matches the team name                                                                 |
+| **Status**          | Every teammate is a full Claude Code session, so it gets the same [working / blocked / done / idle detection](/docs/agent-detection) and notifications as any Claude pane |
+| **Exact targeting** | Teammates are real tmux panes, so `send`, `wait output`, `agent explain` and pane controls work on them                                                                   |
+
+tmux-ide reads Claude Code's runtime team file,
+`~/.claude/teams/<team>/config.json`, about every two seconds and never writes
+it. A pane gets a teammate's name only when both of these hold:
+
+- the file lists that member with a tmux backend and this pane;
+- the live `claude` process in the pane carries the matching team, agent id and
+  agent name.
+
+Anything else, such as a removed or unrecognized file, an iTerm2 backend or an
+ambiguous match, falls back to ordinary pane naming. Each machine's daemon reads
+that machine's files.
+
+## Work with teammates from outside the team
+
+Teammate panes are ordinary tmux panes, so tmux-ide's commands work on them:
+
+```bash
+tmux-ide agent explain %4                                  # how the teammate's state was decided
+tmux-ide wait output %4 --match "tests passed"             # wait for a teammate's output
+tmux-ide wait agent-status review --status done            # wait for the whole session
+tmux-ide send %4 "Also check the upload limit"             # type into the teammate's prompt
+```
+
+`tmux-ide send` types into the pane, like clicking into it and typing. It is
+not a team message: it doesn't go through Claude Code's mailbox, and the lead
+doesn't see it. For attributed, retry-safe sends, use
+[agent automation](/docs/automation).
+
+## Set it up automatically
+
+Needs a release newer than 2.9.3. The tmux-ide installer adds the two
+`settings.json` keys for you when Claude Code is installed. It adds each key only
+if it is missing, keeps a backup, never rewrites a file that isn't valid JSON,
+and never overrides a value you already set, including an explicit `"0"`. To
+skip it, pass `--no-claude-agent-teams` to `install.sh` or set
+`TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`.
+
+The same release adds a command to check or change the setting:
+
+```bash
+tmux-ide integration agent-teams status
+tmux-ide integration agent-teams disable   # writes "0"; future installs respect it
+tmux-ide integration agent-teams enable    # turns it back on, even after a "0"
+```
+
+## What tmux-ide does not do
+
+Claude Code owns the team: creating it, spawning and shutting down teammates,
+the shared task list and the mailbox. tmux-ide never writes Claude's team files
+and does not route messages through the mailbox.
+
+- **In-process teammates** live inside the lead's terminal and have no panes, so
+  tmux-ide does not show them separately.
+- **The lead** is not tagged automatically, because it is not listed with a
+  tmux pane. Group it with `tmux-ide team assign %PANE "<team>"`; a manual
+  assignment takes precedence over discovered grouping.
+- **`tmux-ide send`** is not a team message, and the lead does not see it.
+- **Restore** rebuilds the panes but not the team. Claude Code removes the team
+  file when the lead session ends, so grouping disappears too. With
+  `--resume-agents`, a teammate pane that recorded a session id comes back as an
+  ordinary `claude --resume` conversation, not as a member of the team.
+- **New agent…** in the app starts an independent session; it does not add a
+  teammate to Claude's team.
+
+## Common questions
+
+### Do I need tmux for Claude Code agent teams?
+
+No. By default, teammates run in-process inside the lead's terminal. Split panes
+need tmux, or iTerm2 with its `it2` CLI according to Anthropic's guide. tmux-ide
+recognizes teammates only in tmux panes.
+
+### Does tmux-ide orchestrate the team?
+
+No. Claude Code's lead, task list and mailbox do. tmux-ide shows the teammate
+panes, their names and their status.
+
+### Why isn't the lead grouped with its teammates?
+
+Claude Code doesn't list the lead with a tmux pane, so tmux-ide can't match it.
+Group it yourself:
+
+```bash
+tmux-ide team assign %1 "<team>"
+```
+
+### Can I add Codex or other agents to a Claude team?
+
+Not to Claude Code's team; its teammates are Claude Code sessions. You can group
+any pane, including Codex, into a tmux-ide team with `tmux-ide team assign` and
+coordinate it with `send` and `wait`. See
+[Multi-agent teams](/docs/multi-agent-teams).
+
+### Does `tmux-ide restore` bring the team back?
+
+It brings back the panes and, with `--resume-agents`, their conversations, but
+as ordinary Claude Code sessions, not as members of a team. Ask the lead to
+spawn new teammates.
+
+## See also
+
+- [Multi-agent teams](/docs/multi-agent-teams) — coordinate mixed agents with send and wait
+- [Agent detection](/docs/agent-detection) — how each teammate's status is decided
+- [Restore and resume](/docs/restore-resume) — what comes back after a crash
+- [Agent automation](/docs/automation) — attributed reads and sends
+- [Anthropic's agent teams guide](https://code.claude.com/docs/en/agent-teams) — prompting and managing a team
