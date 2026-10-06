@@ -346,8 +346,6 @@ interface RecoveryRecord {
   readonly reason: "backpressure" | "requested";
   startedAtMs: number;
   retired: boolean;
-  continueReply: boolean;
-  continueNotify: boolean;
   stage:
     | "queued"
     | "stock-pause"
@@ -362,7 +360,6 @@ interface RecoveryRecord {
     | "confirm";
   attempts: number;
   reseedOrdinal: number;
-  outputOrdinal: number;
   confirmationOrdinal: number;
   atomicCollectorNonce: string | null;
   collectorStarted: boolean;
@@ -1334,7 +1331,6 @@ export class SessionChannel {
       if (disposition !== "live" && disposition !== "unrelated") {
         const ordinal = (this.outputOrdinals.get(runtimePane) ?? 0) + 1;
         this.outputOrdinals.set(runtimePane, ordinal);
-        stockRecovery.outputOrdinal = ordinal;
         this.opts.onOutputObserved?.(stockPane.semanticId, ageMs, timing);
         if (ageMs !== null) {
           this.ageByRuntime.set(runtimePane, ageMs);
@@ -1377,7 +1373,6 @@ export class SessionChannel {
       if (sub.feed.takeOverflowed()) overflowed = true;
     }
     if (overflowed) this.restartRecoveryAfterOutputOverflow(pane);
-    this.noteRecoveryOutput(pane, outputOrdinal);
   }
 
   // ── Seed / reseed (the atomic recipe) ────────────────────────────────────
@@ -1587,12 +1582,9 @@ export class SessionChannel {
       reason,
       startedAtMs: this.recoveryNowMs(),
       retired: false,
-      continueReply: false,
-      continueNotify: false,
       stage: "queued",
       attempts: 0,
       reseedOrdinal: 0,
-      outputOrdinal: this.outputOrdinals.get(pane.runtimeId) ?? 0,
       confirmationOrdinal: 0,
       atomicCollectorNonce: null,
       collectorStarted: false,
@@ -2112,10 +2104,6 @@ export class SessionChannel {
           }
           this.nativeBootstrapConfirmed = true;
           this.observeSnapshotMetadata(pane, result.cursorLine);
-          // The selected child reply owns its inline %continue. It adds no
-          // asynchronous notification debt to the legacy continue queue.
-          recovery.continueReply = true;
-          recovery.continueNotify = true;
           const ansiLines = result.ansiCapture
             ? captureLinesFromAnsiBytes(result.ansiCapture)
             : null;
@@ -2584,12 +2572,6 @@ export class SessionChannel {
     }
     this.observeRecovery(pane, recovery, "converged", null);
     if (recovery.lease) this.retireSnapshotLease(recovery.lease);
-  }
-
-  private noteRecoveryOutput(pane: PaneRecord, outputOrdinal: number): void {
-    const recovery = this.recoveries.get(pane.runtimeId);
-    if (!recovery || recovery.paneIncarnation !== pane.incarnation) return;
-    recovery.outputOrdinal = outputOrdinal;
   }
 
   private restartRecoveryAfterOutputOverflow(pane: PaneRecord): void {
