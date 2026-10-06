@@ -18,16 +18,23 @@ const technicalCaption = readFileSync(
   resolve(root, "components/marketing/technical-caption.tsx"),
   "utf8",
 );
+const installTabs = readFileSync(resolve(root, "components/marketing/install-tabs.tsx"), "utf8");
+const marketingSources = [page, sectionHeader, footer, banner, technicalCaption, installTabs].join(
+  "\n",
+);
 
 const failures = [];
 const expectAbsent = (source, pattern, message) => {
   if (pattern.test(source)) failures.push(message);
 };
 
+// Labels are sentence case. Uppercase eyebrows and flags were retired with
+// the role ramp; no marketing source may reintroduce them.
+expectAbsent(marketingSources, /\buppercase\b/u, "labels must be sentence case, not uppercase");
 expectAbsent(
-  page,
-  /\buppercase\b/u,
-  "uppercase must be scoped through the shared marketing-flag role",
+  `${marketingSources}\n${globalCss}`,
+  /\bmarketing-flag\b|text-transform:\s*uppercase/u,
+  "the retired uppercase marketing-flag role must not return",
 );
 expectAbsent(
   page,
@@ -35,8 +42,37 @@ expectAbsent(
   "one-pixel separator grids must use Mosaic, not MarketingGrid",
 );
 
-if (!/\.marketing-flag\s*\{[^}]*text-transform:\s*uppercase;/su.test(globalCss)) {
-  failures.push("marketing flags must resolve uppercase through their shared role");
+for (const role of [
+  "type-large-title",
+  "type-display-1",
+  "type-display-2",
+  "type-display-3",
+  "type-display-4",
+  "type-title-1",
+  "type-title-2",
+  "type-title-3",
+  "type-headline",
+  "type-subheadline",
+  "type-body",
+  "type-body-2",
+  "type-caption-1",
+  "type-caption-2",
+  "type-caption-3",
+  "type-marketing-body",
+  "type-marketing-lede",
+  "type-marketing-subtitle",
+  "type-page-title",
+]) {
+  if (!new RegExp(`@utility ${role} \\{`, "u").test(globalCss)) {
+    failures.push(`the type ramp must define ${role}`);
+  }
+}
+if (
+  !/:where\(h1, h2, h3, h4, h5, h6\)\s*\{[^}]*--font-display[^}]*calc\(0\.5px - 0\.028em\)/su.test(
+    globalCss,
+  )
+) {
+  failures.push("every heading must use the display face and the shared tracking formula");
 }
 
 if (
@@ -63,14 +99,16 @@ expectAbsent(
 );
 expectAbsent(logo, /^["']use client["'];/mu, "the static ASCII logo must remain server-rendered");
 expectAbsent(
-  `${page}\n${sectionHeader}\n${footer}`,
-  /\btext-\[(?:\d|clamp\()/u,
-  "landing typography must use semantic type roles, not local numeric sizes",
+  marketingSources,
+  /\btext-(?:\[(?:\d|clamp\()|(?:xs|sm|base|lg|xl|[2-9]xl)\b)/u,
+  "marketing typography must pick a type role, not a raw or Tailwind size",
 );
+// Weight is part of each type role (display medium, titles semibold, body
+// regular), so call sites never set it directly.
 expectAbsent(
-  `${page}\n${sectionHeader}\n${footer}\n${banner}`,
-  /\b(?:font-(?:medium|semibold|bold)|lowercase)\b/u,
-  "marketing typography must stay light, with mono flags resolved uppercase by their shared role",
+  marketingSources,
+  /\b(?:font-(?:thin|extralight|light|medium|semibold|bold|extrabold|black)|lowercase)\b/u,
+  "font weight must come from the type role, not the call site",
 );
 
 const stretchCount = page.match(/<Stretch\b/gu)?.length ?? 0;
@@ -108,13 +146,13 @@ if (!tuiFigure.includes("<figure") || !tuiFigure.includes("<TechnicalCaption")) 
 if (!technicalCaption.includes("Fig. {number}.")) {
   failures.push("technical captions must share the canonical figure label");
 }
-if (!technicalCaption.includes("marketing-type-micro")) {
+if (!technicalCaption.includes("type-caption-1")) {
   failures.push("technical captions must use a merge-safe type role");
 }
 expectAbsent(
-  `${page}\n${sectionHeader}\n${footer}\n${banner}\n${technicalCaption}`,
-  /\btext-marketing-(?:title|subtitle|body|caption|micro)\b/u,
-  "marketing type roles must not use Tailwind's ambiguous text-* namespace",
+  marketingSources,
+  /\b(?:text-marketing-[a-z]+|marketing-type-[a-z]+)\b/u,
+  "type roles use the type-* namespace (never Tailwind's ambiguous text-*, nor the retired names)",
 );
 
 for (const role of [
@@ -141,5 +179,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `Marketing structure verified: ${stretchCount} ground stretches, ${customBandBodyCount} intentional spacing exceptions, stable technical figures, role-based typography, semantic colors, and server-rendered branding.`,
+  `Marketing structure verified: ${stretchCount} ground stretches, ${customBandBodyCount} intentional spacing exceptions, stable technical figures, the role-based type ramp, semantic colors, and server-rendered branding.`,
 );
