@@ -95,6 +95,7 @@ export default async function HomePage() {
 
               <Cell className="marketing-enter marketing-enter-step-4 lg:col-span-11">
                 <p className="type-marketing-lede mt-7 max-w-[62ch] text-fd-muted-foreground">
+                  <span className="text-fd-foreground">{LANDING_HERO.ledeLead}</span>{" "}
                   {LANDING_HERO.lede}
                 </p>
                 <InstallTabs
@@ -176,7 +177,8 @@ export default async function HomePage() {
           <BandBody>
             <SectionHeader
               eyebrow="One workspace, every agent accounted for"
-              title="Name them. See their state. Go straight to the right pane."
+              title="Name them. See their state."
+              titleMuted="Go straight to the right pane."
               description="A clear three-step loop replaces terminal hunting with a workspace the whole team can understand."
             />
             <p className="type-body mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 text-fd-muted-foreground">
@@ -197,7 +199,7 @@ export default async function HomePage() {
                     <span className="font-mono">{feature.index}</span>
                     <span>{feature.eyebrow}</span>
                   </div>
-                  <h3 className="type-title-2 mt-10 text-fd-foreground">{feature.title}</h3>
+                  <h3 className="type-card-title mt-10 text-fd-foreground">{feature.title}</h3>
                   <p className={`mt-4 ${bodyCopy}`}>{feature.body}</p>
                   <TuiMiniFigure
                     variant={agentVisuals[index]}
@@ -215,7 +217,8 @@ export default async function HomePage() {
           <BandBody>
             <SectionHeader
               eyebrow="Durable by architecture"
-              title="Close the interface. Disconnect SSH. Your agents keep running."
+              title="Close the interface. Disconnect SSH."
+              titleMuted="Your agents keep running."
               description={
                 <>
                   tmux has already absorbed years of terminal, resize, shell, disconnect, and remote
@@ -231,7 +234,7 @@ export default async function HomePage() {
                   <span className="type-caption-1 font-mono text-fd-muted-foreground">
                     0{index + 1}
                   </span>
-                  <h3 className="type-title-2 mt-8 text-fd-foreground">{layer.owner}</h3>
+                  <h3 className="type-card-title mt-8 text-fd-foreground">{layer.owner}</h3>
                   <p className="type-body-2 mt-3 min-h-10 text-fd-muted-foreground">
                     {layer.responsibility}
                   </p>
@@ -282,7 +285,7 @@ export default async function HomePage() {
                   <span className="type-caption-1 font-mono text-fd-muted-foreground">
                     {capability.index}
                   </span>
-                  <h3 className="type-title-2 mt-8 text-fd-foreground">{capability.title}</h3>
+                  <h3 className="type-card-title mt-8 text-fd-foreground">{capability.title}</h3>
                   <p className={`mt-4 ${bodyCopy}`}>{capability.body}</p>
                   <ul className="type-caption-1 mt-6 flex flex-wrap gap-x-5 gap-y-2 text-fd-muted-foreground">
                     {capability.items.map((item) => (

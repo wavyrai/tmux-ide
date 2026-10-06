@@ -7,7 +7,10 @@ import { INSTALL_COMMAND } from "@/lib/site";
 export const LANDING_HERO = {
   eyebrow: "Build your team of agents",
   title: "A dedicated workspace for your coding agents.",
-  lede: "Build, coordinate, and navigate a team of coding agents from one agent-aware communication plane. See what every agent is doing and jump directly to the one that needs you.",
+  // The lede leads with one foreground sentence; the rest reads in the muted tone.
+  ledeLead:
+    "Build, coordinate, and navigate a team of coding agents from one agent-aware communication plane.",
+  lede: "See what every agent is doing and jump directly to the one that needs you.",
 } as const;
 
 export interface InstallMethod {

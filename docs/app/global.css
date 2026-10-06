@@ -29,47 +29,62 @@
 @custom-variant hover-only (@media (hover: hover));
 
 :root {
-  /* Optical white, neutral paper greys, and ink-black controls preserve the
-     original tmux-ide site. Product color belongs to the TUI specimen itself. */
-  --color-fd-background: #ffffff;
-  --color-fd-foreground: #171717;
-  --color-fd-muted: #f5f5f5;
-  --color-fd-muted-foreground: #6b6b6b;
-  --color-fd-card: #fafafa;
-  --color-fd-card-foreground: #171717;
-  --color-fd-border: rgb(23 23 23 / 12%);
-  --color-fd-primary: #171717;
-  --color-fd-primary-foreground: #ffffff;
-  --color-fd-ring: #525252;
-  --color-fd-accent: rgb(23 23 23 / 7%);
-  --color-fd-accent-foreground: #171717;
-  --marketing-paper: #ffffff;
-  --marketing-raise: #fafafa;
-  --marketing-panel: #f4f4f4;
-  --marketing-line: #e5e5e5;
+  /* Neutral zinc palette: an off-white page with white raised surfaces,
+     near-black headings and a cool grey for supporting text. Product colour
+     belongs to the TUI specimen and the small accent tokens below. */
+  --color-fd-background: oklch(0.987 0 0);
+  --color-fd-foreground: oklch(0.1405 0.004 285.8);
+  --color-fd-muted: oklch(0.967 0.001 286.4);
+  --color-fd-muted-foreground: oklch(0.45 0.014 285.9);
+  --color-fd-card: oklch(1 0 0);
+  --color-fd-card-foreground: oklch(0.1405 0.004 285.8);
+  --color-fd-border: oklch(0.92 0.004 286.3);
+  --color-fd-primary: oklch(0.1405 0.004 285.8);
+  --color-fd-primary-foreground: oklch(0.987 0 0);
+  --color-fd-ring: oklch(0.552 0.016 285.9);
+  --color-fd-accent: oklch(0.1405 0.004 285.8 / 6%);
+  --color-fd-accent-foreground: oklch(0.1405 0.004 285.8);
+  --marketing-paper: oklch(0.987 0 0);
+  --marketing-raise: oklch(1 0 0);
+  --marketing-panel: oklch(0.967 0.001 286.4);
+  --marketing-line: oklch(0.92 0.004 286.3);
   --terminal-stage: #0f0f14;
   --terminal-line: rgb(255 255 255 / 10%);
+  /* Long-form docs text sits one step softer than headings. */
+  --docs-prose-body: oklch(0.3247 0.0017 106.5);
+  /* Accent hues for flourishes (the copy beam), harness marks and success. */
+  --chart-1: oklch(0.72 0.17 150);
+  --chart-2: oklch(0.72 0.12 195);
+  --chart-3: oklch(0.64 0.16 262);
+  --chart-4: oklch(0.63 0.19 300);
+  --chart-5: oklch(0.68 0.18 352);
+  --chart-6: oklch(0.79 0.15 78);
+  --mark-claude: oklch(0.68 0.15 40);
+  --mark-codex: oklch(0.63 0.17 278);
+  --color-success: oklch(0.78 0.17 150);
 }
 
 .dark {
-  --color-fd-background: #0d0d0d;
-  --color-fd-foreground: #f5f5f5;
-  --color-fd-muted: #171717;
-  --color-fd-muted-foreground: #a3a3a3;
-  --color-fd-card: #121212;
-  --color-fd-card-foreground: #f5f5f5;
-  --color-fd-border: rgb(245 245 245 / 13%);
-  --color-fd-primary: #f5f5f5;
-  --color-fd-primary-foreground: #0d0d0d;
-  --color-fd-ring: #a3a3a3;
-  --color-fd-accent: rgb(245 245 245 / 9%);
-  --color-fd-accent-foreground: #f5f5f5;
-  --marketing-paper: #0d0d0d;
-  --marketing-raise: #121212;
-  --marketing-panel: #171717;
-  --marketing-line: #292929;
+  --color-fd-background: oklch(0.1405 0.004 285.8);
+  --color-fd-foreground: oklch(0.9848 0 0);
+  --color-fd-muted: oklch(0.21 0.006 285.9);
+  --color-fd-muted-foreground: oklch(0.7119 0.013 286.1);
+  --color-fd-card: oklch(0.168 0.006 285.7);
+  --color-fd-card-foreground: oklch(0.9848 0 0);
+  --color-fd-border: oklch(0.245 0.006 286);
+  --color-fd-primary: oklch(0.9848 0 0);
+  --color-fd-primary-foreground: oklch(0.1405 0.004 285.8);
+  --color-fd-ring: oklch(0.705 0.015 286.1);
+  --color-fd-accent: oklch(0.9848 0 0 / 8%);
+  --color-fd-accent-foreground: oklch(0.9848 0 0);
+  --marketing-paper: oklch(0.1405 0.004 285.8);
+  --marketing-raise: oklch(0.168 0.006 285.7);
+  --marketing-panel: oklch(0.19 0.006 285.8);
+  --marketing-line: oklch(0.245 0.006 286);
   --terminal-stage: #0f0f14;
   --terminal-line: rgb(255 255 255 / 10%);
+  --docs-prose-body: oklch(0.9848 0 0);
+  --color-success: oklch(0.6 0.17 150);
 }
 
 /* ── Type system ───────────────────────────────────────────────────────────
@@ -89,12 +104,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Every heading uses the display face. The tracking formula tightens large
-   sizes (−1.3px at 64px, −0.4px at 32px) and resolves to roughly zero at body
-   sizes, so one rule serves the whole ramp. */
+/* Every heading uses the display face and balanced wrapping. Tracking is
+   part of each role: display and title sizes (24px and up) tighten by
+   −0.02em; smaller headings keep the face's natural spacing. */
 :where(h1, h2, h3, h4, h5, h6) {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
-  letter-spacing: calc(0.5px - 0.028em);
   text-wrap: balance;
 }
 
@@ -138,7 +152,7 @@ body {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
   font-size: 4rem;
   line-height: 5rem;
-  letter-spacing: calc(0.5px - 0.028em);
+  letter-spacing: -0.02em;
   font-weight: 500;
 }
 
@@ -146,7 +160,7 @@ body {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
   font-size: 3.5rem;
   line-height: 4.5rem;
-  letter-spacing: calc(0.5px - 0.028em);
+  letter-spacing: -0.02em;
   font-weight: 500;
 }
 
@@ -154,7 +168,7 @@ body {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
   font-size: 3rem;
   line-height: 4rem;
-  letter-spacing: calc(0.5px - 0.028em);
+  letter-spacing: -0.02em;
   font-weight: 500;
 }
 
@@ -162,7 +176,7 @@ body {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
   font-size: 2.5rem;
   line-height: 3.375rem;
-  letter-spacing: calc(0.5px - 0.028em);
+  letter-spacing: -0.02em;
   font-weight: 500;
 }
 
@@ -170,7 +184,7 @@ body {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
   font-size: 2rem;
   line-height: 2.75rem;
-  letter-spacing: calc(0.5px - 0.028em);
+  letter-spacing: -0.02em;
   font-weight: 600;
 }
 
@@ -178,7 +192,7 @@ body {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
   font-size: 1.5rem;
   line-height: 2.125rem;
-  letter-spacing: calc(0.5px - 0.028em);
+  letter-spacing: -0.02em;
   font-weight: 600;
 }
 
@@ -234,6 +248,14 @@ body {
 }
 
 /* Marketing reading roles: roomier line boxes for running text. */
+/* Card and list-item titles: body size, carried by weight and tone. */
+@utility type-card-title {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.5rem;
+  font-weight: 600;
+}
+
 @utility type-marketing-body {
   font-size: 0.9375rem;
   line-height: 1.5rem;
@@ -241,8 +263,8 @@ body {
 }
 
 @utility type-marketing-lede {
-  font-size: 1.0625rem;
-  line-height: 1.75rem;
+  font-size: 1.125rem;
+  line-height: 1.5rem;
   text-wrap: pretty;
 }
 
@@ -258,7 +280,7 @@ body {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
   font-size: 2rem;
   line-height: 2.75rem;
-  letter-spacing: calc(0.5px - 0.028em);
+  letter-spacing: -0.02em;
   font-weight: 600;
   text-wrap: balance;
 
@@ -313,39 +335,35 @@ body {
 /* Documentation prose. Fumadocs' typography plugin ships its own heading
    scale; these overrides map it onto the role ramp so MDX pages inherit the
    system without page-specific classes. */
+/* Docs read like an interface manual: a title-1 page title, a 16/22 muted
+   description and 14/20 body text one tone softer than headings. */
 .docs-title {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
-  font-size: 2rem !important;
-  line-height: 2.75rem !important;
+  font-size: 1.5rem !important;
+  line-height: 2.125rem !important;
   font-weight: 600 !important;
-  letter-spacing: calc(0.5px - 0.028em) !important;
+  letter-spacing: -0.02em !important;
   text-wrap: balance;
-}
-
-@media (width >= 48rem) {
-  .docs-title {
-    font-size: 2.5rem !important;
-    line-height: 3.375rem !important;
-    font-weight: 500 !important;
-  }
 }
 
 .docs-description {
   max-width: 62ch;
-  font-size: 1.0625rem !important;
-  line-height: 1.75rem !important;
+  font-size: 1rem !important;
+  line-height: 1.375rem !important;
   text-wrap: pretty;
 }
 
 .docs-prose {
-  font-size: 0.9375rem !important;
-  line-height: 1.5rem !important;
+  --tw-prose-body: var(--docs-prose-body);
+  color: var(--docs-prose-body);
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
 }
 
 .docs-prose
   :where(h1, h2, h3, h4, h5, h6):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
-  letter-spacing: calc(0.5px - 0.028em) !important;
+  color: var(--color-fd-foreground);
   text-wrap: balance;
 }
 
@@ -353,6 +371,7 @@ body {
   font-size: 1.5rem !important;
   line-height: 2.125rem !important;
   font-weight: 600 !important;
+  letter-spacing: -0.02em !important;
 }
 
 .docs-prose :where(h3):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
@@ -538,18 +557,18 @@ body {
    reader's theme. Rebinding the same semantic tokens keeps every child on the
    design system instead of scattering one-off white/black utilities. */
 .marketing-dark-footer {
-  --color-fd-background: #0d0d0d;
-  --color-fd-foreground: #f5f5f5;
-  --color-fd-muted-foreground: #a3a3a3;
-  --color-fd-primary: #ffffff;
-  --color-marketing-paper: #0d0d0d;
-  --color-marketing-raise: #141414;
+  --color-fd-background: oklch(0.1405 0.004 285.8);
+  --color-fd-foreground: oklch(0.9848 0 0);
+  --color-fd-muted-foreground: oklch(0.7119 0.013 286.1);
+  --color-fd-primary: oklch(1 0 0);
+  --color-marketing-paper: oklch(0.1405 0.004 285.8);
+  --color-marketing-raise: oklch(0.168 0.006 285.7);
   --color-marketing-line: rgb(255 255 255 / 12%);
-  --marketing-paper: #0d0d0d;
-  --marketing-raise: #141414;
+  --marketing-paper: oklch(0.1405 0.004 285.8);
+  --marketing-raise: oklch(0.168 0.006 285.7);
   --marketing-line: rgb(255 255 255 / 12%);
-  background-color: #0d0d0d;
-  color: #f5f5f5;
+  background-color: oklch(0.1405 0.004 285.8);
+  color: oklch(0.9848 0 0);
   color-scheme: dark;
 }
 
@@ -568,15 +587,15 @@ body {
 }
 
 .marketing-dark-footer .footer-surface {
-  background-color: #0d0d0d;
+  background-color: oklch(0.1405 0.004 285.8);
 }
 
 .marketing-dark-footer .footer-foreground {
-  color: #f5f5f5;
+  color: oklch(0.9848 0 0);
 }
 
 .marketing-dark-footer .footer-muted {
-  color: #a3a3a3;
+  color: oklch(0.7119 0.013 286.1);
 }
 
 .marketing-dark-footer .footer-wordmark {
