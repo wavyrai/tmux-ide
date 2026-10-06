@@ -1,3 +1,4 @@
+import { OwnedSnapshotChannel } from "../mirror/__tests__/owned-snapshot-channel.ts";
 import { describe, expect, it, vi } from "vitest";
 import {
   PANE_STREAM_PROTOCOL_VERSION,
@@ -35,12 +36,7 @@ import {
   SessionRuntimeRegistry,
 } from "../session-runtime/registry.ts";
 import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
-import {
-  SimulatedChannel,
-  fixtureAutoReply,
-  fixtureState,
-  FIXTURE,
-} from "../mirror/__tests__/simulated-channel.ts";
+import { fixtureAutoReply, fixtureState, FIXTURE } from "../mirror/__tests__/simulated-channel.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import { createPaneStreamRuntime } from "./runtime.ts";
 import {
@@ -679,33 +675,39 @@ describe("PaneStreamAdmissionCoordinator", () => {
       observability,
       mirror: {
         createIo: (_session, handlers) => {
-          const sim = new SimulatedChannel(handlers, (command) => {
-            const reply = fixtureAutoReply(state)(command);
-            if (reply) return reply;
-            if (command.includes("capture-pane -p -R")) {
-              // This portable fixture has backing-only v1 capability. Returning
-              // ANSI text as native JSON would instead model a corrupt capture.
-              return [
-                JSON.stringify({
-                  version: 1,
-                  cols: 1,
-                  rows: 1,
-                  history: 0,
-                  hscrolled: 0,
-                  limit: 2000,
-                  cursor: [0, 0],
-                }),
-                JSON.stringify({ row: 0, flags: 0, used: 0, cells: [] }),
-              ];
-            }
-            if (command.includes("capture-pane")) return ["seed"];
-            if (command.includes("display-message")) {
-              if (command.includes("-t %2")) return ["0 0 99 50"];
-              if (command.includes("-t %3")) return ["0 0 200 50"];
-              return ["0 0 100 50"];
-            }
-            return [];
-          });
+          const sim = new OwnedSnapshotChannel(
+            handlers,
+            (command) => {
+              const reply = fixtureAutoReply(state)(command);
+              if (reply) return reply;
+              if (command.startsWith("set-option -po") || command.startsWith("if-shell")) return [];
+              if (command.includes("capture-pane -p -R")) {
+                // This portable fixture has backing-only v1 capability. Returning
+                // ANSI text as native JSON would instead model a corrupt capture.
+                return [
+                  JSON.stringify({
+                    version: 1,
+                    cols: 1,
+                    rows: 1,
+                    history: 0,
+                    hscrolled: 0,
+                    limit: 2000,
+                    cursor: [0, 0],
+                  }),
+                  JSON.stringify({ row: 0, flags: 0, used: 0, cells: [] }),
+                ];
+              }
+              if (command.includes("capture-pane")) return ["seed"];
+              if (command.includes("display-message")) {
+                if (command.includes("-t %2")) return ["0 0 99 50"];
+                if (command.includes("-t %3")) return ["0 0 200 50"];
+                return ["0 0 100 50"];
+              }
+              return [];
+            },
+            () => ["seed"],
+            () => "0 0 100 50",
+          );
           return sim;
         },
         controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),

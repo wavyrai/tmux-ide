@@ -54,7 +54,7 @@ the patches listed there; the test command records the actual binary identity.
 
 The initial journey has **one active output pane**. A separate isolated wire
 experiment has confirmed that a sibling pane's backlog can allow post-capture
-output to overtake the capture reply. It reproduces on the bundled tmux 3.7c
+output to overtake the capture reply. It reproduces on the original, unpatched bundled tmux 3.7c
 and a clean build of the pinned upstream commit. With control stdout temporarily
 undrained, flood pane B, issue a capture of A followed by an execution barrier,
 then make A print a unique marker only after that barrier. A's marker arrives
@@ -74,8 +74,9 @@ native atomic snapshot path requires a paused target and an empty global block
 queue before committing snapshot and stream offsets; preserve those guards.
 
 The retained `tmux-boundary-ordering-live.test.ts` asserts the correct final
-canonical content in this two-pane failure. It fails on the original bundled
-server and clean pinned stock server. The ordered
+canonical content in this two-pane failure. With the previous application
+implementation, it fails on the original bundled server and clean pinned stock
+server. The ordered
 `native/tmux/control-output-barriers.patch` corrects the bundled scheduler:
 panes share a scheduling budget within each segment between queued control lines,
 and no later segment can drain before the preceding line. Lines exposed by
@@ -85,9 +86,10 @@ age-triggered pause, pane off/death and service of both flooding panes.
 
 The server format `#{tmux_ide_control_output_barriers}` returns `1` only for the
 patched scheduler. A new client connected to an old server does not provide this
-guarantee. Stock/old-server reseeding remains an open TM02 requirement; do not
-infer it from a passing test with the new bundled server. Local native builds
-also require separate supported-platform and release-artifact qualification.
+guarantee. The client also uses the stock-server snapshot protocol below; its
+qualification must use an actual stock server, independently of the patched
+scheduler. Local native builds require separate supported-platform and
+release-artifact qualification.
 
 These contracts do not establish a global atomic snapshot across independent
 clients or panes. `%pause`/`%continue`, capture failure and pane disappearance need
@@ -110,6 +112,48 @@ server while its reader is paused, cancels before the start reply is observed,
 then drains and successfully invokes another hook on the same connection. The
 previous implementation fails this test by admitting the replacement too soon.
 
+### Stock-server snapshot protocol
+
+One connection-wide lease serializes snapshot work across panes. Cancellation
+invalidates the recipient immediately, but the lease stays occupied until its
+collector drains. Queued panes share bounded admission; repeated requests do not
+extend the recovery's original absolute deadline.
+
+The stock path first invokes a nonce-owned, synchronous NOHOOKS body on the exact
+live pane. Its three authenticated reply blocks establish a successful target
+pause. A new `%pause` notification may be absent if the target was already
+paused; an arbitrary successful `refresh-client` reply without the owned live
+pane invocation is not equivalent proof. The pause collector must drain before
+the snapshot collector is admitted.
+
+A second NOHOOKS body captures the screen, reads cursor/mode metadata and continues
+the target without yielding to the event loop. When native and ANSI subscribers
+share a pane, it captures both representations in that same body, with separate
+sentinels and a combined payload bound. Native capability is negotiated against
+the live server with a bounded full-history probe; a partial screen export can
+carry a full-history header and must not be mistaken for a complete native grid.
+
+`StockPaneSnapshot` holds all target output observed after the pause boundary,
+including bytes that stock tmux delivers before the older capture reply. It
+publishes reset, seed and capture-time cursor/mode metadata before replaying those
+held bytes exactly once. Participant, pane incarnation and layout generation
+changes invalidate the candidate. Capture/probe corruption is rejected directly;
+an internally consistent snapshot ahead of known layout authority waits for a
+new successful inventory sync within the original deadline.
+
+Temporary hook options use nonce ownership and compare-before-invoke and cleanup.
+A substituted hook is not executed or deleted. Closing the final subscriber
+returns an internally owned pause only after the outstanding wire has drained.
+Channel teardown cancels admission timers and queued work. The specialized native
+`-Q` path retains its native identity, paused-target and stream-offset guards
+while sharing the same admission owner.
+
+The real ordering fixture checks single and mixed viewers, both final content and
+a post-capture terminal mode change. A passive `no-output,ignore-size` control
+client keeps tmux reading the producer while the tested reader is deliberately
+stalled. No fixture callback fabricates or reorders tmux's output. This checks the
+snapshot boundary, not physical renderer correctness or native-speed parity.
+
 ### First-slice operation inventory
 
 The inventory covers the current live fixture and its production owners, not every
@@ -124,7 +168,7 @@ command exposed by tmux-ide. Source paths below are relative to
 | Cursor/size/mode `display-message`                                 | `session-channel.ts`, `RECOVERY_CURSOR_PROBE_FORMAT` and inline callback                                                | Invalid/failed or mismatched geometry quarantines/retries in the owner; no partially valid geometry assertion           |
 | `send-keys` literals/bytes/named keys                              | `session-channel.ts`, `InputCoalescer`; discard reply slots are still consumed                                          | One semantic pane mapping; literals flush before named keys; this slice checks processed input, not all modifiers/mouse |
 | Attached PTY resize                                                | Test client → tmux native client-size arbitration → layout notification and reseed                                      | One attached sizing client; application `fitViewport`/multi-viewer policy is not exercised by this fixture              |
-| Format subscriptions and layout/output notifications               | `session-channel.ts` startup `refresh-client -B`; control parser dispatch                                               | Notification order and geometry changes can invalidate a pending seed; multipane scheduling remains unverified          |
+| Format subscriptions and layout/output notifications               | `session-channel.ts` startup `refresh-client -B`; control parser dispatch                                               | Notification order and geometry changes can invalidate a pending seed; arbitrary multipane schedules remain unverified  |
 | Retire owner/service and reattach                                  | `terminal-replica-owner.ts` and `MirrorService.dispose`                                                                 | Existing pane survives; retired subscriber receives no callbacks; a new owner publishes a fresh baseline                |
 
 ## Independent transcript model
@@ -226,10 +270,10 @@ renderer, flow recovery and linked-window tests remain necessary.
 
 ## Next extensions, in order
 
-- Correct the stock/old-server capture boundary and retain the bundled-server
-  regression, then
-  connect a generated legal wire-event schedule to SessionChannel, retaining the
-  independent oracle and shrinking. Cover response failures and bounded overflow.
+- Broaden stock/old-server failure and lifecycle qualification beyond the retained
+  regressions, then connect generated legal wire-event schedules to SessionChannel
+  with an independent oracle and shrinking. Cover cancellation, disconnect, stale
+  publication, response failures and bounded overflow.
 - Add native physical-cell and mode checkpoints, alternate screens, wrapping,
   erase/insert operations, Unicode transitions and large-history reflow.
 - Model geometry generations and continuously check published frames during

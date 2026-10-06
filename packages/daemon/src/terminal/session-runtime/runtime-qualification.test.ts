@@ -603,15 +603,17 @@ describe("real SessionRuntime qualification", () => {
       const siblingBefore = latest(siblingSink);
       connections.forEach((connection, index) => connection.ack(ack(before[index]!)));
       sibling.ack(ack(siblingBefore));
-      // Reject one recovery command, exercising the real channel failure,
-      // owner fault, and registry retirement path with healthy sibling output.
-      const send = driver.channel.send.bind(driver.channel);
+      // Reject each owned pause setup through the real FIFO until the bounded
+      // recovery budget faults this pane. Healthy sibling ingestion stays live.
+      const commandInline = driver.channel.commandInline.bind(driver.channel);
       let rejected = false;
-      driver.channel.send = (command, onReply) => {
-        if (!rejected && command === "refresh-client -A '%1:continue'") {
+      driver.channel.commandInline = (command, onReply) => {
+        if (/^set-option -po -t %1 @tmux_ide_pause_/u.test(command)) {
           rejected = true;
-          onReply?.({ ok: false, lines: ["injected continue failure"] });
-        } else send(command, onReply);
+          driver.channel.core.push({ kind: "inline", onReply, lines: [] });
+          driver.channel.written.push(command);
+          driver.channel.reply(["injected pause setup failure"], false);
+        } else commandInline(command, onReply);
       };
       driver.channel.feedLines("%pause %1");
       await vi.waitFor(
@@ -622,6 +624,7 @@ describe("real SessionRuntime qualification", () => {
         { timeout: 6000 },
       );
       expect(rejected).toBe(true);
+      driver.channel.commandInline = commandInline;
       expect(latest(siblingSink)).toBe(siblingBefore);
       await Promise.all(connections.map((connection) => connection.close()));
       const nextSinks = clients.map(() => [] as TerminalDeliveryServerMessage[]);

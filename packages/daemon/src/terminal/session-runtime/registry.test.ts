@@ -1,3 +1,4 @@
+import { OwnedSnapshotChannel } from "../mirror/__tests__/owned-snapshot-channel.ts";
 import { testInteractionContext } from "../../../test-support/interaction-evidence.ts";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionRuntimeSemanticIntent } from "@tmux-ide/contracts";
@@ -108,13 +109,18 @@ function rig(generation = GENERATION_A): {
   const sims: SimulatedChannel[] = [];
   const mirror: MirrorServiceOptions = {
     createIo: (_session, handlers) => {
-      const sim = new SimulatedChannel(handlers, (command) => {
-        const reply = fixtureAutoReply(fixtureState())(command);
-        if (reply) return reply;
-        if (command.includes("capture-pane")) return ["seed"];
-        if (command.startsWith("display-message")) return ["0 0 100 50"];
-        return [];
-      });
+      const sim = new OwnedSnapshotChannel(
+        handlers,
+        (command) => {
+          const reply = fixtureAutoReply(fixtureState())(command);
+          if (reply) return reply;
+          if (command.includes("capture-pane")) return ["seed"];
+          if (command.startsWith("display-message")) return ["0 0 100 50"];
+          return [];
+        },
+        () => ["seed"],
+        () => "0 0 100 50",
+      );
       sims.push(sim);
       return sim;
     },
@@ -152,7 +158,11 @@ function delayedStartRig(): {
   return { registry, sims, releaseStart };
 }
 
-function finishSeed(sim: SimulatedChannel): void {
+async function finishSeed(sim: SimulatedChannel): Promise<void> {
+  if (sim instanceof OwnedSnapshotChannel) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return;
+  }
   sim.reply(["seed"]);
   sim.reply(["0 0 100 50"]);
 }
@@ -302,7 +312,7 @@ describe("SessionRuntimeRegistry", () => {
     const { registry, sims } = rig();
     const warming = registry.prewarmSession(FIXTURE.session);
     await vi.waitFor(() => expect(sims).toHaveLength(1));
-    finishSeed(sims[0]!);
+    await finishSeed(sims[0]!);
     await warming;
 
     await expect(registry.describeSession(FIXTURE.session)).resolves.toMatchObject({
@@ -437,7 +447,7 @@ describe("SessionRuntimeRegistry", () => {
     const warming = registry.prewarmSession(FIXTURE.session);
     await vi.waitFor(() => expect(sims).toHaveLength(1));
     const retirement = registry.retireSession(FIXTURE.session);
-    finishSeed(sims[0]!);
+    await finishSeed(sims[0]!);
 
     await Promise.allSettled([warming, retirement]);
     expect(registry.sessionCount()).toBe(0);
@@ -557,7 +567,7 @@ describe("SessionRuntimeRegistry", () => {
     const editor = registry.connect("alpha-session", "terminal-attachment", "client:editor");
     const subscribing = editor.subscribe("pane.alpha", () => {});
     await vi.waitFor(() => expect(base.sims).toHaveLength(1));
-    finishSeed(base.sims[0]!);
+    await finishSeed(base.sims[0]!);
     const subscription = await subscribing;
     let releaseSubscriptionClose!: () => void;
     const subscriptionCloseGate = new Promise<void>((resolve) => {
@@ -834,9 +844,9 @@ describe("SessionRuntimeRegistry", () => {
     const slowSubscription = await slow.subscribe("pane.alpha", (event) => {
       slowEvents.push(event.type);
     });
-    finishSeed(sims[0]!);
+    await finishSeed(sims[0]!);
     await live.subscribe("pane.alpha", (event) => liveEvents.push(event.type));
-    finishSeed(sims[0]!);
+    await finishSeed(sims[0]!);
 
     slowEvents.length = 0;
     liveEvents.length = 0;
@@ -1171,7 +1181,7 @@ describe("SessionRuntimeRegistry", () => {
     const slow = registry.connect("alpha-session", "web", "client:slow");
     const controller = registry.connect("alpha-session", "opentui", "client:controller");
     const subscription = await slow.subscribe("pane.alpha", () => {});
-    finishSeed(sims[0]!);
+    await finishSeed(sims[0]!);
     subscription.freeze();
 
     const lease = controller.acquireController();
