@@ -336,6 +336,7 @@ const checks = [
       "src/lib/tmux-server-transport-live.test.ts",
       "src/lib/tmux-server-session-open-live.test.ts",
       "src/lib/tmux-server-coexistence-live.test.ts",
+      "src/terminal/mirror/manual-window-sizing-live.test.ts",
       "src/lib/__tests__/workspace-promotion-live.test.ts",
     ],
   },
