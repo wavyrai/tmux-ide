@@ -345,7 +345,9 @@
    17.5px lede with relaxed leading, in the hero's own ink tones. */
 @utility type-hero-title {
   font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
-  font-size: 3.2rem;
+  /* Phones scale with the viewport (about 41px at 390, 38px at 360) so the
+     headline sets in three lines without an orphaned first word. */
+  font-size: clamp(2.375rem, 10.6vw, 3.2rem);
   line-height: 1.02;
   letter-spacing: -0.03em;
   font-weight: 600;
@@ -552,6 +554,22 @@
 .install-tabs:has(input[value="curl"]:checked) .install-panel[data-method="curl"],
 .install-tabs:has(input[value="npm"]:checked) .install-panel[data-method="npm"] {
   display: block;
+}
+
+/* The command never wraps: one line that scrolls sideways on narrow
+   screens, with the scrollbar hidden and a fade at the trailing edge. The
+   whole box stays the copy target. */
+.install-command-text {
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
+}
+
+.install-command-text::-webkit-scrollbar {
+  display: none;
 }
 
 /* Centred variant for the hero: tab row and note centre under the command. */
