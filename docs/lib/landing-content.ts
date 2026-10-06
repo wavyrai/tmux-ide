@@ -123,7 +123,7 @@ export const LANDING_CAPABILITIES = [
     body: "Open clean windows and give agents, panes, and sessions names your team can remember.",
     items: ["new windows", "named agents and panes"],
     visual: "window",
-    figure: { number: "04.1", label: "Create / windows and names" },
+    figure: { number: "05.1", label: "Create / windows and names" },
   },
   {
     index: "02",
@@ -131,7 +131,7 @@ export const LANDING_CAPABILITIES = [
     body: "Split and resize the workspace while the real tmux layout remains the source of truth.",
     items: ["split panes", "pane resize"],
     visual: "resize",
-    figure: { number: "04.2", label: "Arrange / splits and resize" },
+    figure: { number: "05.2", label: "Arrange / splits and resize" },
   },
   {
     index: "03",
@@ -139,29 +139,6 @@ export const LANDING_CAPABILITIES = [
     body: "Focus exact agent targets and close panes deliberately without disturbing the session.",
     items: ["precise focus", "explicit close"],
     visual: "focus",
-    figure: { number: "04.3", label: "Operate / focus and close" },
-  },
-] as const;
-
-export const LANDING_ARCHITECTURE = [
-  {
-    owner: "tmux",
-    responsibility: "processes · PTYs · sessions · windows · panes",
-    outcome: "The durable source of truth",
-    link: { label: "Restore sessions after a crash", href: "/docs/restore-resume" },
-    figure: { number: "03.1", label: "tmux / durable process ownership" },
-  },
-  {
-    owner: "tmux-ide daemon",
-    responsibility: "discovery · lifecycle · agent state · pane streams",
-    outcome: "One model of every machine, session and agent",
-    link: { label: "Connect to a machine over SSH", href: "/docs/remote-machines" },
-    figure: { number: "03.2", label: "Daemon / one model of machines, sessions and agents" },
-  },
-  {
-    owner: "tmux-ide app",
-    responsibility: "navigation · agent chrome · controls · input",
-    outcome: "The interface you operate",
-    figure: { number: "03.3", label: "App / agent-aware control surface" },
+    figure: { number: "05.3", label: "Operate / focus and close" },
   },
 ] as const;

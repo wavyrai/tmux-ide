@@ -17,10 +17,10 @@ import {
 import { SectionHeader } from "@/components/marketing/section-header";
 import { TechnicalCaption } from "@/components/marketing/technical-caption";
 import { TuiMiniFigure, type TuiFigureVariant } from "@/components/marketing/tui-mini-figure";
+import { AgentTeamsFigure, ArchitectureFigure } from "@/components/figures/figures";
 import tuiDemoSize from "@/components/marketing/tui-demo-size.json";
 import {
   LANDING_AGENT_FEATURES,
-  LANDING_ARCHITECTURE,
   LANDING_CAPABILITIES,
   LANDING_FAQ,
   LANDING_HERO,
@@ -43,7 +43,6 @@ export const metadata: Metadata = {
 
 const bodyCopy = "type-marketing-body max-w-[62ch] text-fd-muted-foreground";
 const agentVisuals = ["names", "status", "navigate"] satisfies TuiFigureVariant[];
-const architectureVisuals = ["tmux", "daemon", "opentui"] satisfies TuiFigureVariant[];
 
 async function fetchStarCount(): Promise<number | null> {
   try {
@@ -219,7 +218,7 @@ export default async function HomePage() {
                   <TuiMiniFigure
                     variant={agentVisuals[index]}
                     figure={feature.figure}
-                    motionCount={9}
+                    motionCount={6}
                     motionIndex={index}
                     className="mt-10"
                   />
@@ -230,61 +229,12 @@ export default async function HomePage() {
         </Band>
         <Band>
           <BandBody>
-            <SectionHeader
-              eyebrow="Durable by architecture"
-              title="Agents keep running in tmux."
-              titleMuted="Close the app or lose SSH."
-              description={
-                <>
-                  tmux has already absorbed years of terminal, resize, shell, disconnect, and remote
-                  session edge cases. Its commands and session vocabulary are also familiar to
-                  coding agents. tmux-ide builds on that shared language instead of introducing a
-                  private multiplexer protocol.
-                </>
-              }
-            />
-            <Mosaic bleed className="mt-12 lg:grid-cols-3">
-              {LANDING_ARCHITECTURE.map((layer, index) => (
-                <Cell key={layer.owner} ground="paper" className="flex h-full flex-col p-7">
-                  <span className="type-caption-1 font-mono text-fd-muted-foreground">
-                    0{index + 1}
-                  </span>
-                  <h3 className="type-card-title mt-8 text-fd-foreground">{layer.owner}</h3>
-                  <p className="type-body-2 mt-3 min-h-10 text-fd-muted-foreground">
-                    {layer.responsibility}
-                  </p>
-                  <p className="type-body mt-8 border-t border-fd-border pt-4 text-fd-foreground">
-                    {layer.outcome}
-                  </p>
-                  {"link" in layer ? (
-                    <Link
-                      href={layer.link.href}
-                      className="type-body marketing-link-action mt-3 self-start text-fd-primary"
-                    >
-                      {layer.link.label} →
-                    </Link>
-                  ) : null}
-                  <TuiMiniFigure
-                    variant={architectureVisuals[index]}
-                    figure={layer.figure}
-                    motionCount={9}
-                    motionIndex={index + 3}
-                    className="mt-6"
-                  />
-                </Cell>
-              ))}
-            </Mosaic>
-            <div className="type-body mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 text-fd-muted-foreground">
-              <span className="text-fd-foreground">Local terminal</span>
-              <span aria-hidden>→</span>
-              <span className="text-fd-foreground">SSH</span>
-              <span aria-hidden>→</span>
-              <span className="text-fd-foreground">Same durable tmux workspace</span>
-            </div>
-            <p className="type-marketing-body mt-6 max-w-[72ch] text-fd-muted-foreground">
-              Humans and agents use the same tmux primitives: inspect sessions, target a named pane,
-              send and wait. No agent needs a proprietary control plane.
-            </p>
+            <AgentTeamsFigure foundation={false} />
+          </BandBody>
+        </Band>
+        <Band>
+          <BandBody>
+            <ArchitectureFigure />
           </BandBody>
         </Band>
       </Stretch>
@@ -322,8 +272,8 @@ export default async function HomePage() {
                   <TuiMiniFigure
                     variant={capability.visual}
                     figure={capability.figure}
-                    motionCount={9}
-                    motionIndex={index + 6}
+                    motionCount={6}
+                    motionIndex={index + 3}
                     className="mt-8"
                   />
                 </Cell>
