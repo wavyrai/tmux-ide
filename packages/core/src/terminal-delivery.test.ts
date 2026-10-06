@@ -20,6 +20,7 @@ import {
   encodeAnsiTerminalRepresentation,
   encodeCompactSemanticTerminalUpdate,
   encodeSemanticTerminalUpdate,
+  freezeTerminalReplicaSnapshot,
   hashTerminalDeliveryRepresentation,
   hashTerminalReplicaSnapshot,
   negotiateTerminalDelivery,
@@ -598,6 +599,69 @@ describe("terminal delivery client", () => {
       expect(text).toBe(canonicalJsonReference(JSON.parse(text)));
       expect(decodeCompactSemanticTerminalUpdate(new TextEncoder().encode(text))).toEqual(payload);
     }
+  });
+
+  it("preserves strict validation when immutable rows recur across seed encodings", () => {
+    const snapshot = freezeTerminalReplicaSnapshot(blankTerminalReplicaSnapshot(3, 2));
+    for (const revision of [1, 2]) {
+      const input = { frame: "seed" as const, revision, snapshot };
+      expect(
+        decodeCompactSemanticTerminalUpdate(encodeCompactSemanticTerminalUpdate(input)),
+      ).toEqual(input);
+    }
+    for (const changed of [
+      { ...snapshot, cols: 2 },
+      { ...snapshot, unknown: true },
+      { ...snapshot, cursor: { ...snapshot.cursor, x: -1 } },
+    ]) {
+      expect(() =>
+        encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 3, snapshot: changed }),
+      ).toThrow();
+    }
+    const invalid = structuredClone(snapshot);
+    invalid.grid[0]!.cells[0]!.attributes = 256;
+    // Copy ownership establishes immutability, not validity of typed callers.
+    const ownedInvalid = freezeTerminalReplicaSnapshot(invalid);
+    for (const revision of [4, 5])
+      expect(() =>
+        encodeCompactSemanticTerminalUpdate({ frame: "seed", revision, snapshot: ownedInvalid }),
+      ).toThrow();
+
+    let attributes = 0;
+    const external = Object.freeze({
+      ...snapshot.grid[0]!.cells[0]!,
+      get attributes() {
+        return attributes;
+      },
+    });
+    const row = Object.freeze({
+      wrapped: false,
+      cells: Object.freeze([external, external, external]),
+    });
+    for (const grid of [
+      [row, row],
+      [snapshot.grid[0]!, row],
+    ]) {
+      const input = {
+        frame: "seed" as const,
+        revision: 6,
+        snapshot: { ...snapshot, grid } as unknown as TerminalReplicaSnapshot,
+      };
+      attributes = 0;
+      expect(() => encodeCompactSemanticTerminalUpdate(input)).not.toThrow();
+      attributes = 256;
+      expect(() => encodeCompactSemanticTerminalUpdate(input)).toThrow();
+    }
+
+    const source = structuredClone(snapshot);
+    const cells = source.grid[0]!.cells;
+    // An overridden map must not let mutable source cells acquire ownership.
+    cells.map = (() => cells) as typeof cells.map;
+    const detached = freezeTerminalReplicaSnapshot(source);
+    const stable = { frame: "seed" as const, revision: 7, snapshot: detached };
+    const before = encodeCompactSemanticTerminalUpdate(stable);
+    cells[0]!.attributes = 256;
+    expect(encodeCompactSemanticTerminalUpdate(stable)).toEqual(before);
   });
 
   it("deep-freezes compact decodes and adopts only the decoder-owned verified snapshot", () => {

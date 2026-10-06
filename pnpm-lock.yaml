@@ -289,6 +289,9 @@ importers:
       '@tmux-ide/contracts':
         specifier: workspace:*
         version: link:../contracts
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       typescript:
         specifier: ^5.9.3

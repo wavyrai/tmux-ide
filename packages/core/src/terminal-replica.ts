@@ -10,6 +10,7 @@ import type {
   TerminalReplicaTombstonePayload,
 } from "@tmux-ide/contracts";
 import { consumeCompactReplicaCapability } from "./terminal-compact-capability.ts";
+import { freezeOwnedTerminalReplicaRow as freezeRow } from "./terminal-replica-owned-row.ts";
 import {
   hashCanonicalTerminalValue,
   hashCanonicalTerminalValueCooperatively,
@@ -22,8 +23,6 @@ import {
 // Only rows validated and copied by this module can bypass a repeated copy.
 // External Object.freeze calls do not establish this provenance.
 const VALIDATED_PATCH_ROWS = new WeakSet<TerminalReplicaRow>();
-// Seed copies have the canonical row shape produced by freezeRow itself.
-const FROZEN_SEED_ROWS = new WeakSet<TerminalReplicaRow>();
 
 const DEFAULT_COLOR = Object.freeze({ kind: "default" } as const);
 const ROW_ARRAY_HASH_CACHE = new WeakMap<
@@ -836,24 +835,6 @@ function blankRow(cols: number): TerminalReplicaRow {
     ),
     wrapped: false,
   }) as unknown as TerminalReplicaRow;
-}
-
-function freezeRow(row: TerminalReplicaRow): TerminalReplicaRow {
-  if (FROZEN_SEED_ROWS.has(row)) return row;
-  const frozen = Object.freeze({
-    wrapped: row.wrapped,
-    cells: Object.freeze(
-      row.cells.map((cell) =>
-        Object.freeze({
-          ...cell,
-          foreground: Object.freeze({ ...cell.foreground }),
-          background: Object.freeze({ ...cell.background }),
-        }),
-      ),
-    ),
-  }) as unknown as TerminalReplicaRow;
-  FROZEN_SEED_ROWS.add(frozen);
-  return frozen;
 }
 
 function validateAndFreezeRow(
