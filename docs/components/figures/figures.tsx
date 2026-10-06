@@ -289,8 +289,8 @@ const ARCH_ROWS: readonly PaneRow[] = [
         role: "CLI · MCP · SDK",
         lines: [
           { text: "reads · sends · events", tone: "dim" },
-          { text: "event %3 → done", t: "v30-94" },
-          { text: '› send %4 "run tests"', typed: true, t: "t44-54" },
+          { text: "read %3 → tests passed", t: "v30-94" },
+          { text: '› automation send %4 "run tests"', typed: true, t: "t44-54" },
         ],
       },
     ],
