@@ -88,14 +88,14 @@ Do **not** use `tui/mirror/application-keybindings.ts` or
 
 ## Workspace file (`.tmux-ide/workspace.yml`)
 
-| Feature                                                           | Source                                                       | Status      | Docs page     |
-| ----------------------------------------------------------------- | ------------------------------------------------------------ | ----------- | ------------- |
-| `terminal.rows` / panes / `before` / theme                        | `packages/contracts/src/workspace-config.ts`                 | shipped     | configuration |
-| Widget pane `type:` (explorer, changes, preview, config, sidebar) | `widgets/resolve.ts`, `packages/contracts/src/ide-config.ts` | tmux chrome | configuration |
-| `app.views` (home, terminals, files, diff, missions)              | `packages/contracts/src/workspace-config.ts`                 | schema-only | configuration |
-| `harnesses`, `agents`, `missions` blocks                          | `packages/contracts/src/workspace-config.ts`                 | schema-only | configuration |
-| Templates (`init --template`)                                     | `templates/`, `bin/cli.ts`                                   | shipped     | templates     |
-| Legacy `ide.yml` + `migrate`                                      | `bin/cli.ts`                                                 | shipped     | configuration |
+| Feature                                                                                                  | Source                                                       | Status      | Docs page     |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ----------- | ------------- |
+| `terminal.rows` / panes / `before` / theme                                                               | `packages/contracts/src/workspace-config.ts`                 | shipped     | configuration |
+| Widget pane `type:` (explorer, changes, preview, config, sidebar) — programs that run inside a tmux pane | `widgets/resolve.ts`, `packages/contracts/src/ide-config.ts` | shipped     | configuration |
+| `app.views` (home, terminals, files, diff, missions)                                                     | `packages/contracts/src/workspace-config.ts`                 | schema-only | configuration |
+| `harnesses`, `agents`, `missions` blocks                                                                 | `packages/contracts/src/workspace-config.ts`                 | schema-only | configuration |
+| Templates (`init --template`)                                                                            | `templates/`, `bin/cli.ts`                                   | shipped     | templates     |
+| Legacy `ide.yml` + `migrate`                                                                             | `bin/cli.ts`                                                 | shipped     | configuration |
 
 ## Global config (`~/.tmux-ide/config.json`)
 
@@ -145,7 +145,12 @@ agents created from the app also start it (`lib/fleet-lifecycle-authority.ts`).
 - `commands.mdx`, `templates.mdx` and the current release page name the package version;
 - every public command in `tmux-ide --help` appears in `commands.mdx`;
 - every implemented widget type appears in `configuration.mdx`;
-- every workspace panel kind appears in `configuration.mdx`, and each
-  quarantined kind is described there as not shown by the current app;
-- docs pages never present a quarantined surface or a legacy key as current
-  (getting-started key table, index).
+- every workspace panel kind appears in `configuration.mdx`, which must state
+  that the app does not read `app.views` while any kind is outside
+  `DEFAULT_PRODUCT_CANVAS_PANELS`;
+- `index.mdx` and `app-surfaces.mdx` name each default app surface;
+- `getting-started.mdx` lists every `CHROME_ACTIONS` function key and none of
+  the unbound legacy keys (`F3`, `F4`, `F11`, `F12`);
+- `index.mdx` and `getting-started.mdx` never present a quarantined surface in bold;
+- no page uses an unrendered `mermaid` block;
+- every internal `/docs/...` link and `#anchor` resolves to an existing page and heading.
