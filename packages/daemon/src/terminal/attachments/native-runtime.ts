@@ -1307,6 +1307,7 @@ export class WorkspaceTerminalInventoryRuntime {
     }
   >();
   #lifecycle: "initializing" | "ready" | "failed" | "disposed" = "initializing";
+  #registeredWindows: { invalidate(): void; dispose(): void } | undefined;
   #disposed = false;
 
   constructor(options: WorkspaceTerminalInventoryRuntimeOptions) {
@@ -1318,6 +1319,16 @@ export class WorkspaceTerminalInventoryRuntime {
     });
     this.readRunner = pinnedReadRunner(authority, executeRead);
     this.#registry = options.registry;
+    this.#registeredWindows = options.sessionRuntimeRegistry?.setRegisteredWindowReader?.(
+      async (signal) => {
+        const snapshot = await discoverWorkspaceRegistryTerminalInventory(
+          this.#registry,
+          this.readRunner,
+          signal,
+        );
+        return snapshot.panes.map((pane) => ({ session: pane.sessionName, window: pane.windowId }));
+      },
+    );
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#resolveInteractionEndpoint = options.resolveInteractionEndpoint;
     this.#nativeServerEpoch = options.nativeServerEpoch;
@@ -1441,10 +1452,12 @@ export class WorkspaceTerminalInventoryRuntime {
       this.#observeWorkspaceSession = null;
     }
     this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
+      this.#registeredWindows?.invalidate();
       this.invalidate();
       this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
     });
     this.#stopWorkspaceRemovedObserver = options.registry.on("workspace.removed", (name) => {
+      this.#registeredWindows?.invalidate();
       this.invalidate();
       if (!options.sessionRuntimeRegistry) return;
       const sessionName = sessionsByWorkspace.get(name);
@@ -1949,6 +1962,7 @@ export class WorkspaceTerminalInventoryRuntime {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#lifecycle = "disposed";
+    this.#registeredWindows?.dispose();
     this.invalidate();
     this.#stopWorkspaceAddedObserver?.();
     this.#stopWorkspaceRemovedObserver?.();

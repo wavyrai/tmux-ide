@@ -123,7 +123,10 @@ const STRUCTURAL_NOTIFICATIONS = new Set([
   "window-add",
   "window-close",
   "window-renamed",
+  "unlinked-window-add",
   "unlinked-window-close",
+  "session-renamed",
+  "sessions-changed",
 ]);
 const NATIVE_CLIENT_NOTIFICATIONS = new Set([
   "client-attached",
@@ -239,6 +242,10 @@ export interface MirrorFlowRecoveryObservation {
 }
 
 export interface SessionChannelOptions {
+  onWindowMembership?: (windows: readonly string[]) => void;
+  hasSharedWindowConflict?: () => boolean;
+  beforeIdentityRepair?: () => Promise<void>;
+  onWindowTopologyChanged?: () => void;
   ownedViewer?: Pick<OwnedViewerAdapter, "bindIo" | "tryDispatch" | "dispose"> &
     Partial<Pick<OwnedViewerAdapter, "atomicSnapshotEpoch">>;
   executeWindowLinkGuard?: (args: string[]) => Promise<{ status: number | null; stdout: string }>;
@@ -2877,6 +2884,15 @@ export class SessionChannel {
   }
 
   private onNotify(name: string, rest: string): void {
+    if (
+      name === "window-add" ||
+      name === "window-close" ||
+      name === "unlinked-window-add" ||
+      name === "unlinked-window-close" ||
+      name === "session-renamed" ||
+      name === "sessions-changed"
+    )
+      this.opts.onWindowTopologyChanged?.();
     if (name === "subscription-changed") {
       const policy =
         /^tmux-ide-scroll-on-clear\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([01])\s*$/u.exec(
@@ -3850,6 +3866,10 @@ export class SessionChannel {
       if (!unzoomed) throw new Error(`full window layout for ${this.opts.session} is malformed`);
       nextLayoutByWindow.set(row.runtimeId, { ...parsed, zoomed: row.zoomed, unzoomed });
     }
+    // Publish validated physical membership before any identity repair writes.
+    // The receiving session may introduce duplicate stamps by linking a window.
+    this.opts.onWindowMembership?.([...backingRows.keys()]);
+    await this.opts.beforeIdentityRepair?.();
     // Valid unique stamps are identity; missing/invalid/duplicated stamps are
     // ALL regenerated and stamped back (the pane policy, applied to windows).
     const stampCounts = new Map<string, number>();
@@ -3867,7 +3887,7 @@ export class SessionChannel {
       let semanticId: string | null = null;
       if (row.stamp && stampCounts.get(row.stamp) === 1) {
         semanticId = row.stamp;
-      } else {
+      } else if (!this.opts.hasSharedWindowConflict?.()) {
         repairedIdentity = true;
         let candidate: string | null = null;
         for (let attempt = 0; attempt < 32 && !candidate; attempt += 1) {
@@ -3924,6 +3944,10 @@ export class SessionChannel {
     listed: ReadonlySet<string>,
   ): Promise<boolean> {
     if (this.disposed) return false;
+    if (this.opts.hasSharedWindowConflict?.()) {
+      this.settleFirstJoin();
+      return false;
+    }
     const snapshots: WorkspaceTmuxPaneSnapshot[] = descriptors
       .filter((descriptor) => listed.has(descriptor.runtimePaneId))
       .map((descriptor) => ({
@@ -4065,6 +4089,10 @@ export class SessionChannel {
     descriptors: readonly SessionPaneDescriptor[],
     layouts: ReadonlyMap<string, ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }>,
   ): Promise<boolean> {
+    if (this.opts.hasSharedWindowConflict?.())
+      throw new Error(
+        "Linked windows across controlled sessions are unsupported. Unlink the shared window before controlling this session.",
+      );
     const rectForRuntime = (runtimePaneId: string): WorkspacePaneRect => {
       for (const layout of layouts.values()) {
         const leaf = layout.leaves.find(({ id }) => id === runtimePaneId);

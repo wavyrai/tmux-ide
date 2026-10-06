@@ -15,11 +15,17 @@ function rig(options: MirrorServiceOptions = {}): {
   sims: Map<string, SimulatedChannel[]>;
 } {
   const sims = new Map<string, SimulatedChannel[]>();
+  const windowOffsets = new Map<string, number>();
   const service = new MirrorService({
     createIo: (session, handlers) => {
+      if (!windowOffsets.has(session)) windowOffsets.set(session, windowOffsets.size * 100);
+      const offset = windowOffsets.get(session)!;
       const sim = new SimulatedChannel(handlers, (cmd) => {
         const auto = fixtureAutoReply(fixtureState())(cmd);
-        if (auto) return auto;
+        // Independent sessions may reuse semantic IDs, but their physical
+        // window IDs must differ on the same tmux server.
+        if (auto)
+          return auto.map((row) => row.replace(/@(\d+)/g, (_, id) => `@${Number(id) + offset}`));
         // Service tests never interleave: answer probes inline too.
         if (cmd.startsWith("capture-pane")) return ["seed"];
         if (cmd.startsWith("display-message")) return ["0 0 100 50"];
@@ -48,6 +54,62 @@ function stampDetachedFixture(state: ReturnType<typeof fixtureState>): void {
 }
 
 describe("MirrorService refcounting", () => {
+  it.each(["unlinked-window-add @99", "session-renamed $2 renamed", "sessions-changed"])(
+    "rechecks registered ownership after server notification %s",
+    async (notification) => {
+      const { service, sims } = rig();
+      const subscription = await subscribed(service, FIXTURE.session, "pane.alpha");
+      let rows = [{ session: FIXTURE.session, window: "@1" }];
+      try {
+        service.setRegisteredWindowReader(async () => rows);
+        await service.verifyRegisteredWindows();
+        expect(service.hasSharedWindowConflict(FIXTURE.session)).toBe(false);
+        rows = [...rows, { session: "unopened", window: "@1" }];
+        sims.get(FIXTURE.session)![0]!.feedLines(`%${notification}`);
+        expect(service.windowOwnershipMessage(FIXTURE.session)).toMatch(/being verified/);
+        await service.verifyRegisteredWindows();
+        expect(() => subscription.sendText("blocked")).toThrow(/Linked windows/);
+      } finally {
+        await subscription.close();
+        await service.dispose();
+      }
+    },
+  );
+  it("rejects retained input and geometry handles before writing when registered windows overlap", async () => {
+    const { service, sims } = rig();
+    const subscription = await subscribed(service, FIXTURE.session, "pane.alpha");
+    const resize = service.paneResizeTransport(FIXTURE.session);
+    try {
+      service.setRegisteredWindowReader(async () => [
+        { session: FIXTURE.session, window: "@1" },
+        { session: "unopened", window: "@1" },
+      ]);
+      expect(() => subscription.sendText("pending")).toThrow(/ownership is being verified/);
+      await service.verifyRegisteredWindows();
+      const io = sims.get(FIXTURE.session)![0]!;
+      const writes = io.written.length;
+      expect(() => subscription.sendText("blocked")).toThrow(/Linked windows/);
+      expect(() => subscription.sendKey("Enter")).toThrow(/Linked windows/);
+      expect(() => service.sendText(FIXTURE.session, "pane.alpha", "blocked")).toThrow(
+        /Linked windows/,
+      );
+      expect(() => service.sendBytes(FIXTURE.session, "pane.alpha", new Uint8Array([65]))).toThrow(
+        /Linked windows/,
+      );
+      expect(() => service.sendKey(FIXTURE.session, "pane.alpha", "Enter")).toThrow(
+        /Linked windows/,
+      );
+      expect(() => service.fitViewport(FIXTURE.session, 120, 40)).toThrow(/Linked windows/);
+      expect(() => resize(["resize-pane", "-t", "%1", "-x", "120"])).toThrow(/Linked windows/);
+      await expect(
+        service.executeWindowLinkAction(FIXTURE.session, { action: "select" }),
+      ).rejects.toThrow(/Linked windows/);
+      expect(io.written.length).toBe(writes);
+    } finally {
+      await subscription.close();
+      await service.dispose();
+    }
+  });
   it("rejects a descriptor pane-set splice before authoritative replay", async () => {
     const state = fixtureState();
     stampDetachedFixture(state);

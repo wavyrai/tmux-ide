@@ -1,3 +1,5 @@
+import { SharedWindowIndex } from "./shared-window-index.ts";
+import { RegisteredWindowGuard, type RegisteredWindowReader } from "./registered-window-guard.ts";
 import type { OwnedViewerAdapter } from "./owned-viewer-adapter.ts";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
@@ -47,6 +49,7 @@ import {
 } from "./control-mode-ownership.ts";
 
 export interface MirrorServiceOptions {
+  onSharedWindowConflict?: (session: string, conflicted: boolean) => void;
   createOwnedViewerAdapter?: (session: string) => OwnedViewerAdapter | undefined;
   nativeServerIdentity?: import("../../lib/tmux-server-generation-runner.ts").NativeTmuxServerIdentity;
   resolveSocketPath?: () => string;
@@ -148,6 +151,47 @@ interface ChannelEntry {
 export class MirrorService {
   private readonly opts: MirrorServiceOptions;
   private readonly channels = new Map<string, ChannelEntry>();
+  private readonly sharedWindows = new SharedWindowIndex<SessionChannel>();
+  private readonly channelSessions = new Map<SessionChannel, string>();
+  private registeredWindows: RegisteredWindowGuard | null = null;
+  private readonly registeredConflicts = new Set<string>();
+
+  setRegisteredWindowReader(reader: RegisteredWindowReader): {
+    invalidate(): void;
+    dispose(): void;
+  } {
+    this.registeredWindows?.dispose();
+    const guard = new RegisteredWindowGuard(reader);
+    this.registeredWindows = guard;
+    this.invalidateRegisteredWindows();
+    return {
+      invalidate: () => {
+        if (this.registeredWindows === guard) this.invalidateRegisteredWindows();
+      },
+      dispose: () => guard.dispose(),
+    };
+  }
+
+  private invalidateRegisteredWindows(): void {
+    this.registeredWindows?.invalidate();
+  }
+
+  async verifyRegisteredWindows(): Promise<void> {
+    const guard = this.registeredWindows;
+    if (!guard) return;
+    await guard.verify();
+    if (guard !== this.registeredWindows || this.disposed)
+      throw new Error("Window ownership changed during discovery");
+    for (const [channel, session] of this.channelSessions) {
+      if (guard.blocked(session)) {
+        channel.setGeometryParticipation(false);
+        if (!this.registeredConflicts.has(session)) {
+          this.registeredConflicts.add(session);
+          this.opts.onSharedWindowConflict?.(session, true);
+        }
+      } else this.registeredConflicts.delete(session);
+    }
+  }
   private readonly pendingDisposals = new Set<Promise<void>>();
   private readonly drainingChannels = new Map<string, Promise<void>>();
   private readonly sessionExitListeners = new Set<(session: string) => void>();
@@ -239,8 +283,14 @@ export class MirrorService {
       reseed: () => handle.reseed(),
       readHistorySize: () => handle.readHistorySize(),
       captureNativeBacking: () => handle.captureNativeBacking(),
-      sendText: (text) => handle.sendText(text),
-      sendKey: (key) => handle.sendKey(key),
+      sendText: (text) => {
+        this.assertWindowOwnership(request.session);
+        handle.sendText(text);
+      },
+      sendKey: (key) => {
+        this.assertWindowOwnership(request.session);
+        handle.sendKey(key);
+      },
       close: async () => {
         if (closed) return;
         closed = true;
@@ -303,6 +353,7 @@ export class MirrorService {
     return (args: readonly string[]) => {
       if (entry.retired || this.channels.get(session) !== entry)
         return Promise.reject(new Error("Resize mirror session retired"));
+      this.assertWindowOwnership(session);
       return run(args);
     };
   }
@@ -313,6 +364,7 @@ export class MirrorService {
   ) {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    this.assertWindowOwnership(session);
     return entry.channel.executeWindowLinkAction(request);
   }
 
@@ -326,6 +378,7 @@ export class MirrorService {
   ): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    this.assertWindowOwnership(session);
     entry.channel.sendText(semanticPaneId, text, performanceTraceId, isolated);
   }
 
@@ -337,24 +390,61 @@ export class MirrorService {
   ): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    this.assertWindowOwnership(session);
     entry.channel.sendBytes(semanticPaneId, data, performanceTraceId);
   }
 
   sendKey(session: string, semanticPaneId: string, key: string, performanceTraceId?: string): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    this.assertWindowOwnership(session);
     entry.channel.sendKey(semanticPaneId, key, performanceTraceId);
+  }
+
+  private assertWindowOwnership(session: string): void {
+    const message = this.windowOwnershipMessage(session);
+    if (message) throw new Error(message);
+  }
+
+  windowOwnershipMessage(session: string): string | null {
+    if (this.registeredWindows?.pending())
+      return "Window ownership is being verified. Retry after session discovery completes.";
+    if (this.hasSharedWindowConflict(session))
+      return "Linked windows across registered sessions are unsupported. Unlink the shared window before controlling this session.";
+    return null;
+  }
+
+  hasSharedWindowConflict(session: string): boolean {
+    const entry = this.channels.get(session);
+    return (
+      (this.registeredWindows?.blocked(session) ?? false) ||
+      (!!entry && this.sharedWindows.conflicted(entry.channel))
+    );
+  }
+
+  private updateWindowMembership(channel: SessionChannel, windows: readonly string[]): void {
+    // A topology read may finish after retirement. It must not resurrect the
+    // old channel's membership or conflict with its replacement.
+    if (!this.channelSessions.has(channel)) return;
+    for (const [peer, conflict] of this.sharedWindows.update(channel, windows)) {
+      const session = this.channelSessions.get(peer);
+      if (session === undefined) continue;
+      if (conflict) peer.setGeometryParticipation(false);
+      this.opts.onSharedWindowConflict?.(session, conflict);
+    }
   }
 
   fitViewport(session: string, cols: number, rows: number): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    this.assertWindowOwnership(session);
     entry.channel.fitViewport(cols, rows);
   }
 
   fitWindowViewport(session: string, semanticWindowId: string, cols: number, rows: number): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+    this.assertWindowOwnership(session);
     entry.channel.fitWindowViewport(semanticWindowId, cols, rows);
   }
 
@@ -367,7 +457,7 @@ export class MirrorService {
   setGeometryParticipation(session: string, active: boolean): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) return;
-    entry.channel.setGeometryParticipation(active);
+    entry.channel.setGeometryParticipation(active && !this.hasSharedWindowConflict(session));
   }
 
   /**
@@ -412,12 +502,15 @@ export class MirrorService {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.registeredWindows?.dispose();
     this.sessionExitListeners.clear();
     const entries = [...this.channels.values()];
     this.channels.clear();
     await Promise.allSettled(
       entries.map(async (entry) => {
         entry.retired = true;
+        this.updateWindowMembership(entry.channel, []);
+        this.channelSessions.delete(entry.channel);
         try {
           await entry.channel.dispose();
         } finally {
@@ -468,6 +561,12 @@ export class MirrorService {
         );
         const channelOptions: SessionChannelOptions = {
           session,
+          onWindowMembership: (windows) => this.updateWindowMembership(channel, windows),
+          hasSharedWindowConflict: () => this.hasSharedWindowConflict(session),
+          beforeIdentityRepair: () => this.verifyRegisteredWindows(),
+          onWindowTopologyChanged: () => {
+            if (this.channelSessions.has(channel)) this.invalidateRegisteredWindows();
+          },
           ownedViewer,
           createIo: (handlers) =>
             this.opts.createIo?.(session, handlers) ??
@@ -547,6 +646,7 @@ export class MirrorService {
         releaseAuthority();
         throw cause;
       }
+      this.channelSessions.set(channel, session);
       entry = {
         channel,
         started: channel.start(),
@@ -583,6 +683,8 @@ export class MirrorService {
   private retire(session: string, entry: ChannelEntry): void {
     if (entry.retired) return;
     entry.retired = true;
+    this.updateWindowMembership(entry.channel, []);
+    this.channelSessions.delete(entry.channel);
     if (this.channels.get(session) === entry) this.channels.delete(session);
     const disposal = entry.channel
       .dispose()
