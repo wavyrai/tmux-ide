@@ -49,7 +49,9 @@ missing keys, keeps a backup, and never overrides a value you set. To skip it,
 pass `--no-claude-agent-teams` to `install.sh` or set
 `TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`; to turn it off later, run
 `tmux-ide integration agent-teams disable`. If this step fails, the install
-still succeeds and prints a warning.
+still succeeds and prints a warning. The step needs a tmux-ide release that
+includes `tmux-ide integration agent-teams`; installing 2.9.3 skips it and says
+so.
 
 With Node.js 20+ already installed, `npm install -g tmux-ide` is also supported.
 The npm package does not change Claude Code settings.
