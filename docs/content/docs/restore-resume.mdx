@@ -1,13 +1,15 @@
 ---
-title: Restore & Resume
+title: Restore and resume
 description: "Rebuild every tmux session after a server crash with tmux-ide restore: windows, layouts, directories, titles, and Claude, Codex, Cursor and opencode chats."
 ---
 
-A tmux server death shouldn't cost you an afternoon. tmux-ide's
-[background updater](/docs/the-dock#the-background-updater) writes a snapshot of
-your fleet to `~/.tmux-ide/snapshot.json` about every 30 seconds. It runs once
-any session is adopted or created from the app. If the server dies,
-`tmux-ide restore` rebuilds everything the last snapshot recorded.
+`tmux-ide restore` rebuilds your tmux sessions after the tmux server crashes,
+including windows, layouts, directories and, optionally, agent conversations.
+
+It works from a snapshot at `~/.tmux-ide/snapshot.json`, which the
+[background updater](/docs/the-dock#the-background-updater) writes about every
+30 seconds. The updater runs once any session is adopted or created from the
+app.
 
 ## What comes back
 
@@ -23,9 +25,8 @@ For each session in the last snapshot, restore rebuilds:
 - per-pane **titles**, and
 - **re-adopts** the sessions that were adopted (their [tmux chrome](/docs/the-dock) returns).
 
-If a session already maps to a registry project **with a project config**, restore
-relaunches from that config instead of a raw rebuild — the config is the source
-of truth.
+If a session belongs to a project **with a workspace config**, restore relaunches
+it from that config instead of rebuilding it from the snapshot.
 
 ## Safety first
 
@@ -45,10 +46,10 @@ tmux-ide restore --dry-run --json
 
 ## Resume agent conversations
 
-The strongest form of recovery brings the **conversations** back, not just the
-panes. An agent pane that carries a recorded `@agent_session_id` relaunches,
-under `--resume-agents`, with its kind's native resume invocation — reviving
-the actual conversation instead of opening a fresh shell.
+Restore can also bring back agent **conversations**, not only the
+panes. With `--resume-agents`, an agent pane that recorded an
+`@agent_session_id` relaunches with that agent's resume command. You get the
+conversation back instead of a fresh shell.
 
 ```bash
 tmux-ide restore --resume-agents
@@ -66,9 +67,8 @@ You can make this the default in `~/.tmux-ide/config.json`:
 
 ### Support per agent
 
-Two things have to be true for a pane to resume: tmux-ide must know the kind's
-**resume invocation**, and the pane's **session id** must have been captured
-while the agent ran. Honest status of both:
+A pane resumes only when tmux-ide knows that agent's **resume command** and
+captured the pane's **session id** while the agent ran. Support differs by agent:
 
 | Agent                     | Resume invocation            | Session-id capture                                                           |
 | ------------------------- | ---------------------------- | ---------------------------------------------------------------------------- |

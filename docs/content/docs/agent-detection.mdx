@@ -1,12 +1,15 @@
 ---
-title: Agent Detection
+title: Agent detection
 description: "How tmux-ide knows if an agent is working, blocked, done or idle: Claude Code hooks, a one-line self-report contract, an inspectable fallback, overrides."
 ---
 
-Every agent state tmux-ide shows — on Home, in the sidebar and pane headers, and
-in the [tmux chrome](/docs/the-dock) — comes from a **two-layer** detector. The whole point is trust: when an agent can tell you the
-truth, tmux-ide believes it; when it can't, tmux-ide reasons transparently and
-lets you correct it.
+Agent detection is how tmux-ide knows whether each agent is working, blocked,
+done or idle. It has two layers. tmux-ide trusts an agent's own report first.
+When there is none, it reads the pane's process and screen, and shows you
+exactly how it decided.
+
+The same states appear on Home, in the sidebar and pane headers, and in the
+[tmux chrome](/docs/the-dock).
 
 The four states are **blocked**, **working**, **done**, and **idle** (plus
 **unknown** when there's no signal at all).
@@ -22,9 +25,9 @@ option and the detector trusts it.
 tmux-ide integration install claude
 ```
 
-Claude Code has a first-class hooks system. This command writes a small POSIX
-hook script and registers it in `~/.claude/settings.json` for the lifecycle
-events that map to agent states:
+This command writes a small POSIX hook script and registers it in
+`~/.claude/settings.json` for the Claude Code lifecycle events that map to
+agent states:
 
 | Claude event                     | Reported state |
 | -------------------------------- | -------------- |
@@ -60,13 +63,13 @@ long-running agents stamping periodically.
 
 ## Layer 2 — the evidence-tuned fallback
 
-When there's no fresh authority option, the detector resolves the agent from the
-**process tree** (which command is actually running in the pane) and then reads
-the pane's visible screen against **evidence-tuned manifests** — per-agent rule
-sets that recognize the tells of working, blocked, and done from the last lines
-of output.
+Without a fresh self-report, the detector works in two steps. First it finds
+the agent from the pane's **process tree**, the command actually running in the
+pane. Then it matches the last lines of the screen against that agent's
+**manifest**: a rule set, tuned on real output, for recognizing working, blocked
+and done.
 
-This layer is deterministic and inspectable, not a black box — and you can
+This layer is deterministic, you can inspect it, and you can
 override it.
 
 ## Debug it: `agent explain`
@@ -146,4 +149,4 @@ The app's Home roster, sidebar and pane headers show the same agent states. See
 
 - [App surfaces](/docs/app-surfaces) — where agent states appear in the app
 - [tmux chrome](/docs/the-dock) — status-bar glyphs and pane chips in plain tmux
-- [Notifications & events](/docs/notifications-events) — reacting to state transitions
+- [Notifications and events](/docs/notifications-events) — reacting to state transitions

@@ -156,4 +156,5 @@ agents created from the app also start it (`lib/fleet-lifecycle-authority.ts`).
   the unbound legacy keys (`F3`, `F4`, `F11`, `F12`);
 - `index.mdx` and `getting-started.mdx` never present a quarantined surface in bold;
 - no page uses an unrendered `mermaid` block;
-- every internal `/docs/...` link and `#anchor` resolves to an existing page and heading.
+- every internal `/docs/...` link and `#anchor` resolves to an existing page and heading;
+- no page uses the banned filler listed in the [writing guide](./writing-guide.md).
