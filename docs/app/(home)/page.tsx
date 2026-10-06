@@ -148,9 +148,10 @@ export default async function HomePage() {
                   src="/tui-demo.svg"
                   alt="Animated production tmux-ide OpenTUI showing agent status, terminal panes, window controls, and the command palette"
                   width={1344}
-                  height={792}
+                  height={801}
                   unoptimized
                   loading="eager"
+                  fetchPriority="high"
                   className="h-auto w-full"
                 />
               </div>
