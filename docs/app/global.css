@@ -3,13 +3,13 @@
 @import "fumadocs-ui/css/preset.css";
 
 @theme {
-  --font-sans: var(--font-geist-sans);
+  /* Faces by role. next/font variables are owned by app/layout.tsx. */
+  --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
   --font-pixel: var(--font-geist-pixel-square);
-  /* Semantic voices reference next/font variables owned by app/layout.tsx. */
-  --font-marketing: var(--font-geist-sans);
-  --font-interface: var(--font-geist-sans);
-  --font-display: var(--font-geist-sans);
+  --font-marketing: var(--font-inter);
+  --font-interface: var(--font-inter);
+  --font-display: var(--font-plus-jakarta);
   --font-brand: var(--font-geist-pixel-square);
 
   --color-marketing-paper: var(--marketing-paper);
@@ -34,7 +34,7 @@
   --color-fd-background: #ffffff;
   --color-fd-foreground: #171717;
   --color-fd-muted: #f5f5f5;
-  --color-fd-muted-foreground: #737373;
+  --color-fd-muted-foreground: #6b6b6b;
   --color-fd-card: #fafafa;
   --color-fd-card-foreground: #171717;
   --color-fd-border: rgb(23 23 23 / 12%);
@@ -72,24 +72,211 @@
   --terminal-line: rgb(255 255 255 / 10%);
 }
 
-/* Marketing uses named voices so font loading can change in one next/font
-   owner without rewriting every band. Product depictions opt back into the
-   interface voice; tmux-ide's brand marks retain the separate pixel voice. */
-.font-marketing {
-  font-family: var(--font-marketing), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 300;
+/* ── Type system ───────────────────────────────────────────────────────────
+   Faces by role: Inter for body and interface, Plus Jakarta Sans for every
+   heading, Geist Mono for machine tokens (code, ids, paths, keys, counts), and
+   Geist Pixel for the brand mark only. Sizes come from one role ramp below;
+   call sites pick a role, never a raw size. Hierarchy is carried by weight and
+   tone: de-emphasised text is greyer, not smaller. Labels stay sentence case. */
+
+body {
+  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 400;
+  font-synthesis: none;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/* Every heading uses the display face. The tracking formula tightens large
+   sizes (−1.3px at 64px, −0.4px at 32px) and resolves to roughly zero at body
+   sizes, so one rule serves the whole ramp. */
+:where(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: calc(0.5px - 0.028em);
+  text-wrap: balance;
+}
+
+:where(p, li, dd, blockquote, figcaption) {
+  text-wrap: pretty;
+}
+
+/* Machine text: no programming ligatures, columns that line up, and a zero
+   that cannot be read as the letter O. */
+:where(code, kbd, samp, pre),
+.font-mono {
+  font-weight: 400;
+  font-variant-ligatures: none;
+  font-feature-settings:
+    "liga" 0,
+    "calt" 0;
+  font-variant-numeric: tabular-nums slashed-zero;
+  tab-size: 2;
+}
+
+.font-marketing,
 .font-interface {
   font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
 }
 
 .font-display {
-  font-family: var(--font-display), var(--font-marketing), ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
 }
 
 .font-brand {
   font-family: var(--font-brand), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Role ramp — size / line height in whole pixels (rem at a 16px root).
+   Role utilities avoid Tailwind's `text-*` namespace: tailwind-merge would
+   otherwise read a type role as a text colour and drop one of the two.
+   Display and title roles carry the heading face, tracking and weight
+   (large display: medium; titles 18–35px: semibold); smaller roles inherit
+   the face of the element they sit on. */
+@utility type-large-title {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 4rem;
+  line-height: 5rem;
+  letter-spacing: calc(0.5px - 0.028em);
+  font-weight: 500;
+}
+
+@utility type-display-1 {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 3.5rem;
+  line-height: 4.5rem;
+  letter-spacing: calc(0.5px - 0.028em);
+  font-weight: 500;
+}
+
+@utility type-display-2 {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 3rem;
+  line-height: 4rem;
+  letter-spacing: calc(0.5px - 0.028em);
+  font-weight: 500;
+}
+
+@utility type-display-3 {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 2.5rem;
+  line-height: 3.375rem;
+  letter-spacing: calc(0.5px - 0.028em);
+  font-weight: 500;
+}
+
+@utility type-display-4 {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 2rem;
+  line-height: 2.75rem;
+  letter-spacing: calc(0.5px - 0.028em);
+  font-weight: 600;
+}
+
+@utility type-title-1 {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.5rem;
+  line-height: 2.125rem;
+  letter-spacing: calc(0.5px - 0.028em);
+  font-weight: 600;
+}
+
+@utility type-title-2 {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.25rem;
+  line-height: 1.625rem;
+  font-weight: 600;
+}
+
+@utility type-title-3 {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.125rem;
+  line-height: 1.5rem;
+  font-weight: 600;
+}
+
+@utility type-headline {
+  font-size: 1rem;
+  line-height: 1.375rem;
+  font-weight: 500;
+}
+
+@utility type-subheadline {
+  font-size: 0.9375rem;
+  line-height: 1.3125rem;
+}
+
+@utility type-body {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+@utility type-body-2 {
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+}
+
+@utility type-caption-1 {
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+@utility type-caption-2 {
+  font-size: 0.6875rem;
+  line-height: 0.9375rem;
+}
+
+/* Chips and tags only. */
+@utility type-caption-3 {
+  font-size: 0.625rem;
+  line-height: 0.875rem;
+}
+
+/* Marketing reading roles: roomier line boxes for running text. */
+@utility type-marketing-body {
+  font-size: 0.9375rem;
+  line-height: 1.5rem;
+  text-wrap: pretty;
+}
+
+@utility type-marketing-lede {
+  font-size: 1.0625rem;
+  line-height: 1.75rem;
+  text-wrap: pretty;
+}
+
+@utility type-marketing-subtitle {
+  font-size: 1.1875rem;
+  line-height: 1.75rem;
+  text-wrap: pretty;
+}
+
+/* The page title steps up the display ramp with the viewport:
+   display-4 → display-2 (sm) → display-1 (lg) → large-title (xl). */
+@utility type-page-title {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 2rem;
+  line-height: 2.75rem;
+  letter-spacing: calc(0.5px - 0.028em);
+  font-weight: 600;
+  text-wrap: balance;
+
+  @media (width >= 40rem) {
+    font-size: 3rem;
+    line-height: 4rem;
+    font-weight: 500;
+  }
+
+  @media (width >= 64rem) {
+    font-size: 3.5rem;
+    line-height: 4.5rem;
+  }
+
+  @media (width >= 80rem) {
+    font-size: 4rem;
+    line-height: 5rem;
+  }
 }
 
 /* Marketing and docs share an explicit keyboard-focus contract. This remains
@@ -100,155 +287,251 @@
   outline-offset: 3px;
 }
 
-/* A role-based type ladder keeps the landing page's hierarchy coordinated.
-   Components consume roles instead of inventing local pixel sizes, following
-   the same system-level density principle as Fluid Functionalism without
-   adding a client-side provider to this static marketing route. */
-@utility text-marketing-display {
-  font-size: clamp(3rem, 6vw, 4rem);
-  font-weight: 300;
-  line-height: 1;
-  letter-spacing: -0.04em;
-  text-wrap: balance;
-}
-
-/* These role utilities deliberately avoid Tailwind's `text-*` namespace.
-   tailwind-merge otherwise mistakes a type role for a text color and drops
-   one of them when components compose their class names. */
-@utility marketing-type-title {
-  font-size: clamp(1.5rem, 3vw, 2.25rem);
-  font-weight: 300;
-  line-height: 1.1;
-  letter-spacing: -0.035em;
-  text-wrap: balance;
-}
-
-@utility text-marketing-lead {
-  font-size: clamp(0.96875rem, 1.4vw, 1.09375rem);
-  line-height: 1.65;
-  text-wrap: pretty;
-}
-
-@utility marketing-type-subtitle {
-  font-size: clamp(1.25rem, 2vw, 1.5rem);
-  font-weight: 300;
-  line-height: 1.15;
-  letter-spacing: -0.025em;
-  text-wrap: balance;
-}
-
-@utility marketing-type-body {
-  font-size: 0.96875rem;
-  line-height: 1.65;
-  text-wrap: pretty;
-}
-
-@utility marketing-type-caption {
-  font-size: 0.72rem;
-  font-weight: 300;
-  line-height: 1;
-  letter-spacing: -0.015rem;
-}
-
-@utility marketing-type-micro {
-  font-size: 0.68rem;
-  line-height: 1.45;
-  letter-spacing: -0.01rem;
-}
-
-/* Uppercase is reserved for small navigational flags and section eyebrows.
-   Captions, figures, controls, and prose retain their natural casing. */
-.marketing-flag {
-  letter-spacing: 0.035em;
-  text-transform: uppercase;
-}
-
 /* The Prototyper banner owns the first sticky row (2.5rem); the Fumadocs
-   marketing nav stacks immediately below it. Docs routes do not render the
-   banner, so this remains scoped to the HomeLayout ancestry. */
+   marketing nav stacks immediately below it. The docs layout reads the same
+   height through Fumadocs' --fd-banner-height row. */
 [data-slot="marketing-home"] #nd-nav {
   top: 2.5rem !important;
 }
 
-/* The marketing shell uses real variable-font weights only. Antialiasing and
-   explicit kerning keep the light hierarchy crisp at display sizes. */
-[data-slot="marketing-home"] {
-  font-synthesis: none;
-  font-kerning: normal;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+[data-slot="docs-site"] {
+  --fd-banner-height: 2.5rem;
 }
 
-/* Mono is the technical annotation voice, so it carries one more step of
-   weight than the deliberately light marketing prose. Controls stay in the
-   regular sans voice so actions read as interface rather than terminal data. */
-[data-slot="marketing-home"] .font-mono {
-  font-weight: 400;
-}
-
+/* Actions read as interface, not prose: Inter, one step heavier. */
 [data-slot="marketing-home"] button,
 [data-slot="marketing-home"] [data-marketing-button] {
   font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 400;
-  border-radius: 9999px;
-}
-
-/* Documentation uses the same typographic voices as marketing while keeping
-   Fumadocs' navigation and accessibility behavior. Route-level scoping means
-   new MDX pages inherit the system without page-specific typography classes. */
-[data-slot="docs-site"] {
-  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 300;
-  font-synthesis: none;
-  font-kerning: normal;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-[data-slot="docs-site"] .font-mono,
-[data-slot="docs-site"] :where(code, pre) {
-  font-weight: 400;
-}
-
-.docs-title {
-  font-size: clamp(2.25rem, 5vw, 3.5rem) !important;
-  font-weight: 300 !important;
-  line-height: 1.02 !important;
-  letter-spacing: -0.04em !important;
-  text-wrap: balance;
-}
-
-.docs-description {
-  max-width: 62ch;
-  font-size: clamp(1rem, 1.5vw, 1.125rem) !important;
-  font-weight: 300 !important;
-  line-height: 1.65 !important;
-  text-wrap: pretty;
-}
-
-.docs-prose {
-  font-size: 0.96875rem !important;
-  font-weight: 300 !important;
-  line-height: 1.72 !important;
-}
-
-.docs-prose :where(h1, h2, h3, h4):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
-  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 300 !important;
-  line-height: 1.15 !important;
-  letter-spacing: -0.03em !important;
-  text-wrap: balance;
-}
-
-.docs-prose :where(strong):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
   font-weight: 500;
+  border-radius: 9999px;
 }
 
 [data-slot="docs-site"] button {
   font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 400;
+}
+
+/* Documentation prose. Fumadocs' typography plugin ships its own heading
+   scale; these overrides map it onto the role ramp so MDX pages inherit the
+   system without page-specific classes. */
+.docs-title {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 2rem !important;
+  line-height: 2.75rem !important;
+  font-weight: 600 !important;
+  letter-spacing: calc(0.5px - 0.028em) !important;
+  text-wrap: balance;
+}
+
+@media (width >= 48rem) {
+  .docs-title {
+    font-size: 2.5rem !important;
+    line-height: 3.375rem !important;
+    font-weight: 500 !important;
+  }
+}
+
+.docs-description {
+  max-width: 62ch;
+  font-size: 1.0625rem !important;
+  line-height: 1.75rem !important;
+  text-wrap: pretty;
+}
+
+.docs-prose {
+  font-size: 0.9375rem !important;
+  line-height: 1.5rem !important;
+}
+
+.docs-prose
+  :where(h1, h2, h3, h4, h5, h6):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: calc(0.5px - 0.028em) !important;
+  text-wrap: balance;
+}
+
+.docs-prose :where(h1, h2):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-size: 1.5rem !important;
+  line-height: 2.125rem !important;
+  font-weight: 600 !important;
+}
+
+.docs-prose :where(h3):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-size: 1.25rem !important;
+  line-height: 1.625rem !important;
+  font-weight: 600 !important;
+}
+
+.docs-prose :where(h4):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-size: 1.125rem !important;
+  line-height: 1.5rem !important;
+  font-weight: 600 !important;
+}
+
+.docs-prose :where(h5):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-size: 1rem !important;
+  line-height: 1.375rem !important;
+  font-weight: 500 !important;
+}
+
+.docs-prose :where(h6):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-size: 0.9375rem !important;
+  line-height: 1.3125rem !important;
+  font-weight: 500 !important;
+}
+
+.docs-prose :where(strong):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-weight: 600;
+}
+
+.docs-prose :where(:not(pre) > code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-size: 0.8125rem;
+}
+
+.docs-prose :where(pre):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+}
+
+/* The ink command button: one class instead of a long utility string that
+   would be repeated in the HTML and the RSC payload for every instance. */
+.marketing-command {
+  display: flex;
+  width: 100%;
+  cursor: pointer;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--color-fd-primary);
+  background-color: var(--color-fd-primary);
+  padding: 0.875rem 1.25rem;
+  text-align: left;
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+  color: var(--color-fd-primary-foreground);
+}
+
+/* A command can wrap on narrow screens, so it keeps a rounded rectangle
+   rather than the pill shape other marketing buttons use. */
+[data-slot="marketing-home"] .marketing-command {
+  border-radius: 0.875rem;
+}
+
+/* Install method switch: native radios, so it works before hydration and
+   without JavaScript. Only the panel matching the checked radio is shown. */
+.install-panel {
+  display: none;
+}
+
+.install-tabs:has(input[value="curl"]:checked) .install-panel[data-method="curl"],
+.install-tabs:has(input[value="npm"]:checked) .install-panel[data-method="npm"] {
+  display: block;
+}
+
+.install-tab {
+  cursor: pointer;
+  border-radius: 9999px;
+  padding: 0.25rem 0.75rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--color-fd-muted-foreground);
+}
+
+.install-tab:has(input:checked) {
+  background-color: var(--color-fd-accent);
+  color: var(--color-fd-foreground);
+}
+
+.install-tab:has(input:focus-visible) {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+/* Docs page actions: quiet outlined pills above the title. */
+.docs-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 9999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+  color: var(--color-fd-muted-foreground);
+  cursor: pointer;
+  transition:
+    color 150ms var(--ease-smooth),
+    background-color 150ms var(--ease-smooth);
+}
+
+@media (hover: hover) {
+  .docs-action:hover {
+    background-color: var(--color-fd-accent);
+    color: var(--color-fd-foreground);
+  }
+}
+
+.copy-glyph {
+  transition: opacity 150ms var(--ease-smooth);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docs-action,
+  .copy-glyph {
+    transition: none;
+  }
+}
+
+/* Agent setup prompt: the sentence an agent receives, with a copy action
+   that keeps its size while its glyph swaps. */
+.agent-prompt-box {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.875rem;
+  background-color: var(--color-fd-card);
+  padding: 0.625rem 0.625rem 0.625rem 1rem;
+}
+
+.agent-prompt-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 9999px;
+  background-color: var(--color-fd-background);
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+  font-weight: 500;
+  color: var(--color-fd-foreground);
+  cursor: pointer;
+  transition: background-color 150ms var(--ease-smooth);
+}
+
+@media (hover: hover) {
+  .agent-prompt-button:hover {
+    background-color: var(--color-fd-accent);
+  }
+}
+
+@media (max-width: 30rem) {
+  .agent-prompt-box {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.875rem;
+  }
+
+  .agent-prompt-button {
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-prompt-button {
+    transition: none;
+  }
 }
 
 /* The footer is an intentionally permanent dark close, independent of the

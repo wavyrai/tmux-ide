@@ -206,30 +206,28 @@ Right-click any pane or the bar opens the actions menu at the pointer.
 | Panels — explorer / changes / config       | `prefix e` `g` `v`    | `⌥e` `⌥g` `⌥,` |
 
 One interaction grammar everywhere: `j`/`k` move, `enter` opens, `/` filters,
-`esc` backs out, `?` asks. Bare `tmux-ide` with no project config opens the **home
-cockpit** (the fleet home screen). `tmux-ide cheatsheet` prints the full sheet.
+`esc` backs out, `?` asks. Bare `tmux-ide` with no project config opens the
+**app** (below). `tmux-ide cheatsheet` prints the full sheet.
 
-## The app — `tmux-ide app` (the terminal IDE)
+## The app — `tmux-ide app`
 
-v2.7 adds a full-screen unified app: tmux stays the engine (PTYs, agents,
-persistence); the app is the IDE around it. Launch `tmux-ide app` (bare = home
-screen) or `tmux-ide app <session>`. Needs `bun`, or a downloaded binary:
-`tmux-ide update --tui-binary`.
+The full-screen app: tmux stays the engine (PTYs, agents, persistence); the app
+renders it. Launch `tmux-ide app` (Home) or `tmux-ide app <session>`. Installed
+releases include the runtime; `tmux-ide update --tui-binary` re-downloads it.
 
-- **Tabs** `F1`–`F4`: Home (fleet, pick a session = set the workspace) ·
-  Terminal (the session mirrored live — it keeps streaming while you're on
-  other tabs) · Files (tree + built-in editor: `^s` save, `^z` undo, click to
-  place the cursor) · Diff (colored working-tree changes, `^e` opens the file
-  in the editor). `F5` = command palette (fuzzy everything).
-- **Mouse-native**: hover highlights; right-click = context menus (split/zoom/
-  kill panes, layouts, synchronize-panes, kill/rename sessions & windows —
-  destructive actions confirm); drag pane borders to resize; drag-select text →
-  clipboard via OSC52 (works through ssh); scrollbars; clickable buttons.
-- **tmux parity**: `[⛶]` zoom, window verbs, layout presets, `/` scrollback
-  search with `n`/`N`, paste-buffer picker. `^q` quits — the session is
-  untouched, like you were never there.
-- State persists across launches (~/.tmux-ide/app-state.json): last tab,
-  session, open file.
+- **Two surfaces**: `F1` Home (agents across local + SSH machines; `/` search,
+  `f` machine filter, `0`/`w`/`a` All/Working/Needs attention, `Enter` opens the
+  agent's pane) and `F2` Terminals (the session mirrored live, window tabs, pane
+  headers with agent state). There are no Files/Diff/Missions views in 2.9, and
+  `app.views` in workspace.yml is validated but not read.
+- **Overlays**: `F5` Commands (new window, New agent…, splits, zoom, Appearance…,
+  help) · `F6` Sessions · `F7` Attention · `F8`/`F9` session history/tabs ·
+  `F10` sidebar · `Ctrl+G` focus sidebar. `Ctrl+K` in Commands lists every key.
+- **Terminals**: `Ctrl+O`/`Ctrl+T` next pane/window, `Alt+Arrow` resize, drag
+  borders; right-click a pane for select text / rename / split / zoom / close
+  (confirmed). Shift+click opens links; Shift+drag selects inside mouse apps.
+- `Ctrl+Q` quits — sessions keep running. `tmux-ide app --detachable` hosts the
+  app in tmux so `Ctrl+Q` detaches instead.
 
 ## .tmux-ide/workspace.yml (optional)
 

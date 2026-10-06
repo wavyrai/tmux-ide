@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "generate": "node scripts/generate-ascii-wordmark.mjs && node scripts/generate-tui-mockup-motion.mjs && fumadocs-mdx",
+    "generate": "node scripts/generate-ascii-wordmark.mjs && node scripts/generate-tui-mockup-motion.mjs && fumadocs-mdx && node scripts/generate-git-dates.mjs",
     "build": "pnpm run generate && next build && pnpm run check:site",
     "check:performance": "node scripts/check-route-budget.mjs",
     "check:accessibility": "node scripts/check-accessibility.mjs",

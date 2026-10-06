@@ -31,6 +31,7 @@ const columns = [
       ["GitHub", "https://github.com/wavyrai/tmux-ide"],
       ["npm package", "https://www.npmjs.com/package/tmux-ide"],
       ["Contributing", "/docs/contributing"],
+      ["Prototyper", "https://www.prototyper.co"],
       ["X · @prototyper_co", "https://x.com/prototyper_co"],
     ],
   },
@@ -52,11 +53,11 @@ export function SiteFooter() {
               <AppIcon size={30} />
               <AsciiWordmark size="footer" inverted />
             </Link>
-            <p className="footer-muted mt-5 max-w-md text-sm leading-6">
+            <p className="footer-muted type-body mt-5 max-w-md">
               The agent-aware communication plane for building and coordinating a team of coding
               agents on durable tmux sessions.
             </p>
-            <code className="footer-foreground mt-7 inline-block font-mono text-xs">
+            <code className="footer-foreground type-caption-1 mt-7 inline-block font-mono">
               {INSTALL_COMMAND}
             </code>
           </div>
@@ -67,13 +68,13 @@ export function SiteFooter() {
         </div>
 
         <div className="footer-rule-grid grid grid-cols-1 gap-px border-b sm:grid-cols-2">
-          <div className="footer-muted footer-surface flex items-center gap-2 px-6 py-6 font-mono text-xs xl:px-10">
+          <div className="footer-muted footer-surface type-caption-1 flex items-center gap-2 px-6 py-6 xl:px-10">
             <span className="text-emerald-400" aria-hidden>
               ●
             </span>
-            <span>Open source · terminal native · SSH ready</span>
+            <span>An open-source project by Prototyper · MIT license</span>
           </div>
-          <div className="footer-muted footer-surface flex flex-wrap items-center gap-x-5 gap-y-2 px-6 py-6 text-xs sm:justify-end xl:px-10">
+          <div className="footer-muted footer-surface type-caption-1 flex flex-wrap items-center gap-x-5 gap-y-2 px-6 py-6 sm:justify-end xl:px-10">
             <span>© {new Date().getFullYear()} tmux-ide</span>
             <span>tmux owns the processes. tmux-ide gives them a workspace.</span>
           </div>
@@ -104,11 +105,11 @@ function FooterLinkGroup({
 }) {
   return (
     <nav className="footer-surface px-6 py-12 lg:py-16" aria-label={`${title} links`}>
-      <p className="footer-muted marketing-type-caption font-mono">{title}</p>
+      <p className="footer-muted type-caption-1">{title}</p>
       <ul className="mt-6 space-y-3">
         {links.map(([label, href]) => (
           <li key={label}>
-            <Link href={href} className="footer-foreground marketing-color-action text-sm">
+            <Link href={href} className="footer-foreground marketing-color-action type-body">
               {label}
             </Link>
           </li>

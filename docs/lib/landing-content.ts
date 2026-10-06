@@ -1,3 +1,38 @@
+import { INSTALL_COMMAND } from "@/lib/site";
+
+/**
+ * The hero is one constant so the headline can change in a single place.
+ * The eyebrow is a sentence-case label, not an uppercase flag.
+ */
+export const LANDING_HERO = {
+  eyebrow: "Build your team of agents",
+  title: "A dedicated workspace for your coding agents.",
+  lede: "Build, coordinate, and navigate a team of coding agents from one agent-aware communication plane. See what every agent is doing and jump directly to the one that needs you.",
+} as const;
+
+export interface InstallMethod {
+  readonly id: "curl" | "npm";
+  readonly label: string;
+  readonly command: string;
+  readonly note: string;
+}
+
+/** Only methods the release actually supports (see public/install.sh and the README). */
+export const INSTALL_METHODS: readonly InstallMethod[] = [
+  {
+    id: "curl",
+    label: "curl",
+    command: INSTALL_COMMAND,
+    note: "macOS and glibc Linux. Installs under ~/.local without sudo.",
+  },
+  {
+    id: "npm",
+    label: "npm",
+    command: "npm install -g tmux-ide",
+    note: "Requires Node.js 20 or newer.",
+  },
+] as const;
+
 export interface LandingFaqItem {
   readonly question: string;
   readonly answer: string;
@@ -22,7 +57,7 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
     question: "Can I jump directly to a specific agent?",
     answer:
-      "Yes. Selecting an agent resolves its exact tmux session, window, and pane, then focuses that pane. Memorable automatic names make the same targets easier to identify and discuss.",
+      "Yes. Selecting an agent resolves its exact tmux session, window, and pane, then focuses that pane. The names you give agents and panes make targets easy to identify; routing always uses the exact pane, never the name.",
   },
   {
     question: "Does it work over SSH?",
@@ -40,9 +75,9 @@ export const LANDING_AGENT_FEATURES = [
   {
     index: "01",
     eyebrow: "Name",
-    title: "Memorable names instead of pane IDs",
-    body: "New agents and panes get human names such as talented-toucan and warm-redwood. Rename them at any time, then use those names when people and agents coordinate work.",
-    figure: { number: "02.1", label: "Agent identity / memorable naming" },
+    title: "Names you can talk about",
+    body: "Name an agent when you create it — Architect, Reviewer — or rename any pane from its menu. Unnamed agents show their harness, Claude Code or Codex; other new panes get a memorable fallback such as warm-redwood until a title or running program names them.",
+    figure: { number: "02.1", label: "Agent identity / named agents and panes" },
   },
   {
     index: "02",
@@ -65,7 +100,7 @@ export const LANDING_CAPABILITIES = [
     index: "01",
     title: "Create",
     body: "Open clean windows and give agents, panes, and sessions names your team can remember.",
-    items: ["new windows", "memorable names"],
+    items: ["new windows", "named agents and panes"],
     visual: "window",
     figure: { number: "04.1", label: "Create / windows and names" },
   },

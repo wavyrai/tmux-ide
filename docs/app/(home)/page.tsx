@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 
 import { AppIcon } from "@/components/app-icon";
+import { CopyAgentPrompt } from "@/components/copy-agent-prompt";
 import { AsciiWordmark } from "@/components/ascii-wordmark";
 import { LandingFaqJsonLd } from "@/components/landing-faq-json-ld";
 import {
@@ -22,18 +23,25 @@ import {
   LANDING_ARCHITECTURE,
   LANDING_CAPABILITIES,
   LANDING_FAQ,
+  LANDING_HERO,
+  INSTALL_METHODS,
 } from "@/lib/landing-content";
-import { APP_COMMAND, CURRENT_RELEASE_PATH, INSTALL_COMMAND } from "@/lib/site";
-import { CopyButton } from "./copy-button";
+import { InstallCommand, InstallTabs } from "@/components/marketing/install-tabs";
+import {
+  APP_COMMAND,
+  CURRENT_RELEASE_PATH,
+  INSTALL_COMMAND,
+  SITE_DESCRIPTION,
+  SITE_TITLE,
+} from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "tmux-ide — a dedicated workspace for coding agents",
-  description:
-    "Give coding agents a dedicated tmux workspace with memorable names, live status, exact pane navigation, terminal-native controls, durable sessions, and SSH support.",
+  title: { absolute: SITE_TITLE },
+  description: SITE_DESCRIPTION,
   alternates: { canonical: "/" },
 };
 
-const bodyCopy = "marketing-type-body max-w-[62ch] text-fd-muted-foreground";
+const bodyCopy = "type-marketing-body max-w-[62ch] text-fd-muted-foreground";
 const agentVisuals = ["names", "status", "navigate"] satisfies TuiFigureVariant[];
 const architectureVisuals = ["tmux", "daemon", "opentui"] satisfies TuiFigureVariant[];
 
@@ -66,9 +74,9 @@ export default async function HomePage() {
           <BandBody className="pb-10 pt-10! md:pb-12 md:pt-12!">
             <Link
               href={CURRENT_RELEASE_PATH}
-              className="marketing-enter-fast marketing-pill-action mb-8 inline-flex items-center gap-2 rounded-full border border-marketing-line bg-marketing-raise px-3 py-1.5 text-xs text-fd-foreground"
+              className="marketing-enter-fast marketing-pill-action mb-8 inline-flex items-center gap-2 rounded-full border border-marketing-line bg-marketing-raise type-caption-1 px-3 py-1.5 text-fd-foreground"
             >
-              <span className="marketing-flag font-mono text-fd-primary">New</span>
+              <span className="text-fd-muted-foreground">New</span>
               <span>OpenTUI workspace in 2.9</span>
               <span aria-hidden className="text-fd-muted-foreground">
                 →
@@ -78,30 +86,23 @@ export default async function HomePage() {
               <AsciiWordmark animated className="marketing-enter-step-2" />
             </div>
             <MarketingGrid className="items-end gap-y-8 lg:gap-x-12">
-              <Cell className="marketing-enter marketing-enter-step-3 lg:col-span-14">
-                <span className="marketing-flag marketing-type-caption font-mono text-fd-primary">
-                  Build your team of agents
-                </span>
-                <h1 className="text-marketing-display mt-5 max-w-[17ch] text-fd-foreground">
-                  A dedicated workspace for your coding agents.
+              <Cell className="marketing-enter marketing-enter-step-3 lg:col-span-13">
+                <p className="type-subheadline text-fd-muted-foreground">{LANDING_HERO.eyebrow}</p>
+                <h1 className="type-page-title mt-4 max-w-[17ch] text-fd-foreground">
+                  {LANDING_HERO.title}
                 </h1>
               </Cell>
 
-              <Cell className="marketing-enter marketing-enter-step-4 lg:col-span-10">
-                <p className="text-marketing-lead mt-7 max-w-[62ch] text-fd-muted-foreground">
-                  Build, coordinate, and navigate a team of coding agents from one agent-aware
-                  communication plane. See what every agent is doing and jump directly to the one
-                  that needs you.
+              <Cell className="marketing-enter marketing-enter-step-4 lg:col-span-11">
+                <p className="type-marketing-lede mt-7 max-w-[62ch] text-fd-muted-foreground">
+                  {LANDING_HERO.lede}
                 </p>
-                <CopyButton
-                  text={INSTALL_COMMAND}
-                  className="marketing-copy-action mt-7 flex w-full max-w-lg cursor-pointer items-center gap-3 border border-fd-primary bg-fd-primary px-5 py-3.5 text-left text-sm text-fd-primary-foreground"
-                >
-                  <span aria-hidden>$</span>
-                  <code className="font-mono">{INSTALL_COMMAND}</code>
-                  <span className="ml-auto text-xs opacity-65">copy</span>
-                </CopyButton>
-                <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-fd-muted-foreground">
+                <InstallTabs
+                  name="install-method-hero"
+                  methods={INSTALL_METHODS}
+                  className="mt-7"
+                />
+                <div className="type-body mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-fd-muted-foreground">
                   <span>
                     Then run <code className="font-mono text-fd-foreground">{APP_COMMAND}</code>
                   </span>
@@ -124,13 +125,14 @@ export default async function HomePage() {
                   >
                     <span>GitHub</span>
                     {stars !== null ? (
-                      <span className="inline-flex items-center gap-1 font-mono text-xs text-fd-muted-foreground">
+                      <span className="type-caption-1 inline-flex items-center gap-1 font-mono text-fd-muted-foreground">
                         <span aria-hidden>★</span>
                         <span>{formatStars(stars)}</span>
                       </span>
                     ) : null}
                   </a>
                 </div>
+                <CopyAgentPrompt className="mt-8 max-w-xl" />
               </Cell>
             </MarketingGrid>
           </BandBody>
@@ -173,16 +175,16 @@ export default async function HomePage() {
         <Band>
           <BandBody>
             <SectionHeader
-              eyebrow="one workspace, every agent accounted for"
+              eyebrow="One workspace, every agent accounted for"
               title="Name them. See their state. Go straight to the right pane."
               description="A clear three-step loop replaces terminal hunting with a workspace the whole team can understand."
             />
-            <p className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-sm text-fd-muted-foreground">
-              <span className="text-fd-foreground">name</span>
+            <p className="type-body mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 text-fd-muted-foreground">
+              <span className="text-fd-foreground">Name</span>
               <span aria-hidden>→</span>
-              <span className="text-fd-foreground">monitor</span>
+              <span className="text-fd-foreground">Monitor</span>
               <span aria-hidden>→</span>
-              <span className="text-fd-primary">navigate</span>
+              <span className="text-fd-foreground">Navigate</span>
             </p>
             <Mosaic bleed className="mt-12 lg:grid-cols-3">
               {LANDING_AGENT_FEATURES.map((feature, index) => (
@@ -191,13 +193,11 @@ export default async function HomePage() {
                   ground="paper"
                   className="flex h-full flex-col p-7 md:p-9"
                 >
-                  <div className="marketing-flag marketing-type-caption flex items-center justify-between gap-4 font-mono">
-                    <span className="text-fd-primary">{feature.index}</span>
-                    <span className="text-fd-muted-foreground">{feature.eyebrow}</span>
+                  <div className="type-caption-1 flex items-center justify-between gap-4 text-fd-muted-foreground">
+                    <span className="font-mono">{feature.index}</span>
+                    <span>{feature.eyebrow}</span>
                   </div>
-                  <h3 className="marketing-type-subtitle mt-10 text-fd-foreground">
-                    {feature.title}
-                  </h3>
+                  <h3 className="type-title-2 mt-10 text-fd-foreground">{feature.title}</h3>
                   <p className={`mt-4 ${bodyCopy}`}>{feature.body}</p>
                   <TuiMiniFigure
                     variant={agentVisuals[index]}
@@ -214,7 +214,7 @@ export default async function HomePage() {
         <Band>
           <BandBody>
             <SectionHeader
-              eyebrow="durable by architecture"
+              eyebrow="Durable by architecture"
               title="Close the interface. Disconnect SSH. Your agents keep running."
               description={
                 <>
@@ -228,12 +228,14 @@ export default async function HomePage() {
             <Mosaic bleed className="mt-12 lg:grid-cols-3">
               {LANDING_ARCHITECTURE.map((layer, index) => (
                 <Cell key={layer.owner} ground="paper" className="flex h-full flex-col p-7">
-                  <span className="font-mono text-xs text-fd-primary">0{index + 1}</span>
-                  <h3 className="mt-8 font-mono text-lg text-fd-foreground">{layer.owner}</h3>
-                  <p className="mt-3 min-h-12 font-mono text-xs leading-relaxed text-fd-muted-foreground">
+                  <span className="type-caption-1 font-mono text-fd-muted-foreground">
+                    0{index + 1}
+                  </span>
+                  <h3 className="type-title-2 mt-8 text-fd-foreground">{layer.owner}</h3>
+                  <p className="type-body-2 mt-3 min-h-10 text-fd-muted-foreground">
                     {layer.responsibility}
                   </p>
-                  <p className="mt-8 border-t border-fd-border pt-4 text-sm text-fd-foreground">
+                  <p className="type-body mt-8 border-t border-fd-border pt-4 text-fd-foreground">
                     {layer.outcome}
                   </p>
                   <TuiMiniFigure
@@ -246,14 +248,14 @@ export default async function HomePage() {
                 </Cell>
               ))}
             </Mosaic>
-            <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 font-mono text-sm text-fd-muted-foreground">
+            <div className="type-body mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 text-fd-muted-foreground">
               <span className="text-fd-foreground">Local terminal</span>
               <span aria-hidden>→</span>
               <span className="text-fd-foreground">SSH</span>
               <span aria-hidden>→</span>
-              <span className="text-fd-primary">same durable tmux workspace</span>
+              <span className="text-fd-foreground">Same durable tmux workspace</span>
             </div>
-            <p className="marketing-type-body mt-6 max-w-[72ch] text-fd-muted-foreground">
+            <p className="type-marketing-body mt-6 max-w-[72ch] text-fd-muted-foreground">
               That makes tmux-ide legible to both humans and agents: inspect sessions, target a
               named pane, and communicate through established tmux primitives rather than teaching
               every agent a proprietary control plane.
@@ -266,7 +268,7 @@ export default async function HomePage() {
         <Band>
           <BandBody>
             <SectionHeader
-              eyebrow="everything remains ordinary tmux"
+              eyebrow="Everything remains ordinary tmux"
               title="Create, arrange, and operate without breaking flow."
               description="The visual layer maps directly onto familiar tmux operations. Use it when it helps, then drop back to tmux whenever you want."
             />
@@ -277,18 +279,16 @@ export default async function HomePage() {
                   ground="raise"
                   className="flex h-full flex-col p-7 md:p-9"
                 >
-                  <span className="marketing-type-micro font-mono text-fd-primary">
+                  <span className="type-caption-1 font-mono text-fd-muted-foreground">
                     {capability.index}
                   </span>
-                  <h3 className="marketing-type-subtitle mt-8 text-fd-foreground">
-                    {capability.title}
-                  </h3>
+                  <h3 className="type-title-2 mt-8 text-fd-foreground">{capability.title}</h3>
                   <p className={`mt-4 ${bodyCopy}`}>{capability.body}</p>
-                  <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 font-mono text-xs text-fd-muted-foreground">
+                  <ul className="type-caption-1 mt-6 flex flex-wrap gap-x-5 gap-y-2 text-fd-muted-foreground">
                     {capability.items.map((item) => (
                       <li
                         key={item}
-                        className="before:mr-2 before:text-fd-primary before:content-['·']"
+                        className="before:mr-2 before:text-fd-foreground before:content-['·']"
                       >
                         {item}
                       </li>
@@ -304,7 +304,7 @@ export default async function HomePage() {
                 </Cell>
               ))}
             </Mosaic>
-            <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-fd-muted-foreground">
+            <div className="type-body mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-fd-muted-foreground">
               <span>Every action remains inspectable from an ordinary tmux client.</span>
               <Link href="/docs/commands" className="marketing-link-action text-fd-primary">
                 Explore all commands →
@@ -315,15 +315,15 @@ export default async function HomePage() {
         <Band>
           <BandBody>
             <LandingFaqJsonLd />
-            <SectionHeader eyebrow="questions, answered" title="The important details." />
+            <SectionHeader eyebrow="Questions, answered" title="The important details." />
             <div id="faq" className="mt-12 border-t border-fd-border">
               {LANDING_FAQ.map(({ question, answer }) => (
                 <details key={question} className="group border-b border-fd-border py-6">
-                  <summary className="flex cursor-pointer list-none items-center gap-6 text-base font-normal text-fd-foreground marker:content-none">
+                  <summary className="type-headline flex cursor-pointer list-none items-center gap-6 text-fd-foreground marker:content-none">
                     <span>{question}</span>
                     <span
                       aria-hidden
-                      className="ml-auto font-mono text-fd-primary transition-transform duration-200 ease-smooth group-open:rotate-45 motion-reduce:transition-none"
+                      className="ml-auto text-fd-muted-foreground transition-transform duration-200 ease-smooth group-open:rotate-45 motion-reduce:transition-none"
                     >
                       +
                     </span>
@@ -348,22 +348,15 @@ export default async function HomePage() {
                   eyebrow={
                     <span className="inline-flex items-center justify-center gap-3 text-fd-muted-foreground">
                       <AppIcon size={28} />
-                      ready when you are
+                      Ready when you are
                     </span>
                   }
                   title="Build your team of agents."
                   description="Install tmux-ide, open the app, and turn the tmux sessions you already use into one clear agent workspace."
                 />
-                <div className="mt-8 text-center">
-                  <CopyButton
-                    text={INSTALL_COMMAND}
-                    className="marketing-copy-action flex w-full cursor-pointer items-center gap-3 border border-fd-primary bg-fd-primary px-5 py-3.5 text-left text-sm text-fd-primary-foreground"
-                  >
-                    <span aria-hidden>$</span>
-                    <code className="font-mono">{INSTALL_COMMAND}</code>
-                    <span className="ml-auto text-xs opacity-65">copy</span>
-                  </CopyButton>
-                  <p className="mt-4 text-sm text-fd-muted-foreground">
+                <div className="mt-8 flex flex-col items-center text-center">
+                  <InstallCommand command={INSTALL_COMMAND} />
+                  <p className="type-body mt-4 text-fd-muted-foreground">
                     Then run <code className="font-mono text-fd-foreground">{APP_COMMAND}</code>
                     <span aria-hidden className="mx-3">
                       ·

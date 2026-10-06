@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: The supported tmux-ide commands and flags in 2.9.3
+description: "Every public tmux-ide 2.9.3 command and flag, with JSON output for scripts and agents: open the app, adopt, restore, send, wait, automation and more."
 ---
 
 This page follows the public surface printed by `tmux-ide --help` in
@@ -119,8 +119,7 @@ not override a completed turn.
 
 ## Agent automation
 
-The following commands are available starting in `2.9.0-beta.46` and require
-a matching running daemon.
+These commands require a running daemon of the same version.
 
 | Command                                                     | What it does                                        |
 | ----------------------------------------------------------- | --------------------------------------------------- |
@@ -137,7 +136,7 @@ An uncertain response is not permission to send again with a new handle. See
 [Agent automation](/docs/automation) for request formats, source credentials,
 retry rules, and SDK usage.
 
-## Adopt ordinary tmux sessions
+## tmux chrome (adopt ordinary tmux sessions)
 
 | Command                                      | What it does                                             |
 | -------------------------------------------- | -------------------------------------------------------- |
@@ -150,7 +149,8 @@ retry rules, and SDK usage.
 | `tmux-ide popup <explorer\|changes\|config>` | Open a widget in a tmux popup                            |
 | `tmux-ide sidebar-toggle [--session <name>]` | Toggle the app navigation column                         |
 
-See [The dock & keys](/docs/the-dock) for the matching tmux bindings.
+These commands drive [tmux chrome](/docs/the-dock) for plain tmux clients; see
+that page for the matching tmux bindings.
 
 ## Saved SSH machines
 
@@ -272,4 +272,4 @@ as one row.
 `tmux-ide update --daemon` starts or upgrades the local daemon to the installed
 version, preserving tmux sessions. Add `--if-running` to leave fresh installs
 idle, and `--json` for structured status. This command does not update a remote
-machine; install the beta there or run the command in its shell.
+machine; install the same version there and run the command in its shell.

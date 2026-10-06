@@ -162,7 +162,7 @@ export function SocialCard({ description, eyebrow, title }: SocialCardProps) {
             height: 78,
           }}
         >
-          <SocialCardSignal label="memorable names" marker="●" />
+          <SocialCardSignal label="named agents" marker="●" />
           <SocialCardSignal label="live agent state" marker="◌" />
           <SocialCardSignal label="exact pane navigation" marker="→" last />
         </div>
