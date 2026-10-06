@@ -25,6 +25,11 @@ export const docs = defineDocs({
 
 export default defineConfig({
   mdxOptions: {
-    // MDX options
+    rehypeCodeOptions: {
+      // Every token in these themes meets WCAG AA (4.5:1) on the docs
+      // code-block grounds in both schemes; the older github-light/dark
+      // pair had comments and an orange token below it.
+      themes: { light: "github-light-default", dark: "github-dark-default" },
+    },
   },
 });
