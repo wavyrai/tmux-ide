@@ -1,10 +1,10 @@
 ---
 title: Agent Detection
-description: Two layers of agent-status detection — authoritative hooks and an evidence-tuned fallback — plus the self-report contract and overrides
+description: How tmux-ide knows whether an agent is working, blocked, done or idle — Claude Code hooks, a one-line self-report contract, an inspectable fallback, and overrides.
 ---
 
-The glyphs on the dock and the border chips on each pane come from a
-**two-layer** detector. The whole point is trust: when an agent can tell you the
+Every agent state tmux-ide shows — on Home, in the sidebar and pane headers, and
+in the [tmux chrome](/docs/the-dock) — comes from a **two-layer** detector. The whole point is trust: when an agent can tell you the
 truth, tmux-ide believes it; when it can't, tmux-ide reasons transparently and
 lets you correct it.
 
@@ -93,7 +93,30 @@ everything the detector reasoned over:
 
 If the fallback ever guesses wrong for a particular tool, pin the manifest with
 the `@agent_hint` pane option — `agent explain` reports whether a hint is
-applied and which manifest it forced. For authoritative control, prefer the
+applied and which manifest it forced:
+
+```bash
+tmux set-option -p @agent_hint claude
+```
+
+To tune detection for a tool, drop a manifest into
+`~/.tmux-ide/agent-detection/` — one JSON file per agent:
+
+```json
+{
+  "id": "my-agent",
+  "commands": ["my-agent", "my-agent-cli"],
+  "states": {
+    "working": { "any": [{ "contains": "esc to interrupt", "caseInsensitive": true }] },
+    "blocked": { "any": [{ "contains": "(y/n)", "caseInsensitive": true }] }
+  }
+}
+```
+
+A file whose `id` matches a bundled manifest replaces it; a new `id` adds one.
+Invalid files are skipped with a warning. Your files always win over the
+bundled set and over the optional manifest pack fetched by
+`tmux-ide update --manifests`. For authoritative control, prefer the
 [self-report contract](#the-self-report-contract) above: a fresh `@agent_state`
 always wins.
 
@@ -116,11 +139,11 @@ classified to a real agent, flat across the session's windows:
 | `command`     | `pane_current_command` — the immediate process (often node/bun/sh)  |
 | `dir`         | `pane_current_path` — the pane's working directory                  |
 
-This is the same data the unified app reads: the sidebar's agents section and the
-Terminal surface's per-pane chips both render from it. See
-[Home, sidebar & panels](/docs/app-surfaces#the-terminal-surface).
+The app's Home roster, sidebar and pane headers show the same agent states. See
+[App surfaces](/docs/app-surfaces#terminals).
 
 ## See also
 
-- [The dock & keys](/docs/the-dock) — where the glyphs and chips appear
+- [App surfaces](/docs/app-surfaces) — where agent states appear in the app
+- [tmux chrome](/docs/the-dock) — status-bar glyphs and pane chips in plain tmux
 - [Notifications & events](/docs/notifications-events) — reacting to state transitions

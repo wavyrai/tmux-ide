@@ -1,12 +1,13 @@
 ---
 title: Restore & Resume
-description: Rebuild your whole fleet after a tmux server death — sessions, windows, layouts, cwds, titles, and agent conversations
+description: Rebuild every tmux session after a server crash with tmux-ide restore — windows, layouts, directories, titles, and Claude, Codex, Cursor and opencode conversations.
 ---
 
-A tmux server death shouldn't cost you an afternoon. While tmux-ide is running,
-the chrome updater continuously writes a snapshot of your fleet to
-`~/.tmux-ide/snapshot.json`. If the server dies, `tmux-ide restore` rebuilds
-everything it recorded.
+A tmux server death shouldn't cost you an afternoon. tmux-ide's
+[background updater](/docs/the-dock#the-background-updater) writes a snapshot of
+your fleet to `~/.tmux-ide/snapshot.json` about every 30 seconds. It runs once
+any session is adopted or created from the app. If the server dies,
+`tmux-ide restore` rebuilds everything the last snapshot recorded.
 
 ## What comes back
 
@@ -20,7 +21,7 @@ For each session in the last snapshot, restore rebuilds:
 - the **split layout** of each window,
 - per-pane **working directories**,
 - per-pane **titles**, and
-- **re-adopts** the sessions that were adopted (the dock returns).
+- **re-adopts** the sessions that were adopted (their [tmux chrome](/docs/the-dock) returns).
 
 If a session already maps to a registry project **with a project config**, restore
 relaunches from that config instead of a raw rebuild — the config is the source
@@ -110,7 +111,7 @@ How often the snapshot is written is part of the updater config in
 ```
 
 A snapshot is written every `snapshotEvery` ticks (default: every 15 ticks of
-2s ≈ every 30 seconds). See [Theming & config](/docs/theming).
+2s ≈ every 30 seconds). See [Configuration](/docs/configuration#other-sections).
 
 ## See also
 

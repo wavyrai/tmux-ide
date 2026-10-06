@@ -1,12 +1,11 @@
 ---
 title: Agent automation
-description: Scoped pane reads and sends through the CLI, MCP server, and SDK
+description: Let agents and scripts read and type into tmux panes safely — tmux-ide automation through the CLI, an MCP server and the SDK, with operation handles for recovery.
 ---
 
-The CLI and MCP interfaces are available starting in `2.9.0-beta.46`.
-Automatic source resolution and the resolved intent in reservation responses
-require `2.9.0-beta.47` or newer. They require a matching running daemon. The CLI, MCP server, and SDK use the
-same operation API and do not fall back to raw tmux when a request fails.
+The automation CLI, MCP server and SDK share one operation API. They require a
+running daemon of the same version and never fall back to raw tmux when a
+request fails.
 
 ## Discover the target
 
