@@ -105,7 +105,7 @@ export const LANDING_AGENT_FEATURES = [
     index: "02",
     eyebrow: "Monitor",
     title: "Live agent indicators",
-    body: "Working, blocked, done and idle states appear in the sidebar and pane headers, so a multi-agent workspace stays readable without opening every terminal.",
+    body: "See every agent's status in tmux: working, blocked, done or idle, in the sidebar and pane headers, so a multi-agent workspace stays readable without opening every terminal.",
     link: {
       label: "How agent status is detected",
       href: "/docs/agent-detection#which-agents-are-detected",
