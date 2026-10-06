@@ -404,8 +404,8 @@ body {
   background-color: var(--color-fd-primary);
   padding: 0.875rem 1.25rem;
   text-align: left;
-  font-size: 0.875rem;
-  line-height: 1.25rem;
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
   color: var(--color-fd-primary-foreground);
 }
 
@@ -444,6 +444,94 @@ body {
 .install-tab:has(input:focus-visible) {
   outline: 2px solid var(--color-fd-ring);
   outline-offset: 2px;
+}
+
+/* Docs page actions: quiet outlined pills above the title. */
+.docs-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 9999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+  color: var(--color-fd-muted-foreground);
+  cursor: pointer;
+  transition:
+    color 150ms var(--ease-smooth),
+    background-color 150ms var(--ease-smooth);
+}
+
+@media (hover: hover) {
+  .docs-action:hover {
+    background-color: var(--color-fd-accent);
+    color: var(--color-fd-foreground);
+  }
+}
+
+.copy-glyph {
+  transition: opacity 150ms var(--ease-smooth);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docs-action,
+  .copy-glyph {
+    transition: none;
+  }
+}
+
+/* Agent setup prompt: the sentence an agent receives, with a copy action
+   that keeps its size while its glyph swaps. */
+.agent-prompt-box {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.875rem;
+  background-color: var(--color-fd-card);
+  padding: 0.625rem 0.625rem 0.625rem 1rem;
+}
+
+.agent-prompt-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 9999px;
+  background-color: var(--color-fd-background);
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+  font-weight: 500;
+  color: var(--color-fd-foreground);
+  cursor: pointer;
+  transition: background-color 150ms var(--ease-smooth);
+}
+
+@media (hover: hover) {
+  .agent-prompt-button:hover {
+    background-color: var(--color-fd-accent);
+  }
+}
+
+@media (max-width: 30rem) {
+  .agent-prompt-box {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.875rem;
+  }
+
+  .agent-prompt-button {
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-prompt-button {
+    transition: none;
+  }
 }
 
 /* The footer is an intentionally permanent dark close, independent of the
