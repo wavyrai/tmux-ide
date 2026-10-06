@@ -91,20 +91,21 @@ them.
 
 ## Agent awareness and coordination
 
-| Command                                                                           | What it does                                                                    |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `tmux-ide integration install claude`                                             | Install Claude Code lifecycle hooks and refresh the bundled Claude skill        |
-| `tmux-ide integration install opencode`                                           | Install session-ID capture for future opencode sessions                         |
-| `tmux-ide integration uninstall <claude\|opencode>`                               | Remove only tmux-ide's integration entries                                      |
-| `tmux-ide integration status [--json]`                                            | Show discovered agents, integration state, and resume-ID capture                |
-| `tmux-ide agent explain <pane\|session> [--json]`                                 | Explain exactly how an agent state was classified                               |
-| `tmux-ide send <target> <message> [--no-enter] [--json]`                          | Type into a pane selected by ID, title, semantic name, or supported legacy role |
-| `tmux-ide send --to <target> <message> [--no-enter] [--json]`                     | Equivalent explicit target form                                                 |
-| `tmux-ide events [--follow] [--json]`                                             | Read recent agent-state transitions or follow them                              |
-| `tmux-ide events --follow --socket[=<path>]`                                      | Follow pushed events from a running control server                              |
-| `tmux-ide wait agent-status <session> --status <state> [--timeout <ms>] [--json]` | Wait for a session status; exit 0 on match and 1 on timeout                     |
-| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>] [--json]`  | Wait until visible pane output matches                                          |
-| `tmux-ide serve [socket-path]`                                                    | Run the foreground, owner-only local NDJSON control socket                      |
+| Command                                                                           | What it does                                                                                                         |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `tmux-ide integration install claude`                                             | Install Claude Code lifecycle hooks and refresh the bundled Claude skill                                             |
+| `tmux-ide integration install opencode`                                           | Install session-ID capture for future opencode sessions                                                              |
+| `tmux-ide integration uninstall <claude\|opencode>`                               | Remove only tmux-ide's integration entries                                                                           |
+| `tmux-ide integration status [--json]`                                            | Show discovered agents, integration state, and resume-ID capture                                                     |
+| `tmux-ide integration agent-teams [enable\|disable\|status] [--json]`             | Turn Claude Code agent teams on or off in `~/.claude/settings.json`; the installer enables them unless you opted out |
+| `tmux-ide agent explain <pane\|session> [--json]`                                 | Explain exactly how an agent state was classified                                                                    |
+| `tmux-ide send <target> <message> [--no-enter] [--json]`                          | Type into a pane selected by ID, title, semantic name, or supported legacy role                                      |
+| `tmux-ide send --to <target> <message> [--no-enter] [--json]`                     | Equivalent explicit target form                                                                                      |
+| `tmux-ide events [--follow] [--json]`                                             | Read recent agent-state transitions or follow them                                                                   |
+| `tmux-ide events --follow --socket[=<path>]`                                      | Follow pushed events from a running control server                                                                   |
+| `tmux-ide wait agent-status <session> --status <state> [--timeout <ms>] [--json]` | Wait for a session status; exit 0 on match and 1 on timeout                                                          |
+| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>] [--json]`  | Wait until visible pane output matches                                                                               |
+| `tmux-ide serve [socket-path]`                                                    | Run the foreground, owner-only local NDJSON control socket                                                           |
 
 `serve` defaults to `~/.tmux-ide/control.sock`. The wait commands use it when
 requested and otherwise fall back to direct polling.

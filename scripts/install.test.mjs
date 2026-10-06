@@ -43,7 +43,7 @@ const root=path.join(prefix,'lib/node_modules/tmux-ide');
 for (const dir of ['bin','scripts','packages/daemon/dist/native/tmux/${target}']) fs.mkdirSync(path.join(root,dir),{recursive:true});
 const version = process.env.MOCK_VERSION || '2.9.0';
 fs.writeFileSync(path.join(root,'package.json'),JSON.stringify({version}));
-fs.writeFileSync(path.join(root,'bin/cli.js'), "if(process.env.MOCK_RELOCATED_FAIL && !__filename.includes('.install.')) process.exit(1); if(process.env.MOCK_TUI_FAIL && process.argv.includes('--tui-binary')) process.exit(1); console.log(process.env.MOCK_BAD_VERSION ? 'tmux-ide v0.0.0' : 'tmux-ide v"+version+"');");
+fs.writeFileSync(path.join(root,'bin/cli.js'), "if(process.argv.includes('agent-teams')){ if(process.env.MOCK_TEAMS_FAIL) process.exit(1); const r=require('node:child_process').spawnSync(process.execPath,['${path.resolve("bin/cli.js")}',...process.argv.slice(2)],{stdio:'inherit'}); process.exit(r.status ?? 1); } if(process.env.MOCK_RELOCATED_FAIL && !__filename.includes('.install.')) process.exit(1); if(process.env.MOCK_TUI_FAIL && process.argv.includes('--tui-binary')) process.exit(1); console.log(process.env.MOCK_BAD_VERSION ? 'tmux-ide v0.0.0' : 'tmux-ide v"+version+"');");
 fs.writeFileSync(path.join(root,'scripts/postinstall.js'), "if(process.env.MOCK_POSTINSTALL_HOLD) { require('node:fs').writeFileSync(process.env.MOCK_POSTINSTALL_HOLD, 'ready'); setInterval(()=>{}, 1000); } if(process.env.MOCK_POSTINSTALL_FAIL) process.exit(1); if(process.env.npm_config_global === 'true') throw new Error('must not update the daemon implicitly'); require('node:fs').appendFileSync(process.env.HOME+'/postinstall', 'installed\\\\n');");
 
 if (!process.env.MOCK_MISSING_TMUX) fs.writeFileSync(path.join(root,'packages/daemon/dist/native/tmux/${target}/tmux'),'#!/bin/sh\\necho tmux '+(process.env.MOCK_OLD_TMUX ? '3.4' : '3.7c')+'\\n');
@@ -67,6 +67,10 @@ chmod +x "$1/bin/npm"\n`,
     HOME: root,
     PATH: `${bin}:/usr/bin:/bin`,
     TMUX_IDE_RUNTIME_MODE: "",
+    // Agent-teams setup must resolve Claude settings from the fixture HOME only.
+    TMUX_IDE_CLAUDE_SETTINGS: "",
+    TMUX_IDE_CLAUDE_DIR: "",
+    TMUX_IDE_NO_CLAUDE_AGENT_TEAMS: "",
   };
   const run = (extra = {}, args = []) =>
     spawnSync("/bin/sh", [installer, "--prefix", prefix, ...args], {
@@ -321,3 +325,69 @@ for (const signal of ["SIGTERM", "SIGINT"])
     assert.equal(fs.existsSync(path.join(managed, "install.lock")), false);
     assert.equal(run().status, 0, "a subsequent installation succeeds");
   });
+
+// The fixture PATH is tools:/usr/bin:/bin, so only ~/.claude can signal Claude Code
+// unless the host has a system-wide claude binary.
+const systemClaude = ["/usr/bin/claude", "/bin/claude"].some((file) => fs.existsSync(file));
+const teamsSettings = (root) => path.join(root, ".claude", "settings.json");
+
+test("install enables Claude Code agent teams when ~/.claude exists", (t) => {
+  const { root, run } = fixture(t);
+  fs.mkdirSync(path.join(root, ".claude"));
+  fs.writeFileSync(teamsSettings(root), JSON.stringify({ model: "opus" }));
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Enabled Claude Code agent teams in ~\/\.claude\/settings\.json/);
+  assert.match(result.stdout, /Disable: tmux-ide integration agent-teams disable/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(teamsSettings(root), "utf8")), {
+    model: "opus",
+    env: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" },
+    teammateMode: "auto",
+  });
+  assert.ok(
+    fs.readdirSync(path.join(root, ".claude")).some((f) => f.includes(".tmux-ide-backup-")),
+  );
+  assert.match(run().stdout, /already enabled/, "a reinstall changes nothing");
+});
+
+test("install skips agent teams without Claude Code", { skip: systemClaude }, (t) => {
+  const { root, run } = fixture(t);
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Claude Code not found/);
+  assert.equal(fs.existsSync(path.join(root, ".claude")), false);
+});
+
+test("install respects a user's agent-teams opt-out", (t) => {
+  const { root, run } = fixture(t);
+  fs.mkdirSync(path.join(root, ".claude"));
+  const original = JSON.stringify({ env: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0" } });
+  fs.writeFileSync(teamsSettings(root), original);
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /disabled by user/);
+  assert.equal(fs.readFileSync(teamsSettings(root), "utf8"), original);
+});
+
+for (const [label, extra, args] of [
+  ["--no-claude-agent-teams", {}, ["--no-claude-agent-teams"]],
+  ["TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1", { TMUX_IDE_NO_CLAUDE_AGENT_TEAMS: "1" }, []],
+])
+  test(`${label} opts out of the agent-teams step`, (t) => {
+    const { root, run } = fixture(t);
+    fs.mkdirSync(path.join(root, ".claude"));
+    const result = run(extra, args);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Skipped Claude Code agent teams \(opted out\)/);
+    assert.equal(fs.existsSync(teamsSettings(root)), false);
+  });
+
+test("an agent-teams failure warns but never fails the install", (t) => {
+  const { root, prefix, run } = fixture(t);
+  fs.mkdirSync(path.join(root, ".claude"));
+  const result = run({ MOCK_TEAMS_FAIL: "1" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Warning: could not configure Claude Code agent teams/);
+  assert.match(result.stdout, /Installed successfully/);
+  assert.ok(fs.existsSync(path.join(prefix, "bin/tmux-ide")));
+});
