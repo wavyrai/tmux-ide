@@ -1,10 +1,19 @@
 # Contributing
 
+tmux-ide is open source under the MIT license. This guide covers local setup,
+the checks every pull request must pass, and how to work on the docs and demo.
+The website version is [Contributing to tmux-ide](https://tmux-ide.com/docs/contributing).
+
 ## Setup
+
+```bash
+git clone https://github.com/wavyrai/tmux-ide
+cd tmux-ide
+```
 
 Requirements:
 
-- A supported Node.js runtime (see `package.json`); use the same executable and ABI for installation, builds and tests
+- Node.js 20 or newer; use the same executable and ABI for installation, builds and tests
 - The pnpm version pinned in `packageManager` and Bun version in `.bun-version`
 - Native compiler prerequisites and the pinned, patched tmux bundle for TUI and installed-runtime checks (see the worktree guide below)
 
@@ -14,7 +23,7 @@ Install dependencies:
 pnpm install --frozen-lockfile
 ```
 
-## Development Workflow
+## Development workflow
 
 Follow the [isolated worktree quickstart](docs/guides/development-worktrees.md) to run two branches with separate daemons, tmux servers, state and builds. It covers native setup, rebuild/apply, logs, stop/reset and the Docker/SSH workflow.
 
@@ -37,7 +46,7 @@ Consult the [native and dependency maintenance inventory](patches/README.md) bef
 See [isolated development CI](scripts/development-ci.md) for scoped lanes,
 resource bounds and evidence requirements.
 
-## Testing Notes
+## Testing notes
 
 - `pnpm test` runs the selected workspace package test suites, including daemon unit/live tests.
 - `pnpm test:daemon-bun` and `pnpm test:tui-renderer` select their separate Bun suites.
@@ -88,7 +97,18 @@ stops that instance, including its pane commands. Use an unused instance name
 for disposable smoke work; commands with that name select the same durable
 instance within this worktree.
 
-## Pull Requests
+## Docs and demo
+
+- The website lives in `docs/`; `pnpm docs:build` builds it and runs every site
+  check. Follow [the writing guide](docs/contributing/writing-guide.md) and keep
+  [the product-truth ledger](docs/contributing/product-truth-ledger.md) current.
+- `pnpm demo:tui` regenerates the animated demo from the production components;
+  the docs build fails when it is out of date.
+- `pnpm gallery:tui` opens real app components over fixture data, without
+  touching your daemon or tmux sessions. See
+  [the gallery guide](scripts/tui-gallery/README.md).
+
+## Pull requests
 
 - Keep behavior changes covered by tests.
 - Update README and docs when the CLI contract changes.

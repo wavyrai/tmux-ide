@@ -9,22 +9,19 @@
 
 <p align="center"><strong>The open-source workspace for coding agents.</strong></p>
 
-<p align="center">An open-source project by <a href="https://www.prototyper.co">Prototyper</a> · <a href="./LICENSE">MIT license</a> · <a href="https://tmux-ide.com/docs">Docs</a></p>
+<p align="center">An open-source project by <a href="https://www.prototyper.co">Prototyper</a> · <a href="https://github.com/wavyrai/tmux-ide/blob/main/LICENSE">MIT license</a> · <a href="https://tmux-ide.com/docs">Docs</a></p>
+
+Run and coordinate a team of coding agents, such as Claude Code and Codex, in the
+tmux sessions you already use. tmux-ide shows what every agent is doing, and lets
+you jump straight to the one that needs you. tmux keeps owning every process and
+pane, so closing tmux-ide never stops an agent.
 
 <p align="center">
-  <img src="./docs/public/tui-demo.svg" alt="Animated tmux-ide app demo showing Home, named coding agents, live status, terminal panes, and Commands" width="960" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/docs/public/tui-demo.svg" />
+    <img src="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/docs/public/tui-demo-light.svg" alt="Animated tmux-ide app demo showing Home, named coding agents, live status, terminal panes, and Commands" width="960" />
+  </picture>
 </p>
-
-The demo above is a self-contained animated SVG rendered from the app's
-production components, not a video or a hand-maintained mockup. It is committed with
-the project, so the animation runs directly in GitHub.
-
-tmux-ide is a terminal app for running coding agents such as Claude Code and
-Codex in ordinary tmux sessions. tmux still owns the processes, PTYs, sessions,
-windows, panes, and persistence. tmux-ide adds Home, which shows every agent
-across your machines and which ones need you, plus clickable windows, pane
-headers, named agents and panes, and direct controls. Close the app and the
-underlying sessions keep running.
 
 ## Install
 
@@ -33,167 +30,143 @@ curl -fsSL https://tmux-ide.com/install.sh | sh
 tmux-ide app
 ```
 
-The installer supports macOS 26+ on ARM64, macOS 15+ on x64, and glibc Linux (Ubuntu 24.04 or newer baseline) on ARM64/x64. It installs a private
-Node.js runtime, bundled tmux, and the verified app runtime under `~/.local`,
-without sudo.
-Add `~/.local/bin` to your PATH if prompted. Existing tmux sessions are preserved.
-With Node.js 20+ already installed, you can also use `npm install -g tmux-ide`.
-
-Open a particular session directly:
+Or, with Node.js 20+ already installed:
 
 ```bash
-tmux-ide app work
+npm install -g tmux-ide
+tmux-ide app
 ```
 
-With an npm installation, the first app launch downloads the exact-version app
-runtime for macOS or Linux, verifies its release metadata and SHA-256 digests,
-and caches it under `~/.tmux-ide/bin`. Installed users do not need Bun.
+Runs on macOS 26+ (ARM64), macOS 15+ (x64) and glibc Linux (ARM64/x64; use WSL on
+Windows). Both installs bundle tmux 3.7c, and the installer brings its own
+Node.js, so you need no sudo and no system tmux. tmux servers you already run must
+be tmux 3.7 or newer; tmux-ide never replaces a running server.
+[Getting started](https://tmux-ide.com/docs/getting-started) has the details.
 
-To reset a running daemon's runtime while keeping its supervising process and
-tmux sessions:
+## What you get
+
+- **Home** (`F1`) lists every agent across your local and SSH machines, with
+  search and All / Working / Needs attention filters.
+- **Terminals** (`F2`) mirrors the live tmux session with window tabs, pane
+  headers and mouse controls. Splits, resizes, renames and closes are real tmux
+  operations.
+- **Agent status** for each pane: working, blocked, done or idle. It comes from
+  Claude Code hooks or any agent's one-line self-report, and falls back to
+  reading the screen.
+- **Notifications** when an agent is blocked or done: tmux toasts, macOS and
+  terminal banners, and sound.
+- **Remote machines** over SSH, side by side with your local sessions.
+- **Restore** after a tmux crash or reboot, including Claude Code, Codex, Cursor
+  and opencode conversations.
+- **Scripting**: `send`, `wait` and `team --json` from the CLI, plus scoped pane
+  reads and sends over MCP and an SDK.
+- **tmux chrome**: `tmux-ide adopt` adds a status bar, sidebar and keys to plain
+  tmux clients.
+
+## Agent teams
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/.github/assets/agent-teams-dark.gif" />
+    <img src="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/.github/assets/agent-teams-light.gif" alt="An agent team in five tmux panes: a Claude Code orchestrator hands a goal to a Codex goal agent, which splits research across Claude Code, opencode and Codex panes; you answer the one that needs input, and the outcome flows back up." width="974" />
+  </picture>
+</p>
+
+Run several coding agents as a team, each in its own tmux pane. With
+[Claude Code agent teams](https://tmux-ide.com/docs/claude-code-agent-teams), a
+Claude Code lead spawns teammates in split panes, and tmux-ide shows each one by
+name, grouped under its team, with live status. To mix Claude Code, Codex and
+other agents, group panes with `tmux-ide team assign` and coordinate them with
+`send` and `wait`; see
+[Multi-agent teams](https://tmux-ide.com/docs/multi-agent-teams). tmux-ide shows
+and connects the agents; it does not orchestrate them.
 
 ```bash
-tmux-ide daemon restart --json
+tmux-ide team --json                               # every session, pane and agent status
+tmux-ide send %2 "Run the tests and report back"   # type into another agent's prompt
+tmux-ide wait agent-status api --status done       # block until a session's agent is done
 ```
 
-The command verifies a new daemon generation under the same process, preserving
-the active listener and remote-access settings. It does not start a missing
-daemon or load newly installed code; use `tmux-ide update --daemon` for the
-separate version-upgrade flow. Managed services require the
-[explicit supervisor setup](https://tmux-ide.com/docs/remote-machines#run-the-daemon-as-a-service). The existing `tmux-ide restart` command still
-restarts an IDE session.
+## Keys
 
-## What ships in 2.9
-
-- **Home and Terminals** over live tmux sessions, with no project config
-  required.
-- **Agent indicators** in the sidebar, window tabs, and pane chrome.
-- **Keyboard and mouse control** for session, window, and pane selection;
-  splitting, resizing, renaming, creating, and confirmed closing.
-- **Truecolor terminal mirroring** with retained content through quiet periods,
-  resizing, theme changes, daemon replacement, and reattachment.
-- **SSH compatibility** because the source of truth remains ordinary tmux.
-- **Agent coordination from the CLI**: `send`, `wait`, `team --json`, and
-  scoped automation over MCP and the SDK.
-- **Crash recovery** with `tmux-ide restore --resume-agents`.
-
-Useful controls:
-
-| Control     | Action                           |
-| ----------- | -------------------------------- |
-| `F1`        | Home                             |
-| `F2`        | Terminals                        |
-| `F5`        | Commands                         |
-| `Ctrl+O`    | Next pane                        |
-| `Ctrl+T`    | Next window                      |
-| `Alt+Arrow` | Resize focused pane              |
-| `Ctrl+Q`    | Quit, or detach a detachable app |
+| Key                 | Action                                      |
+| ------------------- | ------------------------------------------- |
+| `F1` / `F2`         | Home / Terminals                            |
+| `F5`                | Commands                                    |
+| `F6` / `F7`         | Sessions / Attention (agents that need you) |
+| `F10`               | Show or hide the sidebar                    |
+| `Ctrl+O` / `Ctrl+T` | Next pane / next window                     |
+| `Alt+Arrow`         | Resize the focused pane                     |
+| Right-click a pane  | Select text, rename, split, zoom, close     |
+| `Ctrl+Q`            | Quit, or detach a detachable app            |
 
 See [every keyboard shortcut](https://tmux-ide.com/docs/getting-started#keyboard-shortcuts).
 
-## Optional workspace layout
-
-tmux-ide works without configuration. To describe a reproducible project
-layout, scaffold `.tmux-ide/workspace.yml`:
+## Get exact Claude Code status
 
 ```bash
-tmux-ide init
+tmux-ide integration install claude
+```
+
+This installs Claude Code lifecycle hooks, so new Claude Code sessions report
+working, blocked, done and idle exactly. Any other agent can report its own state
+with one tmux option:
+
+```bash
+tmux set-option -p @agent_state "working:$(date +%s)"   # working | blocked | done | idle
+```
+
+## Optional workspace layout
+
+tmux-ide works with the tmux sessions you already have. To describe a repeatable
+layout for a project, add `.tmux-ide/workspace.yml`:
+
+```bash
+tmux-ide init              # scaffold from your detected stack
+tmux-ide validate --json
 tmux-ide start
 ```
 
-```yaml
-version: 1
-name: my-app
+See [Configuration](https://tmux-ide.com/docs/configuration) and
+[Workspace templates](https://tmux-ide.com/docs/templates).
 
-terminal:
-  rows:
-    - size: 70%
-      panes:
-        - title: Claude
-          command: claude
-          focus: true
-        - title: Shell
-    - panes:
-        - title: Dev server
-          command: pnpm dev
-```
+## How it works
 
-Legacy `ide.yml` files still load through a compatibility adapter. Use
-`tmux-ide migrate --dry-run` before writing the current format.
+| Layer           | Owns                                                      |
+| --------------- | --------------------------------------------------------- |
+| tmux            | Processes, PTYs, sessions, windows, panes and persistence |
+| tmux-ide daemon | Discovery, agent state and pane streams, one per machine  |
+| tmux-ide app    | Home, Terminals, chrome and mouse and keyboard input      |
 
-## Architecture
+tmux has years of coverage for terminal modes, resizes, disconnects and SSH.
+tmux-ide builds on it instead of replacing it, and never puts your work behind a
+proprietary session format. If the app or daemon stops, your sessions are still
+ordinary tmux.
 
-```mermaid
-flowchart LR
-  T[tmux\nprocesses · PTYs · topology · persistence]
-  D[daemon\ndiscovery · lifecycle · agent state · pane streams]
-  U[app\nHome · Terminals · chrome · input]
-  T <--> D
-  D <--> U
-```
+## Documentation
 
-This separation is deliberate: tmux has years of terminal, resize, disconnect,
-shell, and SSH edge-case coverage. tmux-ide does not replace that foundation or
-put your work behind a proprietary session format.
+- [Getting started](https://tmux-ide.com/docs/getting-started)
+- [App tour](https://tmux-ide.com/docs/app-surfaces)
+- [Agent status detection](https://tmux-ide.com/docs/agent-detection)
+- [Claude Code agent teams](https://tmux-ide.com/docs/claude-code-agent-teams) and
+  [Multi-agent teams](https://tmux-ide.com/docs/multi-agent-teams)
+- [Remote machines over SSH](https://tmux-ide.com/docs/remote-machines)
+- [Restore and resume](https://tmux-ide.com/docs/restore-resume)
+- [tmux chrome](https://tmux-ide.com/docs/the-dock)
+- [CLI reference](https://tmux-ide.com/docs/commands)
+- [Troubleshooting](https://tmux-ide.com/docs/troubleshooting)
 
-## Requirements
+Agents can read [tmux-ide.com/agents.md](https://tmux-ide.com/agents.md) for a
+setup manual written for them.
 
-- macOS 26+ on ARM64, macOS 15+ on x64, or glibc Linux arm64/x64
-- tmux 3.7 or newer for servers you already run (the installer includes 3.7c)
-- Node.js 20 or newer only for npm installations (the installer includes it)
-- Bun only when developing or compiling the app runtime from a checkout
+## Contributing
 
-Run `tmux-ide doctor --json` for an environment report.
-
-## Development
-
-```bash
-pnpm install --frozen-lockfile
-pnpm release:opentui:check
-pnpm docs:build
-```
-
-The focused OpenTUI release gate builds and checks the package, runs renderer
-and lifecycle tests, and installs the packed tarball into an isolated new-user
-environment.
-
-Regenerate the production-renderer demo with `pnpm demo:tui`.
-
-Explore real Home, sidebar, Help, pane-header and footer components with `pnpm gallery:tui`. The
-development gallery uses fixture data and local actions, so it does not connect
-to your daemon or change live tmux sessions. See the
-[gallery controls and checks](scripts/tui-gallery/README.md).
-
-- [Documentation](https://tmux-ide.com/docs)
-- [Contributing](CONTRIBUTING.md)
-- [Release checklist](RELEASE.md)
-- [Changelog](CHANGELOG.md)
-- [Security](SECURITY.md)
+See [CONTRIBUTING.md](https://github.com/wavyrai/tmux-ide/blob/main/CONTRIBUTING.md)
+and [Contributing to tmux-ide](https://tmux-ide.com/docs/contributing). Release
+notes are in [CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md),
+and security reports go through
+[SECURITY.md](https://github.com/wavyrai/tmux-ide/blob/main/SECURITY.md).
 
 ## License
 
-[MIT](LICENSE)
-
-Owner-authorized `GET /api/resources/workspace-admission` returns a versioned,
-passive snapshot of workspace promotion and workspace-open admission. Each
-backend reports `pending`, its `limit`, `disposed`, and retained receipt counts
-(`retained` / `retentionLimit`). A `null` backend means unavailable or unknown.
-`pending >= limit` indicates queue pressure; `disposed` refuses new work.
-Promotion replay retention does not block admission. For workspace-open,
-`retentionMayBlock` indicates the current legacy receipt ledger is full; normal
-admission may still retire closed-workspace receipts and proceed. The snapshot
-performs no inventory discovery, mutation, or reservation. It describes only
-these admission owners, not whole-daemon readiness; `/health` remains liveness.
-
-`tmux-ide update --dry-run --json` reports the planned update without installing
-packages or refreshing skills. Stable installations use the npm `latest` tag;
-prerelease installations use `beta`. Update checks and notification receipts are
-cached separately per channel. The updater resolves its own installation path
-and verifies that the active npm, pnpm, or Bun global destination matches it
-before executing an argument-based manager command. Homebrew, Yarn, npx, source
-checkouts, unknown layouts, and mismatched manager prefixes receive manual
-instructions. Package postinstall owns skill refresh; `tmux-ide skill-sync` is
-available explicitly for installations that skip lifecycle scripts.
-
-Node.js 20 or newer is required. `doctor` accepts a project without a workspace
-preset; a present but malformed `.tmux-ide/workspace.yml` still fails validation.
+[MIT](https://github.com/wavyrai/tmux-ide/blob/main/LICENSE) © Thijs Verreck
