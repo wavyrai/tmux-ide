@@ -205,9 +205,55 @@ async function health(expected, version) {
   assert.equal(info.pid, expected.pid);
   assert.equal(info.productVersion, version);
   observedDaemons.add(info.pid);
-  const identity = await (
-    await fetch(`http://127.0.0.1:${info.port}/identity`, { signal: AbortSignal.timeout(5_000) })
-  ).json();
+  const identityUrl = `http://127.0.0.1:${info.port}/identity`;
+  let identity;
+  try {
+    identity = await (await fetch(identityUrl, { signal: AbortSignal.timeout(5_000) })).json();
+  } catch (error) {
+    // Preserve the first failure. A separate fresh-connection observation only
+    // distinguishes transport reuse from a dead owner; it cannot make this pass.
+    let pidAlive = false;
+    try {
+      process.kill(info.pid, 0);
+      pidAlive = true;
+    } catch {
+      // A missing process is the observation being recorded.
+    }
+    const fresh = raw("/usr/bin/curl", ["--max-time", "5", "--fail", "--silent", identityUrl]);
+    let freshIdentity = null;
+    try {
+      const value = JSON.parse(fresh.stdout);
+      freshIdentity = { pid: value.pid, instanceId: value.instanceId };
+    } catch {
+      // Non-JSON and refused connections retain a null identity.
+    }
+    const manager = launchd
+      ? raw("/bin/launchctl", ["print", target])
+      : raw("systemctl", [
+          "--user",
+          "show",
+          target,
+          "--property=LoadState,ActiveState,SubState,MainPID,Result,ExecMainStatus",
+        ]);
+    receipt.healthFailure = {
+      afterStep: receipt.steps.at(-1),
+      expectedPid: info.pid,
+      expectedInstanceId: info.instanceId,
+      error: String(error),
+      cause: error.cause ? { code: error.cause.code, message: error.cause.message } : null,
+      pidAlive,
+      freshConnection: { exitCode: fresh.status, identity: freshIdentity },
+      managerExitCode: manager.status,
+      managerState: manager.stdout
+        .split("\n")
+        .filter((line) =>
+          launchd
+            ? /^\s*(state|pid) =/u.test(line)
+            : /^(LoadState|ActiveState|SubState|MainPID|Result|ExecMainStatus)=/u.test(line),
+        ),
+    };
+    throw error;
+  }
   assert.equal(identity.instanceId, expected.instanceId);
   assert.equal(identity.pid, expected.pid);
   assert.equal(pane(), receipt.paneBefore, "Original pane and tmux server must survive");
