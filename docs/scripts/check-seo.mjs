@@ -198,6 +198,17 @@ for (const [path, page] of builtPages) {
     throw new Error(`${path} is indexable but missing from the sitemap`);
 }
 
+// Links from the homepage into the docs live in TypeScript, out of reach of
+// check:product-docs, so verify each target page and #anchor here.
+const builtPagesByPath = new Map(builtPages);
+for (const [, href] of html.matchAll(/href="(\/docs[^"]*)"/gu)) {
+  const [path, anchor] = href.split("#");
+  const target = builtPagesByPath.get(path.replace(/(.)\/$/u, "$1"));
+  if (!target) throw new Error(`Homepage links to ${href}, which is not a built docs page`);
+  if (anchor && !target.includes(`id="${anchor}"`))
+    throw new Error(`Homepage links to ${href}, but that page has no #${anchor} heading`);
+}
+
 const headerKeys = new Set(
   routes.headers.flatMap((route) => route.headers.map((header) => header.key.toLowerCase())),
 );
