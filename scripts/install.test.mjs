@@ -91,6 +91,23 @@ test("fresh install and upgrade work with spaces and shell punctuation", (t) => 
   assert.ok(fs.existsSync(previous), "keep runtime files for existing processes");
   assert.ok(fs.existsSync(path.join(root, "postinstall")));
 });
+test("printed start and update commands execute with spaces and shell punctuation", (t) => {
+  const { run, env } = fixture(t);
+  const installed = run();
+  assert.equal(installed.status, 0, installed.stderr);
+  for (const label of ["Start now", "Update later"]) {
+    const command =
+      installed.stdout.match(new RegExp(`${label}:\\n  ([^\\n]+)`))?.[1] ??
+      (label === "Start now"
+        ? installed.stdout.match(/Installed\. Start with: ([^\n]+)/)?.[1]
+        : undefined);
+    assert.ok(command, `${label} must provide a copyable command`);
+    const result = spawnSync("/bin/sh", ["-c", command], { env, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /tmux-ide v2\.9\.0/);
+  }
+});
+
 for (const [label, failure] of [
   ["postinstall failure", { MOCK_POSTINSTALL_FAIL: "1" }],
   ["relocated CLI failure", { MOCK_RELOCATED_FAIL: "1" }],

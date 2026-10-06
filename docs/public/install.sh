@@ -232,10 +232,11 @@ try {
   unlink(temporaryLauncher);
   unlink(next);
 }
-console.log(`Add this to your shell profile if needed:\n  export PATH=${quote(path.join(prefix, 'bin'))}:"$PATH"`);
+console.log(`\nInstalled successfully.\n\nStart now:\n  ${quote(launcherPath)} app\n\nUpdate later:\n  ${quote(launcherPath)} update`);
+console.log(`\nTo use the short command in sh, bash or zsh, run:\n  export PATH=${quote(path.join(prefix, 'bin'))}:"$PATH"\nAdd that line to your shell profile to keep it for new terminals.`);
+console.log(`\nExisting tmux sessions are preserved. Reopen any running tmux-ide UI.\nTo update a running daemon explicitly:\n  ${quote(launcherPath)} update --daemon --if-running`);
 JS
   export PATH="$root/current/node/bin:$PATH"
   "$launcher" --version
-  printf '\nInstalled. Start with: %s\nExisting tmux sessions are preserved. Reopen any running tmux-ide UI.\nTo update a running daemon explicitly: tmux-ide update --daemon --if-running\n' "$launcher"
 }
 main "$@"
