@@ -6,103 +6,42 @@
   "figures": {
     "names": {
       "label": "Renaming an agent's pane so the team can refer to it by name",
-      "cursor": [
-        [
-          "click",
-          256.2,
-          209.3
-        ]
-      ]
+      "cursor": [["click", 256.2, 209.3]]
     },
     "status": {
       "label": "Agent states in the sidebar and in each pane header",
       "cursor": [
-        [
-          "move",
-          88.2,
-          63.7
-        ],
-        [
-          "move",
-          407.4,
-          27.3
-        ]
+        ["move", 88.2, 63.7],
+        ["move", 407.4, 27.3]
       ]
     },
     "navigate": {
       "label": "Choosing an agent on Home opens its exact pane",
-      "cursor": [
-        [
-          "click",
-          88.2,
-          209.3
-        ]
-      ]
+      "cursor": [["click", 88.2, 209.3]]
     },
     "tmux": {
       "label": "After the app quits, the same sessions are still running in tmux",
-      "cursor": [
-        [
-          "move",
-          172.2,
-          81.9
-        ]
-      ]
+      "cursor": [["move", 172.2, 81.9]]
     },
     "daemon": {
       "label": "Daemon-observed agent state across every session on Home",
-      "cursor": [
-        [
-          "move",
-          256.2,
-          81.9
-        ]
-      ]
+      "cursor": [["move", 256.2, 81.9]]
     },
     "opentui": {
       "label": "The command palette over agent-aware panes",
-      "cursor": [
-        [
-          "click",
-          457.8,
-          245.7
-        ]
-      ]
+      "cursor": [["click", 457.8, 245.7]]
     },
     "window": {
       "label": "Adding a window from the window strip",
-      "cursor": [
-        [
-          "click",
-          491.4,
-          27.3
-        ]
-      ]
+      "cursor": [["click", 491.4, 27.3]]
     },
     "resize": {
       "label": "Dragging the divider between two panes",
       "cursor": [
-        [
-          "click",
-          256.2,
-          118.3
-        ],
-        [
-          "move",
-          340.2,
-          118.3
-        ]
+        ["click", 256.2, 118.3],
+        ["move", 340.2, 118.3]
       ]
     },
-    "focus": {
-      "label": "Moving focus to another pane",
-      "cursor": [
-        [
-          "click",
-          373.8,
-          118.3
-        ]
-      ]
-    }
+    "focus": { "label": "Moving focus to another pane", "cursor": [["click", 373.8, 118.3]] }
   }
 }

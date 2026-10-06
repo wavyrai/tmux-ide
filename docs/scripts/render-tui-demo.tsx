@@ -14,6 +14,8 @@
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
+import { format, resolveConfig } from "prettier";
+
 import { demoFingerprint, RECORD } from "./tui-demo-sources.mjs";
 import { frameText, renderScene, type Scene } from "./tui-demo-scene.tsx";
 import { FONT_DIR_PATH, svgDocument, type DemoFrame } from "./tui-demo-svg.ts";
@@ -35,10 +37,16 @@ const frames: DemoFrame[] = [
 if (process.argv.includes("--text"))
   for (const { label, frame } of frames)
     process.stdout.write(`--- ${label}\n${frameText(frame)}\n`);
+/** Generated JSON is committed, so write it the way `pnpm format:check` expects. */
+async function writeJson(path: string, value: unknown): Promise<void> {
+  const options = (await resolveConfig(path)) ?? {};
+  writeFileSync(path, await format(JSON.stringify(value), { ...options, filepath: path }));
+}
+
 mkdirSync(dirname(OUTPUT), { recursive: true });
 writeFileSync(OUTPUT, await svgDocument(frames, { cols: COLS, rows: ROWS }, 1));
 const figures = await figureDocument();
-writeFileSync(FIGURES, `${JSON.stringify(figures.document, null, 2)}\n`);
+await writeJson(FIGURES, figures.document);
 writeFileSync(SPRITE, figures.sprite);
 // The inline figures use the same glyph subset, served once for the page.
 mkdirSync(FONTS, { recursive: true });
@@ -47,10 +55,7 @@ for (const weight of ["regular", "bold"])
     resolve(FONT_DIR_PATH, `${weight}.woff2`),
     resolve(FONTS, `tui-demo-${weight}.woff2`),
   );
-writeFileSync(
-  RECORD,
-  `${JSON.stringify({ regenerate: "pnpm demo:tui", sources: demoFingerprint() }, null, 2)}\n`,
-);
+await writeJson(RECORD, { regenerate: "pnpm demo:tui", sources: demoFingerprint() });
 process.stdout.write(
   `Rendered ${OUTPUT} from ${frames.length} production OpenTUI frames and ` +
     `${Object.keys(figures.document.figures).length} landing figures.\n`,
