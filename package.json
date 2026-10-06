@@ -36,6 +36,7 @@
     "!packages/daemon/dist/**/__snapshots__/**"
   ],
   "scripts": {
+    "test:tmux-boundary": "node scripts/test-tmux-boundary.mjs",
     "build": "pnpm build:cli",
     "build:web": "pnpm --filter @tmux-ide/desktop-renderer run build:web",
     "build:cli": "node scripts/build-cli.mjs",
