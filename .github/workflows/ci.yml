@@ -162,6 +162,8 @@ jobs:
           path: |
             ${{ runner.temp }}/opentui-package-proof/proof.json
             ${{ runner.temp }}/opentui-package-proof/*.performance.jsonl
+            ${{ runner.temp }}/opentui-package-proof/linked-*-frame.txt
+            ${{ runner.temp }}/opentui-package-proof/linked-installed-result.json
           if-no-files-found: warn
           retention-days: 30
 
