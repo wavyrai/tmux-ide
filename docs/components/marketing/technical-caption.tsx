@@ -26,7 +26,7 @@ export function TechnicalCaption({
     <figcaption
       id={id}
       className={cn(
-        "type-caption-1 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 text-fd-muted-foreground",
+        "technical-caption type-caption-1",
         ruled && "border-t border-marketing-line",
         className,
       )}

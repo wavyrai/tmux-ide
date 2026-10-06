@@ -1015,6 +1015,126 @@
   }
 }
 
+/* Semantic classes for markup that repeats on the landing: one short name in
+   the HTML and RSC payload instead of a long utility string per instance. */
+@layer components {
+  /* A full-bleed run of bands: the ground paints edge to edge behind the
+   frame, and the overlay repaints the frame's two rules on the same pixels. */
+  .marketing-stretch {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .marketing-stretch::before,
+  .marketing-stretch::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    pointer-events: none;
+  }
+
+  .marketing-stretch::before {
+    left: calc(50% - 50vw);
+    right: calc(50% - 50vw);
+    z-index: -10;
+    background: inherit;
+  }
+
+  .marketing-stretch::after {
+    left: -1px;
+    right: -1px;
+    z-index: 10;
+    border-inline: 1px solid var(--marketing-line);
+  }
+
+  @media (width < 64rem) {
+    .marketing-stretch::after {
+      border-inline: 0;
+    }
+  }
+
+  .technical-caption {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1.5rem;
+    padding: 0.75rem 1rem;
+    color: var(--color-fd-muted-foreground);
+  }
+
+  .faq-item {
+    border-bottom: 1px solid var(--color-fd-border);
+    padding-block: 1.5rem;
+  }
+
+  .faq-q {
+    display: flex;
+    cursor: pointer;
+    list-style: none;
+    align-items: center;
+    gap: 1.5rem;
+    color: var(--color-fd-foreground);
+  }
+
+  .faq-q::marker {
+    content: "";
+  }
+
+  .faq-q::-webkit-details-marker {
+    display: none;
+  }
+
+  .faq-x {
+    margin-left: auto;
+    color: var(--color-fd-muted-foreground);
+    transition: transform 200ms var(--ease-smooth);
+  }
+
+  .faq-item[open] .faq-x {
+    transform: rotate(45deg);
+  }
+
+  .faq-a {
+    max-width: 62ch;
+    padding-top: 1rem;
+    color: var(--color-fd-muted-foreground);
+  }
+
+  .skip-link {
+    position: fixed;
+    top: 1rem;
+    left: 1rem;
+    z-index: 100;
+    transform: translateY(-6rem);
+    border-radius: var(--radius-pill);
+    background: var(--color-fd-primary);
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    color: var(--color-fd-primary-foreground);
+    box-shadow:
+      0 10px 15px -3px rgb(0 0 0 / 10%),
+      0 4px 6px -4px rgb(0 0 0 / 10%);
+  }
+
+  .skip-link:focus {
+    transform: none;
+  }
+
+  .skip-link:focus-visible {
+    outline: 2px solid var(--color-fd-ring);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .faq-x {
+      transition: none;
+    }
+  }
+}
+
 /* The banner's dither field: a tile of white pixel cells in scattered greys
    (cached file, not an inline data URI), fading in toward the right edge. */
 .banner-dither {
