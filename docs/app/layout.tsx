@@ -104,8 +104,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   colorScheme: "light dark",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#101016" },
+    // sRGB equivalents of the page grounds in global.css:
+    // oklch(0.987 0 0) light, oklch(0.1405 0.004 285.8) dark.
+    { media: "(prefers-color-scheme: light)", color: "#fbfbfb" },
+    { media: "(prefers-color-scheme: dark)", color: "#09090b" },
   ],
 };
 
