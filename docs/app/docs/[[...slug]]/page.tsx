@@ -6,7 +6,7 @@ import type { Metadata } from "next";
 import { createRelativeLink } from "fumadocs-ui/mdx";
 import { PageActions, RailActions } from "@/components/docs/page-actions";
 import { gitConfig } from "@/lib/layout.shared";
-import { docLastModified } from "@/lib/git-dates";
+import { docLastModified, docPublished } from "@/lib/git-dates";
 import { PUBLISHER_ID, SITE_DESCRIPTION, SITE_URL, absoluteUrl } from "@/lib/site";
 
 // The docs index's frontmatter title is the bare product name; give the
@@ -22,6 +22,7 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
   const description = page.data.description ?? SITE_DESCRIPTION;
   const pageUrl = absoluteUrl(page.url);
   const modified = docLastModified(page.path);
+  const published = docPublished(page.path);
   const breadcrumbs = [
     { "@type": "ListItem", position: 1, name: "Home", item: absoluteUrl("/") },
     {
@@ -45,6 +46,7 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
         url: pageUrl,
         mainEntityOfPage: pageUrl,
         image: absoluteUrl(getPageImage(page).url),
+        ...(published ? { datePublished: published.toISOString() } : {}),
         ...(modified ? { dateModified: modified.toISOString() } : {}),
         inLanguage: "en",
         isPartOf: { "@id": `${SITE_URL}/#website` },
@@ -113,6 +115,7 @@ export async function generateMetadata(props: {
   if (!page) notFound();
 
   const modified = docLastModified(page.path);
+  const published = docPublished(page.path);
   // `metaTitle` carries the search wording; `title` stays the short H1/sidebar label.
   const metaTitle = page.data.metaTitle ?? page.data.title;
   const noindex = { index: false, follow: true };
@@ -130,6 +133,7 @@ export async function generateMetadata(props: {
     openGraph: {
       type: "article",
       url: absoluteUrl(page.url),
+      ...(published ? { publishedTime: published.toISOString() } : {}),
       ...(modified ? { modifiedTime: modified.toISOString() } : {}),
       title: metaTitle,
       description: page.data.description,

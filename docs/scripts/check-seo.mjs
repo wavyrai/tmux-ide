@@ -12,6 +12,7 @@ const robots = readFileSync(resolve(appDir, "robots.txt.body"), "utf8");
 const sitemap = readFileSync(resolve(appDir, "sitemap.xml.body"), "utf8");
 const routes = JSON.parse(readFileSync(resolve(docsDir, ".next/routes-manifest.json"), "utf8"));
 const llmsIndex = readFileSync(resolve(appDir, "llms.txt.body"), "utf8");
+const llmsFull = readFileSync(resolve(appDir, "llms-full.txt.body"), "utf8");
 const socialCard = readFileSync(resolve(docsDir, "components/social-card.tsx"), "utf8");
 
 const requiredHtml = [
@@ -59,6 +60,13 @@ if (/<title>[^<]*\| tmux-ide<\/title>/u.test(html) && /<title>tmux-ide[^<]*\|/u.
 if (!/^# tmux-ide\n\n> \S/u.test(llmsIndex))
   throw new Error("llms.txt must start with '# tmux-ide' and a '>' summary");
 if (/\]\(\//u.test(llmsIndex)) throw new Error("llms.txt links must be absolute URLs");
+// Markdown served to agents (llms-full.txt and the .md twins share one
+// renderer) must not leak MDX components outside code fences.
+const outsideFences = llmsFull.replace(/```[\s\S]*?```/gu, "");
+const leaked = outsideFences.match(/^[ \t]*<\/?[A-Z][A-Za-z]*[\s/>]/mu);
+if (leaked) throw new Error(`llms-full.txt leaks an MDX component: ${leaked[0].trim()}`);
+const headingId = outsideFences.match(/^#{1,6} .* \[#[\w-]+\]$/mu);
+if (headingId) throw new Error(`llms-full.txt leaks fumadocs heading-id syntax: ${headingId[0]}`);
 // Every same-site page llms.txt points agents at must be a built route.
 for (const [, href] of llmsIndex.matchAll(/\]\((https?:\/\/[^)\s]+)\)/gu)) {
   const url = new URL(href);
@@ -87,7 +95,9 @@ for (const marker of [
   'name="twitter:creator" content="@prototyper_co"',
   '"@type":"TechArticle"',
   '"@type":"BreadcrumbList"',
-  '"dateModified":"',
+  // Git-backed dates exist only when the build host has full history; a shallow
+  // clone omits them rather than guessing (see generate-git-dates.mjs).
+  ...(isFullHistory() ? ['"dateModified":"', '"datePublished":"'] : []),
   'rel="alternate" type="text/markdown" href="',
 ]) {
   if (!docsHtml.includes(marker))
@@ -191,6 +201,10 @@ for (const [path, page] of builtPages) {
   const description = decode(page.match(/<meta name="description" content="([^"]*)"/u)?.[1] ?? "");
   if (!description || description.length > 160)
     throw new Error(`${path} meta description must be 1–160 chars (is ${description.length})`);
+  const published = page.match(/"datePublished":"([^"]+)"/u)?.[1];
+  const modified = page.match(/"dateModified":"([^"]+)"/u)?.[1];
+  if (published && modified && Date.parse(published) > Date.parse(modified))
+    throw new Error(`${path} datePublished ${published} is after dateModified ${modified}`);
   const noindex = /<meta name="robots" content="noindex/u.test(page);
   if (noindex && sitemapPaths.has(path))
     throw new Error(`${path} is noindex but listed in the sitemap`);
