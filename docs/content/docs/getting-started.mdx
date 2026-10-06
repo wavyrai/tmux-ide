@@ -42,7 +42,17 @@ curl -fsSL https://tmux-ide.com/install.sh -o install.sh
 sh install.sh --version 2.9.3 --prefix "$HOME/.local"
 ```
 
+If Claude Code is installed, the installer also turns on Claude Code
+[agent teams](/docs/multi-agent-teams#claude-code-agent-teams) in
+`~/.claude/settings.json`, so teammates open as tmux split panes. It only adds
+missing keys, keeps a backup, and never overrides a value you set. To skip it,
+pass `--no-claude-agent-teams` to `install.sh` or set
+`TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`; to turn it off later, run
+`tmux-ide integration agent-teams disable`. If this step fails, the install
+still succeeds and prints a warning.
+
 With Node.js 20+ already installed, `npm install -g tmux-ide` is also supported.
+The npm package does not change Claude Code settings.
 
 For package-manager installations, if the exact-version runtime is not already installed, the first explicit app
 launch downloads it, verifies its release metadata and SHA-256 digest, and
