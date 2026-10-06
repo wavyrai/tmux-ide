@@ -512,8 +512,13 @@
   font-weight: 600;
 }
 
-.docs-prose :where(:not(pre) > code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+/* Inline code is square wherever the typography plugin styles it: prose
+   bodies and the TOC entries Fumadocs also marks as prose. */
+.prose :where(code) {
   border-radius: 0;
+}
+
+.docs-prose :where(:not(pre) > code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
   font-size: 0.8125rem;
 }
 
