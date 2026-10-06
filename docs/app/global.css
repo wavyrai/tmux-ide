@@ -18,6 +18,8 @@
   --color-marketing-line: var(--marketing-line);
   --color-terminal-stage: var(--terminal-stage);
   --color-terminal-line: var(--terminal-line);
+  --color-hero-ink: var(--hero-ink);
+  --color-hero-body: var(--hero-body);
 
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out-fluid: cubic-bezier(0.32, 0.72, 0, 1);
@@ -66,6 +68,9 @@
   --chart-5: oklch(0.68 0.18 352);
   --chart-6: oklch(0.79 0.15 78);
   --color-success: oklch(0.78 0.17 150);
+  /* Hero inks: a charcoal headline over a warm body tone. */
+  --hero-ink: oklch(0.315 0.002 106);
+  --hero-body: oklch(0.4 0.008 70);
   /* The inverted pill: charcoal fill, off-white ink. */
   --pill-fill: oklch(0.315 0.002 106);
   --pill-ink: oklch(0.987 0 0);
@@ -98,6 +103,8 @@
   --terminal-line: rgb(255 255 255 / 10%);
   --docs-prose-body: oklch(0.9848 0 0);
   --color-success: oklch(0.6 0.17 150);
+  --hero-ink: oklch(0.955 0.002 80);
+  --hero-body: oklch(0.87 0.004 75);
   --pill-fill: oklch(0.9848 0 0);
   --pill-ink: oklch(0.1405 0.004 285.8);
 }
@@ -320,25 +327,29 @@
   }
 }
 
-/* The landing headline, set in the brand's pixel face now that the header
-   carries the wordmark: 32/44 on phones, 48/64 from sm, 64/80 from lg,
-   tracked at -0.02em like the other display roles. */
+/* The landing headline and lede: a centred display block in the heading
+   face (51.2px, 67.2px from sm; line height 1.02; -0.03em) over a 16px /
+   17.5px lede with relaxed leading, in the hero's own ink tones. */
 @utility type-hero-title {
-  font-family: var(--font-brand), var(--font-display), ui-sans-serif, system-ui, sans-serif;
-  font-size: 2rem;
-  line-height: 2.75rem;
-  letter-spacing: -0.02em;
-  font-weight: 500;
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 3.2rem;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  font-weight: 600;
   text-wrap: balance;
 
   @media (width >= 40rem) {
-    font-size: 3rem;
-    line-height: 4rem;
+    font-size: 4.2rem;
   }
+}
 
-  @media (width >= 64rem) {
-    font-size: 4rem;
-    line-height: 5rem;
+@utility type-hero-lede {
+  font-size: 1rem;
+  line-height: 1.625;
+  text-wrap: pretty;
+
+  @media (width >= 40rem) {
+    font-size: 1.09375rem;
   }
 }
 
@@ -527,6 +538,19 @@
 .install-tabs:has(input[value="curl"]:checked) .install-panel[data-method="curl"],
 .install-tabs:has(input[value="npm"]:checked) .install-panel[data-method="npm"] {
   display: block;
+}
+
+/* Centred variant for the hero: tab row and note centre under the command. */
+.install-tabs-centred {
+  margin-inline: auto;
+}
+
+.install-tabs-centred fieldset {
+  justify-content: center;
+}
+
+.install-tabs-centred .install-panel p {
+  text-align: center;
 }
 
 .install-tab {
