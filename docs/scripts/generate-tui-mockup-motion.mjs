@@ -1,66 +1,26 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PERSONALITIES, scriptToSvg } from "matinee";
 
-const width = 360;
-const height = 140;
+const frames = JSON.parse(
+  readFileSync(
+    resolve(import.meta.dirname, "../components/marketing/tui-mini-figure-frames.json"),
+    "utf8",
+  ),
+);
+const width = frames.width;
+const height = frames.height;
 const outputDirectory = resolve(import.meta.dirname, "../public/mockup-motion");
 
 /**
  * Cursor choreography for the small TUI figures on the landing page. The
- * underlying interface remains a theme-aware React SVG; Matinee contributes a
- * transparent, self-contained performance layer with no client-side runtime.
+ * figures are crops of the real app (rendered by `pnpm demo:tui`, which also
+ * records where each action happens); Matinee contributes a transparent,
+ * self-contained performance layer with no client-side runtime.
  */
-const performances = {
-  names: [
-    ["click", 65, 50],
-    ["click", 198, 47],
-  ],
-  status: [
-    ["click", 281, 42],
-    ["click", 281, 86],
-  ],
-  navigate: [
-    ["click", 66, 50],
-    ["click", 319, 101],
-  ],
-  window: [["click", 326, 48]],
-  split: [
-    ["click", 98, 82],
-    ["click", 270, 82],
-  ],
-  resize: [
-    ["click", 198, 92],
-    ["move", 220, 92],
-  ],
-  rename: [
-    ["click", 42, 79],
-    ["click", 187, 79],
-  ],
-  focus: [
-    ["click", 92, 83],
-    ["click", 272, 83],
-  ],
-  close: [
-    ["click", 322, 46],
-    ["click", 177, 97],
-  ],
-  tmux: [
-    ["click", 79, 90],
-    ["click", 186, 90],
-    ["click", 293, 90],
-  ],
-  daemon: [
-    ["move", 72, 75],
-    ["click", 180, 75],
-    ["move", 295, 75],
-  ],
-  opentui: [
-    ["click", 57, 58],
-    ["click", 168, 82],
-    ["click", 280, 82],
-  ],
-};
+const performances = Object.fromEntries(
+  Object.entries(frames.figures).map(([variant, figure]) => [variant, figure.cursor]),
+);
 
 function createSteps(actions) {
   let at = 200;
@@ -79,6 +39,9 @@ function createSteps(actions) {
 }
 
 mkdirSync(outputDirectory, { recursive: true });
+// Retired figures must not linger as orphaned public assets.
+for (const file of readdirSync(outputDirectory))
+  if (!(file.replace(/\.svg$/u, "") in performances)) rmSync(resolve(outputDirectory, file));
 
 for (const [variant, actions] of Object.entries(performances)) {
   const svg = scriptToSvg(
@@ -86,7 +49,7 @@ for (const [variant, actions] of Object.entries(performances)) {
       version: 1,
       viewport: { w: width, h: height },
       seed: 2900 + variant.length * 131,
-      origin: { x: 334, y: 122 },
+      origin: { x: width - 26, y: height - 18 },
       steps: createSteps(actions),
     },
     {
