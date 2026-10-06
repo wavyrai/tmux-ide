@@ -208,7 +208,14 @@ async function health(expected, version) {
   const identityUrl = `http://127.0.0.1:${info.port}/identity`;
   let identity;
   try {
-    identity = await (await fetch(identityUrl, { signal: AbortSignal.timeout(5_000) })).json();
+    identity = await (
+      await fetch(identityUrl, {
+        // Installer subprocesses block this fixture's event loop for minutes.
+        // Do not reuse sockets whose peer-close event may still be queued.
+        headers: { Connection: "close" },
+        signal: AbortSignal.timeout(5_000),
+      })
+    ).json();
   } catch (error) {
     // Preserve the first failure. A separate fresh-connection observation only
     // distinguishes transport reuse from a dead owner; it cannot make this pass.
