@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sourcesForPath } from "./git-date-sources.mjs";
@@ -156,6 +156,48 @@ function isFullHistory() {
   return git(["rev-parse", "--is-shallow-repository"]) === "false";
 }
 
+// Every built page: a <title> of at most 60 characters, unique across the
+// site, and a meta description of at most 160. noindex pages stay out of the
+// sitemap, and every page in the sitemap is indexable.
+const builtPages = [
+  ["/", html],
+  ...readdirSync(resolve(appDir, "docs"))
+    .filter((file) => file.endsWith(".html"))
+    .map((file) => [
+      `/docs/${file.slice(0, -5)}`,
+      readFileSync(resolve(appDir, "docs", file), "utf8"),
+    ]),
+  ["/docs", readFileSync(resolve(appDir, "docs.html"), "utf8")],
+];
+const decode = (text) =>
+  text
+    .replaceAll("&amp;", "&")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#x27;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">");
+const titleOwners = new Map();
+const sitemapPaths = new Set(
+  locations.map((location) => new URL(location).pathname.replace(/(.)\/$/u, "$1")),
+);
+for (const [path, page] of builtPages) {
+  const title = decode(page.match(/<title>([^<]*)<\/title>/u)?.[1] ?? "");
+  if (!title) throw new Error(`${path} has no <title>`);
+  if (title.length > 60)
+    throw new Error(`${path} <title> is ${title.length} chars (max 60): ${title}`);
+  if (titleOwners.has(title))
+    throw new Error(`${path} and ${titleOwners.get(title)} share the <title> "${title}"`);
+  titleOwners.set(title, path);
+  const description = decode(page.match(/<meta name="description" content="([^"]*)"/u)?.[1] ?? "");
+  if (!description || description.length > 160)
+    throw new Error(`${path} meta description must be 1–160 chars (is ${description.length})`);
+  const noindex = /<meta name="robots" content="noindex/u.test(page);
+  if (noindex && sitemapPaths.has(path))
+    throw new Error(`${path} is noindex but listed in the sitemap`);
+  if (!noindex && !sitemapPaths.has(path))
+    throw new Error(`${path} is indexable but missing from the sitemap`);
+}
+
 const headerKeys = new Set(
   routes.headers.flatMap((route) => route.headers.map((header) => header.key.toLowerCase())),
 );
@@ -173,6 +215,6 @@ for (const key of [
 
 console.log(
   `SEO artifacts verified: metadata + entity graph + visible FAQ schema, security headers, ` +
-    `robots.txt (Content-Signal), llms.txt, one canonical host (${canonicalOrigin}), and ${locations.length} ` +
+    `robots.txt (Content-Signal), llms.txt, ${builtPages.length} unique page titles, one canonical host (${canonicalOrigin}), and ${locations.length} ` +
     `sitemap URLs (${dated} with source-backed lastmod).`,
 );

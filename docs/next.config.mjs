@@ -51,6 +51,12 @@ const config = {
       { source: "/docs.md", headers: canonicalLink("/docs") },
     ];
   },
+  async redirects() {
+    return [
+      // Links published before the guide moved to its descriptive slug.
+      { source: "/docs/agent-teams", destination: "/docs/multi-agent-teams", permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       {
