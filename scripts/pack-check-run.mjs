@@ -1174,6 +1174,102 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       many.diagnostics,
     );
   }
+  // Shared physical windows must refuse control visibly, then recover in the
+  // same installed app after unlinking and the user selecting Retry.
+  if (evidenceDir) mkdirSync(evidenceDir, { recursive: true });
+  const linked = tmuxResult([
+    "link-window",
+    "-d",
+    "-s",
+    "=journey-alpha:0",
+    "-t",
+    "=journey-beta:20",
+  ]);
+  if (linked.status !== 0) throw new Error(`Cannot link fixture window: ${linked.stderr}`);
+  const linkedDiagnostics = () => {
+    const frame = capture(many.targetPane);
+    if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
+    return many.diagnostics();
+  };
+  await observe(
+    "linked window actionable refusal",
+    15000,
+    () => {
+      const frame = capture(many.targetPane);
+      if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
+      return /unlink/i.test(frame);
+    },
+    linkedDiagnostics,
+  );
+  const blockedMarker = `PACK_LINK_BLOCKED_${process.pid}`;
+  // Paste is a terminal input event. Raw keystrokes on a recovery screen
+  // intentionally navigate UI controls instead of testing terminal delivery.
+  const blockedPaste = tmuxResult([
+    "send-keys",
+    "-l",
+    "-t",
+    many.targetPane,
+    `\u001b[200~printf 'PACK_LINK_BLOCKED_%s\\n' '${process.pid}'\n\u001b[201~`,
+  ]);
+  if (blockedPaste.status !== 0) throw new Error("Cannot paste blocked input");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  if (
+    ["journey-alpha", "journey-beta"].some((name) =>
+      capture(`=${name}:0.0`).includes(blockedMarker),
+    )
+  )
+    throw new Error("Linked terminal accepted input");
+  const unlinked = tmuxResult(["unlink-window", "-t", "=journey-beta:20"]);
+  if (unlinked.status !== 0) throw new Error(`Cannot unlink fixture window: ${unlinked.stderr}`);
+  const retryLines = capture(many.targetPane).split("\n");
+  const retryRow = retryLines.findIndex((line) => /^(?:[○●]\s+)?Retry$/.test(line.trim()));
+  if (retryRow < 0) throw new Error("Retry button not visible after unlink");
+  const retryX = retryLines[retryRow].indexOf("Retry") + 1;
+  const retryY = retryRow + 1;
+  const retryClick = tmuxResult([
+    "send-keys",
+    "-l",
+    "-t",
+    many.targetPane,
+    `\u001b[<0;${retryX};${retryY}M\u001b[<0;${retryX};${retryY}m`,
+  ]);
+  if (retryClick.status !== 0) throw new Error("Could not click Retry");
+  await observe(
+    "linked window live recovery",
+    15000,
+    () => {
+      const frame = capture(many.targetPane);
+      if (evidenceDir) writeFileSync(join(evidenceDir, "linked-recovery-frame.txt"), frame);
+      return (
+        frameShowsTerminalFocus(frame) &&
+        frame.includes("PACK_WARM_TARGET_journey-alpha_6") &&
+        !/unlink/i.test(frame)
+      );
+    },
+    many.diagnostics,
+  );
+  const recoveredMarker = `PACK_LINK_RECOVERED_${process.pid}`;
+  typeCommand(many, `printf 'PACK_LINK_RECOVERED_%s\\n' '${process.pid}'`);
+  await observe(
+    "input after unlink",
+    10000,
+    () => capture("=journey-alpha:0.0").includes(recoveredMarker),
+    many.diagnostics,
+  );
+  if (
+    ["journey-alpha", "journey-beta"].some((name) =>
+      capture(`=${name}:0.0`).includes(blockedMarker),
+    )
+  )
+    throw new Error("Blocked input replayed after unlink");
+  if (capture("=journey-beta:0.0").includes(recoveredMarker))
+    throw new Error("Recovered input reached the wrong session");
+  if (evidenceDir)
+    writeFileSync(
+      join(evidenceDir, "linked-installed-result.json"),
+      JSON.stringify({ passed: true, blockedMarker, recoveredMarker }) + "\n",
+    );
+
   await cleanQuit(many);
 
   for (const name of ["journey-alpha", "journey-gamma"])
@@ -2484,6 +2580,19 @@ try {
         bytes: readFileSync(destination).byteLength,
         sha256: sha256File(destination),
       });
+    }
+    for (const name of [
+      "linked-refusal-frame.txt",
+      "linked-recovery-frame.txt",
+      "linked-installed-result.json",
+    ]) {
+      const path = join(evidenceDir, name);
+      if (existsSync(path))
+        diagnosticArtifacts.push({
+          name,
+          bytes: readFileSync(path).byteLength,
+          sha256: sha256File(path),
+        });
     }
     proof = {
       schemaVersion: 1,

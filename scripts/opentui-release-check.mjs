@@ -247,6 +247,7 @@ const checks = [
       "src/terminal/mirror/session-channel.test.ts",
       "src/terminal/session-runtime/registry.test.ts",
       "src/terminal/session-runtime/multiplexer-backend.test.ts",
+      "src/terminal/pane-stream/pane-stream-websocket.test.ts",
     ],
   },
   {
@@ -289,6 +290,7 @@ const checks = [
       "vitest",
       "run",
       "src/tui/mirror/runtime/application-root-v2-input.test.ts",
+      "src/tui/mirror/workspace/connection-feedback.test.ts",
       "src/tui/mirror/runtime/application-generation-starter.test.ts",
       "src/tui/mirror/runtime/application-palette-command-owner.test.ts",
       "src/tui/mirror/runtime/application-shell-binding.test.ts",
@@ -389,6 +391,11 @@ const checks = [
       "./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx",
       "./packages/daemon/src/tui/mirror/ui/pane-interaction-renderer.test.tsx",
     ],
+  },
+  {
+    boundary: "OpenTUI workspace authority and presentation tests",
+    command: "bun",
+    args: ["test", "./packages/daemon-client/src/workspace-client.test.ts"],
   },
   {
     boundary: "OpenTUI canonical daemon election tests",
