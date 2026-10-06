@@ -274,7 +274,7 @@ export default async function HomePage() {
                 Restore sessions after a crash →
               </Link>
               <Link
-                href="/docs/app-surfaces#connect-to-another-machine-over-ssh"
+                href="/docs/remote-machines"
                 className="marketing-link-action text-fd-primary"
               >
                 Connect to a machine over SSH →
