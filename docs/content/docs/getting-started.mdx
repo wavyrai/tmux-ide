@@ -43,16 +43,14 @@ curl -fsSL https://tmux-ide.com/install.sh -o install.sh
 sh install.sh --version 2.9.3 --prefix "$HOME/.local"
 ```
 
-If Claude Code is installed, the installer also turns on Claude Code
-[agent teams](/docs/multi-agent-teams#claude-code-agent-teams) in
-`~/.claude/settings.json`, so teammates open as tmux split panes. It only adds
-missing keys, keeps a backup, and never overrides a value you set. To skip it,
-pass `--no-claude-agent-teams` to `install.sh` or set
-`TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`; to turn it off later, run
-`tmux-ide integration agent-teams disable`. If this step fails, the install
-still succeeds and prints a warning. The step needs a tmux-ide release that
-includes `tmux-ide integration agent-teams`; installing 2.9.3 skips it and says
-so.
+Claude Code [agent teams](/docs/multi-agent-teams#claude-code-agent-teams) can
+open each teammate as a tmux split pane; that page shows the two settings to
+add. Needs a release newer than 2.9.3: the installer adds them for you when
+Claude Code is installed. It only adds missing keys, keeps a backup, and never
+overrides a value you set. To skip it, pass `--no-claude-agent-teams` to
+`install.sh` or set `TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`; to turn it off later,
+run `tmux-ide integration agent-teams disable`. If the step fails, the install
+still succeeds and prints a warning. Installing 2.9.3 skips it and says so.
 
 With Node.js 20+ already installed, `npm install -g tmux-ide` is also supported.
 The npm package does not change Claude Code settings.
@@ -225,7 +223,8 @@ reproduces it. For specific symptoms, see [Troubleshooting](/docs/troubleshootin
 
 ## Next steps
 
-- [Tour Home, Terminals and SSH machines](/docs/app-surfaces)
+- [Tour Home, Terminals and Commands](/docs/app-surfaces)
+- [Run agents on remote machines over SSH](/docs/remote-machines)
 - [Run a team of Claude Code and Codex agents](/docs/multi-agent-teams)
 - [Restore sessions after a tmux crash](/docs/restore-resume)
 - [Change the theme](/docs/theming)

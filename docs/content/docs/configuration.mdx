@@ -165,9 +165,8 @@ The legacy `team`, pane `role`/`task` metadata, `sidebar`, and `orchestrator`
 blocks are not represented in WorkspaceConfigV1. The migration command reports
 those fields as diagnostics instead of silently dropping them.
 
-Use the typed `harnesses`, `agents`, and `missions` fields above for declarative
-profiles. Do not copy the legacy `orchestrator` runtime block into
-`.tmux-ide/workspace.yml`.
+Do not copy the legacy `orchestrator` runtime block into
+`.tmux-ide/workspace.yml`; nothing in 2.9.3 runs agent or mission profiles.
 
 ## Global config
 

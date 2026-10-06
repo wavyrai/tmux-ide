@@ -70,23 +70,23 @@ them.
 
 See [Agent detection](/docs/agent-detection) for how agent states are decided.
 
-| Command                                                                           | What it does                                                                                                                       |
-| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `tmux-ide integration install claude`                                             | Install Claude Code lifecycle hooks and refresh the bundled Claude skill                                                           |
-| `tmux-ide integration install opencode`                                           | Install session-ID capture for future opencode sessions                                                                            |
-| `tmux-ide integration uninstall <claude\|opencode>`                               | Remove only tmux-ide's integration entries                                                                                         |
-| `tmux-ide integration status [--json]`                                            | Show discovered agents, integration state, and resume-ID capture                                                                   |
-| `tmux-ide integration agent-teams [enable\|disable\|status] [--json]`             | Next release: turn Claude Code agent teams on or off in `~/.claude/settings.json`; the installer enables them unless you opted out |
-| `tmux-ide agent explain <pane\|session> [--json]`                                 | Explain exactly how an agent state was classified                                                                                  |
-| `tmux-ide send <target> <message> [--no-enter] [--json]`                          | Type into a pane selected by ID, title, semantic name, or supported legacy role                                                    |
-| `tmux-ide send --to <target> <message> [--no-enter] [--json]`                     | Equivalent explicit target form                                                                                                    |
-| `tmux-ide events [--follow] [--json]`                                             | Read recent agent-state transitions or follow them                                                                                 |
-| `tmux-ide events --follow --socket[=<path>]`                                      | Follow pushed events from a running control server                                                                                 |
-| `tmux-ide wait agent-status <session> --status <state> [--timeout <ms>] [--json]` | Wait for a session status; exit 0 on match and 1 on timeout                                                                        |
-| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>] [--json]`  | Wait until visible pane output matches                                                                                             |
-| `tmux-ide team assign <%pane> <team> [--json]`                                    | Group a pane under a named team in Home and the sidebar                                                                            |
-| `tmux-ide team unassign <%pane> [--json]`                                         | Remove a pane's manual team membership                                                                                             |
-| `tmux-ide serve [socket-path]`                                                    | Run the foreground, owner-only local NDJSON control socket                                                                         |
+| Command                                                                           | What it does                                                                                          |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `tmux-ide integration install claude`                                             | Install Claude Code lifecycle hooks and refresh the bundled Claude skill                              |
+| `tmux-ide integration install opencode`                                           | Install session-ID capture for future opencode sessions                                               |
+| `tmux-ide integration uninstall <claude\|opencode>`                               | Remove only tmux-ide's integration entries                                                            |
+| `tmux-ide integration status [--json]`                                            | Show discovered agents, integration state, and resume-ID capture                                      |
+| `tmux-ide integration agent-teams [enable\|disable\|status] [--json]`             | Turn Claude Code agent teams on or off in `~/.claude/settings.json`. Needs a release newer than 2.9.3 |
+| `tmux-ide agent explain <pane\|session> [--json]`                                 | Explain exactly how an agent state was classified                                                     |
+| `tmux-ide send <target> <message> [--no-enter] [--json]`                          | Type into a pane selected by ID, title, semantic name, or supported legacy role                       |
+| `tmux-ide send --to <target> <message> [--no-enter] [--json]`                     | Equivalent explicit target form                                                                       |
+| `tmux-ide events [--follow] [--json]`                                             | Read recent agent-state transitions or follow them                                                    |
+| `tmux-ide events --follow --socket[=<path>]`                                      | Follow pushed events from a running control server                                                    |
+| `tmux-ide wait agent-status <session> --status <state> [--timeout <ms>] [--json]` | Wait for a session status; exit 0 on match and 1 on timeout                                           |
+| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>] [--json]`  | Wait until visible pane output matches                                                                |
+| `tmux-ide team assign <%pane> <team> [--json]`                                    | Group a pane under a named team in Home and the sidebar                                               |
+| `tmux-ide team unassign <%pane> [--json]`                                         | Remove a pane's manual team membership                                                                |
+| `tmux-ide serve [socket-path]`                                                    | Run the foreground, owner-only local NDJSON control socket                                            |
 
 `team assign` and `team unassign` take `--socket-name` or `--socket-path` to
 select another tmux server; see [Multi-agent teams](/docs/multi-agent-teams).
@@ -122,30 +122,31 @@ retry rules, and SDK usage.
 
 ## tmux chrome: adopt existing sessions
 
-| Command                                      | What it does                                             |
-| -------------------------------------------- | -------------------------------------------------------- |
-| `tmux-ide adopt <session>`                   | Add tmux-ide's server-side status bar and agent tracking |
-| `tmux-ide adopt --all`                       | Adopt every live non-internal session                    |
-| `tmux-ide unadopt <session>`                 | Remove tmux-ide chrome without killing the session       |
-| `tmux-ide switcher [--client <name>]`        | Open the compact session picker                          |
-| `tmux-ide cheatsheet`                        | Print the complete key sheet                             |
-| `tmux-ide menu [--client <name>]`            | Open the contextual tmux actions menu                    |
-| `tmux-ide popup <explorer\|changes\|config>` | Open a widget in a tmux popup                            |
-| `tmux-ide sidebar-toggle [--session <name>]` | Toggle the tmux chrome sidebar column                    |
+| Command                                      | What it does                                                                                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `tmux-ide adopt <session>`                   | Add tmux-ide's server-side status bar and agent tracking                                                           |
+| `tmux-ide adopt --all`                       | Adopt every live non-internal session                                                                              |
+| `tmux-ide unadopt <session>`                 | Remove tmux chrome without killing the session; also removes the server-wide chrome keys for every adopted session |
+| `tmux-ide switcher [--client <name>]`        | Open the compact session picker                                                                                    |
+| `tmux-ide cheatsheet`                        | Print the complete key sheet                                                                                       |
+| `tmux-ide menu [--client <name>]`            | Open the contextual tmux actions menu                                                                              |
+| `tmux-ide popup <explorer\|changes\|config>` | Open a widget in a tmux popup                                                                                      |
+| `tmux-ide sidebar-toggle [--session <name>]` | Toggle the tmux chrome sidebar column                                                                              |
 
 These commands drive [tmux chrome](/docs/the-dock) for plain tmux clients; see
 that page for the matching tmux bindings.
 
 ## Saved SSH machines
 
-| Command                                                                                    | What it does                                                    |
-| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
-| `tmux-ide machines ls [--json]`                                                            | List saved machine profiles                                     |
-| `tmux-ide machines export [--json]`                                                        | Print the portable profile registry                             |
-| `tmux-ide machines import <file> [--write] [--json]`                                       | Preview an add-only import, then save explicitly with `--write` |
-| `tmux-ide machines add <alias> [--write] [--json]`                                         | Preview or save an SSH target                                   |
-| `tmux-ide machines edit <id-or-label> [--name <label>] [--ssh <alias>] [--write] [--json]` | Preview or edit an existing profile, preserving its ID          |
-| `tmux-ide machines start <alias> [--write] [--json]`                                       | Preview or explicitly start the already-installed remote daemon |
+| Command                                                                                    | What it does                                                     |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| `tmux-ide machines ls [--json]`                                                            | List saved machine profiles                                      |
+| `tmux-ide machines export [--json]`                                                        | Print the portable profile registry                              |
+| `tmux-ide machines import <file> [--write] [--json]`                                       | Preview an add-only import, then save explicitly with `--write`  |
+| `tmux-ide machines add <alias> [--write] [--json]`                                         | Preview or save an SSH target                                    |
+| `tmux-ide machines edit <id-or-label> [--name <label>] [--ssh <alias>] [--write] [--json]` | Preview or edit an existing profile, preserving its ID           |
+| `tmux-ide machines start <alias> [--write] [--json]`                                       | Preview or explicitly start the already-installed remote daemon  |
+| `tmux-ide machines enable\|disable\|remove <id-or-label> [--write] [--json]`               | Preview or apply enabling, disabling or removing a saved profile |
 
 Profiles do not grant SSH access or copy credentials. Review aliases on the
 receiving computer before applying an import. An ordinary SSH connection expects
@@ -203,12 +204,13 @@ ordinary terminal surface.
 
 ## Updates
 
-| Command                                 | What it does                                                         |
-| --------------------------------------- | -------------------------------------------------------------------- |
-| `tmux-ide update [--dry-run] [--json]`  | Update according to the detected install method, or print the plan   |
-| `tmux-ide update --tui-binary [--json]` | Download and verify the matching compiled app runtime                |
-| `tmux-ide update --manifests [--json]`  | Refresh the agent-detection manifest pack; local overrides still win |
-| `tmux-ide skill-sync [--json]`          | Refresh the managed Claude Code skill in `~/.claude/skills/tmux-ide` |
+| Command                                            | What it does                                                                      |
+| -------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `tmux-ide update [--dry-run] [--json]`             | Update according to the detected install method, or print the plan                |
+| `tmux-ide update --daemon [--if-running] [--json]` | Start or upgrade the local daemon to the installed version, keeping tmux sessions |
+| `tmux-ide update --tui-binary [--json]`            | Download and verify the matching compiled app runtime                             |
+| `tmux-ide update --manifests [--json]`             | Refresh the agent-detection manifest pack; local overrides still win              |
+| `tmux-ide skill-sync [--json]`                     | Refresh the managed Claude Code skill in `~/.claude/skills/tmux-ide`              |
 
 Prerelease installs follow the `beta` channel; stable installs follow `latest`.
 Automatic updates require a verified npm, pnpm or Bun global installation and a
@@ -236,18 +238,6 @@ The headless owner publishes `~/.tmux-ide/daemon.json` with owner-only
 permissions. A host should wait until both `/identity` matches that record and
 `/health` reports a compatible protocol before considering the child ready.
 Stop it with `SIGINT` or `SIGTERM`; do not wrap it in a second daemonizer.
-
-## Global flags
-
-| Flag              | Meaning                                                        |
-| ----------------- | -------------------------------------------------------------- |
-| `-h`, `--help`    | Print built-in help                                            |
-| `-v`, `--version` | Print the installed version                                    |
-| `--verbose`       | Log tmux commands; `TMUX_IDE_DEBUG=1` is equivalent            |
-| `--json`          | Request structured output where the command lists JSON support |
-| `--headless`      | Run only the canonical daemon in this process                  |
-
-Command-specific flags are documented with their command above.
 
 ## Restart versus upgrade
 
@@ -284,6 +274,18 @@ as one row.
 version, preserving tmux sessions. Add `--if-running` to leave fresh installs
 idle, and `--json` for structured status. This command does not update a remote
 machine; install the same version there and run the command in its shell.
+
+## Global flags
+
+| Flag              | Meaning                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| `-h`, `--help`    | Print built-in help                                            |
+| `-v`, `--version` | Print the installed version                                    |
+| `--verbose`       | Log tmux commands; `TMUX_IDE_DEBUG=1` is equivalent            |
+| `--json`          | Request structured output where the command lists JSON support |
+| `--headless`      | Run only the canonical daemon in this process                  |
+
+Command-specific flags are documented with their command above.
 
 ## See also
 

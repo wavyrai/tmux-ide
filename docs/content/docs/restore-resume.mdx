@@ -88,8 +88,8 @@ Check what's active on your machine:
 tmux-ide integration status
 ```
 
-Any agent not listed can still join: the agent contract is open. An agent that
-writes its own id resumes like the rest (given a known invocation for its kind):
+For an agent in the table whose id isn't captured automatically, such as
+Copilot CLI, the agent can record its own id; it then resumes like the rest:
 
 ```bash
 tmux set-option -p @agent_session_id <its-session-id>
