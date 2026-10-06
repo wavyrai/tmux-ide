@@ -12,17 +12,19 @@
 <p align="center">An open-source project by <a href="https://www.prototyper.co">Prototyper</a> · <a href="./LICENSE">MIT license</a> · <a href="https://tmux-ide.com/docs">Docs</a></p>
 
 <p align="center">
-  <img src="./docs/public/tui-demo.svg" alt="Animated tmux-ide OpenTUI demo showing Home, named coding agents, live status, terminal panes, and the command palette" width="960" />
+  <img src="./docs/public/tui-demo.svg" alt="Animated tmux-ide app demo showing Home, named coding agents, live status, terminal panes, and Commands" width="960" />
 </p>
 
-The demo above is a self-contained animated SVG generated from the production
-OpenTUI renderer—not a video or a hand-maintained mockup. It is committed with
+The demo above is a self-contained animated SVG rendered from the app's
+production components, not a video or a hand-maintained mockup. It is committed with
 the project, so the animation runs directly in GitHub.
 
-tmux-ide adds an application shell to ordinary tmux sessions. tmux still owns
-the processes, PTYs, sessions, windows, panes, and persistence; tmux-ide adds
-Home, clickable pane and window chrome, agent indicators, memorable names, and
-direct controls. Close the app and the underlying sessions keep running.
+tmux-ide is a terminal app for running coding agents such as Claude Code and
+Codex in ordinary tmux sessions. tmux still owns the processes, PTYs, sessions,
+windows, panes, and persistence. tmux-ide adds Home, which shows every agent
+across your machines and which ones need you, plus clickable windows, pane
+headers, named agents and panes, and direct controls. Close the app and the
+underlying sessions keep running.
 
 ## Install
 
@@ -32,7 +34,8 @@ tmux-ide app
 ```
 
 The installer supports macOS 26+ on ARM64, macOS 15+ on x64, and glibc Linux (Ubuntu 24.04 or newer baseline) on ARM64/x64. It installs a private
-Node runtime, bundled tmux, and the verified TUI under `~/.local`, without sudo.
+Node.js runtime, bundled tmux, and the verified app runtime under `~/.local`,
+without sudo.
 Add `~/.local/bin` to your PATH if prompted. Existing tmux sessions are preserved.
 With Node.js 20+ already installed, you can also use `npm install -g tmux-ide`.
 
@@ -42,9 +45,9 @@ Open a particular session directly:
 tmux-ide app work
 ```
 
-The first app launch downloads the exact-version OpenTUI runtime for macOS or
-Linux, verifies its release metadata and SHA-256 digests, and caches it under
-`~/.tmux-ide/bin`. Installed users do not need Bun.
+With an npm installation, the first app launch downloads the exact-version app
+runtime for macOS or Linux, verifies its release metadata and SHA-256 digests,
+and caches it under `~/.tmux-ide/bin`. Installed users do not need Bun.
 
 To reset a running daemon's runtime while keeping its supervising process and
 tmux sessions:
@@ -57,7 +60,7 @@ The command verifies a new daemon generation under the same process, preserving
 the active listener and remote-access settings. It does not start a missing
 daemon or load newly installed code; use `tmux-ide update --daemon` for the
 separate version-upgrade flow. Managed services require the
-[explicit supervisor setup](docs/content/docs/app-surfaces.mdx#supervised-daemon-upgrades). The existing `tmux-ide restart` command still
+[explicit supervisor setup](https://tmux-ide.com/docs/remote-machines#run-the-daemon-as-a-service). The existing `tmux-ide restart` command still
 restarts an IDE session.
 
 ## What ships in 2.9
@@ -70,20 +73,23 @@ restarts an IDE session.
 - **Truecolor terminal mirroring** with retained content through quiet periods,
   resizing, theme changes, daemon replacement, and reattachment.
 - **SSH compatibility** because the source of truth remains ordinary tmux.
-- **A future-proof daemon boundary** that a later web client can reuse. The web
-  client is intentionally not part of this release.
+- **Agent coordination from the CLI**: `send`, `wait`, `team --json`, and
+  scoped automation over MCP and the SDK.
+- **Crash recovery** with `tmux-ide restore --resume-agents`.
 
 Useful controls:
 
-| Control      | Action                                |
-| ------------ | ------------------------------------- |
-| `F1`         | Home                                  |
-| `F2`         | Terminals                             |
-| `F5`         | Commands                              |
-| `Ctrl+O`     | Next pane                             |
-| `Ctrl+T`     | Next window                           |
-| `Meta+Arrow` | Resize focused pane                   |
-| `Ctrl+Q`     | Quit, or put away a detachable viewer |
+| Control     | Action                           |
+| ----------- | -------------------------------- |
+| `F1`        | Home                             |
+| `F2`        | Terminals                        |
+| `F5`        | Commands                         |
+| `Ctrl+O`    | Next pane                        |
+| `Ctrl+T`    | Next window                      |
+| `Alt+Arrow` | Resize focused pane              |
+| `Ctrl+Q`    | Quit, or detach a detachable app |
+
+See [every keyboard shortcut](https://tmux-ide.com/docs/getting-started#keyboard-shortcuts).
 
 ## Optional workspace layout
 
@@ -121,7 +127,7 @@ Legacy `ide.yml` files still load through a compatibility adapter. Use
 flowchart LR
   T[tmux\nprocesses · PTYs · topology · persistence]
   D[daemon\ndiscovery · lifecycle · agent state · pane streams]
-  U[OpenTUI\nHome · Terminals · chrome · input]
+  U[app\nHome · Terminals · chrome · input]
   T <--> D
   D <--> U
 ```
@@ -132,10 +138,10 @@ put your work behind a proprietary session format.
 
 ## Requirements
 
-- tmux 3.7 or newer (the universal installer includes 3.7c)
-- Node.js 20 or newer
-- macOS 26+ on ARM64, macOS 15+ on x64, or Linux arm64/x64 for the downloadable OpenTUI runtime
-- Bun only when developing or compiling the TUI from a checkout
+- macOS 26+ on ARM64, macOS 15+ on x64, or glibc Linux arm64/x64
+- tmux 3.7 or newer for servers you already run (the installer includes 3.7c)
+- Node.js 20 or newer only for npm installations (the installer includes it)
+- Bun only when developing or compiling the app runtime from a checkout
 
 Run `tmux-ide doctor --json` for an environment report.
 
@@ -158,7 +164,7 @@ development gallery uses fixture data and local actions, so it does not connect
 to your daemon or change live tmux sessions. See the
 [gallery controls and checks](scripts/tui-gallery/README.md).
 
-- [Documentation](https://github.com/wavyrai/tmux-ide/tree/main/docs)
+- [Documentation](https://tmux-ide.com/docs)
 - [Contributing](CONTRIBUTING.md)
 - [Release checklist](RELEASE.md)
 - [Changelog](CHANGELOG.md)
