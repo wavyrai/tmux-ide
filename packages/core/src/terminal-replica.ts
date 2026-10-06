@@ -22,6 +22,8 @@ import {
 // Only rows validated and copied by this module can bypass a repeated copy.
 // External Object.freeze calls do not establish this provenance.
 const VALIDATED_PATCH_ROWS = new WeakSet<TerminalReplicaRow>();
+// Seed copies have the canonical row shape produced by freezeRow itself.
+const FROZEN_SEED_ROWS = new WeakSet<TerminalReplicaRow>();
 
 const DEFAULT_COLOR = Object.freeze({ kind: "default" } as const);
 const ROW_ARRAY_HASH_CACHE = new WeakMap<
@@ -837,7 +839,8 @@ function blankRow(cols: number): TerminalReplicaRow {
 }
 
 function freezeRow(row: TerminalReplicaRow): TerminalReplicaRow {
-  return Object.freeze({
+  if (FROZEN_SEED_ROWS.has(row)) return row;
+  const frozen = Object.freeze({
     wrapped: row.wrapped,
     cells: Object.freeze(
       row.cells.map((cell) =>
@@ -849,6 +852,8 @@ function freezeRow(row: TerminalReplicaRow): TerminalReplicaRow {
       ),
     ),
   }) as unknown as TerminalReplicaRow;
+  FROZEN_SEED_ROWS.add(frozen);
+  return frozen;
 }
 
 function validateAndFreezeRow(
