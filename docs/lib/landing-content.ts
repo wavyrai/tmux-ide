@@ -1,12 +1,13 @@
-import { INSTALL_COMMAND } from "@/lib/site";
+import { INSTALL_COMMAND, SITE_TAGLINE } from "@/lib/site";
 
 /**
  * The hero is one constant so the headline can change in a single place.
  */
 export const LANDING_HERO = {
-  title: "The open-source workspace for coding agents.",
+  title: SITE_TAGLINE,
   // The lede leads with one foreground sentence; the rest reads in the muted tone.
-  ledeLead: "Run and coordinate a team of coding agents in the tmux sessions you already use.",
+  ledeLead:
+    "Run and coordinate a team of coding agents, such as Claude Code and Codex, in the tmux sessions you already use.",
   lede: "See what every agent is doing, and jump straight to the one that needs you.",
 } as const;
 
@@ -40,6 +41,11 @@ export interface LandingFaqItem {
 
 export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
+    question: "What is tmux-ide?",
+    answer:
+      "tmux-ide is an open-source (MIT) terminal app for running coding agents such as Claude Code and Codex inside ordinary tmux sessions. Home lists every agent across your local and SSH machines and shows which ones are working or need you. Terminals mirrors the live tmux session with clickable windows, pane headers and controls. tmux keeps owning processes, panes and persistence, so closing tmux-ide never stops an agent.",
+  },
+  {
     question: "Is tmux-ide a new terminal multiplexer?",
     answer:
       "No. tmux remains responsible for processes, PTYs, sessions, windows, panes, and persistence. tmux-ide is a visual, agent-aware control surface for the tmux sessions you already own.",
@@ -52,7 +58,12 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
     question: "Which coding agents does it recognize?",
     answer:
-      "The OpenTUI is designed to recognize major coding-agent processes and project their live state into agent-aware pane chrome and the workspace sidebar. Ordinary shells and terminal programs continue to work alongside them.",
+      "Claude Code and Codex, with detection tuned on their real output, plus conservative rules for 15 other agent CLIs. Any agent can report its own state with one tmux option, and ordinary shells keep working alongside them.",
+  },
+  {
+    question: "Does it work with Claude Code agent teams?",
+    answer:
+      "Yes. With teammateMode set to tmux, each teammate opens in its own pane, and tmux-ide groups them under their team with their teammate names and live status. Claude Code still owns the team, tasks and messaging; in-process teammates have no pane of their own.",
   },
   {
     question: "Can I jump directly to a specific agent?",
@@ -62,7 +73,12 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
     question: "Does it work over SSH?",
     answer:
-      "Yes. The OpenTUI and tmux are terminal-native, so the same agent workspace, pane controls, navigation, and durable sessions remain available over SSH.",
+      "Yes. The app and tmux are terminal-native, so the same agents, pane controls, navigation and durable sessions work over SSH, either by running tmux-ide on the remote machine or with `tmux-ide app --ssh <host>`.",
+  },
+  {
+    question: "Can it restore my sessions after the tmux server crashes?",
+    answer:
+      "Yes. While tmux-ide's background updater runs, which starts once you adopt a session or create one from the app, it snapshots your sessions about every 30 seconds. After a crash, `tmux-ide restore --resume-agents` rebuilds windows, layouts and directories and resumes supported agent conversations such as Claude Code.",
   },
   {
     question: "Do I need a workspace configuration file?",
@@ -83,7 +99,7 @@ export const LANDING_AGENT_FEATURES = [
     index: "02",
     eyebrow: "Monitor",
     title: "Live agent indicators",
-    body: "Working, idle, attention, and done states appear in the sidebar and pane chrome, so a multi-agent workspace remains readable without opening every terminal.",
+    body: "Working, blocked, done and idle states appear in the sidebar and pane headers, so a multi-agent workspace stays readable without opening every terminal.",
     figure: { number: "02.2", label: "Agent state / live indicators" },
   },
   {
@@ -108,7 +124,7 @@ export const LANDING_CAPABILITIES = [
     index: "02",
     title: "Arrange",
     body: "Split and resize the workspace while the real tmux layout remains the source of truth.",
-    items: ["split panes", "coherent resize"],
+    items: ["split panes", "pane resize"],
     visual: "resize",
     figure: { number: "04.2", label: "Arrange / splits and resize" },
   },
@@ -132,13 +148,13 @@ export const LANDING_ARCHITECTURE = [
   {
     owner: "tmux-ide daemon",
     responsibility: "discovery · lifecycle · agent state · pane streams",
-    outcome: "A coherent workspace model",
-    figure: { number: "03.2", label: "Daemon / coherent workspace projection" },
+    outcome: "One model of every machine, session and agent",
+    figure: { number: "03.2", label: "Daemon / one model of machines, sessions and agents" },
   },
   {
-    owner: "OpenTUI",
+    owner: "tmux-ide app",
     responsibility: "navigation · agent chrome · controls · input",
     outcome: "The interface you operate",
-    figure: { number: "03.3", label: "OpenTUI / agent-aware control surface" },
+    figure: { number: "03.3", label: "App / agent-aware control surface" },
   },
 ] as const;
