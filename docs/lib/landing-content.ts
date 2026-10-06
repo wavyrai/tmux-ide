@@ -78,7 +78,7 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
     question: "Does it work over SSH?",
     answer:
-      "Yes. Install the same tmux-ide version on the remote machine and start its daemon there with `tmux-ide --headless`. Then run `tmux-ide app --ssh <host>` on your computer. If the connection drops, the remote tmux sessions and agents keep running.",
+      "Yes. Install the same tmux-ide version on the remote machine and start its daemon there with `tmux-ide --headless`. Then run `tmux-ide app --ssh <host>` on your computer. If the connection drops, the remote tmux sessions and agents keep running. See [remote machines](/docs/remote-machines) for the setup.",
   },
   {
     question: "Can it restore my sessions after the tmux server crashes?",

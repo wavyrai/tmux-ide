@@ -73,17 +73,25 @@ function keepHyphenatedWords(text: string) {
   );
 }
 
-/** Backtick spans in plain-text copy render as inline code. */
-function withCode(text: string) {
-  return text.split(/`([^`]+)`/u).map((part, index) =>
-    index % 2 ? (
-      <code key={index} className="font-mono text-fd-foreground">
-        {part}
-      </code>
+/** Plain-text copy with two inline marks: `code` spans and [label](/path) links. */
+function withInline(text: string) {
+  return text.split(/(`[^`]+`|\[[^\]]+\]\([^)]+\))/u).map((part, index) => {
+    if (part.startsWith("`")) {
+      return (
+        <code key={index} className="font-mono text-fd-foreground">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    const link = /^\[([^\]]+)\]\(([^)]+)\)$/u.exec(part);
+    return link ? (
+      <Link key={index} href={link[2]!} className="marketing-link-action text-fd-primary">
+        {link[1]}
+      </Link>
     ) : (
       part
-    ),
-  );
+    );
+  });
 }
 
 function formatStars(count: number): string {
@@ -324,7 +332,7 @@ export default async function HomePage() {
                       +
                     </span>
                   </summary>
-                  <p className={`marketing-faq-answer pt-4 ${bodyCopy}`}>{withCode(answer)}</p>
+                  <p className={`marketing-faq-answer pt-4 ${bodyCopy}`}>{withInline(answer)}</p>
                 </details>
               ))}
             </div>
