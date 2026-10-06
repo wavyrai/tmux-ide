@@ -1,7 +1,7 @@
 import { ImageResponse } from "@takumi-rs/image-response";
 
 import { SocialCard } from "@/components/social-card";
-import { SITE_DESCRIPTION } from "@/lib/site";
+import { SITE_DESCRIPTION, SITE_TAGLINE } from "@/lib/site";
 
 /**
  * The homepage OG card — 1200×630, served at /og-image.png (the URL the root
@@ -16,7 +16,7 @@ export function GET() {
   return new ImageResponse(
     <SocialCard
       eyebrow="Build your team of agents"
-      title="A dedicated workspace for your coding agents."
+      title={SITE_TAGLINE}
       description={SITE_DESCRIPTION}
     />,
     { width: 1200, height: 630, format: "png" },

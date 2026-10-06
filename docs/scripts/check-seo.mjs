@@ -97,6 +97,17 @@ for (const marker of [
 for (const marker of ["User-Agent: *", "Allow: /", "Sitemap:", "Host:"]) {
   if (!robots.includes(marker)) throw new Error(`Built robots.txt is missing: ${marker}`);
 }
+// Owner policy: search, AI answers and AI training are all allowed. The signal
+// must sit inside the `*` group, and nothing may block the whole site.
+const wildcardGroup = robots
+  .split(/\n(?=User-Agent:)/iu)
+  .find((group) => /^User-Agent: \*$/imu.test(group));
+if (!/^Content-Signal: search=yes, ai-input=yes, ai-train=yes$/mu.test(wildcardGroup ?? ""))
+  throw new Error(
+    "robots.txt `*` group must carry Content-Signal: search=yes, ai-input=yes, ai-train=yes",
+  );
+if (/^Disallow: \/\s*$/mu.test(robots))
+  throw new Error("robots.txt must not disallow the whole site");
 
 const locations = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/gu)].map((match) => match[1]);
 if (locations.length === 0) throw new Error("Built sitemap has no locations");
@@ -162,6 +173,6 @@ for (const key of [
 
 console.log(
   `SEO artifacts verified: metadata + entity graph + visible FAQ schema, security headers, ` +
-    `robots.txt, llms.txt, one canonical host (${canonicalOrigin}), and ${locations.length} ` +
+    `robots.txt (Content-Signal), llms.txt, one canonical host (${canonicalOrigin}), and ${locations.length} ` +
     `sitemap URLs (${dated} with source-backed lastmod).`,
 );
