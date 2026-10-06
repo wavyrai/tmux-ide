@@ -5,7 +5,7 @@ import {
   terminalSemanticUpdateNeedsCooperativeEncoding,
   TerminalDeliveryStateTooLargeError,
 } from "./terminal-delivery.ts";
-import { blankTerminalReplicaSnapshot } from "./terminal-replica.ts";
+import { blankTerminalReplicaSnapshot, freezeTerminalReplicaSnapshot } from "./terminal-replica.ts";
 import type { TerminalSemanticDeliveryPayload } from "@tmux-ide/contracts";
 function seed(cols = 128, rows = 64) {
   return {
@@ -16,6 +16,85 @@ function seed(cols = 128, rows = 64) {
 }
 const yielding = { yieldControl: async () => {} };
 describe("cooperative compact seed encoding", () => {
+  it("retains exact bytes and cancellation checkpoints with previously validated owned rows", async () => {
+    const input = seed(4096, 2);
+    input.snapshot = freezeTerminalReplicaSnapshot(input.snapshot);
+    let firstYields = 0;
+    const first = await encodeCompactSemanticTerminalUpdateCooperatively(input, {
+      yieldControl: async () => {
+        firstYields++;
+      },
+    });
+    let repeatedYields = 0;
+    expect(
+      await encodeCompactSemanticTerminalUpdateCooperatively(input, {
+        yieldControl: async () => {
+          repeatedYields++;
+        },
+      }),
+    ).toEqual(first);
+    expect(repeatedYields).toBe(firstYields);
+    expect(firstYields).toBeGreaterThanOrEqual(32);
+    expect(encodeCompactSemanticTerminalUpdate(input)).toEqual(first);
+    const controller = new AbortController();
+    const reason = new Error("retired cached seed");
+    await expect(
+      encodeCompactSemanticTerminalUpdateCooperatively(input, {
+        signal: controller.signal,
+        yieldControl: async () => {
+          controller.abort(reason);
+        },
+      }),
+    ).rejects.toBe(reason);
+  });
+  it("never remembers an incomplete or invalid owned row", async () => {
+    const input = seed(4096, 2);
+    input.snapshot.grid[0]!.cells[300]!.attributes = 256;
+    input.snapshot = freezeTerminalReplicaSnapshot(input.snapshot);
+    await expect(
+      encodeCompactSemanticTerminalUpdateCooperatively(input, {
+        yieldControl: async () => {
+          throw new Error("interrupted row");
+        },
+      }),
+    ).rejects.toThrow("interrupted row");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await expect(
+        encodeCompactSemanticTerminalUpdateCooperatively(input, yielding),
+      ).rejects.toThrow();
+      expect(() => encodeCompactSemanticTerminalUpdate(input)).toThrow();
+    }
+  });
+  it("revalidates external frozen getters mixed with cached owned rows", async () => {
+    const input = seed();
+    input.snapshot = freezeTerminalReplicaSnapshot(input.snapshot);
+    await encodeCompactSemanticTerminalUpdateCooperatively(input, yielding);
+    let attributes = 0;
+    const cell = Object.freeze({
+      ...input.snapshot.grid[0]!.cells[0]!,
+      get attributes() {
+        return attributes;
+      },
+    });
+    const row = Object.freeze({
+      wrapped: false,
+      cells: Object.freeze(Array.from({ length: 128 }, () => cell)),
+    });
+    const mixed = {
+      ...input,
+      snapshot: {
+        ...input.snapshot,
+        grid: [input.snapshot.grid[0]!, row, ...input.snapshot.grid.slice(2)],
+      },
+    } as unknown as TerminalSemanticDeliveryPayload;
+    await expect(
+      encodeCompactSemanticTerminalUpdateCooperatively(mixed, yielding),
+    ).resolves.toBeInstanceOf(Uint8Array);
+    attributes = 256;
+    await expect(
+      encodeCompactSemanticTerminalUpdateCooperatively(mixed, yielding),
+    ).rejects.toThrow();
+  });
   it("emits byte-identical dense style, Unicode, wide and history representations", async () => {
     const input = seed();
     for (let y = 0; y < input.snapshot.grid.length; y++) {

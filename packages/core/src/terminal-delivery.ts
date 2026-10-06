@@ -211,7 +211,7 @@ type CompactColor = 0 | readonly [1 | 2, number];
 type CompactCellRun = [number, string, 0 | 1 | 2, CompactColor, CompactColor, number];
 type CompactRow = readonly [0 | 1, readonly CompactCellRun[]];
 
-// Repeated small seeds share immutable core-owned rows. Validate each such row
+// Repeated seeds share immutable core-owned rows. Validate each such row
 // with the strict contract before remembering it; ownership alone is not enough.
 // External rows still use the ordinary schema and detached parse result.
 const validatedOwnedEncodingRows = new WeakSet<TerminalReplicaRow>();
@@ -385,7 +385,10 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
   for (const rows of [grid, history]) {
     write("[");
     for (let index = 0; index < rows.length; index++) {
-      const { cells, ...rowHeaderInput } = rows[index]!;
+      const row = rows[index]!;
+      const owned = isOwnedTerminalReplicaRow(row);
+      const validatedRow = owned && validatedOwnedEncodingRows.has(row);
+      const { cells, ...rowHeaderInput } = row;
       const rowHeader = CompactRowHeaderSchema.parse(rowHeaderInput);
       if (++rowCount > COMPACT_MAX_ROWS || !Array.isArray(cells) || cells.length !== metadata.cols)
         compactEncodingLimit();
@@ -402,7 +405,8 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
         wroteRun = true;
       };
       for (let offset = 0; offset < cells.length; offset += 256) {
-        const validated = CompactCellSliceSchema.parse(cells.slice(offset, offset + 256));
+        const slice = cells.slice(offset, offset + 256);
+        const validated = validatedRow ? slice : CompactCellSliceSchema.parse(slice);
         for (const cell of validated) {
           const encoded = compactCell(cell);
           if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;
@@ -422,6 +426,9 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
       }
       emitRun();
       write("]]");
+      // Header and every cell have passed the strict row contract, in bounded
+      // slices. Only a completed immutable row may be reused by either encoder.
+      if (owned) validatedOwnedEncodingRows.add(row);
     }
     write("],");
   }
