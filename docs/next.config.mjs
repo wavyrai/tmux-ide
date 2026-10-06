@@ -10,6 +10,9 @@ const config = {
   serverExternalPackages: ["@takumi-rs/image-response"],
   reactStrictMode: true,
   transpilePackages: ["geist"],
+  // Dev-only: extra hostnames (comma-separated) allowed to load dev assets,
+  // e.g. when the dev server is proxied over a private network.
+  allowedDevOrigins: process.env.DOCS_ALLOWED_DEV_ORIGINS?.split(",").filter(Boolean),
   turbopack: {
     root: resolve(docsDir, ".."),
   },
