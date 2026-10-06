@@ -70,8 +70,9 @@
   --marketing-panel: oklch(0.967 0.001 286.4);
   --marketing-line: oklch(0.92 0.004 286.3);
   /* The hero demo's mat follows the site theme, like the demo inside it:
-     a light panel with a hairline here, the dark stage in .dark. */
-  --terminal-stage: var(--marketing-panel);
+     white here, so the app's grey light canvas reads as its own screen inside
+     the hairline frame; the dark stage in .dark. */
+  --terminal-stage: var(--marketing-raise);
   --terminal-line: var(--marketing-line);
   /* Long-form docs text sits one step softer than headings. */
   --docs-prose-body: oklch(0.3247 0.0017 106.5);
