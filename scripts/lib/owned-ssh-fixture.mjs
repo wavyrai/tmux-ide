@@ -697,7 +697,7 @@ export async function createOwnedSshFixture({
     write(
       "bin/tmux-ide",
       publicDiscoveryCli
-        ? `#!${node}\nconst{spawn}=require('node:child_process');if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(['remote-daemon-info','--json']))process.exit(64);const c=spawn(${JSON.stringify(node)},[${JSON.stringify(publicDiscoveryCli)},'remote-daemon-info','--json'],{stdio:'inherit',env:{HOME:${JSON.stringify(join(root, "home"))},ZDOTDIR:${JSON.stringify(join(root, "home"))},PATH:process.env.PATH,TMUX_IDE_HOME:${JSON.stringify(join(root, "home", ".tmux-ide"))}}});c.on('error',()=>{process.exitCode=127;});c.on('exit',code=>{process.exitCode=code??1;});\n`
+        ? `#!${node}\nconst{spawn}=require('node:child_process');if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(['remote-daemon-info','--json']))process.exit(64);const c=spawn(${JSON.stringify(node)},[${JSON.stringify(publicDiscoveryCli)},'remote-daemon-info','--json'],{stdio:'inherit',env:{HOME:${JSON.stringify(join(root, "home"))},ZDOTDIR:${JSON.stringify(join(root, "home"))},PATH:process.env.PATH,TMUX_IDE_HOME:${JSON.stringify(join(root, "state"))}}});c.on('error',()=>{process.exitCode=127;});c.on('exit',code=>{process.exitCode=code??1;});\n`
         : `#!${node}\nconst{connect}=require('node:net');if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(['remote-daemon-info','--json']))process.exit(64);const s=connect(${JSON.stringify(ipc)});let n=0;s.on('data',b=>{n+=b.length;if(n>65536){s.destroy();process.exitCode=1;}else process.stdout.write(b);});s.on('error',()=>{process.exitCode=1;});s.setTimeout(20000,()=>{s.destroy();process.exitCode=1;});\n`,
       0o700,
     );

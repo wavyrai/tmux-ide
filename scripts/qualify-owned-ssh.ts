@@ -13,6 +13,7 @@ import {
   realpathSync,
   lstatSync,
   mkdirSync,
+  existsSync,
 } from "node:fs";
 import { join } from "node:path";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "../packages/contracts/src/index.ts";
@@ -520,6 +521,7 @@ try {
       assert(
         JSON.stringify(readdirSync(join(absent.root, "home"))) === JSON.stringify([".zshenv"]),
       );
+      assert(!existsSync(join(absent.root, "state")));
       caseFacts = { publicCliSha256, syntheticHandshakeRequests: 0, privateHomeUnchanged: true };
       await marker();
     });
@@ -532,9 +534,9 @@ try {
         throw new Error("Public CLI must not use the synthetic handshake");
       },
     });
-    const stateDir = join(incompatible.root, "home", ".tmux-ide");
+    const stateDir = join(incompatible.root, "state");
     mkdirSync(stateDir, { mode: 0o700 });
-    incompatible.files.capture("home/.tmux-ide");
+    incompatible.files.capture("state");
     // A fixture-owned live PID and credential-less legacy record exercise the
     // public CLI's real record reader and compatibility check, not a fake result.
     const record = JSON.stringify({
@@ -549,7 +551,7 @@ try {
     });
     const recordPath = join(stateDir, "daemon.json");
     writeFileSync(recordPath, record, { mode: 0o600, flag: "wx" });
-    incompatible.files.capture("home/.tmux-ide/daemon.json");
+    incompatible.files.capture("state/daemon.json");
     await runCase("public-cli-incompatible-record", async () => {
       await refused(incompatible.config, undefined, 0, "incompatible");
       assert(incompatible.metrics().requests === 0);
