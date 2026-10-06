@@ -478,6 +478,38 @@ fixture above; it does not join both into a live PTY journey or prove physical
 terminal paint. The fixture runs in `test:tui-renderer` with the repository's
 pinned Bun version. Cleanup removes the frame observer and destroys the renderer.
 
+## Retained viewers and prior-release upgrades
+
+`scripts/lib/product-tui-recovery-live.test.mjs` now waits for each retained TUI
+to join the live daemon generation before sending supported focus events. It
+selects one geometry owner and verifies the committed authority and native
+bottom markers before recording the recovery baseline. The SIGKILL case keeps
+eight TUI processes alive across replacement, then verifies content, input
+acknowledgements, geometry and the single replacement control client. This
+qualification does not cover SSH interruption or every recovery mode.
+
+The former pre-viewer geometry assertion was inconsistent with viewport fitting:
+clients intentionally replace the initial manual size. Uncontrolled startup can
+also select a smaller viewer, so a taller observer's native content need not end
+at its own viewport bottom. Controlled ownership is part of this recovery test's
+setup, not a production geometry-policy change.
+
+`installed-daemon-upgrade-live.test.ts` accepts the absolute
+`TMUX_IDE_UPGRADE_PRIOR_CLI` path to an installed prior release's `bin/cli.js`.
+It checks that release's real version, starts its public headless entry, observes
+its health through the current CLI, and requests concurrent explicit updates.
+Both requests must converge on one replacement while pane identity and full
+history survive. The default cases still use current daemon code with older
+metadata to exercise manual/systemd/launchd provenance; they are not historical
+code compatibility tests or actual service-manager runs.
+
+Qualification with the published 2.9.2 package passed against current source.
+That fixture includes tmux on PATH. A separate clean-PATH installer journey found
+that published 2.9.3's `status --json` still attempts system `tmux` despite a
+bundled executable. Installer activation and rollback success alone therefore do
+not establish complete clean-install usability; this command-resolution defect
+requires its own same-path regression and fix.
+
 ## Next extensions, in order
 
 - Broaden the bounded stock lifecycle model to additional cancellation phases,
