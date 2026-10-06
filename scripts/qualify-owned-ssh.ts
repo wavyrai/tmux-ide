@@ -6,7 +6,14 @@ import { createFinitePressureWriter } from "./lib/owned-ssh-pressure.mjs";
 import { createFleetDialScheduler } from "../packages/daemon-client/src/fleet-dial-scheduler.ts";
 import { createServer as tcpServer, type Socket } from "node:net";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { writeFileSync, readFileSync, readdirSync, realpathSync, lstatSync } from "node:fs";
+import {
+  writeFileSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  lstatSync,
+  mkdirSync,
+} from "node:fs";
 import { join } from "node:path";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "../packages/contracts/src/index.ts";
 import {
@@ -517,6 +524,41 @@ try {
       await marker();
     });
   }
+  if (publicDiscoveryCli) {
+    const incompatible = await fixture({
+      targetPort,
+      publicDiscoveryCli,
+      handshake: () => {
+        throw new Error("Public CLI must not use the synthetic handshake");
+      },
+    });
+    const stateDir = join(incompatible.root, "home", ".tmux-ide");
+    mkdirSync(stateDir, { mode: 0o700 });
+    incompatible.files.capture("home/.tmux-ide");
+    // A fixture-owned live PID and credential-less legacy record exercise the
+    // public CLI's real record reader and compatibility check, not a fake result.
+    const record = JSON.stringify({
+      pid: process.pid,
+      port: targetPort,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: "2.9.2",
+      instanceId: randomUUID(),
+      startedAt: new Date().toISOString(),
+      bindHostname: "127.0.0.1",
+      authToken: null,
+    });
+    const recordPath = join(stateDir, "daemon.json");
+    writeFileSync(recordPath, record, { mode: 0o600, flag: "wx" });
+    incompatible.files.capture("home/.tmux-ide/daemon.json");
+    await runCase("public-cli-incompatible-record", async () => {
+      await refused(incompatible.config, undefined, 0, "incompatible");
+      assert(incompatible.metrics().requests === 0);
+      assert(readFileSync(recordPath, "utf8") === record);
+      assert(JSON.stringify(readdirSync(stateDir)) === JSON.stringify(["daemon.json"]));
+      caseFacts = { publicCliSha256, syntheticHandshakeRequests: 0, recordUnchanged: true };
+      await marker();
+    });
+  }
   const unreachablePort = await unusedLoopbackPort();
   const unreachableConfig = join(target.root, "unreachable_config");
   privateWrite(
@@ -798,7 +840,7 @@ try {
           cli: publicDiscoveryCli,
           sha256: publicCliSha256,
           scope:
-            "Actual CLI executed by the private SSH server; no daemon exists or is started in its private HOME. Other protocol cases remain synthetic.",
+            "Actual CLI executed by the private SSH server against absent state and a fixture-owned incompatible record; no daemon is started. Other protocol cases remain synthetic.",
         }
       : null,
     failureStage: overall ? null : currentStage,
