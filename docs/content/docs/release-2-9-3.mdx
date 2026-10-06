@@ -3,20 +3,24 @@ title: tmux-ide 2.9.3
 description: "tmux-ide 2.9.3, the current release: more reliable remote connections, window resizing, installation, updates and recovery for the Home and Terminals app."
 ---
 
-Version `2.9.3` strengthens the terminal-first Home and Terminals experience.
-Existing tmux sessions remain running when you update or close the viewer.
+Version `2.9.3` was released on October 6, 2026. It makes remote connections,
+window resizing, installation and recovery more reliable in the Home and
+Terminals app. Existing tmux sessions keep running when you update or close the
+app. Upgrade with `tmux-ide update`, or rerun the installer below.
 
 ## Connections and session recovery
 
-The running app recovers after remote daemon replacement and applies saved-machine
-edits. Connection errors and lifecycle logs provide clearer diagnostics. Managed
-services preserve ownership through restart, interrupted updates, and failed
-launcher recovery.
-
-Managed windows recover from manual sizing policies. Linked windows that would
-create competing control owners are refused with guidance to unlink and retry.
-Agent completion stays associated with the correct agent identity, and interaction
-observation reports gaps rather than silently losing retained events.
+- SSH connections recover after a remote daemon is replaced, and edits to saved
+  machines apply in the running app.
+- Connection errors and lifecycle logs are clearer.
+- Daemon services keep their ownership through restart, interrupted updates and
+  failed launcher recovery.
+- Windows that a manual tmux sizing policy left out of step resize correctly
+  again.
+- tmux-ide refuses linked windows that two viewers would both try to control,
+  and tells you to unlink them and retry.
+- Agent completion stays with the right agent, and interaction observation
+  reports gaps instead of silently losing events.
 
 ## Installation and updates
 
@@ -34,8 +38,11 @@ client or contributor test files.
 
 ## Scope and remaining limits
 
-Supported platform requirements and the terminal-first scope remain those of
-[2.9.2](/docs/release-2-9-2). This release does not claim native performance parity.
+Supported platforms are listed in
+[Getting started](/docs/getting-started#requirements); they have not changed
+since [2.9.2](/docs/release-2-9-2). This release does not claim native performance parity.
 Duplicate link-event handling is fixed and covered by renderer and hosted-terminal
 tests; physical terminal-emulator modifier handling remains a manual qualification
 item. Native interaction observation remains experimental and opt-in.
+
+Full list of changes: [CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
