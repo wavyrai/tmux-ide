@@ -113,10 +113,16 @@ export async function generateMetadata(props: {
   if (!page) notFound();
 
   const modified = docLastModified(page.path);
+  // `metaTitle` carries the search wording; `title` stays the short H1/sidebar label.
+  const metaTitle = page.data.metaTitle ?? page.data.title;
+  const noindex = { index: false, follow: true };
 
   return {
-    title: page.url === "/docs" ? { absolute: DOCS_INDEX_TITLE } : page.data.title,
+    title:
+      page.data.metaTitle ??
+      (page.url === "/docs" ? { absolute: DOCS_INDEX_TITLE } : page.data.title),
     description: page.data.description,
+    ...(page.data.noindex ? { robots: { ...noindex, googleBot: noindex } } : {}),
     alternates: {
       canonical: page.url,
       types: { "text/markdown": `${page.url}.mdx` },
@@ -125,7 +131,7 @@ export async function generateMetadata(props: {
       type: "article",
       url: absoluteUrl(page.url),
       ...(modified ? { modifiedTime: modified.toISOString() } : {}),
-      title: page.data.title,
+      title: metaTitle,
       description: page.data.description,
       images: [
         {
@@ -140,7 +146,7 @@ export async function generateMetadata(props: {
       card: "summary_large_image",
       creator: "@prototyper_co",
       site: "@prototyper_co",
-      title: page.data.title,
+      title: metaTitle,
       description: page.data.description,
       images: [getPageImage(page).url],
     },
