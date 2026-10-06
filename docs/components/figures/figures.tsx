@@ -16,7 +16,7 @@ export function AgentTeamsFigure({
   label?: string;
   number?: string;
   heading?: "h2" | "h3";
-  /** The shared-workspace strip; the landing omits it (Fig. 4's strip covers it). */
+  /** The shared-workspace strip (on by default). */
   foundation?: boolean;
 }) {
   return (

@@ -8,7 +8,12 @@ const nextDir = resolve(docsDir, ".next");
 const manifestPath = resolve(nextDir, "server/app/(home)/page_client-reference-manifest.js");
 const rawBudget = Number(process.env.TMUX_IDE_HOME_JS_RAW_BUDGET ?? 200 * 1024);
 const gzipBudget = Number(process.env.TMUX_IDE_HOME_JS_GZIP_BUDGET ?? 70 * 1024);
-const htmlGzipBudget = Number(process.env.TMUX_IDE_HOME_HTML_GZIP_BUDGET ?? 28 * 1024);
+// 32 KiB since the landing gained two system figures (agent teams and
+// architecture). They are real, crawlable text, so they ship as server HTML
+// (and its RSC copy); the alternatives were shipping them in client JS, which
+// breaks the JS budget, or as images, which loses the text and theming. With
+// both figures the page measured 28,653 B. The JS budget is unchanged.
+const htmlGzipBudget = Number(process.env.TMUX_IDE_HOME_HTML_GZIP_BUDGET ?? 32 * 1024);
 // Fig. 01 is the real app rendered to SVG (see docs/contributing/tui-demo.md).
 // Loaded as an <img>, it cannot use page fonts, so it embeds a Geist Mono
 // subset to render identically on every OS. Measured at the 18 KB decision:

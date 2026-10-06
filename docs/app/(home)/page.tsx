@@ -229,7 +229,7 @@ export default async function HomePage() {
         </Band>
         <Band>
           <BandBody>
-            <AgentTeamsFigure foundation={false} />
+            <AgentTeamsFigure />
           </BandBody>
         </Band>
         <Band>
