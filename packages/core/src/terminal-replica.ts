@@ -842,7 +842,6 @@ function validateAndFreezeRow(
   profile?: MutableTerminalReplicaApplyProfile,
 ): TerminalReplicaRow {
   if (VALIDATED_PATCH_ROWS.has(row)) return row;
-  const cells = new Array(row.cells.length);
   for (let index = 0; index < row.cells.length; index += 1) {
     const cell = row.cells[index]!;
     if (profile) profile.counts.validatedCells += 1;
@@ -850,17 +849,11 @@ function validateAndFreezeRow(
       throw new TypeError("Malformed terminal replica row");
     if (cell.width === 0 && (index === 0 || row.cells[index - 1]?.width !== 2))
       throw new TypeError("Malformed terminal replica row");
-    cells[index] = Object.freeze({
-      ...cell,
-      foreground: Object.freeze({ ...cell.foreground }),
-      background: Object.freeze({ ...cell.background }),
-    });
-    if (profile) profile.counts.frozenCells += 1;
   }
-  const frozen = Object.freeze({
-    wrapped: row.wrapped,
-    cells: Object.freeze(cells),
-  }) as unknown as TerminalReplicaRow;
+  // Use the same copy owner as seed admission and encoding. Already owned rows
+  // retain identity; external rows still receive an immutable detached copy.
+  const frozen = freezeRow(row);
+  if (profile && frozen !== row) profile.counts.frozenCells += row.cells.length;
   VALIDATED_PATCH_ROWS.add(frozen);
   return frozen;
 }

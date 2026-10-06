@@ -168,6 +168,24 @@ describe("terminal replica reducer", () => {
     ).toThrow();
   });
 
+  it("retains core-owned patch rows through subsequent seed admission", () => {
+    const initial = blankTerminalReplicaSnapshot(4, 2);
+    const row = freezeTerminalReplicaRow({
+      wrapped: false,
+      cells: initial.grid[0]!.cells.map((cell) => ({ ...cell, grapheme: "p" })),
+    });
+    const next = applyTerminalReplicaPatch(initial, { rows: [{ index: 0, row }] });
+    expect(next.grid[0]).toBe(row);
+    const admitted = applyTerminalReplicaUpdate(null, seed(next));
+    expect(admitted.status).toBe("applied");
+    expect(admitted.state?.snapshot?.grid[0]).toBe(row);
+    expect(admitted.state?.hash).toBe(hashTerminalReplicaSnapshot(next));
+    const external = structuredClone(row);
+    const detached = applyTerminalReplicaPatch(initial, { rows: [{ index: 0, row: external }] });
+    external.cells[0]!.grapheme = "mutated";
+    expect(detached.grid[0]!.cells[0]!.grapheme).toBe("p");
+  });
+
   it("retains owned immutable rows through seed admission without trusting the seed hash or geometry", () => {
     const initial = blankTerminalReplicaSnapshot(2, 2);
     const row = freezeTerminalReplicaRow({
