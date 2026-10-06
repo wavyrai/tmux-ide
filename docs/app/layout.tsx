@@ -140,7 +140,7 @@ const jsonLd = {
       disambiguatingDescription: "tmux-ide, an open-source Prototyper project",
       applicationCategory: "DeveloperApplication",
       applicationSubCategory: "Agent workspace for tmux",
-      operatingSystem: "macOS, Linux, and other Unix-like systems",
+      operatingSystem: "macOS, Linux",
       softwareRequirements: "tmux",
       softwareVersion: SOFTWARE_VERSION,
       releaseNotes: absoluteUrl(CURRENT_RELEASE_PATH),
