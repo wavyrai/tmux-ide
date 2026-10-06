@@ -7,15 +7,15 @@ import type { NativeGridCapture } from "./native-grid-capture.ts";
  * addresses (`%N`, `@N`, `$N`) never cross this boundary. Pane content arrives
  * as a typed event stream a renderer can apply verbatim to a VT emulator:
  *
- *   reset → seed → [held deltas] → cursor → live deltas…
+ *   reset → seed → cursor → [held deltas] → live deltas…
  *
  * The seed batch is emitted ATOMICALLY (one synchronous callback sequence) so
  * a consumer can apply it as a single paint: `reset` replaces emulator state
  * (tmux is a painter, not a stream — never composite two captures), `seed`
- * carries one capture from one instant, any deltas the server emitted between
- * the capture and cursor probes replay next (they are strictly-after-capture
- * bytes the capture cannot contain), and `cursor` lands the emulator cursor on
- * tmux's truth. Everything after is a live delta.
+ * carries one capture from one instant, and `cursor` installs that capture's
+ * cursor and mode metadata. Strictly post-capture output then replays once;
+ * installing older cursor/mode metadata after those bytes would overwrite their
+ * effects. Everything after the held tail is a live delta.
  */
 
 /** Modes observed at the native capture seam; omitted fields stay unknown. */
@@ -72,8 +72,8 @@ export type MirrorPaneEvent =
     }
   | {
       /** Delivery state changed. `backpressure` mirrors tmux `%pause`;
-       *  `requested` is a subscriber's own freeze. A `resumed` flow event is
-       *  always followed by a fresh atomic seed batch. */
+       *  `requested` is a subscriber's own freeze. A `resumed` flow event follows
+       *  the fresh atomic seed batch and its held output. */
       type: "flow";
       state: "paused" | "resumed";
       reason: "backpressure" | "requested";
