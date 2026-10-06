@@ -151,7 +151,7 @@ export default async function HomePage() {
               id="figure-01-caption"
               number="01"
               ruled={false}
-              className="bg-marketing-raise px-6 py-5 xl:px-10"
+              className="bg-marketing-raise px-(--site-gutter) py-5"
               action={
                 <Link href="/docs/demo" className="marketing-link-action shrink-0 text-fd-primary">
                   Method notes →

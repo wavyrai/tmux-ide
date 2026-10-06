@@ -91,7 +91,7 @@ for (const role of [
 }
 
 if (
-  !/bleed\s*\?\s*["'][^"']*-mx-6[^"']*border-y[^"']*xl:-mx-10[^"']*["']\s*:\s*["']border["']/u.test(
+  !/bleed\s*\?\s*["'][^"']*-mx-\[var\(--site-gutter\)\][^"']*border-y[^"']*["']\s*:\s*["']border["']/u.test(
     lattice,
   )
 ) {

@@ -29,6 +29,12 @@
 @custom-variant hover-only (@media (hover: hover));
 
 :root {
+  /* One site lattice: the banner rail, header, every landing band and the
+     footer share this frame width and inner gutter, so their content edges
+     line up with each other and with the ruled frame. */
+  --site-max: 80rem;
+  --site-gutter: 1.5rem;
+
   /* Neutral zinc palette: an off-white page with white raised surfaces,
      near-black headings and a cool grey for supporting text. Product colour
      belongs to the TUI specimen and the small accent tokens below. */
@@ -63,6 +69,12 @@
   /* The inverted pill: charcoal fill, off-white ink. */
   --pill-fill: oklch(0.315 0.002 106);
   --pill-ink: oklch(0.987 0 0);
+}
+
+@media (width >= 80rem) {
+  :root {
+    --site-gutter: 2.5rem;
+  }
 }
 
 .dark {
@@ -345,17 +357,23 @@
   top: 2.5rem !important;
 }
 
-/* A taller header (72px) with a 24px side inset: the landing nav, and the
-   docs mobile header through Fumadocs' --fd-header-height so the sticky
-   sidebar, TOC and banner rows stay aligned. The banner rail matches the
-   inset (px-6 in top-banner.tsx). */
+/* A taller header (72px): the landing nav sits on the shared site lattice
+   (--site-max, --site-gutter), and the docs mobile header grows through
+   Fumadocs' --fd-header-height so the sticky sidebar, TOC and banner rows
+   stay aligned. */
 [data-slot="marketing-home"] #nd-nav,
 [data-slot="marketing-home"] #nd-nav nav {
   height: 4.5rem;
 }
 
+/* Fumadocs sizes the nav row from --fd-layout-width (set as a class on
+   #nd-home-layout); point it at the site lattice. */
+[data-slot="marketing-home"] #nd-home-layout {
+  --fd-layout-width: var(--site-max);
+}
+
 [data-slot="marketing-home"] #nd-nav nav {
-  padding-inline: 1.5rem;
+  padding-inline: var(--site-gutter);
 }
 
 @media (width < 48rem) {
@@ -370,6 +388,20 @@
 
 [data-slot="docs-site"] {
   --fd-banner-height: 2.5rem;
+}
+
+/* The docs layout is full-bleed (sidebar at the window edge), so on docs the
+   banner rail follows the docs edges instead of the centred site lattice:
+   the mobile header's 24px inset, then the sidebar's 16px from md up. */
+[data-slot="docs-site"] .site-banner-rail {
+  max-width: none;
+  padding-inline: 1.5rem;
+}
+
+@media (width >= 48rem) {
+  [data-slot="docs-site"] .site-banner-rail {
+    padding-inline: 1rem;
+  }
 }
 
 /* Actions read as interface, not prose: Inter, one step heavier. */

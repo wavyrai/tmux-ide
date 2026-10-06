@@ -16,12 +16,15 @@ type LatticeProps = {
 };
 
 /** One spacing rhythm for every standard marketing band. */
-export const BAND_PAD = "px-6 pb-16 pt-20 lg:pb-20 lg:pt-28 xl:px-10";
+export const BAND_PAD = "px-(--site-gutter) pb-16 pt-20 lg:pb-20 lg:pt-28";
 
 /** The only placement grid used by marketing sections. */
 export const MARKETING_GRID = "grid grid-cols-1 gap-x-6 gap-y-10 lg:grid-cols-24";
 
-/** The page-length 1280px frame. Its two vertical rules anchor every band. */
+/**
+ * The page-length frame, --site-max wide. Its two vertical rules anchor every
+ * band; the banner, header and footer share the same width and gutter.
+ */
 export function MarketingFrame({
   id,
   tabIndex,
@@ -34,7 +37,7 @@ export function MarketingFrame({
       tabIndex={tabIndex}
       data-slot="marketing-frame"
       className={cn(
-        "font-marketing mx-auto w-full max-w-[1280px] border-x border-marketing-line max-lg:border-x-0",
+        "font-marketing mx-auto w-full max-w-(--site-max) border-x border-marketing-line max-lg:border-x-0",
         className,
       )}
     >
@@ -115,7 +118,7 @@ export function Mosaic({ bleed = false, className, children }: LatticeProps & { 
       data-slot="marketing-mosaic"
       className={cn(
         "grid grid-cols-1 gap-px border-marketing-line bg-marketing-line",
-        bleed ? "-mx-6 border-y xl:-mx-10" : "border",
+        bleed ? "-mx-[var(--site-gutter)] border-y" : "border",
         className,
       )}
     >
