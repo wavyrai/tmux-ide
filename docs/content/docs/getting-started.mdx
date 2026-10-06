@@ -1,6 +1,6 @@
 ---
 title: Getting started
-description: Install tmux-ide 2.9 and open your first tmux session
+description: Install tmux-ide 2.9 with one command, open your first tmux session, and learn every key in the Home and Terminals app.
 ---
 
 ## Requirements
@@ -54,7 +54,7 @@ Package-manager installations can use `tmux-ide update` to update their package.
 
 If you installed a daemon supervisor service, remove it before uninstalling the
 launcher: `tmux-ide daemon service remove --yes --json`. Service removal preserves
-your tmux sessions. See [daemon supervision](/docs/app-surfaces) for service status
+your tmux sessions. See [daemon supervision](/docs/app-surfaces#supervised-daemon-upgrades) for service status
 and restart commands.
 
 For an installer-owned copy, use the same prefix with these recovery commands:
@@ -96,37 +96,88 @@ tmux-ide app
 
 ## Open a session
 
-Home lists the tmux sessions you already own. Select one with the mouse or
-keyboard, or name it directly:
+Home lists the agents and tmux sessions you already have. Select one with the
+mouse or keyboard, or name a session directly:
 
 ```bash
 tmux-ide app work
 ```
 
-If there are no sessions, press `N` on Home to create one. You do not need a
+If there are no sessions, press `n` on Home to create one. You do not need a
 system `tmux` command: tmux-ide uses its private bundled copy for new servers.
 If you already use tmux, its existing sessions are discovered too. Closing
 tmux-ide does not kill the tmux session.
 
-## Controls
+New to the app? Choose **Learn tmux-ide** on Home for a guided walkthrough in a
+practice session.
 
-| Key              | Action                                                |
-| ---------------- | ----------------------------------------------------- |
-| `F1`             | Home                                                  |
-| `F2`             | Terminals                                             |
-| `F3`, `F4`, `F6` | Files, Diff, Missions when those views are configured |
-| `F5`, `Ctrl+P`   | Commands                                              |
-| `F8`, `Ctrl+Tab` | Cycle focus inside a composite view                   |
-| `F12`            | Performance HUD                                       |
-| `Ctrl+O`         | Cycle panes                                           |
-| `Ctrl+T`         | Cycle windows                                         |
-| `Ctrl+G`         | Return to Home                                        |
-| `Ctrl+E`         | Toggle the Files editor                               |
-| `Meta+Arrow`     | Resize the focused pane                               |
-| `Ctrl+Q`         | Quit, or detach a detachable viewer                   |
+## Keys
 
-Pane headers and window tabs also expose mouse controls for the supported
-actions.
+Function keys work everywhere in the app. Press `Ctrl+K` inside Commands to
+search the full shortcut list, or `Ctrl+B` for what's new.
+
+### Anywhere
+
+| Key               | Action                                                      |
+| ----------------- | ----------------------------------------------------------- |
+| `F1`              | Home                                                        |
+| `F2`              | Terminals                                                   |
+| `F5`              | Commands                                                    |
+| `F6`              | Sessions — switch sessions across machines                  |
+| `F7`              | Attention — sessions with agents that need you              |
+| `F8` / `Shift+F8` | Back / forward through recently opened sessions             |
+| `F9` / `Shift+F9` | Next / previous open session tab (`Ctrl+F9` closes the tab) |
+| `F10`             | Show or hide the sidebar                                    |
+| `Ctrl+G`          | Focus the sidebar (opens Sessions on Home or when hidden)   |
+| `Ctrl+Q`          | Quit, or detach a detachable app                            |
+
+### Terminals
+
+| Key                | Action                                             |
+| ------------------ | -------------------------------------------------- |
+| `Ctrl+O`           | Next pane                                          |
+| `Ctrl+T`           | Next window                                        |
+| `Alt+Arrow`        | Resize the focused pane                            |
+| Right-click a pane | Pane menu: select text, rename, split, zoom, close |
+| `Shift+drag`       | Select text inside a mouse-enabled application     |
+| `Shift+click`      | Open a link (`Ctrl+click` or `⌘+click` also works) |
+
+All other keys go to the focused pane. Pane headers and window tabs expose the
+same actions to the mouse.
+
+### Home
+
+| Key     | Action                   |
+| ------- | ------------------------ |
+| `/`     | Search agents            |
+| `f`     | Cycle the machine filter |
+| `0`     | All agents               |
+| `w`     | Working agents           |
+| `a`     | Needs attention          |
+| `Enter` | Open the selected agent  |
+
+### Sidebar (when focused)
+
+| Key                | Action                               |
+| ------------------ | ------------------------------------ |
+| `↑` `↓` or `j` `k` | Move                                 |
+| `Enter`            | Open                                 |
+| `←` `→` or `h` `l` | Collapse / expand a machine          |
+| `Tab`              | Switch between sessions and machines |
+| `/`                | Search sessions                      |
+| `f`                | Toggle a session favorite            |
+| `?`                | Using tmux-ide (help)                |
+| `A` / `R` / `D`    | Add / retry / disconnect a machine   |
+| `Esc`              | Return to the terminal               |
+
+### Commands and Sessions menus
+
+Type to search, `↑` `↓` to choose, `Enter` to activate, `Esc` to go back.
+`Ctrl+Space` switches to navigation mode (`j` `k` move, `g` `G` first/last,
+`i` returns to search). In Sessions, `Ctrl+H` toggles local/all hosts, `Ctrl+F`
+favorites, `Ctrl+P` toggles the preview, `Ctrl+E` expands it, `Ctrl+N` creates
+a session, `Ctrl+X` closes one (with confirmation), `Ctrl+R` retries a host, and
+`Ctrl+←` / `Ctrl+→` browse windows without switching.
 
 ## Diagnose an install
 
