@@ -729,6 +729,13 @@
   background-color: color-mix(in oklab, var(--color-fd-foreground) 14%, var(--color-fd-muted));
 }
 
+/* Leading marks (docs book, GitHub) share one 16px optical size. */
+.hero-secondary svg {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
 .hero-secondary-count {
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 0.75rem;

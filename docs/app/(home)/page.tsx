@@ -4,7 +4,7 @@ import Link from "next/link";
 
 import { AppIcon } from "@/components/app-icon";
 import { CopyAgentPrompt } from "@/components/copy-agent-prompt";
-import { GitHubMark } from "@/components/docs/assistant-marks";
+import { DocsMark, GitHubMark } from "@/components/docs/assistant-marks";
 import { LandingFaqJsonLd } from "@/components/landing-faq-json-ld";
 import {
   Band,
@@ -115,7 +115,8 @@ export default async function HomePage() {
                   <CopyAgentPrompt size="hero" showPrompt={false} />
                   <div className="hero-cta-links">
                     <Link href="/docs/getting-started" className="hero-secondary">
-                      Docs <span aria-hidden>→</span>
+                      <DocsMark />
+                      <span>Docs</span>
                     </Link>
                     <a
                       href="https://github.com/wavyrai/tmux-ide"

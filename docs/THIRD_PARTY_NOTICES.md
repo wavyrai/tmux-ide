@@ -38,7 +38,8 @@ SOFTWARE.
 
 ## Hugeicons (free set)
 
-Used for the copy and check icons (`components/copy-status.tsx`).
+Used for the copy and check icons (`components/copy-status.tsx`) and the docs
+book icon (`components/docs/assistant-marks.tsx`).
 
 Source: https://hugeicons.com (package `@hugeicons/core-free-icons`, MIT)
 
