@@ -7,7 +7,7 @@
 
 <h1 align="center">tmux-ide</h1>
 
-<p align="center"><strong>A visual tmux client designed for working with coding agents.</strong></p>
+<p align="center"><strong>The open-source workspace for coding agents.</strong></p>
 
 <p align="center">An open-source project by <a href="https://www.prototyper.co">Prototyper</a> · <a href="./LICENSE">MIT license</a> · <a href="https://tmux-ide.com/docs">Docs</a></p>
 

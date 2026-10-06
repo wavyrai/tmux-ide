@@ -1,6 +1,6 @@
 # tmux-ide
 
-**The terminal that understands your agents.** tmux-ide is a terminal-native IDE and agent cockpit built _around_ tmux: one command adds a native chrome (the dock) to any existing tmux session — fleet tabs with live agent-status glyphs, ground-truth working/blocked/done detection, notifications when an agent needs you, and crash-proof restore that revives whole fleets including Claude conversations. Nothing to migrate into, nothing to lock into: the chrome is tmux options; `unadopt` reverts; if tmux-ide dies your sessions are ordinary tmux.
+**The open-source workspace for coding agents.** tmux-ide is a terminal app built _around_ tmux: Home shows every coding agent across your local and SSH machines with ground-truth working/blocked/done status, and Terminals drives the live tmux session with clickable windows, pane headers and direct controls. Around it: notifications when an agent needs you, crash-proof restore that revives whole fleets including Claude conversations, and an optional tmux chrome (`adopt`) that brings the status bar, keys and menus to plain tmux clients. Nothing to migrate into, nothing to lock into: tmux owns every process and pane, the chrome is tmux options (`unadopt` reverts), and if tmux-ide dies your sessions are ordinary tmux.
 
 Positioning: other tools rebuild the terminal to understand agents; tmux-ide teaches the terminal you already use to understand them. Never reference competitor projects by name in code, comments, commits, or docs.
 
