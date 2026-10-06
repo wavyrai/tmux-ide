@@ -87,6 +87,11 @@
   /* The inverted pill: charcoal fill, off-white ink. */
   --pill-fill: oklch(0.315 0.002 106);
   --pill-ink: oklch(0.987 0 0);
+  /* The install command box: terminal-dark in both themes. */
+  --command-fill: oklch(0.1405 0.004 285.8);
+  --command-ink: oklch(0.987 0 0);
+  --command-edge: oklch(0.1405 0.004 285.8);
+  --command-shadow: none;
 }
 
 @media (width >= 80rem) {
@@ -120,6 +125,11 @@
   --hero-body: oklch(0.87 0.004 75);
   --pill-fill: oklch(0.9848 0 0);
   --pill-ink: oklch(0.1405 0.004 285.8);
+  /* Stays dark on the dark ground: one step raised, with a hairline edge. */
+  --command-fill: oklch(0.185 0.006 285.8);
+  --command-ink: oklch(0.987 0 0);
+  --command-edge: oklch(1 0 0 / 12%);
+  --command-shadow: 0 1px 0 oklch(1 0 0 / 4%) inset, 0 8px 24px -12px oklch(0 0 0 / 60%);
 }
 
 /* ── Type system ───────────────────────────────────────────────────────────
@@ -546,13 +556,14 @@
   cursor: pointer;
   align-items: center;
   gap: 0.75rem;
-  border: 1px solid var(--color-fd-primary);
-  background-color: var(--color-fd-primary);
+  border: 1px solid var(--command-edge);
+  background-color: var(--command-fill);
+  box-shadow: var(--command-shadow);
   padding: 0.875rem 1.25rem;
   text-align: left;
   font-size: 0.8125rem;
   line-height: 1.1875rem;
-  color: var(--color-fd-primary-foreground);
+  color: var(--command-ink);
 }
 
 /* The install command is a square box (it can wrap on narrow screens),
@@ -594,15 +605,17 @@
    method tabs on its top edge, the command row as the copy button and the
    follow-up command beneath. Square corners like every surface. */
 .install-box {
-  background-color: var(--color-fd-primary);
-  color: var(--color-fd-primary-foreground);
+  border: 1px solid var(--command-edge);
+  background-color: var(--command-fill);
+  box-shadow: var(--command-shadow);
+  color: var(--command-ink);
   text-align: left;
 }
 
 .install-box-tabs {
   display: flex;
   gap: 0.25rem;
-  border-bottom: 1px solid color-mix(in oklab, var(--color-fd-primary-foreground) 14%, transparent);
+  border-bottom: 1px solid color-mix(in oklab, var(--command-ink) 14%, transparent);
   padding: 0.5rem 0.75rem;
 }
 
@@ -613,15 +626,15 @@
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 0.75rem;
   line-height: 1.25rem;
-  color: color-mix(in oklab, var(--color-fd-primary-foreground) 60%, transparent);
+  color: color-mix(in oklab, var(--command-ink) 60%, transparent);
   transition:
     background-color 150ms var(--ease-smooth),
     color 150ms var(--ease-smooth);
 }
 
 .install-tab:has(input:checked) {
-  background-color: color-mix(in oklab, var(--color-fd-primary-foreground) 14%, transparent);
-  color: var(--color-fd-primary-foreground);
+  background-color: color-mix(in oklab, var(--command-ink) 14%, transparent);
+  color: var(--command-ink);
 }
 
 .install-tab:has(input:focus-visible) {
@@ -658,11 +671,11 @@
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 0.8125rem;
   line-height: 1.1875rem;
-  color: color-mix(in oklab, var(--color-fd-primary-foreground) 55%, transparent);
+  color: color-mix(in oklab, var(--command-ink) 55%, transparent);
 }
 
 .install-box-then code {
-  color: var(--color-fd-primary-foreground);
+  color: var(--command-ink);
 }
 
 .install-box-then span:last-child {
