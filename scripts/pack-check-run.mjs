@@ -1453,6 +1453,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     () => activePane("journey-beta") === recreatedAgentPane,
     one.diagnostics,
   );
+  let topologyInputWindow = null;
   if (topologyInputReproEnabled) {
     const topologyStatus = () =>
       readFileSync(one.performancePath, "utf8")
@@ -1475,9 +1476,15 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       "journey-beta",
       "-n",
       "topology-rebind-input",
+      "-P",
+      "-F",
+      "#{window_id}",
       "/bin/sh",
     ]);
     if (background.status !== 0) throw new Error("Owned background topology trigger failed");
+    topologyInputWindow = background.stdout.trim();
+    if (!/^@\d+$/.test(topologyInputWindow))
+      throw new Error("Owned background topology window identity missing");
     await observe(
       "topology rebinding before immediate input",
       10_000,
@@ -1512,6 +1519,45 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       !capture(paneBeforeAgentJump).includes(recreatedAgentMarker),
     one.diagnostics,
   );
+  if (topologyInputWindow) {
+    if (evidenceDir)
+      writeFileSync(
+        join(evidenceDir, "topology-input-delivery.json"),
+        JSON.stringify(
+          {
+            marker: recreatedAgentMarker,
+            selectedPane: recreatedAgentPane,
+            activePane: activePane("journey-beta"),
+            selectedPaneCapture: capture(recreatedAgentPane),
+            previousPaneCapture: capture(paneBeforeAgentJump),
+          },
+          null,
+          2,
+        ),
+      );
+    const beforeRemoval = readFileSync(one.performancePath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((row) => row.phase === "generation-status")
+      .at(-1);
+    const removed = tmuxResult(["kill-window", "-t", topologyInputWindow]);
+    if (removed.status !== 0) throw new Error("Owned topology window removal failed");
+    await observe(
+      "runtime live after topology fixture removal",
+      10_000,
+      () => {
+        const status = readFileSync(one.performancePath, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line))
+          .filter((row) => row.phase === "generation-status")
+          .at(-1);
+        return status?.status === "live" && status.elapsedMs > beforeRemoval.elapsedMs;
+      },
+      one.diagnostics,
+    );
+  }
   send(one, "C-t");
   await observe(
     "return from agent window",
