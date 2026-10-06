@@ -129,6 +129,12 @@ class CanonicalFnv64 {
   }
 
   number(value: number): void {
+    // Common terminal widths and default attributes share exact canonical bytes.
+    // Equality intentionally preserves String(-0) === "0"; all other numbers
+    // retain the original formatting path.
+    if (value === 0) return void this.ascii("d1:0;");
+    if (value === 1) return void this.ascii("d1:1;");
+    if (value === 2) return void this.ascii("d1:2;");
     const text = String(value);
     this.ascii(`d${text.length}:${text};`);
   }

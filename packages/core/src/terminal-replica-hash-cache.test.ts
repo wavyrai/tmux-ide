@@ -37,6 +37,56 @@ const referenceHash = (value: unknown): string => {
 };
 
 describe("terminal canonical hash cache", () => {
+  it("preserves numeric canonical tokens including signed zero and general-number fallback", async () => {
+    const numbers = [
+      0,
+      -0,
+      1,
+      2,
+      3,
+      -1,
+      -17,
+      NaN,
+      Infinity,
+      -Infinity,
+      0.5,
+      -0.5,
+      Number.MIN_VALUE,
+      Number.MAX_VALUE,
+      Number.MAX_SAFE_INTEGER,
+      Number.MAX_SAFE_INTEGER + 1,
+      1e-7,
+      1e-6,
+      1e20,
+      1e21,
+      255,
+      0xffffff,
+    ];
+    const corpus: unknown[] = [
+      ...numbers,
+      { values: numbers, widths: [0, 1, 2], attributes: 0 },
+      { a: "x".repeat(65540), z: numbers },
+    ];
+    const expected = corpus.map(referenceHash);
+    const accelerator = vi.spyOn(bufferedHash, "createBufferedFnv64");
+    try {
+      for (const fallback of [false, true]) {
+        if (fallback) accelerator.mockReturnValue(null);
+        expect(corpus.map(hashCanonicalTerminalValue)).toEqual(expected);
+        expect(
+          await Promise.all(
+            corpus.map((value) =>
+              hashCanonicalTerminalValueCooperatively(value, async () => {}, 7),
+            ),
+          ),
+        ).toEqual(expected);
+      }
+    } finally {
+      accelerator.mockRestore();
+    }
+    expect(hashCanonicalTerminalValue(-0)).toBe(hashCanonicalTerminalValue(0));
+  });
+
   it("preserves large mixed frame hashes through acceleration, yields and JS fallback", async () => {
     const values = Array.from({ length: 3 }, (_, frame) => ({
       prefix: "x".repeat(65520 + frame),
