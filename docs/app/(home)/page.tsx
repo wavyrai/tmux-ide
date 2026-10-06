@@ -163,15 +163,28 @@ export default async function HomePage() {
           >
             <div className="border-y border-marketing-line bg-terminal-stage p-2 md:p-4">
               <div className="relative border border-terminal-line bg-terminal-stage">
+                {/* The app's default Light and Dark themes, matching the site theme. The
+                    theme class is applied before paint but unknown to the server, so both
+                    are lazy: only the displayed image is fetched, at high priority. */}
+                <Image
+                  src="/tui-demo-light.svg"
+                  alt="Animated tmux-ide app showing agent status, terminal panes, window controls, and Commands"
+                  width={tuiDemoSize.width}
+                  height={tuiDemoSize.height}
+                  unoptimized
+                  loading="lazy"
+                  fetchPriority="high"
+                  className="h-auto w-full dark:hidden"
+                />
                 <Image
                   src="/tui-demo.svg"
                   alt="Animated tmux-ide app showing agent status, terminal panes, window controls, and Commands"
                   width={tuiDemoSize.width}
                   height={tuiDemoSize.height}
                   unoptimized
-                  loading="eager"
+                  loading="lazy"
                   fetchPriority="high"
-                  className="h-auto w-full"
+                  className="hidden h-auto w-full dark:block"
                 />
                 <TuiHeroCursors />
               </div>

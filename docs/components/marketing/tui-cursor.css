@@ -420,3 +420,9 @@
     transform: translate(92.5%, 98.9%);
   }
 }
+/* On narrow screens the hero image is scaled down; keep the cursor in proportion. */
+@media (max-width: 640px) {
+  .tui-hero-cursors .tui-cursor {
+    scale: 0.7;
+  }
+}
