@@ -246,6 +246,7 @@ const checks = [
       "src/terminal/mirror/mirror-service.test.ts",
       "src/terminal/mirror/session-channel.test.ts",
       "src/terminal/session-runtime/registry.test.ts",
+      "src/terminal/session-runtime/multiplexer-backend.test.ts",
     ],
   },
   {

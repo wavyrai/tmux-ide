@@ -440,6 +440,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     signal?.throwIfAborted();
     const runtime = this.#runtime(session);
     await abortable(runtime.whenReady(), signal);
+    await abortable(this.#mirror.verifyRegisteredWindows(), signal);
     if (this.#sessions.get(session) !== runtime) {
       throw new Error(`SessionRuntime ${session} was retired while prewarming`);
     }
@@ -579,6 +580,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   ): ReturnType<MirrorService["executeWindowLinkAction"]> {
     if (this.#disposed) return Promise.reject(new Error("Session runtime disposed"));
     return this.#mirror.executeWindowLinkAction(session, request);
+  }
+
+  /** Resolve pending ownership before an asynchronous owner-authorized mutation. */
+  async verifyWindowOwnership(): Promise<void> {
+    await this.#mirror.verifyRegisteredWindows();
   }
 
   /** Install the bounded registered-session membership reader. */
