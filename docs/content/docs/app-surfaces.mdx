@@ -1,10 +1,14 @@
 ---
 title: App surfaces
-description: "A tour of the tmux-ide 2.9 app: Home, Terminals, Commands, Sessions, the machine sidebar, SSH machines and daemon supervision."
+description: "Tour the tmux-ide app: Home lists coding agents across machines, Terminals mirrors live tmux panes, plus Commands, Sessions and the machine sidebar."
 ---
 
-The 2.9 app has two root surfaces, **Home** (`F1`) and **Terminals** (`F2`).
-Commands, Sessions, Attention and the sidebar open on top of either one.
+The tmux-ide app has two main views. **Home** (`F1`) lists every coding agent
+across your local and SSH machines and shows which ones are working or need you.
+**Terminals** (`F2`) mirrors the selected tmux session live, with window tabs,
+pane headers and mouse controls. Commands (`F5`), Sessions (`F6`), Attention
+(`F7`) and the sidebar (`F10`) open on top of either view. To see it move, watch
+the [app demo](/docs/demo).
 
 ## Home
 
@@ -20,7 +24,8 @@ recovers. One unavailable machine does not prevent other machines from updating.
 Search with `/`, cycle the machine filter with `f`, and switch between **All**
 (`0`), **Working** (`w`) and **Needs attention** (`a`). `Enter` opens the selected
 agent's pane. "Unavailable" means the connection or observation is missing, not
-that the agent stopped.
+that the agent stopped. Working and needs-attention states come from
+[agent detection](/docs/agent-detection).
 
 **Quick actions** on Home browse sessions (or open Terminals), add a machine
 (or open Commands), start **Learn tmux-ide**, and cycle the theme. When no
@@ -139,77 +144,11 @@ Shift+click a visible HTTP or HTTPS URL to open it in your browser; Ctrl+click
 and ⌘+click also work. Ordinary clicks retain their existing terminal behavior. Links split across soft-wrapped
 rows are recognized; this does not open links merely because a program prints them.
 
-## Connect to another machine over SSH
+## Machines over SSH
 
-Install the same tmux-ide version on both machines. The installer brings its own
-Node.js and tmux; an npm installation needs Node.js 20+ and tmux 3.7+. Discovery and explicit remote start respect the noninteractive
-SSH PATH, then check the installer default (`~/.local/bin`), Homebrew
-(`/opt/homebrew/bin` and `/usr/local/bin`), Linuxbrew and `~/.npm-global/bin`.
-Custom installation prefixes must be on the noninteractive SSH PATH; interactive
-shell profiles are not sourced. Configure an SSH alias, key authentication, and host trust first:
-the app uses `BatchMode=yes`, so it cannot prompt for a password or accept an
-unknown host key.
-
-Global installation upgrades an older running daemon on that machine. Its tmux
-sessions keep running while TUI clients reconnect. A fresh install does not start
-a daemon. If lifecycle scripts were skipped, app and headless launch also check
-for an older daemon; you can explicitly run `tmux-ide update --daemon` to upgrade
-it. An older CLI never replaces a newer daemon.
-
-On the remote machine, start the daemon:
-
-```bash
-tmux-ide --headless
-```
-
-This runs in the foreground; keep that process alive in a separate shell. For a
-managed service, use the [explicit supervisor setup](#supervised-daemon-upgrades).
-
-If a healthy daemon already exists, the command reports
-it and exits. Create any sessions you want to open using ordinary tmux on that
-machine.
-
-On your local machine, open the remote session browser or a named session:
-
-```bash
-tmux-ide app --ssh my-server
-tmux-ide app --ssh my-server work
-tmux-ide app --ssh my-server --ssh my-laptop
-```
-
-`my-server` can be an alias from `~/.ssh/config` or `user@host`. The app opens an
-SSH tunnel to the existing remote daemon; it does not install software or start
-a daemon remotely. Home and Terminals show the same machine sidebar and selected host label. Repeat
-`--ssh` to include several machines alongside Local. Opening a session switches
-the active terminal workspace to its machine; matching session names on different
-machines remain separate. If you also provide a session name, it opens on the
-first `--ssh` target.
-
-Click **Add machine**, or press `Ctrl+G` to focus the machine sidebar and then
-`A`, to connect another SSH target. Enter an alias or `user@host` and choose
-Connect. To keep machines across runs, save them with
-[`tmux-ide machines`](#manage-saved-machines).
-
-With the sidebar focused, use Up/Down to move, Enter to open a session, and
-Left/Right to collapse or expand a machine. The active session remains visible
-when its group is collapsed. Escape returns focus to the workspace. Offline
-cached sessions are marked unavailable and cannot be opened until reconnected.
-
-If the connection drops, the app reconnects to that same host. It never silently
-switches to your local daemon. Remote sessions and their processes remain owned
-by tmux when you close the viewer. To create a session on a remote machine,
-select that machine in Sessions (`F6`) and press `Ctrl+N`.
-
-Each machine needs tmux 3.7 or newer. tmux-ide starts new tmux servers with its
-bundled tmux 3.7c, which carries tmux-ide's native-grid patch on every supported
-platform. A server you started yourself with a system tmux also works, but its
-retained history uses compatible reflow instead of native grid backing.
-Installing or updating a tmux executable does not upgrade a server that is
-already running.
-
-The TUI still runs locally with `app --ssh`, so local macOS clipboard copying
-continues to use the system clipboard. Running the TUI itself inside an SSH shell
-uses the terminal clipboard route described above.
+The sidebar can hold your local machine and any number of SSH machines, and
+Home lists agents from all of them. See
+[Run agents on remote machines over SSH](/docs/remote-machines) to set one up.
 
 ## Commands
 
@@ -249,96 +188,8 @@ picker keys.
 Terminals. Mission profiles are validated but not dispatched, and `tmux-ide web`
 is unavailable. See [Workspace layouts](/docs/configuration#app-views).
 
-## Manage saved machines
+## See also
 
-Renaming a saved profile keeps its existing connection. Editing its SSH target
-reconnects that profile while other connected hosts stay open. Imported environment
-identity hints remain in force; a new SSH target must still reach the expected
-environment. Use a new profile when connecting to a different environment.
-
-Use `tmux-ide machines ls --json` to find a machine ID or label. These commands
-preview the change; add `--write` to apply it through the local daemon:
-
-```bash
-tmux-ide machines edit "Build host" --name "Build server" --json
-tmux-ide machines edit "Build host" --ssh build-alias --write --json
-tmux-ide machines disable "Build host" --write --json
-tmux-ide machines enable "Build host" --write --json
-tmux-ide machines remove "Build host" --write --json
-```
-
-Open clients reconcile the saved directory automatically. Disabling or removing
-a machine retires its local connection; it does not stop the remote daemon or
-kill its tmux sessions. Enable a disabled profile to reconnect it.
-
-## Supervised daemon upgrades
-
-For an opt-in user service, point the service at the installer's stable launcher:
-
-```bash
-tmux-ide daemon service install "$HOME/.local/bin/tmux-ide" --json
-tmux-ide daemon service status --json
-tmux-ide daemon service restart --json
-tmux-ide daemon service remove --yes --json
-```
-
-Use your custom prefix if you installed elsewhere. The launcher path is retained
-without resolving its version-specific target, so a service restart loads the
-activated installation. Services use the current user's macOS GUI launchd domain
-or Linux systemd user manager; neither root services nor development instances
-are managed here. The user manager must already be available.
-
-Installation reserves the selected daemon namespace and refuses existing live,
-uncertain or foreign owners. Stop an existing manual launcher or remove its old
-service before installing; this command does not silently take it over. Status
-reports `running` only after the manager PID and canonical identity agree.
-Restart replaces the service process, unlike `daemon restart`, which resets the
-runtime inside the existing process. Removal stops and unloads only the owned
-service and then releases its reservation. The generated manager policy preserves
-independent tmux pane work rather than terminating the job's entire process group.
-
-If activation is uncertain, the service definition and reservation remain for
-explicit restart or removal. Interrupted removal can be retried. Modified or
-foreign definitions are refused. launchd output goes to `service.stdout.log` and
-`service.stderr.log` in the daemon state directory; systemd output goes to its user
-journal. Remove the service before uninstalling its launcher. Service installation
-does not enable Linux login lingering or change macOS privacy permissions.
-
-For a manually maintained supervisor definition, explicitly reserve
-its daemon namespace before the first service start:
-
-```bash
-tmux-ide daemon reserve-supervisor my-service --json
-# Configure the service's foreground command:
-tmux-ide --headless --supervised my-service
-```
-
-Run both commands with the same user and daemon state directory. The ID declares
-ownership of that namespace; it does not install or identify an operating-system
-service. Use `KeepAlive=true` with launchd or `Restart=always` with systemd:
-upgrades exit successfully, so restart-on-failure alone is insufficient. The
-service's stable executable/entry must already point to the updated installed
-code before `tmux-ide update --daemon --if-running` requests replacement. The
-updater waits for the supervisor and never starts a detached replacement for a
-reserved namespace. An unavailable supervisor produces a bounded failure and
-leaves the reservation intact.
-
-Remove or disable the service and confirm its processes have stopped before
-releasing the namespace:
-
-```bash
-tmux-ide daemon release-supervisor my-service --yes --json
-```
-
-Release refuses live or uncertain owners. It does not verify that the operating-system service was removed; that is an operator precondition. Existing unmarked services require a
-one-time migration: stop and remove/disable the old service, reserve the stopped
-namespace, then configure and start the supervised command. There is no implicit
-migration or supervisor detection from process ancestry. When an older daemon’s
-startup record identifies systemd or launchd but has no reservation, an upgrade
-refuses to stop it and prints migration guidance. Older records without that
-provenance cannot provide this protection. Plain `--headless`
-remains a foreground process and does not provide this automatic-upgrade contract.
-Retained PID reuse after a cold boot remains conservatively refused pending
-separate qualification. For systemd, also choose a process-group policy that
-preserves external tmux sessions; this does not promise survival for tmux
-processes placed inside a service cgroup that systemd kills.
+- [Getting started](/docs/getting-started#keyboard-shortcuts) — every keyboard shortcut
+- [Remote machines over SSH](/docs/remote-machines) — connect other machines
+- [Multi-agent teams](/docs/multi-agent-teams) — group panes and coordinate agents
