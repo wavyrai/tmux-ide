@@ -1,8 +1,20 @@
 /* @jsxImportSource @opentui/solid */
+/**
+ * Renders docs/public/tui-demo.svg from the production `tmux-ide app` shell.
+ *
+ *   pnpm demo:tui            regenerate the SVG and its source fingerprint
+ *   pnpm demo:tui --text     also print each frame as plain text (for review)
+ *
+ * The frames are the real ApplicationShellView composition — machine sidebar,
+ * Home agent roster, palette commands, pane headers, footer hints — rendered
+ * headlessly with OpenTUI's test renderer over the fixture fleet in
+ * tui-demo-fixture.ts. Only the terminal *contents* are invented. Glyphs ship
+ * inside the SVG as a Geist Mono subset so it looks the same on every OS.
+ */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import type { CapturedFrame, CapturedSpan } from "@opentui/core";
+import type { CapturedFrame } from "@opentui/core";
 import { testRender } from "@opentui/solid";
 
 import {
@@ -16,91 +28,201 @@ import {
 import { projectOpenTuiApplicationShell } from "../../packages/daemon/src/tui/mirror/workspace/application-shell-controller.ts";
 import type { PaneScopedTerminalAdapter } from "../../packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface.tsx";
 import { ApplicationShellView } from "../../packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx";
+import type { ApplicationMachineSidebarModel } from "../../packages/daemon/src/tui/mirror/runtime/application-machine-sidebar.tsx";
+import type { ApplicationHomeAgentPresentation } from "../../packages/daemon/src/tui/mirror/runtime/application-home-agents-owner.ts";
+import type { ApplicationMachineAgent } from "../../packages/daemon/src/tui/mirror/runtime/application-machine-agents.ts";
+import { projectHomeFleet } from "../../packages/daemon/src/tui/mirror/runtime/application-home-fleet.ts";
+import {
+  applicationPaletteCommands,
+  type ApplicationPaletteCommand,
+} from "../../packages/daemon/src/tui/mirror/runtime/application-palette-input.ts";
+
+import { demoFingerprint, RECORD } from "./tui-demo-sources.mjs";
+import { svgDocument, type DemoFrame } from "./tui-demo-svg.ts";
+import {
+  ACTIVE_SESSION,
+  INK,
+  MACHINE,
+  OTHER_AGENTS,
+  PANES,
+  SESSIONS,
+  WINDOW,
+} from "./tui-demo-fixture.ts";
 
 const COLS = 160;
 const ROWS = 44;
-const CELL_WIDTH = 8.4;
-const CELL_HEIGHT = 18;
 const OUTPUT = resolve("docs/public/tui-demo.svg");
+const FOCUSED_PANE = "pane.claude";
 
-const panes = ["pane.claude", "pane.codex", "pane.release", "pane.docs"] as const;
+type Surface = "home" | "terminals";
 
 function semantic() {
   return projectOpenTuiApplicationShell({
-    projectName: "tmux-ide",
-    rootLabel: "/workspace/tmux-ide",
-    workspaceName: "tmux-ide-demo",
+    projectName: ACTIVE_SESSION,
+    rootLabel: `~/src/${ACTIVE_SESSION}`,
+    workspaceName: ACTIVE_SESSION,
     activeMode: "terminals",
     dockMode: "collapsed",
     activeDockTool: "files",
     focusZone: "terminal",
-    focusedPaneId: "pane.claude",
-    terminalInputPaneId: "pane.claude",
+    focusedPaneId: FOCUSED_PANE,
+    terminalInputPaneId: FOCUSED_PANE,
     paletteOpen: false,
-    sessions: [
-      { name: "tmux-ide-demo", status: "working" },
-      { name: "docs", status: "idle" },
-    ],
-    activeSession: "tmux-ide-demo",
-    agents: [
-      { paneId: "pane.claude", name: "talented-toucan", kind: "claude", status: "working" },
-      { paneId: "pane.codex", name: "rapid-redwood", kind: "codex", status: "idle" },
-    ],
-    paneIdentities: panes.map((paneId) => ({ runtimePaneId: paneId, semanticPaneId: paneId })),
-    notification: "Live tmux session discovered",
+    sessions: SESSIONS.map(({ name, status }) => ({ name, status })),
+    activeSession: ACTIVE_SESSION,
+    agents: PANES.flatMap((pane) =>
+      pane.agent
+        ? [
+            {
+              paneId: pane.id,
+              name: pane.agent.name,
+              kind: pane.agent.harness,
+              status: pane.agent.status,
+            },
+          ]
+        : [],
+    ),
+    paneIdentities: PANES.map((pane) => ({ runtimePaneId: pane.id, semanticPaneId: pane.id })),
+    notification: null,
+    connectionState: "connected",
   });
 }
 
 function layout() {
   const current = {
     type: "layout" as const,
-    semanticWindowId: "window.agents",
-    windowName: "agents",
+    semanticWindowId: WINDOW.id,
+    windowName: WINDOW.name,
     currentWindow: true,
-    cols: 132,
-    rows: 41,
+    cols: Math.max(...PANES.map((pane) => pane.left + pane.width)),
+    rows: Math.max(...PANES.map((pane) => pane.top + pane.height)),
     zoomed: false,
     paneBorderStatus: "top" as const,
-    panes: [
-      { pane: "pane.claude", left: 0, top: 0, width: 76, height: 27, active: true },
-      { pane: "pane.codex", left: 76, top: 0, width: 56, height: 27, active: false },
-      { pane: "pane.release", left: 0, top: 27, width: 66, height: 14, active: false },
-      { pane: "pane.docs", left: 66, top: 27, width: 66, height: 14, active: false },
-    ],
+    panes: PANES.map((pane) => ({
+      pane: pane.id,
+      displayName: pane.title,
+      displayNameSource: "title" as const,
+      left: pane.left,
+      top: pane.top,
+      width: pane.width,
+      height: pane.height,
+      active: pane.id === FOCUSED_PANE,
+    })),
   };
-  return { current, windows: [current] };
+  const linkId = `window-link.${"a".repeat(32)}`;
+  return {
+    current,
+    windows: [current],
+    windowLinks: {
+      liveSessionId: `$${ACTIVE_SESSION}`,
+      linkRevision: 1,
+      activeLinkId: linkId,
+      links: [{ linkId, semanticWindowId: WINDOW.id, displayIndex: 0 }],
+    },
+  };
 }
 
-const paneLines: Record<string, Array<{ text: string; color?: number; bold?: boolean }>> = {
-  "pane.claude": [
-    { text: "Claude Code", color: 0x5fd7d7, bold: true },
-    { text: "", color: 0xdedee6 },
-    { text: "Polishing the OpenTUI release.", color: 0xdedee6 },
-    { text: "", color: 0xdedee6 },
-    { text: "* Working on agent navigation", color: 0x72d49b },
-    { text: "  and pane chrome...", color: 0x8b8b99 },
-  ],
-  "pane.codex": [
-    { text: "Codex", color: 0xb4a1ff, bold: true },
-    { text: "", color: 0xdedee6 },
-    { text: "Release boundary reviewed.", color: 0xdedee6 },
-    { text: "", color: 0xdedee6 },
-    { text: "o idle - ready for work", color: 0x8b8b99 },
-  ],
-  "pane.release": [
-    { text: "$ pnpm check", color: 0x5fd7d7, bold: true },
-    { text: "", color: 0xdedee6 },
-    { text: "check typecheck", color: 0x72d49b },
-    { text: "check renderer", color: 0x72d49b },
-    { text: "check packed install", color: 0x72d49b },
-  ],
-  "pane.docs": [
-    { text: "$ pnpm docs", color: 0x5fd7d7, bold: true },
-    { text: "", color: 0xdedee6 },
-    { text: "ready on localhost:3000", color: 0x72d49b },
-    { text: "watching for changes...", color: 0x8b8b99 },
-  ],
-};
+const machineAgents: ApplicationMachineAgent[] = [
+  ...PANES.flatMap((pane) =>
+    pane.agent
+      ? [
+          {
+            id: `${ACTIVE_SESSION}:${pane.title}`,
+            sessionName: ACTIVE_SESSION,
+            paneId: pane.id,
+            name: pane.agent.name,
+            harness: pane.agent.harness,
+            activity: pane.agent.activity,
+            attention: pane.agent.attention,
+          },
+        ]
+      : [],
+  ),
+  ...OTHER_AGENTS,
+].map((agent) => ({
+  ...agent,
+  key: agent.id,
+  machineId: MACHINE.id,
+  machineLabel: MACHINE.label,
+  disabled: false,
+  sessionKey: agent.sessionName,
+  liveSessionId: `$${agent.sessionName}`,
+  daemonInstanceId: "daemon.local",
+  agentId: agent.id,
+  projectName: agent.sessionName,
+  nativeIdentity: null,
+  interactionEndpoint: null,
+}));
+
+const sessionRows = SESSIONS.map((session) => ({
+  id: session.name,
+  name: session.name,
+  paneCount: session.panes,
+  liveSessionId: `$${session.name}`,
+  machineId: MACHINE.id,
+  sourceId: MACHINE.id,
+  disabled: false,
+}));
+
+function machineSidebar(): ApplicationMachineSidebarModel {
+  return {
+    groups: () => [
+      {
+        id: MACHINE.id,
+        label: MACHINE.label,
+        state: "ready",
+        sessions: sessionRows,
+        agents: machineAgents,
+        agentsAvailable: true,
+      },
+    ],
+    activeMachineId: () => MACHINE.id,
+    activeSessionName: () => ACTIVE_SESSION,
+    activePaneId: () => FOCUSED_PANE,
+    onOpen: () => undefined,
+    onSelectMachine: () => undefined,
+    onOpenSwitcher: () => undefined,
+    onOpenAttention: () => undefined,
+    onAddMachine: () => undefined,
+  };
+}
+
+function homeAgents(): ApplicationHomeAgentPresentation {
+  const roster = projectHomeFleet(
+    {
+      selectedMachineId: MACHINE.id,
+      groups: [
+        { id: MACHINE.id, label: MACHINE.label, state: "ready", sessions: sessionRows, note: null },
+      ],
+    },
+    [{ machineId: MACHINE.id, available: true, agents: machineAgents }],
+    { machineId: null, attentionOnly: false },
+  );
+  return {
+    agentQuery: "",
+    agentFilterLabel: "All machines · All agents",
+    agentActivityFilter: "all",
+    agentRoster: roster,
+    agentSelection: { selectedKey: roster.rows[0]?.key ?? null, scrollOffset: 0 },
+    agentInputActive: true,
+    onAgentQueryChange: () => undefined,
+    onSetAgentActivityFilter: () => undefined,
+    onCycleAgentMachine: () => undefined,
+    onToggleAgentAttention: () => undefined,
+    onSelectAgent: () => undefined,
+    onMoveAgent: () => undefined,
+    onAgentViewport: () => undefined,
+    onOpenAgent: () => undefined,
+  };
+}
+
+/** The production palette composition: shell commands, then the sidebar toggle. */
+function paletteCommands(): readonly ApplicationPaletteCommand[] {
+  return [
+    ...applicationPaletteCommands(semantic()).filter((command) => typeof command === "string"),
+    "hide-sidebar",
+  ];
+}
 
 function setColor(buffer: Uint16Array, cell: number, color: number): void {
   const offset = cell * 4;
@@ -111,6 +233,7 @@ function setColor(buffer: Uint16Array, cell: number, color: number): void {
 }
 
 function terminalAdapter(): PaneScopedTerminalAdapter {
+  const panes = new Map(PANES.map((pane) => [pane.id, pane]));
   const renderSource: TerminalPaneRenderSource = {
     scrollbackDepth: () => 0,
     cursorState: () => null,
@@ -121,14 +244,18 @@ function terminalAdapter(): PaneScopedTerminalAdapter {
         setColor(buffers.fg, cell, foreground);
         setColor(buffers.bg, cell, background);
       }
-      for (const [row, line] of (paneLines[paneId] ?? []).entries()) {
+      for (const [row, line] of (panes.get(paneId)?.lines ?? []).entries()) {
         if (row >= height) break;
-        for (const [column, char] of [...line.text.slice(0, width)].entries()) {
-          const cell = row * width + column;
-          buffers.char[cell] = char.codePointAt(0) ?? 32;
-          setColor(buffers.fg, cell, line.color ?? foreground);
-          if (line.bold) buffers.attributes[cell] = 1;
-        }
+        let column = 0;
+        for (const [text, ink] of line.segments)
+          for (const char of text) {
+            if (column >= width) break;
+            const cell = row * width + column;
+            buffers.char[cell] = char.codePointAt(0) ?? 32;
+            setColor(buffers.fg, cell, ink ? INK[ink] : foreground);
+            if (line.bold) buffers.attributes[cell] = 1;
+            column += 1;
+          }
       }
       for (let row = 0; row < height; row += 1) options.dirtyRows.push(row);
       return null;
@@ -143,34 +270,44 @@ function terminalAdapter(): PaneScopedTerminalAdapter {
   };
 }
 
-async function renderFrame(
-  surface: "home" | "terminals",
-  paletteOpen: boolean,
-): Promise<CapturedFrame> {
+async function renderFrame(surface: Surface, paletteOpen: boolean): Promise<CapturedFrame> {
   const theme = createSemanticThemeSnapshot({ mode: "dark" });
   const palette = createTerminalPaletteProjection(theme);
+  const shell = semantic();
   const setup = await testRender(
     () => (
       <ApplicationShellView
+        machineSidebar={machineSidebar()}
+        sidebarVisible={true}
+        machineLabel={MACHINE.label}
+        homeAgents={homeAgents()}
         dimensions={() => ({ width: COLS, height: ROWS })}
         surface={() => surface}
-        semantic={() => semantic()}
+        semantic={() => shell}
         generationStatus={() => "live"}
-        sessions={["tmux-ide-demo", "docs"]}
+        sessions={SESSIONS.map((session) => session.name)}
         selectedSession={() => 0}
         bootstrapNote={() => null}
+        catalogPhase={() => "live"}
         paletteOpen={() => paletteOpen}
+        paletteCommands={paletteCommands}
+        paletteSelection={() => 0}
+        paletteQuery={() => ""}
         terminalRendererSource={() =>
           surface === "terminals" ? { adapter: terminalAdapter(), rendererEpoch: 1 } : null
         }
         layout={layout}
-        focusedPane={() => (surface === "terminals" ? "pane.claude" : null)}
+        focusedPane={() => (surface === "terminals" ? FOCUSED_PANE : null)}
+        rendererFocused={() => surface === "terminals"}
         theme={theme}
         palette={palette}
+        tutorialLabel="Learn tmux-ide"
+        onOpenTutorial={() => undefined}
+        onCycleTheme={() => undefined}
+        onCreateWindow={() => undefined}
         onOpenSurface={() => undefined}
         onOpenSession={() => undefined}
         onSetPaletteOpen={() => undefined}
-        onCycleTheme={() => undefined}
         onSelectPane={() => undefined}
         onResizePreview={() => undefined}
         onResizePane={() => undefined}
@@ -179,79 +316,27 @@ async function renderFrame(
     { width: COLS, height: ROWS },
   );
   await setup.renderOnce();
+  await setup.renderOnce();
   const frame = setup.captureSpans();
   setup.renderer.destroy();
   return frame;
 }
 
-function escapeXml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-function rgb(span: CapturedSpan, channel: "fg" | "bg"): string {
-  const [red, green, blue] = span[channel].toInts();
-  return `rgb(${red} ${green} ${blue})`;
-}
-
-function svgFrame(frame: CapturedFrame, index: number): string {
-  const rows: string[] = [];
-  for (const [row, line] of frame.lines.entries()) {
-    let column = 0;
-    const backgrounds: string[] = [];
-    const text: string[] = [];
-    for (const span of line.spans) {
-      const width = span.width * CELL_WIDTH;
-      backgrounds.push(
-        `<rect x="${(column * CELL_WIDTH).toFixed(2)}" y="${(row * CELL_HEIGHT).toFixed(2)}" width="${width.toFixed(2)}" height="${CELL_HEIGHT}" fill="${rgb(span, "bg")}"/>`,
-      );
-      if (span.text.trim().length > 0) {
-        const attributes = span.attributes & 0xff;
-        text.push(
-          `<text x="${(column * CELL_WIDTH).toFixed(2)}" y="${(row * CELL_HEIGHT + 14).toFixed(2)}" fill="${rgb(span, "fg")}"${attributes & 1 ? ' font-weight="700"' : ""}${attributes & 4 ? ' font-style="italic"' : ""}>${escapeXml(span.text)}</text>`,
-        );
-      }
-      column += span.width;
-    }
-    rows.push(...backgrounds, ...text);
-  }
-  return `<g class="demo-frame demo-frame-${index}">${rows.join("")}</g>`;
-}
-
-function document(frames: CapturedFrame[]): string {
-  const width = COLS * CELL_WIDTH;
-  const height = ROWS * CELL_HEIGHT;
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title description" viewBox="0 0 ${width} ${height}">
-  <title id="title">tmux-ide OpenTUI demo</title>
-  <desc id="description">An animated tour of the real Home, Terminals, and Commands OpenTUI surfaces.</desc>
-  <style>
-    text { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 13px; white-space: pre; }
-    .demo-frame { opacity: 0; animation: demo-cycle 12s steps(1, end) infinite; }
-    .demo-frame-0 { opacity: 1; animation-delay: 0s; }
-    .demo-frame-1 { animation-delay: -8s; }
-    .demo-frame-2 { animation-delay: -4s; }
-    @keyframes demo-cycle { 0%, 31% { opacity: 1; } 32%, 100% { opacity: 0; } }
-    @media (prefers-reduced-motion: reduce) {
-      .demo-frame { animation: none; opacity: 0; }
-      .demo-frame-1 { opacity: 1; }
-    }
-  </style>
-  <rect width="100%" height="100%" rx="8" fill="#0f0f14"/>
-  ${frames.map(svgFrame).join("\n  ")}
-</svg>
-`;
-}
-
 registerPaneSurface();
-const frames = await Promise.all([
-  renderFrame("home", false),
-  renderFrame("terminals", false),
-  renderFrame("terminals", true),
-]);
+const frames: DemoFrame[] = [
+  { label: "Home", frame: await renderFrame("home", false) },
+  { label: "Terminals", frame: await renderFrame("terminals", false) },
+  { label: "Commands", frame: await renderFrame("terminals", true) },
+];
+if (process.argv.includes("--text"))
+  for (const { label, frame } of frames)
+    process.stdout.write(
+      `--- ${label}\n${frame.lines.map((line) => line.spans.map((span) => span.text).join("")).join("\n")}\n`,
+    );
 mkdirSync(dirname(OUTPUT), { recursive: true });
-writeFileSync(OUTPUT, document(frames));
+writeFileSync(OUTPUT, await svgDocument(frames, { cols: COLS, rows: ROWS }, 1));
+writeFileSync(
+  RECORD,
+  `${JSON.stringify({ regenerate: "pnpm demo:tui", sources: demoFingerprint() }, null, 2)}\n`,
+);
 process.stdout.write(`Rendered ${OUTPUT} from ${frames.length} production OpenTUI frames.\n`);
