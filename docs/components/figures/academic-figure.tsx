@@ -28,7 +28,8 @@ export type AcademicFigureProps = {
   /** A second title line in the muted tone (the section-heading pattern). */
   accent?: string;
   subtitle?: ReactNode;
-  heading?: "h2" | "h3";
+  /** A section heading on the landing; "p" keeps docs figure titles out of the outline. */
+  heading?: "h2" | "h3" | "p";
   /** Docs-column variant: the title takes the docs h3 role instead of the section role. */
   compact?: boolean;
   /** Mono label in the figure bar, e.g. "Delegation and synthesis". */
