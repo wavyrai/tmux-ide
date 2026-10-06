@@ -104,8 +104,12 @@ them.
 | `tmux-ide events --follow --socket[=<path>]`                                      | Follow pushed events from a running control server                              |
 | `tmux-ide wait agent-status <session> --status <state> [--timeout <ms>] [--json]` | Wait for a session status; exit 0 on match and 1 on timeout                     |
 | `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>] [--json]`  | Wait until visible pane output matches                                          |
+| `tmux-ide team assign <%pane> <team> [--json]`                                    | Group a pane under a named team in Home and the sidebar                         |
+| `tmux-ide team unassign <%pane> [--json]`                                         | Remove a pane's manual team membership                                          |
 | `tmux-ide serve [socket-path]`                                                    | Run the foreground, owner-only local NDJSON control socket                      |
 
+`team assign` and `team unassign` take `--socket-name` or `--socket-path` to
+select another tmux server; see [Multi-agent teams](/docs/multi-agent-teams).
 `serve` defaults to `~/.tmux-ide/control.sock`. The wait commands use it when
 requested and otherwise fall back to direct polling.
 
