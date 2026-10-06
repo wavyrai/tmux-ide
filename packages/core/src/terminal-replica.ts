@@ -13,6 +13,7 @@ import { consumeCompactReplicaCapability } from "./terminal-compact-capability.t
 import {
   freezeOwnedTerminalReplicaRow as freezeRow,
   createOwnedTerminalReplicaRowBuilder,
+  isOwnedTerminalReplicaRow,
   TERMINAL_REPLICA_DEFAULT_COLOR,
 } from "./terminal-replica-owned-row.ts";
 export {
@@ -506,12 +507,13 @@ export async function applyTerminalReplicaUpdateCooperatively(
     ] as const) {
       for (const row of sources) {
         if (row.cells.length !== cols) return complete(conflict());
-        const builder = createOwnedTerminalReplicaRowBuilder();
+        const owned = isOwnedTerminalReplicaRow(row);
+        const builder = owned ? null : createOwnedTerminalReplicaRowBuilder();
         let priorWidth = -1;
         const wrapped = row.wrapped;
         for (let index = 0; index < cols; index++) {
           const sourceCell = row.cells[index]!;
-          const cell = builder.append(sourceCell);
+          const cell = owned ? sourceCell : builder!.append(sourceCell);
           if ((priorWidth === 2 && cell.width !== 0) || (cell.width === 0 && priorWidth !== 2))
             return complete(conflict());
           priorWidth = cell.width;
@@ -521,7 +523,7 @@ export async function applyTerminalReplicaUpdateCooperatively(
           }
         }
         if (priorWidth === 2) return complete(conflict());
-        target.push(builder.finish(row, wrapped));
+        target.push(owned ? row : builder!.finish(row, wrapped));
       }
     }
     const placements: TerminalReplicaSnapshot["placements"] = [];
