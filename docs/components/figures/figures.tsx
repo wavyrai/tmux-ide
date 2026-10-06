@@ -7,15 +7,15 @@ import { AcademicFigure } from "@/components/figures/academic-figure";
 
 export function AgentTeamsFigure({
   id = "agent-teams-figure",
-  label = "Fig. 03 / Delegation and synthesis",
-  number = "Figure 3.",
+  number = "5",
   heading = "h2",
+  compact = false,
   foundation = true,
 }: {
   id?: string;
-  label?: string;
   number?: string;
   heading?: "h2" | "h3";
+  compact?: boolean;
   /** The shared-workspace strip (on by default). */
   foundation?: boolean;
 }) {
@@ -23,6 +23,8 @@ export function AgentTeamsFigure({
     <AcademicFigure
       id={id}
       heading={heading}
+      compact={compact}
+      number={number}
       kicker="Systems / Agent coordination"
       title="Heterogeneous"
       accent="agent teams."
@@ -33,7 +35,7 @@ export function AgentTeamsFigure({
           every agent and its status. It does not orchestrate them.
         </>
       }
-      label={label}
+      label="Delegation and synthesis"
       legend={{ solid: "Delegation", dashed: "Results & evidence" }}
       levels={[
         {
@@ -120,10 +122,7 @@ export function AgentTeamsFigure({
             }
           : undefined
       }
-      caption={{
-        lead: number,
-        text: "A goal goes to an execution agent, which splits bounded questions across three researchers; findings and the finished outcome flow back up for review.",
-      }}
+      caption="A goal goes to an execution agent, which splits bounded questions across three researchers; findings and the finished outcome flow back up for review."
       reading={{
         lead: "Reading the figure.",
         text: "Each box is an agent process in its own pane, with the command it runs. Pairings are illustrative.",
@@ -140,7 +139,8 @@ export function ArchitectureFigure() {
       title="tmux owns the processes."
       accent="tmux-ide adds the view."
       subtitle="Close the app or lose SSH; every agent keeps running in tmux."
-      label="Fig. 04 / Ownership and data flow"
+      label="Ownership and data flow"
+      number="6"
       legend={{ solid: "State & output", dashed: "Commands & input" }}
       levels={[
         {
@@ -222,10 +222,7 @@ export function ArchitectureFigure() {
           },
         ],
       }}
-      caption={{
-        lead: "Figure 4.",
-        text: "The daemon publishes tmux state to the app and automation clients and applies their commands back to tmux.",
-      }}
+      caption="The daemon publishes tmux state to the app and automation clients and applies their commands back to tmux."
       reading={{
         lead: "Reading the figure.",
         text: "Every action is an ordinary tmux operation you could also run from a tmux client.",
@@ -242,7 +239,9 @@ export function AgentDetectionFigure({ id = "detection-figure" }: { id?: string 
       kicker="Systems / Agent detection"
       title="Two layers,"
       accent="one status."
-      label="Fig. 1 / How a pane gets its agent status"
+      label="How a pane gets its agent status"
+      number="1"
+      compact
       legend={{ solid: "Status flow" }}
       levels={[
         {
@@ -301,10 +300,7 @@ export function AgentDetectionFigure({ id = "detection-figure" }: { id?: string 
         },
       ]}
       links={[{ down: "no fresh stamp" }, { down: "inferred state" }]}
-      caption={{
-        lead: "Figure 1.",
-        text: "A pane's status comes from its own fresh self-report when there is one; otherwise from its process tree and visible output, matched against per-agent manifests.",
-      }}
+      caption="A pane's status comes from its own fresh self-report when there is one; otherwise from its process tree and visible output, matched against per-agent manifests."
     />
   );
 }

@@ -31,15 +31,6 @@ const jakarta = Plus_Jakarta_Sans({
   display: "swap",
   variable: "--font-plus-jakarta",
 });
-// The italic accent in diagrams only; not preloaded, so it downloads only on
-// pages that render a figure.
-const jakartaItalic = Plus_Jakarta_Sans({
-  subsets: ["latin"],
-  style: "italic",
-  display: "swap",
-  preload: false,
-  variable: "--font-plus-jakarta-italic",
-});
 
 const image = {
   url: SITE_IMAGE,
@@ -176,7 +167,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${jakarta.variable} ${jakartaItalic.variable} ${GeistMono.variable} ${GeistPixelSquare.variable}`}
+      className={`${inter.variable} ${jakarta.variable} ${GeistMono.variable} ${GeistPixelSquare.variable}`}
       suppressHydrationWarning
     >
       <body className="flex flex-col min-h-screen">

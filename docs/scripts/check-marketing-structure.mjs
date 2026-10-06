@@ -138,19 +138,20 @@ if (customBandBodyCount > 3) {
   );
 }
 
-// Landing figure numbers in reading order: the agent cards (02.x) and the
-// capability cards (05.x); Figs. 03 and 04 are the full-width system figures.
-const expectedFigureNumbers = ["02.1", "02.2", "02.3", "05.1", "05.2", "05.3"];
+// Landing figures are numbered 1, 2, 3 … in reading order: the hero demo
+// (1), the agent cards (2-4), the agent-teams and architecture figures (5,
+// 6) and the capability cards (7-9). The cards' numbers live in content.
+const expectedFigureNumbers = ["2", "3", "4", "7", "8", "9"];
 const modeledFigureNumbers = [...landingContent.matchAll(/number:\s*"([0-9.]+)"/gu)]
   .map((match) => match[1])
   .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
 if (JSON.stringify(modeledFigureNumbers) !== JSON.stringify(expectedFigureNumbers)) {
-  failures.push("landing figures must keep the stable 02.x / 05.x technical sequence");
+  failures.push("landing figures must keep the sequential 1-9 numbering");
 }
 if (!tuiFigure.includes("<figure") || !tuiFigure.includes("<TechnicalCaption")) {
   failures.push("TUI diagrams must render as semantic figures through TechnicalCaption");
 }
-if (!technicalCaption.includes("Fig. {number}.")) {
+if (!technicalCaption.includes("Fig {number}.")) {
   failures.push("technical captions must share the canonical figure label");
 }
 if (!technicalCaption.includes("type-caption-1")) {
