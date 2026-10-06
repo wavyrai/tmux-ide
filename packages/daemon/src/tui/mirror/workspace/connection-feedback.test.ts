@@ -195,3 +195,12 @@ it("updates failure correlation for a replacement daemon without repeating ident
   expect(owner.snapshot()?.failure?.daemonGeneration).toBe("daemon-b");
   owner.dispose();
 });
+
+it("explains how to recover from a shared terminal binding", () => {
+  const owner = createApplicationConnectionFeedback();
+  owner.note("opening main");
+  owner.progress("main", "startup-failed", { reason: "duplicate-runtime-pane-binding" });
+  expect(owner.snapshot()?.recovery).toMatch(/unlink.*retry/i);
+  expect(owner.snapshot()?.failed).toBe(true);
+  owner.dispose();
+});

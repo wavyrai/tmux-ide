@@ -1762,12 +1762,12 @@ export class WorkspaceTerminalInventoryRuntime {
     let catalogIssue: NativeTerminalInventoryCatalogIssue | null = inventory.catalog
       .invalidRuntimeProof
       ? "invalid-runtime-proof"
-      : inventory.catalog.missingSemanticStamp
-        ? "missing-semantic-stamp"
-        : inventory.catalog.duplicateSemanticStamp
-          ? "duplicate-semantic-stamp"
-          : inventory.catalog.duplicateRuntimePaneBinding
-            ? "duplicate-runtime-pane-binding"
+      : inventory.catalog.duplicateRuntimePaneBinding
+        ? "duplicate-runtime-pane-binding"
+        : inventory.catalog.missingSemanticStamp
+          ? "missing-semantic-stamp"
+          : inventory.catalog.duplicateSemanticStamp
+            ? "duplicate-semantic-stamp"
             : null;
     if (
       shouldPrewarm &&
@@ -2371,12 +2371,12 @@ export class NativeTerminalAttachmentRuntime {
     const catalogIssue: NativeTerminalInventoryCatalogIssue | null = inventory.catalog
       .invalidRuntimeProof
       ? "invalid-runtime-proof"
-      : inventory.catalog.missingSemanticStamp
-        ? "missing-semantic-stamp"
-        : inventory.catalog.duplicateSemanticStamp
-          ? "duplicate-semantic-stamp"
-          : inventory.catalog.duplicateRuntimePaneBinding
-            ? "duplicate-runtime-pane-binding"
+      : inventory.catalog.duplicateRuntimePaneBinding
+        ? "duplicate-runtime-pane-binding"
+        : inventory.catalog.missingSemanticStamp
+          ? "missing-semantic-stamp"
+          : inventory.catalog.duplicateSemanticStamp
+            ? "duplicate-semantic-stamp"
             : null;
     // Ground-truth agent facts (authority + scrape fallback). All IO stays here;
     // the resource projector composes them purely. Absent probe → no facts →

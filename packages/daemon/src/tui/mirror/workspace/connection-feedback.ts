@@ -167,9 +167,12 @@ export function createApplicationConnectionFeedback(
           failure,
           ...(inventory
             ? {
-                recovery: missing
-                  ? "A registered session may have been recreated. Choose that session to restore its identity, then retry here. It may be a different session."
-                  : "Terminal identities conflict or cannot be verified. Copy connection details for diagnosis; Retry does not repair identity conflicts.",
+                recovery:
+                  failure.reason === "duplicate-runtime-pane-binding"
+                    ? "A terminal is shared by multiple workspace entries. Unlink shared tmux windows so each belongs to one session, then select Retry."
+                    : missing
+                      ? "A registered session may have been recreated. Choose that session to restore its identity, then retry here. It may be a different session."
+                      : "Terminal identities conflict or cannot be verified. Copy connection details for diagnosis; Retry does not repair identity conflicts.",
               }
             : {}),
         };

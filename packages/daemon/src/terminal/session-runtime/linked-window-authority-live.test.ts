@@ -131,6 +131,10 @@ it.skipIf(!executable).each([
         );
         expect(run("show-option", "-pqv", "-t", "alpha:0", "@tmux_ide_pane_id")).toBe("pane.alpha");
       }
+      expect(admitted.map((session) => session?.catalogIssue)).toEqual([
+        "duplicate-runtime-pane-binding",
+        "duplicate-runtime-pane-binding",
+      ]);
       const owners = clients.map((client) => {
         client.updatePresence("foreground");
         try {
@@ -206,6 +210,14 @@ it.skipIf(!executable).each([
         await expect
           .poll(() => runtime!.isTrustedSessionInventoryCandidateCurrent("alpha", recovered.token))
           .toBe(false);
+        // A pending topology proof also rejects tokens temporarily. Confirm
+        // the still-linked inventory before replacing beta, so this checks
+        // permanent revocation of an observed conflict rather than racing the
+        // membership reader against link removal.
+        await runtime.verifyWindowOwnership();
+        expect(runtime.isTrustedSessionInventoryCandidateCurrent("alpha", recovered.token)).toBe(
+          false,
+        );
         expect(() => clients[0]!.fitViewport(fresh, 124, 34)).toThrow(
           /Linked windows|ownership is being verified/,
         );
