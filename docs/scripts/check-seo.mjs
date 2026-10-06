@@ -102,6 +102,7 @@ const entries = [...sitemap.matchAll(/<url>([\s\S]*?)<\/url>/gu)].map((match) =>
   lastmod: match[1].match(/<lastmod>([^<]+)<\/lastmod>/u)?.[1],
 }));
 const buildStartedNear = Date.now() - 60 * 60 * 1000;
+let recentCommitTimes;
 for (const { loc, lastmod } of entries) {
   if (!lastmod) continue;
   const time = Date.parse(lastmod);
@@ -130,9 +131,20 @@ function git(args) {
 function isFullHistory() {
   return git(["rev-parse", "--is-shallow-repository"]) === "false";
 }
+// Every commit time inside the window being tested, however many commits landed.
 function lastmodBackedByGit(time) {
-  const recent = git(["log", "-20", "--format=%cI"]) ?? "";
-  return recent.split("\n").some((iso) => Date.parse(iso) === time);
+  recentCommitTimes ??= new Set(
+    (
+      git([
+        "log",
+        `--since=${new Date(buildStartedNear - 60_000).toISOString()}`,
+        "--format=%cI",
+      ]) ?? ""
+    )
+      .split("\n")
+      .map((iso) => Date.parse(iso)),
+  );
+  return recentCommitTimes.has(time);
 }
 
 const headerKeys = new Set(
