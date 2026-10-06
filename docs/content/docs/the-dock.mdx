@@ -9,8 +9,8 @@ in a plain tmux client — `tmux attach`, a phone over SSH, another terminal —
 surface built from tmux options; nothing it draws appears inside the app.
 
 `tmux-ide adopt <session>` adds the chrome — a status bar (the dock), keys,
-menus and popups — to any existing session. It's the always-on surface: a fleet of tabs, live agent-status
-glyphs, and triggers into the rest of the app. Everything it draws is a tmux
+menus and popups — to any existing session: a fleet of tabs, live agent-status
+glyphs, and popups for the fleet home, keys and session switching. Everything it draws is a tmux
 option, so it renders on the server and shows up on every client (including SSH),
 and `unadopt` reverts it completely.
 
@@ -74,8 +74,8 @@ app has its own keys — see [Getting started](/docs/getting-started#keys).)
 
 ## The keys
 
-Once a session is adopted, the whole app is a couple of keystrokes away. Every
-surface has two bindings — reach for the **prefix twin** first; the `⌥` key is a
+Once a session is adopted, every chrome popup is a couple of keystrokes away.
+Each has two bindings — reach for the **prefix twin** first; the `⌥` key is a
 faster shortcut when it's available.
 
 | Action         | Prefix (always works) | Alt fast-path |

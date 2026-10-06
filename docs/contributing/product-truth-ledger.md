@@ -81,7 +81,7 @@ Do **not** use `tui/mirror/application-keybindings.ts` or
 | `Shift+drag`                     | Select text locally in a mouse-enabled app                          | Terminals                 |
 | Right-click                      | Pane action menu                                                    | Terminals                 |
 | `/` `f` `0` `w` `a` `Enter`      | Search, machine filter, All, Working, Needs attention, open         | Home                      |
-| `N`                              | Create a local session (when none exist)                            | Home                      |
+| `n`                              | Create a local session (when none exist)                            | Home                      |
 | `Tab`, `?` `R` `D` `A`           | Switch sections, Help, Retry, Disconnect, Add machine               | Sidebar focused           |
 | `Ctrl+K`, `Ctrl+B`               | Keyboard shortcuts, What's new                                      | Commands / Sessions menus |
 | `Ctrl+Space`                     | Toggle search / navigation mode (`j k g G i`)                       | menus                     |

@@ -22,9 +22,9 @@ interactive commands do not.
 
 `app.detachable` in `~/.tmux-ide/config.json` makes detachable mode the default.
 
-## Multiple tmux servers (development)
+## Multiple tmux servers
 
-The development build can register multiple tmux servers on one machine. List
+tmux-ide can register several tmux servers on one machine. List
 registrations to get the opaque server ID, then use it to select a server:
 
 ```bash
@@ -147,7 +147,7 @@ retry rules, and SDK usage.
 | `tmux-ide cheatsheet`                        | Print the complete key sheet                             |
 | `tmux-ide menu [--client <name>]`            | Open the contextual tmux actions menu                    |
 | `tmux-ide popup <explorer\|changes\|config>` | Open a widget in a tmux popup                            |
-| `tmux-ide sidebar-toggle [--session <name>]` | Toggle the app navigation column                         |
+| `tmux-ide sidebar-toggle [--session <name>]` | Toggle the tmux chrome sidebar column                    |
 
 These commands drive [tmux chrome](/docs/the-dock) for plain tmux clients; see
 that page for the matching tmux bindings.
