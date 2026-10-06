@@ -346,6 +346,21 @@ use known fixture expectations. Complete native cell attributes/modes are not ye
 compared, and this test stops before actual OpenTUI rendering. Existing native-grid,
 renderer, flow recovery and linked-window tests remain necessary.
 
+### Exact input delivery
+
+`terminal-input-ordering-live.test.ts` sends mixed Unicode and shell-sensitive
+text, arbitrary binary bytes, separately delivered bracketed-paste messages,
+Enter and Ctrl-C through MirrorService and its existing input coalescer. Two
+raw-mode receiver processes record their bytes independently. Native clients
+select the opposite pane before input dispatch; each receiver must still match
+its exact expected byte stream. Cleanup verifies both receivers and the private
+server have exited.
+
+This fixture exercises ordinary control `send-keys` on stock and bundled tmux.
+Its custom IO intentionally excludes the native guarded input route. It does not
+qualify controller/WebSocket authorization, stale pane/session generations,
+physical keyboard behavior or mouse targeting.
+
 ## Coverage matrix
 
 | Evidence                               | First-slice status                                                                 | Remaining boundary                                                   |

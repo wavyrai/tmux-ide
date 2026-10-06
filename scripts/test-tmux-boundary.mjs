@@ -23,20 +23,21 @@ console.log(
 );
 const cwd = fileURLToPath(new URL("../packages/daemon/", import.meta.url));
 for (const [config, test] of [
-  ["vitest.config.ts", "pane-feed-model.test.ts"],
-  ["vitest.config.ts", "control-channel-model.test.ts"],
-  ["vitest.config.ts", "session-channel-model.test.ts"],
-  ["vitest.live.config.ts", "tmux-boundary-model-live.test.ts"],
-  ["vitest.live.config.ts", "tmux-boundary-ordering-live.test.ts"],
-  ["vitest.live.config.ts", "control-collector-retirement-live.test.ts"],
-  ["vitest.live.config.ts", "control-owned-pause-live.test.ts"],
-  ["vitest.live.config.ts", "session-channel-cancellation-live.test.ts"],
+  ["vitest.config.ts", "src/terminal/mirror/pane-feed-model.test.ts"],
+  ["vitest.config.ts", "src/terminal/mirror/control-channel-model.test.ts"],
+  ["vitest.config.ts", "src/terminal/mirror/session-channel-model.test.ts"],
+  ["vitest.live.config.ts", "src/terminal/mirror/tmux-boundary-model-live.test.ts"],
+  ["vitest.live.config.ts", "src/terminal/mirror/tmux-boundary-ordering-live.test.ts"],
+  ["vitest.live.config.ts", "src/terminal/mirror/control-collector-retirement-live.test.ts"],
+  ["vitest.live.config.ts", "src/terminal/mirror/control-owned-pause-live.test.ts"],
+  ["vitest.live.config.ts", "src/terminal/mirror/session-channel-cancellation-live.test.ts"],
+  ["vitest.live.config.ts", "src/tui/mirror/runtime/terminal-input-ordering-live.test.ts"],
 ]) {
-  const result = spawnSync(
-    "pnpm",
-    ["exec", "vitest", "run", "--config", config, `src/terminal/mirror/${test}`],
-    { cwd, env: process.env, stdio: "inherit" },
-  );
+  const result = spawnSync("pnpm", ["exec", "vitest", "run", "--config", config, test], {
+    cwd,
+    env: process.env,
+    stdio: "inherit",
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
