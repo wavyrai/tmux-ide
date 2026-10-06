@@ -1,5 +1,5 @@
 ---
-title: Multi-Agent Teams
+title: Multi-agent teams
 description: Run Claude Code, Codex and other agents side by side, coordinating through tmux-ide team groups, a shared status bus, direct messages and wait commands.
 ---
 
@@ -190,7 +190,7 @@ tmux-ide wait output %2 --match "tests passed" --timeout 300000   # wait on a pa
 tmux-ide wait agent-status api --status done --timeout 600000     # wait on a session
 ```
 
-### 4. Observation & isolation
+### 4. Observation and isolation
 
 ```bash
 tmux-ide agent explain %3     # why is the UI pane blocked? see exactly how it was classified
@@ -245,6 +245,6 @@ calls, or a Makefile — whatever is driving the fleet.
 
 - [Agent detection](/docs/agent-detection) — the status every teammate publishes
 - [Claude Code agent teams](https://code.claude.com/docs/en/agent-teams) — the official guide
-- [Notifications & events](/docs/notifications-events) — the toast/stream side of the handoff
+- [Notifications and events](/docs/notifications-events) — the toast/stream side of the handoff
 - [Worktrees](/docs/worktrees) — an isolated checkout per teammate
 - [CLI reference](/docs/commands) — `send`, `wait`, `team`, `events` in full

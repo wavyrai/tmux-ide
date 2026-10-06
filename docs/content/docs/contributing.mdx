@@ -3,7 +3,7 @@ title: Contributing
 description: "How to contribute to tmux-ide: the development workflow, the checks every change must pass, release quality gates and open source project conventions."
 ---
 
-## Local Setup
+## Local setup
 
 Requirements:
 
@@ -17,7 +17,7 @@ Install dependencies from the repo root:
 pnpm install --frozen-lockfile
 ```
 
-## Independent Worktrees
+## Independent worktrees
 
 The repository's [isolated worktree quickstart](https://github.com/wavyrai/tmux-ide/blob/main/docs/guides/development-worktrees.md)
 walks through two branches with separate daemons, tmux servers, state and immutable
@@ -26,7 +26,7 @@ reset. The same instance name in different worktrees selects different instances
 The guide also covers Docker/SSH fixtures and migration from ad-hoc scripts.
 Production ownership and disposable test fixtures remain separate workflows.
 
-## Main Commands
+## Main commands
 
 Run these from the repository root:
 
@@ -54,7 +54,7 @@ and `scripts/prepublish-opentui-check.mjs`. It does not run the broad `pnpm chec
 gate automatically. Deferred web/desktop checks remain independent CI signals.
 See the [native and dependency maintenance inventory](https://github.com/wavyrai/tmux-ide/blob/main/patches/README.md) before changing native inputs or dependency patches.
 
-## Manual Smoke Tests
+## Manual smoke tests
 
 If tmux is available locally, run a manual smoke test:
 
@@ -71,7 +71,7 @@ node bin/cli.js status --json
 node bin/cli.js stop --json
 ```
 
-## Comparative Terminal Smoke Benchmark
+## Comparative terminal smoke benchmark
 
 The isolated comparison runner exercises native tmux, tmux-ide, and Herdr with
 the same producer and terminal parser. Build the tmux-ide CLI and TUI first, then
@@ -152,7 +152,7 @@ Its [CI guide](https://github.com/wavyrai/tmux-ide/blob/main/scripts/development
 explains resource bounds, evidence and cancellation limits. These jobs supplement
 `pnpm check`; their configuration alone is not evidence of a passing run.
 
-## Release Workflow
+## Release workflow
 
 Follow the current [terminal release checklist](https://github.com/wavyrai/tmux-ide/blob/main/RELEASE.md).
 Confirm the intended version, dist-tag and release notes; run
@@ -173,7 +173,7 @@ The repository root also includes:
 - `CHANGELOG.md` for release notes
 - `SECURITY.md` for vulnerability reporting
 
-## Pull Request Expectations
+## Pull request expectations
 
 - Keep CLI behavior changes covered by tests.
 - Update docs when command behavior or output changes.
