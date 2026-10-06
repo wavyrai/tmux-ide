@@ -14,7 +14,7 @@ tmux-ide ${SOFTWARE_VERSION}. Docs: ${SITE_URL}/docs · Index for LLMs: ${SITE_U
 
 tmux-ide is an open-source (MIT) agent workspace built around tmux, by Prototyper. tmux keeps
 owning processes, PTYs, sessions, windows and panes; tmux-ide adds a terminal app with live
-agent status, memorable names and exact pane navigation, plus an optional status-bar chrome
+agent status, named agents and panes, and exact pane navigation, plus an optional status-bar chrome
 for plain tmux clients. If tmux-ide stops, every session is still ordinary tmux.
 
 ## Install
@@ -31,7 +31,7 @@ sessions are preserved.
 ## Set up a project
 
 \`\`\`bash
-tmux-ide app [session]                  # open the app (bare \`tmux-ide\` does the same)
+tmux-ide app [session]                  # open the app (bare \`tmux-ide\` does the same outside a configured project)
 tmux-ide adopt <session>                # add the status-bar chrome to an existing tmux session
 tmux-ide adopt --all                    # adopt every live session; \`unadopt <session>\` reverts
 tmux-ide integration install claude     # Claude Code hooks: ground-truth agent status + skill
