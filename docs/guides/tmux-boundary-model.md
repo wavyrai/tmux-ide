@@ -546,3 +546,18 @@ failure, and a subsequent successful read. Enable it with an absolute
 `TMUX_IDE_TEST_BUNDLED_CLI_ANCHOR` pointing to a CLI beside validated native
 assets, and run it with `vitest.live.config.ts` after building `bin/cli.js`.
 It does not qualify the separate `TMUX_IDE_TMUX_SOCKET_NAME` namespace policy.
+
+## Hidden semantic viewers
+
+`terminal-hidden-viewer-live.test.ts` joins a real native producer and replica
+owner to two semantic delivery clients. After one client becomes hidden, the
+other advances through three native updates while the hidden client receives no
+new deliveries. Reveal must produce one current seed; both clients are checked
+against a literal complete 40×8 grid, including blank cells and a wide-character
+continuation, plus native cursor and geometry. Visibility must not change native
+sizing policy. Closing both clients releases the hub's retained revisions and
+representation cache; the private server and producer must exit.
+
+This fixture runs in the boundary gate. It verifies semantic delivery, not
+physical WebSocket buffering or renderer work; the stalled-observer wire test
+and rendering fixtures cover those separate boundaries.

@@ -40,6 +40,7 @@ for (const [config, test] of [
   ["vitest.live.config.ts", "src/terminal/mirror/session-channel-cancellation-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/mirror/native-physical-cell-oracle-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/mirror/canonical-resize-publication-live.test.ts"],
+  ["vitest.live.config.ts", "src/terminal/session-runtime/terminal-hidden-viewer-live.test.ts"],
   ["vitest.live.config.ts", "src/tui/mirror/runtime/terminal-input-ordering-live.test.ts"],
   ["vitest.live.config.ts", "src/tui/mirror/runtime/terminal-native-input-death-live.test.ts"],
   [
