@@ -87,8 +87,9 @@ for (const marker of [
   'name="twitter:creator" content="@prototyper_co"',
   '"@type":"TechArticle"',
   '"@type":"BreadcrumbList"',
-  '"dateModified":"',
-  '"datePublished":"',
+  // Git-backed dates exist only when the build host has full history; a shallow
+  // clone omits them rather than guessing (see generate-git-dates.mjs).
+  ...(isFullHistory() ? ['"dateModified":"', '"datePublished":"'] : []),
   'rel="alternate" type="text/markdown" href="',
 ]) {
   if (!docsHtml.includes(marker))
