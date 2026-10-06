@@ -64,7 +64,6 @@
     "typecheck:workspace": "turbo run typecheck",
     "docs:build": "turbo run build --filter=@tmux-ide/docs",
     "pack:check": "pnpm test:installer && node --test scripts/lib/npm-release-tag.test.mjs && node scripts/pack-tui-check.mjs",
-    "pack:web:check": "pnpm build:web && node scripts/pack-web-check.mjs",
     "test:pack-installed": "node scripts/pack-check-run.mjs",
     "release:opentui:check": "node scripts/opentui-release-check.mjs",
     "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
