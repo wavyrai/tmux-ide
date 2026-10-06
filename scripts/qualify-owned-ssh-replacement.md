@@ -63,6 +63,27 @@ Run from the manager checkout using its exact Node executable:
 /absolute/pinned-node --import tsx scripts/qualify-owned-ssh-replacement.ts --run /absolute/evidence/descriptor.json
 ```
 
+To exercise an npm-installed client, add an `installedClient` object containing
+absolute `cli` and `tui` paths, their `cliSha256` and `tuiSha256` digests, and
+`commit` matching `nativeSource`. Install the package tarball from a clean release
+gate receipt and independently verify both files against that receipt first.
+The runner checks the supplied digests before launch. It uses the supported
+`TMUX_IDE_TUI_BIN` override for the unpublished candidate's verified TUI artifact.
+It still builds four managed instances for isolated target infrastructure.
+
+Installed clients run with short private homes, a seeded saved-machine profile,
+a private bundled-tmux server and the fixture's SSH wrapper. The explicit socket
+is created before launch because daemon admission requires an existing server.
+Short state paths also keep the control socket within macOS path limits. Their renderer identities, manual sizing, terminal IO and
+daemon replacement checks are the same as the development-client journey. The
+receipt records installed artifact identity separately. Cleanup removes private
+homes only after client and tracked-process teardown succeeds, the exact private
+tmux server is retired, and no local daemon record or private tmux socket remains.
+The server PID, kernel identity and socket inode are checked before retirement.
+A remaining local daemon is a cleanup refusal to investigate, not permission to
+discard its state. This mode does not by itself
+qualify machine-registry mutations, remote installation or external SSH hosts.
+
 The runner selects actual terminal views, verifies encoded shell output and typed
 input, then stops only A's daemon. It confirms the original SSH tunnel and forward
 are still alive at daemon death. A wrong-identity HTTP listener occupies the old
@@ -173,3 +194,28 @@ frames and receipts are retained at
 `.tasks/sfora-foundation-mission/native-ssh-manual-sizing-renderer`. The manager
 was `826dfe6a` with the recorded fixture extension. This is a native localhost-SSH
 proof, not an npm-installed remote client, DGX-host test or performance benchmark.
+
+## Installed-client qualification
+
+The clean `29aa9d31` release-gate npm tarball and verified compiled TUI passed this
+journey on macOS arm64 with Node 24.21.0/Bun 1.4.2. The manager was `29aa9d31` with
+the recorded fixture extension; all four development target artifacts came from
+clean worktrees at that revision. Both installed clients used saved SSH profiles,
+short private state homes and separately owned local tmux servers.
+
+The retained installed renderer recovered output and input after remote daemon
+replacement, both manual-sizing policies passed, the hidden window and pane
+identities were preserved, and the sibling stayed responsive. The trap received
+only a credential-free identity probe and the independent witness. Both clients
+closed interactively with exit zero. The 100,413ms run includes setup and teardown;
+it is not a latency benchmark. Every cleanup field passed. Independent checks
+found 72 recorded PIDs absent, seven recorded ports closed and both private homes
+and sockets removed; installed CLI/TUI hashes and fixture source remained stable.
+
+Receipts are retained under ignored local evidence
+`.tasks/sfora-foundation-mission/installed-ssh-replacement-socket-cleanup-29aa9d31`.
+Earlier failed receipts remain separate: missing explicit local sockets delayed
+startup, and a later behavior-passing run refused stale-socket cleanup. This is an
+npm-installed client against owned localhost SSH targets. Saved-machine mutations,
+external hosts, remote installation and runtime performance budgets remain outside
+this proof.

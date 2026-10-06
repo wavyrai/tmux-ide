@@ -4,6 +4,7 @@ import { monitorEventLoopDelay } from "node:perf_hooks";
 import { cleanupOwnedSshRegistry } from "./lib/owned-ssh-registry-cleanup.ts";
 import { qualifyCanonicalSshAttribution } from "./lib/owned-ssh-attribution.ts";
 import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
+import { capturePackedTmuxWitness, retirePackedTmuxSocket } from "./lib/packed-install-cleanup.mjs";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
@@ -20,10 +21,15 @@ import {
   lstatSync,
   readdirSync,
   realpathSync,
+  rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  capturePackedInstallEnvironment,
+  privatePackedInstallEnvironment,
+} from "./lib/packed-install-environment.mjs";
 import {
   readDevelopmentIdentity,
   readPrivateDevelopmentFile,
@@ -69,6 +75,13 @@ type Plan = {
   nativeSource: string;
   store: string;
   session: string;
+  installedClient?: {
+    cli: string;
+    tui: string;
+    commit: string;
+    cliSha256: string;
+    tuiSha256: string;
+  };
 };
 type Pty = {
   pid: number;
@@ -81,7 +94,7 @@ type Pty = {
 type Vt = {
   rows: number;
   resize(cols: number, rows: number): void;
-  write(text: string): void;
+  write(text: string, callback?: () => void): void;
   dispose(): void;
   buffer: {
     active: { getLine(index: number): { translateToString(trim: boolean): string } | undefined };
@@ -100,6 +113,7 @@ type Client = {
   exited: boolean;
   exitCode?: number;
   renderer?: { pid: number; identity: string };
+  outputFacts: { received: number; parsed: number; firstAtMs: number | null };
   frame(): string;
 };
 type Allocation = { root: string; disposeFiles(): Promise<void>; diagnostics?(): unknown };
@@ -152,6 +166,16 @@ if (args[0] === "--client") {
   const out = dirname(descriptorPath),
     started = Date.now(),
     events: Array<Record<string, unknown>> = [];
+  const installedServers = new Map<
+    string,
+    {
+      binary: string;
+      socket: string;
+      pid: number;
+      identity: string;
+      witness: ReturnType<typeof capturePackedTmuxWitness>;
+    }
+  >();
   const save = (name: string, value: unknown) =>
     writeFileSync(join(out, name), JSON.stringify(value, null, 2) + "\n", {
       flag: "wx",
@@ -423,12 +447,102 @@ if (args[0] === "--client") {
       pty = req("node-pty"),
       { Terminal } = req("@tmux-ide/xterm-headless");
     const vt = new Terminal({ cols: 120, rows: 32, allowProposedApi: true }),
-      child: Pty = pty.spawn(descriptor.node, ["--import", "tsx", self, "--client", input], {
-        cwd: sourceRoot,
-        env,
+      installed = descriptor.installedClient,
+      home = join(descriptor.store, "home-" + side);
+    if (installed) {
+      assert.equal(hash(readFileSync(installed.cli)), installed.cliSha256);
+      assert.equal(hash(readFileSync(installed.tui)), installed.tuiSha256);
+      assert(!existsSync(home), "Installed client home must be new");
+      mkdirSync(join(home, ".tmux-ide"), { recursive: true, mode: 0o700 });
+      writeFileSync(
+        join(home, ".tmux-ide", "machines.json"),
+        JSON.stringify({
+          version: 1,
+          machines: [
+            {
+              id: randomUUID(),
+              label: "Owned remote " + side,
+              sshTarget: fixture.alias,
+              enabled: true,
+            },
+          ],
+        }),
+        { flag: "wx", mode: 0o600 },
+      );
+    }
+    const clientEnv = installed
+      ? privatePackedInstallEnvironment(capturePackedInstallEnvironment(env), {
+          home,
+          cache: join(home, ".cache"),
+          overrides: {
+            TMUX_IDE_HOME: join(home, ".tmux-ide"),
+            TMUX_IDE_TMUX_SOCKET_PATH: join(descriptor.store, "installed-" + side + ".sock"),
+            TMUX_IDE_TUI_BIN: installed.tui,
+            TMUX_IDE_TUI_PERF_LOG: join(out, "installed-" + side + ".performance.jsonl"),
+            PATH: remote.directory + ":" + env.PATH,
+          },
+        })
+      : env;
+    if (installed) {
+      assert(Buffer.byteLength(join(home, ".tmux-ide", "control.sock")) <= 100);
+      const binary = realpathSync(
+        join(dirname(installed.cli), "../packages/daemon/dist/native/tmux/darwin-arm64/tmux"),
+      );
+      const socket = clientEnv.TMUX_IDE_TMUX_SOCKET_PATH!;
+      assert(!existsSync(socket));
+      await execute(
+        binary,
+        [
+          "-S",
+          socket,
+          "-f",
+          "/dev/null",
+          "new-session",
+          "-d",
+          "-s",
+          "_installed_fixture",
+          "/bin/sh",
+        ],
+        {
+          env: clientEnv,
+          cwd: home,
+          timeout: 5000,
+        },
+      );
+      const pid = Number(
+        (await run(binary, ["-S", socket, "-N", "display-message", "-p", "#{pid}"])).trim(),
+      );
+      const identity = await kernel.identify(pid);
+      assert(identity);
+      const witness = capturePackedTmuxWitness(socket, pid);
+      installedServers.set(side, { binary, socket, pid, identity, witness });
+      ownedPids.add(pid);
+      for (const pane of (
+        await run(binary, ["-S", socket, "-N", "list-panes", "-a", "-F", "#{pane_pid}"])
+      )
+        .trim()
+        .split("\n"))
+        ownedPids.add(Number(pane));
+      save(side + "-installed-tmux.json", {
+        witness,
+        pid,
+        socket,
+        binary,
+        sha256: hash(readFileSync(binary)),
+      });
+    }
+    const child: Pty = pty.spawn(
+      descriptor.node,
+      installed
+        ? [installed.cli, "app", "--ssh", fixture.alias]
+        : ["--import", "tsx", self, "--client", input],
+      {
+        cwd: installed ? home : sourceRoot,
+        env: clientEnv,
         cols: 120,
         rows: 32,
-      });
+      },
+    );
     const handle: Handle = Object.assign(new EventEmitter(), {
       pid: child.pid,
       kill: (signal: string) => {
@@ -444,6 +558,7 @@ if (args[0] === "--client") {
       handle,
       vt,
       exited: false,
+      outputFacts: { received: 0, parsed: 0, firstAtMs: null },
       frame: () =>
         Array.from(
           { length: vt.rows },
@@ -451,8 +566,18 @@ if (args[0] === "--client") {
         ).join("\n"),
     };
     clients[side] = client;
-    child.onData((text: string) => vt.write(text));
+    let outputTail = "";
+    child.onData((text: string) => {
+      client.outputFacts.received += text.length;
+      client.outputFacts.firstAtMs ??= Date.now() - started;
+      outputTail = (outputTail + text).slice(-65536);
+      vt.write(text, () => {
+        client.outputFacts.parsed += text.length;
+      });
+    });
     child.onExit((value: { exitCode: number }) => {
+      // A blank parsed frame cannot distinguish renderer and parser failures.
+      writeFileSync(join(out, side + "-terminal-tail.txt"), outputTail, { mode: 0o600 });
       client.exited = true;
       client.exitCode = value.exitCode;
       handle.exitCode = value.exitCode;
@@ -460,16 +585,19 @@ if (args[0] === "--client") {
     });
     const badge =
       "DEV " + i.name.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 12) + ":" + i.id.slice(4, 10);
-    await wait(() => {
-      assert(!client.exited);
-      return client.frame().includes(badge);
-    });
+    if (!installed)
+      await wait(() => {
+        assert(!client.exited);
+        return client.frame().includes(badge);
+      });
     await wait(() => {
       const frame = client.frame();
       return (
         frame.includes("Your agents, across your machines") &&
         frame.includes("Open terminals F2") &&
-        frame.includes("1 session live")
+        (installed
+          ? frame.includes("SSH Owned remote " + side) && frame.includes("1 live")
+          : frame.includes("1 session live"))
       );
     });
     // This fixture owns a plain shell, not an agent. Home lists agents; F2 opens
@@ -492,7 +620,7 @@ if (args[0] === "--client") {
     child.write(`\x1b[<0;8;${sessionRow + 1}M\x1b[<0;8;${sessionRow + 1}m`);
     await wait(() => frameShowsTerminalFocus(client.frame()));
     await tracker.capture();
-    const executable = readDevelopmentBuild(i, {}).tui;
+    const executable = installed?.tui ?? readDevelopmentBuild(i, {}).tui;
     const rendererPids: number[] = [];
     for (const row of tracker.snapshot().ancestry) {
       if (row.rootPid !== child.pid) continue;
@@ -684,10 +812,15 @@ if (args[0] === "--client") {
     c.child.write("\x11");
     await wait(() => c.exited, 10000);
     assert.equal(c.exitCode, 0);
-    await wait(() => readdirSync(join(instances["client-" + side].root, "apps")).length === 0);
+    if (!descriptor.installedClient)
+      await wait(() => readdirSync(join(instances["client-" + side].root, "apps")).length === 0);
   }
   try {
     event(stage);
+    if (descriptor.installedClient) {
+      assert.equal(descriptor.installedClient.commit, descriptor.nativeSource);
+      receipts.installedClient = descriptor.installedClient;
+    }
     assert.equal(process.execPath, descriptor.node);
     mkdirSync(descriptor.store, { mode: 0o700 });
     kernel = await createMacProcessIdentity({
@@ -1158,7 +1291,11 @@ if (args[0] === "--client") {
     }
     receipts.privateFailureLogs = retainedLogs;
     for (const [side, c] of Object.entries(clients))
-      save(side + "-failure-frame.json", { frame: c.frame(), exited: c.exited });
+      save(side + "-failure-frame.json", {
+        frame: c.frame(),
+        exited: c.exited,
+        outputFacts: c.outputFacts,
+      });
   } finally {
     cleaning = true;
     receipts.cleanupStartedMs = Date.now() - started;
@@ -1192,6 +1329,51 @@ if (args[0] === "--client") {
     } catch {
       receipts.cleanup.ssh = false;
     }
+    if (descriptor.installedClient)
+      for (const side of ["a", "b"]) {
+        const home = join(descriptor.store, "home-" + side);
+        try {
+          assert(receipts.cleanup.ssh);
+          const server = installedServers.get(side);
+          if (server) {
+            const identity = await kernel.identify(server.pid);
+            if (identity !== null) {
+              assert.equal(identity, server.identity);
+              assert.deepEqual(capturePackedTmuxWitness(server.socket, server.pid), server.witness);
+              assert.equal(
+                Number(
+                  (
+                    await run(server.binary, [
+                      "-S",
+                      server.socket,
+                      "-N",
+                      "display-message",
+                      "-p",
+                      "#{pid}",
+                    ])
+                  ).trim(),
+                ),
+                server.pid,
+              );
+              await run(server.binary, ["-S", server.socket, "-N", "kill-server"]);
+              await wait(async () => (await kernel.identify(server.pid)) === null);
+            }
+            receipts.cleanup["installed-socket-" + side] = await retirePackedTmuxSocket(
+              server.witness,
+            ).then(() => true);
+          }
+          assert(receipts.cleanup["client-" + side]);
+          assert(
+            !existsSync(join(home, ".tmux-ide", "daemon.json")),
+            "Unexpected local daemon requires explicit retirement",
+          );
+          assert(!existsSync(join(descriptor.store, "installed-" + side + ".sock")));
+          rmSync(home, { recursive: true, force: true });
+          receipts.cleanup["installed-home-" + side] = true;
+        } catch {
+          receipts.cleanup["installed-home-" + side] = false;
+        }
+      }
     if (trap) {
       for (const socket of trapSockets) socket.destroy();
       trap.closeAllConnections();
