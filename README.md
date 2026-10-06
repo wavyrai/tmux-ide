@@ -9,6 +9,8 @@
 
 <p align="center"><strong>A visual tmux client designed for working with coding agents.</strong></p>
 
+<p align="center">An open-source project by <a href="https://www.prototyper.co">Prototyper</a> · <a href="./LICENSE">MIT license</a> · <a href="https://tmux-ide.com/docs">Docs</a></p>
+
 <p align="center">
   <img src="./docs/public/tui-demo.svg" alt="Animated tmux-ide OpenTUI demo showing Home, named coding agents, live status, terminal panes, and the command palette" width="960" />
 </p>

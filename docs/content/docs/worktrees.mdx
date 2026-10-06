@@ -1,6 +1,6 @@
 ---
 title: Worktrees
-description: Parallel agents on parallel branches — a git worktree plus an adopted session, in one command
+description: "Run parallel agents on parallel branches: tmux-ide worktree creates a git worktree and a ready tmux session in one command, then lists and removes them."
 ---
 
 When you want two agents working two branches at once without stepping on each
@@ -15,8 +15,9 @@ tmux-ide worktree create fix/login
 ```
 
 This adds a git worktree on a new `fix/login` branch and opens a session inside
-it — already adopted, so the dock and agent detection are on from the first
-keystroke.
+it. If the worktree has a `.tmux-ide/workspace.yml`, that layout launches;
+otherwise you get a plain session. Either way the session is adopted, so it
+appears in the app, notifications and restore snapshots right away.
 
 Options:
 
@@ -51,9 +52,9 @@ directory next to the repo. Override the base globally in
 ```
 
 An empty value keeps the sibling-directory default; a relative path is resolved
-against the repo. See [Theming & config](/docs/theming).
+against the repo. See [Configuration](/docs/configuration#other-sections).
 
 ## See also
 
 - [Restore & resume](/docs/restore-resume) — worktree sessions are snapshotted too
-- [The dock & keys](/docs/the-dock) — worktree sessions arrive pre-adopted
+- [tmux chrome](/docs/the-dock) — worktree sessions arrive pre-adopted

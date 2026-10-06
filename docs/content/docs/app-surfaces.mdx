@@ -1,7 +1,10 @@
 ---
 title: App surfaces
-description: Home, Terminals, contextual commands, and optional project views
+description: "A tour of the tmux-ide 2.9 app: Home, Terminals, Commands, Sessions, the machine sidebar, SSH machines and daemon supervision."
 ---
+
+The 2.9 app has two root surfaces, **Home** (`F1`) and **Terminals** (`F2`).
+Commands, Sessions, Attention and the sidebar open on top of either one.
 
 ## Home
 
@@ -14,9 +17,14 @@ Connection and observation status remain visible: disconnected machines show
 last-observed information, and their agents cannot be opened until the connection
 recovers. One unavailable machine does not prevent other machines from updating.
 
-The machine sidebar lists sessions and connection status. Home also provides
-terminal, command and theme actions. When no tmux server exists, the terminal
-browser offers a new-session action.
+Search with `/`, cycle the machine filter with `f`, and switch between **All**
+(`0`), **Working** (`w`) and **Needs attention** (`a`). `Enter` opens the selected
+agent's pane. "Unavailable" means the connection or observation is missing, not
+that the agent stopped.
+
+**Quick actions** on Home browse sessions (or open Terminals), add a machine
+(or open Commands), start **Learn tmux-ide**, and cycle the theme. When no
+tmux session exists, press `n` to create one.
 
 ### Learn tmux-ide
 
@@ -30,6 +38,8 @@ observed application changes, and progress is saved locally so you can pause and
 resume. You can replay the walkthrough from Home. Your other sessions keep
 running; the walkthrough does not close them.
 
+### Recent pane activity
+
 Recent pane activity shows the latest reported reads and input actions, with
 brief matching indicators in pane headers. This includes tmux-ide actions and
 `send-keys`/`capture-pane` commands observed by the daemon's hooks on tracked
@@ -41,7 +51,7 @@ agent, and the feed does not show the contents of input or captured text.
 
 Terminals is a visual client for the selected tmux session:
 
-- the left sidebar lists the current session and detected agents;
+- the left sidebar lists machines, sessions and detected agents;
 - the window strip reflects real tmux windows and creates new ones;
 - every pane has a title, state, and relevant controls;
 - terminal content is mirrored as terminal cells, including indexed and
@@ -52,6 +62,23 @@ Terminals is a visual client for the selected tmux session:
 
 The UI retains terminal content through quiet periods, resize, theme switching,
 daemon replacement, and viewer reattachment. tmux remains the source of truth.
+
+### Pane menu
+
+Right-click a pane to open its menu. Each item also has a key while the menu is
+open:
+
+| Item               | Key |
+| ------------------ | --- |
+| Select text…       |     |
+| Rename pane…       | `R` |
+| Split pane right   | `→` |
+| Split pane down    | `D` |
+| Zoom / unzoom pane | `Z` |
+| Close pane…        | `X` |
+
+Closing asks for confirmation. `Ctrl+O` cycles panes, `Ctrl+T` cycles windows,
+and `Alt+Arrow` resizes the focused pane; you can also drag pane borders.
 
 ### Named agents
 
@@ -65,7 +92,10 @@ Explicit manual pane names are retained. For native Claude split-pane teams,
 tmux-ide reads the local runtime team metadata and matches each member against
 the Claude process running inside that pane. Matched teammate names take
 precedence over automatic names and changing activity titles. Otherwise,
-meaningful native pane titles appear ahead of generic process labels.
+meaningful native pane titles appear ahead of generic process labels. A pane
+with nothing better gets a stable, memorable fallback such as `warm-redwood`;
+an unnamed agent is listed by its harness, Claude Code or Codex. Rename any pane
+from its menu (`R`).
 
 The same naming rules feed pane headers, the sidebar, Home and agent details.
 Team metadata is refreshed on inventory reads with a two-second cache; deleted
@@ -105,13 +135,13 @@ OSC 52 support. To explicitly use that terminal route on macOS, launch with
 `TMUX_IDE_CLIPBOARD_BACKEND=osc52 tmux-ide`. Terminal-routed confirmation indicates
 that the request was sent; the terminal controls whether it is accepted.
 
-Ctrl+click a visible HTTP or HTTPS URL to open it in your browser. Ordinary
-clicks retain their existing terminal behavior. Links split across soft-wrapped
+Shift+click a visible HTTP or HTTPS URL to open it in your browser; Ctrl+click
+and ⌘+click also work. Ordinary clicks retain their existing terminal behavior. Links split across soft-wrapped
 rows are recognized; this does not open links merely because a program prints them.
 
 ## Connect to another machine over SSH
 
-Install the same tmux-ide beta build on both machines. The remote machine needs
+Install the same tmux-ide version on both machines. The remote machine needs
 Node.js and tmux. Discovery and explicit remote start respect the noninteractive
 SSH PATH, then check the installer default (`~/.local/bin`), Homebrew
 (`/opt/homebrew/bin` and `/usr/local/bin`), Linuxbrew and `~/.npm-global/bin`.
@@ -155,9 +185,10 @@ the active terminal workspace to its machine; matching session names on differen
 machines remain separate. If you also provide a session name, it opens on the
 first `--ssh` target.
 
-Click **Add machine**, or press Ctrl+G to focus the machine sidebar and then A,
-to connect another SSH target during this run. Enter an alias or `user@host` and
-choose Connect. These additions are not saved to a configuration file.
+Click **Add machine**, or press `Ctrl+G` to focus the machine sidebar and then
+`A`, to connect another SSH target. Enter an alias or `user@host` and choose
+Connect. To keep machines across runs, save them with
+[`tmux-ide machines`](#manage-saved-machines).
 
 With the sidebar focused, use Up/Down to move, Enter to open a session, and
 Left/Right to collapse or expand a machine. The active session remains visible
@@ -166,37 +197,57 @@ cached sessions are marked unavailable and cannot be opened until reconnected.
 
 If the connection drops, the app reconnects to that same host. It never silently
 switches to your local daemon. Remote sessions and their processes remain owned
-by tmux when you close the viewer. Creating a session or provisioning an agent
-from the remote Home screen is not available in this beta; create those remotely
-before opening them in the app.
+by tmux when you close the viewer. To create a session on a remote machine,
+select that machine in Sessions (`F6`) and press `Ctrl+N`.
 
-On Linux, system tmux can serve the connection and normal terminal streaming.
-Without the optional patched tmux build, retained history uses compatible
-semantic reflow rather than native physical-grid backing. Older tmux versions
-also expose fewer terminal-mode details, so this is not a claim of identical
-behavior to the qualified native setup. Installing a different tmux executable
-does not upgrade an already-running tmux server.
+Each machine needs tmux 3.7 or newer. tmux-ide starts new tmux servers with its
+bundled tmux 3.7c, which carries tmux-ide's native-grid patch on every supported
+platform. A server you started yourself with a system tmux also works, but its
+retained history uses compatible reflow instead of native grid backing.
+Installing or updating a tmux executable does not upgrade a server that is
+already running.
 
 The TUI still runs locally with `app --ssh`, so local macOS clipboard copying
 continues to use the system clipboard. Running the TUI itself inside an SSH shell
 uses the terminal clipboard route described above.
 
-## Commands and notifications
+## Commands
 
-`F5` or `Ctrl+P` opens the command surface. Transient action notes, such as a successful
-split, dismiss automatically and do not become permanent chrome.
+`F5` opens Commands: a searchable list of actions with their shortcuts.
 
-## Project-defined views
+| Command                 | What it does                                         |
+| ----------------------- | ---------------------------------------------------- |
+| Home / Terminals        | Switch surface (`F1` / `F2`)                         |
+| New terminal window     | Add a window to the current session                  |
+| New agent…              | Start a named Claude Code or Codex agent             |
+| Split pane right / down | Split the focused pane                               |
+| Close pane…             | Close the focused pane after confirmation            |
+| Zoom / unzoom pane      | Toggle tmux zoom                                     |
+| Appearance…             | Theme and contrast — see [Appearance](/docs/theming) |
+| Using tmux-ide          | Built-in help                                        |
+| Keyboard shortcuts      | Searchable shortcut list (`Ctrl+K`)                  |
+| What's new              | Recent changes (`Ctrl+B`)                            |
+| Switch session          | Opens Sessions (`F6`)                                |
+| Show / hide sidebar     | Same as `F10`                                        |
 
-WorkspaceConfigV1 can order full-panel views for `home`, `terminals`, `files`,
-`diff`, and `missions`, or compose them with split and tab layouts. Files,
-changes, dialogs, settings, palettes, and rich previews are loaded as optional
-features so the resident terminal path stays small.
+Commands also lists your sessions and agents, so typing a name jumps straight to
+it. Transient notes, such as a successful split, dismiss automatically.
 
-The Missions panel is presentational in this beta. `harnesses`, `agents`, and
-`missions` workspace blocks are validated, but there is no public CLI command
-that dispatches those mission defaults yet. `tmux-ide web` is also explicitly
-unavailable; the daemon remains renderer-neutral for future clients.
+## Sessions and Attention
+
+`F6` opens **Sessions**: every session across your machines, with favorites,
+recent sessions and a live preview. `F7` opens the same picker filtered to
+sessions whose agents need attention. Open sessions become tabs; `F9` cycles
+them and `F8` goes back through recently opened sessions. See
+[Getting started](/docs/getting-started#commands-and-sessions-menus) for the
+picker keys.
+
+## Not in this release
+
+`.tmux-ide/workspace.yml` can declare `app.views` panels such as `files`,
+`diff` and `missions`. The 2.9 app does not read them: it always shows Home and
+Terminals. Mission profiles are validated but not dispatched, and `tmux-ide web`
+is unavailable. See [Workspace layouts](/docs/configuration#app-views).
 
 ## Manage saved machines
 

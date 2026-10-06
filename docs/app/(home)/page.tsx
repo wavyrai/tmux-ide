@@ -27,12 +27,17 @@ import {
   INSTALL_METHODS,
 } from "@/lib/landing-content";
 import { InstallCommand, InstallTabs } from "@/components/marketing/install-tabs";
-import { APP_COMMAND, CURRENT_RELEASE_PATH, INSTALL_COMMAND } from "@/lib/site";
+import {
+  APP_COMMAND,
+  CURRENT_RELEASE_PATH,
+  INSTALL_COMMAND,
+  SITE_DESCRIPTION,
+  SITE_TITLE,
+} from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "tmux-ide — a dedicated workspace for coding agents",
-  description:
-    "Give coding agents a dedicated tmux workspace with memorable names, live status, exact pane navigation, terminal-native controls, durable sessions, and SSH support.",
+  title: { absolute: SITE_TITLE },
+  description: SITE_DESCRIPTION,
   alternates: { canonical: "/" },
 };
 

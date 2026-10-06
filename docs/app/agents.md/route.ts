@@ -38,6 +38,10 @@ tmux-ide integration install claude     # Claude Code hooks: ground-truth agent 
 tmux-ide integration status --json      # what is detected and wired up
 \`\`\`
 
+The app has two surfaces: Home (F1: agents across local and SSH machines, search, needs-attention
+filter) and Terminals (F2: the live session, window tabs, pane headers). F5 opens Commands; Ctrl+Q
+quits and leaves every session running.
+
 A \`.tmux-ide/workspace.yml\` layout is optional. To create one: \`tmux-ide detect --json\`, propose
 two or three layouts to the user, then \`tmux-ide detect --write\` or the \`tmux-ide config\`
 commands, and always finish with \`tmux-ide validate --json\`.

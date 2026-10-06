@@ -1,6 +1,6 @@
 ---
 title: Multi-Agent Teams
-description: Run heterogeneous agent fleets — Claude Code, codex, cursor-agent, anything — that coordinate through tmux-ide's shared status bus, direct messaging, and synchronization primitives
+description: Run Claude Code, Codex and other agents side by side, coordinating through tmux-ide team groups, a shared status bus, direct messages and wait commands.
 ---
 
 tmux-ide doesn't just watch one agent — it lets a **team of agents work together**,
@@ -59,6 +59,10 @@ automatically associated with a pane; use explicit grouping when needed.
 
 ## A mixed fleet
 
+In the app, Home and the sidebar list each agent with its state, and Attention
+(`F7`) jumps to the ones that need you. In a [tmux chrome](/docs/the-dock)
+session the same fleet looks like this:
+
 ```
  mixed-fleet   ●working                          [ ⌂ home ^b h ]  [ ⧉ switch ^b j ]
 ┌──────────────────────────────┬──────────────────────────────┐
@@ -70,8 +74,8 @@ automatically associated with a pane; use explicit grouping when needed.
 └──────────────────────────────┴──────────────────────────────┘
 ```
 
-One glance at the dock tells the lead (human or agent): the API worker is `done`,
-the UI worker is `blocked` and needs attention. That glyph is the handoff signal.
+One glance tells the lead (human or agent): the API worker is `done`, the UI
+worker is `blocked` and needs attention. That state is the handoff signal.
 
 ## The primitives
 
@@ -166,12 +170,13 @@ session-level twin of the pane-level `wait output`.
 
 The pattern that ties it together:
 
-- A **lead** — a human watching the dock, or a lead agent — assigns work with
+- A **lead** — a human watching Home, or a lead agent — assigns work with
   `send` and worktrees.
 - **Teammates** report status (automatically for Claude Code, via the pane option
   for anything else).
-- The **`done`/`blocked` glyph and the toast** are the handoff signal: the lead
-  reacts the moment a teammate finishes or gets stuck, instead of polling.
+- The **`done`/`blocked` state and its notification** are the handoff signal:
+  the lead reacts the moment a teammate finishes or gets stuck, instead of
+  polling.
 
 Because the status bus, messaging, and waits are all plain CLI with `--json` and
 exit codes, you can wire the same pattern into scripts, a lead agent's tool

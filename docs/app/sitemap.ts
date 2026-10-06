@@ -1,17 +1,20 @@
 import type { MetadataRoute } from "next";
+import { docLastModified, homeLastModified } from "@/lib/git-dates";
 import { source } from "@/lib/source";
-import { SITE_URL } from "@/lib/site";
+import { absoluteUrl } from "@/lib/site";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const docs = source.getPages().map((page) => ({
-    url: `${SITE_URL}${page.url}`,
+    url: absoluteUrl(page.url),
+    lastModified: docLastModified(page.path),
     changeFrequency: "weekly" as const,
     priority: page.url === "/docs" ? 0.9 : 0.7,
   }));
 
   const routes: MetadataRoute.Sitemap = [
     {
-      url: `${SITE_URL}/`,
+      url: absoluteUrl("/"),
+      lastModified: homeLastModified(),
       changeFrequency: "weekly",
       priority: 1,
     },

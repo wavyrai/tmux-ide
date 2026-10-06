@@ -1,9 +1,9 @@
 ---
-title: Appearance
-description: Light, dark, and system appearance in the OpenTUI
+title: Appearance and themes
+description: Choose system, dark, light or one of 22 theme presets in tmux-ide, and control automatic contrast correction for app chrome and terminal panes.
 ---
 
-The OpenTUI has one appearance authority. Home, application chrome, sidebars,
+tmux-ide has one appearance authority. Home, application chrome, sidebars,
 tabs, pane headers, status bars, dialogs, and overlays all consume the same
 semantic token snapshot.
 
@@ -14,14 +14,67 @@ colors, so partial palette replies do not decide whether the canvas is light
 or dark. If color queries are unavailable, terminal mode notifications still
 update the app using built-in defaults.
 
-Choose **light**, **dark**, or **system** from the command palette's Settings
-group. A switch publishes one new appearance generation and repaints every
-app-owned surface atomically.
+## Choose a theme
 
-Terminal panes follow the selected appearance too: default foreground/background
+Open **Commands** (`F5`) → **Appearance…**. The picker lists **System · follow terminal**, **Dark**, **Light**
+and the theme presets below.
+
+| Key             | Action                                             |
+| --------------- | -------------------------------------------------- |
+| Type            | Filter themes; matching themes preview live        |
+| `↑` `↓` / `Tab` | Move and preview                                   |
+| `Enter`         | Apply and save                                     |
+| `Esc`           | Cancel and restore the previous theme and contrast |
+| `Ctrl+A`        | Toggle automatic contrast                          |
+
+A switch repaints every app-owned surface at once. The choice is saved to
+`theme.mode` and `theme.preset` in [`~/.tmux-ide/config.json`](/docs/configuration#theme).
+
+## Theme presets
+
+| Preset id         | Name             | Appearance |
+| ----------------- | ---------------- | ---------- |
+| `amber`           | Amber            | dark       |
+| `green`           | Green Phosphor   | dark       |
+| `cyan`            | Cyan             | dark       |
+| `red`             | Red Phosphor     | dark       |
+| `blue`            | Blue Phosphor    | dark       |
+| `purple`          | Purple Phosphor  | dark       |
+| `pink`            | Hot Pink         | dark       |
+| `white`           | White Phosphor   | dark       |
+| `paper`           | Paper            | light      |
+| `github-light`    | GitHub Light     | light      |
+| `solarized-light` | Solarized Light  | light      |
+| `gruvbox-light`   | Gruvbox Light    | light      |
+| `nord-light`      | Nord Light       | light      |
+| `tokyo`           | Tokyo Night      | dark       |
+| `solarized`       | Solarized Dark   | dark       |
+| `dracula`         | Dracula          | dark       |
+| `nord`            | Nord             | dark       |
+| `monokai`         | Monokai          | dark       |
+| `catppuccin`      | Catppuccin Mocha | dark       |
+| `gruvbox`         | Gruvbox Dark     | dark       |
+| `rosepine`        | Rose Pine        | dark       |
+| `midnight`        | Midnight Blue    | dark       |
+
+To set one by hand:
+
+```json
+{ "theme": { "preset": "catppuccin" } }
+```
+
+An unknown preset id is ignored. Theme presets color the app; the
+[tmux chrome](/docs/the-dock) uses its own `theme.accent`, `theme.status` and
+`theme.glyphs` tokens.
+
+## Terminal panes
+
+Terminal panes follow the selected appearance: default foreground/background
 and standard ANSI colors (slots 0–15) use the theme palette. System appearance
 uses detected host ANSI colors where available. Named themes derive basic colors
 from their semantic palette, including status and accent colors.
+
+## Automatic contrast
 
 Automatic contrast correction is enabled by default for every appearance. It
 checks text against its rendered background across the TUI, including menus,
@@ -49,6 +102,8 @@ Corrections are cached with a fixed size limit. Each frame uses perceptual
 lightness correction for up to 128 new low-contrast pairs; additional new pairs
 use a cheaper verified color blend. This bounds expensive work when applications
 produce thousands of different colors.
+
+## Terminal environment
 
 Fresh sessions advertise:
 
