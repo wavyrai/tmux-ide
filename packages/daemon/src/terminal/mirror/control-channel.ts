@@ -117,8 +117,13 @@ export type AtomicPaneSnapshotFailureReason =
   | "retired";
 
 export interface AtomicPaneSnapshotResult {
+  /** Present only for an owned pause hook; an already-paused target emits no new notification.
+   * The caller must authenticate the live target and exact nonwaiting hook body. */
+  readonly pauseObserved?: boolean;
   readonly ok: boolean;
   readonly captureLines: readonly string[];
+  /** Optional second representation; bounded together with captureLines. */
+  readonly ansiCaptureLines?: readonly string[];
   readonly cursorLine: string | null;
   readonly continueObserved: boolean;
   readonly statusObserved: boolean;
@@ -141,6 +146,10 @@ export interface AtomicPaneSnapshotProgress {
 }
 
 export interface AtomicPaneSnapshotCollector {
+  /** Pause uses start / refresh-client :pause / complete, sharing this sole wire owner. */
+  readonly kind?: "snapshot" | "pause";
+  /** Adds ANSI capture / ansi-capture-end after capture-end, before cursor. */
+  readonly dualCapture?: boolean;
   readonly nonce: string;
   readonly runtimePaneId: string;
   readonly maxCaptureBytes: number;
@@ -297,11 +306,13 @@ export class ControlChannelCore {
     blockOrdinal: number;
     blockContentCount: number;
     captureLines: string[];
+    ansiCaptureLines: string[];
     captureBytes: number;
     totalLines: number;
     totalBytes: number;
     cursorLine: string | null;
     continueObserved: boolean;
+    pauseObserved: boolean;
     statusObserved: boolean;
     observerEmissionObserved: boolean;
     lastCompletedOrdinal: number;
@@ -442,6 +453,10 @@ export class ControlChannelCore {
 
   armAtomicPaneSnapshotCollector(spec: AtomicPaneSnapshotCollector): boolean {
     if (this.failed || this.atomicCollector) return false;
+    if (spec.kind !== undefined && spec.kind !== "snapshot" && spec.kind !== "pause") return false;
+    if (spec.kind === "pause" && (spec.observerCommandCount !== 0 || spec.dualCapture))
+      return false;
+    if (spec.dualCapture !== undefined && typeof spec.dualCapture !== "boolean") return false;
     if (!/^[0-9a-f]{32,128}$/.test(spec.nonce) || !/^%\d+$/.test(spec.runtimePaneId)) return false;
     if (
       !Number.isSafeInteger(spec.maxCaptureBytes) ||
@@ -466,11 +481,13 @@ export class ControlChannelCore {
       blockOrdinal: -1,
       blockContentCount: 0,
       captureLines: [],
+      ansiCaptureLines: [],
       captureBytes: 0,
       totalLines: 0,
       totalBytes: 0,
       cursorLine: null,
       continueObserved: false,
+      pauseObserved: false,
       statusObserved: false,
       observerEmissionObserved: false,
       lastCompletedOrdinal: -1,
@@ -490,18 +507,21 @@ export class ControlChannelCore {
     const result: AtomicPaneSnapshotResult = Object.freeze({
       ok: false,
       captureLines: Object.freeze([]),
+      ...(collector.spec.dualCapture ? { ansiCaptureLines: Object.freeze([]) } : {}),
       cursorLine: null,
       continueObserved: collector.continueObserved,
       statusObserved: collector.statusObserved,
       observerEmissionObserved: collector.observerEmissionObserved,
       started: collector.started,
       lastCompletedOrdinal: collector.lastCompletedOrdinal,
-      captureLineCount: collector.captureLines.length,
+      captureLineCount: collector.captureLines.length + collector.ansiCaptureLines.length,
       captureByteCount: collector.captureBytes,
       failureReason: collector.failureReason ?? reason,
+      ...(collector.spec.kind === "pause" ? { pauseObserved: collector.pauseObserved } : {}),
     });
     // Release payload memory before callbacks can throw or reenter retirement.
     collector.captureLines.length = 0;
+    collector.ansiCaptureLines.length = 0;
     collector.cursorLine = null;
     collector.totalBytes = 0;
     collector.totalLines = 0;
@@ -860,7 +880,9 @@ export class ControlChannelCore {
         token !== "start" ||
         !this.inReply ||
         this.currentReplyFlags !== 0 ||
-        this.currentReplyNum === null
+        this.currentReplyNum === null ||
+        (collector.spec.kind === "pause" &&
+          (!Number.isSafeInteger(this.currentReplyNum) || this.currentReplyNum < 0))
       ) {
         collector.failureReason ??= "sentinel-order";
         return true;
@@ -878,6 +900,9 @@ export class ControlChannelCore {
     if (collector.totalBytes > collector.spec.maxCaptureBytes + 64 * 1024)
       collector.failureReason ??= "capture-byte-cap";
 
+    if (collector.spec.kind === "pause") return this.consumeOwnedPauseLine(line, token);
+
+    const shift = collector.spec.dualCapture ? 2 : 0;
     const guard = parseControlLine(line, this.inReply);
     if (guard.kind === "begin") {
       if (guard.flags !== 0 || this.inReply) collector.failureReason ??= "sentinel-order";
@@ -899,12 +924,21 @@ export class ControlChannelCore {
       // The ownership compare-and-unset is an if-shell command plus exactly
       // one selected branch command. Both commands retain the control client
       // and therefore each has its own flags=0 guard block.
-      const markerBranchOrdinal = 7 + collector.spec.observerCommandCount;
-      const statusOrdinal = 8 + collector.spec.observerCommandCount;
-      const completeOrdinal = 10 + collector.spec.observerCommandCount;
-      const contentRequired = new Set([0, 2, 3, 4, statusOrdinal, completeOrdinal]);
+      const markerBranchOrdinal = 7 + shift + collector.spec.observerCommandCount;
+      const statusOrdinal = 8 + shift + collector.spec.observerCommandCount;
+      const completeOrdinal = 10 + shift + collector.spec.observerCommandCount;
+      const contentRequired = new Set([
+        0,
+        2,
+        3 + shift,
+        4 + shift,
+        ...(shift ? [4] : []),
+        statusOrdinal,
+        completeOrdinal,
+      ]);
       const contentSilent =
         collector.blockOrdinal !== 1 &&
+        !(shift && collector.blockOrdinal === 3) &&
         collector.blockOrdinal !== markerBranchOrdinal &&
         !contentRequired.has(collector.blockOrdinal);
       const markerBranchValid =
@@ -919,7 +953,7 @@ export class ControlChannelCore {
         guard.kind === "end" &&
         !guardInvalid &&
         collector.spec.observerCommandCount > 0 &&
-        collector.blockOrdinal === 5 + collector.spec.observerCommandCount
+        collector.blockOrdinal === 5 + shift + collector.spec.observerCommandCount
       )
         collector.observerEmissionObserved = true;
       if (!guardInvalid && guard.kind === "end") {
@@ -934,46 +968,15 @@ export class ControlChannelCore {
           collector.failureReason === null &&
           collector.cursorLine !== null &&
           collector.statusObserved;
-        if (!ok) {
-          // Malformed framing can reach this ordinal before the real hook ends.
-          // Semantic failure is not proof that its outstanding wire has drained.
-          this.retireAtomicPaneSnapshotCollector(
-            collector.spec.nonce,
-            collector.failureReason ?? "sentinel-order",
-          );
-          return true;
-        }
-        const result: AtomicPaneSnapshotResult = Object.freeze({
-          ok: true,
-          captureLines: Object.freeze([...collector.captureLines]),
-          cursorLine: collector.cursorLine,
-          continueObserved: collector.continueObserved,
-          statusObserved: collector.statusObserved,
-          observerEmissionObserved: collector.observerEmissionObserved,
-          started: collector.started,
-          lastCompletedOrdinal: collector.lastCompletedOrdinal,
-          captureLineCount: collector.captureLines.length,
-          captureByteCount: collector.captureBytes,
-          failureReason: null,
-        });
-        // Keep admission closed throughout settlement callbacks. Only the
-        // authenticated terminal block releases this successful attempt.
-        collector.settled = true;
-        try {
-          collector.spec.onSettled(result);
-        } catch {
-          this.failRetiredDrain("snapshot settlement callback failed");
-          return true;
-        }
-        if (this.atomicCollector === collector) {
-          this.atomicCollector = null;
-          this.notifyAtomicDrained(collector, "complete");
-        }
+        this.completeAtomicCollector(collector, ok);
       }
       return true;
     }
 
-    if (line === `%continue ${collector.spec.runtimePaneId}` && collector.blockOrdinal === 5) {
+    if (
+      line === `%continue ${collector.spec.runtimePaneId}` &&
+      collector.blockOrdinal === 5 + shift
+    ) {
       if (collector.continueObserved) collector.failureReason ??= "duplicate-sentinel";
       collector.continueObserved = true;
       return true;
@@ -988,21 +991,27 @@ export class ControlChannelCore {
       return true;
     }
 
-    const markerBranchOrdinal = 7 + collector.spec.observerCommandCount;
-    const statusOrdinal = 8 + collector.spec.observerCommandCount;
-    const completeOrdinal = 10 + collector.spec.observerCommandCount;
+    const markerBranchOrdinal = 7 + shift + collector.spec.observerCommandCount;
+    const statusOrdinal = 8 + shift + collector.spec.observerCommandCount;
+    const completeOrdinal = 10 + shift + collector.spec.observerCommandCount;
     collector.blockContentCount += 1;
-    if (collector.blockOrdinal === 1) {
+    if (collector.blockOrdinal === 1 || (shift && collector.blockOrdinal === 3)) {
       collector.captureBytes += Buffer.byteLength(line, "latin1") + 1;
       if (collector.captureBytes > collector.spec.maxCaptureBytes)
         collector.failureReason ??= "capture-byte-cap";
-      if (collector.captureLines.length >= collector.spec.maxCaptureLines)
+      if (
+        collector.captureLines.length + collector.ansiCaptureLines.length >=
+        collector.spec.maxCaptureLines
+      )
         collector.failureReason ??= "capture-line-cap";
-      else collector.captureLines.push(line);
+      else
+        (collector.blockOrdinal === 1 ? collector.captureLines : collector.ansiCaptureLines).push(
+          line,
+        );
       this.reportAtomicPaneSnapshotProgress(collector);
       return true;
     }
-    if (collector.blockOrdinal === 3) {
+    if (collector.blockOrdinal === 3 + shift) {
       if (collector.cursorLine !== null) collector.failureReason ??= "cursor-cardinality";
       else if (Buffer.byteLength(line, "latin1") > collector.spec.maxCursorBytes)
         collector.failureReason ??= "cursor-byte-cap";
@@ -1017,19 +1026,121 @@ export class ControlChannelCore {
     const expectedToken =
       collector.blockOrdinal === 2
         ? "capture-end"
-        : collector.blockOrdinal === 4
-          ? "cursor-end"
-          : collector.blockOrdinal === statusOrdinal
-            ? "status-ok"
-            : collector.blockOrdinal === completeOrdinal
-              ? "complete"
-              : null;
+        : shift && collector.blockOrdinal === 4
+          ? "ansi-capture-end"
+          : collector.blockOrdinal === 4 + shift
+            ? "cursor-end"
+            : collector.blockOrdinal === statusOrdinal
+              ? "status-ok"
+              : collector.blockOrdinal === completeOrdinal
+                ? "complete"
+                : null;
     if (expectedToken === null || token !== expectedToken)
       collector.failureReason ??= token === "start" ? "duplicate-sentinel" : "sentinel-order";
     if (collector.blockOrdinal === statusOrdinal && token === "status-ok") {
       if (collector.statusObserved) collector.failureReason ??= "duplicate-sentinel";
       collector.statusObserved = true;
     }
+    return true;
+  }
+
+  private completeAtomicCollector(
+    collector: NonNullable<ControlChannelCore["atomicCollector"]>,
+    ok: boolean,
+  ): void {
+    if (!ok) {
+      this.retireAtomicPaneSnapshotCollector(
+        collector.spec.nonce,
+        collector.failureReason ?? "sentinel-order",
+      );
+      return;
+    }
+    const result: AtomicPaneSnapshotResult = Object.freeze({
+      ok: true,
+      captureLines: Object.freeze([...collector.captureLines]),
+      ...(collector.spec.dualCapture
+        ? { ansiCaptureLines: Object.freeze([...collector.ansiCaptureLines]) }
+        : {}),
+      cursorLine: collector.cursorLine,
+      continueObserved: collector.continueObserved,
+      statusObserved: collector.statusObserved,
+      observerEmissionObserved: collector.observerEmissionObserved,
+      started: collector.started,
+      lastCompletedOrdinal: collector.lastCompletedOrdinal,
+      captureLineCount: collector.captureLines.length + collector.ansiCaptureLines.length,
+      captureByteCount: collector.captureBytes,
+      failureReason: null,
+      ...(collector.spec.kind === "pause" ? { pauseObserved: collector.pauseObserved } : {}),
+    });
+    // Settlement cannot admit another collector before terminal framing drains.
+    collector.settled = true;
+    try {
+      collector.spec.onSettled(result);
+    } catch {
+      this.failRetiredDrain("snapshot settlement callback failed");
+      return;
+    }
+    if (this.atomicCollector === collector) {
+      this.atomicCollector = null;
+      this.notifyAtomicDrained(collector, "complete");
+    }
+  }
+
+  private consumeOwnedPauseLine(line: string, token: string | null): boolean {
+    const collector = this.atomicCollector!;
+    const guard = parseControlLine(line, this.inReply);
+    if (guard.kind === "begin") {
+      if (guard.flags !== 0 || this.inReply || !Number.isSafeInteger(guard.num) || guard.num < 0)
+        collector.failureReason ??= "sentinel-order";
+      this.inReply = true;
+      this.currentReplyNum = guard.num;
+      this.currentReplyFlags = guard.flags;
+      collector.blockOrdinal += 1;
+      collector.blockContentCount = 0;
+      return true;
+    }
+    if (guard.kind === "end" || guard.kind === "error") {
+      const valid =
+        this.inReply &&
+        guard.kind === "end" &&
+        guard.flags === 0 &&
+        this.currentReplyFlags === 0 &&
+        guard.num === this.currentReplyNum;
+      if (
+        !valid ||
+        (collector.blockOrdinal === 1
+          ? collector.blockContentCount > 1
+          : collector.blockContentCount !== 1)
+      )
+        collector.failureReason ??= "sentinel-order";
+      if (valid) collector.lastCompletedOrdinal = collector.blockOrdinal;
+      this.inReply = false;
+      this.currentReplyNum = null;
+      this.currentReplyFlags = null;
+      this.currentReplyConsumesPending = false;
+      if (collector.blockOrdinal === 2)
+        this.completeAtomicCollector(
+          collector,
+          collector.failureReason === null && collector.statusObserved,
+        );
+      return true;
+    }
+    if (!this.inReply && (line === "%exit" || line.startsWith("%exit "))) {
+      this.retireAtomicPaneSnapshotCollector(collector.spec.nonce, "channel-exit");
+      return false;
+    }
+    if (!this.inReply) {
+      collector.failureReason ??= "unexpected-post-line";
+      return true;
+    }
+    collector.blockContentCount += 1;
+    if (collector.blockOrdinal === 1 && line === `%pause ${collector.spec.runtimePaneId}`) {
+      if (collector.pauseObserved) collector.failureReason ??= "duplicate-sentinel";
+      collector.pauseObserved = true;
+    } else if (collector.blockOrdinal === 2 && token === "complete") {
+      if (collector.statusObserved) collector.failureReason ??= "duplicate-sentinel";
+      collector.statusObserved = true;
+    } else collector.failureReason ??= "sentinel-order";
     return true;
   }
 
@@ -1041,7 +1152,10 @@ export class ControlChannelCore {
       Object.freeze({
         started: collector.started,
         lastCompletedOrdinal: collector.lastCompletedOrdinal,
-        captureLineCount: Math.min(collector.captureLines.length, ATOMIC_CAPTURE_LINE_HARD_CAP),
+        captureLineCount: Math.min(
+          collector.captureLines.length + collector.ansiCaptureLines.length,
+          ATOMIC_CAPTURE_LINE_HARD_CAP,
+        ),
         captureByteCount: Math.min(collector.captureBytes, ATOMIC_CAPTURE_BYTE_HARD_CAP),
         continueObserved: collector.continueObserved,
         statusObserved: collector.statusObserved,
