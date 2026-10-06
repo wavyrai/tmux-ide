@@ -10,13 +10,15 @@ for scripts, and **wait** commands for coordination.
 Notifications and the event stream come from the background updater described
 in [tmux chrome](/docs/the-dock#the-background-updater). It runs once any
 session is adopted or created from the app. Inside the app itself, Home's
-**Needs attention** filter and Attention (`F7`) show the same signal.
+**Needs attention** filter and Attention (`F7`) show the same signal. For exact
+Claude Code states, run `tmux-ide integration install claude` once; see
+[Agent detection](/docs/agent-detection).
 
-## Notifications
+## Get notified when an agent is blocked or done
 
 When an agent anywhere in the fleet goes **blocked** or **done**, tmux-ide fires
-a toast. Because the chrome lives server-side, the toast appears on **every
-client attached to the session** — the laptop and the phone both light up.
+a toast. The toast is a tmux message, so it appears on **every tmux client
+attached to the session**, including one on another device.
 
 Notifications are configured in `~/.tmux-ide/config.json`:
 
@@ -54,7 +56,7 @@ In the app, pane headers, the sidebar and Home show each agent's state. In
 [tmux chrome](/docs/the-dock) sessions, each pane's border chip reflects its
 agent, e.g. `claude · working`.
 
-## The event stream
+## Stream status changes as JSONL
 
 Every status transition is also an append-only JSONL event. Follow it live or
 snapshot it:
@@ -69,7 +71,7 @@ session or one created from the app. Pipe the stream anywhere — a log, a webho
 relay, a status bar of your own. With `tmux-ide serve` running, `events --socket`
 receives pushed events from its local control socket instead.
 
-## Coordination primitives
+## Wait for an agent in scripts
 
 Two `wait` commands block until a condition is met, so you can script the fleet.
 Both exit `0` on match and `1` on timeout.
@@ -98,3 +100,5 @@ way to wait on a dev server booting, a build finishing, or an error appearing.
 
 - [Agent detection](/docs/agent-detection) — where the transitions come from
 - [tmux chrome](/docs/the-dock) — the status bar and the background updater
+- [Multi-agent teams](/docs/multi-agent-teams) — use `done` and `blocked` as the handoff signal
+- [Configuration](/docs/configuration#notifications) — every notification option

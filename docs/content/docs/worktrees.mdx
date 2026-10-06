@@ -7,7 +7,7 @@ description: "Run parallel agents on parallel branches: tmux-ide worktree create
 session in it, in one command. Use it to run two agents on two branches at once
 without them touching each other's files.
 
-## Create
+## Create a worktree and session
 
 ```bash
 tmux-ide worktree create fix/login
@@ -53,7 +53,26 @@ directory next to the repo. Override the base globally in
 An empty value keeps the sibling-directory default; a relative path is resolved
 against the repo. See [Configuration](/docs/configuration#other-sections).
 
+## Example: one agent per branch
+
+Each worktree gets a session named `<project>@<branch>`, with `/` replaced by
+`-`. The project is the workspace `name`, or the repo folder name. In a repo
+folder named `myapp`:
+
+```bash
+tmux-ide worktree create feat/api   # session myapp@feat-api
+tmux-ide worktree create feat/ui    # session myapp@feat-ui
+```
+
+Start an agent in each session, for example `claude`, then wait for one to
+finish:
+
+```bash
+tmux-ide wait agent-status myapp@feat-api --status done
+```
+
 ## See also
 
 - [Restore and resume](/docs/restore-resume) — worktree sessions are snapshotted too
 - [tmux chrome](/docs/the-dock) — worktree sessions arrive pre-adopted
+- [Multi-agent teams](/docs/multi-agent-teams) — dispatch work to each worktree's agent

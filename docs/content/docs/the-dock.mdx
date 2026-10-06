@@ -38,7 +38,7 @@ Adopting a session starts a small background updater in an internal
 `_tmux-ide-chrome` tmux session. Besides refreshing the bar, it:
 
 - sends [notifications](/docs/notifications-events) when an agent becomes blocked or done;
-- writes the [event log](/docs/notifications-events#the-event-stream);
+- writes the [event log](/docs/notifications-events#stream-status-changes-as-jsonl);
 - writes the snapshot that [`tmux-ide restore`](/docs/restore-resume) rebuilds from;
 - captures Codex and Cursor session ids for resume.
 
