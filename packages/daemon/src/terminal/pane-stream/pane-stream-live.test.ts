@@ -231,7 +231,11 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
     // Observe real outbound flow notifications while S's receive side is
     // paused. A pre-drain ledger peak can disappear into the OS buffer and
     // does not prove that the subscriber has actually been parked.
+    const receiverPort = (clientS.ws as unknown as { _socket: { localPort: number } })._socket
+      .localPort;
+    expect(receiverPort).toBeGreaterThan(0);
     let pausedOnWire = false;
+    const flowTrace: Array<{ state: unknown; pane: unknown }> = [];
     const originalSend = WebSocket.prototype.send;
     vi.spyOn(WebSocket.prototype, "send").mockImplementation(function (
       this: WebSocket,
@@ -240,8 +244,12 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
       const raw = args[0];
       if (typeof raw === "string" && raw.includes('"flow"')) {
         const frame = JSON.parse(raw) as Record<string, unknown>;
-        if (frame.type === "flow" && frame.pane === floodPane && frame.state === "paused")
-          pausedOnWire = true;
+        const targetPort = (this as unknown as { _socket: { remotePort: number } })._socket
+          .remotePort;
+        if (targetPort === receiverPort && frame.type === "flow" && frame.pane === floodPane) {
+          flowTrace.push({ state: frame.state, pane: frame.pane });
+          pausedOnWire = frame.state === "paused";
+        }
       }
       return originalSend.apply(this, args);
     });
@@ -278,6 +286,53 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
       { timeout: 20_000 },
     );
 
+    // Prove input reaches the native pane while this exact observer socket's
+    // flood delivery is still parked; later input after resume cannot prove it.
+    expect(pausedOnWire).toBe(true);
+    expect(clientS.ws.isPaused).toBe(true);
+    const inputMarker = `LIVE_INPUT_${randomUUID().replaceAll("-", "")}_`;
+    const inputFlowStart = flowTrace.length;
+    clientH.ws.send(
+      JSON.stringify({
+        type: "input",
+        kind: "text",
+        pane: quietC,
+        seq: 1,
+        data: `echo ${inputMarker}$((6*7))`,
+      }),
+    );
+    clientH.ws.send(
+      JSON.stringify({ type: "input", kind: "key", pane: quietC, seq: 2, data: "Enter" }),
+    );
+    await vi.waitFor(
+      () => {
+        expect(framesOf(clientH, "input-ack", quietC).map((frame) => frame.seq)).toEqual([1, 2]);
+        expect(textOf(clientH, quietC)).toContain(`${inputMarker}42`);
+        expect(runTmux(["capture-pane", "-p", "-t", runtimePanes[2]!])).toContain(
+          `${inputMarker}42`,
+        );
+        expect(pausedOnWire).toBe(true);
+        expect(clientS.ws.isPaused).toBe(true);
+      },
+      { timeout: 20_000 },
+    );
+
+    expect(flowTrace.slice(inputFlowStart).some((frame) => frame.state !== "paused")).toBe(false);
+    expect(framesOf(clientS, "input-ack", quietC)).toHaveLength(0);
+    const stalledInputReceipt = {
+      receiverPort,
+      observerRequestId: issuedS.requestId,
+      inputRequestId: issuedH.requestId,
+      observerPane: floodPane,
+      inputPane: quietC,
+      nativeInputPane: runtimePanes[2],
+      marker: `${inputMarker}42`,
+      acknowledgments: framesOf(clientH, "input-ack", quietC).map((frame) => frame.seq),
+      observerStillPaused: pausedOnWire && clientS.ws.isPaused,
+      flowBeforeInput: flowTrace.slice(0, inputFlowStart),
+      flowDuringInput: flowTrace.slice(inputFlowStart),
+    };
+
     // ── Resume S: its own flow events + a fresh atomic seed batch arrive ──
     clientS.ws.resume();
     await vi.waitFor(
@@ -295,27 +350,6 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
     await vi.waitFor(
       () => {
         expect(textOf(clientS, quietB)).toContain("DURING_STALL_42");
-      },
-      { timeout: 20_000 },
-    );
-
-    // ── Live interactive input through the wire ────────────────────────────
-    clientH.ws.send(
-      JSON.stringify({
-        type: "input",
-        kind: "text",
-        pane: quietC,
-        seq: 1,
-        data: "echo LIVE_INPUT_$((6*7))",
-      }),
-    );
-    clientH.ws.send(
-      JSON.stringify({ type: "input", kind: "key", pane: quietC, seq: 2, data: "Enter" }),
-    );
-    await vi.waitFor(
-      () => {
-        expect(framesOf(clientH, "input-ack", quietC).map((frame) => frame.seq)).toEqual([1, 2]);
-        expect(textOf(clientH, quietC)).toContain("LIVE_INPUT_42");
       },
       { timeout: 20_000 },
     );
@@ -358,5 +392,16 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
       { timeout: 10_000 },
     );
     expect(runTmux(["list-sessions", "-F", "#{session_name}"])).toContain(session);
+    process.stdout.write(
+      `TM07 stalled observer input: ${JSON.stringify({
+        ...stalledInputReceipt,
+        observerRecovered: framesOf(clientS, "flow", floodPane).some(
+          (frame) => frame.state === "resumed",
+        ),
+        clientsClosed:
+          clientS.ws.readyState === WebSocket.CLOSED && clientH.ws.readyState === WebSocket.CLOSED,
+        nativeClientsAbsent: true,
+      })}\n`,
+    );
   });
 });
