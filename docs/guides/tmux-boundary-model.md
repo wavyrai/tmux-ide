@@ -455,6 +455,13 @@ real server failures. The fixture preserves native window sizing policy and
 records bounded teardown and private server/client/producer absence. It runs in
 the bundled boundary gate; stock snapshot limitations remain separate.
 
+The navigation variant adds six individually converged transitions across a
+split pane, a second window, and zoom/unzoom while the client collector remains
+unresolved. Native acknowledgements verify client dimensions, selected window,
+target-window active pane and zoom state. Expected geometry comes from the target
+pane itself, including while another window is selected. Both variants verify
+all private producers exit after teardown.
+
 ## Next extensions, in order
 
 - Broaden the bounded stock lifecycle model to additional cancellation phases,

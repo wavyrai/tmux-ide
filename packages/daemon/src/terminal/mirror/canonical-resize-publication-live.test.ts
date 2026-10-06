@@ -83,9 +83,9 @@ it("detects incoherent cursor and obsolete same-size capture epochs", () => {
 });
 
 const binary = process.env.TMUX_IDE_BOUNDARY_TEST_BINARY;
-it.skipIf(!binary)(
-  "publishes coherent canonical states while attached PTY resize crosses active captures",
-  async () => {
+it.skipIf(!binary).each(["resize", "navigation-zoom"] as const)(
+  "publishes coherent canonical states while attached PTY %s crosses active captures",
+  async (scenario) => {
     const root = mkdtempSync(join(tmpdir(), "tmux-canonical-resize-"));
     const socket = `zz-canonical-resize-${process.pid}-${randomUUID().slice(0, 8)}`;
     const env = { ...process.env, HOME: root, TMUX: "", TERM: "xterm-256color" };
@@ -129,12 +129,21 @@ it.skipIf(!binary)(
     let layoutKey = "",
       batchReset = false,
       batchSeed = false;
-    let pendingResize: readonly [number, number] | null = null;
+    type Step = {
+      size: readonly [number, number];
+      commands: readonly string[][];
+      focusWindow: string;
+      targetActivePane: string;
+      zoomed: boolean;
+    };
+    let pendingResize: Step | null = null;
+    let expectedPaneSize: readonly [number, number] | null = null;
     let overlap = 0,
       sequence = 0,
       producerPid = 0,
       clientExited = false;
     let failure: string | undefined;
+    const producerPids = new Set<number>();
     const absent = (pid: number) => {
       try {
         process.kill(pid, 0);
@@ -165,6 +174,85 @@ it.skipIf(!binary)(
       );
       run("set-option", "-t", "resize", "status", "off");
       producerPid = Number(run("display-message", "-p", "-t", pane, "#{pane_pid}"));
+      producerPids.add(producerPid);
+      const targetWindow = run("display-message", "-p", "-t", pane, "#{window_id}");
+      let sibling = pane;
+      let otherWindow = targetWindow;
+      if (scenario === "navigation-zoom") {
+        sibling = run(
+          "split-window",
+          "-h",
+          "-d",
+          "-t",
+          pane,
+          "-P",
+          "-F",
+          "#{pane_id}",
+          "exec sleep 120",
+        );
+        otherWindow = run(
+          "new-window",
+          "-d",
+          "-t",
+          "resize",
+          "-P",
+          "-F",
+          "#{window_id}",
+          "exec sleep 120",
+        );
+      }
+      for (const pid of run("list-panes", "-s", "-t", "resize", "-F", "#{pane_pid}").split("\n")) {
+        const value = Number(pid);
+        expect(Number.isSafeInteger(value) && value > 0).toBe(true);
+        producerPids.add(value);
+      }
+      run("select-window", "-t", targetWindow);
+      run("select-pane", "-t", pane);
+      run("select-pane", "-t", pane, "-T", "fixture-target");
+      const step = (
+        size: readonly [number, number],
+        commands: string[][] = [],
+        focusWindow = targetWindow,
+        targetActivePane = pane,
+        zoomed = false,
+      ): Step => ({ size, commands, focusWindow, targetActivePane, zoomed });
+      const schedule: Step[] =
+        scenario === "resize"
+          ? [step([92, 28]), step([136, 38]), step([92, 28]), step([136, 38])]
+          : [
+              step([92, 28], [["select-pane", "-t", sibling]], targetWindow, sibling),
+              step(
+                [136, 38],
+                [
+                  ["select-pane", "-t", pane],
+                  ["resize-pane", "-Z", "-t", pane],
+                ],
+                targetWindow,
+                pane,
+                true,
+              ),
+              step([92, 28], [["select-window", "-t", otherWindow]], otherWindow, pane, true),
+              step([136, 38], [["select-window", "-t", targetWindow]], targetWindow, pane, true),
+              step(
+                [92, 28],
+                [
+                  ["resize-pane", "-Z", "-t", pane],
+                  ["select-pane", "-t", sibling],
+                ],
+                targetWindow,
+                sibling,
+              ),
+              step(
+                [136, 38],
+                [
+                  ["select-pane", "-t", pane],
+                  ["resize-pane", "-Z", "-t", pane],
+                ],
+                targetWindow,
+                pane,
+                true,
+              ),
+            ];
       client = defaultNodePtyAdapter.spawnSync(
         {
           shell: binary!,
@@ -207,7 +295,8 @@ it.skipIf(!binary)(
                 onProgress: (progress) => {
                   spec.onProgress?.(progress);
                   if (spec.kind !== "pause" && progress.started && pendingResize) {
-                    const [cols, rows] = pendingResize;
+                    const transition = pendingResize;
+                    const [cols, rows] = transition.size;
                     pendingResize = null;
                     try {
                       trace.push({
@@ -219,6 +308,7 @@ it.skipIf(!binary)(
                         rows,
                       });
                       client!.resize(cols, rows);
+                      for (const command of transition.commands) run(...command);
                       run("send-keys", "-t", pane, "-l", "x");
                       // Native commands progress while this reader callback is still in
                       // the real collector: prove both server resize and producer output.
@@ -229,9 +319,53 @@ it.skipIf(!binary)(
                           "-p",
                           "-t",
                           pane,
-                          "#{window_width}|#{window_height}|#{pane_title}",
+                          "#{pane_width}|#{pane_height}|#{pane_title}|#{window_zoomed_flag}|#{window_width}|#{window_height}",
                         );
-                        if (observed === `${cols}|${rows}|tick-${overlap + 1}`) {
+                        const [paneCols, paneRows, title, zoom, windowCols, windowRows] =
+                          observed.split("|");
+                        const focusedWindow = run(
+                          "display-message",
+                          "-p",
+                          "-t",
+                          "resize",
+                          "#{window_id}",
+                        );
+                        const targetActivePaneObserved = run(
+                          "display-message",
+                          "-p",
+                          "-t",
+                          targetWindow,
+                          "#{pane_id}",
+                        );
+                        const clientSize = run(
+                          "list-clients",
+                          "-t",
+                          "resize",
+                          "-F",
+                          "#{client_control_mode}|#{client_width}|#{client_height}",
+                        );
+                        if (
+                          (transition.focusWindow !== targetWindow ||
+                            (Number(windowCols) === cols && Number(windowRows) === rows)) &&
+                          title === `tick-${overlap + 1}` &&
+                          zoom === (transition.zoomed ? "1" : "0") &&
+                          focusedWindow === transition.focusWindow &&
+                          targetActivePaneObserved === transition.targetActivePane &&
+                          clientSize.split("\n").includes(`0|${cols}|${rows}`)
+                        ) {
+                          expectedPaneSize = [Number(paneCols), Number(paneRows)];
+                          trace.push({
+                            seq: ++sequence,
+                            kind: "native-transition-ack",
+                            scenario,
+                            commands: transition.commands,
+                            targetWindow,
+                            focusedWindow,
+                            targetActivePaneObserved,
+                            zoomed: zoom === "1",
+                            clientSize,
+                            paneSize: expectedPaneSize,
+                          });
                           seen = true;
                           break;
                         }
@@ -257,7 +391,9 @@ it.skipIf(!binary)(
         },
       });
       const describe = await service.describeSession("resize");
-      const semantic = describe.panes[0]!.semanticPaneId;
+      const semantic = describe.panes.find(
+        (entry) => entry.title === "fixture-target",
+      )!.semanticPaneId;
       const subscribe = service.subscribe.bind(service);
       service.subscribe = async (request) => {
         const sub = await subscribe({
@@ -427,35 +563,35 @@ it.skipIf(!binary)(
           errors.push(String(error));
         }
       });
-      for (const size of [
-        [92, 28],
-        [136, 38],
-        [92, 28],
-        [136, 38],
-      ] as const) {
-        pendingResize = size;
+      for (const transition of schedule) {
+        expectedPaneSize = null;
+        pendingResize = transition;
         upstream!.reseed();
         await vi.waitFor(
           () => {
             expect(errors).toEqual([]);
             expect(pendingResize).toBeNull();
-            expect(state?.snapshot?.cols).toBe(size[0]);
-            expect(state?.snapshot?.rows).toBe(size[1]);
+            expect(expectedPaneSize).not.toBeNull();
+            expect(state?.snapshot?.cols).toBe(expectedPaneSize![0]);
+            expect(state?.snapshot?.rows).toBe(expectedPaneSize![1]);
+            expect(state?.snapshot?.grid[1]!.cells.map((cell) => cell.grapheme).join("")).toContain(
+              `OUT${overlap}`,
+            );
           },
           { timeout: 5000 },
         );
-        expect(run("show-options", "-wv", "-t", "resize", "window-size")).toBe(policy);
+        expect(run("show-options", "-wv", "-t", targetWindow, "window-size")).toBe(policy);
       }
-      expect(overlap).toBe(4);
+      expect(overlap).toBe(schedule.length);
       expect(publications.length).toBeGreaterThan(4);
       expect(errors).toEqual([]);
-      expect(run("capture-pane", "-p", "-t", pane)).toContain("OUT4");
+      expect(run("capture-pane", "-p", "-t", pane)).toContain(`OUT${schedule.length}`);
       const nativeCursor = run("display-message", "-p", "-t", pane, "#{cursor_x},#{cursor_y}")
         .split(",")
         .map(Number);
       await vi.waitFor(() =>
         expect(state?.snapshot?.grid[1]!.cells.map((cell) => cell.grapheme).join("")).toContain(
-          "OUT4",
+          `OUT${schedule.length}`,
         ),
       );
       expect([state!.snapshot!.cursor.x, state!.snapshot!.cursor.y]).toEqual(nativeCursor);
@@ -540,7 +676,7 @@ it.skipIf(!binary)(
       try {
         await vi.waitFor(() => {
           if (client) expect(clientExited).toBe(true);
-          if (producerPid > 0) expect(absent(producerPid)).toBe(true);
+          for (const pid of producerPids) expect(absent(pid)).toBe(true);
         });
       } catch (error) {
         cleanupErrors.push(String(error));
@@ -551,6 +687,7 @@ it.skipIf(!binary)(
         JSON.stringify(
           {
             root,
+            scenario,
             socket,
             binary,
             binarySha256: hash(binary!),
@@ -567,7 +704,7 @@ it.skipIf(!binary)(
               ]),
             ),
             scope:
-              "Delivered canonical callbacks between subscription and teardown; bootstrap replay explicit. Four individually converged capture overlaps, not autonomous continuous output or unquiesced reversals; no host paint claim.",
+              "Delivered canonical callbacks between subscription and teardown; bootstrap replay explicit. Individually converged capture overlaps with actual PTY sizing and optional native pane/window navigation plus zoom, not autonomous continuous output or unquiesced reversals; no host paint claim.",
             trace,
             batches,
             publications,
@@ -580,6 +717,7 @@ it.skipIf(!binary)(
               serverAbsentStatus,
               clientExited,
               producerAbsent: producerPid > 0 ? absent(producerPid) : null,
+              producers: [...producerPids].map((pid) => ({ pid, absent: absent(pid) })),
             },
           },
           null,
