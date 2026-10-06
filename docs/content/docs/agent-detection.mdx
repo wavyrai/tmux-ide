@@ -12,8 +12,13 @@ exactly how it decided.
 The same states appear on Home, in the sidebar and pane headers, and in the
 [tmux chrome](/docs/the-dock).
 
+## How detection works
+
 The four states are **blocked**, **working**, **done**, and **idle** (plus
-**unknown** when there's no signal at all).
+**unknown** when there's no signal at all). A fresh self-report decides the
+state; without one, tmux-ide infers it from the pane's process and screen.
+
+<AgentDetectionFigure />
 
 ## How agents report their own state
 
