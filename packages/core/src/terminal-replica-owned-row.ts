@@ -59,3 +59,32 @@ export function freezeOwnedTerminalReplicaRow(row: TerminalReplicaRow): Terminal
   OWNED_ROWS.add(frozen);
   return frozen;
 }
+
+/** Internal incremental copy seam. No caller-owned array or row can be branded.
+ * Ownership establishes detached immutable data, never schema validity. */
+export function createOwnedTerminalReplicaRowBuilder() {
+  const cells: TerminalReplicaCell[] = [];
+  let finished = false;
+  const assertOpen = () => {
+    if (finished) throw new Error("Terminal replica row builder already finished");
+  };
+  return Object.freeze({
+    append(source: TerminalReplicaCell): TerminalReplicaCell {
+      assertOpen();
+      const cell = freezeOwnedTerminalReplicaCell(source);
+      cells.push(cell);
+      return cell;
+    },
+    finish(source: TerminalReplicaRow, wrapped: boolean): TerminalReplicaRow {
+      assertOpen();
+      finished = true;
+      const row = Object.freeze({
+        ...source,
+        wrapped,
+        cells: Object.freeze(cells),
+      }) as unknown as TerminalReplicaRow;
+      OWNED_ROWS.add(row);
+      return row;
+    },
+  });
+}
