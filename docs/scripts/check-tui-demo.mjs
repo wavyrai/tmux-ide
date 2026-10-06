@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -55,18 +55,28 @@ for (const variant of variants)
   for (const state of ["before", "after"])
     if (!sprite.includes(`id="${variant}-${state}"`))
       failures.push(`tui-figures.svg lacks #${variant}-${state}`);
-const cursors = readdirSync(resolve(docsDir, "public/mockup-motion"))
-  .map((file) => file.replace(/\.svg$/u, ""))
-  .sort();
-if (JSON.stringify(cursors) !== JSON.stringify(variants))
-  failures.push(
-    `public/mockup-motion must hold one cursor per figure (${variants.join(", ")}); run \`pnpm --dir docs generate\``,
-  );
+// Each figure names who performs its action; the cursor is pure CSS over the frames.
+const actors = new Set(["You", "Claude Code", "Codex"]);
+for (const [variant, figure] of Object.entries(frames.figures)) {
+  const cursor = figure.cursor;
+  const point = (p) => Array.isArray(p) && p.length === 2 && p.every((v) => v >= 0 && v <= 100);
+  if (
+    !cursor ||
+    !actors.has(cursor.actor) ||
+    !["click", "drag", "hover"].includes(cursor.kind) ||
+    ![cursor.from, cursor.at, cursor.to].every(point)
+  )
+    failures.push(
+      `${variant} figure needs a named cursor with from/at/to points inside the figure`,
+    );
+}
+if (!sprite.includes('<symbol id="cursor"'))
+  failures.push("tui-figures.svg lacks the shared #cursor arrow symbol");
 
 if (failures.length > 0) {
   console.error(`TUI demo check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
 }
 console.log(
-  `TUI demo verified: current with the app's presentation code, self-contained glyphs, ${variants.length} figures with cursors.`,
+  `TUI demo verified: current with the app's presentation code, self-contained glyphs, ${variants.length} figures with named cursors.`,
 );

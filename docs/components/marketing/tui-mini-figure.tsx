@@ -2,13 +2,14 @@ import { cn } from "@/lib/cn";
 import type { CSSProperties } from "react";
 import { TechnicalCaption } from "./technical-caption";
 import frames from "./tui-mini-figure-frames.json";
+import { TuiCursor, cursorPath, type CursorActor } from "./tui-cursor";
 
 /**
  * Landing-page mini-figures. Each is a crop of the real `tmux-ide app`,
  * rendered by `pnpm demo:tui` (docs/scripts/tui-demo-figures.ts) in the app's
  * dark and light themes into one cached sprite, public/tui-figures.svg: the
- * "before" frame, then the cells that change when the Matinee cursor performs
- * the action. Colours arrive as inherited `light-dark()` custom properties, so
+ * "before" frame, then the cells that change when the named cursor performs
+ * the action (see tui-cursor.tsx). Colours arrive as inherited `light-dark()` custom properties, so
  * the figures follow the site theme; glyphs use Fig. 01's Geist Mono subset.
  */
 export type TuiFigureVariant =
@@ -80,14 +81,12 @@ export function TuiMiniFigure({ variant, figure, className, motionCount, motionI
           <use href={`${frames.sprite}#${variant}-before`} />
           <use className="tui-motion-after" href={`${frames.sprite}#${variant}-after`} />
         </svg>
-        <img
-          src={`/mockup-motion/${variant}.svg`}
-          alt=""
-          aria-hidden="true"
-          loading="eager"
-          decoding="async"
-          className="tui-motion-cursor pointer-events-none absolute inset-0 block h-full w-full select-none"
-        />
+        <div className="tui-figure-cursors" data-kind={frame.cursor.kind} aria-hidden="true">
+          <TuiCursor
+            actor={frame.cursor.actor as CursorActor}
+            style={cursorPath(frame.cursor.from, frame.cursor.at, frame.cursor.to)}
+          />
+        </div>
       </div>
       <TechnicalCaption id={`${figureId}-caption`} number={figure.number}>
         {figure.label}

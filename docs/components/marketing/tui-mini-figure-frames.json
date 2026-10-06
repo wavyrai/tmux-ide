@@ -2,46 +2,97 @@
   "width": 504,
   "height": 254.8,
   "css": "@font-face{font-family:tui-figure;font-weight:400;font-display:block;src:url(/fonts/tui-demo-regular.woff2) format(\"woff2\")}\n@font-face{font-family:tui-figure;font-weight:700;font-display:block;src:url(/fonts/tui-demo-bold.woff2) format(\"woff2\")}\n.tui-figure{font-family:tui-figure,var(--font-geist-mono),ui-monospace,monospace;font-size:14px;white-space:pre;text-rendering:geometricPrecision;--k0:light-dark(#ffffff,#ffffff);--k1:light-dark(#626262,#08080b);--k2:light-dark(#0d0d10,#5b5b5f);--k3:light-dark(#656566,#0b0b0f);--k4:light-dark(#2c2c2c,#393939);--k5:light-dark(#092b56,#284c69);--k6:light-dark(#545e69,#142738);--k7:light-dark(#090e15,#696969);--k8:light-dark(#616163,#09090d);--k9:light-dark(#525860,#141d2b);--ka:light-dark(#626262,#050507);--kb:light-dark(#e4e4e4,#181821);--kc:light-dark(#202027,#dedee6);--kd:light-dark(#6c6c6c,#8a8a8a);--ke:light-dark(#006c7a,#62d9e8);--kf:light-dark(#172334,#ffffff);--kg:light-dark(#cce4ff,#315f89);--kh:light-dark(#eeeeee,#13131a);--ki:light-dark(#656566,#060607);--kj:light-dark(#f5f5f7,#1b1b24);--kk:light-dark(#1769d2,#62b9ff);--kl:light-dark(#ececf1,#17171f);--km:light-dark(#c7d6e9,#304668);--kn:light-dark(#eeeeee,#0b0b10);--ko:light-dark(#f5f5f7,#0e0e12);--kp:light-dark(#555563,#a5a5b3);--kq:light-dark(#1769d2,#68a8ff);--kr:light-dark(#61616c,#8b8b99);--ks:light-dark(#18764b,#62d49a);--kt:light-dark(#d77757,#d77757);--ku:light-dark(#d4b963,#d4b963);--kv:light-dark(#8d5c00,#f0bd5c);--kw:light-dark(#dedee5,#242430);--kx:light-dark(#dbd1be,#3f3527);--ky:light-dark(#3a2600,#634e26);--kz:light-dark(#0a311f,#28573f);--k10:light-dark(#593124,#593124)}",
-  "sprite": "/tui-figures.svg?v=d70b266902",
+  "sprite": "/tui-figures.svg?v=f55687b56c",
   "figures": {
     "names": {
       "label": "Renaming an agent's pane so the team can refer to it by name",
-      "cursor": [["click", 256.2, 209.3]]
+      "cursor": {
+        "actor": "You",
+        "kind": "click",
+        "from": [67.5, 89.29],
+        "at": [15.83, 60.71],
+        "to": [20.83, 17.86]
+      }
     },
     "status": {
       "label": "Agent states in the sidebar and in each pane header",
-      "cursor": [
-        ["move", 88.2, 63.7],
-        ["move", 407.4, 27.3]
-      ]
+      "cursor": {
+        "actor": "Codex",
+        "kind": "hover",
+        "from": [67.5, 67.86],
+        "at": [5.83, 25],
+        "to": [10.83, 25]
+      }
     },
     "navigate": {
       "label": "Choosing an agent on Home opens its exact pane",
-      "cursor": [["click", 88.2, 209.3]]
+      "cursor": {
+        "actor": "You",
+        "kind": "click",
+        "from": [67.5, 46.43],
+        "at": [15.83, 82.14],
+        "to": [90.83, 10.71]
+      }
     },
     "tmux": {
       "label": "After the app quits, the same sessions are still running in tmux",
-      "cursor": [["move", 172.2, 81.9]]
+      "cursor": {
+        "actor": "You",
+        "kind": "hover",
+        "from": [67.5, 67.86],
+        "at": [24.17, 10.71],
+        "to": [27.5, 10.71]
+      }
     },
     "daemon": {
       "label": "Daemon-observed agent state across every session on Home",
-      "cursor": [["move", 256.2, 81.9]]
+      "cursor": {
+        "actor": "Codex",
+        "kind": "hover",
+        "from": [67.5, 89.29],
+        "at": [5.83, 82.14],
+        "to": [9.17, 82.14]
+      }
     },
     "opentui": {
       "label": "The command palette over agent-aware panes",
-      "cursor": [["click", 457.8, 245.7]]
+      "cursor": {
+        "actor": "You",
+        "kind": "click",
+        "from": [50.83, 75],
+        "at": [84.17, 96.43],
+        "to": [20.83, 39.29]
+      }
     },
     "window": {
       "label": "Adding a window from the window strip",
-      "cursor": [["click", 491.4, 27.3]]
+      "cursor": {
+        "actor": "You",
+        "kind": "click",
+        "from": [67.5, 60.71],
+        "at": [97.5, 10.71],
+        "to": [40.83, 10.71]
+      }
     },
     "resize": {
       "label": "Dragging the divider between two panes",
-      "cursor": [
-        ["click", 256.2, 118.3],
-        ["move", 340.2, 118.3]
-      ]
+      "cursor": {
+        "actor": "You",
+        "kind": "drag",
+        "from": [50.83, 75],
+        "at": [50.83, 46.43],
+        "to": [67.5, 46.43]
+      }
     },
-    "focus": { "label": "Moving focus to another pane", "cursor": [["click", 373.8, 118.3]] }
+    "focus": {
+      "label": "Moving focus to another pane",
+      "cursor": {
+        "actor": "You",
+        "kind": "click",
+        "from": [24.17, 75],
+        "at": [67.5, 46.43],
+        "to": [70.83, 53.57]
+      }
+    }
   }
 }
