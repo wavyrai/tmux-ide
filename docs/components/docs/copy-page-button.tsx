@@ -6,9 +6,11 @@ import { CopyGlyph, useCopy } from "@/components/copy-status";
 export function CopyPageButton({
   markdownUrl,
   className = "docs-action",
+  glyphSize = 16,
 }: {
   markdownUrl: string;
   className?: string;
+  glyphSize?: number;
 }) {
   const { status, copy } = useCopy();
 
@@ -23,7 +25,7 @@ export function CopyPageButton({
   return (
     <>
       <button type="button" onClick={onClick} className={className}>
-        <CopyGlyph status={status} />
+        <CopyGlyph status={status} size={glyphSize} />
         Copy page
       </button>
       <span
