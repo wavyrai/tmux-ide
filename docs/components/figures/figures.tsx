@@ -28,9 +28,9 @@ export function AgentTeamsFigure({
       accent="agent teams."
       subtitle={
         <>
-          One agent per tmux pane, across harnesses. Run it with Claude Code agent teams or{" "}
-          <code>tmux-ide send</code> and <code>wait</code>; tmux-ide shows every agent and its
-          status. It does not orchestrate them.
+          One agent per tmux pane, across harnesses. Coordinate them with <code>tmux-ide send</code>{" "}
+          and <code>wait</code>, or use Claude Code agent teams for all-Claude teams; tmux-ide shows
+          every agent and its status. It does not orchestrate them.
         </>
       }
       label={label}
@@ -165,7 +165,7 @@ export function ArchitectureFigure() {
           name: "Authority",
           note: {
             label: "One authority",
-            text: "Only the daemon observes or changes live tmux state.",
+            text: "For the app and automation, the daemon is the only path to live tmux state.",
           },
           cards: [
             {
@@ -182,7 +182,7 @@ export function ArchitectureFigure() {
           name: "Clients",
           note: {
             label: "Many views",
-            text: "Clients act through the daemon; plain tmux clients still attach directly.",
+            text: "The app and automation act through the daemon; plain tmux clients still attach directly.",
           },
           cards: [
             {
@@ -279,7 +279,7 @@ export function AgentDetectionFigure({ id = "detection-figure" }: { id?: string 
             {
               cap: "Screen manifests",
               name: "Visible output",
-              mono: "tuned rules per agent",
+              mono: "rule set per agent",
               duty: "Infers working, blocked or done",
             },
           ],
