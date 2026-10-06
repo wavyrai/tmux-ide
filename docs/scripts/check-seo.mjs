@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { LEGACY_REDIRECTS } from "../lib/legacy-redirects.mjs";
 import { sourcesForPath } from "./git-date-sources.mjs";
 
 const docsDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -221,6 +222,22 @@ for (const [, href] of html.matchAll(/href="(\/docs[^"]*)"/gu)) {
   if (!target) throw new Error(`Homepage links to ${href}, which is not a built docs page`);
   if (anchor && !target.includes(`id="${anchor}"`))
     throw new Error(`Homepage links to ${href}, but that page has no #${anchor} heading`);
+}
+
+// Retired docs URLs: every redirect lands on a built page, never on another
+// redirect, and no redirect shadows a page that still exists.
+for (const [source, destination] of Object.entries(LEGACY_REDIRECTS)) {
+  if (builtPagesByPath.has(source))
+    throw new Error(`Redirect source ${source} is still a built page; remove the redirect`);
+  if (!builtPagesByPath.has(destination))
+    throw new Error(`Redirect ${source} → ${destination} does not land on a built page`);
+}
+const configuredRedirects = new Set(
+  routes.redirects.filter((route) => route.statusCode === 308).map((route) => route.source),
+);
+for (const source of Object.keys(LEGACY_REDIRECTS)) {
+  if (!configuredRedirects.has(source))
+    throw new Error(`Legacy redirect ${source} is not served as a permanent redirect`);
 }
 
 const headerKeys = new Set(
