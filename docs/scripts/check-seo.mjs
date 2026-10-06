@@ -88,6 +88,7 @@ for (const marker of [
   '"@type":"TechArticle"',
   '"@type":"BreadcrumbList"',
   '"dateModified":"',
+  '"datePublished":"',
   'rel="alternate" type="text/markdown" href="',
 ]) {
   if (!docsHtml.includes(marker))
@@ -191,6 +192,10 @@ for (const [path, page] of builtPages) {
   const description = decode(page.match(/<meta name="description" content="([^"]*)"/u)?.[1] ?? "");
   if (!description || description.length > 160)
     throw new Error(`${path} meta description must be 1–160 chars (is ${description.length})`);
+  const published = page.match(/"datePublished":"([^"]+)"/u)?.[1];
+  const modified = page.match(/"dateModified":"([^"]+)"/u)?.[1];
+  if (published && modified && Date.parse(published) > Date.parse(modified))
+    throw new Error(`${path} datePublished ${published} is after dateModified ${modified}`);
   const noindex = /<meta name="robots" content="noindex/u.test(page);
   if (noindex && sitemapPaths.has(path))
     throw new Error(`${path} is noindex but listed in the sitemap`);

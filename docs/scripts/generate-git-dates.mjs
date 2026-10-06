@@ -40,18 +40,32 @@ function lastCommitDate(paths) {
   return new Date(iso).toISOString();
 }
 
-const pages = {};
-for (const file of readdirSync(resolve(docsDir, contentDir), { recursive: true })) {
-  if (/\.mdx?$/u.test(file)) pages[file] = lastCommitDate([`${contentDir}/${file}`]);
+/** Date of the commit that first added `path` (following renames), or null. */
+function firstCommitDate(path) {
+  const added = git(["log", "--follow", "--diff-filter=A", "--format=%H %cI", "--", path]) ?? "";
+  const [hash, iso] = (added.split("\n").at(-1) ?? "").split(" ");
+  if (!hash || boundary.has(hash) || Number.isNaN(Date.parse(iso))) return null;
+  return new Date(iso).toISOString();
 }
+
+const pages = {};
+const published = {};
+for (const file of readdirSync(resolve(docsDir, contentDir), { recursive: true })) {
+  if (!/\.mdx?$/u.test(file)) continue;
+  pages[file] = lastCommitDate([`${contentDir}/${file}`]);
+  published[file] = firstCommitDate(`${contentDir}/${file}`);
+}
+const known = (dates) =>
+  Object.fromEntries(
+    Object.entries(dates)
+      .filter(([, date]) => date !== null)
+      .sort(),
+  );
 
 const dates = {
   home: lastCommitDate(homeSources),
-  pages: Object.fromEntries(
-    Object.entries(pages)
-      .filter(([, date]) => date !== null)
-      .sort(),
-  ),
+  pages: known(pages),
+  published: known(published),
 };
 mkdirSync(resolve(docsDir, ".source"), { recursive: true });
 writeFileSync(outputPath, `${JSON.stringify(dates, null, 2)}\n`);
