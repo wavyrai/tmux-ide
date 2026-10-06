@@ -361,6 +361,13 @@ Its custom IO intentionally excludes the native guarded input route. It does not
 qualify controller/WebSocket authorization, stale pane/session generations,
 physical keyboard behavior or mouse targeting.
 
+`terminal-input-session-replacement-live.test.ts` retains an old subscription
+after its session dies, waits for the actual closed event, then recreates the
+same session name and semantic pane stamp. Old text/key calls must remain no-ops;
+the new raw receiver accepts only fresh input. Both runtime session and pane IDs
+must differ. This proves isolation after observed closure, not rejection of input
+already queued before deletion or controller-generation authorization.
+
 ## Coverage matrix
 
 | Evidence                               | First-slice status                                                                 | Remaining boundary                                                   |
