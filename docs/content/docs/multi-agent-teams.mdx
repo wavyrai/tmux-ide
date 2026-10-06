@@ -47,15 +47,74 @@ Assignments do not restore deleted panes or join groups across machines.
 
 ### Native Claude teams
 
-For Claude Code teammates running in their own tmux panes, tmux-ide can discover
-the member name and team through a read-only compatibility adapter. A match
-requires both native team metadata and the live Claude process in that pane.
-Missing or changed metadata falls back to normal pane naming and discovery.
+Teammates from [Claude Code agent teams](#claude-code-agent-teams) that run in
+their own tmux panes are grouped automatically — see the next section.
 
-Claude owns team creation, tasks, messaging, and shutdown. tmux-ide does not edit
-Claude's team files. In-process teammates do not have separate panes and are not
-shown as separate terminals. A lead recorded only as the logical `leader` is not
-automatically associated with a pane; use explicit grouping when needed.
+## Claude Code agent teams
+
+[Agent teams](https://code.claude.com/docs/en/agent-teams) let one Claude Code
+session lead several teammate sessions that share a task list and message each
+other. In split-pane mode, Claude Code opens each teammate in its own tmux pane —
+and because a tmux-ide session is ordinary tmux, those panes show up in tmux-ide
+like any others, with their team context added.
+
+### Run a team inside tmux-ide
+
+Agent teams are experimental in Claude Code and off by default. Enable them and
+choose tmux split panes in `~/.claude/settings.json`:
+
+```json
+{
+  "env": { "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1" },
+  "teammateMode": "tmux"
+}
+```
+
+`"auto"` also uses split panes when Claude Code is already running inside tmux;
+the default `"in-process"` keeps every teammate inside the lead's terminal. Then
+start `claude` in a tmux-ide session and ask it to spawn teammates. For the best
+status signal, install the integration first:
+
+```bash
+tmux-ide integration install claude
+```
+
+### What tmux-ide shows
+
+| What                | How it works                                                                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Teammate names**  | Each teammate pane shows the name the lead gave it — in pane headers, the sidebar, Home and agent rows — instead of a generic "Claude Code"                               |
+| **Team grouping**   | Teammates appear together under their team in Home and the sidebar, and Home search matches the team name                                                                 |
+| **Status**          | Every teammate is a full Claude Code session, so it gets the same [working / blocked / done / idle detection](/docs/agent-detection) and notifications as any Claude pane |
+| **Exact targeting** | Teammates are real tmux panes, so `send`, `wait output`, `agent explain` and pane controls work on them                                                                   |
+
+tmux-ide reads Claude Code's runtime team file,
+`~/.claude/teams/<team>/config.json`, about every two seconds. A pane gets a
+teammate's name only when that file lists the member with a tmux backend and
+that pane, **and** the live `claude` process in the pane carries the matching
+team, agent id and agent name. Anything else — a removed or unrecognized file,
+an iTerm2 backend, an ambiguous match — falls back to ordinary pane naming.
+Each machine's daemon reads that machine's files.
+
+### What it does not do
+
+Claude Code owns the team: creating it, spawning and shutting down teammates,
+the shared task list and the mailbox. tmux-ide never writes Claude's team files
+and does not route messages through the mailbox.
+
+- **In-process teammates** live inside the lead's terminal and have no panes, so
+  tmux-ide does not show them separately.
+- **The lead** is not tagged automatically, because it is not listed with a
+  tmux pane. Group it with `tmux-ide team assign %PANE "<team>"`; a manual
+  assignment takes precedence over discovered grouping.
+- **`tmux-ide send`** types into a teammate's pane like you would by clicking
+  into it. It is not a team message, and the lead does not see it.
+- **Restore** rebuilds the panes but not the team. Claude Code removes the team
+  file when the lead session ends, so grouping disappears too. With
+  `--resume-agents`, a teammate pane that recorded a session id comes back as an
+  ordinary `claude --resume` conversation, not as a member of the team.
+- **New agent…** in the app starts an independent session; it does not add a
+  teammate to Claude's team.
 
 ## A mixed fleet
 
@@ -185,6 +244,7 @@ calls, or a Makefile — whatever is driving the fleet.
 ## See also
 
 - [Agent detection](/docs/agent-detection) — the status every teammate publishes
+- [Claude Code agent teams](https://code.claude.com/docs/en/agent-teams) — the official guide
 - [Notifications & events](/docs/notifications-events) — the toast/stream side of the handoff
 - [Worktrees](/docs/worktrees) — an isolated checkout per teammate
 - [CLI reference](/docs/commands) — `send`, `wait`, `team`, `events` in full
