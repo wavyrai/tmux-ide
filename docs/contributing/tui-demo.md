@@ -31,9 +31,12 @@ pnpm demo:font           # rebuild the embedded glyph subset (needs uv)
 - `tui-demo-figure-markup.ts` renders every figure in the dark and the light
   theme. Each colour pair becomes a `light-dark()` custom property, so the
   figures follow the site theme. All figures go into one cached sprite that
-  `components/marketing/tui-mini-figure.tsx` references with `<use>`. The
-  Matinee cursors (`generate-tui-mockup-motion.mjs`) read their viewport and
-  action points from the same output.
+  `components/marketing/tui-mini-figure.tsx` references with `<use>`. Each
+  figure also names who performs its action ("You", "Claude Code" or "Codex")
+  and where (`from` → `at` → `to`); `components/marketing/tui-cursor.tsx`
+  draws that as a CSS-only cursor (the sprite's `#cursor` arrow plus a name
+  pill) on the figure's slot of the page's motion queue, and the same
+  component overlays Fig. 01 with two cursors on its 12 s loop.
 - `tui-demo-font/` builds the Geist Mono subset (SIL OFL 1.1). The build also
   draws the few glyphs Geist lacks (spinner braille, `⎿ ✻ ✶ ⋯ ▾ ✓`) on Geist's
   own metrics. If a frame draws a character outside `chars.txt`, the render

@@ -23,8 +23,6 @@ import {
 } from "./tui-demo-figures.ts";
 import { renderScene, renderShell, type ThemeMode } from "./tui-demo-scene.tsx";
 import {
-  CELL_HEIGHT,
-  CELL_WIDTH,
   FONT_SIZE,
   SCRIM_ALPHA,
   backgrounds,
@@ -41,8 +39,14 @@ import {
 
 export interface FigureMarkup {
   readonly label: string;
-  /** Cursor choreography in viewBox units. */
-  readonly cursor: readonly (readonly ["click" | "move", number, number])[];
+  /** Who acts and how; points are percentages of the figure (cell centres). */
+  readonly cursor: {
+    readonly actor: string;
+    readonly kind: "click" | "drag" | "hover";
+    readonly from: readonly [number, number];
+    readonly at: readonly [number, number];
+    readonly to: readonly [number, number];
+  };
 }
 
 export interface FigureDocument {
@@ -101,6 +105,20 @@ function changedSpans(
   }
   return { spans: after[0]!.map(() => [0, CROP_COLS - 1]), scrim: 0 };
 }
+
+/**
+ * The pointer arrow every figure and hero cursor draws through <use>. Its tip
+ * is at (4, 2.5); the fill is the actor's colour (an inherited custom
+ * property), outlined in white so it reads on light and dark figures.
+ */
+const CURSOR_SYMBOL =
+  '<symbol id="cursor" viewBox="0 0 24 24"><path d="M4 2.5v16.7l4.2-3.8 2.7 5.9 2.7-1.2-2.65-5.8h5.65z" ' +
+  'style="fill:var(--cursor-fill,#2563eb)" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></symbol>';
+
+const percent = ([column, row]: readonly [number, number]): [number, number] => [
+  +(((column + 0.5) / CROP_COLS) * 100).toFixed(2),
+  +(((row + 0.5) / CROP_ROWS) * 100).toFixed(2),
+];
 
 export async function figureDocument(): Promise<FigureOutput> {
   const pairs = new Map<string, string>();
@@ -164,15 +182,16 @@ export async function figureDocument(): Promise<FigureOutput> {
     );
     figures[spec.variant] = {
       label: spec.label,
-      cursor: spec.cursor.map(([action, column, row]) => [
-        action,
-        +((column + 0.5) * CELL_WIDTH).toFixed(1),
-        +((row + 0.5) * CELL_HEIGHT).toFixed(1),
-      ]),
+      cursor: {
+        ...spec.cursor,
+        from: percent(spec.cursor.from),
+        at: percent(spec.cursor.at),
+        to: percent(spec.cursor.to),
+      },
     };
   }
 
-  const sprite = `<svg xmlns="http://www.w3.org/2000/svg"><!-- Landing figures: crops of the tmux-ide app, rendered by \`pnpm demo:tui\`. --><defs>${groups.join("")}</defs></svg>\n`;
+  const sprite = `<svg xmlns="http://www.w3.org/2000/svg"><!-- Landing figures: crops of the tmux-ide app, rendered by \`pnpm demo:tui\`. --><defs>${CURSOR_SYMBOL}${groups.join("")}</defs></svg>\n`;
   const scope = ".tui-figure";
   const css = [
     `@font-face{font-family:tui-figure;font-weight:400;font-display:block;src:url(/fonts/tui-demo-regular.woff2) format("woff2")}`,

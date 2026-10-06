@@ -20,6 +20,7 @@ import { TechnicalCaption } from "@/components/marketing/technical-caption";
 import { TuiMiniFigure, type TuiFigureVariant } from "@/components/marketing/tui-mini-figure";
 import { AgentTeamsFigure, ArchitectureFigure } from "@/components/figures/figures";
 import tuiDemoSize from "@/components/marketing/tui-demo-size.json";
+import { TuiHeroCursors } from "@/components/marketing/tui-cursor";
 import {
   LANDING_AGENT_FEATURES,
   LANDING_CAPABILITIES,
@@ -147,7 +148,7 @@ export default async function HomePage() {
             className="marketing-enter marketing-enter-step-5"
           >
             <div className="border-y border-marketing-line bg-terminal-stage p-2 md:p-4">
-              <div className="border border-terminal-line bg-terminal-stage">
+              <div className="relative border border-terminal-line bg-terminal-stage">
                 <Image
                   src="/tui-demo.svg"
                   alt="Animated tmux-ide app showing agent status, terminal panes, window controls, and Commands"
@@ -158,6 +159,7 @@ export default async function HomePage() {
                   fetchPriority="high"
                   className="h-auto w-full"
                 />
+                <TuiHeroCursors />
               </div>
             </div>
             <TechnicalCaption

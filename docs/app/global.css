@@ -1383,32 +1383,30 @@
   color: rgb(255 255 255 / 32%);
 }
 
-/* The mini TUI figures share a four-second Matinee clock. Cards in each
-   section are offset onto a common 12s/24s timeline, so only one performance
-   speaks at a time. Diagram state changes land with the cursor action. */
+/* The mini TUI figures share a four-second slot each. Cards are offset onto
+   a common 12s/24s/36s timeline, so only one performance plays at a time.
+   Diagram state changes land with the named cursor's action (tui-cursor.tsx). */
 .tui-motion-before,
-.tui-motion-after,
-.tui-motion-cursor {
+.tui-motion-after {
   animation-delay: var(--mockup-delay);
   animation-timing-function: linear;
   animation-iteration-count: infinite;
   animation-fill-mode: both;
 }
 
-.tui-motion-after,
-.tui-motion-cursor {
+.tui-motion-after {
   opacity: 0;
 }
 
-[data-motion-count="3"] :is(.tui-motion-before, .tui-motion-after, .tui-motion-cursor) {
+[data-motion-count="3"] :is(.tui-motion-before, .tui-motion-after) {
   animation-duration: 12s;
 }
 
-[data-motion-count="6"] :is(.tui-motion-before, .tui-motion-after, .tui-motion-cursor) {
+[data-motion-count="6"] :is(.tui-motion-before, .tui-motion-after) {
   animation-duration: 24s;
 }
 
-[data-motion-count="9"] :is(.tui-motion-before, .tui-motion-after, .tui-motion-cursor) {
+[data-motion-count="9"] :is(.tui-motion-before, .tui-motion-after) {
   animation-duration: 36s;
 }
 
@@ -1420,10 +1418,6 @@
   animation-name: tui-motion-after-3;
 }
 
-.tui-motion-cursor {
-  animation-name: tui-motion-cursor-3;
-}
-
 [data-motion-count="6"] .tui-motion-before {
   animation-name: tui-motion-before-6;
 }
@@ -1432,20 +1426,12 @@
   animation-name: tui-motion-after-6;
 }
 
-[data-motion-count="6"] .tui-motion-cursor {
-  animation-name: tui-motion-cursor-6;
-}
-
 [data-motion-count="9"] .tui-motion-before {
   animation-name: tui-motion-before-9;
 }
 
 [data-motion-count="9"] .tui-motion-after {
   animation-name: tui-motion-after-9;
-}
-
-[data-motion-count="9"] .tui-motion-cursor {
-  animation-name: tui-motion-cursor-9;
 }
 
 @keyframes tui-motion-before-3 {
@@ -1470,21 +1456,6 @@
   }
   13%,
   29% {
-    opacity: 1;
-  }
-  33%,
-  100% {
-    opacity: 0;
-  }
-}
-
-@keyframes tui-motion-cursor-3 {
-  0%,
-  1% {
-    opacity: 0;
-  }
-  3%,
-  30% {
     opacity: 1;
   }
   33%,
@@ -1523,21 +1494,6 @@
   }
 }
 
-@keyframes tui-motion-cursor-6 {
-  0%,
-  0.5% {
-    opacity: 0;
-  }
-  1.5%,
-  15% {
-    opacity: 1;
-  }
-  16.5%,
-  100% {
-    opacity: 0;
-  }
-}
-
 @keyframes tui-motion-before-9 {
   0%,
   3% {
@@ -1568,28 +1524,16 @@
   }
 }
 
-@keyframes tui-motion-cursor-9 {
-  0%,
-  0.4% {
-    opacity: 0;
-  }
-  1%,
-  10.2% {
-    opacity: 1;
-  }
-  11.1%,
-  100% {
-    opacity: 0;
-  }
-}
-
+/* Match the queue rules' specificity, or their animation-name keeps the swap
+   running under reduced motion. */
 @media (prefers-reduced-motion: reduce) {
   .tui-motion-before,
-  .tui-motion-cursor {
+  [data-motion-count] .tui-motion-before {
     display: none;
   }
 
-  .tui-motion-after {
+  .tui-motion-after,
+  [data-motion-count] .tui-motion-after {
     opacity: 1;
     animation: none;
   }

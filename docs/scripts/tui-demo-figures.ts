@@ -1,6 +1,6 @@
 /**
  * The nine landing-page mini-figures (Fig. 02.1–04.3). Each is a before/after
- * pair of real app frames: the page's motion queue swaps them while a Matinee
+ * pair of real app frames: the page's motion queue swaps them while a named
  * cursor performs the action between them.
  */
 import { blank, bold, line, type DemoLine, type DemoPane } from "./tui-demo-fixture.ts";
@@ -20,6 +20,16 @@ export type FigureVariant =
 /** A frame of the app, or a plain terminal (the app has quit). */
 export type FigureFrame = Scene | { readonly shell: readonly DemoLine[] };
 
+export type CursorActor = "You" | "Claude Code" | "Codex";
+type Cell = readonly [column: number, row: number];
+export interface FigureCursor {
+  readonly actor: CursorActor;
+  readonly kind: "click" | "drag" | "hover";
+  readonly from: Cell;
+  readonly at: Cell;
+  readonly to: Cell;
+}
+
 export interface FigureSpec {
   readonly variant: FigureVariant;
   readonly label: string;
@@ -27,8 +37,12 @@ export interface FigureSpec {
   readonly after: FigureFrame;
   /** Top-left cell of the CROP_COLS × CROP_ROWS window shown on the page. */
   readonly crop: readonly [column: number, row: number];
-  /** Cursor choreography in cropped cells: [action, column, row]. */
-  readonly cursor: readonly (readonly ["click" | "move", number, number])[];
+  /**
+   * Who performs the action and how, in cropped cells: the cursor enters at
+   * `from`, acts at `at` (a click or drag press lands as the frame changes),
+   * then settles at `to` (a drag's release point).
+   */
+  readonly cursor: FigureCursor;
 }
 
 export const CROP_COLS = 60;
@@ -216,6 +230,14 @@ const shellPane = (title: string, width = COLS, height = PANE_ROWS): DemoPane =>
   nameSource: "generated",
 });
 
+const you = (kind: FigureCursor["kind"], from: Cell, at: Cell, to: Cell): FigureCursor => ({
+  actor: "You",
+  kind,
+  from,
+  at,
+  to,
+});
+
 export const FIGURES: readonly FigureSpec[] = [
   {
     variant: "names",
@@ -223,7 +245,7 @@ export const FIGURES: readonly FigureSpec[] = [
     before: compactCodex(codex("working"), { rename: { paneId: "pane.codex", value: "Reviewer" } }),
     after: compactCodex(codex("working", "Reviewer")),
     crop: [0, 0],
-    cursor: [["click", 30, 11]],
+    cursor: you("click", [40, 12], [9, 8], [12, 2]),
   },
   {
     variant: "status",
@@ -231,10 +253,7 @@ export const FIGURES: readonly FigureSpec[] = [
     before: terminals({ sidebar: true }),
     after: terminals({ sidebar: true, left: claude("done"), right: codex("blocked") }),
     crop: [0, 1],
-    cursor: [
-      ["move", 10, 3],
-      ["move", 48, 1],
-    ],
+    cursor: { actor: "Codex", kind: "hover", from: [40, 9], at: [3, 3], to: [6, 3] },
   },
   {
     variant: "navigate",
@@ -242,7 +261,7 @@ export const FIGURES: readonly FigureSpec[] = [
     before: home({ right: codex("blocked") }, { homeSelection: "codex" }),
     after: terminals({ right: codex("blocked") }, { focusedPane: "pane.codex" }),
     crop: [0, 1],
-    cursor: [["click", 10, 11]],
+    cursor: you("click", [40, 6], [9, 11], [54, 1]),
   },
   {
     variant: "tmux",
@@ -258,7 +277,7 @@ export const FIGURES: readonly FigureSpec[] = [
       ],
     },
     crop: [0, 0],
-    cursor: [["move", 20, 4]],
+    cursor: you("hover", [40, 9], [14, 1], [16, 1]),
   },
   {
     variant: "daemon",
@@ -266,7 +285,7 @@ export const FIGURES: readonly FigureSpec[] = [
     before: home({}),
     after: home({ left: claude("done"), right: codex("blocked") }),
     crop: [6, 1],
-    cursor: [["move", 30, 4]],
+    cursor: { actor: "Codex", kind: "hover", from: [40, 12], at: [3, 11], to: [5, 11] },
   },
   {
     variant: "opentui",
@@ -274,7 +293,7 @@ export const FIGURES: readonly FigureSpec[] = [
     before: compact({ right: codex("blocked") }),
     after: compact({ right: codex("blocked") }, { paletteOpen: true }),
     crop: [0, 0],
-    cursor: [["click", 54, 13]],
+    cursor: you("click", [30, 10], [50, 13], [12, 5]),
   },
   {
     variant: "window",
@@ -293,7 +312,7 @@ export const FIGURES: readonly FigureSpec[] = [
       },
     ),
     crop: [0, 0],
-    cursor: [["click", 58, 1]],
+    cursor: you("click", [40, 8], [58, 1], [24, 1]),
   },
   {
     variant: "resize",
@@ -301,10 +320,7 @@ export const FIGURES: readonly FigureSpec[] = [
     before: compact({}),
     after: compact({ split: 40 }),
     crop: [0, 0],
-    cursor: [
-      ["click", 30, 6],
-      ["move", 40, 6],
-    ],
+    cursor: you("drag", [30, 10], [30, 6], [40, 6]),
   },
   {
     variant: "focus",
@@ -312,6 +328,6 @@ export const FIGURES: readonly FigureSpec[] = [
     before: compact({}),
     after: compact({}, { focusedPane: "pane.codex" }),
     crop: [0, 0],
-    cursor: [["click", 44, 6]],
+    cursor: you("click", [14, 10], [40, 6], [42, 7]),
   },
 ];
