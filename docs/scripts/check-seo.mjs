@@ -12,6 +12,7 @@ const robots = readFileSync(resolve(appDir, "robots.txt.body"), "utf8");
 const sitemap = readFileSync(resolve(appDir, "sitemap.xml.body"), "utf8");
 const routes = JSON.parse(readFileSync(resolve(docsDir, ".next/routes-manifest.json"), "utf8"));
 const llmsIndex = readFileSync(resolve(appDir, "llms.txt.body"), "utf8");
+const llmsFull = readFileSync(resolve(appDir, "llms-full.txt.body"), "utf8");
 const socialCard = readFileSync(resolve(docsDir, "components/social-card.tsx"), "utf8");
 
 const requiredHtml = [
@@ -59,6 +60,13 @@ if (/<title>[^<]*\| tmux-ide<\/title>/u.test(html) && /<title>tmux-ide[^<]*\|/u.
 if (!/^# tmux-ide\n\n> \S/u.test(llmsIndex))
   throw new Error("llms.txt must start with '# tmux-ide' and a '>' summary");
 if (/\]\(\//u.test(llmsIndex)) throw new Error("llms.txt links must be absolute URLs");
+// Markdown served to agents (llms-full.txt and the .md twins share one
+// renderer) must not leak MDX components outside code fences.
+const outsideFences = llmsFull.replace(/```[\s\S]*?```/gu, "");
+const leaked = outsideFences.match(/^[ \t]*<\/?[A-Z][A-Za-z]*[\s/>]/mu);
+if (leaked) throw new Error(`llms-full.txt leaks an MDX component: ${leaked[0].trim()}`);
+const headingId = outsideFences.match(/^#{1,6} .* \[#[\w-]+\]$/mu);
+if (headingId) throw new Error(`llms-full.txt leaks fumadocs heading-id syntax: ${headingId[0]}`);
 // Every same-site page llms.txt points agents at must be a built route.
 for (const [, href] of llmsIndex.matchAll(/\]\((https?:\/\/[^)\s]+)\)/gu)) {
   const url = new URL(href);
