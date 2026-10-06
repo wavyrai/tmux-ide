@@ -3,7 +3,9 @@ title: CLI reference
 description: "Every public tmux-ide 2.9.3 command and flag, with JSON output for scripts and agents: open the app, adopt, restore, send, wait, automation and more."
 ---
 
-This is every public `tmux-ide` command in `2.9.3`, as printed by
+The `tmux-ide` command opens the app, adds tmux chrome to existing sessions,
+reports agent state, coordinates agents, and rebuilds sessions after a tmux
+crash. This page lists every public command in `2.9.3`, matching
 `tmux-ide --help`. Scripting commands that list `--json` below print JSON;
 interactive commands do not.
 
@@ -17,37 +19,10 @@ interactive commands do not.
 | `tmux-ide app [session]`    | Open Home, or bypass Home and open a live session                                                      |
 | `tmux-ide app --detachable` | Host the app in `_tmux-ide-app`; `Ctrl+Q` detaches and the viewer survives                             |
 | `tmux-ide app --hosted`     | Alias for `--detachable`                                                                               |
-| `tmux-ide team [--json]`    | Open the classic fleet view, or print fleet state as JSON                                              |
-| `tmux-ide --team`           | Force the classic fleet view for a bare invocation                                                     |
+| `tmux-ide team [--json]`    | Open the fleet home from tmux chrome, or print fleet state as JSON                                     |
+| `tmux-ide --team`           | Force the fleet home for a bare invocation                                                             |
 
 `app.detachable` in `~/.tmux-ide/config.json` makes detachable mode the default.
-
-## Multiple tmux servers (development)
-
-The development build can register multiple tmux servers on one machine. List
-registrations to get the opaque server ID, then use it to select a server:
-
-```bash
-tmux-ide servers list --json
-tmux-ide servers add --socket-name work --name Work --json
-tmux-ide servers add --socket-path /absolute/path/to/socket --name Custom --json
-tmux-ide servers sessions <server-id> --json
-tmux-ide servers create <server-id> --session-name Work --dir /project/path --json
-tmux-ide app --server <server-id> [session]
-tmux-ide servers remove <server-id> --json
-```
-
-Add `--ssh HOST` to manage a remote machine's registrations or open its app.
-Socket names and paths are resolved on that remote machine. Registration does
-not create a native tmux server, and removing a registration does not kill its
-sessions. An offline server remains visible until removed.
-
-The app groups sessions by machine and server. A single server uses a compact
-view. Saved tabs retain the exact server and session incarnation; a replacement
-session requires selecting it again. Explicit `--server` opens in foreground
-mode and cannot be combined with hosted or headless mode. An older daemon
-without the server API reports an unsupported capability instead of selecting
-its default server.
 
 ## Sessions and recovery
 
@@ -89,7 +64,9 @@ Row and pane indexes are zero-based. Config mutations preserve
 WorkspaceConfigV1 and refuse legacy-only fields rather than silently losing
 them.
 
-## Agent awareness and coordination
+## Agent status and messaging
+
+See [Agent detection](/docs/agent-detection) for how agent states are decided.
 
 | Command                                                                           | What it does                                                                                                         |
 | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -105,8 +82,12 @@ them.
 | `tmux-ide events --follow --socket[=<path>]`                                      | Follow pushed events from a running control server                                                                   |
 | `tmux-ide wait agent-status <session> --status <state> [--timeout <ms>] [--json]` | Wait for a session status; exit 0 on match and 1 on timeout                                                          |
 | `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>] [--json]`  | Wait until visible pane output matches                                                                               |
+| `tmux-ide team assign <%pane> <team> [--json]`                                    | Group a pane under a named team in Home and the sidebar                                                              |
+| `tmux-ide team unassign <%pane> [--json]`                                         | Remove a pane's manual team membership                                                                               |
 | `tmux-ide serve [socket-path]`                                                    | Run the foreground, owner-only local NDJSON control socket                                                           |
 
+`team assign` and `team unassign` take `--socket-name` or `--socket-path` to
+select another tmux server; see [Multi-agent teams](/docs/multi-agent-teams).
 `serve` defaults to `~/.tmux-ide/control.sock`. The wait commands use it when
 requested and otherwise fall back to direct polling.
 
@@ -137,7 +118,7 @@ An uncertain response is not permission to send again with a new handle. See
 [Agent automation](/docs/automation) for request formats, source credentials,
 retry rules, and SDK usage.
 
-## tmux chrome (adopt ordinary tmux sessions)
+## tmux chrome: adopt existing sessions
 
 | Command                                      | What it does                                             |
 | -------------------------------------------- | -------------------------------------------------------- |
@@ -148,7 +129,7 @@ retry rules, and SDK usage.
 | `tmux-ide cheatsheet`                        | Print the complete key sheet                             |
 | `tmux-ide menu [--client <name>]`            | Open the contextual tmux actions menu                    |
 | `tmux-ide popup <explorer\|changes\|config>` | Open a widget in a tmux popup                            |
-| `tmux-ide sidebar-toggle [--session <name>]` | Toggle the app navigation column                         |
+| `tmux-ide sidebar-toggle [--session <name>]` | Toggle the tmux chrome sidebar column                    |
 
 These commands drive [tmux chrome](/docs/the-dock) for plain tmux clients; see
 that page for the matching tmux bindings.
@@ -167,6 +148,33 @@ that page for the matching tmux bindings.
 Profiles do not grant SSH access or copy credentials. Review aliases on the
 receiving computer before applying an import. An ordinary SSH connection expects
 the remote daemon to be running; package installation remains explicit.
+
+## Multiple tmux servers
+
+tmux-ide can register several tmux servers on one machine. List
+registrations to get the opaque server ID, then use it to select a server:
+
+```bash
+tmux-ide servers list --json
+tmux-ide servers add --socket-name work --name Work --json
+tmux-ide servers add --socket-path /absolute/path/to/socket --name Custom --json
+tmux-ide servers sessions <server-id> --json
+tmux-ide servers create <server-id> --session-name Work --dir /project/path --json
+tmux-ide app --server <server-id> [session]
+tmux-ide servers remove <server-id> --json
+```
+
+Add `--ssh HOST` to manage a remote machine's registrations or open its app.
+Socket names and paths are resolved on that remote machine. Registration does
+not create a native tmux server, and removing a registration does not kill its
+sessions. An offline server remains visible until removed.
+
+The app groups sessions by machine and server. A single server uses a compact
+view. Saved tabs retain the exact server and session incarnation; a replacement
+session requires selecting it again. Explicit `--server` opens in foreground
+mode and cannot be combined with hosted or headless mode. An older daemon
+without the server API reports an unsupported capability instead of selecting
+its default server.
 
 ## Worktrees
 
@@ -255,7 +263,7 @@ commands.
 launchd or systemd user service. Use `daemon service status --json` to inspect it,
 `daemon service restart --json` to load the activated installation in a new
 process, and `daemon service remove --yes --json` before uninstalling the launcher.
-See [supervised daemon upgrades](/docs/app-surfaces#supervised-daemon-upgrades) for
+See [supervised daemon upgrades](/docs/remote-machines#run-the-daemon-as-a-service) for
 namespace ownership, failure recovery and session preservation.
 
 `tmux-ide daemon info --json` reports the current daemon instance id, version,

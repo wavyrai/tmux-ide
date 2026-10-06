@@ -3,17 +3,20 @@ title: Getting started
 description: Install tmux-ide with one command, open your first agent-aware tmux session, and learn every key that moves between agents, sessions and panes.
 ---
 
-## Requirements
+This guide installs tmux-ide 2.9.3, opens your first session in the app, and
+lists its keyboard shortcuts. Installing takes one command on macOS or glibc
+Linux, needs no sudo, and leaves any tmux sessions you already run untouched.
 
-Existing tmux servers must run tmux 3.7 or newer. The installer includes 3.7c;
-it never kills or replaces an older running server automatically.
+## Requirements
 
 - macOS 26+ on ARM64, macOS 15+ on x64, or glibc Linux (Ubuntu 24.04 or newer baseline) arm64/x64
 - curl, tar, gzip, and a SHA-256 utility (normally included with your OS)
 
-The installer supplies a private Node.js runtime and bundled tmux. No sudo,
-Homebrew, or system Node installation is needed. Alpine/musl and native Windows
-are not supported; use a supported Linux distribution inside WSL.
+The installer supplies a private Node.js runtime and bundled tmux 3.7c, so no
+sudo, Homebrew, or system Node installation is needed. If you already run a tmux
+server, it must be tmux 3.7 or newer; the installer never kills or replaces a
+running server. Alpine/musl and native Windows are not supported; use a
+supported Linux distribution inside WSL.
 
 Installed releases include a compiled app runtime and do not require Bun.
 Development checkouts use Bun to build the runtime and can opt into live source
@@ -40,54 +43,12 @@ sh install.sh --version 2.9.3 --prefix "$HOME/.local"
 ```
 
 With Node.js 20+ already installed, `npm install -g tmux-ide` is also supported.
-To update an installer-owned copy, run `tmux-ide update`. It remembers your
-installation prefix and keeps stable installs on `latest` and beta installs on
-`beta`. Use `tmux-ide update --dry-run` to preview the operation. The command
-downloads and runs the same installer used for first-time setup. It verifies the new
-release before switching the launcher, and retains the previous release for rollback.
-It does not restart a daemon or replace a tmux server during installation.
-After installing, reopen the TUI. To explicitly refresh a running daemon:
-
-```bash
-tmux-ide update --daemon --if-running
-```
-
-Package-manager installations can use `tmux-ide update` to update their package.
-
-If you installed a daemon supervisor service, remove it before uninstalling the
-launcher: `tmux-ide daemon service remove --yes --json`. Service removal preserves
-your tmux sessions. See [daemon supervision](/docs/app-surfaces#supervised-daemon-upgrades) for service status
-and restart commands.
-
-For an installer-owned copy, use the same prefix with these recovery commands:
-
-```bash
-sh install.sh --rollback --prefix "$HOME/.local"
-sh install.sh --uninstall --prefix "$HOME/.local"
-```
-
-Rollback selects the previous verified release without a download. Uninstall
-removes the launcher, preserves sessions and settings in `~/.tmux-ide`, and leaves
-runtime files available for processes that are still running. After those processes
-have exited, you can remove `~/.local/share/tmux-ide/releases` to reclaim the space.
-
-The installer retains at most eight marked releases and refuses a ninth until
-cleanup. To reclaim retired versions, first close every tmux-ide app and stop its
-daemon and any supervisor service. Ordinary tmux sessions may stay running. Then:
-
-```bash
-sh install.sh --prune --yes --prefix "$HOME/.local"
-```
-
-`--yes` confirms that those processes have stopped; the installer does not stop
-or detect them for you. Cleanup preserves the current and previous rollback
-releases, settings, and unrecognized files. Releases installed by an older script
-without a release marker are left for manual review.
 
 For package-manager installations, if the exact-version runtime is not already installed, the first explicit app
 launch downloads it, verifies its release metadata and SHA-256 digest, and
-caches it under `~/.tmux-ide/bin`. The daemon starts only after a runnable TUI
-has been selected.
+caches it under `~/.tmux-ide/bin`. tmux-ide starts its daemon (the background
+process that discovers sessions and tracks agent state) only after the app
+runtime is in place.
 
 If the download was interrupted:
 
@@ -96,7 +57,7 @@ tmux-ide update --tui-binary
 tmux-ide app
 ```
 
-## Open a session
+## Open your first session
 
 Home lists the agents and tmux sessions you already have. Select one with the
 mouse or keyboard, or name a session directly:
@@ -113,7 +74,19 @@ tmux-ide does not kill the tmux session.
 New to the app? Choose **Learn tmux-ide** on Home for a guided walkthrough in a
 practice session.
 
-## Keys
+## Get exact agent status from Claude Code
+
+tmux-ide detects agents from their process and screen. For exact working,
+blocked and done states from Claude Code, install its lifecycle hooks once:
+
+```bash
+tmux-ide integration install claude
+```
+
+New Claude Code sessions report their state from then on. See
+[how agent detection works](/docs/agent-detection).
+
+## Keyboard shortcuts
 
 Function keys work everywhere in the app. Press `Ctrl+K` inside Commands to
 search the full shortcut list, or `Ctrl+B` for what's new.
@@ -181,7 +154,53 @@ favorites, `Ctrl+P` toggles the preview, `Ctrl+E` expands it, `Ctrl+N` creates
 a session, `Ctrl+X` closes one (with confirmation), `Ctrl+R` retries a host, and
 `Ctrl+←` / `Ctrl+→` browse windows without switching.
 
-## Diagnose an install
+## Update, roll back or uninstall
+
+To update an installer-owned copy, run `tmux-ide update`. It remembers your
+installation prefix and keeps stable installs on `latest` and beta installs on
+`beta`. Use `tmux-ide update --dry-run` to preview the operation. The command
+downloads and runs the same installer used for first-time setup. It verifies the new
+release before switching the launcher, and retains the previous release for rollback.
+It does not restart a daemon or replace a tmux server during installation.
+After installing, reopen the app. To explicitly refresh a running daemon:
+
+```bash
+tmux-ide update --daemon --if-running
+```
+
+Package-manager installations can use `tmux-ide update` to update their package.
+
+If you installed a daemon supervisor service, remove it before uninstalling the
+launcher: `tmux-ide daemon service remove --yes --json`. Service removal preserves
+your tmux sessions. See [daemon supervision](/docs/remote-machines#run-the-daemon-as-a-service) for service status
+and restart commands.
+
+For an installer-owned copy, use the same prefix with these recovery commands:
+
+```bash
+sh install.sh --rollback --prefix "$HOME/.local"
+sh install.sh --uninstall --prefix "$HOME/.local"
+```
+
+Rollback selects the previous verified release without a download. Uninstall
+removes the launcher, preserves sessions and settings in `~/.tmux-ide`, and leaves
+runtime files available for processes that are still running. After those processes
+have exited, you can remove `~/.local/share/tmux-ide/releases` to reclaim the space.
+
+The installer retains at most eight marked releases and refuses a ninth until
+cleanup. To reclaim retired versions, first close every tmux-ide app and stop its
+daemon and any supervisor service. Ordinary tmux sessions may stay running. Then:
+
+```bash
+sh install.sh --prune --yes --prefix "$HOME/.local"
+```
+
+`--yes` confirms that those processes have stopped; the installer does not stop
+or detect them for you. Cleanup preserves the current and previous rollback
+releases, settings, and unrecognized files. Releases installed by an older script
+without a release marker are left for manual review.
+
+## Troubleshooting
 
 ```bash
 tmux-ide doctor --json
@@ -189,4 +208,12 @@ tmux-ide inspect --json
 ```
 
 When reporting an issue, include the output plus the shortest sequence that
-reproduces it.
+reproduces it. For specific symptoms, see [Troubleshooting](/docs/troubleshooting).
+
+## Next steps
+
+- [Tour Home, Terminals and SSH machines](/docs/app-surfaces)
+- [Run a team of Claude Code and Codex agents](/docs/multi-agent-teams)
+- [Restore sessions after a tmux crash](/docs/restore-resume)
+- [Change the theme](/docs/theming)
+- [Every CLI command](/docs/commands)

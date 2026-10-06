@@ -1,18 +1,11 @@
 ---
 title: Appearance and themes
-description: Choose system, dark, light or one of 22 theme presets in tmux-ide, and control automatic contrast correction for app chrome and terminal panes.
+description: "Pick System, Dark, Light or one of 22 tmux-ide theme presets such as Tokyo Night, Dracula or Catppuccin, and control automatic text contrast in panes."
 ---
 
 Choose how the tmux-ide app looks: follow your terminal, force dark or light, or
 pick one of 22 theme presets. One setting colors every part of the app, from
 Home and the sidebar to pane headers, dialogs and terminal panes.
-
-New or unset appearance settings follow the terminal (**system**). Saved light,
-dark, and named theme choices stay selected. System mode uses the terminal's
-reported default background and foreground; ANSI black and white are palette
-colors, so partial palette replies do not decide whether the canvas is light
-or dark. If color queries are unavailable, terminal mode notifications still
-update the app using built-in defaults.
 
 ## Choose a theme
 
@@ -29,6 +22,15 @@ and the theme presets below.
 
 A switch repaints every app-owned surface at once. The choice is saved to
 `theme.mode` and `theme.preset` in [`~/.tmux-ide/config.json`](/docs/configuration#theme).
+
+### How System mode detects light or dark
+
+New or unset appearance settings follow the terminal (**system**). Saved light,
+dark, and named theme choices stay selected. System mode uses the terminal's
+reported default background and foreground; ANSI black and white are palette
+colors, so partial palette replies do not decide whether the canvas is light
+or dark. If color queries are unavailable, terminal mode notifications still
+update the app using built-in defaults.
 
 ## Theme presets
 
@@ -65,7 +67,9 @@ To set one by hand:
 
 An unknown preset id is ignored. Theme presets color the app; the
 [tmux chrome](/docs/the-dock) uses its own `theme.accent`, `theme.status` and
-`theme.glyphs` tokens.
+`theme.glyphs` tokens. To color one workspace's tmux panes from
+`.tmux-ide/workspace.yml`, see
+[per-session theme](/docs/configuration#per-session-theme).
 
 ## Terminal panes
 

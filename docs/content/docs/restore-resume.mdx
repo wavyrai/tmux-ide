@@ -3,15 +3,17 @@ title: Restore and resume
 description: "Rebuild every tmux session after a server crash with tmux-ide restore: windows, layouts, directories, titles, and Claude, Codex, Cursor and opencode chats."
 ---
 
-`tmux-ide restore` rebuilds your tmux sessions after the tmux server crashes,
-including windows, layouts, directories and, optionally, agent conversations.
+If your tmux server crashes or your machine reboots, `tmux-ide restore` rebuilds
+your tmux sessions from the last snapshot: windows, split layouts, working
+directories and pane titles. With `--resume-agents`, Claude Code, Codex, Cursor
+and opencode panes can reopen their previous conversation.
 
 It works from a snapshot at `~/.tmux-ide/snapshot.json`, which the
 [background updater](/docs/the-dock#the-background-updater) writes about every
 30 seconds. The updater runs once any session is adopted or created from the
-app.
+app, so a snapshot exists only if it was running before the crash.
 
-## What comes back
+## What restore rebuilds
 
 ```bash
 tmux-ide restore
@@ -28,7 +30,7 @@ For each session in the last snapshot, restore rebuilds:
 If a session belongs to a project **with a workspace config**, restore relaunches
 it from that config instead of rebuilding it from the snapshot.
 
-## Safety first
+## Preview and safety defaults
 
 Restore never clobbers work in progress:
 
@@ -44,7 +46,7 @@ tmux-ide restore --dry-run
 tmux-ide restore --dry-run --json
 ```
 
-## Resume agent conversations
+## Resume Claude Code and other agent conversations
 
 Restore can also bring back agent **conversations**, not only the
 panes. With `--resume-agents`, an agent pane that recorded an
@@ -117,3 +119,5 @@ A snapshot is written every `snapshotEvery` ticks (default: every 15 ticks of
 
 - [Agent detection](/docs/agent-detection) — how `@agent_session_id` is recorded
 - [Worktrees](/docs/worktrees) — isolated sessions per branch, restored too
+- [Troubleshooting](/docs/troubleshooting#restore-finds-no-snapshot) — when there is no snapshot
+- [CLI reference](/docs/commands) — every `restore` flag

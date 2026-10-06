@@ -9,8 +9,8 @@ in a plain tmux client — `tmux attach`, a phone over SSH, another terminal —
 surface built from tmux options; nothing it draws appears inside the app.
 
 `tmux-ide adopt <session>` adds the chrome — a status bar (the dock), keys,
-menus and popups — to any existing session. It's the always-on surface: a fleet of tabs, live agent-status
-glyphs, and triggers into the rest of the app. Everything it draws is a tmux
+menus and popups — to any existing session: a fleet of tabs, live agent-status
+glyphs, and popups for the fleet home, keys and session switching. Everything it draws is a tmux
 option, so it renders on the server and shows up on every client (including SSH),
 and `unadopt` reverts it completely.
 
@@ -38,7 +38,7 @@ Adopting a session starts a small background updater in an internal
 `_tmux-ide-chrome` tmux session. Besides refreshing the bar, it:
 
 - sends [notifications](/docs/notifications-events) when an agent becomes blocked or done;
-- writes the [event log](/docs/notifications-events#the-event-stream);
+- writes the [event log](/docs/notifications-events#stream-status-changes-as-jsonl);
 - writes the snapshot that [`tmux-ide restore`](/docs/restore-resume) rebuilds from;
 - captures Codex and Cursor session ids for resume.
 
@@ -59,7 +59,7 @@ keep running as ordinary tmux without the decoration.
 
 ## One interaction grammar
 
-Every surface tmux-ide draws speaks the same five keys:
+Every tmux chrome surface uses the same five keys:
 
 | Key       | Action                     |
 | --------- | -------------------------- |
@@ -70,12 +70,12 @@ Every surface tmux-ide draws speaks the same five keys:
 | `?`       | Show keys for this surface |
 
 Learn it once; it works in the fleet home, the sidebar, and every panel. (The
-app has its own keys — see [Getting started](/docs/getting-started#keys).)
+app has its own keys — see [Getting started](/docs/getting-started#keyboard-shortcuts).)
 
 ## The keys
 
-Once a session is adopted, the whole app is a couple of keystrokes away. Every
-surface has two bindings — reach for the **prefix twin** first; the `⌥` key is a
+Once a session is adopted, every chrome popup is a couple of keystrokes away.
+Each has two bindings — reach for the **prefix twin** first; the `⌥` key is a
 faster shortcut when it's available.
 
 | Action         | Prefix (always works) | Alt fast-path |
@@ -95,7 +95,7 @@ faster shortcut when it's available.
 ### Why prefix-first
 
 The prefix twins are the **reliable** path: they work under every keyboard
-protocol. The `⌥` (root-table) binds are a genuine one-keystroke fast path, but an
+protocol. The `⌥` (root-table) binds are a one-keystroke fast path, but an
 agent pane can temporarily switch how the terminal encodes keys (the kitty
 keyboard protocol), which can swallow a root-table `Alt` bind before tmux ever
 sees it. tmux-ide registers kitty-encoded fallbacks for the `⌥` keys, but coverage
@@ -138,8 +138,30 @@ tmux-ide popup config
 
 These are tmux chrome panels, separate from the app.
 
+## Common questions
+
+### Does adopt change my tmux.conf?
+
+No. `adopt` sets tmux options and key bindings on the running server; it never
+writes `tmux.conf`. Root-table bindings such as `⌥h` apply to the whole tmux
+server, not just the adopted session.
+
+### Why doesn't ⌥h work inside Claude Code?
+
+Claude Code can switch the terminal to a key encoding that tmux can't match
+against `⌥` bindings. Use `prefix h` instead.
+
+### How do I remove it?
+
+```bash
+tmux-ide unadopt <session>
+```
+
+The session keeps running as ordinary tmux.
+
 ## See also
 
 - [App surfaces](/docs/app-surfaces) — the Home and Terminals app
 - [Agent detection](/docs/agent-detection) — what the glyphs mean and where they come from
 - [Configuration](/docs/configuration#global-config) — rebind every key and recolor every glyph
+- [CLI reference](/docs/commands#tmux-chrome-adopt-existing-sessions) — every chrome command

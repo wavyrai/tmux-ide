@@ -1,0 +1,117 @@
+---
+title: Troubleshooting
+description: "Fix common tmux-ide problems with one command each: tmux version errors, missing keys, wrong agent states, Claude hooks, SSH and restore."
+---
+
+Most problems have one command that shows what is wrong. Start with
+`tmux-ide doctor`, then find your symptom below.
+
+## Run the doctor first
+
+```bash
+tmux-ide doctor
+tmux-ide doctor --json   # for a bug report
+```
+
+It checks the tmux version, Node.js, your terminal's color support, the app
+runtime, the daemon and your agent integrations. When you report an issue,
+include this output and the shortest sequence that reproduces it.
+
+## "tmux 3.7 or newer is required"
+
+tmux-ide refuses tmux servers older than 3.7. It never kills or replaces a
+running server for you. Sessions you create from tmux-ide use its bundled tmux
+3.7c, so start new sessions from the app (press `n` on Home, or `Ctrl+N` in
+Sessions) and move your work over when you're ready.
+
+## `tmux-ide: command not found`
+
+The installer puts the launcher in `~/.local/bin` and prints a PATH instruction
+if your shell doesn't include it. Add that directory to your `PATH` and open a
+new shell.
+
+## The app does not start after an interrupted download
+
+Download and verify this version's runtime again:
+
+```bash
+tmux-ide update --tui-binary
+tmux-ide app
+```
+
+## ⌥ keys do nothing in tmux chrome sessions
+
+Some agents, Claude Code among them, switch the terminal to a key encoding that
+tmux can't match against `⌥` bindings. Use the prefix form instead: `prefix h`,
+`prefix j`, `prefix k` and so on. See [tmux chrome keys](/docs/the-dock#the-keys).
+
+If keys misbehave inside the app itself, set `app.kittyKeys` to `false` in
+[`~/.tmux-ide/config.json`](/docs/configuration#app).
+
+## An agent shows the wrong state
+
+Ask tmux-ide how it classified the pane:
+
+```bash
+tmux-ide agent explain %3
+```
+
+The output shows the agent's own `@agent_state` stamp and its age, which
+manifest matched, and the screen lines it read.
+
+- A `working` or `blocked` stamp older than 10 minutes is ignored, and the
+  screen is read instead. Agents that report their own state should re-stamp
+  while they work.
+- If the wrong manifest matched, pin the right one with
+  `tmux set-option -p @agent_hint <id>`.
+- To change how an agent is recognized, add a manifest. See
+  [Override detection for a tool](/docs/agent-detection#override-detection-for-a-tool).
+
+## Claude Code status is not exact
+
+Check the integration:
+
+```bash
+tmux-ide integration status
+```
+
+Hooks are read when a Claude Code session starts, so restart sessions that were
+running before you installed the integration. Project or managed Claude Code
+settings can override user settings. See
+[the Claude Code integration](/docs/agent-detection#the-claude-code-integration).
+
+## A remote machine won't connect
+
+- The app connects with SSH `BatchMode=yes`, so it can't type a password or
+  accept an unknown host key. Set up key authentication and connect once with
+  `ssh` to trust the host.
+- The remote machine must run its own daemon. Start it with
+  `tmux-ide --headless` there, or with `tmux-ide machines start <alias> --write`
+  from your machine.
+- tmux-ide on the remote machine must be on the non-interactive SSH `PATH`.
+
+See [Remote machines over SSH](/docs/remote-machines).
+
+## `restore` finds no snapshot
+
+Snapshots are written by the background updater about every 30 seconds while
+any session is adopted or was created from the app. Without one, there is
+nothing to restore. Preview what a restore would do before running it:
+
+```bash
+tmux-ide restore --dry-run
+```
+
+See [Restore and resume](/docs/restore-resume).
+
+## `events` prints nothing
+
+The event log is written by the same background updater, so it needs an
+adopted session or one created from the app. See
+[Notifications and events](/docs/notifications-events).
+
+## See also
+
+- [Getting started](/docs/getting-started) — requirements and installation
+- [Agent detection](/docs/agent-detection) — how agent states are decided
+- [CLI reference](/docs/commands) — every command and flag

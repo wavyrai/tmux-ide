@@ -1,18 +1,22 @@
 ---
 title: tmux-ide
-description: "tmux-ide is a terminal app for coding agents built on ordinary tmux: Home shows every agent across your machines and Terminals drives the live session."
+description: tmux-ide is an open-source terminal app for running Claude Code, Codex and other coding agents in tmux, locally and over SSH. See what ships in 2.9.3.
 ---
 
-tmux-ide is a mouse-friendly terminal application around ordinary tmux
-sessions. It shows your coding agents across local and SSH machines, tells you
-which ones are working or need you, and lets you drive the live session with
-clickable windows, pane headers and direct controls. tmux stays the authority
-for processes, PTYs, layout, persistence and SSH.
+tmux-ide is an open-source terminal app for running coding agents such as
+Claude Code and Codex in ordinary tmux sessions. Home shows every agent across
+your local and SSH machines and which ones are working or need you. Terminals
+lets you drive the live session with the mouse and keyboard. tmux stays the
+authority for processes, PTYs, layout, persistence and SSH.
 
 ```bash
 curl -fsSL https://tmux-ide.com/install.sh | sh
 tmux-ide app
 ```
+
+It runs on macOS and glibc Linux (use WSL on Windows). The installer bundles
+tmux 3.7c and a private Node.js runtime and needs no sudo. Full requirements are
+in [Getting started](/docs/getting-started#requirements).
 
 ## What ships in 2.9
 
@@ -34,7 +38,7 @@ Around them:
 See [App surfaces](/docs/app-surfaces) for the full tour and
 [Getting started](/docs/getting-started) for every key.
 
-## Why tmux stays underneath
+## Why tmux-ide is built on tmux
 
 tmux has years of coverage for shells, terminal modes, resizes, detach/attach,
 disconnects and SSH. tmux-ide does not replace it:
@@ -47,7 +51,7 @@ disconnects and SSH. tmux-ide does not replace it:
 
 If the app or daemon stops, your sessions remain ordinary tmux sessions.
 
-## Also in the box
+## What else tmux-ide does
 
 - [Agent detection](/docs/agent-detection) — ground-truth status from Claude
   Code hooks or any agent's self-report, with a transparent fallback.
@@ -55,7 +59,14 @@ If the app or daemon stops, your sessions remain ordinary tmux sessions.
   — scriptable reads, sends and waits through the CLI, MCP and SDK.
 - [tmux chrome](/docs/the-dock) — `tmux-ide adopt` adds a status bar, keys and
   notifications to sessions you use from a plain tmux client.
-- [Restore and resume](/docs/restore-resume) and [worktrees](/docs/worktrees).
+- [Restore after a tmux crash](/docs/restore-resume) and
+  [run agents on parallel git worktrees](/docs/worktrees).
+- [Remote machines over SSH](/docs/remote-machines) — run agents on other
+  machines and drive them from your app.
+- [CLI reference](/docs/commands) — every command, most with `--json` output.
+- [Workspace layouts and config](/docs/configuration) — the optional
+  `.tmux-ide/workspace.yml` and global settings.
+- [Themes](/docs/theming) — 22 presets and automatic contrast.
 
 ## Not in this release
 
