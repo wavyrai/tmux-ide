@@ -1,7 +1,7 @@
 {
   "regenerate": "pnpm demo:tui",
   "sources": {
-    "docs/scripts/render-tui-demo.tsx": "cdecc3bb64d5c2d4",
+    "docs/scripts/render-tui-demo.tsx": "ddd4be5bace81bf4",
     "docs/scripts/tui-demo-figure-markup.ts": "5fc7df5945d9eed3",
     "docs/scripts/tui-demo-figures.ts": "d82a37fa19cf6540",
     "docs/scripts/tui-demo-fixture.ts": "db87220a3f7c7d9f",

@@ -18,7 +18,7 @@ import { format, resolveConfig } from "prettier";
 
 import { demoFingerprint, RECORD } from "./tui-demo-sources.mjs";
 import { frameText, renderScene, type Scene } from "./tui-demo-scene.tsx";
-import { FONT_DIR_PATH, svgDocument, type DemoFrame } from "./tui-demo-svg.ts";
+import { FONT_DIR_PATH, svgDocument, x, y, type DemoFrame } from "./tui-demo-svg.ts";
 import { figureDocument } from "./tui-demo-figure-markup.ts";
 
 const COLS = 160;
@@ -27,6 +27,8 @@ const OUTPUT = resolve("docs/public/tui-demo.svg");
 const FIGURES = resolve("docs/components/marketing/tui-mini-figure-frames.json");
 const FONTS = resolve("docs/public/fonts");
 const SPRITE = resolve("docs/public/tui-figures.svg");
+// The hero <Image> reads its intrinsic size from here, so it cannot drift.
+const SIZE = resolve("docs/components/marketing/tui-demo-size.json");
 
 const scene: Scene = { cols: COLS, rows: ROWS, surface: "terminals", focusedPane: "pane.claude" };
 const frames: DemoFrame[] = [
@@ -47,6 +49,7 @@ mkdirSync(dirname(OUTPUT), { recursive: true });
 writeFileSync(OUTPUT, await svgDocument(frames, { cols: COLS, rows: ROWS }, 1));
 const figures = await figureDocument();
 await writeJson(FIGURES, figures.document);
+await writeJson(SIZE, { width: Math.ceil(x(COLS)), height: Math.ceil(y(ROWS)) });
 writeFileSync(SPRITE, figures.sprite);
 // The inline figures use the same glyph subset, served once for the page.
 mkdirSync(FONTS, { recursive: true });

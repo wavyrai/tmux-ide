@@ -26,6 +26,20 @@ if (!/<title id="t">[^<]+<\/title>/u.test(svg) || !/<desc id="d">[^<]+<\/desc>/u
 if (!/@media \(prefers-reduced-motion:reduce\)/u.test(svg))
   failures.push("tui-demo.svg needs a reduced-motion still frame");
 
+// The hero <Image> reserves the SVG's declared size (no layout shift).
+const size = JSON.parse(
+  readFileSync(resolve(docsDir, "components/marketing/tui-demo-size.json"), "utf8"),
+);
+const declared = svg.match(/<svg[^>]*\swidth="([\d.]+)" height="([\d.]+)"/u);
+if (
+  !declared ||
+  size.width !== Math.ceil(Number(declared[1])) ||
+  size.height !== Math.ceil(Number(declared[2]))
+)
+  failures.push(
+    "tui-demo-size.json does not match tui-demo.svg's declared size; run `pnpm demo:tui`",
+  );
+
 // The landing mini-figures: one sprite, one cursor performance per figure.
 const frames = JSON.parse(
   readFileSync(resolve(docsDir, "components/marketing/tui-mini-figure-frames.json"), "utf8"),
