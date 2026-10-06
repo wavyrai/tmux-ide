@@ -6,39 +6,45 @@ import { fileURLToPath } from "node:url";
 import { staleDemoSources } from "./tui-demo-sources.mjs";
 
 const docsDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const svg = readFileSync(resolve(docsDir, "public/tui-demo.svg"), "utf8");
+// Fig. 01 ships in the app's default Dark and Light themes; the page shows the
+// one matching the site theme.
+const heroes = ["tui-demo.svg", "tui-demo-light.svg"].map((name) => ({
+  name,
+  svg: readFileSync(resolve(docsDir, "public", name), "utf8"),
+}));
 const failures = [];
 
 const stale = staleDemoSources();
 if (stale.length > 0)
   failures.push(
     "docs/public/tui-demo.svg is older than the app code it shows. Run `pnpm demo:tui` from " +
-      "the repo root and commit docs/public/tui-demo.svg and docs/scripts/tui-demo.sources.json. " +
+      "the repo root and commit docs/public/tui-demo*.svg and docs/scripts/tui-demo.sources.json. " +
       `Changed since the last render:\n    ${stale.join("\n    ")}`,
   );
-// Loaded as an <img>, the SVG cannot reach page fonts: it must carry its own.
-if ((svg.match(/src:url\(data:font\/woff2;base64,/gu) ?? []).length !== 2)
-  failures.push("tui-demo.svg must embed its regular and bold demo font subsets");
-if (/SFMono|Consolas|Menlo|Liberation Mono/u.test(svg))
-  failures.push("tui-demo.svg must not depend on system monospace fonts");
-if (!/<title id="t">[^<]+<\/title>/u.test(svg) || !/<desc id="d">[^<]+<\/desc>/u.test(svg))
-  failures.push("tui-demo.svg needs an accessible title and description");
-if (!/@media \(prefers-reduced-motion:reduce\)/u.test(svg))
-  failures.push("tui-demo.svg needs a reduced-motion still frame");
-
-// The hero <Image> reserves the SVG's declared size (no layout shift).
+// Loaded as an <img>, each SVG cannot reach page fonts: it must carry its own.
 const size = JSON.parse(
   readFileSync(resolve(docsDir, "components/marketing/tui-demo-size.json"), "utf8"),
 );
-const declared = svg.match(/<svg[^>]*\swidth="([\d.]+)" height="([\d.]+)"/u);
-if (
-  !declared ||
-  size.width !== Math.ceil(Number(declared[1])) ||
-  size.height !== Math.ceil(Number(declared[2]))
-)
-  failures.push(
-    "tui-demo-size.json does not match tui-demo.svg's declared size; run `pnpm demo:tui`",
-  );
+for (const { name, svg } of heroes) {
+  if ((svg.match(/src:url\(data:font\/woff2;base64,/gu) ?? []).length !== 2)
+    failures.push(`${name} must embed its regular and bold demo font subsets`);
+  if (/SFMono|Consolas|Menlo|Liberation Mono/u.test(svg))
+    failures.push(`${name} must not depend on system monospace fonts`);
+  if (!/<title id="t">[^<]+<\/title>/u.test(svg) || !/<desc id="d">[^<]+<\/desc>/u.test(svg))
+    failures.push(`${name} needs an accessible title and description`);
+  if (!/@media \(prefers-reduced-motion:reduce\)/u.test(svg))
+    failures.push(`${name} needs a reduced-motion still frame`);
+  // The hero <Image>s reserve the SVG's declared size (no layout shift).
+  const declared = svg.match(/<svg[^>]*\swidth="([\d.]+)" height="([\d.]+)"/u);
+  if (
+    !declared ||
+    size.width !== Math.ceil(Number(declared[1])) ||
+    size.height !== Math.ceil(Number(declared[2]))
+  )
+    failures.push(
+      `tui-demo-size.json does not match ${name}'s declared size; run \`pnpm demo:tui\``,
+    );
+}
 
 // The landing mini-figures: one sprite, one cursor performance per figure.
 const frames = JSON.parse(

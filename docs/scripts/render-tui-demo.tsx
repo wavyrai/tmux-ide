@@ -24,18 +24,30 @@ import { figureDocument } from "./tui-demo-figure-markup.ts";
 const COLS = 160;
 const ROWS = 44;
 const OUTPUT = resolve("docs/public/tui-demo.svg");
+// The same frames in the app's default Light theme, shown when the site is light.
+const OUTPUT_LIGHT = resolve("docs/public/tui-demo-light.svg");
 const FIGURES = resolve("docs/components/marketing/tui-mini-figure-frames.json");
 const FONTS = resolve("docs/public/fonts");
 const SPRITE = resolve("docs/public/tui-figures.svg");
 // The hero <Image> reads its intrinsic size from here, so it cannot drift.
 const SIZE = resolve("docs/components/marketing/tui-demo-size.json");
 
-const scene: Scene = { cols: COLS, rows: ROWS, surface: "terminals", focusedPane: "pane.claude" };
-const frames: DemoFrame[] = [
-  { label: "Home", frame: await renderScene({ ...scene, surface: "home" }) },
-  { label: "Terminals", frame: await renderScene(scene) },
-  { label: "Commands", frame: await renderScene({ ...scene, paletteOpen: true }) },
-];
+const heroFrames = async (mode: "dark" | "light"): Promise<DemoFrame[]> => {
+  const scene: Scene = {
+    cols: COLS,
+    rows: ROWS,
+    surface: "terminals",
+    focusedPane: "pane.claude",
+    mode,
+  };
+  return [
+    { label: "Home", frame: await renderScene({ ...scene, surface: "home" }) },
+    { label: "Terminals", frame: await renderScene(scene) },
+    { label: "Commands", frame: await renderScene({ ...scene, paletteOpen: true }) },
+  ];
+};
+const frames = await heroFrames("dark");
+const lightFrames = await heroFrames("light");
 if (process.argv.includes("--text"))
   for (const { label, frame } of frames)
     process.stdout.write(`--- ${label}\n${frameText(frame)}\n`);
@@ -47,6 +59,7 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 
 mkdirSync(dirname(OUTPUT), { recursive: true });
 writeFileSync(OUTPUT, await svgDocument(frames, { cols: COLS, rows: ROWS }, 1));
+writeFileSync(OUTPUT_LIGHT, await svgDocument(lightFrames, { cols: COLS, rows: ROWS }, 1));
 const figures = await figureDocument();
 await writeJson(FIGURES, figures.document);
 await writeJson(SIZE, { width: Math.ceil(x(COLS)), height: Math.ceil(y(ROWS)) });
@@ -60,6 +73,6 @@ for (const weight of ["regular", "bold"])
   );
 await writeJson(RECORD, { regenerate: "pnpm demo:tui", sources: demoFingerprint() });
 process.stdout.write(
-  `Rendered ${OUTPUT} from ${frames.length} production OpenTUI frames and ` +
+  `Rendered ${OUTPUT} and its light twin from ${frames.length} production OpenTUI frames and ` +
     `${Object.keys(figures.document.figures).length} landing figures.\n`,
 );

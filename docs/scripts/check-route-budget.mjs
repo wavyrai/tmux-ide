@@ -53,14 +53,18 @@ if (htmlGzipBytes > htmlGzipBudget) {
   throw new Error(`Homepage HTML exceeds budget: ${htmlGzipBytes}/${htmlGzipBudget} gzip bytes`);
 }
 
-const demo = readFileSync(resolve(docsDir, "public/tui-demo.svg"));
-const demoGzipBytes = gzipSync(demo, { level: 9 }).length;
-if (demoGzipBytes > demoGzipBudget) {
-  throw new Error(`TUI demo exceeds budget: ${demoGzipBytes}/${demoGzipBudget} gzip bytes`);
+// Dark and light heroes each get the budget: a page view loads only the one
+// matching the site theme.
+let demoGzipBytes = 0;
+for (const name of ["tui-demo.svg", "tui-demo-light.svg"]) {
+  const bytes = gzipSync(readFileSync(resolve(docsDir, "public", name)), { level: 9 }).length;
+  if (bytes > demoGzipBudget)
+    throw new Error(`TUI demo ${name} exceeds budget: ${bytes}/${demoGzipBudget} gzip bytes`);
+  demoGzipBytes = Math.max(demoGzipBytes, bytes);
 }
 
 console.log(
   `Homepage client JS: ${rawBytes} raw bytes, ${gzipBytes} gzip bytes, ` +
     `${chunks.length} chunks; HTML ${htmlGzipBytes} gzip bytes; ` +
-    `TUI demo ${demoGzipBytes} gzip bytes; static prerender confirmed.`,
+    `TUI demo ${demoGzipBytes} gzip bytes (largest theme); static prerender confirmed.`,
 );

@@ -1,6 +1,7 @@
 # The rendered app demos
 
-The landing page's Fig. 01 (`docs/public/tui-demo.svg`), the nine mini-figures
+The landing page's Fig. 01 (`docs/public/tui-demo.svg`, and `tui-demo-light.svg`, the same
+frames in the app's default Light theme, shown when the site is light), the nine mini-figures
 (Fig. 02.1–04.3, `docs/public/tui-figures.svg`) and the README demo are
 rendered from the production `tmux-ide app` shell. They are not screenshots
 and not drawings.
@@ -46,7 +47,8 @@ pnpm demo:font           # rebuild the embedded glyph subset (needs uv)
 
 ## Size budget
 
-`check:performance` caps `tui-demo.svg` at 18 KB gzip. When the cap was set,
+`check:performance` caps each of `tui-demo.svg` and `tui-demo-light.svg` at 18 KB gzip (a page
+view fetches only the one matching the site theme). When the cap was set,
 the three frames measured about 5.7 KB and each embedded glyph subset (regular
 and bold) about 5.4 KB, for 15.7 KB in total. Real bold is kept because the
 app draws headings, tabs and tool calls in bold. The SVG is an `<img>` that
