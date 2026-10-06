@@ -10,8 +10,8 @@ import {
 } from "./native-x64-qualification.mjs";
 const report = () => ({
   success: true,
-  numTotalTests: 8,
-  numPassedTests: 8,
+  numTotalTests: nativeX64Suites.length,
+  numPassedTests: nativeX64Suites.length,
   numFailedTests: 0,
   numPendingTests: 0,
   testResults: nativeX64Suites.map((name) => ({
@@ -21,7 +21,7 @@ const report = () => ({
   })),
 });
 test("requires actual executed assertions in each selected file", () => {
-  assert.equal(verifyNativeResults(report()), 8);
+  assert.equal(verifyNativeResults(report()), nativeX64Suites.length);
   for (const change of [
     (r) => r.testResults.pop(),
     (r) => (r.testResults[0].assertionResults = []),
@@ -33,6 +33,21 @@ test("requires actual executed assertions in each selected file", () => {
     const r = report();
     change(r);
     assert.throws(() => verifyNativeResults(r));
+  }
+});
+test("history qualification cannot omit either maintained suite or skip its assertions", () => {
+  for (const name of [
+    "src/tui/mirror/runtime/terminal-native-content-live.test.ts",
+    "src/terminal/session-runtime/tmux-clear-history-live.test.ts",
+  ]) {
+    assert(nativeX64Suites.includes(name));
+    const missing = report();
+    missing.testResults = missing.testResults.filter((suite) => !suite.name.endsWith(name));
+    assert.throws(() => verifyNativeResults(missing));
+    const skipped = report();
+    skipped.testResults.find((suite) => suite.name.endsWith(name)).assertionResults[0].status =
+      "pending";
+    assert.throws(() => verifyNativeResults(skipped));
   }
 });
 function elf() {

@@ -85,11 +85,12 @@ jobs:
       - name: Execute every selected native daemon test without skips
         run: |
           export TMUX_IDE_NATIVE_JOURNAL_TEST_BINARY="$PROOF/bundle/tmux"
+          export TMUX_IDE_REQUIRE_NATIVE_CAPABILITIES=1
           export PATH="$PROOF/bundle:$PATH"
           unset TMUX TMUX_PANE
           suites=()
           while IFS= read -r suite; do suites+=("$suite"); done < <(node scripts/lib/native-x64-qualification.mjs suites "$PROOF")
-          test "${#suites[@]}" -eq 8
+          test "${#suites[@]}" -eq 10
           pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts "${suites[@]}" --reporter=default --reporter=json --outputFile.json="$PROOF/vitest.json" 2>&1 | tee "$PROOF/daemon.log"
           node scripts/lib/native-x64-qualification.mjs verify "$PROOF"
       - name: Record cleanup independently of test success
