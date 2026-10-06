@@ -11959,7 +11959,7 @@ var require_package = __commonJS({
     module.exports = {
       name: "tmux-ide",
       version: "2.9.3",
-      description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
+      description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
         "tmux-ide": "bin/cli.js"
@@ -12072,7 +12072,11 @@ var require_package = __commonJS({
       },
       keywords: [
         "tmux",
-        "ide",
+        "coding-agents",
+        "claude-code",
+        "codex",
+        "ai-agents",
+        "agent-teams",
         "terminal",
         "workspace",
         "developer-tools"
@@ -12084,7 +12088,7 @@ var require_package = __commonJS({
         type: "git",
         url: "git+https://github.com/wavyrai/tmux-ide.git"
       },
-      homepage: "https://github.com/wavyrai/tmux-ide#readme",
+      homepage: "https://tmux-ide.com",
       bugs: {
         url: "https://github.com/wavyrai/tmux-ide/issues"
       },
