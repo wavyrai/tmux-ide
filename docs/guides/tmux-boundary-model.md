@@ -524,3 +524,25 @@ requires its own same-path regression and fix.
 - Once these contracts pass, record capture counts, copied rows, queue depth and
   rendered-frame latency for the same scenarios. Performance changes must retain
   correctness; wall-clock test duration is not a user-visible latency benchmark.
+
+### Ordinary CLI client selection
+
+Ordinary bridge commands (including `status --json`) resolve their tmux client
+lazily at the CLI composition boundary. An explicit absolute
+`TMUX_IDE_TMUX_BIN` takes precedence and an invalid override fails without
+fallback. Otherwise the existing PATH client wins, including relative and empty
+PATH entries interpreted against the command's working directory; an omitted
+PATH uses the Unix default `/usr/bin:/bin`. If no PATH client exists, the CLI
+uses the validated bundled tmux and its terminfo resources. Caller environment
+and socket arguments are preserved; selecting a client does not select or
+replace a server. The daemon's pinned client selection and development namespace
+guard remain separate.
+
+`cli-tmux-resolution-live.test.ts` exercises the built CLI against a private
+server through tmux's ordinary `TMUX` socket context, checks unchanged
+server/session/pane/process identity, and covers clean PATH, repeated reads,
+ordinary/relative/empty PATH, explicit override precedence, invalid override
+failure, and a subsequent successful read. Enable it with an absolute
+`TMUX_IDE_TEST_BUNDLED_CLI_ANCHOR` pointing to a CLI beside validated native
+assets, and run it with `vitest.live.config.ts` after building `bin/cli.js`.
+It does not qualify the separate `TMUX_IDE_TMUX_SOCKET_NAME` namespace policy.

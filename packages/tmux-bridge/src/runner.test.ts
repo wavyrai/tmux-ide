@@ -22,6 +22,7 @@ import {
   attachSession,
   runSessionCommand,
   runTmux,
+  configureTmuxClientResolver,
   runTmuxBinary,
   runTmuxBinaryAsync,
 } from "./index.ts";
@@ -610,5 +611,40 @@ describe("runTmuxBinaryAsync", () => {
       { env: { PATH: "/usr/bin:/bin", NO_COLOR: "1" } },
     );
     expect(output).toBe("truecolor|");
+  });
+});
+
+describe("ordinary client host resolution", () => {
+  it("preserves caller socket arguments, environment and cwd while leaving pinned execution alone", () => {
+    const environment = { PATH: "/ordinary", TMUX: "/private/socket,123,0" };
+    const resolver = mock((env: NodeJS.ProcessEnv, cwd?: string | URL) => {
+      expect(env).toBe(environment);
+      expect(cwd).toBe("/caller");
+      return { executable: "/selected/tmux", environment: { ...env, TERMINFO_DIRS: "/bundle:" } };
+    });
+    const restore = configureTmuxClientResolver(resolver);
+    try {
+      mockExec.mockReturnValue("");
+      runTmux(["-S", "/explicit/socket", "has-session"], {
+        env: environment,
+        cwd: "/caller",
+        encoding: "utf8",
+      });
+      expect(mockExec.mock.calls[0][0]).toBe("/selected/tmux");
+      expect(mockExec.mock.calls[0][1]).toEqual(["-S", "/explicit/socket", "has-session"]);
+      expect(mockExec.mock.calls[0][2]).toMatchObject({
+        cwd: "/caller",
+        env: { ...environment, TERMINFO_DIRS: "/bundle:" },
+      });
+      runTmuxBinary("/pinned/tmux", ["list-sessions"]);
+      expect(resolver).toHaveBeenCalledTimes(1);
+      expect(mockExec.mock.calls[1][0]).toBe("/pinned/tmux");
+      expect(() =>
+        runTmux(["list-sessions"], { env: { TMUX_IDE_RUNTIME_MODE: "development" } }),
+      ).toThrow("explicitly pinned namespace runner");
+      expect(resolver).toHaveBeenCalledTimes(1);
+    } finally {
+      restore();
+    }
   });
 });

@@ -1,7 +1,12 @@
+import { fileURLToPath } from "node:url";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
-import { delimiter, isAbsolute, join } from "node:path";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
-import { resolveBundledTmux, bundledTmuxResourceEnvironment } from "./bundled-tmux.ts";
+import {
+  resolveBundledTmux,
+  bundledTmuxResourceEnvironment,
+  withBundledTmuxResources,
+} from "./bundled-tmux.ts";
 
 export function resolveTmuxExecutable(): string {
   if (resolveRuntimeNamespace().development) return resolveBundledTmux()!;
@@ -56,4 +61,44 @@ export function tmuxClientEnvironment(
     if (value && SAFE_LOCALE_VALUE.test(value)) environment[name] = value;
   }
   return { ...environment, ...bundledTmuxResourceEnvironment(executable) };
+}
+
+/** Ordinary CLI commands retain PATH selection; bundled tmux fills a missing system client. */
+export function resolveOrdinaryTmuxClient(
+  environment: NodeJS.ProcessEnv,
+  cwd?: string | URL,
+): {
+  executable: string;
+  environment: NodeJS.ProcessEnv;
+} {
+  const configured = environment.TMUX_IDE_TMUX_BIN;
+  const candidates = configured
+    ? [configured]
+    : (environment.PATH ?? "/usr/bin:/bin")
+        .split(delimiter)
+        .map((entry) =>
+          resolve(cwd instanceof URL ? fileURLToPath(cwd) : (cwd ?? process.cwd()), entry, "tmux"),
+        );
+  let executable: string | undefined;
+  for (const candidate of candidates) {
+    try {
+      if (!isAbsolute(candidate)) continue;
+      accessSync(candidate, constants.X_OK);
+      const canonical = realpathSync(candidate);
+      if (statSync(canonical).isFile()) {
+        executable = canonical;
+        break;
+      }
+    } catch {
+      /* Try the next ordinary PATH candidate. */
+    }
+  }
+  if (!executable && !configured)
+    executable =
+      resolveBundledTmux([
+        ...(environment.TMUX_IDE_CLI ? [environment.TMUX_IDE_CLI] : []),
+        fileURLToPath(import.meta.url),
+      ]) ?? undefined;
+  if (!executable) throw new Error("tmux_executable_unavailable");
+  return { executable, environment: withBundledTmuxResources(executable, environment) };
 }

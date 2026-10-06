@@ -8,6 +8,12 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { configureTmuxClientResolver } from "../packages/tmux-bridge/src/index.ts";
+import { resolveOrdinaryTmuxClient } from "../packages/daemon/src/lib/tmux-client-execution.ts";
+
+// Resolve only when an ordinary bridge command executes; help/version stay inert.
+configureTmuxClientResolver(resolveOrdinaryTmuxClient);
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // The node-runnable CLI path that spawned TUI surfaces shell back to (the app's
 // async fleet poll + `detect --write`). When we're the published `bin/cli.js`
