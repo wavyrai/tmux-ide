@@ -66,6 +66,33 @@ describe("terminal canonical hash cache", () => {
     expect(hashCanonicalTerminalValue(values)).toBe(referenceHash(values));
   });
 
+  it("preserves key byte encodings across token limits, Unicode and cache overflow", async () => {
+    const keys = ["", "kind", "a;b:", "\0\n", "x".repeat(32), "x".repeat(33), "界", "😀", "\ud800"];
+    const values = [
+      ...Array.from({ length: 3 }, (_, pass) =>
+        Object.fromEntries(keys.map((key, index) => [key, pass + index])),
+      ),
+      ...Array.from({ length: 24 }, (_, index) => ({ ["layout-" + index]: index, kind: "fresh" })),
+      Object.fromEntries(Array.from({ length: 40 }, (_, index) => ["field-" + index, index])),
+      Object.fromEntries(keys.map((key, index) => [key, "changed-" + index])),
+    ];
+    const expected = referenceHash(values);
+    expect(hashCanonicalTerminalValue(values)).toBe(expected);
+    let yields = 0;
+    expect(
+      await hashCanonicalTerminalValueCooperatively(
+        values,
+        async () => {
+          yields++;
+        },
+        32,
+      ),
+    ).toBe(expected);
+    expect(yields).toBeGreaterThan(0);
+    values[0] = { kind: "next call" };
+    expect(hashCanonicalTerminalValue(values)).toBe(referenceHash(values));
+  });
+
   it("keeps batch row hashes canonical with bounded encoding reuse and a JS fallback", () => {
     const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
     const base = blankTerminalReplicaSnapshot(1, 1).grid[0]!.cells[0]!;

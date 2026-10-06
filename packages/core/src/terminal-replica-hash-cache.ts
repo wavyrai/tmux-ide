@@ -5,8 +5,14 @@ const ROW_HASH_CACHE = new WeakMap<object, string>();
 const DEEPLY_FROZEN_ROWS = new WeakSet<object>();
 const UTF8_ENCODER = new TextEncoder();
 
+interface CanonicalKeyOrder {
+  readonly original: string[];
+  readonly sorted: string[];
+  readonly tokens: readonly (string | null)[] | null;
+}
+
 /**
- * Allocation-free FNV-1a64 writer for the canonical terminal encoding.
+ * Streaming FNV-1a64 writer for the canonical terminal encoding.
  *
  * Keep the two 32-bit limbs: BigInt per byte made a unique 5k-row compact
  * delivery monopolize the OpenTUI event loop for almost a second.
@@ -15,13 +21,13 @@ class CanonicalFnv64 {
   #high = 0xcbf29ce4;
   #low = 0x84222325;
   // Per-hash only: terminal objects repeat a handful of small field layouts.
-  // Reuse their sorted keys without retaining records, values, or future calls.
-  #keyOrders: Array<{ original: string[]; sorted: string[] }> | null = null;
+  // Reuse sorted keys and short ASCII key tokens without retaining records,
+  // values, or future calls. Tokens share the 16-layout/32-key cache bound.
+  #keyOrders: CanonicalKeyOrder[] | null = null;
 
-  keys(record: Record<string, unknown>): readonly string[] {
+  keyOrder(record: Record<string, unknown>): CanonicalKeyOrder {
     const keys = Object.keys(record);
-    if (keys.length < 2) return keys;
-    if (keys.length > 32) return keys.sort();
+    if (keys.length > 32) return { original: keys, sorted: keys.sort(), tokens: null };
     for (const order of this.#keyOrders ?? []) {
       if (order.original.length !== keys.length) continue;
       let matches = true;
@@ -31,12 +37,23 @@ class CanonicalFnv64 {
           break;
         }
       }
-      if (matches) return order.sorted;
+      if (matches) return order;
     }
-    if ((this.#keyOrders?.length ?? 0) >= 16) return keys.sort();
-    const sorted = keys.slice().sort();
-    (this.#keyOrders ??= []).push({ original: keys, sorted });
-    return sorted;
+    if ((this.#keyOrders?.length ?? 0) >= 16)
+      return { original: keys, sorted: keys.sort(), tokens: null };
+    const sorted = keys.length < 2 ? keys : keys.slice().sort();
+    const order = {
+      original: keys,
+      sorted,
+      tokens: sorted.map((key) => {
+        if (key.length > 32) return null;
+        for (let index = 0; index < key.length; index++)
+          if (key.charCodeAt(index) > 0x7f) return null;
+        return `s${key.length}:${key};`;
+      }),
+    };
+    (this.#keyOrders ??= []).push(order);
+    return order;
   }
 
   #byte(value: number): void {
@@ -123,10 +140,13 @@ class CanonicalFnv64 {
       return;
     }
     const record = value as Record<string, unknown>;
-    const keys = this.keys(record);
+    const { sorted: keys, tokens } = this.keyOrder(record);
     this.ascii(`o${keys.length}:`);
-    for (const key of keys) {
-      this.string(key);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
+      const token = tokens?.[index];
+      if (token !== null && token !== undefined) this.ascii(token);
+      else this.string(key);
       this.value(record[key]);
     }
     this.ascii(";");
@@ -199,7 +219,7 @@ export async function hashCanonicalTerminalValueCooperatively(
       continue;
     }
     const record = entry as Record<string, unknown>;
-    const keys = hash.keys(record);
+    const keys = hash.keyOrder(record).sorted;
     if (checkpoint(hash.ascii(`o${keys.length}:`) + keys.length)) await yieldControl();
     stack.push({ kind: "ascii", value: ";" });
     for (let index = keys.length - 1; index >= 0; index -= 1) {
