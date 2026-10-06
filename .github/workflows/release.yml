@@ -119,6 +119,36 @@ jobs:
       - uses: pnpm/action-setup@v4
       - name: Install qualification dependencies
         run: pnpm install --frozen-lockfile
+      - name: Qualify exact bundled tmux boundary
+        id: tmux_boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Short private path keeps macOS AF_UNIX fixture sockets representable.
+          proof="$(mktemp -d /tmp/tmb.XXXXXX)"
+          echo "evidence=$proof" >> "$GITHUB_OUTPUT"
+          mkdir "$proof/tmp"
+          export TMPDIR="$proof/tmp"
+          git rev-parse HEAD > "$proof/commit.txt"
+          node --version > "$proof/node-version.txt"
+          cp native/tmux/provenance.json "$proof/provenance.json"
+          bundle="$PWD/packages/daemon/dist/native/tmux/$(node -p 'process.platform + "-" + process.arch')"
+          cp "$bundle/manifest.json" "$proof/bundle-manifest.json"
+          test -x "$bundle/tmux"
+          unset TMUX TMUX_PANE
+          export TMUX_IDE_BOUNDARY_TEST_BINARY="$bundle/tmux"
+          export TMUX_IDE_ORACLE_EXPECT_NATIVE=1
+          export TMUX_IDE_REQUIRE_NATIVE_CAPABILITIES=1
+          export PATH="$bundle:$PATH"
+          pnpm test:tmux-boundary 2>&1 | tee "$proof/boundary.log"
+      - name: Retain bundled boundary reports including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-boundary-${{ matrix.platform }}-${{ github.sha }}
+          path: ${{ steps.tmux_boundary.outputs.evidence }}
+          if-no-files-found: error
+          retention-days: 14
       - name: Qualify installer transactions on this platform
         run: pnpm test:installer
       - name: Prepare Linux user service manager
