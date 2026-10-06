@@ -171,10 +171,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       suppressHydrationWarning
     >
       <body className="flex flex-col min-h-screen">
-        <a
-          href="#main-content"
-          className="marketing-skip-action fixed left-4 top-4 z-[100] -translate-y-24 rounded-full bg-fd-primary px-4 py-2 text-sm text-fd-primary-foreground shadow-lg focus:translate-y-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fd-ring"
-        >
+        <a href="#main-content" className="marketing-skip-action skip-link">
           Skip to content
         </a>
         <script

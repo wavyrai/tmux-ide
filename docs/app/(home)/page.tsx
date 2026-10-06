@@ -322,17 +322,16 @@ export default async function HomePage() {
             <SectionHeader eyebrow="Questions, answered" title="tmux-ide FAQ" />
             <div id="faq" className="mt-12 border-t border-fd-border">
               {LANDING_FAQ.map(({ question, answer }) => (
-                <details key={question} className="group border-b border-fd-border py-6">
-                  <summary className="type-headline flex cursor-pointer list-none items-center gap-6 text-fd-foreground marker:content-none">
+                <details key={question} className="faq-item">
+                  <summary className="faq-q type-headline">
                     <span>{question}</span>
-                    <span
-                      aria-hidden
-                      className="ml-auto text-fd-muted-foreground transition-transform duration-200 ease-smooth group-open:rotate-45 motion-reduce:transition-none"
-                    >
+                    <span aria-hidden className="faq-x">
                       +
                     </span>
                   </summary>
-                  <p className={`marketing-faq-answer pt-4 ${bodyCopy}`}>{withInline(answer)}</p>
+                  <p className="marketing-faq-answer faq-a type-marketing-body">
+                    {withInline(answer)}
+                  </p>
                 </details>
               ))}
             </div>

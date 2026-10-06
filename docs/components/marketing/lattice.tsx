@@ -59,12 +59,7 @@ export function Stretch({
   return (
     <div
       data-slot="marketing-stretch"
-      className={cn(
-        "relative isolate before:pointer-events-none before:absolute before:inset-y-0 before:left-[calc(50%-50vw)] before:right-[calc(50%-50vw)] before:-z-10 before:bg-inherit",
-        "after:pointer-events-none after:absolute after:inset-y-0 after:-inset-x-px after:z-10 after:border-x after:border-marketing-line after:max-lg:border-x-0",
-        groundClasses[ground],
-        className,
-      )}
+      className={cn("marketing-stretch", groundClasses[ground], className)}
     >
       {children}
     </div>
