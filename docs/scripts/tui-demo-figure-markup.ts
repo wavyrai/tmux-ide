@@ -3,8 +3,9 @@
  *
  * Each figure is rendered twice — the app's dark and light themes — and the
  * two renders must agree cell for cell except in colour. Every (light, dark)
- * colour pair becomes one custom property set to `light-dark(...)`, so the
- * figures follow the site's theme toggle with the app's own palettes. All
+ * colour pair becomes one custom property, set per theme on `.tui-figure` and
+ * `.dark .tui-figure` in tui-mini-figure-frames.css, so the figures follow the
+ * site's theme toggle with the app's own palettes. All
  * figures live in one cached sprite (docs/public/tui-figures.svg) that the
  * page references with <use>; the "after" frame holds only the cells that
  * change, painted over "before".
@@ -51,8 +52,6 @@ export interface FigureMarkup {
 export interface FigureDocument {
   readonly width: number;
   readonly height: number;
-  /** Page CSS: glyph faces and one custom property per themed colour pair. */
-  readonly css: string;
   /** Content-hashed URL of the sprite; `#<variant>-before` / `#<variant>-after`. */
   readonly sprite: string;
   readonly figures: Readonly<Record<string, FigureMarkup>>;
@@ -62,6 +61,12 @@ export interface FigureOutput {
   readonly document: FigureDocument;
   /** docs/public/tui-figures.svg */
   readonly sprite: string;
+  /**
+   * Page CSS (glyph faces, one custom property per themed colour pair). It is
+   * imported as a stylesheet, not inlined: an inline <style> would be repeated
+   * in the RSC payload once per figure.
+   */
+  readonly css: string;
 }
 
 async function frame(spec: FigureFrame, mode: ThemeMode): Promise<CapturedFrame> {
@@ -186,21 +191,25 @@ export async function figureDocument(): Promise<FigureOutput> {
   const css = [
     `@font-face{font-family:tui-figure;font-weight:400;font-display:block;src:url(/fonts/tui-demo-regular.woff2) format("woff2")}`,
     `@font-face{font-family:tui-figure;font-weight:700;font-display:block;src:url(/fonts/tui-demo-bold.woff2) format("woff2")}`,
+    // Plain per-theme custom properties keyed on the site's .dark class: the
+    // CSS pipeline rewrites light-dark() into variables only a stylesheet's own
+    // color-scheme declarations define, and the site sets color-scheme inline.
     `${scope}{font-family:tui-figure,var(--font-geist-mono),ui-monospace,monospace;font-size:${FONT_SIZE}px;white-space:pre;text-rendering:geometricPrecision;${[
       ...pairs,
     ]
-      .map(([id, name]) => `--${name}:light-dark(${id.slice(0, 7)},${id.slice(7)})`)
+      .map(([id, name]) => `--${name}:${id.slice(0, 7)}`)
       .join(";")}}`,
+    `.dark ${scope}{${[...pairs].map(([id, name]) => `--${name}:${id.slice(7)}`).join(";")}}`,
   ].join("\n");
   const hash = createHash("sha256").update(sprite).digest("hex").slice(0, 10);
   return {
     document: {
       width: x(CROP_COLS),
       height: y(CROP_ROWS),
-      css,
       sprite: `/tui-figures.svg?v=${hash}`,
       figures,
     },
     sprite,
+    css,
   };
 }

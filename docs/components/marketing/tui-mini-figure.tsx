@@ -2,6 +2,8 @@ import { cn } from "@/lib/cn";
 import type { CSSProperties } from "react";
 import { TechnicalCaption } from "./technical-caption";
 import frames from "./tui-mini-figure-frames.json";
+// Glyph faces and themed colour pairs, in the cached CSS chunk rather than the page.
+import "./tui-mini-figure-frames.css";
 import { TuiCursor, cursorPath } from "./tui-cursor";
 
 /**
@@ -9,8 +11,9 @@ import { TuiCursor, cursorPath } from "./tui-cursor";
  * rendered by `pnpm demo:tui` (docs/scripts/tui-demo-figures.ts) in the app's
  * dark and light themes into one cached sprite, public/tui-figures.svg: the
  * "before" frame, then the cells that change when the named cursor performs
- * the action (see tui-cursor.tsx). Colours arrive as inherited `light-dark()` custom properties, so
- * the figures follow the site theme; glyphs use Fig. 01's Geist Mono subset.
+ * the action (see tui-cursor.tsx). Colours arrive as inherited custom
+ * properties set per site theme (tui-mini-figure-frames.css), so the figures
+ * follow the site theme; glyphs use Fig. 01's Geist Mono subset.
  */
 export type TuiFigureVariant =
   | "names"
@@ -62,10 +65,6 @@ export function TuiMiniFigure({ variant, figure, className, motionCount, motionI
       aria-labelledby={`${figureId}-caption`}
       className={cn("overflow-hidden border border-marketing-line bg-marketing-raise", className)}
     >
-      {/* One shared, deduplicated stylesheet: glyph faces and themed colour pairs. */}
-      <style href="tui-mini-figure" precedence="default">
-        {frames.css}
-      </style>
       <div
         data-motion-count={motion.count}
         data-motion-index={motion.index}

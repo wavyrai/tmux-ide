@@ -73,6 +73,14 @@ for (const [variant, figure] of Object.entries(frames.figures)) {
   )
     failures.push(`${variant} figure needs a "You" cursor path with from/at/to inside the figure`);
 }
+const figureCss = readFileSync(
+  resolve(docsDir, "components/marketing/tui-mini-figure-frames.css"),
+  "utf8",
+);
+if (!figureCss.includes("@font-face") || !figureCss.includes(".dark .tui-figure"))
+  failures.push(
+    "tui-mini-figure-frames.css lacks the figure glyph faces or themed colours; run `pnpm demo:tui`",
+  );
 const icons = readFileSync(resolve(docsDir, "components/icons/sprite.svg"), "utf8");
 if (!icons.includes('<symbol id="cursor-arrow"'))
   failures.push("components/icons/sprite.svg lacks the #cursor-arrow symbol the cursors draw");

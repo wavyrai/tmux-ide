@@ -30,8 +30,9 @@ pnpm demo:font           # rebuild the embedded glyph subset (needs uv)
   spinner. A frame that differs only by a modal (the palette) is stored as the
   app's scrim plus the changed cells.
 - `tui-demo-figure-markup.ts` renders every figure in the dark and the light
-  theme. Each colour pair becomes a `light-dark()` custom property, so the
-  figures follow the site theme. All figures go into one cached sprite that
+  theme. Each colour pair becomes a custom property, set for the light site
+  and again under `.dark` in the generated `tui-mini-figure-frames.css`, so
+  the figures follow the site theme. All figures go into one cached sprite that
   `components/marketing/tui-mini-figure.tsx` references with `<use>`. Each
   figure also says how the reader's "You" cursor performs its action
   (`from` → `at` → `to`); `components/marketing/tui-cursor.tsx` draws that as
