@@ -7,8 +7,9 @@ does not imply endorsement.
 
 ## lobe-icons
 
-Used for the Codex mark (`public/marks/codex.svg`) and the OpenAI,
-Claude and Perplexity marks (`components/docs/assistant-marks.tsx`).
+Used for the Codex mark (`public/marks/codex.svg`,
+`components/icons/sprite.svg`) and the OpenAI, Claude and Perplexity marks
+(`components/docs/assistant-marks.tsx`).
 
 Source: https://github.com/lobehub/lobe-icons
 
@@ -99,8 +100,8 @@ SOFTWARE.
 
 ## Simple Icons
 
-Used for the Claude Code and Cursor marks (`public/marks/claude-code.svg`,
-`components/icons/sprite.svg`).
+Used for the Claude Code, Cursor and opencode marks
+(`public/marks/claude-code.svg`, `components/icons/sprite.svg`).
 
 Source: https://simpleicons.org, released under CC0 1.0 Universal (public
 domain dedication); credit is given as a courtesy.

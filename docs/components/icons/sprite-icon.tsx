@@ -6,15 +6,27 @@ import { SPRITE } from "./sprite-url";
  * once and stay out of every page's HTML and RSC payload. Symbols paint with
  * currentColor, which a <use> instance inherits from its parent.
  *
- * Symbols: github, docs, cursor, copy, cursor-arrow (the demos' multiplayer pointer). Add new ones to the sprite with their own
- * viewBox and reference them by id.
+ * Symbols: github, docs, cursor, copy, cursor-arrow (the demos' multiplayer
+ * pointer), and the harness marks claude-code (brand fill), codex and
+ * opencode (currentColor). Add new ones to the sprite with
+ * their own viewBox and reference them by id.
  */
+export type SpriteName =
+  | "github"
+  | "docs"
+  | "cursor"
+  | "copy"
+  | "cursor-arrow"
+  | "claude-code"
+  | "codex"
+  | "opencode";
+
 export function SpriteIcon({
   name,
   size = 14,
   className,
 }: {
-  name: "github" | "docs" | "cursor" | "copy" | "cursor-arrow";
+  name: SpriteName;
   size?: number;
   className?: string;
 }) {
