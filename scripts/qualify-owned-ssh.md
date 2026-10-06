@@ -26,8 +26,8 @@ This adds `public-cli-absent-daemon`: the SSH-side process runs that CLI with
 `remote-daemon-info --json`, an explicit private `TMUX_IDE_HOME`, and no inherited
 runtime credentials or namespace settings. The case verifies `daemon-missing`,
 zero synthetic-handshake requests, and no files created in the private home.
-It also adds `public-cli-incompatible-record`: an owner-only, credential-less
-legacy record references the live fixture process. The real CLI must report
+It also adds credential-less and unsupported-protocol cases: owner-only
+records reference the live fixture process. The real CLI must report
 `incompatible` without modifying that record or using the synthetic handshake.
 The receipt records the CLI hash. These cases do not start a daemon or qualify an
 actual legacy server upgrade or installation. Other identity/protocol cases

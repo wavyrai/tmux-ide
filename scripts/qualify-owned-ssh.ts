@@ -527,39 +527,44 @@ try {
     });
   }
   if (publicDiscoveryCli) {
-    const incompatible = await fixture({
-      targetPort,
-      publicDiscoveryCli,
-      handshake: () => {
-        throw new Error("Public CLI must not use the synthetic handshake");
-      },
-    });
-    const stateDir = join(incompatible.root, "state");
-    mkdirSync(stateDir, { mode: 0o700 });
-    incompatible.files.capture("state");
-    // A fixture-owned live PID and credential-less legacy record exercise the
-    // public CLI's real record reader and compatibility check, not a fake result.
-    const record = JSON.stringify({
-      pid: process.pid,
-      port: targetPort,
-      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
-      productVersion: "2.9.2",
-      instanceId: randomUUID(),
-      startedAt: new Date().toISOString(),
-      bindHostname: "127.0.0.1",
-      authToken: null,
-    });
-    const recordPath = join(stateDir, "daemon.json");
-    writeFileSync(recordPath, record, { mode: 0o600, flag: "wx" });
-    incompatible.files.capture("state/daemon.json");
-    await runCase("public-cli-incompatible-record", async () => {
-      await refused(incompatible.config, undefined, 0, "incompatible");
-      assert(incompatible.metrics().requests === 0);
-      assert(readFileSync(recordPath, "utf8") === record);
-      assert(JSON.stringify(readdirSync(stateDir)) === JSON.stringify(["daemon.json"]));
-      caseFacts = { publicCliSha256, syntheticHandshakeRequests: 0, recordUnchanged: true };
-      await marker();
-    });
+    for (const variant of ["credential-less", "unsupported-protocol"] as const) {
+      const incompatible = await fixture({
+        targetPort,
+        publicDiscoveryCli,
+        handshake: () => {
+          throw new Error("Public CLI must not use the synthetic handshake");
+        },
+      });
+      const stateDir = join(incompatible.root, "state");
+      mkdirSync(stateDir, { mode: 0o700 });
+      incompatible.files.capture("state");
+      // A fixture-owned live PID and incompatible record exercise the
+      // public CLI's real record reader and compatibility check, not a fake result.
+      const record = JSON.stringify({
+        pid: process.pid,
+        port: targetPort,
+        protocolVersion:
+          variant === "unsupported-protocol"
+            ? DAEMON_WIRE_PROTOCOL_VERSION + 1
+            : DAEMON_WIRE_PROTOCOL_VERSION,
+        productVersion: "2.9.2",
+        instanceId: randomUUID(),
+        startedAt: new Date().toISOString(),
+        bindHostname: "127.0.0.1",
+        authToken: variant === "credential-less" ? null : "fixture-only-incompatible-token",
+      });
+      const recordPath = join(stateDir, "daemon.json");
+      writeFileSync(recordPath, record, { mode: 0o600, flag: "wx" });
+      incompatible.files.capture("state/daemon.json");
+      await runCase(`public-cli-incompatible-${variant}`, async () => {
+        await refused(incompatible.config, undefined, 0, "incompatible");
+        assert(incompatible.metrics().requests === 0);
+        assert(readFileSync(recordPath, "utf8") === record);
+        assert(JSON.stringify(readdirSync(stateDir)) === JSON.stringify(["daemon.json"]));
+        caseFacts = { publicCliSha256, syntheticHandshakeRequests: 0, recordUnchanged: true };
+        await marker();
+      });
+    }
   }
   const unreachablePort = await unusedLoopbackPort();
   const unreachableConfig = join(target.root, "unreachable_config");
