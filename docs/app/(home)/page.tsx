@@ -23,13 +23,18 @@ import {
   LANDING_CAPABILITIES,
   LANDING_FAQ,
 } from "@/lib/landing-content";
-import { APP_COMMAND, CURRENT_RELEASE_PATH, INSTALL_COMMAND } from "@/lib/site";
+import {
+  APP_COMMAND,
+  CURRENT_RELEASE_PATH,
+  INSTALL_COMMAND,
+  SITE_DESCRIPTION,
+  SITE_TITLE,
+} from "@/lib/site";
 import { CopyButton } from "./copy-button";
 
 export const metadata: Metadata = {
-  title: "tmux-ide — a dedicated workspace for coding agents",
-  description:
-    "Give coding agents a dedicated tmux workspace with memorable names, live status, exact pane navigation, terminal-native controls, durable sessions, and SSH support.",
+  title: { absolute: SITE_TITLE },
+  description: SITE_DESCRIPTION,
   alternates: { canonical: "/" },
 };
 

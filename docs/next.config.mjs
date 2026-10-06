@@ -4,12 +4,20 @@ import { createMDX } from "fumadocs-mdx/next";
 
 const withMDX = createMDX();
 const docsDir = dirname(fileURLToPath(import.meta.url));
+// Keep in sync with SITE_URL in lib/site.ts (the canonical host is the apex).
+const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL?.trim() || "https://tmux-ide.com").replace(
+  /\/+$/u,
+  "",
+);
 
 /** @type {import('next').NextConfig} */
 const config = {
   serverExternalPackages: ["@takumi-rs/image-response"],
   reactStrictMode: true,
   transpilePackages: ["geist"],
+  // Dev-only: extra hostnames (comma-separated) allowed to load dev assets,
+  // e.g. when the dev server is proxied over a private network.
+  allowedDevOrigins: process.env.DOCS_ALLOWED_DEV_ORIGINS?.split(",").filter(Boolean),
   turbopack: {
     root: resolve(docsDir, ".."),
   },
@@ -31,12 +39,26 @@ const config = {
           "camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=(), browsing-topics=()",
       },
     ];
-    return [{ source: "/:path*", headers: securityHeaders }];
+    // Markdown twins of docs pages point search engines at the HTML page.
+    const canonicalLink = (path) => [
+      { key: "Link", value: `<${siteUrl}${path}>; rel="canonical"` },
+    ];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      { source: "/docs/:path+.mdx", headers: canonicalLink("/docs/:path+") },
+      { source: "/docs/:path+.md", headers: canonicalLink("/docs/:path+") },
+      { source: "/docs.mdx", headers: canonicalLink("/docs") },
+      { source: "/docs.md", headers: canonicalLink("/docs") },
+    ];
   },
   async rewrites() {
     return [
       {
         source: "/docs/:path*.mdx",
+        destination: "/llms.mdx/docs/:path*",
+      },
+      {
+        source: "/docs/:path*.md",
         destination: "/llms.mdx/docs/:path*",
       },
     ];

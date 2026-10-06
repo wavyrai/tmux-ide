@@ -6,6 +6,10 @@ import { GeistPixelSquare } from "geist/font/pixel";
 import { Analytics } from "@vercel/analytics/next";
 import type { Metadata, Viewport } from "next";
 import {
+  CURRENT_RELEASE_PATH,
+  PUBLISHER_ID,
+  PUBLISHER_NAME,
+  PUBLISHER_URL,
   SITE_DESCRIPTION,
   SITE_IMAGE,
   SITE_NAME,
@@ -13,8 +17,8 @@ import {
   SITE_TITLE,
   SITE_URL,
   SOFTWARE_DOWNLOAD_URL,
+  SOFTWARE_LICENSE,
   SOFTWARE_VERSION,
-  SOCIAL_PROFILE,
   absoluteUrl,
 } from "@/lib/site";
 
@@ -50,7 +54,7 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Thijs Verreck", url: "https://thijsverreck.com" }],
   creator: "Thijs Verreck",
-  publisher: SITE_NAME,
+  publisher: PUBLISHER_NAME,
   category: "Developer Tools",
   alternates: { canonical: "/" },
   icons: {
@@ -95,42 +99,54 @@ export const viewport: Viewport = {
   ],
 };
 
+// One entity graph: tmux-ide is an open-source software project published by
+// Prototyper. The organization reuses prototyper.co's own @id (where its logo
+// and profiles live), so both sites describe the same entity.
 const jsonLd = {
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "Organization",
-      "@id": `${SITE_URL}/#organization`,
-      name: SITE_NAME,
-      url: SITE_URL,
-      logo: absoluteUrl("/icon.png"),
-      description: SITE_DESCRIPTION,
-      sameAs: [SITE_REPOSITORY, SOFTWARE_DOWNLOAD_URL, SOCIAL_PROFILE],
+      "@id": PUBLISHER_ID,
+      name: PUBLISHER_NAME,
+      url: PUBLISHER_URL,
     },
     {
       "@type": "WebSite",
       "@id": `${SITE_URL}/#website`,
       name: SITE_NAME,
-      url: SITE_URL,
-      description: SITE_DESCRIPTION,
+      url: absoluteUrl("/"),
       inLanguage: "en",
-      publisher: { "@id": `${SITE_URL}/#organization` },
+      publisher: { "@id": PUBLISHER_ID },
     },
     {
       "@type": "SoftwareApplication",
       "@id": `${SITE_URL}/#software`,
       name: SITE_NAME,
-      url: SITE_URL,
+      url: absoluteUrl("/"),
       description: SITE_DESCRIPTION,
+      disambiguatingDescription: "tmux-ide, an open-source Prototyper project",
       applicationCategory: "DeveloperApplication",
       applicationSubCategory: "Agent workspace for tmux",
       operatingSystem: "macOS, Linux, and other Unix-like systems",
+      softwareRequirements: "tmux",
       softwareVersion: SOFTWARE_VERSION,
-      isAccessibleForFree: true,
+      releaseNotes: absoluteUrl(CURRENT_RELEASE_PATH),
+      license: SOFTWARE_LICENSE,
       downloadUrl: SOFTWARE_DOWNLOAD_URL,
-      codeRepository: SITE_REPOSITORY,
-      publisher: { "@id": `${SITE_URL}/#organization` },
+      installUrl: absoluteUrl("/docs/getting-started"),
+      sameAs: [SITE_REPOSITORY, SOFTWARE_DOWNLOAD_URL],
+      author: { "@id": PUBLISHER_ID },
+      publisher: { "@id": PUBLISHER_ID },
       offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": `${SITE_URL}/#source`,
+      codeRepository: SITE_REPOSITORY,
+      programmingLanguage: "TypeScript",
+      license: SOFTWARE_LICENSE,
+      targetProduct: { "@id": `${SITE_URL}/#software` },
     },
   ],
 };
