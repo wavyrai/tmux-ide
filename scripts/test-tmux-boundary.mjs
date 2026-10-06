@@ -6,9 +6,15 @@ import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const binary = process.env.TMUX_IDE_BOUNDARY_TEST_BINARY;
+const expectedNative = process.env.TMUX_IDE_ORACLE_EXPECT_NATIVE;
 if (!binary || !isAbsolute(binary)) {
   throw new Error(
     "Set TMUX_IDE_BOUNDARY_TEST_BINARY to the absolute path of the tmux binary to qualify.",
+  );
+}
+if (expectedNative !== "0" && expectedNative !== "1") {
+  throw new Error(
+    "Set TMUX_IDE_ORACLE_EXPECT_NATIVE to 1 for bundled physical capture or 0 for stock compatibility.",
   );
 }
 const version = spawnSync(binary, ["-V"], { encoding: "utf8", timeout: 5000 });
@@ -17,6 +23,7 @@ if (version.status !== 0)
 console.log(
   JSON.stringify({
     binary,
+    expectedNativePhysicalCapture: expectedNative === "1",
     version: version.stdout.trim(),
     sha256: createHash("sha256").update(readFileSync(binary)).digest("hex"),
   }),
@@ -31,6 +38,7 @@ for (const [config, test] of [
   ["vitest.live.config.ts", "src/terminal/mirror/control-collector-retirement-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/mirror/control-owned-pause-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/mirror/session-channel-cancellation-live.test.ts"],
+  ["vitest.live.config.ts", "src/terminal/mirror/native-physical-cell-oracle-live.test.ts"],
   ["vitest.live.config.ts", "src/tui/mirror/runtime/terminal-input-ordering-live.test.ts"],
   [
     "vitest.live.config.ts",

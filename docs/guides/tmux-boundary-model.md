@@ -11,11 +11,15 @@ executable. For example, on Apple Silicon from the repository root:
 
 ```sh
 TMUX_IDE_BOUNDARY_TEST_BINARY="$PWD/packages/daemon/dist/native/tmux/darwin-arm64/tmux" \
+  TMUX_IDE_ORACLE_EXPECT_NATIVE=1 \
   pnpm test:tmux-boundary
 ```
 
-The command requires an absolute executable path, prints its version and SHA-256,
-and runs the transcript model, both application journeys, and the scheduler wire
+The command requires an absolute executable path and an explicit expected
+physical-capture capability (`1` for bundled tmux, `0` for stock compatibility).
+It fails if the selected server does not match that expectation. It prints the
+binary's version and SHA-256 and runs the models, application journeys, independent
+cell checkpoints and scheduler wire
 cases. Python 3 is required for the wire cases; their raw traces and JSON receipts
 are retained in the printed temporary evidence directory. A missing binary fails
 the command. The ordinary daemon
@@ -369,6 +373,22 @@ must differ. This proves isolation after observed closure, not rejection of inpu
 already queued before deletion or controller-generation authorization.
 
 ## Coverage matrix
+
+`native-physical-cell-oracle-live.test.ts` adds an independent, deliberately small
+8×4 physical-cell checkpoint. Both raw native JSON and delivered canonical cells
+are compared with literal expectations, without using the production decoder or
+projector to compute expected cells. Initial and insert/delete-character frames
+cover selected indexed/RGB colors and attributes, wide/combining characters,
+explicit spaces and colored erased tails. A trailing OSC title marker fences all
+fixture output, including cursor positioning. Mutation checks verify field-error
+detection; malformed-record tests prevent silent coercion in the oracle.
+
+The native comparison normalizes wide continuation cells to their leading cell's
+visual style. Unsupported record flags, attributes and renditions are rejected,
+not silently treated as defaults. Stock tmux checks text, cursor and available
+modes and explicitly reports that physical capture is unavailable. These two
+authored checkpoints do not establish complete mode/history/reflow coverage or
+continuous frame correctness.
 
 | Evidence                               | First-slice status                                                                 | Remaining boundary                                                   |
 | -------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
