@@ -141,7 +141,7 @@ const jsonLd = {
       applicationCategory: "DeveloperApplication",
       applicationSubCategory: "Agent workspace for tmux",
       operatingSystem: "macOS, Linux",
-      softwareRequirements: "tmux",
+      softwareRequirements: "tmux 3.7 or newer (the installer bundles it)",
       softwareVersion: SOFTWARE_VERSION,
       releaseNotes: absoluteUrl(CURRENT_RELEASE_PATH),
       license: SOFTWARE_LICENSE,

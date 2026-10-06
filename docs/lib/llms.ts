@@ -103,8 +103,8 @@ export function llmsIndex(): string {
       "`~/.claude/teams/<team>/config.json` read-only; Claude Code owns spawning, tasks and messaging. " +
       `Docs: ${absoluteUrl("/docs/multi-agent-teams#claude-code-agent-teams")}`,
     "",
-    "Every documentation page is also available as Markdown: append `.mdx` to its URL " +
-      `(for example ${absoluteUrl("/docs/getting-started.mdx")}).`,
+    "Every documentation page is also available as Markdown: append `.md` (or `.mdx`) to its URL " +
+      `(for example ${absoluteUrl("/docs/getting-started.md")}).`,
   ];
   for (const [title, lines] of sections) out.push("", `## ${title}`, "", ...lines);
   out.push("");
