@@ -97,39 +97,43 @@
    call sites pick a role, never a raw size. Hierarchy is carried by weight and
    tone: de-emphasised text is greyer, not smaller. Labels stay sentence case. */
 
-body {
-  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
-  font-weight: 400;
-  font-synthesis: none;
-  font-kerning: normal;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+/* Element defaults live in the base layer so role utilities (for example
+   type-hero-title's pixel face) always win over them. */
+@layer base {
+  body {
+    font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+    font-weight: 400;
+    font-synthesis: none;
+    font-kerning: normal;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 
-/* Every heading uses the display face and balanced wrapping. Tracking is
-   part of each role: display and title sizes (24px and up) tighten by
-   −0.02em; smaller headings keep the face's natural spacing. */
-:where(h1, h2, h3, h4, h5, h6) {
-  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
-  text-wrap: balance;
-}
+  /* Every heading uses the display face and balanced wrapping. Tracking is
+     part of each role: display and title sizes (24px and up) tighten by
+     −0.02em; smaller headings keep the face's natural spacing. */
+  :where(h1, h2, h3, h4, h5, h6) {
+    font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+    text-wrap: balance;
+  }
 
-:where(p, li, dd, blockquote, figcaption) {
-  text-wrap: pretty;
-}
+  :where(p, li, dd, blockquote, figcaption) {
+    text-wrap: pretty;
+  }
 
-/* Machine text: no programming ligatures, columns that line up, and a zero
-   that cannot be read as the letter O. */
-:where(code, kbd, samp, pre),
-.font-mono {
-  font-weight: 400;
-  font-variant-ligatures: none;
-  font-feature-settings:
-    "liga" 0,
-    "calt" 0;
-  font-variant-numeric: tabular-nums slashed-zero;
-  tab-size: 2;
+  /* Machine text: no programming ligatures, columns that line up, and a zero
+     that cannot be read as the letter O. */
+  :where(code, kbd, samp, pre),
+  .font-mono {
+    font-weight: 400;
+    font-variant-ligatures: none;
+    font-feature-settings:
+      "liga" 0,
+      "calt" 0;
+    font-variant-numeric: tabular-nums slashed-zero;
+    tab-size: 2;
+  }
 }
 
 .font-marketing,
@@ -299,6 +303,28 @@ body {
   }
 
   @media (width >= 80rem) {
+    font-size: 4rem;
+    line-height: 5rem;
+  }
+}
+
+/* The landing headline, set in the brand's pixel face now that the header
+   carries the wordmark: 32/44 on phones, 48/64 from sm, 64/80 from lg,
+   tracked at -0.02em like the other display roles. */
+@utility type-hero-title {
+  font-family: var(--font-brand), var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  font-size: 2rem;
+  line-height: 2.75rem;
+  letter-spacing: -0.02em;
+  font-weight: 500;
+  text-wrap: balance;
+
+  @media (width >= 40rem) {
+    font-size: 3rem;
+    line-height: 4rem;
+  }
+
+  @media (width >= 64rem) {
     font-size: 4rem;
     line-height: 5rem;
   }

@@ -2,10 +2,8 @@ import { INSTALL_COMMAND } from "@/lib/site";
 
 /**
  * The hero is one constant so the headline can change in a single place.
- * The eyebrow is a sentence-case label, not an uppercase flag.
  */
 export const LANDING_HERO = {
-  eyebrow: "Build your team of agents",
   title: "A dedicated workspace for your coding agents.",
   // The lede leads with one foreground sentence; the rest reads in the muted tone.
   ledeLead:

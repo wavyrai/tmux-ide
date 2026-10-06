@@ -63,6 +63,7 @@ for (const role of [
   "type-marketing-subtitle",
   "type-page-title",
   "type-card-title",
+  "type-hero-title",
 ]) {
   if (!new RegExp(`@utility ${role} \\{`, "u").test(globalCss)) {
     failures.push(`the type ramp must define ${role}`);
@@ -81,6 +82,7 @@ for (const role of [
   "type-display-4",
   "type-title-1",
   "type-page-title",
+  "type-hero-title",
 ]) {
   const body = globalCss.match(new RegExp(`@utility ${role} \\{([^}]*)`, "u"))?.[1] ?? "";
   if (!body.includes("letter-spacing: -0.02em")) {
