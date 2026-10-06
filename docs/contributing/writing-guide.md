@@ -109,7 +109,9 @@ as `prefix h`, with the `⌥` key as the secondary form.
 
 ### Banned filler
 
-Cut these words and phrases, or replace them with something specific:
+Cut these words and phrases, or replace them with something specific.
+`check-product-docs.mjs` fails the docs build on the clearest ones (simply,
+seamless, powerful, leverage, utilize, in order to, and similar):
 
 - just, simply, easily, seamlessly, effortlessly, of course, obviously
 - powerful, robust, blazing, magic, revolutionary, next-generation, world-class

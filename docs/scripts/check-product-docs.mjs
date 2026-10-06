@@ -170,4 +170,17 @@ for (const [page, content] of Object.entries(pages)) {
   }
 }
 
+// Banned filler from docs/contributing/writing-guide.md, checked in prose only.
+const bannedFiller =
+  /\b(simply|seamless(?:ly)?|effortless(?:ly)?|powerful|blazing|leverag(?:e|es|ing)|utiliz(?:e|es|ing)|in order to|delve|supercharge|game-changer|the whole point|aspirational)\b/giu;
+for (const [page, content] of Object.entries(pages)) {
+  const prose = content
+    .replace(/^---[\s\S]*?---/u, "")
+    .replace(/```[\s\S]*?```/gu, "")
+    .replace(/`[^`\n]*`/gu, "");
+  for (const match of prose.matchAll(bannedFiller)) {
+    fail(`${page}.mdx uses banned filler "${match[0]}" (see docs/contributing/writing-guide.md)`);
+  }
+}
+
 if (!process.exitCode) console.log("product docs: source-aligned");
