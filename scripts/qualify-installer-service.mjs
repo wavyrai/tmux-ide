@@ -11,6 +11,8 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -89,7 +91,7 @@ const receipt = {
     ? "Published beta.50 to 2.9.2 upgrade/managed restart/rollback"
     : "Published 2.9.2 first install/reinstall/managed restart/rollback; cross-version coverage remains incomplete",
   candidateDownloaded: false,
-  candidateRole: "Packed public service controller only",
+  candidateRole: "Packed public service controller and provisioned managed update CLI",
   crossVersionCovered,
   runtimeVersions: [initialVersion, nextVersion],
   runtimeArtifacts: [],
@@ -386,6 +388,87 @@ try {
   assert.equal(service("remove", "--yes").status, "removed");
   assert.equal(pane(), receipt.paneBefore);
   assert(managerAbsent());
+  // Exercise the candidate's new update command through the real installer
+  // launcher. The candidate is provisioned from the source-bound tarball; it is
+  // not presented as a downloadable release or a fresh candidate installation.
+  const candidateRelease = join(managed, "releases/install-proof1");
+  const candidateNpm = join(candidateRelease, "npm");
+  mkdirSync(candidateRelease, { mode: 0o700 });
+  checked(
+    process.execPath,
+    [
+      npm,
+      "install",
+      "--global",
+      "--prefix",
+      candidateNpm,
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      tarball,
+    ],
+    { env: controllerEnv, timeout: 180_000 },
+  );
+  const candidateCli = join(candidateNpm, "lib/node_modules/tmux-ide/bin/cli.js");
+  assert.equal(hash(readFileSync(candidateCli)), receipt.sourceCliSha256);
+  symlinkSync(join(newRelease, "node"), join(candidateRelease, "node"));
+  writeFileSync(join(candidateRelease, ".installer-release-v1"), "1\n", { mode: 0o600 });
+  unlinkSync(join(managed, "current"));
+  symlinkSync(candidateRelease, join(managed, "current"));
+  const tools = join(root, "update-tools");
+  mkdirSync(tools, { mode: 0o700 });
+  // Only delivery of the reviewed script is substituted. Runtime downloads
+  // still use the real HTTPS endpoints and the installer validates them.
+  writeFileSync(
+    join(tools, "curl"),
+    `#!${process.execPath}\nconst{copyFileSync}=require('node:fs');const{spawnSync}=require('node:child_process');const args=process.argv.slice(2);if(args.at(-1)==='https://tmux-ide.com/install.sh'){if(process.env.FAIL_INSTALLER_DOWNLOAD==='1')process.exit(7);const out=args[args.indexOf('--output')+1];if(!out)process.exit(64);copyFileSync(${JSON.stringify(installer)},out);}else{const r=spawnSync('/usr/bin/curl',args,{stdio:'inherit'});process.exit(r.status??1); }\n`,
+    { mode: 0o700 },
+  );
+  const updateEnv = { ...env, PATH: tools + ":/usr/bin:/bin" };
+  const preview = JSON.parse(
+    checked(launcher, ["update", "--dry-run", "--json"], { env: updateEnv }),
+  );
+  assert.equal(preview.installerPrefix, prefix);
+  assert.equal(preview.executed, false);
+  const failed = raw(launcher, ["update", "--json"], {
+    env: { ...updateEnv, FAIL_INSTALLER_DOWNLOAD: "1" },
+  });
+  assert(!failed.error && failed.status !== 0);
+  assert.equal(realpathSync(join(managed, "current")), candidateRelease);
+  assert.equal(pane(), receipt.paneBefore);
+  const updated = raw(launcher, ["update", "--json"], { env: updateEnv, timeout: 900_000 });
+  writeFileSync(
+    join(evidence, "managed-update.log"),
+    (updated.stdout ?? "") + (updated.stderr ?? ""),
+  );
+  assert(!updated.error && updated.status === 0, "Managed public update must finish successfully");
+  const updateResult = JSON.parse(updated.stdout);
+  assert.equal(updateResult.executed, true);
+  assert.equal(updateResult.installerPrefix, prefix);
+  assert.equal(updateResult.channel, "latest");
+  assert.notEqual(realpathSync(join(managed, "current")), candidateRelease);
+  assert.equal(realpathSync(join(managed, "previous")), candidateRelease);
+  assert.equal(pane(), receipt.paneBefore);
+  const updatedVersion = checked(launcher, ["--version"]);
+  install("managed-update-rollback", ["--rollback"]);
+  assert.equal(realpathSync(join(managed, "current")), candidateRelease);
+  assert.equal(hash(readFileSync(candidateCli)), receipt.sourceCliSha256);
+  const restored = JSON.parse(
+    checked(launcher, ["update", "--dry-run", "--json"], { env: updateEnv }),
+  );
+  assert.equal(restored.installerPrefix, prefix);
+  assert.equal(restored.executed, false);
+  assert.equal(pane(), receipt.paneBefore);
+  receipt.managedUpdate = {
+    scope:
+      "Provisioned candidate from actual tarball; reviewed installer URL substituted, real published runtime downloads; no live website or fresh candidate installation claim",
+    cliSha256: receipt.sourceCliSha256,
+    failedDownloadPreserved: true,
+    updateExecuted: true,
+    updatedVersion,
+    rollbackRestoredCandidate: true,
+    panePreserved: true,
+  };
   install("uninstall", ["--uninstall"]);
   assert(!existsSync(launcher));
   assert.equal(pane(), receipt.paneBefore);
