@@ -87,7 +87,13 @@ without changing the active installation or daemon. The packed candidate control
 the private service through its public CLI. The journey covers first install,
 upgrade without implicit daemon replacement, required installed doctor checks,
 failed-version preservation, explicit manager restart, rollback, roll-forward,
-service removal and uninstall while preserving the original tmux pane. Receipts
+service removal and uninstall while preserving the original tmux pane. After
+service removal it provisions the packed candidate into the managed layout and
+runs its public `update --json` command: failed script download must preserve the
+active release, successful update must retain rollback, and rollback must restore
+the candidate CLI byte-for-byte. Only the canonical installer URL is substituted
+with the reviewed script; runtime downloads remain real. This verifies the update
+command, not live website deployment or a fresh candidate installation. Receipts
 distinguish the candidate controller from downloaded published runtimes and
 record source, artifact, process and cleanup identities. Receipts explicitly mark
 whether cross-version coverage was exercised. Same-version reinstall coverage
