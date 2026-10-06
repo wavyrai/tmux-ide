@@ -1,19 +1,24 @@
 import type { NativeGridCapture } from "./native-grid-capture.ts";
 /**
  * PaneFeed — PURE per-subscriber delivery gate implementing the atomic
- * seed/reseed recipe (m43 flood spike, verified on tmux 3.7b).
+ * seed/reseed recipe. This gate assumes the caller supplies a valid capture
+ * seam; FIFO command replies alone do not prove that precondition.
  *
  * tmux is a painter, not a stream: history and the live screen are separate
  * authorities, and a capture may only be spliced onto a live stream at an
- * explicit seam. The seam works because the control channel is FIFO — the
- * `capture-pane` reply comes back at the exact point in the byte stream where
- * the capture was taken, so:
+ * explicit seam. For a VALID seam the caller must establish:
  *
  *   - every `%output` delta read BEFORE the capture reply was produced before
  *     the capture instant → its bytes are already IN the capture → DISCARD
  *     (applying them too would double-apply);
  *   - every delta read AFTER the capture reply is strictly-after-capture →
  *     it must be applied on top of the seed → no gap.
+ *
+ * Known limitation: a sibling pane backlog can hold a capture reply while
+ * post-capture target output drains ahead of it. Ordinary capture reply order
+ * therefore does not establish this seam; that path can discard newer output.
+ * See docs/guides/tmux-boundary-model.md and TM02 for the real-wire reproducer.
+ * Native atomic snapshot/offset commit has a separate, stronger contract.
  *
  * The cursor probe is a second command issued back-to-back with the capture.
  * Deltas that land between the two replies (normally none — both commands sit

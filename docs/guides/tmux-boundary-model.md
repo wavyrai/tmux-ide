@@ -50,14 +50,26 @@ the patches listed there; the test command records the actual binary identity.
 | Capture and cursor are separate observations            | `session-channel.ts` reseed probe and geometry checks                                                                                           | A generation/geometry change invalidates the candidate; a command receipt alone proves neither parsed PTY output nor rendering |
 | Disconnect invalidates delivery                         | `PaneFeed.abortCurrent` and owner/service disposal                                                                                              | No updates reach a retired consumer; reattachment requires a new seed                                                          |
 
-The live proof here has **one active output pane**. A source-level hypothesis
-remains open for multiple panes: global blocks `A-before, B-before, capture-A,
-A-after` and per-A blocks `A-before, A-after` may allow A's later output to drain
-while B's older output prevents the capture reply reaching the global head.
-See upstream `control.c:689–728` and `control_write_callback:755–763`. This is not
-an observed runtime failure. TM02/TM07 must trace and reproduce or disprove this
-ordering before generalizing the seam. The specialized atomic snapshot path has
-separate safeguards and needs its own proof.
+The live proof here has **one active output pane**. A separate isolated wire
+experiment has confirmed that a sibling pane's backlog can allow post-capture
+output to overtake the capture reply. It reproduces on the bundled tmux 3.7c
+and a clean build of the pinned upstream commit. With control stdout temporarily
+undrained, flood pane B, issue a capture of A followed by an execution barrier,
+then make A print a unique marker only after that barrier. A's marker arrives
+before the earlier capture response, which excludes it. Without the backlog,
+the comparison run delivers the capture first.
+
+This matches upstream `control.c:689–728` and
+`control_write_callback:755–763`: global blocks can hold reply lines behind B
+while A's per-pane output drains. FIFO command replies therefore do not establish
+a universal capture/output seam. The transcript model below assumes that seam;
+it does not test tmux's scheduler. TM02 owns the real integration reproducer and
+correction, and TM07 must retain the multipane regression. A real MirrorService/canonical-owner fixture also reproduces a stale replica:
+the native pane changes from `BEFORE` to `AFTER!`, while the replica remains
+`BEFORE` with unchanged cursor and history size. That proves impact on ordinary
+native `-R` reseeding, not every application recovery path. The specialized
+native atomic snapshot path requires a paused target and an empty global block
+queue before committing snapshot and stream offsets; preserve those guards.
 
 These contracts do not establish a global atomic snapshot across independent
 clients or panes. `%pause`/`%continue`, capture failure and pane disappearance need
@@ -156,7 +168,8 @@ renderer, flow recovery and linked-window tests remain necessary.
 
 ## Next extensions, in order
 
-- Reproduce or disprove cross-pane backlog overtaking a capture reply. Then
+- Prove the application impact of the reproduced cross-pane capture overtake,
+  correct the responsible boundary with a failing regression, then
   connect a generated legal wire-event schedule to SessionChannel, retaining the
   independent oracle and shrinking. Cover response failures and bounded overflow.
 - Add native physical-cell and mode checkpoints, alternate screens, wrapping,
