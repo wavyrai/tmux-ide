@@ -49,7 +49,7 @@ export function RailActions({ pageUrl, markdownUrl, sourceUrl }: PageActionProps
         </p>
         <ul>
           <li>
-            <CopyPageButton markdownUrl={markdownUrl} className="docs-rail-link" />
+            <CopyPageButton markdownUrl={markdownUrl} className="docs-rail-link" glyphSize={14} />
           </li>
           <li>
             <a href={markdownUrl} className="docs-rail-link">

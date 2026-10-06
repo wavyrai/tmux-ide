@@ -94,7 +94,7 @@ export default async function HomePage() {
                 </h1>
               </Cell>
 
-              <Cell className="marketing-enter marketing-enter-step-4 lg:col-span-11">
+              <Cell className="marketing-enter marketing-enter-step-4 overflow-visible lg:col-span-11">
                 <p className="type-marketing-lede mt-7 max-w-[62ch] text-fd-muted-foreground">
                   <span className="text-fd-foreground">{LANDING_HERO.ledeLead}</span>{" "}
                   {LANDING_HERO.lede}

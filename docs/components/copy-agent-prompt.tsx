@@ -1,20 +1,32 @@
 "use client";
 
-import { useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { CopyGlyph, useCopy } from "@/components/copy-status";
 import { HarnessMarks } from "@/components/harness-marks";
 import { AGENT_PROMPT } from "@/lib/agent-prompt";
 
+/** How long the beam stays powered after a copy lands. */
+const BEAM_ON_MS = 900;
+/** The ramp-off; matches the .prompt-beam opacity transition in global.css. */
+const BEAM_FADE_MS = 450;
+
+type BeamPhase = "on" | "fading" | null;
+
+const SIZES = {
+  hero: { mark: 16, glyph: 15 },
+  default: { mark: 14, glyph: 14 },
+} as const;
+
 /**
  * "Copy agent prompt": an inverted pill that copies AGENT_PROMPT, the single
  * source for the text shown beneath it and the text placed on the clipboard.
  *
- * The label never changes, and the copy and check glyphs share one grid
- * cell, so the pill keeps its size. Success swaps in a green check, is
- * announced politely, and runs a one-shot ring around the pill: JS only sets
- * data-beam, CSS draws it, and neither runs under prefers-reduced-motion.
- * Failure leaves a visible message and the prompt stays selectable.
+ * The harness marks, the fixed label and a copy glyph sit in the pill; the
+ * glyph swaps to a green check inside one grid cell, so the pill never
+ * resizes. A landed copy powers a border beam around the pill for
+ * BEAM_ON_MS and ramps it off; under reduced motion it never runs (the check
+ * still shows). Failure leaves a visible message and the prompt selectable.
  */
 export function CopyAgentPrompt({
   size = "default",
@@ -25,35 +37,45 @@ export function CopyAgentPrompt({
 }) {
   const { status, copy } = useCopy();
   const promptId = useId();
-  const button = useRef<HTMLButtonElement>(null);
-  const beamTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [beam, setBeam] = useState<BeamPhase>(null);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+  const powerBeam = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    setBeam("on");
+    timers.current.push(
+      setTimeout(() => setBeam("fading"), BEAM_ON_MS),
+      setTimeout(() => setBeam(null), BEAM_ON_MS + BEAM_FADE_MS),
+    );
+  };
 
   const onClick = async () => {
-    const ok = await copy(AGENT_PROMPT);
-    const pill = button.current;
-    if (!ok || !pill || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    // Restart the ring if it is already running.
-    delete pill.dataset.beam;
-    void pill.offsetWidth;
-    pill.dataset.beam = "on";
-    clearTimeout(beamTimer.current);
-    beamTimer.current = setTimeout(() => delete pill.dataset.beam, 1600);
+    if (await copy(AGENT_PROMPT)) powerBeam();
   };
+
+  const s = SIZES[size];
 
   return (
     <div className={`agent-prompt not-prose ${className}`}>
-      <button
-        ref={button}
-        type="button"
-        onClick={() => void onClick()}
-        data-size={size}
-        aria-describedby={promptId}
-        className="prompt-pill"
-      >
-        <HarnessMarks />
-        <span>Copy agent prompt</span>
-        <CopyGlyph status={status} />
-      </button>
+      <span className="prompt-frame" data-beam={beam ?? undefined}>
+        <button
+          type="button"
+          onClick={() => void onClick()}
+          data-size={size}
+          data-state={status}
+          aria-describedby={promptId}
+          className="prompt-pill"
+        >
+          <HarnessMarks size={s.mark} />
+          Copy agent prompt
+          <CopyGlyph status={status} size={s.glyph} />
+        </button>
+        <span aria-hidden className="prompt-beam" />
+      </span>
       <p className="type-caption-1 mt-3 text-fd-muted-foreground">
         Copies{" "}
         <span id={promptId} className="select-all text-fd-foreground">

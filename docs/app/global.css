@@ -52,17 +52,17 @@
   --terminal-line: rgb(255 255 255 / 10%);
   /* Long-form docs text sits one step softer than headings. */
   --docs-prose-body: oklch(0.3247 0.0017 106.5);
-  /* Accent hues for flourishes (the copy beam), harness marks and success. */
+  /* Accent hues for flourishes (the copy beam) and success. */
   --chart-1: oklch(0.72 0.17 150);
   --chart-2: oklch(0.72 0.12 195);
   --chart-3: oklch(0.64 0.16 262);
   --chart-4: oklch(0.63 0.19 300);
   --chart-5: oklch(0.68 0.18 352);
   --chart-6: oklch(0.79 0.15 78);
-  --mark-claude: oklch(0.68 0.15 40);
-  --mark-codex: oklch(0.63 0.17 278);
-  --mark-perplexity: oklch(0.66 0.1 200);
   --color-success: oklch(0.78 0.17 150);
+  /* The inverted pill: charcoal fill, off-white ink. */
+  --pill-fill: oklch(0.315 0.002 106);
+  --pill-ink: oklch(0.987 0 0);
 }
 
 .dark {
@@ -86,6 +86,8 @@
   --terminal-line: rgb(255 255 255 / 10%);
   --docs-prose-body: oklch(0.9848 0 0);
   --color-success: oklch(0.6 0.17 150);
+  --pill-fill: oklch(0.9848 0 0);
+  --pill-ink: oklch(0.1405 0.004 285.8);
 }
 
 /* ── Type system ───────────────────────────────────────────────────────────
@@ -561,13 +563,6 @@ body {
   flex-shrink: 0;
 }
 
-/* Keep the copy glyph (and its cell) at the rail's 14px optical size. */
-.docs-rail-link > span[aria-hidden],
-.docs-rail-link .copy-glyph {
-  width: 14px;
-  height: 14px;
-}
-
 .docs-rail-arrow {
   margin-left: auto;
   opacity: 0.6;
@@ -585,40 +580,39 @@ body {
   }
 }
 
-.mark-claude {
-  color: var(--mark-claude);
-}
-
-.mark-perplexity {
-  color: var(--mark-perplexity);
-}
-
-/* Copy agent prompt: an inverted pill (ink on light pages, paper on dark)
-   with harness marks, a fixed label and a copy glyph that turns into a green
-   check. Hero size is 40px tall with a 15px label; default is 36px / 14px. */
-.prompt-pill {
+/* Copy agent prompt: an inverted pill (charcoal on light pages, off-white
+   on dark) with harness marks, a fixed label and a copy glyph that turns
+   into a green check. Hero: 40px, 15px label. Default: 36px, 14px. */
+.prompt-frame {
   position: relative;
+  display: inline-flex;
+  border-radius: 9999px;
+  isolation: isolate;
+}
+
+.prompt-pill {
   display: inline-flex;
   height: 2.25rem;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.375rem;
   border-radius: 9999px;
-  background-color: var(--color-fd-primary);
+  background-color: var(--pill-fill);
   padding: 0 0.875rem;
   font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
   font-size: 0.875rem;
   line-height: 1.25rem;
   font-weight: 500;
   white-space: nowrap;
-  color: var(--color-fd-primary-foreground);
+  color: var(--pill-ink);
   cursor: pointer;
   transition:
-    opacity 150ms var(--ease-smooth),
+    background-color 150ms var(--ease-smooth),
     transform 150ms var(--ease-smooth);
 }
 
 .prompt-pill[data-size="hero"] {
   height: 2.5rem;
+  gap: 0.5rem;
   padding: 0 1rem;
   font-size: 0.9375rem;
   line-height: 1.375rem;
@@ -626,8 +620,12 @@ body {
 
 @media (hover: hover) {
   .prompt-pill:hover {
-    opacity: 0.9;
+    background-color: color-mix(in oklab, var(--pill-fill) 90%, transparent);
   }
+}
+
+.prompt-pill:active {
+  background-color: color-mix(in oklab, var(--pill-fill) 80%, transparent);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -636,9 +634,10 @@ body {
   }
 }
 
-/* De-emphasised through colour, so the glyph's own opacity swap still works. */
+/* Resting glyph in a soft tone of the pill ink; set as colour so the
+   glyph's own opacity swap keeps working. */
 .prompt-pill .copy-glyph-copy {
-  color: color-mix(in oklab, var(--color-fd-primary-foreground) 60%, transparent);
+  color: color-mix(in oklab, var(--pill-ink) 60%, transparent);
 }
 
 .prompt-pill .copy-glyph-check {
@@ -650,85 +649,60 @@ body {
   flex-shrink: 0;
   align-items: center;
   gap: 0.25rem;
+  margin-right: 0.125rem;
 }
 
-.harness-mark-claude {
-  color: var(--mark-claude);
-}
-
-.harness-mark-codex {
-  color: var(--mark-codex);
-}
-
-.harness-mark-codex-glyph {
-  stroke: oklch(1 0 0);
-}
-
-/* The cube is drawn in the pill's text colour; its edges cut back to the
-   pill fill so the faces read on either theme. */
-.harness-mark-cursor-edge {
-  stroke: var(--color-fd-primary);
-}
-
-/* Border beam: a conic gradient spun by a registered angle property and
-   masked down to a 2px ring just outside the pill. JS only toggles
-   data-beam on a successful copy; reduced motion never shows it. */
+/* Border beam: a conic gradient of the chart tokens, masked to a thin ring
+   tight on the pill edge, its start angle spun through a registered custom
+   property. JS only sets data-beam on the frame: "on" powers the ring up,
+   "fading" ramps it off while it keeps spinning, absent is at rest. */
 @property --beam-angle {
   syntax: "<angle>";
   inherits: false;
   initial-value: 0deg;
 }
 
-.prompt-pill::after {
-  content: "";
+.prompt-beam {
+  pointer-events: none;
   position: absolute;
-  inset: -3px;
+  inset: -2px;
+  z-index: 1;
   border-radius: inherit;
   padding: 2px;
   background: conic-gradient(
     from var(--beam-angle),
     var(--chart-1),
-    var(--chart-2),
-    var(--chart-3),
-    var(--chart-4),
     var(--chart-5),
     var(--chart-6),
+    var(--chart-4),
+    var(--chart-3),
+    var(--chart-2),
     var(--chart-1)
   );
-  mask:
+  -webkit-mask:
     linear-gradient(black 0 0) content-box,
     linear-gradient(black 0 0);
-  mask-composite: exclude;
   -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(black 0 0) content-box exclude,
+    linear-gradient(black 0 0);
   opacity: 0;
-  pointer-events: none;
+  transition: opacity 450ms var(--ease-smooth);
 }
 
-.prompt-pill[data-beam="on"]::after {
-  animation:
-    prompt-beam-spin 1.5s linear,
-    prompt-beam-fade 1.5s var(--ease-smooth) forwards;
+.prompt-frame[data-beam="on"] .prompt-beam {
+  opacity: 1;
+  transition-duration: 180ms;
+}
+
+.prompt-frame[data-beam="on"] .prompt-beam,
+.prompt-frame[data-beam="fading"] .prompt-beam {
+  animation: prompt-beam-spin 1100ms linear infinite;
 }
 
 @keyframes prompt-beam-spin {
-  from {
-    --beam-angle: 0deg;
-  }
   to {
-    --beam-angle: 540deg;
-  }
-}
-
-@keyframes prompt-beam-fade {
-  0% {
-    opacity: 0;
-  }
-  12%,
-  66% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
+    --beam-angle: 360deg;
   }
 }
 
@@ -737,7 +711,7 @@ body {
     transition: none;
   }
 
-  .prompt-pill::after {
+  .prompt-beam {
     display: none;
   }
 }
