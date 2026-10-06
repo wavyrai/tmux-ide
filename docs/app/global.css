@@ -416,18 +416,29 @@
   --fd-banner-height: 2.5rem;
 }
 
-/* The docs layout is full-bleed (sidebar at the window edge), so on docs the
-   banner rail follows the docs edges instead of the centred site lattice:
-   the mobile header's 24px inset, then the sidebar's 16px from md up. */
-[data-slot="docs-site"] .site-banner-rail {
-  max-width: none;
-  padding-inline: 1.5rem;
+/* Docs sit on the same lattice as the landing: Fumadocs centres its grid on
+   --fd-layout-width, so pointing it at --site-max puts sidebar, article and
+   TOC inside the frame, with the outer grid columns as the margins. The
+   sidebar contents start at the gutter (logo, search and page tree on the
+   landing's content edge) and the TOC ends at it. The banner keeps the
+   shared site rail. */
+[data-slot="docs-site"] #nd-docs-layout {
+  --fd-layout-width: var(--site-max);
 }
 
 @media (width >= 48rem) {
-  [data-slot="docs-site"] .site-banner-rail {
-    padding-inline: 1rem;
+  [data-slot="docs-site"] #nd-sidebar > * {
+    padding-inline-start: var(--site-gutter);
   }
+
+  /* The page tree's scroll viewport adds its own 1rem inset. */
+  [data-slot="docs-site"] #nd-sidebar > div.overflow-hidden {
+    padding-inline-start: calc(var(--site-gutter) - 1rem);
+  }
+}
+
+[data-slot="docs-site"] #nd-toc {
+  padding-inline-end: var(--site-gutter);
 }
 
 /* Actions read as interface, not prose: Inter, one step heavier. */
