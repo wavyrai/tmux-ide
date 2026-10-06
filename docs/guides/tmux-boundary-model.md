@@ -462,6 +462,22 @@ target-window active pane and zoom state. Expected geometry comes from the targe
 pane itself, including while another window is selected. Both variants verify
 all private producers exit after teardown.
 
+## Completed renderer frames during a snapshot handoff
+
+`terminal-transient-frame-renderer.test.tsx` drives controlled mirror events
+through the production replica owner, fast lane, renderer adapter and PaneSurface.
+It observes every native test-renderer `FRAME` completion after baseline, including
+forced draws after layout, reset and staged grid delivery. The previous coherent
+image must remain until cursor admission; the settled frame must contain the new
+image. Literal rows, sentinel foreground and cursor positions reject partial or
+mixed frames, with three mutations of an actual frame as negative controls.
+
+The pane narrows and expands inside a fixed host renderer. This verifies the
+controlled production rendering handoff, complementing the real tmux publication
+fixture above; it does not join both into a live PTY journey or prove physical
+terminal paint. The fixture runs in `test:tui-renderer` with the repository's
+pinned Bun version. Cleanup removes the frame observer and destroys the renderer.
+
 ## Next extensions, in order
 
 - Broaden the bounded stock lifecycle model to additional cancellation phases,
