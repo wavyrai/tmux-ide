@@ -922,6 +922,65 @@ describe("stock observed-pause snapshot", () => {
     }
   });
 
+  it.each(["pane-borders", "copy-keys"])(
+    "opens a pane despite unrelated-window %s hints during valid pause completion",
+    async (option) => {
+      const rig = await startedRig({ atomicHook: true });
+      const alpha = collect();
+      const descriptors = [...rig.state.descriptorRows];
+      const windows = [...rig.state.windowRows];
+      try {
+        rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+        // @2 is a different window from alpha's @1. Initial sampled option
+        // notifications are valid hints, not evidence that alpha changed.
+        // Exercise separate notification turns across the bounded retry budget.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          if (rig.armedAtomicCollectors.at(-1)?.kind !== "pause") break;
+          const value = option === "pane-borders" ? "off" : "emacs";
+          rig.sim.feedLines(`%subscription-changed tmux-ide-${option} $1 @2 0 - : ${value}`);
+          completeStockPause(rig, "%1", attempt === 0);
+        }
+        expect(rig.state.descriptorRows).toEqual(descriptors);
+        expect(rig.state.windowRows).toEqual(windows);
+        expect(alpha.events.filter((event) => event.type === "fault")).toEqual([]);
+        expect(rig.armedAtomicCollectors.at(-1)?.kind).not.toBe("pause");
+        completeAtomicRecoveryPhase(rig, ["VALID-ALPHA"], "3 2 100 50", {
+          continueNotify: true,
+        });
+        expect(bytesOf(alpha.events)).toEqual(["VALID-ALPHA"]);
+        expect(alpha.events.filter((event) => event.type === "seed")).toHaveLength(1);
+        rig.sim.output("%1", "LIVE");
+        expect(bytesOf(alpha.events)).toEqual(["VALID-ALPHA", "LIVE"]);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it.each(["pane-borders", "copy-keys"])(
+    "still rejects a pause crossed by its own window's %s hint",
+    async (option) => {
+      const rig = await startedRig({ atomicHook: true });
+      const alpha = collect();
+      try {
+        rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+        const oldNonce = rig.armedAtomicCollectors.at(-1)!.nonce;
+        rig.sim.feedLines(
+          `%subscription-changed tmux-ide-${option} $1 @1 0 - : ${option === "pane-borders" ? "off" : "emacs"}`,
+        );
+        completeStockPause(rig, "%1");
+        expect(bytesOf(alpha.events)).toEqual([]);
+        expect(rig.armedAtomicCollectors.at(-1)).toMatchObject({ kind: "pause" });
+        expect(rig.armedAtomicCollectors.at(-1)!.nonce).not.toBe(oldNonce);
+        completeStockPause(rig, "%1", false);
+        completeAtomicRecoveryPhase(rig, ["FRESH"], "0 0 100 50", { continueNotify: true });
+        expect(bytesOf(alpha.events)).toEqual(["FRESH"]);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
   it("reseeds every existing viewer when another viewer joins the same paused pane", async () => {
     const rig = await startedRig({ atomicHook: true });
     const first = collect();
@@ -1076,6 +1135,7 @@ describe("stock observed-pause snapshot", () => {
     const second = collect();
     try {
       rig.channel.subscribePane("pane.alpha", first.onEvent);
+      rig.sim.feedLines("%subscription-changed tmux-ide-copy-keys $1 @2 0 - : emacs");
       completeStockPause(rig, "%1");
       const collector = rig.armedAtomicCollectors.at(-1)!;
       rig.sim.output("%1", "OLD-TAIL");
@@ -1637,6 +1697,7 @@ describe("layout push", () => {
       try {
         await Promise.resolve();
         if (nativeBootstrap) rig.sim.reply(nativeBootstrapLines());
+        rig.sim.feedLines("%subscription-changed tmux-ide-pane-borders $1 @2 0 - : off");
         completeStockPause(rig, "%1");
         const retiredNonce = rig.armedAtomicCollectors.at(-1)!.nonce;
         rig.sim.feedLines(

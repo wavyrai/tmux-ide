@@ -320,6 +320,7 @@ interface PaneRecord {
   windowRuntimeId: string | null;
   readonly subs: Set<SubRecord>;
   incarnation: number;
+  snapshotLayoutGeneration: number;
 }
 
 interface SnapshotLease {
@@ -1611,7 +1612,7 @@ export class SessionChannel {
     return {
       paneId: pane.runtimeId,
       incarnation: pane.incarnation,
-      layoutGeneration: this.windowAuthorityOrdinal,
+      layoutGeneration: pane.snapshotLayoutGeneration,
       participants: [...pane.subs].filter((sub) => !sub.closed && !sub.frozen),
     };
   }
@@ -2712,13 +2713,21 @@ export class SessionChannel {
         return;
       }
     }
-    if (
-      name === "subscription-changed" &&
-      (/^tmux-ide-pane-borders\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+-\s*:\s*(top|bottom|off)\s*$/u.test(
-        rest,
-      ) ||
-        /^tmux-ide-copy-keys\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+-\s*:\s*(emacs|vi)\s*$/u.test(rest))
-    ) {
+    const windowOptionHint =
+      name === "subscription-changed"
+        ? (/^tmux-ide-pane-borders\s+\$[0-9]+\s+(@[0-9]+)\s+[0-9]+\s+-\s*:\s*(?:top|bottom|off)\s*$/u.exec(
+            rest,
+          ) ??
+          /^tmux-ide-copy-keys\s+\$[0-9]+\s+(@[0-9]+)\s+[0-9]+\s+-\s*:\s*(?:emacs|vi)\s*$/u.exec(
+            rest,
+          ))
+        : null;
+    if (windowOptionHint) {
+      // Initial option samples from sibling windows are not evidence that this
+      // pane's capture context changed. Unknown membership stays conservative.
+      for (const pane of this.panesByRuntime.values())
+        if (!pane.windowRuntimeId || pane.windowRuntimeId === windowOptionHint[1])
+          pane.snapshotLayoutGeneration += 1;
       this.windowAuthorityOrdinal += 1;
       this.windowIdentityOrdinal += 1;
       this.scheduleSync();
@@ -2731,6 +2740,8 @@ export class SessionChannel {
       STRUCTURAL_NOTIFICATIONS.has(name)
     ) {
       this.windowAuthorityOrdinal += 1;
+      // Structural and layout notifications remain conservative across all panes.
+      for (const pane of this.panesByRuntime.values()) pane.snapshotLayoutGeneration += 1;
       if (name !== "layout-change") this.windowIdentityOrdinal += 1;
     }
     // Layout changes remain a second honest wake-up: a native resize can arrive
@@ -3153,6 +3164,7 @@ export class SessionChannel {
         const nextWindowRuntimeId = this.truthWindow.get(runtime) ?? pane.windowRuntimeId;
         if (nextWindowRuntimeId !== pane.windowRuntimeId && nextWindowRuntimeId !== null)
           movedWindowRuntimeIds.add(nextWindowRuntimeId);
+        if (pane.windowRuntimeId !== nextWindowRuntimeId) pane.snapshotLayoutGeneration += 1;
         pane.windowRuntimeId = nextWindowRuntimeId;
         continue;
       }
@@ -3788,6 +3800,8 @@ export class SessionChannel {
         existingBySemantic.incarnation = ++this.paneIncarnation;
         existingBySemantic.descriptor = descriptor;
         existingBySemantic.active = verified.active;
+        if (existingBySemantic.windowRuntimeId !== windowRuntimeId)
+          existingBySemantic.snapshotLayoutGeneration += 1;
         existingBySemantic.windowRuntimeId = windowRuntimeId;
         this.panesByRuntime.set(verified.runtimePaneId, existingBySemantic);
         for (const sub of existingBySemantic.subs) {
@@ -3798,6 +3812,8 @@ export class SessionChannel {
       if (existingByRuntime && existingByRuntime.semanticId === verified.semanticPaneId) {
         existingByRuntime.descriptor = descriptor;
         existingByRuntime.active = verified.active;
+        if (existingByRuntime.windowRuntimeId !== windowRuntimeId)
+          existingByRuntime.snapshotLayoutGeneration += 1;
         existingByRuntime.windowRuntimeId = windowRuntimeId;
         continue;
       }
@@ -3824,6 +3840,8 @@ export class SessionChannel {
         existingByRuntime.semanticId = verified.semanticPaneId;
         existingByRuntime.descriptor = descriptor;
         existingByRuntime.active = verified.active;
+        if (existingByRuntime.windowRuntimeId !== windowRuntimeId)
+          existingByRuntime.snapshotLayoutGeneration += 1;
         existingByRuntime.windowRuntimeId = windowRuntimeId;
         this.panesBySemantic.set(verified.semanticPaneId, existingByRuntime);
         continue;
@@ -3836,6 +3854,7 @@ export class SessionChannel {
         windowRuntimeId,
         subs: new Set(),
         incarnation: ++this.paneIncarnation,
+        snapshotLayoutGeneration: 0,
       };
       this.panesByRuntime.set(record.runtimeId, record);
       this.panesBySemantic.set(record.semanticId, record);
