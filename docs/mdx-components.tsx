@@ -10,12 +10,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     CopyAgentPrompt,
     // Figures for docs pages: numbered within the page, titled at h3.
     AgentTeamsFigure: () => (
-      <AgentTeamsFigure
-        id="docs-agent-teams-figure"
-        label="Fig. 1 / Delegation and synthesis"
-        number="Figure 1."
-        heading="h3"
-      />
+      <AgentTeamsFigure id="docs-agent-teams-figure" number="1" heading="h3" compact />
     ),
     AgentDetectionFigure,
     ...components,

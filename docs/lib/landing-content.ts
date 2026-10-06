@@ -94,7 +94,7 @@ export const LANDING_AGENT_FEATURES = [
     title: "Names you can talk about",
     body: "Name an agent when you create it — Architect, Reviewer — or rename any pane from its menu. Unnamed agents show their harness, Claude Code or Codex; other new panes get a memorable fallback such as warm-redwood until a title or running program names them.",
     link: { label: "Coordinate a team of agents", href: "/docs/multi-agent-teams" },
-    figure: { number: "02.1", label: "Agent identity / named agents and panes" },
+    figure: { number: "2", label: "Agent identity / named agents and panes" },
   },
   {
     index: "02",
@@ -105,14 +105,14 @@ export const LANDING_AGENT_FEATURES = [
       label: "How agent status is detected",
       href: "/docs/agent-detection#which-agents-are-detected",
     },
-    figure: { number: "02.2", label: "Agent state / live indicators" },
+    figure: { number: "3", label: "Agent state / live indicators" },
   },
   {
     index: "03",
     eyebrow: "Navigate",
     title: "Exact agent-to-pane navigation",
     body: "Click an agent or choose it from the keyboard. tmux-ide resolves the exact session, window, and pane before transferring focus—no scanning a wall of terminals.",
-    figure: { number: "02.3", label: "Agent routing / exact pane focus" },
+    figure: { number: "4", label: "Agent routing / exact pane focus" },
   },
 ] as const;
 
@@ -123,7 +123,7 @@ export const LANDING_CAPABILITIES = [
     body: "Open clean windows and give agents, panes, and sessions names your team can remember.",
     items: ["new windows", "named agents and panes"],
     visual: "window",
-    figure: { number: "05.1", label: "Create / windows and names" },
+    figure: { number: "7", label: "Create / windows and names" },
   },
   {
     index: "02",
@@ -131,7 +131,7 @@ export const LANDING_CAPABILITIES = [
     body: "Split and resize the workspace while the real tmux layout remains the source of truth.",
     items: ["split panes", "pane resize"],
     visual: "resize",
-    figure: { number: "05.2", label: "Arrange / splits and resize" },
+    figure: { number: "8", label: "Arrange / splits and resize" },
   },
   {
     index: "03",
@@ -139,6 +139,6 @@ export const LANDING_CAPABILITIES = [
     body: "Focus exact agent targets and close panes deliberately without disturbing the session.",
     items: ["precise focus", "explicit close"],
     visual: "focus",
-    figure: { number: "05.3", label: "Operate / focus and close" },
+    figure: { number: "9", label: "Operate / focus and close" },
   },
 ] as const;

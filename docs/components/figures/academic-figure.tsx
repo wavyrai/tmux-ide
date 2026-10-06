@@ -25,11 +25,13 @@ export type AcademicFigureProps = {
   id: string;
   kicker: string;
   title: string;
-  /** Rendered after the title in the accent face. */
+  /** A second title line in the muted tone (the section-heading pattern). */
   accent?: string;
   subtitle?: ReactNode;
   heading?: "h2" | "h3";
-  /** Mono label in the figure bar, e.g. "Fig. 03 / Delegation and synthesis". */
+  /** Docs-column variant: the title takes the docs h3 role instead of the section role. */
+  compact?: boolean;
+  /** Mono label in the figure bar, e.g. "Delegation and synthesis". */
   label: string;
   legend: { solid: string; dashed?: string };
   levels: readonly FigureLevel[];
@@ -40,7 +42,9 @@ export type AcademicFigureProps = {
     sub: string;
     items: readonly { title: string; sub: string; href?: string }[];
   };
-  caption: { lead: string; text: ReactNode };
+  /** The figure number on its page; the caption reads "Fig {number}. …". */
+  number: string;
+  caption: ReactNode;
   reading?: { lead: string; text: ReactNode };
 };
 
@@ -86,12 +90,18 @@ function Wire({ from, to, link }: { from: number; to: number; link: FigureLink }
           <i key={`u${x}`} className="afig-a afig-a-up" style={{ left: pct(x) }} />
         ))}
         {link.down ? (
-          <span className="afig-e" style={{ right: pct(100 - Math.min(...down)) }}>
+          <span
+            className="afig-e type-caption-1 font-mono"
+            style={{ right: pct(100 - Math.min(...down)) }}
+          >
             {link.down}
           </span>
         ) : null}
         {link.up ? (
-          <span className="afig-e afig-e-up" style={{ left: pct(Math.max(...up)) }}>
+          <span
+            className="afig-e afig-e-up type-caption-1 font-mono"
+            style={{ left: pct(Math.max(...up)) }}
+          >
             {link.up}
           </span>
         ) : null}
@@ -110,21 +120,21 @@ function Wire({ from, to, link }: { from: number; to: number; link: FigureLink }
 export function AcademicFigure(props: AcademicFigureProps) {
   const { id, levels, links } = props;
   const Heading = props.heading ?? "h2";
+  const label = "type-caption-1 font-mono";
   return (
     <figure className="afig not-prose" aria-labelledby={`${id}-caption`}>
-      <p className="afig-top">{props.kicker}</p>
-      <Heading className="afig-title">
+      <p className={`afig-top ${label}`}>{props.kicker}</p>
+      <Heading
+        className={`afig-title ${props.compact ? "type-title-2" : "type-display-4 lg:type-display-3"}`}
+      >
         {props.title}
         {props.accent ? (
-          <>
-            {" "}
-            <em>{props.accent}</em>
-          </>
+          <span className="block text-fd-muted-foreground">{props.accent}</span>
         ) : null}
       </Heading>
-      {props.subtitle ? <p className="afig-sub">{props.subtitle}</p> : null}
+      {props.subtitle ? <p className="afig-sub type-marketing-body">{props.subtitle}</p> : null}
       <div className="afig-frame">
-        <div className="afig-bar">
+        <div className={`afig-bar ${label}`}>
           <span>{props.label}</span>
           <span className="afig-legend">
             <span>{props.legend.solid}</span>
@@ -137,26 +147,28 @@ export function AcademicFigure(props: AcademicFigureProps) {
           {levels.map((level, index) => (
             <div key={level.letter} className="afig-group">
               <div className="afig-level">
-                <p className="afig-lvl">
-                  <i>{level.letter}</i>
+                <p className={`afig-lvl ${label}`}>
+                  <span className="text-fd-foreground">{level.letter}</span>
                   {level.name}
                 </p>
                 <ul className={`afig-cards afig-n${level.cards.length}`}>
                   {level.cards.map((card) => (
                     <li key={card.cap} className="afig-card">
-                      <p className="afig-cap">
+                      <p className={`afig-cap ${label}`}>
                         <span>{card.cap}</span>
                         {card.tag ? <span>{card.tag}</span> : null}
                       </p>
                       <div className="afig-body">
-                        <p className="afig-name">{card.name}</p>
-                        {card.mono ? <p className="afig-mono">{card.mono}</p> : null}
-                        <p className="afig-duty">{card.duty}</p>
+                        <p className="type-title-3">{card.name}</p>
+                        {card.mono ? (
+                          <p className="afig-mono type-body-2 font-mono">{card.mono}</p>
+                        ) : null}
+                        <p className="afig-duty type-caption-1">{card.duty}</p>
                       </div>
                     </li>
                   ))}
                 </ul>
-                <p className="afig-note">
+                <p className="afig-note type-body-2">
                   <strong>
                     {level.letter}. {level.note.label}
                   </strong>
@@ -175,11 +187,11 @@ export function AcademicFigure(props: AcademicFigureProps) {
         </div>
         {props.foundation ? (
           <div className="afig-found">
-            <p className="afig-found-title">
+            <p className="afig-found-title type-body font-mono">
               {props.foundation.title}
-              <small>{props.foundation.sub}</small>
+              <small className="type-caption-2">{props.foundation.sub}</small>
             </p>
-            <ul>
+            <ul className="type-caption-1">
               {props.foundation.items.map((item) => (
                 <li key={item.title}>
                   {item.href ? (
@@ -189,16 +201,17 @@ export function AcademicFigure(props: AcademicFigureProps) {
                   ) : (
                     item.title
                   )}
-                  <small>{item.sub}</small>
+                  <small className="type-caption-2">{item.sub}</small>
                 </li>
               ))}
             </ul>
           </div>
         ) : null}
       </div>
-      <figcaption id={`${id}-caption`} className="afig-foot">
+      <figcaption id={`${id}-caption`} className="afig-foot type-caption-1">
         <p>
-          <strong>{props.caption.lead}</strong> {props.caption.text}
+          <span className="mr-2 font-mono">Fig {props.number}.</span>
+          <span className="text-fd-foreground">{props.caption}</span>
         </p>
         {props.reading ? (
           <p>

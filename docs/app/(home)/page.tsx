@@ -164,7 +164,7 @@ export default async function HomePage() {
             </div>
             <TechnicalCaption
               id="figure-01-caption"
-              number="01"
+              number="1"
               ruled={false}
               className="bg-marketing-raise px-(--site-gutter) py-5"
               action={
