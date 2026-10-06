@@ -3,16 +3,14 @@ title: Multi-agent teams
 description: Run Claude Code, Codex and other agents side by side, coordinating through tmux-ide team groups, a shared status bus, direct messages and wait commands.
 ---
 
-tmux-ide doesn't just watch one agent — it lets a **team of agents work together**,
-and they don't have to be the same tool. A Claude Code lead, a codex pane, a
-cursor-agent pane, and an `aider` pane can share one fleet and coordinate through
-tmux-ide's primitives. Nothing here is aspirational: it's the same `send`, `wait`,
-`events`, and `team` commands documented elsewhere, pointed at each other.
+tmux-ide lets agents in different panes work as a team, even when they are
+different tools. A Claude Code lead can hand work to a Codex pane and wait for
+it to finish, using the same `send`, `wait`, `events` and `team` commands
+documented elsewhere.
 
-Because every agent is just a process in a tmux pane, the coordination layer is
-**agent-agnostic**. Claude Code reports its status automatically (via the
-integration hooks); any other agent either self-reports with a one-line pane
-option or is recognized by the fallback detector.
+Every agent is a process in a tmux pane, so coordination works with any agent.
+Claude Code reports its status through the integration hooks. Other agents
+report it with a one-line pane option, or the fallback detector recognizes them.
 
 ## Named groups in Home and the sidebar
 
@@ -54,9 +52,9 @@ their own tmux panes are grouped automatically — see the next section.
 
 [Agent teams](https://code.claude.com/docs/en/agent-teams) let one Claude Code
 session lead several teammate sessions that share a task list and message each
-other. In split-pane mode, Claude Code opens each teammate in its own tmux pane —
-and because a tmux-ide session is ordinary tmux, those panes show up in tmux-ide
-like any others, with their team context added.
+other. In split-pane mode, Claude Code opens each teammate in its own tmux pane.
+A tmux-ide session is ordinary tmux, so those panes show up in tmux-ide like any
+others, with their team context added.
 
 ### Run a team inside tmux-ide
 
@@ -70,8 +68,8 @@ choose tmux split panes in `~/.claude/settings.json`:
 }
 ```
 
-`"auto"` also uses split panes when Claude Code is already running inside tmux;
-the default `"in-process"` keeps every teammate inside the lead's terminal. Then
+`"auto"` also uses split panes when Claude Code is already running inside tmux.
+The default, `"in-process"`, keeps every teammate inside the lead's terminal. Then
 start `claude` in a tmux-ide session and ask it to spawn teammates. For the best
 status signal, install the integration first:
 
@@ -90,11 +88,14 @@ tmux-ide integration install claude
 
 tmux-ide reads Claude Code's runtime team file,
 `~/.claude/teams/<team>/config.json`, about every two seconds. A pane gets a
-teammate's name only when that file lists the member with a tmux backend and
-that pane, **and** the live `claude` process in the pane carries the matching
-team, agent id and agent name. Anything else — a removed or unrecognized file,
-an iTerm2 backend, an ambiguous match — falls back to ordinary pane naming.
-Each machine's daemon reads that machine's files.
+teammate's name only when both of these hold:
+
+- the file lists that member with a tmux backend and this pane;
+- the live `claude` process in the pane carries the matching team, agent id and
+  agent name.
+  Anything else — a removed or unrecognized file,
+  an iTerm2 backend, an ambiguous match — falls back to ordinary pane naming.
+  Each machine's daemon reads that machine's files.
 
 ### What it does not do
 
@@ -177,8 +178,9 @@ tmux-ide send API --no-enter "draft: "        # stage text without submitting
 echo "long instructions…" | tmux-ide send %2  # pipe from stdin
 ```
 
-Long messages (over ~150 characters) are automatically written to a dispatch
-file and the target is told to read it — no paste-mode issues in any agent TUI.
+Messages over 150 characters are written to a dispatch file under
+`.tasks/dispatch/` in the project, and the target is told to read it. That avoids paste-mode
+problems in agent interfaces.
 
 ### 3. Synchronization
 
@@ -221,9 +223,9 @@ tmux-ide agent explain %2 --json | jq -r .classification
 Step 2 puts text into codex's prompt exactly as if the lead had typed it. Step 3
 watches codex's own output. Steps 1 and 4 read the shared bus. None of it is
 Claude-specific — swap `%2` for a cursor-agent or `aider` pane and the same
-commands hold. When the unit you're waiting on is a whole session — say a worktree
-running one agent — `tmux-ide wait agent-status <session> --status done` is the
-session-level twin of the pane-level `wait output`.
+commands hold. To wait on a whole session, such as a worktree running one agent,
+use `tmux-ide wait agent-status <session> --status done` instead of
+`wait output`.
 
 ## The lead-agent pattern
 
@@ -237,9 +239,9 @@ The pattern that ties it together:
   the lead reacts the moment a teammate finishes or gets stuck, instead of
   polling.
 
-Because the status bus, messaging, and waits are all plain CLI with `--json` and
-exit codes, you can wire the same pattern into scripts, a lead agent's tool
-calls, or a Makefile — whatever is driving the fleet.
+The status bus, messaging and waits are plain CLI commands with `--json` output
+and exit codes. Use the same pattern from scripts, a lead agent's tool calls or a
+Makefile.
 
 ## See also
 
