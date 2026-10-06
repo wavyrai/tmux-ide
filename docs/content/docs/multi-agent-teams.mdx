@@ -1,5 +1,6 @@
 ---
 title: Multi-agent teams
+metaTitle: Run Claude Code, Codex and agent teams
 description: Run Claude Code, Codex and other agents side by side, coordinating through tmux-ide team groups, a shared status bus, direct messages and wait commands.
 ---
 
@@ -191,20 +192,37 @@ others, with their team context added.
 
 ### Run a team inside tmux-ide
 
-Agent teams are experimental in Claude Code and off by default. Enable them and
-choose tmux split panes in `~/.claude/settings.json`:
+Agent teams are experimental in Claude Code and off by default there. The
+tmux-ide installer turns them on for you when Claude Code is installed, unless
+you opted out. It adds two keys to `~/.claude/settings.json`, each only if it is
+missing:
 
 ```json
 {
   "env": { "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1" },
-  "teammateMode": "tmux"
+  "teammateMode": "auto"
 }
 ```
 
-`"auto"` also uses split panes when Claude Code is already running inside tmux.
-The default, `"in-process"`, keeps every teammate inside the lead's terminal. Then
-start `claude` in a tmux-ide session and ask it to spawn teammates. For the best
-status signal, install the integration first:
+`"auto"` opens teammates as split panes when Claude Code runs inside tmux, and
+in-process elsewhere. `"tmux"` always asks for split panes; Claude Code's
+default, `"in-process"`, keeps every teammate inside the lead's terminal. The
+installer never overrides a value you already set, including an explicit `"0"`.
+The step and the command below need a tmux-ide release newer than 2.9.3; with
+2.9.3, add the two keys to `~/.claude/settings.json` yourself.
+
+Check or change the setting at any time:
+
+```bash
+tmux-ide integration agent-teams status
+tmux-ide integration agent-teams disable   # writes "0"; future installs respect it
+tmux-ide integration agent-teams enable    # turns it back on, even after a "0"
+```
+
+The command backs up `settings.json` once before its first change and never
+rewrites a file that isn't valid JSON. Then start `claude` in a tmux-ide session
+and ask it to spawn teammates. For the best status signal, install the
+integration first:
 
 ```bash
 tmux-ide integration install claude

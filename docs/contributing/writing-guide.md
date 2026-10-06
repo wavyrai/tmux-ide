@@ -151,6 +151,10 @@ description: "Rebuild every tmux session after a server crash with tmux-ide rest
 - `title`: two to four words in sentence case that make sense out of context.
   The site appends " | tmux-ide". Proper nouns keep their capitals ("Claude
   Code", "Home"); write "and", not "&".
+- `metaTitle` (optional): a search title of at most 49 characters, used only for
+  the browser title and social cards. Add one when the short `title` lacks the
+  words people search for ("Restore tmux sessions and resume agents" for
+  "Restore and resume"). Each must be unique.
 - `description`: 110–155 characters, one sentence, ending with a period. Say
   what the page lets the reader do, and put the key phrase first.
 - Quote the description if it contains `: `, or the YAML breaks.
