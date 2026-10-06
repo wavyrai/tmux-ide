@@ -160,6 +160,31 @@ delivered delta events and proves the oracle detects corruption and reduces the
 failing trace. This is a transcript model, not a model of terminal emulation,
 geometry ownership, queue overflow or the entire SessionChannel lifecycle.
 
+### Generated control-parser schedules
+
+`control-channel-model.test.ts` drives the real `ControlChannelCore` with 128
+recorded seeds and a bounded campaign of 1,024 additional seeds. Each schedule
+contains 48 operations: pane output with escaped control bytes, server hook
+replies, successful command groups, first-command errors that abort their group,
+and bounded reply overflow. Reads split down to individual bytes or coalesce
+multiple complete replies. The expected transcript comes directly from those
+operations, independently of the production parser and reply queue.
+
+The oracle checks exact output and reply delivery order, selected reply identity,
+success/error results, and that every reserved response slot is consumed. Hook
+replies must not consume ordinary command slots. These schedules put output
+between complete reply blocks; they do not claim arbitrary interleaving inside
+capture payloads is legal. They also do not model SessionChannel publication,
+cancellation, disconnected generations, or tmux's internal scheduling.
+
+On an invariant failure, the test retains a JSON receipt containing its seed,
+original schedule, deletion-reduced schedule and failure in a temporary
+`tmux-control-model-*` directory. Reduction removes whole operations so the wire
+stays framed and every remaining reply retains its command. Negative controls
+duplicate output, lose output or misroute a reply. Each is detected and reduced
+to one operation that passes without the injected corruption; their original
+and reduced schedules are retained as `negative.json` receipts.
+
 ## Real-tmux checkpoints
 
 `tmux-boundary-model-live.test.ts` drives the actual MirrorService and canonical

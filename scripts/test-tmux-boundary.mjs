@@ -24,6 +24,7 @@ console.log(
 const cwd = fileURLToPath(new URL("../packages/daemon/", import.meta.url));
 for (const [config, test] of [
   ["vitest.config.ts", "pane-feed-model.test.ts"],
+  ["vitest.config.ts", "control-channel-model.test.ts"],
   ["vitest.live.config.ts", "tmux-boundary-model-live.test.ts"],
   ["vitest.live.config.ts", "tmux-boundary-ordering-live.test.ts"],
   ["vitest.live.config.ts", "control-collector-retirement-live.test.ts"],
