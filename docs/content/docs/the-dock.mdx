@@ -1,7 +1,7 @@
 ---
 title: tmux chrome
-metaTitle: Agent status bar for tmux (tmux chrome)
-description: tmux-ide adopt adds a status bar, agent glyphs, prefix keys, menus and notifications to sessions you use from a plain tmux client, no app required.
+metaTitle: tmux status bar and sidebar for agents
+description: "A tmux status bar and sidebar for coding agents: tmux-ide adopt adds live agent status glyphs, prefix keys, menus and alerts to plain tmux sessions."
 ---
 
 **tmux chrome** is the status bar, keys and menus that `tmux-ide adopt` adds to a
@@ -16,6 +16,23 @@ option, so it renders on the server and shows up on every client (including SSH)
 `unadopt` removes it from that session. The keys and mouse bindings are
 server-wide, so unadopting one session also removes them for the other adopted
 sessions; run `tmux-ide adopt` on one of those to restore them.
+
+## Agent sidebar for tmux
+
+`prefix b` (or `⌥b`) opens the tmux-ide sidebar in the current adopted session: a
+narrow, full-height tmux pane on the left that lists your fleet as a tree of
+projects, sessions and windows, each with a live agent-status glyph. Press
+`Enter` or double-click a row to jump your tmux client there. The same key closes it.
+The sidebar is a real tmux pane, so it stays put while you work and never counts
+as an agent.
+
+```bash
+tmux-ide sidebar-toggle --session work   # the command behind prefix b
+```
+
+You can also add it to a layout as a `type: sidebar`
+[widget pane](/docs/configuration#widget-panes). It is part of tmux chrome; the
+app has its own `F10` sidebar.
 
 ## What's on the bar
 

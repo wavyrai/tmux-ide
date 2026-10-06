@@ -1,11 +1,11 @@
 ---
 title: Agent status detection
-metaTitle: Detect Claude Code and agent status in tmux
-description: "How tmux-ide knows if an agent is working, blocked, done or idle: Claude Code hooks, a one-line self-report contract, an inspectable fallback, overrides."
+metaTitle: tmux agent status for Claude Code and Codex
+description: "tmux agent status: see if Claude Code, Codex or any agent in a pane is working, blocked, done or idle, from hooks, a self-report or a screen fallback."
 ---
 
-Agent detection is how tmux-ide knows whether each agent is working, blocked,
-done or idle. It has two layers. tmux-ide trusts an agent's own report first.
+Agent detection gives every tmux pane an agent status: tmux-ide knows whether
+each agent is working, blocked, done or idle. It has two layers. tmux-ide trusts an agent's own report first.
 When there is none, it reads the pane's process and screen, and shows you
 exactly how it decided.
 

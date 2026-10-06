@@ -12,7 +12,7 @@ running on the remote machine when you close the app or the connection drops.
 ## What you need on each machine
 
 Install the same tmux-ide version on both machines. The installer brings its own
-Node.js and tmux; an npm installation needs Node.js 20+ and tmux 3.7+. Discovery and explicit remote start respect the noninteractive
+Node.js and tmux; an npm installation needs Node.js 20+ and also bundles tmux. Discovery and explicit remote start respect the noninteractive
 SSH PATH, then check the installer default (`~/.local/bin`), Homebrew
 (`/opt/homebrew/bin` and `/usr/local/bin`), Linuxbrew and `~/.npm-global/bin`.
 Custom installation prefixes must be on the noninteractive SSH PATH; interactive
