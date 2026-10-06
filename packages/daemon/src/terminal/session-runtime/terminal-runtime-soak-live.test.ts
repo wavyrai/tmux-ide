@@ -116,6 +116,7 @@ function resourceTrend(samples: { phase: string; rss: number; heap: number; at: 
 }
 type Viewer = {
   client?: PaneStreamRuntimeClient;
+  deliveryLaneId?: string;
   states: Map<string, TerminalDeliveryClientState>;
   pending: Map<string, TerminalDeliveryServerMessage[]>;
   envelopes: Map<string, TerminalDeliveryEnvelope>;
@@ -337,6 +338,17 @@ for (const count of [1, 15])
           () => panes.every((p) => !!v.states.get(p.semantic)?.canonicalSnapshot),
           "viewer initial snapshots",
         );
+        const entries = owner!.sessionRuntimeRegistry
+          .qualificationSnapshot()
+          .sessions.flatMap((session) => session.convergence.clients)
+          .filter((client) => client.clientId.startsWith(`${v.client!.connectionClientId}:`));
+        const lanes = [...new Set(entries.map((client) => client.clientId))];
+        expect(lanes).toHaveLength(1);
+        expect(entries).toHaveLength(count);
+        expect(
+          panes.every((pane) => entries.some((client) => client.semanticPaneId === pane.semantic)),
+        ).toBe(true);
+        v.deliveryLaneId = lanes[0]!;
         return v;
       };
       const row = (v: Viewer, pane: string, y: number) =>
@@ -458,7 +470,28 @@ for (const count of [1, 15])
         while (Date.now() < end) {
           if (Date.now() >= nextCycle) {
             visibility(observer, "hidden");
-            await sleep(150);
+            // Hiding prevents new transactions; an already admitted flight may
+            // finish. Establish its ACK/drain boundary before counting silence.
+            await until(() => {
+              if (!observer.deliveryLaneId) return false;
+              const entries = owner!.sessionRuntimeRegistry
+                .qualificationSnapshot()
+                .sessions.flatMap((session) => session.convergence.clients)
+                .filter((client) => client.clientId === observer.deliveryLaneId);
+              return (
+                entries.length === count &&
+                panes.every((pane) =>
+                  entries.some((client) => client.semanticPaneId === pane.semantic),
+                ) &&
+                entries.every(
+                  (client) =>
+                    client.visibility === "hidden" &&
+                    client.inFlightRevision === null &&
+                    client.queueDepth === 0,
+                ) &&
+                panes.every((pane) => observer.pending.get(pane.semantic)?.length === 0)
+              );
+            }, "observer hidden transactions drained");
             const hidden = observer.deliveries,
               before = row(active, panes[0]!.semantic, 0);
             const text = String.fromCharCode(97 + (cycle % 26));
