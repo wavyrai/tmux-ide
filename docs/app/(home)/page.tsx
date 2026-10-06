@@ -208,6 +208,14 @@ export default async function HomePage() {
                   </div>
                   <h3 className="type-card-title mt-10 text-fd-foreground">{feature.title}</h3>
                   <p className={`mt-4 ${bodyCopy}`}>{feature.body}</p>
+                  {"link" in feature ? (
+                    <Link
+                      href={feature.link.href}
+                      className="type-body marketing-link-action mt-4 self-start text-fd-primary"
+                    >
+                      {feature.link.label} →
+                    </Link>
+                  ) : null}
                   <TuiMiniFigure
                     variant={agentVisuals[index]}
                     figure={feature.figure}
@@ -218,20 +226,6 @@ export default async function HomePage() {
                 </Cell>
               ))}
             </Mosaic>
-            <div className="type-body mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-              <Link
-                href="/docs/agent-detection#which-agents-are-detected"
-                className="marketing-link-action text-fd-primary"
-              >
-                How agent status is detected →
-              </Link>
-              <Link
-                href="/docs/multi-agent-teams"
-                className="marketing-link-action text-fd-primary"
-              >
-                Coordinate a team of agents →
-              </Link>
-            </div>
           </BandBody>
         </Band>
         <Band>
@@ -262,6 +256,14 @@ export default async function HomePage() {
                   <p className="type-body mt-8 border-t border-fd-border pt-4 text-fd-foreground">
                     {layer.outcome}
                   </p>
+                  {"link" in layer ? (
+                    <Link
+                      href={layer.link.href}
+                      className="type-body marketing-link-action mt-3 self-start text-fd-primary"
+                    >
+                      {layer.link.label} →
+                    </Link>
+                  ) : null}
                   <TuiMiniFigure
                     variant={architectureVisuals[index]}
                     figure={layer.figure}
@@ -272,14 +274,6 @@ export default async function HomePage() {
                 </Cell>
               ))}
             </Mosaic>
-            <div className="type-body mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-              <Link href="/docs/restore-resume" className="marketing-link-action text-fd-primary">
-                Restore sessions after a crash →
-              </Link>
-              <Link href="/docs/remote-machines" className="marketing-link-action text-fd-primary">
-                Connect to a machine over SSH →
-              </Link>
-            </div>
             <div className="type-body mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 text-fd-muted-foreground">
               <span className="text-fd-foreground">Local terminal</span>
               <span aria-hidden>→</span>

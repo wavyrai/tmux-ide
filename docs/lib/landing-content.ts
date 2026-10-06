@@ -93,6 +93,7 @@ export const LANDING_AGENT_FEATURES = [
     eyebrow: "Name",
     title: "Names you can talk about",
     body: "Name an agent when you create it — Architect, Reviewer — or rename any pane from its menu. Unnamed agents show their harness, Claude Code or Codex; other new panes get a memorable fallback such as warm-redwood until a title or running program names them.",
+    link: { label: "Coordinate a team of agents", href: "/docs/multi-agent-teams" },
     figure: { number: "02.1", label: "Agent identity / named agents and panes" },
   },
   {
@@ -100,6 +101,10 @@ export const LANDING_AGENT_FEATURES = [
     eyebrow: "Monitor",
     title: "Live agent indicators",
     body: "Working, blocked, done and idle states appear in the sidebar and pane headers, so a multi-agent workspace stays readable without opening every terminal.",
+    link: {
+      label: "How agent status is detected",
+      href: "/docs/agent-detection#which-agents-are-detected",
+    },
     figure: { number: "02.2", label: "Agent state / live indicators" },
   },
   {
@@ -143,12 +148,14 @@ export const LANDING_ARCHITECTURE = [
     owner: "tmux",
     responsibility: "processes · PTYs · sessions · windows · panes",
     outcome: "The durable source of truth",
+    link: { label: "Restore sessions after a crash", href: "/docs/restore-resume" },
     figure: { number: "03.1", label: "tmux / durable process ownership" },
   },
   {
     owner: "tmux-ide daemon",
     responsibility: "discovery · lifecycle · agent state · pane streams",
     outcome: "One model of every machine, session and agent",
+    link: { label: "Connect to a machine over SSH", href: "/docs/remote-machines" },
     figure: { number: "03.2", label: "Daemon / one model of machines, sessions and agents" },
   },
   {
