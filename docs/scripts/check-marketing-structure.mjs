@@ -138,22 +138,14 @@ if (customBandBodyCount > 3) {
   );
 }
 
-const expectedFigureNumbers = [
-  "02.1",
-  "02.2",
-  "02.3",
-  "03.1",
-  "03.2",
-  "03.3",
-  "04.1",
-  "04.2",
-  "04.3",
-];
+// Landing figure numbers in reading order: the agent cards (02.x) and the
+// capability cards (05.x); Figs. 03 and 04 are the full-width system figures.
+const expectedFigureNumbers = ["02.1", "02.2", "02.3", "05.1", "05.2", "05.3"];
 const modeledFigureNumbers = [...landingContent.matchAll(/number:\s*"([0-9.]+)"/gu)]
   .map((match) => match[1])
   .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
 if (JSON.stringify(modeledFigureNumbers) !== JSON.stringify(expectedFigureNumbers)) {
-  failures.push("landing figures must keep the stable 02.1–04.3 technical sequence");
+  failures.push("landing figures must keep the stable 02.x / 05.x technical sequence");
 }
 if (!tuiFigure.includes("<figure") || !tuiFigure.includes("<TechnicalCaption")) {
   failures.push("TUI diagrams must render as semantic figures through TechnicalCaption");

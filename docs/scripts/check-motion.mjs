@@ -47,7 +47,7 @@ for (const token of [
   if (!css.includes(token)) failures.push(`missing shared motion primitive: ${token}`);
 }
 
-for (const token of ["motionCount={9}", "motionIndex={index + 3}", "motionIndex={index + 6}"]) {
+for (const token of ["motionCount={6}", "motionIndex={index}", "motionIndex={index + 3}"]) {
   if (!page.includes(token)) failures.push(`landing-page demos must share one queue: ${token}`);
 }
 for (const token of [
