@@ -210,7 +210,7 @@ export interface TerminalAttachmentAdmissionCoordinatorOptions {
   /** Trusted redemption boundary into the generation's SessionRuntime owner. */
   readonly bindSessionRuntime?: (
     descriptor: AttachmentLeaseDescriptor,
-  ) => SessionRuntimeRedeemedTransportBinding;
+  ) => SessionRuntimeRedeemedTransportBinding | Promise<SessionRuntimeRedeemedTransportBinding>;
   readonly maxPendingTickets?: number;
   readonly maxPreAuthSockets?: number;
   readonly maxLiveConnections?: number;
@@ -765,7 +765,13 @@ export class TerminalAttachmentAdmissionCoordinator {
         let sessionRuntimeBinding: SessionRuntimeRedeemedTransportBinding | null = null;
         let live: TerminalAttachmentLiveConnection;
         try {
-          sessionRuntimeBinding = this.#bindSessionRuntime?.(activeDescriptor) ?? null;
+          sessionRuntimeBinding = (await this.#bindSessionRuntime?.(activeDescriptor)) ?? null;
+          if (!admission.isOpen()) {
+            throw new TerminalAttachmentAdmissionError(
+              "redemption-rejected",
+              "Terminal attachment redemption was rejected.",
+            );
+          }
           live = new TerminalAttachmentLiveConnection({
             onRetire: (connection) => this.#trackRetiringRelease(connection),
             socket,

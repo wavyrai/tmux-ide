@@ -5,8 +5,16 @@ import { createServer as httpServer, request, type IncomingMessage } from "node:
 import { createFinitePressureWriter } from "./lib/owned-ssh-pressure.mjs";
 import { createFleetDialScheduler } from "../packages/daemon-client/src/fleet-dial-scheduler.ts";
 import { createServer as tcpServer, type Socket } from "node:net";
-import { randomBytes, randomUUID } from "node:crypto";
-import { writeFileSync, realpathSync, lstatSync } from "node:fs";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import {
+  writeFileSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  lstatSync,
+  mkdirSync,
+  existsSync,
+} from "node:fs";
 import { join } from "node:path";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "../packages/contracts/src/index.ts";
 import {
@@ -28,10 +36,19 @@ process.umask(0o077);
 const runStarted = Date.now();
 const execute = promisify(execFile);
 const args = process.argv.slice(2);
-if (args.length !== 3 || args[0] !== "--run-owned-local" || args[1] !== "--root")
+if (
+  ![3, 5].includes(args.length) ||
+  args[0] !== "--run-owned-local" ||
+  args[1] !== "--root" ||
+  (args.length === 5 && args[3] !== "--public-cli")
+)
   throw new Error(
-    "Usage: qualify-owned-ssh --run-owned-local --root EXISTING_PRIVATE_SHORT_DIRECTORY",
+    "Usage: qualify-owned-ssh --run-owned-local --root EXISTING_PRIVATE_SHORT_DIRECTORY [--public-cli ABSOLUTE_CLI_PATH]",
   );
+const publicDiscoveryCli = args[4] ? realpathSync(args[4]) : null;
+const publicCliSha256 = publicDiscoveryCli
+  ? createHash("sha256").update(readFileSync(publicDiscoveryCli)).digest("hex")
+  : null;
 const root = fixturePath(realpathSync(args[2]!));
 const rootStat = lstatSync(root);
 if (!rootStat.isDirectory() || rootStat.uid !== process.getuid!() || rootStat.mode & 0o077)
@@ -163,6 +180,7 @@ async function fixture(options: {
   handshake(): unknown;
   jump?: boolean;
   missingPath?: boolean;
+  publicDiscoveryCli?: string;
 }) {
   currentStage = options.jump
     ? "jump-fixture"
@@ -224,7 +242,12 @@ async function closeTransport(transport: Awaited<ReturnType<typeof connect>>) {
   await waitForPort(Number(new URL(transport.baseUrl).port), false);
 }
 let expectedFailureCode: string | undefined;
-async function refused(config: string, signal?: AbortSignal, minMs = 0) {
+async function refused(
+  config: string,
+  signal?: AbortSignal,
+  minMs = 0,
+  expectedCode: SshConnectionError["code"] = "unavailable",
+) {
   const before = sshChildren.length,
     started = Date.now();
   let rejected = false;
@@ -235,7 +258,13 @@ async function refused(config: string, signal?: AbortSignal, minMs = 0) {
     if (!(error instanceof SshConnectionError)) throw error;
     expectedFailureCode = error.code;
     caseFacts.step = "error-code";
-    assert(error.code === "unavailable");
+    assert(error.code === expectedCode);
+    assert(
+      error.retryable === (expectedCode === "unavailable" || expectedCode === "daemon-missing"),
+    );
+    assert(!error.message.includes(root));
+    caseFacts.retryable = error.retryable;
+    caseFacts.sanitizedMessage = error.message;
     rejected = true;
   }
   caseFacts.elapsedMs = Date.now() - started;
@@ -446,7 +475,12 @@ try {
     target.files.capture(name + "_config");
     await runCase(name, async () => {
       const requests = target.metrics().requests;
-      await refused(path);
+      await refused(
+        path,
+        undefined,
+        0,
+        name === "wrong-key" ? "ssh-authentication" : "ssh-host-key",
+      );
       assert(target.metrics().requests === requests);
       await marker();
     });
@@ -458,8 +492,97 @@ try {
   });
   const missing = await fixture({ targetPort, missingPath: true, handshake: () => ({}) });
   await runCase("missing-path-no-installed-fallback", async () => {
-    await refused(missing.config);
+    await refused(missing.config, undefined, 0, "remote-cli-missing");
     assert(missing.metrics().requests === 0);
+    await marker();
+  });
+  for (const code of ["daemon-missing", "incompatible", "unavailable"] as const) {
+    const preflight = await fixture({
+      targetPort,
+      handshake: () => ({ version: 1, error: { code } }),
+    });
+    await runCase("remote-preflight-" + code, async () => {
+      await refused(preflight.config, undefined, 0, code);
+      assert(preflight.metrics().requests === 1);
+      await marker();
+    });
+  }
+  if (publicDiscoveryCli) {
+    const absent = await fixture({
+      targetPort,
+      publicDiscoveryCli,
+      handshake: () => {
+        throw new Error("Public CLI must not use the synthetic handshake");
+      },
+    });
+    await runCase("public-cli-absent-daemon", async () => {
+      await refused(absent.config, undefined, 0, "daemon-missing");
+      assert(absent.metrics().requests === 0);
+      assert(
+        JSON.stringify(readdirSync(join(absent.root, "home"))) === JSON.stringify([".zshenv"]),
+      );
+      assert(!existsSync(join(absent.root, "state")));
+      caseFacts = { publicCliSha256, syntheticHandshakeRequests: 0, privateHomeUnchanged: true };
+      await marker();
+    });
+  }
+  if (publicDiscoveryCli) {
+    for (const variant of ["credential-less", "unsupported-protocol"] as const) {
+      const incompatible = await fixture({
+        targetPort,
+        publicDiscoveryCli,
+        handshake: () => {
+          throw new Error("Public CLI must not use the synthetic handshake");
+        },
+      });
+      const stateDir = join(incompatible.root, "state");
+      mkdirSync(stateDir, { mode: 0o700 });
+      incompatible.files.capture("state");
+      // A fixture-owned live PID and incompatible record exercise the
+      // public CLI's real record reader and compatibility check, not a fake result.
+      const record = JSON.stringify({
+        pid: process.pid,
+        port: targetPort,
+        protocolVersion:
+          variant === "unsupported-protocol"
+            ? DAEMON_WIRE_PROTOCOL_VERSION + 1
+            : DAEMON_WIRE_PROTOCOL_VERSION,
+        productVersion: "2.9.2",
+        instanceId: randomUUID(),
+        startedAt: new Date().toISOString(),
+        bindHostname: "127.0.0.1",
+        authToken: variant === "credential-less" ? null : "fixture-only-incompatible-token",
+      });
+      const recordPath = join(stateDir, "daemon.json");
+      writeFileSync(recordPath, record, { mode: 0o600, flag: "wx" });
+      incompatible.files.capture("state/daemon.json");
+      await runCase(`public-cli-incompatible-${variant}`, async () => {
+        await refused(incompatible.config, undefined, 0, "incompatible");
+        assert(incompatible.metrics().requests === 0);
+        assert(readFileSync(recordPath, "utf8") === record);
+        assert(JSON.stringify(readdirSync(stateDir)) === JSON.stringify(["daemon.json"]));
+        caseFacts = { publicCliSha256, syntheticHandshakeRequests: 0, recordUnchanged: true };
+        await marker();
+      });
+    }
+  }
+  const unreachablePort = await unusedLoopbackPort();
+  const unreachableConfig = join(target.root, "unreachable_config");
+  privateWrite(
+    unreachableConfig,
+    clientConfiguration({
+      root: target.root,
+      account: target.account,
+      port: unreachablePort,
+      sharing: false,
+      defaults: false,
+    }),
+  );
+  target.files.capture("unreachable_config");
+  await runCase("unreachable-ssh-endpoint", async () => {
+    const requests = target.metrics().requests;
+    await refused(unreachableConfig);
+    assert(target.metrics().requests === requests);
     await marker();
   });
   await runCase("pre-aborted", async () => {
@@ -719,6 +842,14 @@ try {
     ok: overall && Object.values(cleanup).every(Boolean),
     scope: "synthetic-identity-production-ssh-transport-only",
     realDaemon: false,
+    publicDiscovery: publicDiscoveryCli
+      ? {
+          cli: publicDiscoveryCli,
+          sha256: publicCliSha256,
+          scope:
+            "Actual CLI executed by the private SSH server against absent state and a fixture-owned incompatible record; no daemon is started. Other protocol cases remain synthetic.",
+        }
+      : null,
     failureStage: overall ? null : currentStage,
     proxyChildObserved,
     sshDiagnostics: sshDiagnostics.map((item) => ({ role: item.role, ...item.snapshot() })),

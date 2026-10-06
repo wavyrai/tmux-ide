@@ -1,6 +1,11 @@
 import { spawn, spawnSync } from "node:child_process";
 import { runPackedAutomationJourney } from "./lib/packed-automation-journey.mjs";
+import { assertNoPackagedContributorTests } from "./lib/packaged-runtime-files.mjs";
 import { createPackedCancellation } from "./lib/packed-cancellation.mjs";
+import {
+  captureGeneratedCliSource,
+  restoreGeneratedCliSource,
+} from "./lib/generated-cli-source.mjs";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -50,6 +55,8 @@ function boundedSpawnSync(file, args, options = {}) {
 
 // Read only intentional top-level selectors before dropping all ambient child overrides.
 const gateEvidenceDir = process.env.TMUX_IDE_PACK_EVIDENCE_DIR;
+const runtimeTraceEnabled = process.env.TMUX_IDE_PACK_RUNTIME_TRACE === "1";
+const topologyInputReproEnabled = process.env.TMUX_IDE_PACK_TOPOLOGY_INPUT === "1";
 const interruptionMode = process.env.TMUX_IDE_PACK_INTERRUPT_AT;
 if (interruptionMode && !["hold-input-ready", "fail-input-ready"].includes(interruptionMode))
   throw new Error("Unknown packed interruption fixture");
@@ -208,6 +215,9 @@ function tmuxEnv(runtimePath, fetchMode = "success", includeBun = false) {
     TMUX: "",
     TMUX_IDE_TMUX_SOCKET_PATH: installedTmuxSocketPath,
     TMUX_IDE_HOME: join(homeDir, ".tmux-ide"),
+    ...(runtimeTraceEnabled
+      ? { TMUX_IDE_SESSION_RUNTIME_TRACE_LOG: join(tmpRoot, "installed-daemon.performance.jsonl") }
+      : {}),
     NODE_PATH: "",
     BUN_INSTALL: "",
     NODE_OPTIONS: `--import=${mockFetchPreloadPath}`,
@@ -274,6 +284,7 @@ let proofCompleted = false;
 let installationScenarios = null;
 let postinstallEvidence = null;
 let npmVersion = null;
+let generatedSource = null;
 let tmuxWitness = null;
 let tmuxStarted = false;
 const tmuxGenerations = [];
@@ -345,9 +356,26 @@ function spawnInstalledCli(installedCli) {
   return child;
 }
 
-async function waitForChild(child, timeoutMs = 20_000) {
-  const exit = await cancellation.waitFor(childExits.get(child), timeoutMs);
-  return { ...exit, ...childOutput.get(child) };
+async function waitForChild(child, phase, timeoutMs = 20_000) {
+  try {
+    const exit = await cancellation.waitFor(childExits.get(child), timeoutMs);
+    return { ...exit, ...childOutput.get(child) };
+  } catch (cause) {
+    const output = childOutput.get(child);
+    throw new Error(
+      `Installed daemon did not close during ${phase}: ${JSON.stringify({
+        pid: child.pid,
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+        signalSent: child.killed,
+        stdoutClosed: child.stdout?.closed,
+        stderrClosed: child.stderr?.closed,
+        stdout: output?.stdout.slice(-4096),
+        stderr: output?.stderr.slice(-4096),
+      })}`,
+      { cause },
+    );
+  }
 }
 
 async function runInstalledTuiGate(installedCli) {
@@ -366,9 +394,8 @@ async function runInstalledTuiGate(installedCli) {
     "bin",
     `tmux-ide-tui-${platformTag}-${packageVersion}`,
   );
-  // `npm pack` compiles the tracked CLI before the runtime build. Capture that
-  // post-pack source state so the assertion describes the exact compiled input
-  // while the evidence record still proves qualification began from `sourceState`.
+  // The packed CLI is retained in the tarball; its tracked build output has
+  // already been restored. Capture the actual input state of the TUI build.
   const compiledSourceState = checkedReleaseSourceState(
     boundedSpawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
       cwd: root,
@@ -870,6 +897,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
                   (line) =>
                     line.includes('"phase":"terminal-host-') ||
                     line.includes('"phase":"terminal-input-gate-') ||
+                    line.includes('"phase":"window-switch-') ||
                     line.includes('"phase":"generation-status"') ||
                     line.includes('"phase":"generation-host-internal-snapshot-publication"') ||
                     line.includes('"scenario":"terminal-input-to-paint"'),
@@ -957,7 +985,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // waiting for app readiness before that restart would never reach the chooser.
   await createSession("_tmux-ide-pack-empty-seed");
   initialOwner.kill("SIGTERM");
-  await waitForChild(initialOwner);
+  await waitForChild(initialOwner, "empty chooser server rebind");
   const emptyCatalogOwner = spawnInstalledCli(installedCli);
   await observe(
     "daemon binds empty chooser tmux server",
@@ -993,7 +1021,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // server. Restart the installed daemon so its tmux observer is bound to the
   // new server generation before asserting catalog-driven chooser behavior.
   emptyCatalogOwner.kill("SIGTERM");
-  await waitForChild(emptyCatalogOwner);
+  await waitForChild(emptyCatalogOwner, "populated catalog server rebind");
   const catalogOwner = spawnInstalledCli(installedCli);
   await observe(
     "daemon binds recreated tmux server",
@@ -1146,6 +1174,102 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       many.diagnostics,
     );
   }
+  // Shared physical windows must refuse control visibly, then recover in the
+  // same installed app after unlinking and the user selecting Retry.
+  if (evidenceDir) mkdirSync(evidenceDir, { recursive: true });
+  const linked = tmuxResult([
+    "link-window",
+    "-d",
+    "-s",
+    "=journey-alpha:0",
+    "-t",
+    "=journey-beta:20",
+  ]);
+  if (linked.status !== 0) throw new Error(`Cannot link fixture window: ${linked.stderr}`);
+  const linkedDiagnostics = () => {
+    const frame = capture(many.targetPane);
+    if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
+    return many.diagnostics();
+  };
+  await observe(
+    "linked window actionable refusal",
+    15000,
+    () => {
+      const frame = capture(many.targetPane);
+      if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
+      return /unlink/i.test(frame);
+    },
+    linkedDiagnostics,
+  );
+  const blockedMarker = `PACK_LINK_BLOCKED_${process.pid}`;
+  // Paste is a terminal input event. Raw keystrokes on a recovery screen
+  // intentionally navigate UI controls instead of testing terminal delivery.
+  const blockedPaste = tmuxResult([
+    "send-keys",
+    "-l",
+    "-t",
+    many.targetPane,
+    `\u001b[200~printf 'PACK_LINK_BLOCKED_%s\\n' '${process.pid}'\n\u001b[201~`,
+  ]);
+  if (blockedPaste.status !== 0) throw new Error("Cannot paste blocked input");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  if (
+    ["journey-alpha", "journey-beta"].some((name) =>
+      capture(`=${name}:0.0`).includes(blockedMarker),
+    )
+  )
+    throw new Error("Linked terminal accepted input");
+  const unlinked = tmuxResult(["unlink-window", "-t", "=journey-beta:20"]);
+  if (unlinked.status !== 0) throw new Error(`Cannot unlink fixture window: ${unlinked.stderr}`);
+  const retryLines = capture(many.targetPane).split("\n");
+  const retryRow = retryLines.findIndex((line) => /^(?:[○●]\s+)?Retry$/.test(line.trim()));
+  if (retryRow < 0) throw new Error("Retry button not visible after unlink");
+  const retryX = retryLines[retryRow].indexOf("Retry") + 1;
+  const retryY = retryRow + 1;
+  const retryClick = tmuxResult([
+    "send-keys",
+    "-l",
+    "-t",
+    many.targetPane,
+    `\u001b[<0;${retryX};${retryY}M\u001b[<0;${retryX};${retryY}m`,
+  ]);
+  if (retryClick.status !== 0) throw new Error("Could not click Retry");
+  await observe(
+    "linked window live recovery",
+    15000,
+    () => {
+      const frame = capture(many.targetPane);
+      if (evidenceDir) writeFileSync(join(evidenceDir, "linked-recovery-frame.txt"), frame);
+      return (
+        frameShowsTerminalFocus(frame) &&
+        frame.includes("PACK_WARM_TARGET_journey-alpha_6") &&
+        !/unlink/i.test(frame)
+      );
+    },
+    many.diagnostics,
+  );
+  const recoveredMarker = `PACK_LINK_RECOVERED_${process.pid}`;
+  typeCommand(many, `printf 'PACK_LINK_RECOVERED_%s\\n' '${process.pid}'`);
+  await observe(
+    "input after unlink",
+    10000,
+    () => capture("=journey-alpha:0.0").includes(recoveredMarker),
+    many.diagnostics,
+  );
+  if (
+    ["journey-alpha", "journey-beta"].some((name) =>
+      capture(`=${name}:0.0`).includes(blockedMarker),
+    )
+  )
+    throw new Error("Blocked input replayed after unlink");
+  if (capture("=journey-beta:0.0").includes(recoveredMarker))
+    throw new Error("Recovered input reached the wrong session");
+  if (evidenceDir)
+    writeFileSync(
+      join(evidenceDir, "linked-installed-result.json"),
+      JSON.stringify({ passed: true, blockedMarker, recoveredMarker }) + "\n",
+    );
+
   await cleanQuit(many);
 
   for (const name of ["journey-alpha", "journey-gamma"])
@@ -1425,6 +1549,61 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     () => activePane("journey-beta") === recreatedAgentPane,
     one.diagnostics,
   );
+  let topologyInputWindow = null;
+  if (topologyInputReproEnabled) {
+    const topologyStatus = () =>
+      readFileSync(one.performancePath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((row) => row.phase === "generation-status")
+        .at(-1);
+    await observe(
+      "pre-topology renderer live",
+      10_000,
+      () => topologyStatus()?.status === "live",
+      one.diagnostics,
+    );
+    const before = topologyStatus();
+    const background = tmuxResult([
+      "new-window",
+      "-d",
+      "-t",
+      "journey-beta",
+      "-n",
+      "topology-rebind-input",
+      "-P",
+      "-F",
+      "#{window_id}",
+      "/bin/sh",
+    ]);
+    if (background.status !== 0) throw new Error("Owned background topology trigger failed");
+    topologyInputWindow = background.stdout.trim();
+    if (!/^@\d+$/.test(topologyInputWindow))
+      throw new Error("Owned background topology window identity missing");
+    await observe(
+      "topology rebinding before immediate input",
+      10_000,
+      () => {
+        const row = topologyStatus();
+        return row?.status === "rebinding" && row.elapsedMs > before.elapsedMs;
+      },
+      one.diagnostics,
+    );
+    const trigger = {
+      before,
+      atInput: topologyStatus(),
+      sameNativePane: activePane("journey-beta") === recreatedAgentPane,
+    };
+    if (evidenceDir) {
+      mkdirSync(evidenceDir, { recursive: true });
+      writeFileSync(
+        join(evidenceDir, "topology-input-trigger.json"),
+        JSON.stringify(trigger, null, 2),
+      );
+    }
+    if (!trigger.sameNativePane) throw new Error("Topology trigger changed the selected pane");
+  }
   const recreatedAgentMarker = `PACK_AGENT_RECREATED_${process.pid}`;
   typeCommand(one, recreatedAgentMarker);
   await observe(
@@ -1436,6 +1615,45 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       !capture(paneBeforeAgentJump).includes(recreatedAgentMarker),
     one.diagnostics,
   );
+  if (topologyInputWindow) {
+    if (evidenceDir)
+      writeFileSync(
+        join(evidenceDir, "topology-input-delivery.json"),
+        JSON.stringify(
+          {
+            marker: recreatedAgentMarker,
+            selectedPane: recreatedAgentPane,
+            activePane: activePane("journey-beta"),
+            selectedPaneCapture: capture(recreatedAgentPane),
+            previousPaneCapture: capture(paneBeforeAgentJump),
+          },
+          null,
+          2,
+        ),
+      );
+    const beforeRemoval = readFileSync(one.performancePath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((row) => row.phase === "generation-status")
+      .at(-1);
+    const removed = tmuxResult(["kill-window", "-t", topologyInputWindow]);
+    if (removed.status !== 0) throw new Error("Owned topology window removal failed");
+    await observe(
+      "runtime live after topology fixture removal",
+      10_000,
+      () => {
+        const status = readFileSync(one.performancePath, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line))
+          .filter((row) => row.phase === "generation-status")
+          .at(-1);
+        return status?.status === "live" && status.elapsedMs > beforeRemoval.elapsedMs;
+      },
+      one.diagnostics,
+    );
+  }
   send(one, "C-t");
   await observe(
     "return from agent window",
@@ -1556,12 +1774,194 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     one.diagnostics,
   );
 
+  // Resize the actual terminal hosting the installed app, not its mirror API.
+  // Both inherited and explicit manual policies must recover in this viewer.
+  const sizingCommand = (...args) => {
+    const result = tmuxResult(args);
+    if (result.status !== 0) throw new Error(`Manual sizing fixture failed: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  const sizingState = (target) => {
+    const [window, cols, rows, panePid] = sizingCommand(
+      "display-message",
+      "-p",
+      "-t",
+      target,
+      "#{window_id}|#{window_width}|#{window_height}|#{pane_pid}",
+    ).split("|");
+    return { window, cols: Number(cols), rows: Number(rows), panePid };
+  };
+  const sourceSize = sizingState(focused);
+  const hostSize = sizingState(one.targetPane);
+  const neighbour = sizingCommand("list-windows", "-t", "=journey-beta", "-F", "#{window_id}")
+    .split("\n")
+    .find((id) => id !== sourceSize.window);
+  if (!neighbour) throw new Error("Manual sizing proof needs an unrelated window");
+  sizingCommand("resize-window", "-t", neighbour, "-x", "90", "-y", "25");
+  const neighbourSize = sizingState(neighbour);
+  const globalSizing = sizingCommand("show-options", "-gwv", "window-size");
+  const viewerPid = sizingState(one.targetPane).panePid;
+  const manualSizing = [];
+  try {
+    for (const [index, scope] of ["window", "inherited"].entries()) {
+      const deltaCols = index === 0 ? 20 : 8;
+      const deltaRows = index === 0 ? 8 : 4;
+      // Keep setup, readback and the host resize in one tmux command queue.
+      // Separate CLI invocations let the live viewer repair manual sizing
+      // between establishing the fixture policy and triggering the resize.
+      const policyArgs =
+        scope === "inherited"
+          ? [
+              "set-option",
+              "-gw",
+              "window-size",
+              "manual",
+              ";",
+              "set-option",
+              "-wu",
+              "-t",
+              sourceSize.window,
+              "window-size",
+            ]
+          : ["set-option", "-w", "-t", sourceSize.window, "window-size", "manual"];
+      const policyBefore = sizingCommand(
+        ...policyArgs,
+        ";",
+        "show-options",
+        "-Awv",
+        "-t",
+        sourceSize.window,
+        "window-size",
+        ";",
+        "resize-window",
+        "-t",
+        hostSize.window,
+        "-x",
+        String(hostSize.cols + deltaCols),
+        "-y",
+        String(hostSize.rows + deltaRows),
+      );
+      if (policyBefore !== "manual")
+        throw new Error(
+          `Fixture did not establish ${scope} manual sizing: ${JSON.stringify({ policyBefore, source: sizingState(focused), host: sizingState(one.targetPane) })}\n${one.diagnostics()}`,
+        );
+      const expected = { cols: sourceSize.cols + deltaCols, rows: sourceSize.rows + deltaRows };
+      await observe(
+        `installed viewport repairs ${scope} manual sizing`,
+        10_000,
+        () => {
+          const actual = sizingState(focused);
+          return (
+            actual.cols === expected.cols &&
+            actual.rows === expected.rows &&
+            sizingCommand("show-options", "-Awv", "-t", sourceSize.window, "window-size") ===
+              "latest"
+          );
+        },
+        () =>
+          `${one.diagnostics()}\nmanual sizing: ${JSON.stringify({ scope, expected, actual: sizingState(focused) })}`,
+      );
+      if (
+        JSON.stringify(sizingState(neighbour)) !== JSON.stringify(neighbourSize) ||
+        sizingCommand("show-options", "-Awv", "-t", neighbour, "window-size") !== "manual"
+      )
+        throw new Error(
+          `Viewport repair changed the unrelated manual window: ${JSON.stringify({ scope, before: neighbourSize, after: sizingState(neighbour), policy: sizingCommand("show-options", "-Awv", "-t", neighbour, "window-size") })}`,
+        );
+      if (
+        sizingState(focused).panePid !== sourceSize.panePid ||
+        sizingState(one.targetPane).panePid !== viewerPid
+      )
+        throw new Error("Viewport repair replaced the viewer or pane process");
+      const marker = `PACK_MANUAL_${scope}_${process.pid}`;
+      typeCommand(one, `printf 'PACK_MANUAL_%s\\n' '${scope}_${process.pid}'`);
+      await observe(
+        `input after ${scope} manual sizing repair`,
+        10_000,
+        () => capture(focused).includes(marker),
+        one.diagnostics,
+      );
+      manualSizing.push({
+        scope,
+        policyBefore,
+        expected,
+        actual: sizingState(focused),
+        neighbour: neighbourSize,
+        viewerPid,
+      });
+    }
+  } finally {
+    sizingCommand("set-option", "-gw", "window-size", globalSizing);
+    sizingCommand(
+      "resize-window",
+      "-t",
+      hostSize.window,
+      "-x",
+      String(hostSize.cols),
+      "-y",
+      String(hostSize.rows),
+    );
+  }
+  await observe(
+    "installed viewport restores original dimensions",
+    10_000,
+    () => {
+      const actual = sizingState(focused);
+      return actual.cols === sourceSize.cols && actual.rows === sourceSize.rows;
+    },
+    one.diagnostics,
+  );
+  observations.push({ name: "manual sizing policies and process continuity", cases: manualSizing });
+
   send(one, "C-t");
   await observe(
     "keyboard window switch",
     10_000,
     () => windowCount("journey-beta") === 2 && activePane("journey-beta") !== focused,
     one.diagnostics,
+  );
+
+  // Backend selection can precede the selected terminal's first frame.
+  // Qualify the actual visible target before arming a destructive command.
+  const switchedWindowPane = activePane("journey-beta");
+  const switchedWindowMarker = `PACK_SWITCHED_WINDOW_${process.pid}`;
+  // This pane may run the echoing agent fixture rather than a shell. The
+  // literal marker witnesses output from this exact pane in either case.
+  for (const args of [
+    ["send-keys", "-l", "-t", switchedWindowPane, `printf '${switchedWindowMarker}\\n'`],
+    ["send-keys", "-t", switchedWindowPane, "Enter"],
+  ]) {
+    const result = tmuxResult(args);
+    if (result.status !== 0)
+      throw new Error(`Could not prepare the switched window output witness: ${result.stderr}`);
+  }
+  await observe(
+    "switched window rendered before close confirmation",
+    10_000,
+    () => {
+      const frame = capture(one.targetPane);
+      return (
+        activePane("journey-beta") === switchedWindowPane &&
+        frameShowsTerminalFocus(frame) &&
+        frame.includes(switchedWindowMarker)
+      );
+    },
+    () =>
+      `${one.diagnostics()}\nswitched window witness: ${JSON.stringify({
+        expectedPane: switchedWindowPane,
+        activePane: activePane("journey-beta"),
+        marker: switchedWindowMarker,
+        terminalFocus: frameShowsTerminalFocus(capture(one.targetPane)),
+        sourceFrame: capture(switchedWindowPane),
+        inventory: tmuxResult([
+          "list-panes",
+          "-s",
+          "-t",
+          "=journey-beta",
+          "-F",
+          "#{pane_id}|#{window_id}|#{window_active}|#{pane_active}|#{pane_dead}|#{pane_current_command}",
+        ]).stdout,
+      })}`,
   );
 
   // Close is intentionally two activations: the first arms the destructive
@@ -1585,7 +1985,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"),
   ).instanceId;
   catalogOwner.kill("SIGTERM");
-  await waitForChild(catalogOwner);
+  await waitForChild(catalogOwner, "live client daemon replacement");
   const replacement = spawnInstalledCli(installedCli);
   let replacementInstanceId = null;
   await observe(
@@ -1812,10 +2212,21 @@ try {
   // workspace-owned TypeScript. The private @tmux-ide/daemon workspace package
   // is not an installed runtime dependency of that CLI and must not mask an
   // incomplete root tarball in this smoke test.
+  const originalCli = captureGeneratedCliSource(join(root, "bin/cli.js"));
   await runAsync("pnpm", ["build:cli"], { stdio: "inherit" });
-  await runAsync("pnpm", ["pack", "--pack-destination", tarballDir], { stdio: "inherit" });
+  // Match release.yml's npm publisher. pnpm's packlist has different files/ignore
+  // semantics and can retain files excluded from the actual npm release.
+  await runAsync("npm", ["pack", "--pack-destination", tarballDir], { stdio: "inherit" });
 
   rootTarball = findTarball("tmux-ide-");
+  const packagedCli = boundedSpawnSync("tar", ["-xOzf", rootTarball, "package/bin/cli.js"], {
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (packagedCli.error || packagedCli.status !== 0 || packagedCli.signal !== null)
+    throw new Error("Could not verify generated CLI against the completed package");
+  generatedSource = restoreGeneratedCliSource(originalCli, packagedCli.stdout);
+  generatedSource.packagedSha256 = generatedSource.generatedSha256;
+  assertNoPackagedContributorTests(run("tar", ["-tzf", rootTarball]).stdout.trim().split("\n"));
   npmVersion = run("npm", ["--version"]).stdout.trim();
   await runAsync("npm", ["init", "-y"], { cwd: projectDir });
   await runAsync("npm", ["install", rootTarball], { cwd: projectDir, stdio: "inherit" });
@@ -2024,7 +2435,9 @@ try {
   }
 
   const losers = contenders.filter((candidate) => candidate !== owner);
-  const loserResults = await Promise.all(losers.map((candidate) => waitForChild(candidate)));
+  const loserResults = await Promise.all(
+    losers.map((candidate) => waitForChild(candidate, "concurrent owner election")),
+  );
   for (const result of loserResults) {
     if (result.code !== 0) {
       throw new Error(
@@ -2141,6 +2554,7 @@ try {
   if (evidenceDir) {
     mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
     const copied = [];
+    const diagnosticArtifacts = [];
     for (const source of [
       rootTarball,
       automationObservations?.sdkTarballPath ?? null,
@@ -2148,16 +2562,37 @@ try {
       mockReleaseAssetPath,
       mockReleaseManifestPath,
       installedCliPath ? join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js") : null,
+      // Keep the complete existing diagnostic stream: filtered timeout tails
+      // can omit the frame-delivery events needed to explain stale output.
+      ...readdirSync(tmpRoot)
+        .filter((name) =>
+          /^(?:journey-\d+|installed-tui|installed-daemon)\.performance\.jsonl$/u.test(name),
+        )
+        .map((name) => join(tmpRoot, name)),
     ]) {
       if (!source || !existsSync(source)) continue;
       const name = source.endsWith("/cli.js") ? "tmux-ide-cli.js" : source.split("/").at(-1);
       const destination = join(evidenceDir, name);
       copyFileSync(source, destination);
-      copied.push({
+      const inventory = name.endsWith(".performance.jsonl") ? diagnosticArtifacts : copied;
+      inventory.push({
         name,
         bytes: readFileSync(destination).byteLength,
         sha256: sha256File(destination),
       });
+    }
+    for (const name of [
+      "linked-refusal-frame.txt",
+      "linked-recovery-frame.txt",
+      "linked-installed-result.json",
+    ]) {
+      const path = join(evidenceDir, name);
+      if (existsSync(path))
+        diagnosticArtifacts.push({
+          name,
+          bytes: readFileSync(path).byteLength,
+          sha256: sha256File(path),
+        });
     }
     proof = {
       schemaVersion: 1,
@@ -2176,9 +2611,11 @@ try {
       commit: releaseCommit,
       platform: platformTag,
       sourceState,
+      generatedSource,
       installedVersion,
       runtime: runtimeEvidence,
       artifacts: copied,
+      diagnosticArtifacts,
       journey: journeyObservations,
       automation: automationObservations,
       homeDiagnostics,

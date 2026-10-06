@@ -1307,7 +1307,12 @@ describe("async terminal inventory reads", () => {
       for (let i = 0; i < 2; i++) {
         await expect(
           f.runtime.discoverTerminalRuntimeSession("runtime:session"),
-        ).resolves.toMatchObject({ catalogIssue: "missing-semantic-stamp" });
+        ).resolves.toMatchObject({
+          catalogIssue:
+            _name === "masked runtime alias"
+              ? "duplicate-runtime-pane-binding"
+              : "missing-semantic-stamp",
+        });
       }
       expect(f.prewarm).not.toHaveBeenCalled();
       expect(f.candidate).not.toHaveBeenCalled();

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { type CanonicalDaemonInfo } from "@tmux-ide/contracts";
+import { DAEMON_WIRE_PROTOCOL_VERSION, type CanonicalDaemonInfo } from "@tmux-ide/contracts";
 import {
   readRemoteDaemonHandshake,
   readRemoteDaemonHandshakeResult,
@@ -10,7 +10,7 @@ const info: CanonicalDaemonInfo = {
   port: 43123,
   bindHostname: "127.0.0.1",
   authToken: "private-test-owner-token",
-  protocolVersion: 2,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.9.0-beta.8",
   instanceId: "328f7407-2a86-468f-b2e2-cd4e5d47fcc9",
   startedAt: "2026-09-09T08:00:00.000Z",
@@ -66,7 +66,7 @@ describe("remote daemon discovery command", () => {
     { instanceId: "08d44942-319b-4e08-b174-51d246b204f6" },
     { startedAt: "2026-09-09T08:01:00.000Z" },
     { productVersion: "2.9.0-beta.9" },
-    { protocolVersion: 3 },
+    { protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION + 1 },
     { environmentId: "08d44942-319b-4e08-b174-51d246b204f6" },
   ])("rejects a changed daemon identity %j", async (override) => {
     await expect(
@@ -111,4 +111,16 @@ it("returns structured credential-free missing-daemon and unexpected failures", 
     },
   });
   expect(failed).toEqual({ version: 1, error: { code: "unavailable" } });
+});
+
+it("rejects unsupported daemon protocols before attempting their API", async () => {
+  const request = vi.fn(async () => new Response("Unsupported API", { status: 404 }));
+  expect(
+    await readRemoteDaemonHandshakeResult({
+      readInfo: () => ({ ...info, protocolVersion: 999 }),
+      isAlive: async () => true,
+      request,
+    }),
+  ).toEqual({ version: 1, error: { code: "incompatible" } });
+  expect(request).not.toHaveBeenCalled();
 });

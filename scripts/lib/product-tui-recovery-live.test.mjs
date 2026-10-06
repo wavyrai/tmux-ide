@@ -5,11 +5,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, statSync 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { createScratchFleet } from "../../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
-import {
-  startDaemon,
-  waitForReadinessLadder,
-} from "../../apps/desktop-renderer/e2e/fixtures/daemon.ts";
+import { createScratchFleet } from "./product-fixtures/scratch-fleet.ts";
+import { startDaemon, waitForReadinessLadder } from "./product-fixtures/daemon.ts";
 import { createIsolatedTargetedTuiCwd } from "../product-test-rig-journeys.mjs";
 import { decodeFocusFramebufferCapture } from "./product-focus.mjs";
 

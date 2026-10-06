@@ -486,6 +486,20 @@ function harness(
     authorityRevision += 1;
     return authoritySnapshot();
   });
+  const requestAuthority = vi.fn<
+    NonNullable<SessionRuntimePaneStreamTransportBinding["requestAuthority"]>
+  >((authority) => {
+    authorityOwners[authority] = "test:interactive";
+    authorityRevision += 1;
+    return {
+      generation: INSTANCE,
+      session: SESSION,
+      clientId: "test:interactive",
+      authority,
+      token: "00000000-0000-4000-8000-000000000095",
+      revision: authorityRevision,
+    };
+  });
   const coordinator = new PaneStreamAdmissionCoordinator({
     daemonInstanceId: INSTANCE,
     webSocketUrl: WS_URL,
@@ -522,18 +536,7 @@ function harness(
           authorityRevision += 1;
           return authoritySnapshot();
         },
-        requestAuthority: (authority) => {
-          authorityOwners[authority] = "test:interactive";
-          authorityRevision += 1;
-          return {
-            generation: INSTANCE,
-            session: SESSION,
-            clientId: "test:interactive",
-            authority,
-            token: "00000000-0000-4000-8000-000000000095",
-            revision: authorityRevision,
-          };
-        },
+        requestAuthority,
         releaseAuthority: (authority) => {
           authorityOwners[authority] = null;
           authorityRevision += 1;
@@ -587,6 +590,7 @@ function harness(
     sendInput,
     fitViewport,
     activateLegacyAuthority,
+    requestAuthority,
   };
 }
 
@@ -2634,6 +2638,63 @@ describe("PaneStreamAdmissionCoordinator", () => {
       authority: "geometry",
     });
     expect(staleConnection.socket.framesOfType("error")[0]?.code).toBe("protocol-error");
+  });
+
+  it.each(["input", "geometry"] as const)(
+    "rejects conflicting %s authority without terminating the connection and permits recovery",
+    async (authority) => {
+      const h = harness();
+      const { socket } = await connect(h, {
+        viewerMode: "interactive",
+        semanticDelivery: true,
+      });
+      h.requestAuthority.mockImplementationOnce(() => {
+        throw new SessionRuntimeControllerLeaseError(
+          "controller-conflict",
+          "Window ownership is being verified. Retry after session discovery completes.",
+        );
+      });
+      const request = {
+        type: "authority-request",
+        generation: INSTANCE,
+        requestId: "00000000-0000-4000-8000-000000000094",
+        authority,
+      };
+      expect(() => socket.message(request)).not.toThrow();
+      expect(socket.framesOfType("authority-receipt")).toEqual([
+        expect.objectContaining({ authority, status: "rejected", lease: null }),
+      ]);
+      expect(socket.closed).toBeNull();
+      expect(h.sendInput).not.toHaveBeenCalled();
+      expect(h.fitViewport).not.toHaveBeenCalled();
+
+      socket.message({ ...request, requestId: "00000000-0000-4000-8000-000000000093" });
+      expect(socket.framesOfType("authority-receipt")[1]).toEqual(
+        expect.objectContaining({ authority, status: "granted", lease: expect.any(Object) }),
+      );
+      expect(socket.closed).toBeNull();
+    },
+  );
+
+  it("contains unexpected authority failures to the requesting connection", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    h.requestAuthority.mockImplementationOnce(() => {
+      throw new Error("Unexpected authority failure");
+    });
+    expect(() =>
+      socket.message({
+        type: "authority-request",
+        generation: INSTANCE,
+        requestId: "00000000-0000-4000-8000-000000000094",
+        authority: "geometry",
+      }),
+    ).not.toThrow();
+    expect(socket.framesOfType("authority-receipt")).toHaveLength(0);
+    expect(socket.framesOfType("error")[0]?.code).toBe("input-rejected");
+    expect(socket.closed).not.toBeNull();
+    expect(h.fitViewport).not.toHaveBeenCalled();
+    expect(h.sendInput).not.toHaveBeenCalled();
   });
 
   it("replays retained authority immediately for an explicit late binding", async () => {

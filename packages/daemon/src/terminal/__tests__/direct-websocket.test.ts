@@ -1,3 +1,4 @@
+import type { SessionRuntimeRedeemedTransportBinding } from "../session-runtime/transport-binding.ts";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
 import { createConnection } from "node:net";
@@ -392,6 +393,41 @@ describe("TerminalAttachmentAdmissionCoordinator", () => {
     await vi.waitFor(() => expect(bindSessionRuntime).toHaveBeenCalledOnce());
     socket.close();
     await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+  });
+
+  it("retires a runtime binding that resolves after the socket closes", async () => {
+    const close = vi.fn(async () => undefined);
+    let finishBinding!: () => void;
+    const bindSessionRuntime = vi.fn(
+      (descriptor: AttachmentLeaseDescriptor) =>
+        new Promise<SessionRuntimeRedeemedTransportBinding>((resolve) => {
+          finishBinding = () =>
+            resolve({
+              generation: INSTANCE_ID,
+              session: "alpha",
+              clientId: `terminal-attachment:${descriptor.leaseId}`,
+              assertController: () => undefined,
+              close,
+            });
+        }),
+    );
+    const { coordinator, client } = rig({ bindSessionRuntime });
+    const issued = await issue(coordinator);
+    const socket = new FakeSocket();
+    admission(coordinator).bind(socket);
+    socket.frame(redemption(issued.redemptionTicket));
+    await vi.waitFor(() => expect(bindSessionRuntime).toHaveBeenCalledOnce());
+    socket.close();
+    finishBinding();
+    await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
+    expect(client.disposed).toBe(1);
+    expect(coordinator.toJSON().liveConnections).toBe(0);
+    expect(
+      socket.sent.some(
+        (entry) => typeof entry.data === "string" && JSON.parse(entry.data).type === "ready",
+      ),
+    ).toBe(false);
+    await coordinator.shutdown();
   });
 
   it("preserves a controller conflict at redemption for passive-viewer fallback", async () => {

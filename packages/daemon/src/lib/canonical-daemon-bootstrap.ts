@@ -236,6 +236,18 @@ async function replaceOlderCanonicalDaemon(
       reason: "identity-mismatch",
     });
   }
+  const supervisor = latest.info.provenance?.supervisor;
+  if (!latest.info.supervisionId && (supervisor === "systemd" || supervisor === "launchd")) {
+    throw new DaemonBootstrapError(
+      "incompatible",
+      `The older canonical daemon is managed by ${supervisor} without a supervisor reservation. ` +
+        "Stop and disable the old service, reserve the stopped namespace with " +
+        "tmux-ide daemon reserve-supervisor <id>, then configure the service to run " +
+        "tmux-ide --headless --supervised <id> before restarting it. " +
+        "The existing daemon has been left running.",
+      { reason: "canonical-record-invalid" },
+    );
+  }
   await deps.shutdownOlderOwner(info);
   const deadline = deps.now() + timeoutMs;
   while (deps.now() < deadline) {

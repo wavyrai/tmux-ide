@@ -605,7 +605,22 @@ describe("OpenTUI workspace terminal fast lane", () => {
         inputInFlightPeak: 1,
         inputPendingBytesPeak: 8,
       });
+      // Completed samples must not exhaust the lifetime of a long-running
+      // renderer. Only concurrent diagnostic work should consume the budget.
+      for (let revision = 25; revision <= 514; revision += 1) {
+        fence(revision, "pane.target");
+        await vi.advanceTimersByTimeAsync(60);
+      }
+      expect(samples).toHaveLength(514);
+      expect(samples.at(-1)).toMatchObject({ revision: 514, ordinal: 514 });
+      // A producer flood is still bounded and makes dropped evidence explicit.
+      for (let revision = 515; revision < 1515; revision += 1) fence(revision, "pane.target");
+      expect(vi.getTimerCount()).toBeLessThanOrEqual(522);
+      await vi.advanceTimersByTimeAsync(60);
+      expect(samples).toHaveLength(1026);
+      expect(samples.at(-1)).toMatchObject({ resourceSamplingFailureCount: 488 });
       fastLane.dispose();
+      expect(vi.getTimerCount()).toBe(0);
       counters.mockRestore();
     } finally {
       now?.mockRestore();

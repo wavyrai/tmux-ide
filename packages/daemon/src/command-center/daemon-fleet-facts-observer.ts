@@ -546,16 +546,7 @@ export function createDefaultFleetFactsReaders(): Pick<
       return null;
     }
   };
-  return {
-    readSessions: async (signal) => {
-      const raw = await execute(SESSION_COMPOSITION_TMUX_ARGS, signal);
-      return raw === null ? null : parseSessionCompositionFacts(raw);
-    },
-    readAgents: async (signal) => {
-      const raw = await execute(AGENT_STATE_TMUX_ARGS, signal);
-      return raw === null ? null : parseAgentStateFacts(raw);
-    },
-  };
+  return createSharedFleetFactsReaders(execute);
 }
 
 export const SESSION_COMPOSITION_TMUX_ARGS = [
@@ -592,4 +583,103 @@ export const AGENT_STATE_TMUX_ARGS = [
 
 export async function readAgentStateFacts(signal?: AbortSignal): Promise<AgentStateReading | null> {
   return createDefaultFleetFactsReaders().readAgents(signal);
+}
+
+/** Agent columns are excluded from the session topology projection. */
+export const FLEET_FACTS_TMUX_ARGS = [
+  "list-panes",
+  "-a",
+  "-F",
+  `${SESSION_COMPOSITION_TMUX_ARGS[3]}\t#{@agent_state}\t#{pane_current_command}`,
+] as const;
+
+/** Share only an outstanding read; completed snapshots are never cached. */
+export function createSharedFleetFactsReaders(
+  run: (args: readonly string[], signal?: AbortSignal) => string | null | Promise<string | null>,
+  isAbsentServer: (error: unknown) => boolean = () => false,
+): Pick<DaemonFleetFactsObserverOptions, "readSessions" | "readAgents"> {
+  interface Pending {
+    controller: AbortController;
+    result: Promise<string | null>;
+    readers: number;
+  }
+  let pending: Pending | null = null;
+  const read = async (signal?: AbortSignal): Promise<string | null> => {
+    if (signal?.aborted) return null;
+    if (!pending) {
+      const controller = new AbortController();
+      const entry: Pending = {
+        controller,
+        readers: 0,
+        result: Promise.resolve().then(() => run(FLEET_FACTS_TMUX_ARGS, controller.signal)),
+      };
+      entry.result = entry.result.finally(() => {
+        if (pending === entry) pending = null;
+      });
+      pending = entry;
+    }
+    const entry = pending;
+    entry.readers += 1;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      entry.readers -= 1;
+      if (entry.readers === 0) {
+        if (pending === entry) pending = null;
+        entry.controller.abort();
+      }
+    };
+    signal?.addEventListener("abort", release, { once: true });
+    try {
+      // Keep the promise outstanding for a noncooperative runner so the
+      // observer's per-kind quarantine remains effective after cancellation.
+      const raw = await entry.result;
+      return signal?.aborted ? null : raw;
+    } catch (error) {
+      if (signal?.aborted) return null;
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", release);
+      release();
+    }
+  };
+  return {
+    readSessions: async (signal) => {
+      try {
+        const raw = await read(signal);
+        return raw === null
+          ? null
+          : parseSessionCompositionFacts(
+              raw
+                .split("\n")
+                .map((line) => line.split("\t").slice(0, 11).join("\t"))
+                .join("\n"),
+            );
+      } catch (error) {
+        // Socket absence is an authoritative empty catalog, but must not
+        // manufacture agent turn completions from a failed agent observation.
+        return isAbsentServer(error) ? parseSessionCompositionFacts("") : null;
+      }
+    },
+    readAgents: async (signal) => {
+      try {
+        const raw = await read(signal);
+        return raw === null
+          ? null
+          : parseAgentStateFacts(
+              raw
+                .split("\n")
+                .map((line) => {
+                  const fields = line.split("\t");
+                  if (fields.length !== 13) return "";
+                  return [fields[0], fields[6], fields[9], fields[11], fields[12]].join("\t");
+                })
+                .join("\n"),
+            );
+      } catch {
+        return null;
+      }
+    },
+  };
 }

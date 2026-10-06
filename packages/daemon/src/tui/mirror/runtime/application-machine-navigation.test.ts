@@ -17,7 +17,7 @@ const state = vi.hoisted(() => ({
       kind: string;
       ready: Promise<boolean>;
       endpoint: () => { state: string };
-      read: () => { instanceId: string };
+      read: () => { instanceId: string } | null;
     }
   >(),
   trace: [] as string[],
@@ -423,6 +423,44 @@ it("reselects exact same-machine incarnation when sidebar leaves a pinned tab fo
   expect(callbacks.resetWorkspace).not.toHaveBeenCalled();
 });
 
+it("retains the live session identity when reopening a selected profile after local fallback", async () => {
+  const { owner, callbacks } = navigation();
+  const server = {
+    serverId: `tmux-server.${"a".repeat(32)}`,
+    generation: "11111111-1111-4111-8111-111111111111",
+  };
+  const publish = () =>
+    state.listener?.({
+      selectedMachineId: state.selected,
+      groups: [
+        {
+          id: "A",
+          label: "A",
+          state: "ready",
+          sessions: [
+            {
+              id: "A:shared",
+              name: "shared",
+              liveSessionId: "live-shared",
+              server,
+              disabled: false,
+            },
+          ],
+        },
+      ],
+    });
+  publish();
+  await owner.sidebar.onOpen("A", "shared", "mouse");
+  vi.spyOn(callbacks, "sessionName").mockReturnValue("shared");
+  // Profile retirement selects Local while the last terminal remains visible.
+  state.selected = "local";
+  publish();
+  callbacks.resetWorkspace.mockClear();
+  await owner.sidebar.onOpen("A", "shared", "mouse");
+  expect(callbacks.resetWorkspace).toHaveBeenCalledWith("A", "live-shared", server);
+  expect(callbacks.openSession).toHaveBeenLastCalledWith("shared", "mouse");
+});
+
 it("routes duplicate names by exact server session and rejects replaced tabs/history/palette", async () => {
   const { owner, callbacks } = navigation();
   const serverA = {
@@ -504,7 +542,7 @@ it("offers empty registered servers as scoped creation targets and filters the s
 });
 
 it("retains the exact attached default session for agent jumps but resets a different owner with colliding live IDs", () => {
-  const daemonGeneration = state.handles.get("local")!.read().instanceId;
+  const daemonGeneration = state.handles.get("local")!.read()!.instanceId;
   const server = { serverId: `tmux-server.${"a".repeat(32)}`, generation: daemonGeneration };
   const row = {
     id: "agent",
@@ -610,3 +648,87 @@ it("opens Home agents through exact server identity and rejects replaced generat
   owner.openHomeAgent(row, "mouse");
   expect(callbacks.openAgent).toHaveBeenCalledTimes(1);
 });
+
+for (const surface of ["sidebar", "palette"] as const) {
+  it(`keeps ${surface} agent scopes coherent within a projection and refreshes the next one`, () => {
+    const server = { serverId: `tmux-server.${"a".repeat(32)}`, generation: "first" };
+    const agent = {
+      id: "agent",
+      machineId: "local",
+      disabled: false,
+      key: "key",
+      sessionKey: "session",
+      sessionName: "same",
+      liveSessionId: "live",
+      daemonInstanceId: "first",
+      agentId: "agent",
+      paneId: "pane",
+      name: "Codex",
+      harness: "codex",
+      activity: "running" as const,
+      attention: false,
+      projectName: "project",
+    };
+    state.agentGroups = [{ machineId: "local", available: true, agents: [agent] }];
+    const { owner } = navigation();
+    state.listener?.({
+      selectedMachineId: "local",
+      groups: [
+        {
+          id: "local",
+          label: "Local",
+          state: "ready",
+          sessions: [
+            {
+              id: "default",
+              name: "same",
+              liveSessionId: "live",
+              server,
+              paneCount: 1,
+              disabled: false,
+            },
+            {
+              id: "other",
+              name: "other",
+              liveSessionId: "live",
+              server: { ...server, generation: "other" },
+              paneCount: 1,
+              disabled: false,
+            },
+          ],
+        },
+      ],
+    });
+    // A record replaced between reads must not produce a mixed-generation projection.
+    const read = vi
+      .fn<() => { instanceId: string } | null>()
+      .mockReturnValueOnce({ instanceId: "first" })
+      .mockReturnValue({ instanceId: "replacement" });
+    state.handles.get("local")!.read = read;
+    if (surface === "sidebar") {
+      expect(owner.sidebar.groups()[0]).toMatchObject({
+        agentsAvailable: true,
+        agents: [{ server }],
+      });
+      expect(owner.sidebar.groups()[0]).toMatchObject({ agentsAvailable: false, agents: [] });
+      read.mockReturnValue(null);
+      expect(owner.sidebar.groups()[0]).toMatchObject({ agentsAvailable: false, agents: [] });
+    } else {
+      const first = owner.paletteCommands();
+      expect(
+        first.filter((command) => typeof command === "object" && command.kind === "jump-agent"),
+      ).toMatchObject([{ fleet: { server, daemonInstanceId: "first" } }]);
+      expect(
+        owner
+          .paletteCommands()
+          .filter((command) => typeof command === "object" && command.kind === "jump-agent"),
+      ).toEqual([]);
+      read.mockReturnValue(null);
+      expect(
+        owner
+          .paletteCommands()
+          .filter((command) => typeof command === "object" && command.kind === "jump-agent"),
+      ).toEqual([]);
+    }
+  });
+}

@@ -9,6 +9,7 @@ import {
   applyTerminalReplicaPatch,
   applyTerminalReplicaUpdate,
   blankTerminalReplicaSnapshot,
+  freezeTerminalReplicaRow,
   hashTerminalReplicaSnapshot,
   hashTerminalWidgetContent,
 } from "./terminal-replica.ts";
@@ -165,6 +166,60 @@ describe("terminal replica reducer", () => {
         ],
       }),
     ).toThrow();
+  });
+
+  it("retains core-owned patch rows through subsequent seed admission", () => {
+    const initial = blankTerminalReplicaSnapshot(4, 2);
+    const row = freezeTerminalReplicaRow({
+      wrapped: false,
+      cells: initial.grid[0]!.cells.map((cell) => ({ ...cell, grapheme: "p" })),
+    });
+    const next = applyTerminalReplicaPatch(initial, { rows: [{ index: 0, row }] });
+    expect(next.grid[0]).toBe(row);
+    const admitted = applyTerminalReplicaUpdate(null, seed(next));
+    expect(admitted.status).toBe("applied");
+    expect(admitted.state?.snapshot?.grid[0]).toBe(row);
+    expect(admitted.state?.hash).toBe(hashTerminalReplicaSnapshot(next));
+    const external = structuredClone(row);
+    const detached = applyTerminalReplicaPatch(initial, { rows: [{ index: 0, row: external }] });
+    external.cells[0]!.grapheme = "mutated";
+    expect(detached.grid[0]!.cells[0]!.grapheme).toBe("p");
+  });
+
+  it("retains owned immutable rows through seed admission without trusting the seed hash or geometry", () => {
+    const initial = blankTerminalReplicaSnapshot(2, 2);
+    const row = freezeTerminalReplicaRow({
+      wrapped: false,
+      cells: initial.grid[0]!.cells.map((cell) => ({ ...cell, grapheme: "x" })),
+    });
+    const snapshot = { ...initial, grid: [row, initial.grid[1]!], history: [row] };
+    const update = seed(snapshot);
+    const applied = applyTerminalReplicaUpdate(null, update);
+    expect(applied.status).toBe("applied");
+    expect(applied.state?.snapshot?.grid[0]).toBe(row);
+    expect(applied.state?.snapshot?.history[0]).toBe(row);
+    expect(applied.state?.hash).toBe(update.stateHash);
+    expect(
+      applyTerminalReplicaUpdate(null, { ...update, stateHash: "0000000000000000" }).status,
+    ).toBe("conflict");
+    expect(
+      applyTerminalReplicaUpdate(null, { ...update, snapshot: { ...snapshot, cols: 1 } }).status,
+    ).toBe("conflict");
+  });
+
+  it("copies caller-frozen rows before marking them reusable", () => {
+    const initial = blankTerminalReplicaSnapshot(2, 1);
+    const foreground = { kind: "indexed" as const, index: 42 };
+    const external = Object.freeze({
+      wrapped: false,
+      cells: initial.grid[0]!.cells.map((cell) => Object.freeze({ ...cell, foreground })),
+    });
+    const owned = freezeTerminalReplicaRow(external);
+    expect(owned).not.toBe(external);
+    foreground.index = 99;
+    expect(owned.cells[0]!.foreground).toEqual({ kind: "indexed", index: 42 });
+    expect(Object.isFrozen(owned.cells[0]!.foreground)).toBe(true);
+    expect(freezeTerminalReplicaRow(owned)).toBe(owned);
   });
 
   it("does not trust external frozen rows, including malformed wide cells", () => {

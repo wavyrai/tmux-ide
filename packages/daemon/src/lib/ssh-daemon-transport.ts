@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import type { Readable } from "node:stream";
 import { z } from "zod";
+import { remoteTmuxIdeCommand } from "./remote-tmux-command.ts";
 import { createSshDaemonRelay, type SshDaemonRelay } from "./ssh-daemon-relay.ts";
 import {
   CanonicalDaemonInfoSchema,
@@ -49,11 +50,29 @@ export class SshConnectionError extends Error {
     super(`SSH daemon connection: ${message}`);
   }
   get retryable(): boolean {
-    return this.code === "unavailable";
+    // A supervisor may temporarily remove the record while replacing its daemon.
+    return this.code === "unavailable" || this.code === "daemon-missing";
   }
 }
 function failure(message: string, code: FleetConnectionFailureCode = "unavailable"): Error {
   return new SshConnectionError(message, code);
+}
+
+/** Classify known OpenSSH errors without publishing remote stderr or credentials. */
+function observeSshFailure(child: SshTransportChild): () => FleetConnectionFailureCode {
+  let tail = "";
+  let code: FleetConnectionFailureCode = "unavailable";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    tail = (tail + chunk.toString("utf8")).slice(-4096);
+    if (/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i.test(tail))
+      code = "ssh-host-key";
+    else if (/Permission denied \((?:publickey|password|keyboard-interactive)[^)]*\)/i.test(tail))
+      code = "ssh-authentication";
+  });
+  child.once("close", () => {
+    tail = "";
+  });
+  return () => code;
 }
 const stoppedChildren = new WeakSet<SshTransportChild>();
 function stop(child: SshTransportChild): void {
@@ -153,6 +172,7 @@ const defaults: SshDaemonTransportDependencies = {
   probe: probeSshDaemonIdentity,
 };
 function discover(child: SshTransportChild, signal: AbortSignal): Promise<RemoteDaemon> {
+  const sshFailure = observeSshFailure(child);
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let bytes = 0;
@@ -177,8 +197,6 @@ function discover(child: SshTransportChild, signal: AbortSignal): Promise<Remote
       }
       chunks.push(Buffer.from(chunk));
     });
-    // Drain without capturing: SSH banners/errors may contain confidential remote information.
-    child.stderr?.resume();
     child.once("error", () => finish(failure("could not start OpenSSH")));
     child.once("close", (code) => {
       if (settled) return;
@@ -186,6 +204,7 @@ function discover(child: SshTransportChild, signal: AbortSignal): Promise<Remote
         finish(
           failure(
             "discovery failed; check SSH authentication, host trust, and remote tmux-ide installation",
+            code === 127 ? "remote-cli-missing" : sshFailure(),
           ),
         );
         return;
@@ -266,9 +285,7 @@ export async function openSshDaemonTransport(
       "ForkAfterAuthentication=no",
       "--",
       options.alias,
-      "tmux-ide",
-      "remote-daemon-info",
-      "--json",
+      remoteTmuxIdeCommand("discover"),
     ]);
     const daemon = await discover(child, signal);
     const port = await cancellable(dependencies.allocatePort(), signal);
@@ -307,7 +324,7 @@ export async function openSshDaemonTransport(
       options.alias,
     ]);
     child.stdout?.resume();
-    child.stderr?.resume();
+    const sshFailure = observeSshFailure(child);
     child.once("exit", dispose);
     const tunnelClosed = new Promise<void>((resolve) => {
       child!.once("close", () => {
@@ -342,6 +359,7 @@ export async function openSshDaemonTransport(
     }
     throw failure(
       "tunnel could not authenticate the expected daemon before cancellation or timeout",
+      sshFailure(),
     );
   } catch (error) {
     dispose();

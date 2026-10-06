@@ -25,7 +25,7 @@ import {
   type Accessor,
   type JSX,
 } from "solid-js";
-import { friendlySessionLabel } from "../terminal-text.ts";
+import { friendlySessionLabel, wrapText } from "../terminal-text.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { KeyHint } from "../ui/key-hint.tsx";
 import { NavigationRow } from "../ui/navigation-row.tsx";
@@ -124,6 +124,9 @@ export function ApplicationMachineSidebar(props: {
   readonly agentRows?: number;
   readonly onHelp?: (source: "keyboard" | "mouse") => void;
 }) {
+  // All visible sections share one projection for the current reactive inputs.
+  // Event handlers retain the model's fresh authority checks at action time.
+  const groups = createMemo(() => props.model.groups());
   const [localFocused, setLocalFocused] = createSignal(false);
   const focused = () => props.model.focused?.() ?? localFocused();
   const [localCollapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
@@ -133,22 +136,22 @@ export function ApplicationMachineSidebar(props: {
   let scroll: ScrollBoxRenderable | undefined;
   const agentHeight = () =>
     (props.agentRows ?? 0) > 0
-      ? Math.min((props.agentRows ?? 0) + 2, Math.max(0, Math.floor(props.height / 2)))
+      ? Math.min(
+          (props.agentRows ?? 0) + 2,
+          Math.max(0, Math.floor(props.height / 2)),
+          Math.max(0, props.height - fixedHeight() - controlsHeight() - 2),
+        )
       : 0;
-  const controlsHeight = () => (props.height >= 8 && controlGroup() ? 4 : 0);
+  const controlsHeight = () => (props.height >= 8 && controlGroup() ? controlTextHeight() + 2 : 0);
   const searchHeight = () =>
     (props.model.onOpenSwitcher ? 1 : 0) + (props.model.onOpenAttention ? 1 : 0);
+  const fixedHeight = () => 1 + (props.model.onAddMachine ? 1 : 0) + searchHeight();
+  // Keep both action rows and at least two machine rows available on short terminals.
+  const controlTextHeight = () =>
+    Math.min(controlTextLines().length, Math.max(1, props.height - fixedHeight() - 4));
 
   const machineHeight = () =>
-    Math.max(
-      0,
-      props.height -
-        1 -
-        (props.model.onAddMachine ? 1 : 0) -
-        agentHeight() -
-        controlsHeight() -
-        searchHeight(),
-    );
+    Math.max(0, props.height - fixedHeight() - agentHeight() - controlsHeight());
   const active = (row: Row) =>
     row.group.id === props.model.activeMachineId() &&
     (row.agent
@@ -170,7 +173,7 @@ export function ApplicationMachineSidebar(props: {
         : row.session?.name === props.model.activeSessionName());
   const preferenceKey = (group: ApplicationMachineGroup) => group.environmentId ?? group.id;
   const rows = createMemo<readonly Row[]>(() => [
-    ...props.model.groups().flatMap((group) =>
+    ...groups().flatMap((group) =>
       groupApplicationTeamRows(group.agents ?? []).map((agent) => ({
         key: JSON.stringify([
           group.id,
@@ -183,7 +186,7 @@ export function ApplicationMachineSidebar(props: {
         agent,
       })),
     ),
-    ...props.model.groups().flatMap((group) => [
+    ...groups().flatMap((group) => [
       { key: JSON.stringify([group.id]), group },
       ...group.sessions
         .filter(
@@ -255,6 +258,15 @@ export function ApplicationMachineSidebar(props: {
         : "disconnected"
       : diagnostic.phase;
   };
+  const controlTextLines = createMemo(() => {
+    const group = controlGroup();
+    return group
+      ? wrapText(
+          group.diagnostic ? fleetConnectionMessage(group.diagnostic) : connectionDetail(group),
+          Math.max(1, props.width),
+        )
+      : [];
+  });
   const toggle = (
     group: ApplicationMachineGroup,
     value = !collapsed().has(preferenceKey(group)),
@@ -303,7 +315,7 @@ export function ApplicationMachineSidebar(props: {
   const rowHeight = (row: Row) =>
     (row.agent ? 2 : row.serverHeading ? 2 : 1) +
     sectionGap(row) +
-    (hasAgents() && row.key === JSON.stringify([props.model.groups()[0]?.id]) ? 1 : 0);
+    (hasAgents() && row.key === JSON.stringify([groups()[0]?.id]) ? 1 : 0);
   const revealFocusedRow = () => {
     if (!focused() || !scroll) return;
     const y = rows()
@@ -528,9 +540,7 @@ export function ApplicationMachineSidebar(props: {
                     }}
                   />
                 </Show>
-                <Show
-                  when={hasAgents() && row.key === JSON.stringify([props.model.groups()[0]?.id])}
-                >
+                <Show when={hasAgents() && row.key === JSON.stringify([groups()[0]?.id])}>
                   <text height={1} fg={props.theme.roles.text.secondary}>
                     {" "}
                     Machines
@@ -646,7 +656,7 @@ export function ApplicationMachineSidebar(props: {
         <KeyHint
           theme={props.theme}
           keys={CHROME_ACTIONS.attention.keys}
-          label={`${CHROME_ACTIONS.attention.label} (${props.model.groups().reduce((sum, group) => sum + (group.state === "ready" ? (group.agents ?? []).filter((agent) => agent.attention && !agent.disabled).length : 0), 0)})`}
+          label={`${CHROME_ACTIONS.attention.label} (${groups().reduce((sum, group) => sum + (group.state === "ready" ? (group.agents ?? []).filter((agent) => agent.attention && !agent.disabled).length : 0), 0)})`}
           width={props.width}
           quiet
           button
@@ -656,10 +666,8 @@ export function ApplicationMachineSidebar(props: {
       <Show when={controlsHeight() > 0 && controlGroup()}>
         {(group) => (
           <>
-            <text height={2} fg={props.theme.roles.text.secondary}>
-              {group().diagnostic
-                ? fleetConnectionMessage(group().diagnostic!)
-                : connectionDetail(group())}
+            <text height={controlTextHeight()} flexShrink={0} fg={props.theme.roles.text.secondary}>
+              {controlTextLines().join("\n")}
             </text>
             <KeyHint
               theme={props.theme}

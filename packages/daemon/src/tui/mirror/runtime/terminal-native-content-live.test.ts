@@ -189,8 +189,6 @@ process.on('SIGWINCH', () => {}); process.stdout.write('HOLD');`,
 describe.skipIf(!available)("native transient capture recovery", () => {
   it("recovers a failed initial capture through the retained control channel", async () => {
     const session = "transient-capture";
-    const script = join(directory, `${session}.mjs`);
-    writeFileSync(script, "process.stdout.write('TRUTH');setInterval(()=>{},10000);");
     tmux(
       "new-session",
       "-d",
@@ -200,7 +198,9 @@ describe.skipIf(!available)("native transient capture recovery", () => {
       "40",
       "-y",
       "12",
-      `${process.execPath} ${script}`,
+      // This fixture needs static native content, not a second Node startup.
+      // Keep the initial marker independent of runtime/module loading on CI.
+      "printf TRUTH; exec sleep 120",
     );
     tmux("set-option", "-t", session, "status", "off");
     await vi.waitFor(() => expect(tmux("capture-pane", "-p", "-t", session)).toBe("TRUTH"));
@@ -1386,14 +1386,50 @@ describe.skipIf(!available)("native history authority", () => {
         () => expect(tmux("capture-pane", "-p", "-t", target)).toContain(`DONE-${batch}`),
         { timeout: 5_000 },
       );
+      // Retain bounded metadata on failure so a slow capture can be distinguished
+      // from a lost history probe or rejected native reseed in platform CI.
+      const observations: Array<Readonly<Record<string, unknown>>> = [];
+      const observedAt = performance.now();
+      const observe = (event: Readonly<Record<string, unknown>>) => {
+        if (observations.length === 32) observations.shift();
+        observations.push({ elapsedMs: Math.round(performance.now() - observedAt), ...event });
+      };
       const mirror = new MirrorService({
-        createIo: (name, handlers) =>
-          new MirrorControlChannel({
+        createIo: (name, handlers) => {
+          const io = new MirrorControlChannel({
             session: name,
             handlers,
             socketName: socket,
             configFile: "/dev/null",
-          }),
+          });
+          const inline = io.commandInline.bind(io);
+          io.commandInline = (command, onReply) => {
+            const historyProbe = command.includes('"#{history_size}"');
+            if (historyProbe) observe({ event: "history-probe-start" });
+            return inline(command, (reply) => {
+              if (historyProbe)
+                observe({
+                  event: "history-probe-reply",
+                  ok: reply.ok,
+                  history: /^\d+$/u.test(reply.lines[0]?.trim() ?? "")
+                    ? Number(reply.lines[0])
+                    : null,
+                });
+              onReply(reply);
+            });
+          };
+          const commandList = io.commandListInline.bind(io);
+          io.commandListInline = (command, count, index, onReply) => {
+            const capture = command.includes("capture-pane -p ");
+            if (capture) observe({ event: "capture-start" });
+            return commandList(command, count, index, (reply) => {
+              if (capture)
+                observe({ event: "capture-reply", ok: reply.ok, lines: reply.lines.length });
+              onReply(reply);
+            });
+          };
+          return io;
+        },
       });
       let owner: SessionRuntimeTerminalReplicaOwner | undefined;
       let snapshot: TerminalReplicaSnapshot | null = null;
@@ -1426,6 +1462,7 @@ describe.skipIf(!available)("native history authority", () => {
             snapshot = applyTerminalReplicaPatch(snapshot, update.patch);
           }
           revision = update.revision;
+          observe({ event: update.type, history: snapshot?.history.length, revision });
         });
         await vi.waitFor(() => {
           expect(snapshot).not.toBeNull();
@@ -1456,6 +1493,12 @@ describe.skipIf(!available)("native history authority", () => {
           await vi.waitFor(() => expect(snapshot!.history.length).toBe(0), { timeout: 2500 });
           expect(text()).toBe(tmux("capture-pane", "-p", "-S", "-", "-t", target));
         }
+      } catch (error) {
+        console.error(
+          "native history authority observations",
+          JSON.stringify({ mode, observations }),
+        );
+        throw error;
       } finally {
         await owner?.dispose();
         await mirror.dispose();

@@ -79,6 +79,7 @@ export interface ApplicationTerminalInteractionControllerOptions {
 
 export interface ApplicationTerminalInteractionController {
   adoptGeneration(snapshot: OpenTuiGenerationHostSnapshot | null): void;
+  cancelPendingInput(): void;
   adoptLayout(snapshot: OpenTuiWorkspaceLayoutSnapshot): void;
   selectPane(paneId: string): void;
   selectWindowLink(target: WindowLinkTarget): Promise<void>;
@@ -173,7 +174,9 @@ export function createApplicationTerminalInteractionController(
       // Critical diagnostic retention still cannot own semantic interaction.
     }
   };
-  let pendingWindowSwitch: {
+  type PendingWindowSwitch = {
+    readonly selectionKind: "pane" | "window-link";
+    readonly windowLink?: WindowLinkTarget;
     readonly traceId: string;
     readonly target: string;
     readonly paneId: string;
@@ -197,7 +200,8 @@ export function createApplicationTerminalInteractionController(
       layoutAtMicros: number | null;
       presentationAtMicros: number | null;
     };
-  } | null = null;
+  };
+  let pendingWindowSwitch: PendingWindowSwitch | null = null;
   let pendingWindowRename: {
     readonly traceId: string;
     readonly target: string;
@@ -310,6 +314,70 @@ export function createApplicationTerminalInteractionController(
     fastLane: NonNullable<OpenTuiGenerationHostSnapshot["fastLane"]>;
     adapter: NonNullable<OpenTuiGenerationHostSnapshot["adapter"]>;
   }> | null = null;
+
+  // Pane selection belongs to the control connection, which can outlive a
+  // terminal renderer rebuild. Never carry selection or input across reconnects.
+  const controlIdentity = (snapshot: OpenTuiGenerationHostSnapshot | null) => {
+    if (
+      !snapshot ||
+      !["live", "rebinding"].includes(snapshot.status) ||
+      !snapshot.connection ||
+      !snapshot.client ||
+      !snapshot.daemonGeneration
+    )
+      return null;
+    try {
+      const generation = snapshot.client.getSnapshot().generation;
+      if (!Number.isSafeInteger(generation)) return null;
+      return {
+        connection: snapshot.connection,
+        client: snapshot.client,
+        daemon: snapshot.daemonGeneration,
+        generation,
+        workspace: snapshot.connection.workspaceName,
+      };
+    } catch {
+      return null;
+    }
+  };
+  type ControlIdentity = NonNullable<ReturnType<typeof controlIdentity>>;
+  const sameControl = (left: ControlIdentity | null, right: ControlIdentity | null) =>
+    left !== null &&
+    right !== null &&
+    left.connection === right.connection &&
+    left.client === right.client &&
+    left.daemon === right.daemon &&
+    left.generation === right.generation &&
+    left.workspace === right.workspace;
+  let selectedControl: ControlIdentity | null = null;
+  const waitingInput = new Set<{
+    control: ControlIdentity;
+    weight: number;
+    settle: (ready: boolean) => void;
+  }>();
+  let waitingInputBytes = 0;
+  let releasingInput: Promise<void> | null = null;
+  const awaitInputRuntime = (weight: number): Promise<boolean> => {
+    const control = controlIdentity(options.generation());
+    if (!control || waitingInput.size >= 64 || waitingInputBytes + weight > 1024 * 1024)
+      return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const entry = {
+        control,
+        weight,
+        settle: (ready: boolean) => {
+          if (!waitingInput.delete(entry)) return;
+          waitingInputBytes -= weight;
+          clearTimeout(timer);
+          resolve(ready);
+        },
+      };
+      const timer = setTimeout(() => entry.settle(false), 5000);
+      timer.unref?.();
+      waitingInput.add(entry);
+      waitingInputBytes += weight;
+    });
+  };
 
   const armDiagnosticWindowFrame = (pending: DiagnosticWindowFrameContext): void => {
     diagnosticWindowFrame = pending;
@@ -633,11 +701,78 @@ export function createApplicationTerminalInteractionController(
     }
   };
 
+  const beginWindowSwitch = (pane: string, target: string, windowLink?: WindowLinkTarget): void => {
+    pendingWindowSwitch = null;
+    if (options.diagnosticsEnabled) {
+      try {
+        const active = options.generation();
+        const identity = active?.adapter?.paneCanonicalIdentity(pane);
+        const clientGeneration = active?.client?.getSnapshot().generation;
+        const startedAtMicros = diagnosticNowMicros();
+        if (
+          active?.status === "live" &&
+          active.daemonGeneration &&
+          identity &&
+          Number.isSafeInteger(clientGeneration) &&
+          startedAtMicros !== null
+        ) {
+          pendingWindowSwitch = {
+            selectionKind: windowLink ? "window-link" : "pane",
+            ...(windowLink ? { windowLink } : {}),
+            traceId: createTraceId(),
+            target,
+            paneId: pane,
+            startedAtMicros,
+            daemonGeneration: active.daemonGeneration,
+            clientGeneration: clientGeneration!,
+            rendererEpoch: active.rendererEpoch,
+            sourceEpoch: identity.sourceEpoch,
+            generation: identity.generation,
+            incarnation: identity.incarnation,
+            revision: identity.revision,
+            stateHash: identity.stateHash,
+            cols: identity.cols,
+            rows: identity.rows,
+            layoutPublished: false,
+            selectionApplied: false,
+            presentationPublished: false,
+            followUpRequested: false,
+            ...(options.detailedWindowSwitchTiming
+              ? {
+                  timing: {
+                    receiptAtMicros: null,
+                    layoutAtMicros: null,
+                    presentationAtMicros: null,
+                  },
+                }
+              : {}),
+          };
+          armDiagnosticWindowFrame({ kind: "window-switch", ...pendingWindowSwitch });
+          diagnose("window-switch-start", { ...pendingWindowSwitch });
+        } else {
+          diagnose("window-switch-untracked", {
+            paneId: pane,
+            target,
+            status: active?.status ?? null,
+            daemonGeneration: active?.daemonGeneration ?? null,
+            rendererEpoch: active?.rendererEpoch ?? null,
+            clientGeneration: clientGeneration ?? null,
+            identity: identity ?? null,
+            laneCounters: active?.fastLane?.lane.counters() ?? null,
+          });
+        }
+      } catch {
+        pendingWindowSwitch = null;
+      }
+    }
+  };
+
   let linkSelection: {
     target: WindowLinkTarget;
     paneId: string;
     layout: OpenTuiWorkspaceLayoutSnapshot;
     received: boolean;
+    diagnostic: PendingWindowSwitch | null;
     resolve: (selected: boolean) => void;
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
@@ -646,6 +781,19 @@ export function createApplicationTerminalInteractionController(
     if (!pending) return;
     linkSelection = null;
     clearTimeout(pending.timer);
+    const diagnostic = pending.diagnostic;
+    if (diagnostic && pendingWindowSwitch === diagnostic) {
+      if (selected) {
+        diagnostic.selectionApplied = true;
+        maybeRequestWindowSwitchFrame();
+      } else {
+        diagnoseCritical(`window-switch:${diagnostic.traceId}:failed`, "window-switch-failed", {
+          ...diagnostic,
+          reason: "window-link-selection-not-applied",
+        });
+        pendingWindowSwitch = null;
+      }
+    }
     pending.resolve(selected);
   };
   const reconcileLinkSelection = (snapshot: OpenTuiWorkspaceLayoutSnapshot) => {
@@ -678,13 +826,19 @@ export function createApplicationTerminalInteractionController(
     select: async (paneId) => {
       finishLinkSelection(false);
       const expected = liveSelectionTarget();
+      const selectionControl = controlIdentity(options.generation());
       const selecting = pendingWindowSwitch;
       const operationId = selecting?.traceId;
       const selectionFailure: { current: PaneSelectionFailure | null } = { current: null };
       const receipt = expected
         ? await selectTerminalPane(
             expected,
-            liveSelectionTarget,
+            () => {
+              if (!selectionControl) return liveSelectionTarget();
+              return sameControl(selectionControl, controlIdentity(options.generation()))
+                ? expected
+                : null;
+            },
             paneId,
             operationId,
             (failure) => {
@@ -757,6 +911,14 @@ export function createApplicationTerminalInteractionController(
     },
     send: async (paneId, routed) => {
       const { input, parserOrigin } = routed;
+      const selectionVersion = paneInput.selectionVersion;
+      if (options.generation()?.status === "rebinding") {
+        if (!(await awaitInputRuntime(Buffer.byteLength(input.data, "utf8")))) return false;
+      } else if (releasingInput) {
+        await releasingInput;
+      }
+      if (paneInput.selectionVersion !== selectionVersion || paneInput.focusedPane !== paneId)
+        return false;
       const active = options.generation();
       if (active?.status !== "live" || !active.fastLane) return false;
       let fixtureEnabled: boolean;
@@ -838,7 +1000,31 @@ export function createApplicationTerminalInteractionController(
   });
 
   return {
+    cancelPendingInput() {
+      finishLinkSelection(false);
+      paneInput.invalidateSelection();
+      for (const entry of waitingInput) entry.settle(false);
+    },
     adoptGeneration(snapshot) {
+      const control = controlIdentity(snapshot);
+      if (!sameControl(selectedControl, control)) {
+        finishLinkSelection(false);
+        paneInput.invalidateSelection();
+      }
+      selectedControl = control;
+      if (waitingInput.size > 0 && snapshot?.status === "live" && snapshot.fastLane) {
+        // Old waiters resume first; input admitted synchronously by the next
+        // layout publication must not overtake them in this microtask turn.
+        const barrier = Promise.resolve();
+        releasingInput = barrier;
+        queueMicrotask(() => {
+          if (releasingInput === barrier) releasingInput = null;
+        });
+      }
+      for (const entry of waitingInput) {
+        if (!sameControl(entry.control, control)) entry.settle(false);
+        else if (snapshot?.status === "live" && snapshot.fastLane) entry.settle(true);
+      }
       let next: typeof inputAuthorityIdentity = null;
       if (
         snapshot?.status === "live" &&
@@ -876,7 +1062,6 @@ export function createApplicationTerminalInteractionController(
           next.adapter !== inputAuthorityIdentity.adapter);
       if (next === null || replaced) {
         finishLinkSelection(false);
-        paneInput.invalidateSelection();
         pendingWindowSwitch = null;
         pendingWindowRename = null;
         diagnosticWindowFrame = null;
@@ -1035,6 +1220,7 @@ export function createApplicationTerminalInteractionController(
       )
         return;
       finishLinkSelection(false);
+      beginWindowSwitch(paneId, target.expectedSemanticWindowId, target);
       let resolve!: (selected: boolean) => void;
       const settled = new Promise<boolean>((done) => {
         resolve = done;
@@ -1044,6 +1230,7 @@ export function createApplicationTerminalInteractionController(
         paneId,
         layout: snapshot,
         received: false,
+        diagnostic: pendingWindowSwitch,
         resolve,
         timer: setTimeout(() => {
           if (linkSelection === pending) finishLinkSelection(false);
@@ -1072,6 +1259,7 @@ export function createApplicationTerminalInteractionController(
         }
         const wrapper = (await expected.client.dispatch({
           kind: "semantic-intent",
+          ...(pending.diagnostic ? { operationId: pending.diagnostic.traceId } : {}),
           intent: {
             verb: "workspace.window.link.select",
             workspaceName: expected.workspaceName,
@@ -1084,6 +1272,7 @@ export function createApplicationTerminalInteractionController(
           wrapper.kind !== "semantic-intent" ||
           !result.success ||
           result.data.operationId !== wrapper.operationId ||
+          (pending.diagnostic && wrapper.operationId !== pending.diagnostic.traceId) ||
           result.data.daemonInstanceId !== expected.daemonGeneration ||
           result.data.workspaceName !== expected.workspaceName ||
           result.data.target.linkId !== target.linkId ||
@@ -1093,6 +1282,18 @@ export function createApplicationTerminalInteractionController(
         ) {
           finishLinkSelection(false);
           return;
+        }
+        if (pending.diagnostic) {
+          const receiptAtMicros = diagnosticNowMicros();
+          if (pending.diagnostic.timing)
+            pending.diagnostic.timing.receiptAtMicros = receiptAtMicros;
+          diagnose("window-switch-receipt", {
+            ...pending.diagnostic,
+            operationId: wrapper.operationId,
+            selected: true,
+            applied: true,
+            ...(options.detailedWindowSwitchTiming ? { phaseAtMicros: receiptAtMicros } : {}),
+          });
         }
         pending.received = true;
         reconcileLinkSelection(pending.layout);
@@ -1335,55 +1536,7 @@ export function createApplicationTerminalInteractionController(
       const pane = next ? paneForWindow(next) : null;
       const target = next?.semanticWindowId ?? next?.windowName;
       if (!pane || !target) return;
-      if (options.diagnosticsEnabled) {
-        try {
-          const active = options.generation();
-          const identity = active?.adapter?.paneCanonicalIdentity(pane);
-          const clientGeneration = active?.client?.getSnapshot().generation;
-          const startedAtMicros = diagnosticNowMicros();
-          if (
-            active?.status === "live" &&
-            active.daemonGeneration &&
-            identity &&
-            Number.isSafeInteger(clientGeneration) &&
-            startedAtMicros !== null
-          ) {
-            pendingWindowSwitch = {
-              traceId: createTraceId(),
-              target,
-              paneId: pane,
-              startedAtMicros,
-              daemonGeneration: active.daemonGeneration,
-              clientGeneration: clientGeneration!,
-              rendererEpoch: active.rendererEpoch,
-              sourceEpoch: identity.sourceEpoch,
-              generation: identity.generation,
-              incarnation: identity.incarnation,
-              revision: identity.revision,
-              stateHash: identity.stateHash,
-              cols: identity.cols,
-              rows: identity.rows,
-              layoutPublished: false,
-              selectionApplied: false,
-              presentationPublished: false,
-              followUpRequested: false,
-              ...(options.detailedWindowSwitchTiming
-                ? {
-                    timing: {
-                      receiptAtMicros: null,
-                      layoutAtMicros: null,
-                      presentationAtMicros: null,
-                    },
-                  }
-                : {}),
-            };
-            armDiagnosticWindowFrame({ kind: "window-switch", ...pendingWindowSwitch });
-            diagnose("window-switch-start", { ...pendingWindowSwitch });
-          }
-        } catch {
-          pendingWindowSwitch = null;
-        }
-      }
+      beginWindowSwitch(pane, target);
       paneInput.selectPane(pane, { presentOptimistically: false });
     },
     async zoomPane(targetPane) {
@@ -1583,6 +1736,7 @@ export function createApplicationTerminalInteractionController(
           ? {}
           : { phaseAtMicros: pending.timing.presentationAtMicros }),
       });
+      maybeRequestWindowSwitchFrame();
     },
     observeDiagnosticWindowFrame() {
       if (!options.diagnosticsEnabled) return null;

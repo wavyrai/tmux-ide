@@ -19,6 +19,20 @@ node --import tsx scripts/qualify-owned-ssh.ts --run-owned-local --root "$fixtur
 cat "$fixture_root/qualification.json"
 ```
 
+To additionally exercise actual CLI discovery with no daemon installed in the
+fixture home, pass `--public-cli /absolute/path/to/verified/bin/cli.js`. Use an
+installed or independently source-verified CLI artifact and retain its receipt.
+This adds `public-cli-absent-daemon`: the SSH-side process runs that CLI with
+`remote-daemon-info --json`, an explicit private `TMUX_IDE_HOME`, and no inherited
+runtime credentials or namespace settings. The case verifies `daemon-missing`,
+zero synthetic-handshake requests, and no files created in the private home.
+It also adds credential-less and unsupported-protocol cases: owner-only
+records reference the live fixture process. The real CLI must report
+`incompatible` without modifying that record or using the synthetic handshake.
+The receipt records the CLI hash. These cases do not start a daemon or qualify an
+actual legacy server upgrade or installation. Other identity/protocol cases
+remain synthetic.
+
 Use an absolute Node executable when qualifying a specific runtime. The root
 must already exist, belong to the current user, and have private permissions.
 Paths must contain only letters, digits, underscores, dots, slashes and hyphens.
@@ -28,7 +42,11 @@ per-user temporary directory; keep SSH strict ownership checks enabled.
 
 The matrix covers an existing shared master, dedicated-forward disposal,
 ProxyJump, private noninteractive PATH, rejected keys and host trust, cancellation,
-delayed discovery and oversized discovery output. A baseline connection checks
+delayed discovery, oversized discovery output, an unreachable SSH endpoint, and
+structured missing-daemon/incompatible/unavailable preflight responses. Refusals
+check the public error category, retryability, bounded process count and sanitized
+message. Structured responses are synthetic; this does not qualify a real remote
+service reservation or installation. A baseline connection checks
 that disposing or failing another transport does not destroy it. This baseline
 is an HTTP fixture, not evidence of healthy TUI input under load.
 Recorded durations include fixture instrumentation and process scans; they are

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { cleanupOwnedSshRegistry } from "./lib/owned-ssh-registry-cleanup.ts";
 import { qualifyCanonicalSshAttribution } from "./lib/owned-ssh-attribution.ts";
+import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
+import { capturePackedTmuxWitness, retirePackedTmuxSocket } from "./lib/packed-install-cleanup.mjs";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
@@ -19,10 +21,15 @@ import {
   lstatSync,
   readdirSync,
   realpathSync,
+  rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  capturePackedInstallEnvironment,
+  privatePackedInstallEnvironment,
+} from "./lib/packed-install-environment.mjs";
 import {
   readDevelopmentIdentity,
   readPrivateDevelopmentFile,
@@ -68,19 +75,34 @@ type Plan = {
   nativeSource: string;
   store: string;
   session: string;
+  installedClient?: {
+    cli: string;
+    tui: string;
+    commit: string;
+    cliSha256: string;
+    tuiSha256: string;
+  };
 };
 type Pty = {
   pid: number;
+  resize(cols: number, rows: number): void;
   write(text: string): void;
   kill(signal?: string): void;
   onData(callback: (text: string) => void): void;
   onExit(callback: (value: { exitCode: number }) => void): void;
 };
 type Vt = {
-  write(text: string): void;
+  cols: number;
+  rows: number;
+  resize(cols: number, rows: number): void;
+  write(text: string, callback?: () => void): void;
   dispose(): void;
   buffer: {
-    active: { getLine(index: number): { translateToString(trim: boolean): string } | undefined };
+    active: {
+      getLine(
+        index: number,
+      ): { translateToString(trim: boolean, start?: number, end?: number): string } | undefined;
+    };
   };
 };
 type Handle = EventEmitter & {
@@ -95,6 +117,8 @@ type Client = {
   vt: Vt;
   exited: boolean;
   exitCode?: number;
+  renderer?: { pid: number; identity: string };
+  outputFacts: { received: number; parsed: number; firstAtMs: number | null };
   frame(): string;
 };
 type Allocation = { root: string; disposeFiles(): Promise<void>; diagnostics?(): unknown };
@@ -147,6 +171,16 @@ if (args[0] === "--client") {
   const out = dirname(descriptorPath),
     started = Date.now(),
     events: Array<Record<string, unknown>> = [];
+  const installedServers = new Map<
+    string,
+    {
+      binary: string;
+      socket: string;
+      pid: number;
+      identity: string;
+      witness: ReturnType<typeof capturePackedTmuxWitness>;
+    }
+  >();
   const save = (name: string, value: unknown) =>
     writeFileSync(join(out, name), JSON.stringify(value, null, 2) + "\n", {
       flag: "wx",
@@ -389,14 +423,19 @@ if (args[0] === "--client") {
       target = "target-" + side,
       i = instances[role],
       fixture = ssh[side];
-    const config = clientConfiguration({
-      root: fixture.root,
-      account: fixture.account,
-      port: fixture.port,
-      alias: fixture.alias,
-      sharing: false,
-      defaults: false,
-    });
+    const routes = descriptor.installedClient && side === "a" ? [ssh.a, ssh.b] : [fixture];
+    const config = routes
+      .map((route) =>
+        clientConfiguration({
+          root: route.root,
+          account: route.account,
+          port: route.port,
+          alias: route.alias,
+          sharing: false,
+          defaults: false,
+        }),
+      )
+      .join("\n");
     writeFileSync(join(fixture.root, "ssh_config"), config, { flag: "wx", mode: 0o600 });
     fixture.files.capture("ssh_config");
     fixture.config = join(fixture.root, "ssh_config");
@@ -418,12 +457,100 @@ if (args[0] === "--client") {
       pty = req("node-pty"),
       { Terminal } = req("@tmux-ide/xterm-headless");
     const vt = new Terminal({ cols: 120, rows: 32, allowProposedApi: true }),
-      child: Pty = pty.spawn(descriptor.node, ["--import", "tsx", self, "--client", input], {
-        cwd: sourceRoot,
-        env,
+      installed = descriptor.installedClient,
+      home = join(descriptor.store, "home-" + side);
+    if (installed) {
+      assert.equal(hash(readFileSync(installed.cli)), installed.cliSha256);
+      assert.equal(hash(readFileSync(installed.tui)), installed.tuiSha256);
+      assert(!existsSync(home), "Installed client home must be new");
+      mkdirSync(join(home, ".tmux-ide"), { recursive: true, mode: 0o700 });
+      writeFileSync(
+        join(home, ".tmux-ide", "machines.json"),
+        JSON.stringify({
+          version: 1,
+          machines: [fixture].map((route) => ({
+            id: randomUUID(),
+            label: "Owned remote " + (route === ssh.a ? "a" : "b"),
+            sshTarget: route.alias,
+            enabled: true,
+          })),
+        }),
+        { flag: "wx", mode: 0o600 },
+      );
+    }
+    const clientEnv = installed
+      ? privatePackedInstallEnvironment(capturePackedInstallEnvironment(env), {
+          home,
+          cache: join(home, ".cache"),
+          overrides: {
+            TMUX_IDE_HOME: join(home, ".tmux-ide"),
+            TMUX_IDE_TMUX_SOCKET_PATH: join(descriptor.store, "installed-" + side + ".sock"),
+            TMUX_IDE_TUI_BIN: installed.tui,
+            TMUX_IDE_TUI_PERF_LOG: join(out, "installed-" + side + ".performance.jsonl"),
+            PATH: remote.directory + ":" + env.PATH,
+          },
+        })
+      : env;
+    if (installed) {
+      assert(Buffer.byteLength(join(home, ".tmux-ide", "control.sock")) <= 100);
+      const binary = realpathSync(
+        join(dirname(installed.cli), "../packages/daemon/dist/native/tmux/darwin-arm64/tmux"),
+      );
+      const socket = clientEnv.TMUX_IDE_TMUX_SOCKET_PATH!;
+      assert(!existsSync(socket));
+      await execute(
+        binary,
+        [
+          "-S",
+          socket,
+          "-f",
+          "/dev/null",
+          "new-session",
+          "-d",
+          "-s",
+          "_installed_fixture",
+          "/bin/sh",
+        ],
+        {
+          env: clientEnv,
+          cwd: home,
+          timeout: 5000,
+        },
+      );
+      const pid = Number(
+        (await run(binary, ["-S", socket, "-N", "display-message", "-p", "#{pid}"])).trim(),
+      );
+      const identity = await kernel.identify(pid);
+      assert(identity);
+      const witness = capturePackedTmuxWitness(socket, pid);
+      installedServers.set(side, { binary, socket, pid, identity, witness });
+      ownedPids.add(pid);
+      for (const pane of (
+        await run(binary, ["-S", socket, "-N", "list-panes", "-a", "-F", "#{pane_pid}"])
+      )
+        .trim()
+        .split("\n"))
+        ownedPids.add(Number(pane));
+      save(side + "-installed-tmux.json", {
+        witness,
+        pid,
+        socket,
+        binary,
+        sha256: hash(readFileSync(binary)),
+      });
+    }
+    const child: Pty = pty.spawn(
+      descriptor.node,
+      installed
+        ? [installed.cli, "app", "--ssh", fixture.alias]
+        : ["--import", "tsx", self, "--client", input],
+      {
+        cwd: installed ? home : sourceRoot,
+        env: clientEnv,
         cols: 120,
         rows: 32,
-      });
+      },
+    );
     const handle: Handle = Object.assign(new EventEmitter(), {
       pid: child.pid,
       kill: (signal: string) => {
@@ -439,15 +566,26 @@ if (args[0] === "--client") {
       handle,
       vt,
       exited: false,
+      outputFacts: { received: 0, parsed: 0, firstAtMs: null },
       frame: () =>
         Array.from(
-          { length: 32 },
-          (_, n) => vt.buffer.active.getLine(n)?.translateToString(true) ?? "",
+          { length: vt.rows },
+          (_, n) => vt.buffer.active.getLine(n)?.translateToString(true, 0, vt.cols) ?? "",
         ).join("\n"),
     };
     clients[side] = client;
-    child.onData((text: string) => vt.write(text));
+    let outputTail = "";
+    child.onData((text: string) => {
+      client.outputFacts.received += text.length;
+      client.outputFacts.firstAtMs ??= Date.now() - started;
+      outputTail = (outputTail + text).slice(-65536);
+      vt.write(text, () => {
+        client.outputFacts.parsed += text.length;
+      });
+    });
     child.onExit((value: { exitCode: number }) => {
+      // A blank parsed frame cannot distinguish renderer and parser failures.
+      writeFileSync(join(out, side + "-terminal-tail.txt"), outputTail, { mode: 0o600 });
       client.exited = true;
       client.exitCode = value.exitCode;
       handle.exitCode = value.exitCode;
@@ -455,18 +593,24 @@ if (args[0] === "--client") {
     });
     const badge =
       "DEV " + i.name.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 12) + ":" + i.id.slice(4, 10);
-    await wait(() => {
-      assert(!client.exited);
-      return client.frame().includes(badge);
-    });
+    if (!installed)
+      await wait(() => {
+        assert(!client.exited);
+        return client.frame().includes(badge);
+      });
     await wait(() => {
       const frame = client.frame();
       return (
-        frame.includes("Your agents, across your machines") && frame.includes(descriptor.session)
+        frame.includes("Your agents, across your machines") &&
+        frame.includes("Open terminals F2") &&
+        (installed
+          ? frame.includes("SSH Owned remote " + side) && frame.includes("1 live")
+          : frame.includes("1 session live"))
       );
     });
-    // Home now selects agents directly; there is no session sidebar here.
-    child.write("\r");
+    // This fixture owns a plain shell, not an agent. Home lists agents; F2 opens
+    // the live session through the supported terminal navigation.
+    child.write("\x1bOQ");
     await wait(() => {
       const frame = client.frame();
       return (
@@ -476,13 +620,36 @@ if (args[0] === "--client") {
         frame.includes(descriptor.session)
       );
     });
+    const sessionRow = client
+      .frame()
+      .split("\n")
+      .findIndex((line: string) => line.trimStart().startsWith(descriptor.session));
+    assert(sessionRow >= 0, "Owned remote session must be visible in the sidebar");
+    child.write(`\x1b[<0;8;${sessionRow + 1}M\x1b[<0;8;${sessionRow + 1}m`);
+    await wait(() => frameShowsTerminalFocus(client.frame()));
     await tracker.capture();
+    const executable = installed?.tui ?? readDevelopmentBuild(i, {}).tui;
+    const rendererPids: number[] = [];
+    for (const row of tracker.snapshot().ancestry) {
+      if (row.rootPid !== child.pid) continue;
+      const command = await run("/bin/ps", ["-p", String(row.pid), "-o", "comm="], 1000).catch(
+        () => "",
+      );
+      if (command.trim() === executable) rendererPids.push(row.pid);
+    }
+    assert.equal(rendererPids.length, 1, "Expected one exact native TUI executable");
+    const rendererPid = rendererPids[0]!;
+    const rendererIdentity = await kernel.identify(rendererPid);
+    assert(rendererIdentity);
+    client.renderer = { pid: rendererPid, identity: rendererIdentity };
     await remember(role);
     save(side + "-selected-frame.json", { frame: client.frame(), target, alias: fixture.alias });
   }
   async function io(side: string, label: string) {
     const c = clients[side];
     assert(c && !c.exited);
+    assert(c.renderer);
+    assert.equal(await kernel.identify(c.renderer.pid), c.renderer.identity);
     const token = randomUUID().slice(0, 8),
       output = `d11_${side}_${token}_output_ok`,
       input = `d11_${side}_${token}_input_ok`;
@@ -504,19 +671,130 @@ if (args[0] === "--client") {
     await delay(100);
     c.child.write(`printf 'd11_${side}_${token}_input_\\157k\\n'\r`);
     await wait(() => c.frame().includes(input));
+    assert.equal(await kernel.identify(c.renderer.pid), c.renderer.identity);
     save(side + "-" + label + ".json", {
       frame: c.frame(),
       output,
       input,
+      renderer: c.renderer,
       elapsedMs: Date.now() - started,
     });
   }
-  async function tunnel(side: string, remotePort: number) {
+  async function qualifyRemoteManualSizing() {
+    const client = clients.a;
+    const role = "target-a";
+    const source = `${descriptor.session}:0.0`;
+    const state = async (target: string) => {
+      const [window, cols, rows, panePid] = (
+        await tmux(role, [
+          "display-message",
+          "-p",
+          "-t",
+          target,
+          "#{window_id}|#{window_width}|#{window_height}|#{pane_pid}",
+        ])
+      ).split("|");
+      return { window: window!, cols: Number(cols), rows: Number(rows), panePid: panePid! };
+    };
+    const resize = (cols: number, rows: number) => {
+      client.vt.resize(cols, rows);
+      client.child.resize(cols, rows);
+    };
+    const before = await state(source);
+    const siblingBefore = await fingerprint("target-b");
+    const clientPid = client.child.pid;
+    const neighbour = await tmux(role, [
+      "new-window",
+      "-d",
+      "-t",
+      `=${descriptor.session}`,
+      "-n",
+      "idle-neighbor",
+      "-P",
+      "-F",
+      "#{window_id}",
+      "/bin/sh",
+    ]);
+    await remember(role);
+    await wait(() => client.frame().includes("idle-neighbor"));
+    await tmux(role, ["resize-window", "-t", neighbour, "-x", "90", "-y", "25"]);
+    const neighbourBefore = await state(neighbour);
+    const globalSizing = await tmux(role, ["show-options", "-gwv", "window-size"]);
+    const cases: Record<string, unknown>[] = [];
+    receipts.remoteManualSizing = {
+      cases,
+      before,
+      neighbour: neighbourBefore,
+      clientPid,
+      renderer: client.renderer,
+    };
+    try {
+      for (const [index, scope] of ["window", "inherited"].entries()) {
+        if (scope === "inherited") {
+          await tmux(role, ["set-option", "-gw", "window-size", "manual"]);
+          await tmux(role, ["set-option", "-wu", "-t", before.window, "window-size"]);
+        } else {
+          await tmux(role, ["set-option", "-w", "-t", before.window, "window-size", "manual"]);
+        }
+        const policyBefore = await tmux(role, [
+          "show-options",
+          "-Awv",
+          "-t",
+          before.window,
+          "window-size",
+        ]);
+        assert.equal(policyBefore, "manual");
+        const deltaCols = index === 0 ? 20 : 8;
+        const deltaRows = index === 0 ? 8 : 4;
+        const expected = { cols: before.cols + deltaCols, rows: before.rows + deltaRows };
+        resize(120 + deltaCols, 32 + deltaRows);
+        await wait(async () => {
+          const current = await state(source);
+          return (
+            current.cols === expected.cols &&
+            current.rows === expected.rows &&
+            (await tmux(role, ["show-options", "-Awv", "-t", before.window, "window-size"])) ===
+              "latest"
+          );
+        });
+        assert.deepEqual(await state(neighbour), neighbourBefore);
+        assert.equal(
+          await tmux(role, ["show-options", "-Awv", "-t", neighbour, "window-size"]),
+          "manual",
+        );
+        assert.equal((await state(source)).panePid, before.panePid);
+        assert.equal(client.child.pid, clientPid);
+        assert.equal(client.exited, false);
+        await io("a", `manual-${scope}`);
+        await io("b", `sibling-manual-${scope}`);
+        assert.deepEqual(await fingerprint("target-b"), siblingBefore);
+        cases.push({
+          scope,
+          policyBefore,
+          expected,
+          actual: await state(source),
+          neighbour: await state(neighbour),
+          clientPid,
+        });
+      }
+    } finally {
+      await tmux(role, ["set-option", "-gw", "window-size", globalSizing]);
+      resize(120, 32);
+    }
+    await wait(async () => {
+      const current = await state(source);
+      return current.cols === before.cols && current.rows === before.rows;
+    });
+    assert.deepEqual(await state(neighbour), neighbourBefore);
+    save("remote-manual-sizing.json", receipts.remoteManualSizing);
+  }
+  async function tunnel(side: string, remotePort: number, routeSide = side, excludingPid?: number) {
     await tracker.capture();
     const candidates = tracker
       .snapshot()
       .ancestry.filter((v: { rootPid: number }) => v.rootPid === clients[side].handle.pid);
     for (const row of candidates) {
+      if (row.pid === excludingPid) continue;
       const command = await run("/bin/ps", ["-p", String(row.pid), "-o", "command="], 1000).catch(
         () => "",
       );
@@ -524,7 +802,7 @@ if (args[0] === "--client") {
         `(?:^| )-L 127\\.0\\.0\\.1:(\\d+):127\\.0\\.0\\.1:${remotePort}(?: |$)`,
       );
       const match = pattern.exec(command);
-      if (match && command.includes("-- " + ssh[side].alias)) {
+      if (match && command.includes("-- " + ssh[routeSide].alias)) {
         const identity = await kernel.identify(row.pid);
         assert(identity !== null);
         return {
@@ -543,10 +821,242 @@ if (args[0] === "--client") {
     c.child.write("\x11");
     await wait(() => c.exited, 10000);
     assert.equal(c.exitCode, 0);
-    await wait(() => readdirSync(join(instances["client-" + side].root, "apps")).length === 0);
+    if (!descriptor.installedClient)
+      await wait(() => readdirSync(join(instances["client-" + side].root, "apps")).length === 0);
+  }
+  async function qualifyInstalledRegistry() {
+    if (!descriptor.installedClient) return;
+    stage = "installed-registry-setup";
+    event(stage);
+    const home = join(descriptor.store, "home-a", ".tmux-ide");
+    const local = JSON.parse(readFileSync(join(home, "daemon.json"), "utf8"));
+    assert.equal(local.bindHostname, "127.0.0.1");
+    assert(await kernel.identify(local.pid));
+    const registry = JSON.parse(readFileSync(join(home, "machines.json"), "utf8"));
+    assert.equal(registry.machines.length, 1);
+    const profile = {
+      id: randomUUID(),
+      label: "Owned remote b",
+      sshTarget: ssh.b.alias,
+      enabled: true,
+    };
+    const originalA = await fingerprint("target-a"),
+      originalB = await fingerprint("target-b");
+    const retained = await tunnel("a", originalA.port);
+    const sibling = await tunnel("b", originalB.port);
+    let background: Awaited<ReturnType<typeof tunnel>> | undefined;
+    const facts: Array<Record<string, unknown>> = [];
+    async function request(method: string, payload: Record<string, unknown>) {
+      const response = await fetch(`http://127.0.0.1:${local.port}/api/resources/saved-machines`, {
+        method,
+        redirect: "error",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${local.authToken}` },
+        body: JSON.stringify({ expectedInstanceId: local.instanceId, ...payload }),
+        signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(5000)]),
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.daemon.instanceId, local.instanceId);
+      assert.equal(body.daemon.startedAt, local.startedAt);
+      assert.deepEqual(
+        JSON.parse(readFileSync(join(home, "machines.json"), "utf8")),
+        body.registry,
+      );
+      return body.registry;
+    }
+    async function unchanged(label: string) {
+      assert.deepEqual(await tunnel("a", originalA.port), retained);
+      assert.deepEqual(await tunnel("b", originalB.port), sibling);
+      await io("a", "registry-" + label);
+      await io("b", "registry-" + label);
+      assert.deepEqual(await fingerprint("target-a"), originalA);
+      assert.deepEqual(await fingerprint("target-b"), originalB);
+      facts.push({ operation: label, retained, sibling, renderer: clients.a.renderer });
+    }
+    for (const [operation, label] of [
+      ["selected-rename", "Owned renamed a"],
+      ["selected-rename-restore", registry.machines[0].label],
+    ] as const) {
+      stage = "installed-registry-" + operation;
+      event(stage);
+      await request("PATCH", {
+        change: { id: registry.machines[0].id, operation: "edit", patch: { label } },
+      });
+      await wait(() => clients.a.frame().includes(label));
+      await unchanged(operation);
+      save("registry-" + operation + "-frame.json", { frame: clients.a.frame() });
+    }
+
+    stage = "installed-registry-add";
+    event(stage);
+    await request("POST", { registry: { version: 1, machines: [profile] } });
+    await wait(async () => {
+      try {
+        background = await tunnel("a", originalB.port, "b");
+        return true;
+      } catch {
+        return false;
+      }
+    }, 30000);
+    assert(background);
+    await unchanged("add");
+    const sessionRows = () =>
+      clients.a
+        .frame()
+        .split("\n")
+        .filter((line: string) => line.trimStart().startsWith(descriptor.session)).length;
+    await wait(() => sessionRows() === 2 && clients.a.frame().includes(profile.label));
+    for (const routeSide of ["a", "b"] as const) {
+      const operation = routeSide === "a" ? "edit-duplicate-route" : "edit-route-restore";
+      stage = "installed-registry-" + operation;
+      event(stage);
+      const retiring = background;
+      const edited = await request("PATCH", {
+        change: { id: profile.id, operation: "edit", patch: { sshTarget: ssh[routeSide].alias } },
+      });
+      assert.equal(
+        edited.machines.find((value: { id: string }) => value.id === profile.id).sshTarget,
+        ssh[routeSide].alias,
+      );
+      await wait(async () => (await kernel.identify(retiring.pid)) === null);
+      let replacement: Awaited<ReturnType<typeof tunnel>> | undefined;
+      await wait(async () => {
+        try {
+          replacement = await tunnel(
+            "a",
+            routeSide === "a" ? originalA.port : originalB.port,
+            routeSide,
+            retained.pid,
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      }, 30000);
+      assert(replacement && replacement.pid !== retiring.pid);
+      background = replacement;
+      await wait(() =>
+        routeSide === "a"
+          ? sessionRows() === 1 && !clients.a.frame().includes(profile.label)
+          : sessionRows() === 2 && clients.a.frame().includes(profile.label),
+      );
+      await unchanged(operation);
+      Object.assign(facts.at(-1)!, { retired: retiring, replacement, sessionRows: sessionRows() });
+      save("registry-" + operation + "-frame.json", { frame: clients.a.frame() });
+    }
+    stage = "installed-registry-disable";
+    event(stage);
+    const disabled = await request("PATCH", { change: { id: profile.id, operation: "disable" } });
+    assert.equal(
+      disabled.machines.find((value: { id: string }) => value.id === profile.id).enabled,
+      false,
+    );
+    const disabledTunnel = background;
+    await wait(async () => (await kernel.identify(disabledTunnel.pid)) === null);
+    await unchanged("disable");
+    stage = "installed-registry-enable";
+    event(stage);
+    await request("PATCH", { change: { id: profile.id, operation: "enable" } });
+    let enabled: Awaited<ReturnType<typeof tunnel>> | undefined;
+    await wait(async () => {
+      try {
+        enabled = await tunnel("a", originalB.port, "b");
+        return true;
+      } catch {
+        return false;
+      }
+    }, 30000);
+    assert(enabled && enabled.pid !== background.pid);
+    background = enabled;
+    await unchanged("enable");
+    stage = "installed-registry-remove";
+    event(stage);
+    const removed = await request("PATCH", { change: { id: profile.id, operation: "remove" } });
+    assert(!removed.machines.some((value: { id: string }) => value.id === profile.id));
+    const removedTunnel = background;
+    await wait(async () => (await kernel.identify(removedTunnel.pid)) === null);
+    await unchanged("remove");
+    stage = "installed-registry-readd";
+    event(stage);
+    await request("POST", { registry: { version: 1, machines: [profile] } });
+    let restored: Awaited<ReturnType<typeof tunnel>> | undefined;
+    await wait(async () => {
+      try {
+        restored = await tunnel("a", originalB.port, "b");
+        return true;
+      } catch {
+        return false;
+      }
+    }, 30000);
+    assert(restored && restored.pid !== background.pid);
+    await unchanged("readd");
+    const selectedProfile = registry.machines[0];
+    const backgroundRetained = restored;
+    for (const operation of ["disable", "remove"] as const) {
+      stage = "installed-registry-selected-" + operation;
+      event(stage);
+      const retiring = await tunnel("a", originalA.port);
+      await request("PATCH", { change: { id: selectedProfile.id, operation } });
+      await wait(async () => (await kernel.identify(retiring.pid)) === null);
+      await wait(() => clients.a.frame().split("\n")[0]!.includes("Local"));
+      assert.equal(await kernel.identify(clients.a.renderer!.pid), clients.a.renderer!.identity);
+      assert.deepEqual(await tunnel("a", originalB.port, "b"), backgroundRetained);
+      assert.deepEqual(await tunnel("b", originalB.port), sibling);
+      await io("b", "registry-selected-" + operation);
+      assert.deepEqual(await fingerprint("target-a"), originalA);
+      assert.deepEqual(await fingerprint("target-b"), originalB);
+      save("registry-selected-" + operation + "-frame.json", { frame: clients.a.frame() });
+      if (operation === "disable")
+        await request("PATCH", { change: { id: selectedProfile.id, operation: "enable" } });
+      else await request("POST", { registry: { version: 1, machines: [selectedProfile] } });
+      let resumed: Awaited<ReturnType<typeof tunnel>> | undefined;
+      await wait(async () => {
+        try {
+          resumed = await tunnel("a", originalA.port);
+          return true;
+        } catch {
+          return false;
+        }
+      }, 30000);
+      assert(resumed && resumed.pid !== retiring.pid);
+      clients.a.child.write("\x1bOQ");
+      let row = -1;
+      await wait(() => {
+        const lines = clients.a.frame().split("\n");
+        const machineRow = lines.findIndex((line) => line.includes("Owned remote a"));
+        row = lines.findIndex(
+          (line, index) => index > machineRow && line.trimStart().startsWith(descriptor.session),
+        );
+        return machineRow >= 0 && row > machineRow;
+      });
+      clients.a.child.write(`\x1b[<0;8;${row + 1}M\x1b[<0;8;${row + 1}m`);
+      await wait(() => frameShowsTerminalFocus(clients.a.frame()));
+      await io("a", "registry-selected-" + operation + "-restored");
+      assert.deepEqual(await tunnel("a", originalB.port, "b"), backgroundRetained);
+      assert.deepEqual(await tunnel("b", originalB.port), sibling);
+      facts.push({
+        operation: "selected-" + operation,
+        retired: retiring,
+        resumed,
+        backgroundRetained,
+        sibling,
+        renderer: clients.a.renderer,
+      });
+    }
+    receipts.installedRegistry = {
+      qualified: true,
+      profileId: profile.id,
+      operations: facts,
+      restored,
+    };
+    save("installed-registry.json", receipts.installedRegistry);
   }
   try {
     event(stage);
+    if (descriptor.installedClient) {
+      assert.equal(descriptor.installedClient.commit, descriptor.nativeSource);
+      receipts.installedClient = descriptor.installedClient;
+    }
     assert.equal(process.execPath, descriptor.node);
     mkdirSync(descriptor.store, { mode: 0o700 });
     kernel = await createMacProcessIdentity({
@@ -585,6 +1095,9 @@ if (args[0] === "--client") {
         parent: sshParent,
         node: descriptor.node,
         targetPort: lease.port,
+        // Concurrent immutable native-artifact verification can exceed six
+        // seconds. Keep this fixture deadline below the product's 15s budget.
+        handshakeTimeoutMs: 10000,
         processes: tracker,
         onAllocated: (v: Allocation) => allocations.push(v),
         handshake: async () => {
@@ -672,6 +1185,10 @@ if (args[0] === "--client") {
       await openClient(side);
       await io(side, "before");
     }
+    stage = "remote-manual-sizing";
+    event(stage);
+    await qualifyRemoteManualSizing();
+    await qualifyInstalledRegistry();
     const original = await fingerprint("target-a"),
       sibling = await fingerprint("target-b"),
       oldCanonical = await canonical("target-a"),
@@ -1014,7 +1531,11 @@ if (args[0] === "--client") {
     }
     receipts.privateFailureLogs = retainedLogs;
     for (const [side, c] of Object.entries(clients))
-      save(side + "-failure-frame.json", { frame: c.frame(), exited: c.exited });
+      save(side + "-failure-frame.json", {
+        frame: c.frame(),
+        exited: c.exited,
+        outputFacts: c.outputFacts,
+      });
   } finally {
     cleaning = true;
     receipts.cleanupStartedMs = Date.now() - started;
@@ -1048,6 +1569,51 @@ if (args[0] === "--client") {
     } catch {
       receipts.cleanup.ssh = false;
     }
+    if (descriptor.installedClient)
+      for (const side of ["a", "b"]) {
+        const home = join(descriptor.store, "home-" + side);
+        try {
+          assert(receipts.cleanup.ssh);
+          const server = installedServers.get(side);
+          if (server) {
+            const identity = await kernel.identify(server.pid);
+            if (identity !== null) {
+              assert.equal(identity, server.identity);
+              assert.deepEqual(capturePackedTmuxWitness(server.socket, server.pid), server.witness);
+              assert.equal(
+                Number(
+                  (
+                    await run(server.binary, [
+                      "-S",
+                      server.socket,
+                      "-N",
+                      "display-message",
+                      "-p",
+                      "#{pid}",
+                    ])
+                  ).trim(),
+                ),
+                server.pid,
+              );
+              await run(server.binary, ["-S", server.socket, "-N", "kill-server"]);
+              await wait(async () => (await kernel.identify(server.pid)) === null);
+            }
+            receipts.cleanup["installed-socket-" + side] = await retirePackedTmuxSocket(
+              server.witness,
+            ).then(() => true);
+          }
+          assert(receipts.cleanup["client-" + side]);
+          assert(
+            !existsSync(join(home, ".tmux-ide", "daemon.json")),
+            "Unexpected local daemon requires explicit retirement",
+          );
+          assert(!existsSync(join(descriptor.store, "installed-" + side + ".sock")));
+          rmSync(home, { recursive: true, force: true });
+          receipts.cleanup["installed-home-" + side] = true;
+        } catch {
+          receipts.cleanup["installed-home-" + side] = false;
+        }
+      }
     if (trap) {
       for (const socket of trapSockets) socket.destroy();
       trap.closeAllConnections();

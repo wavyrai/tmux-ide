@@ -8,10 +8,16 @@
  * (and a developer's own 5173) cannot collide.
  */
 import { createServer } from "node:net";
+import { resolve } from "node:path";
 
-import { pollUntil, spawnHarnessChild } from "./harness-process.ts";
-import { rendererRoot, type RunningDaemon } from "./daemon.ts";
+import {
+  pollUntil,
+  spawnHarnessChild,
+} from "../../../../scripts/lib/product-fixtures/harness-process.ts";
+import { type RunningDaemon } from "../../../../scripts/lib/product-fixtures/daemon.ts";
 import { startGenerationGateway } from "../../scripts/generation-gateway.ts";
+
+const rendererRoot = resolve(import.meta.dirname, "..", "..");
 
 const VITE_READY_TIMEOUT_MS = 60_000;
 

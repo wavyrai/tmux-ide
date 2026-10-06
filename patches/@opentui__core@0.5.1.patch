@@ -1,8 +1,30 @@
 diff --git a/chunk-bun-8fkgaxc6.js b/chunk-bun-8fkgaxc6.js
-index 3977ea9f1a24cf7e00cadc7c6b0f419c3405c37e..3ca77c584439686c23bd5e67ed52651f63d7bdcf 100644
+index 3977ea9f1a24cf7e00cadc7c6b0f419c3405c37e..b16293ea209ec9204e0165ab47b4fe5062c43647 100644
 --- a/chunk-bun-8fkgaxc6.js
 +++ b/chunk-bun-8fkgaxc6.js
-@@ -7554,12 +7554,6 @@ Captured external output:
+@@ -933,7 +933,9 @@ class Renderable extends BaseRenderable {
+     if (this._visible) {
+       this.handleFrameBufferResize(width, height);
+       this.onResize(width, height);
+-      this.requestRender();
++      // Layout runs before this frame paints. Keep the resized buffer dirty,
++      // but let actual mutations in resize listeners request another frame.
++      this.markDirty();
+     }
+   }
+   handleFrameBufferResize(width, height) {
+@@ -3002,7 +3004,9 @@ class TextBufferRenderable extends Renderable {
+   onResize(width, height) {
+     this.textBufferView.setViewport(this._scrollX, this._scrollY, width, height);
+     this.yogaNode.markDirty();
+-    this.requestRender();
++    // The new viewport is consumed by the current frame. Listener mutations
++    // still schedule their own follow-up through ordinary property setters.
++    this.markDirty();
+     this.emit("line-info-change");
+   }
+   refreshLocalSelection() {
+@@ -7554,12 +7558,6 @@ Captured external output:
      if (this.feedIdleRenderScheduled) {
        return;
      }
@@ -15,7 +37,7 @@ index 3977ea9f1a24cf7e00cadc7c6b0f419c3405c37e..3ca77c584439686c23bd5e67ed52651f
      if (this.ordinaryFrameWaitingForFeed) {
        return;
      }
-@@ -7567,6 +7561,16 @@ Captured external output:
+@@ -7567,6 +7565,16 @@ Captured external output:
        this.immediateRerenderRequested = true;
        return;
      }
@@ -32,7 +54,7 @@ index 3977ea9f1a24cf7e00cadc7c6b0f419c3405c37e..3ca77c584439686c23bd5e67ed52651f
      if (!this.updateScheduled && !this.renderTimeout) {
        this.updateScheduled = true;
        const now = this.normalizeClockTime(this.clock.now(), this.lastTime);
-@@ -9690,6 +9694,13 @@ Captured external output:
+@@ -9690,6 +9698,13 @@ Captured external output:
        this.clock.clearTimeout(this.renderTimeout);
        this.renderTimeout = null;
      }
@@ -47,10 +69,32 @@ index 3977ea9f1a24cf7e00cadc7c6b0f419c3405c37e..3ca77c584439686c23bd5e67ed52651f
      let renderFailed = false;
      try {
 diff --git a/chunk-node-0yw3x5m7.js b/chunk-node-0yw3x5m7.js
-index 84a2d22b6e36c1dab68641684f66b048069634ee..2e084b6e6ee7824c4bb4e8984cd4a755e90a202f 100644
+index 84a2d22b6e36c1dab68641684f66b048069634ee..5de7ae3759deef661a614b8e01ed381800ea289c 100644
 --- a/chunk-node-0yw3x5m7.js
 +++ b/chunk-node-0yw3x5m7.js
-@@ -7553,12 +7553,6 @@ Captured external output:
+@@ -932,7 +932,9 @@ class Renderable extends BaseRenderable {
+     if (this._visible) {
+       this.handleFrameBufferResize(width, height);
+       this.onResize(width, height);
+-      this.requestRender();
++      // Layout runs before this frame paints. Keep the resized buffer dirty,
++      // but let actual mutations in resize listeners request another frame.
++      this.markDirty();
+     }
+   }
+   handleFrameBufferResize(width, height) {
+@@ -3001,7 +3003,9 @@ class TextBufferRenderable extends Renderable {
+   onResize(width, height) {
+     this.textBufferView.setViewport(this._scrollX, this._scrollY, width, height);
+     this.yogaNode.markDirty();
+-    this.requestRender();
++    // The new viewport is consumed by the current frame. Listener mutations
++    // still schedule their own follow-up through ordinary property setters.
++    this.markDirty();
+     this.emit("line-info-change");
+   }
+   refreshLocalSelection() {
+@@ -7553,12 +7557,6 @@ Captured external output:
      if (this.feedIdleRenderScheduled) {
        return;
      }
@@ -63,7 +107,7 @@ index 84a2d22b6e36c1dab68641684f66b048069634ee..2e084b6e6ee7824c4bb4e8984cd4a755
      if (this.ordinaryFrameWaitingForFeed) {
        return;
      }
-@@ -7566,6 +7560,16 @@ Captured external output:
+@@ -7566,6 +7564,16 @@ Captured external output:
        this.immediateRerenderRequested = true;
        return;
      }
@@ -80,7 +124,7 @@ index 84a2d22b6e36c1dab68641684f66b048069634ee..2e084b6e6ee7824c4bb4e8984cd4a755
      if (!this.updateScheduled && !this.renderTimeout) {
        this.updateScheduled = true;
        const now = this.normalizeClockTime(this.clock.now(), this.lastTime);
-@@ -9689,6 +9693,13 @@ Captured external output:
+@@ -9689,6 +9697,13 @@ Captured external output:
        this.clock.clearTimeout(this.renderTimeout);
        this.renderTimeout = null;
      }

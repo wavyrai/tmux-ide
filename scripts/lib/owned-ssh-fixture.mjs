@@ -1,3 +1,4 @@
+import { remoteTmuxIdeCommand } from "../../packages/daemon/src/lib/remote-tmux-command.ts";
 /** Opt-in test infrastructure. Never uses the user's SSH config, agent or default sockets. */
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -545,13 +546,21 @@ export async function createOwnedSshFixture({
   targetPort,
   jump = false,
   missingPath = false,
+  publicDiscoveryCli = null,
   handshake,
+  handshakeTimeoutMs = 6000,
   processes,
   onAllocated,
 }) {
   if (process.platform !== "darwin" || process.getuid() === 0 || userInfo().shell !== "/bin/zsh")
     throw fail();
   if (typeof onAllocated !== "function") throw fail();
+  if (!Number.isInteger(handshakeTimeoutMs) || handshakeTimeoutMs < 1 || handshakeTimeoutMs > 15000)
+    throw fail();
+  if (publicDiscoveryCli !== null) {
+    publicDiscoveryCli = realpathSync(publicDiscoveryCli);
+    if (!lstatSync(publicDiscoveryCli).isFile()) throw fail();
+  }
   parent = fixturePath(realpathSync(fixturePath(parent)));
   node = fixturePath(realpathSync(fixturePath(node)));
   socketPath(join(parent, "ssh-XXXXXX", "discovery.sock"));
@@ -653,7 +662,7 @@ export async function createOwnedSshFixture({
       const deliver = () => {
         if (socket.destroyed) return;
         const task = handshakeWork
-          .encode(mode)
+          .encode(mode, handshakeTimeoutMs)
           .then((value) => {
             if (socket.destroyed) return;
             metrics.deliveredBytes += Buffer.byteLength(value);
@@ -687,14 +696,18 @@ export async function createOwnedSshFixture({
     listeners.push(server);
     write(
       "bin/tmux-ide",
-      `#!${node}\nconst{connect}=require('node:net');if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(['remote-daemon-info','--json']))process.exit(64);const s=connect(${JSON.stringify(ipc)});let n=0;s.on('data',b=>{n+=b.length;if(n>65536){s.destroy();process.exitCode=1;}else process.stdout.write(b);});s.on('error',()=>{process.exitCode=1;});s.setTimeout(20000,()=>{s.destroy();process.exitCode=1;});\n`,
+      publicDiscoveryCli
+        ? `#!${node}\nconst{spawn}=require('node:child_process');if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(['remote-daemon-info','--json']))process.exit(64);const c=spawn(${JSON.stringify(node)},[${JSON.stringify(publicDiscoveryCli)},'remote-daemon-info','--json'],{stdio:'inherit',env:{HOME:${JSON.stringify(join(root, "home"))},ZDOTDIR:${JSON.stringify(join(root, "home"))},PATH:process.env.PATH,TMUX_IDE_HOME:${JSON.stringify(join(root, "state"))}}});c.on('error',()=>{process.exitCode=127;});c.on('exit',code=>{process.exitCode=code??1;});\n`
+        : `#!${node}\nconst{connect}=require('node:net');if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(['remote-daemon-info','--json']))process.exit(64);const s=connect(${JSON.stringify(ipc)});let n=0;s.on('data',b=>{n+=b.length;if(n>65536){s.destroy();process.exitCode=1;}else process.stdout.write(b);});s.on('error',()=>{process.exitCode=1;});s.setTimeout(20000,()=>{s.destroy();process.exitCode=1;});\n`,
       0o700,
     );
     write("home/.zshenv", "export TMUX_IDE_D11_PRIVATE_SHELL=1\n");
     write(
       "dispatch.mjs",
-      `import{spawn}from'node:child_process';if(process.env.TMUX_IDE_D11_PRIVATE_SHELL!=='1'||process.env.SSH_ORIGINAL_COMMAND!=='tmux-ide remote-daemon-info --json'||process.env.HOME!==${JSON.stringify(join(root, "home"))}||process.env.ZDOTDIR!==${JSON.stringify(join(root, "home"))}||process.env.PATH!==${JSON.stringify(join(root, missingPath ? "empty" : "bin"))})process.exit(64);const c=spawn('tmux-ide',['remote-daemon-info','--json'],{stdio:'inherit',env:{HOME:process.env.HOME,ZDOTDIR:process.env.ZDOTDIR,PATH:process.env.PATH}});c.on('error',()=>{process.exitCode=127;});c.on('exit',(code)=>{process.exitCode=code??1;});\n`,
+      `import{spawn}from'node:child_process';if(process.env.TMUX_IDE_D11_PRIVATE_SHELL!=='1'||process.env.SSH_ORIGINAL_COMMAND!==${JSON.stringify(remoteTmuxIdeCommand("discover"))}||process.env.HOME!==${JSON.stringify(join(root, "home"))}||process.env.ZDOTDIR!==${JSON.stringify(join(root, "home"))}||process.env.PATH!==${JSON.stringify(join(root, missingPath ? "empty" : "bin"))})process.exit(64);const c=spawn('tmux-ide',['remote-daemon-info','--json'],{stdio:'inherit',env:{HOME:process.env.HOME,ZDOTDIR:process.env.ZDOTDIR,PATH:process.env.PATH}});c.on('error',()=>{process.exitCode=127;});c.on('exit',(code)=>{process.exitCode=code??1;});\n`,
     );
+    await tool(node, ["--check", join(root, "bin/tmux-ide")]);
+    await tool(node, ["--check", join(root, "dispatch.mjs")]);
     stage = "configuration";
     const spec = { root, node, account, port: listenPort, targetPort, jump, missingPath };
     write("sshd_config", serverConfiguration(spec));

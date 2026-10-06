@@ -20,10 +20,13 @@ import {
   waitForReadinessLadder,
   type RunningDaemon,
   type StartupReadinessLadder,
-} from "./daemon.ts";
+} from "../../../../scripts/lib/product-fixtures/daemon.ts";
 import { startDevServer, type RunningDevServer } from "./dev-server.ts";
 import { attachPageDiagnostics, recordPageDiagnostics } from "./page-diagnostics.ts";
-import { createScratchFleet, type ScratchFleet } from "./scratch-fleet.ts";
+import {
+  createScratchFleet,
+  type ScratchFleet,
+} from "../../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { reportHarnessStalls, watchForHarnessStalls } from "./stall-watch.ts";
 
 export interface LiveApp {

@@ -20,6 +20,9 @@ function fail(message) {
   process.exit(1);
 }
 
+if (process.env.TMUX_IDE_WEB_RENDERER === "workspace")
+  fail("The experimental workspace renderer has been retired; unset TMUX_IDE_WEB_RENDERER.");
+
 let info;
 try {
   ({ candidate: info } = await ensureCanonicalDaemon({
@@ -38,10 +41,7 @@ const gateway = await startGenerationGateway(getCanonicalDaemonInfoPath(), {
   productVersion: info.productVersion,
   ...(info.environmentId ? { environmentId: info.environmentId } : {}),
 });
-const renderer =
-  process.env.TMUX_IDE_WEB_RENDERER === "workspace"
-    ? "@tmux-ide/web-workspace"
-    : "@tmux-ide/desktop-renderer";
+const renderer = "@tmux-ide/desktop-renderer";
 const child = spawn("pnpm", ["--filter", renderer, "dev"], {
   cwd: repoRoot,
   env: {

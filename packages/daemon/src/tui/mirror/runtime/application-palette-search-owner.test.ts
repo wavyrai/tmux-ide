@@ -13,6 +13,39 @@ import { PANE_ACTION_MENU_ITEMS } from "../workspace/pane-action-menu-model.ts";
 
 const key = (name: string) => ({ name, ctrl: false, meta: false, shift: false });
 describe("command discovery", () => {
+  it("does not filter closed catalogs and reopens with fresh results and reset selection", () =>
+    createRoot((dispose) => {
+      const [open, setOpen] = createSignal(false);
+      const [catalog, setCatalog] = createSignal<readonly ApplicationPaletteCommand[]>([
+        "home",
+        "terminals",
+      ]);
+      const commands = vi.fn(() => catalog());
+      const owner = createApplicationPaletteSearchOwner({
+        commands,
+        open,
+        activate: vi.fn(),
+        close: vi.fn(),
+        onChange: vi.fn(),
+      });
+      expect(commands).not.toHaveBeenCalled();
+      setCatalog(["home", "terminals", "help"]);
+      expect(commands).not.toHaveBeenCalled();
+      owner.reset(1);
+      expect(owner.commands()[owner.selection()]).toBe("terminals");
+      setOpen(true);
+      expect(owner.commands()).toEqual(["home", "terminals", "help"]);
+      expect(owner.commands()[owner.selection()]).toBe("terminals");
+      setOpen(false);
+      commands.mockClear();
+      setCatalog(["help", "home"]);
+      expect(commands).not.toHaveBeenCalled();
+      setOpen(true);
+      expect(owner.commands()).toEqual(["help", "home"]);
+      expect(owner.selection()).toBe(0);
+      dispose();
+    }));
+
   it("uses shared pane labels and collision-free session/agent identities", () => {
     for (const command of ["split-right", "split-down", "close-pane"] as const)
       expect(applicationCommandDescription(command).label).toBe(

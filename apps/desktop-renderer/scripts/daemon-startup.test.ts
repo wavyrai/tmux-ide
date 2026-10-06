@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import type { ScratchFleet } from "../e2e/fixtures/scratch-fleet.ts";
+import type { ScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 
 const owned = vi.hoisted(() => ({
   stop: vi.fn(),
@@ -9,12 +9,12 @@ vi.mock("node:child_process", () => ({
   execFile: (_file: unknown, _args: unknown, _options: unknown, callback: (error: null) => void) =>
     callback(null),
 }));
-vi.mock("../e2e/fixtures/harness-process.ts", () => ({
+vi.mock("../../../scripts/lib/product-fixtures/harness-process.ts", () => ({
   spawnHarnessChild: () => ({ child: { pid: 1234 }, output: () => "", stop: owned.stop }),
   pollUntil: owned.poll,
   processIsAlive: () => false,
 }));
-import { startDaemon } from "../e2e/fixtures/daemon.ts";
+import { startDaemon } from "../../../scripts/lib/product-fixtures/daemon.ts";
 
 const fleet = { environment: {}, daemonInfoDir: "/owned-fixture" } as ScratchFleet;
 beforeEach(() => {

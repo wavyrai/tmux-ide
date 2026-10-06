@@ -10,8 +10,8 @@
 import type { Page, TestInfo, WebSocket } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 
-import type { RunningDaemon } from "./daemon.ts";
-import type { ScratchFleet } from "./scratch-fleet.ts";
+import type { RunningDaemon } from "../../../../scripts/lib/product-fixtures/daemon.ts";
+import type { ScratchFleet } from "../../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 
 const ISSUE_PATH = "/api/v1/terminal/attachments/issue";
 const REDEEM_PATH = "/v1/terminal/attachments/redeem";

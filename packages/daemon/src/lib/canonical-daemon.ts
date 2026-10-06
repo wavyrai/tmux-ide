@@ -115,7 +115,12 @@ export type CanonicalDaemonInfoState =
     };
 
 export function getCanonicalDaemonInfoPath(): string {
-  return runtimeOwnedPath(join(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE));
+  const namespace = resolveRuntimeNamespace();
+  const path = join(namespace.daemonInfoDir, DAEMON_INFO_FILE);
+  // Resolution already validates ordinary and isolated namespaces. Only
+  // development adds a per-path containment check; do not resolve twice on
+  // every ordinary daemon read. Each call still resolves the current namespace.
+  return namespace.development ? runtimeOwnedPath(path) : path;
 }
 
 export function getCanonicalDaemonClaimPath(): string {
@@ -687,11 +692,48 @@ export function assertCanonicalDaemonSupervision(supervisionId: string): void {
 }
 
 /** Explicit installation only; startup never calls this to recreate a reservation. */
+/** Sanitized reservation guidance; never includes credentials or filesystem errors. */
+export class CanonicalDaemonReservationError extends Error {
+  constructor(message: string) {
+    super(`Supervisor reservation refused: ${message}`);
+    this.name = "CanonicalDaemonReservationError";
+  }
+}
+
+function reservationRefusal(
+  attempt: Exclude<CanonicalDaemonClaimAttempt, { status: "acquired" }>,
+): CanonicalDaemonReservationError {
+  if (attempt.status === "busy")
+    return new CanonicalDaemonReservationError(
+      `another lifecycle operation holds the namespace (PID ${attempt.owner.pid}). Wait for it to finish, then retry.`,
+    );
+  const state = inspectCanonicalDaemonInfo();
+  if (state.status === "valid")
+    return new CanonicalDaemonReservationError(
+      `the recorded ${state.info.supervisionId ? "supervised" : "unsupervised"} daemon (PID ${state.info.pid}) has not been released. Inspect it with tmux-ide daemon info --json, then stop it through its owning process or service before reserving.`,
+    );
+  if (state.status === "reserved")
+    return new CanonicalDaemonReservationError(
+      `this namespace is reserved for supervisor ${state.reservation.supervisionId}. Remove that service and release its reservation before assigning a different ID.`,
+    );
+  if (state.status === "invalid")
+    return new CanonicalDaemonReservationError(
+      `the namespace record cannot be trusted (${state.reason}). Run tmux-ide daemon info --json for diagnosis; repair ownership or permissions before retrying.`,
+    );
+  return new CanonicalDaemonReservationError(
+    "the namespace changed or its lifecycle claim is unavailable. Run tmux-ide daemon info --json, then retry after the owning operation finishes.",
+  );
+}
+
 export function reserveCanonicalDaemonSupervision(
   supervisionId: string,
 ): CanonicalDaemonReservation {
+  if (!DaemonSupervisionIdSchema.safeParse(supervisionId).success)
+    throw new CanonicalDaemonReservationError(
+      "use a 1–128 character ID starting with a letter or digit and containing only letters, digits, periods, underscores or hyphens.",
+    );
   const attempt = tryAcquireCanonicalDaemonClaim({ kind: "reserve", supervisionId });
-  if (attempt.status !== "acquired") throw new Error("Cannot reserve supervised daemon namespace");
+  if (attempt.status !== "acquired") throw reservationRefusal(attempt);
   const claim = attempt.claim;
   try {
     const before = inspectCanonicalDaemonInfo();

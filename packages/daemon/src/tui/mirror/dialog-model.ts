@@ -16,6 +16,8 @@
  * Rows span the box interior in x: [left+1, left+width-1).
  */
 import { fuzzyFilter } from "../team/fuzzy.ts";
+import { wrapText } from "./terminal-text.ts";
+export { wrapText } from "./terminal-text.ts";
 
 // ── Specs ────────────────────────────────────────────────────────────────────
 
@@ -174,38 +176,6 @@ export function dialogPos(
     left: Math.max(0, Math.floor((termW - width) / 2)),
     top: Math.max(1, Math.floor(termH / 6)),
   };
-}
-
-/** PURE — greedy word-wrap for the confirm body (never returns empty for
- *  non-empty text; words longer than the width hard-break). */
-export function wrapText(text: string, width: number): string[] {
-  if (width <= 0) return [text];
-  const out: string[] = [];
-  for (const para of text.split("\n")) {
-    let line = "";
-    for (const word of para.split(/\s+/).filter(Boolean)) {
-      if (line.length === 0) {
-        let w = word;
-        while (w.length > width) {
-          out.push(w.slice(0, width));
-          w = w.slice(width);
-        }
-        line = w;
-      } else if (line.length + 1 + word.length <= width) {
-        line += ` ${word}`;
-      } else {
-        out.push(line);
-        let w = word;
-        while (w.length > width) {
-          out.push(w.slice(0, width));
-          w = w.slice(width);
-        }
-        line = w;
-      }
-    }
-    if (line.length > 0 || para.length === 0) out.push(line);
-  }
-  return out.length > 0 ? out : [""];
 }
 
 /** PURE — the interior text width of the box (borders + 1-cell padding each side). */

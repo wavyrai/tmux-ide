@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { machineResourceKey } from "@tmux-ide/core";
 import {
   applicationMachineAuthorityManager,
@@ -69,7 +70,7 @@ export function createApplicationMachineAgents(options: {
   let started = false;
   const publish = () => {
     if (disposed) return;
-    snapshot = Object.freeze(
+    const next = Object.freeze(
       catalog.groups.map((group) => {
         const entry = entries.get(group.id);
         const current = !!entry && entry.binding === bindingFor(entry.handle);
@@ -95,6 +96,10 @@ export function createApplicationMachineAgents(options: {
         });
       }),
     );
+    // Fresh authority checks above still run on every observation. Identical
+    // presentation data must not invalidate the Home/sidebar/tab subscribers.
+    if (isDeepStrictEqual(snapshot, next)) return;
+    snapshot = next;
     for (const listener of listeners) {
       try {
         listener(snapshot);

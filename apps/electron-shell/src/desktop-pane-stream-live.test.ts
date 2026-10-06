@@ -11,7 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { WebSocket } from "ws";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 45_000, hookTimeout: 30_000 });
 import type { DesktopDaemonHostState } from "@tmux-ide/contracts";
@@ -68,14 +68,18 @@ function visibleTerminalText(value: string): string {
   return value.replace(ansiEscapeSequence, "");
 }
 
-async function waitUntil<T>(read: () => T | null, message: string, timeoutMs = 10_000): Promise<T> {
+async function waitUntil<T>(
+  read: () => T | null,
+  message: string | (() => string),
+  timeoutMs = 10_000,
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const value = read();
     if (value !== null) return value;
     await delay(25);
   }
-  throw new Error(message);
+  throw new Error(typeof message === "function" ? message() : message);
 }
 
 /** Browser-shaped socket over `ws`, auditing every frame that crosses the wire. */
@@ -279,6 +283,8 @@ describe
         createBroker: liveBrokerFactory,
       });
 
+      onTestFinished(() => coordinator.dispose());
+
       const transcript: WireRecord[] = [];
       const paneBytes = new Map<string, Buffer[]>([
         [PANE_ONE, []],
@@ -326,6 +332,9 @@ describe
           },
         },
       );
+      if (connection.status === "connected") {
+        onTestFinished(() => connection.session.dispose());
+      }
       expect(connection.status, JSON.stringify(connection)).toBe("connected");
 
       // Every leased pane seeds atomically before (or without) any delta.
@@ -379,7 +388,37 @@ describe
       runTmux(["kill-pane", "-t", `=${sessionName}:0.2`]);
       await waitUntil(
         () => (ends.length === 1 ? true : null),
-        "a killed pane must retire the exact-inventory stream",
+        () => {
+          let inventory: string;
+          try {
+            inventory = runTmux([
+              "list-panes",
+              "-t",
+              `=${sessionName}:0`,
+              "-F",
+              "#{pane_id} #{pane_index} #{@tmux_ide_pane_id} #{pane_dead}",
+            ]);
+          } catch {
+            inventory = "unavailable";
+          }
+          return (
+            "a killed pane must retire the exact-inventory stream: " +
+            JSON.stringify({
+              inventory,
+              ends,
+              daemon: [...children].map((child) => ({
+                pid: child.pid,
+                exitCode: child.exitCode,
+                signalCode: child.signalCode,
+              })),
+              wireTail: transcript.slice(-40),
+              paneEventTail: paneEvents.slice(-20),
+              receivedErrorCount: transcript.filter(
+                (record) => record.direction === "received" && record.type === "error",
+              ).length,
+            })
+          );
+        },
       );
       expect(ends).toEqual([
         expect.objectContaining({ code: "topology-changed", retryable: true }),
@@ -418,10 +457,5 @@ describe
       expect(
         transcript.filter((record) => record.direction === "sent" && record.type === "input"),
       ).toHaveLength(0);
-
-      if (connection.status === "connected") {
-        connection.session.dispose();
-      }
-      coordinator.dispose();
     });
   });

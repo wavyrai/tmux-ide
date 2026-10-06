@@ -14,7 +14,12 @@ The current product surface is deliberately narrow:
 - the minimal command palette
 
 The web and native desktop clients are future consumers of the daemon contract;
-they are not part of the 2.9 release cut.
+they are not part of the 2.9 release cut. The retained Solid desktop renderer
+provides browser-specific fixtures used by cross-client qualification. Shared daemon,
+private tmux fleet, process ownership, and retirement fixtures live in
+`scripts/lib/product-fixtures`, independent of renderer packages.
+The separate experimental React workspace client and its Electron launch variants
+have been retired; shared contracts and native ownership checks remain supported.
 
 ## Runtime shape
 
@@ -104,9 +109,10 @@ colors, duplicate input listeners, and direct renderer-side tmux mutation.
 - `packages/core` — reusable application/domain logic
 - `packages/daemon` — daemon, command center, tmux integration, and OpenTUI app
 - `packages/daemon-client` — typed client for daemon resources and actions
+- `packages/presentation` — renderer-neutral pane and workspace presentation models
 - `packages/sdk` — public programmatic API
 - `packages/tmux-bridge` — tmux protocol/process integration
-- `apps/electron-shell` and `app/` — future desktop work, outside the 2.9 product cut
+- `apps/desktop-renderer`, `apps/electron-shell` and `app/` — deferred desktop surfaces and retained cross-client qualification fixtures
 - `docs/` — marketing site and user documentation
 
 The SDK shares HTTP/retry behavior through the exported
@@ -117,6 +123,28 @@ bundles private workspace code and declarations; `test:pack` verifies the actual
 tarball with an isolated Node consumer, strict TypeScript and a browser bundle.
 Automation execution retries carry the same daemon-minted handle. Expiry or
 uncertainty never triggers a new reservation or a direct tmux fallback.
+
+## Where runtime changes belong
+
+Several entry points share the same owners. Keep their distinct lifecycle contracts
+when consolidating code; their filenames alone do not establish duplication.
+
+| Concern                                    | Owner and boundary                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Canonical daemon discovery and replacement | `lib/canonical-daemon.ts` validates the owner record; `lib/canonical-daemon-bootstrap.ts` authenticates identity, checks tmux intent and coordinates startup/replacement through the shipped CLI.                                                                                                           |
+| Daemon composition                         | `lib/daemon-embed.ts` composes the shared server for standalone and embedded consumers. `lib/embedded-daemon-lifecycle.ts` owns embedded lifetime; it is not a second discovery protocol.                                                                                                                   |
+| Remote connection                          | `lib/ssh-daemon-transport.ts` discovers and authenticates the remote owner and owns the tunnel. `lib/remote-daemon-lifecycle.ts` starts a remote daemon only for an explicit action; reconnect must not silently install or start one. Both use `lib/remote-tmux-command.ts` for the remote CLI invocation. |
+| Workspace configuration                    | `lib/project-resolver.ts` discovers the project; `lib/workspace-config-loader.ts` loads and validates the effective workspace file. `lib/legacy-config-adapter.ts` and `lib/legacy-config-migration.ts` retain the supported `ide.yml` boundary.                                                            |
+| Terminal geometry and delivery             | `terminal/mirror/session-channel.ts` reconciles tmux inventory and ordered notifications. Native capture and replica owners consume its qualified authority; renderers must not repair stale geometry by issuing their own tmux commands.                                                                   |
+| Renderer integration                       | `tui/mirror/runtime/` binds generation-bound clients, input and terminal delivery. Shared models belong in `core` or `presentation`; visible components belong in `ui/` or `workspace/`.                                                                                                                    |
+
+Paths in this table are relative to `packages/daemon/src`. Package import direction
+is enforced by `eslint.config.js`; the production-root graph test provides the
+stricter TUI boundary. `scripts/architecture-debt-inventory.mjs` inventories retained
+direct tmux, PTY and compatibility uses against `scripts/architecture-debt-budget.json`.
+These are migration candidates, not permission to remove public CLI or desktop
+qualification behavior. Trace callers and characterize behavior before moving an
+owner; splitting a large composition module by line count is not a release goal.
 
 ## Public daemon boundary
 

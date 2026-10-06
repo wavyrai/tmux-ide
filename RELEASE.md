@@ -59,6 +59,57 @@ For installer or native packaging changes, first run `release.yml` with
 prefix, including an upgrade and failed-download recovery. `pnpm test:installer`
 covers staged activation and failure preservation without touching real daemons.
 
+The native matrix also runs `node scripts/qualify-daemon-service.mjs <receipt.json>`
+against a packed candidate. It requires an available non-root launchd GUI or
+systemd user manager, installs into a temporary HOME, and verifies service
+installation, restart, removal, and preservation of an existing private tmux pane.
+It also atomically switches a stable launcher to a second copy of the packed
+candidate, verifies the restarted daemon's actual entry path, interrupts a restart
+after an intentionally failing launcher runs, and restores the working launcher
+to verify recovery. Activation alone must leave the current daemon running;
+cancellation and startup failure must retain service ownership and the pane PID.
+The receipt records before/after source identity, tracked and untracked changes,
+artifact hashes, recovery results, and cleanup; source drift, missing manager
+access, or unverified cleanup fails qualification. Run `pnpm build:cli` and build
+the current platform's bundled tmux first. This check covers service launcher
+activation, not the installer's download/verification transaction or compatibility
+between different product versions. CI enables lingering only for its disposable
+Linux runner.
+
+The Linux service qualification also starts a private transient systemd unit
+without a supervisor reservation. It runs current CLI code with deliberately
+older version metadata, then verifies that repeated public daemon-update attempts
+refuse retirement while preserving its PID, record and existing tmux pane. It
+stops the exact unit and verifies owner/record removal before the registered
+service journey. This proves real-manager ownership protection, not backward
+compatibility with a historical published binary.
+
+Qualification-only dispatches additionally run
+`node scripts/qualify-installer-service.mjs <new-evidence-directory>` on all four
+platforms. This uses the reviewed installer in an isolated HOME and a prefix
+containing spaces, with only `/usr/bin:/bin` on the installer's PATH. Apple Silicon
+uses published `2.9.0-beta.50` → `2.9.2` for cross-version coverage. The older
+package lacks native bundles for the other three platforms; those use two real
+`2.9.2` installations and additionally verify that attempting beta.50 fails
+without changing the active installation or daemon. The packed candidate controls
+the private service through its public CLI. The journey covers first install,
+upgrade without implicit daemon replacement, required installed doctor checks,
+failed-version preservation, explicit manager restart, rollback, roll-forward,
+service removal and uninstall while preserving the original tmux pane. After
+service removal it provisions the packed candidate into the managed layout and
+runs its public `update --json` command: failed script download must preserve the
+active release, successful update must retain rollback, and rollback must restore
+the candidate CLI byte-for-byte. Only the canonical installer URL is substituted
+with the reviewed script; runtime downloads remain real. This verifies the update
+command, not live website deployment or a fresh candidate installation. Receipts
+distinguish the candidate controller from downloaded published runtimes and
+record source, artifact, process and cleanup identities. Receipts explicitly mark
+whether cross-version coverage was exercised. Same-version reinstall coverage
+cannot close the cross-version requirement on Linux or Intel Mac. Neither
+journey substitutes for installing the unpublished candidate or running its TUI.
+It requires network access and an existing user manager, and never changes
+production services or login lingering.
+
 ## Post-release
 
 1. Install from npm in an empty user environment.

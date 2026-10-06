@@ -1,5 +1,5 @@
 #!/bin/sh
-# curl -fsSL https://tmux.thijsverreck.com/install.sh | sh
+# curl -fsSL https://tmux-ide.com/install.sh | sh
 set -eu
 fail() { printf 'tmux-ide: %s\n' "$*" >&2; exit 1; }
 fetch() { curl -fLsS --retry 3 --connect-timeout 15 --max-time 180 "$1" -o "$2"; }
@@ -7,6 +7,8 @@ digest() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{print $1}'
 }
 main() {
+  action=install
+  confirmed=false
   version=latest
   prefix=${TMUX_IDE_INSTALL_PREFIX:-"$HOME/.local"}
   while [ "$#" -gt 0 ]; do
@@ -15,20 +17,16 @@ main() {
         [ "$#" -ge 2 ] || fail "$1 requires a value"
         case "$1" in --version) version=$2 ;; --prefix) prefix=$2 ;; esac
         shift 2 ;;
-      --help) printf 'Usage: install.sh [--version VERSION|beta|latest] [--prefix ABSOLUTE_PATH]\n'; return ;;
+      --rollback|--uninstall|--prune) [ "$action" = install ] || fail 'Choose one action'; action=${1#--}; shift ;;
+      --yes) confirmed=true; shift ;;
+      --help) printf 'Usage: install.sh [--version VERSION|beta|latest] [--prefix ABSOLUTE_PATH] [--rollback|--uninstall|--prune --yes]\nPrune requires all tmux-ide processes and services to be stopped; it keeps current and previous releases.\nRollback needs a previous successful install. Uninstall removes the launcher, preserves sessions and data, and retains runtime files for running processes.\n'; return ;;
       *) fail "Unknown option: $1" ;;
     esac
   done
+  [ "$confirmed" = false ] || [ "$action" = prune ] || fail '--yes is only valid with --prune'
+  [ "$action" != prune ] || [ "$confirmed" = true ] || fail 'Prune requires --yes after stopping all tmux-ide processes and services; ordinary tmux sessions may remain running'
   case "$prefix" in /*) ;; *) fail 'Install prefix must be absolute' ;; esac
   case "$version" in ''|*[!a-zA-Z0-9.+-]*) fail 'Invalid version or channel' ;; esac
-  case "$(uname -s)" in
-    Darwin) os=darwin ;;
-    Linux) os=linux; getconf GNU_LIBC_VERSION >/dev/null 2>&1 || fail 'Linux requires glibc (musl/Alpine is not supported)' ;;
-    *) fail 'Supported systems: macOS and glibc Linux, including supported WSL distributions' ;;
-  esac
-  case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=x64 ;; *) fail 'Supported architectures: ARM64 and x64' ;; esac
-  for tool in curl tar gzip awk mktemp grep; do command -v "$tool" >/dev/null 2>&1 || fail "Missing required tool: $tool"; done
-  command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail 'A SHA-256 tool is required'
   root="$prefix/share/tmux-ide"
   launcher="$prefix/bin/tmux-ide"
   if [ -e "$launcher" ] || [ -L "$launcher" ]; then
@@ -37,16 +35,97 @@ main() {
   mkdir -p "$root/releases" "$prefix/bin"
   mkdir "$root/install.lock" 2>/dev/null || fail "Another installation is running (lock: $root/install.lock)"
   stage=''
-  trap '[ -z "$stage" ] || rm -rf "$stage"; rmdir "$root/install.lock" 2>/dev/null || true' 0
+  candidate=''
+  trap '[ -z "$stage" ] || rm -rf "$stage"; if [ -n "$candidate" ] && [ ! "$candidate" -ef "$root/current" ] && [ ! "$candidate" -ef "$root/previous" ]; then rm -rf "$candidate"; fi; rmdir "$root/install.lock" 2>/dev/null || true' 0
   trap 'exit 1' INT TERM
+  if [ "$action" != install ]; then
+    [ -f "$root/installer-v1" ] || fail 'No managed installation found at this prefix'
+    [ -x "$root/current/node/bin/node" ] || fail 'Installed Node.js is unavailable; reinstall at this prefix to repair it'
+    "$root/current/node/bin/node" --input-type=module - "$root" "$launcher" "$action" <<'JS'
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+const [root, launcher, action] = process.argv.slice(2);
+const current = path.join(root, 'current');
+const previous = path.join(root, 'previous');
+const unlink = file => { try { fs.unlinkSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; } };
+const release = link => {
+  const target = fs.realpathSync(link);
+  if (path.dirname(target) !== fs.realpathSync(path.join(root, 'releases')) || !path.basename(target).startsWith('install-'))
+    throw new Error('Refusing to use a release outside this managed installation');
+  return target;
+};
+const switchLink = (target, link) => {
+  const temporary = `${link}.next`;
+  unlink(temporary);
+  fs.symlinkSync(target, temporary);
+  fs.renameSync(temporary, link);
+};
+if (action === 'rollback') {
+  const active = release(current);
+  let target;
+  try { target = release(previous); } catch { throw new Error('No valid previous release is available for rollback'); }
+  const pkg = path.join(target, 'npm/lib/node_modules/tmux-ide');
+  const version = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8')).version;
+  const actual = execFileSync(path.join(target, 'node/bin/node'), [path.join(pkg, 'bin/cli.js'), '--version'], {encoding: 'utf8', timeout: 30000}).trim();
+  if (actual !== `tmux-ide v${version}`) throw new Error('Previous release failed its version check; current installation unchanged');
+  switchLink(target, current);
+  try { switchLink(active, previous); } catch (error) { switchLink(active, current); throw error; }
+  console.log(`Rolled back to ${version}. Existing sessions are preserved. Reopen tmux-ide to use this release.`);
+} else if (action === 'prune') {
+  const keep = new Set([release(current)]);
+  try { keep.add(release(previous)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  let removed = 0;
+  for (const entry of fs.readdirSync(path.join(root, 'releases'), {withFileTypes: true})) {
+    if (!entry.isDirectory() || !/^install-[A-Za-z0-9]{6}$/.test(entry.name)) continue;
+    const target = path.join(root, 'releases', entry.name);
+    if (keep.has(fs.realpathSync(target))) continue;
+    const marker = path.join(target, '.installer-release-v1');
+    try {
+      if (!fs.lstatSync(marker).isFile() || fs.readFileSync(marker, 'utf8') !== '1\n') continue;
+    } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    fs.rmSync(target, {recursive: true});
+    removed++;
+  }
+  console.log(`Removed ${removed} retired releases; current, rollback and unrecognized files are preserved.`);
+} else {
+  release(current);
+  fs.unlinkSync(launcher);
+  fs.unlinkSync(current);
+  unlink(previous);
+  fs.unlinkSync(path.join(root, 'installer-v1'));
+  console.log(`Uninstalled the launcher. Sessions, settings and runtime files are preserved. After all tmux-ide processes have exited, you may remove ${path.join(root, 'releases')}.`);
+}
+JS
+    return
+  fi
+  # Bound disk growth without guessing which old runtime a live process uses.
+  # Cleanup is explicit because unlinking a loaded runtime can break later I/O.
+  retained=0
+  for retained_release in "$root"/releases/install-*; do
+    [ -d "$retained_release" ] && [ ! -L "$retained_release" ] && [ -f "$retained_release/.installer-release-v1" ] || continue
+    retained=$((retained + 1))
+  done
+  [ "$retained" -lt 8 ] || fail 'Eight retained releases reached. Stop tmux-ide processes and services, then rerun this script with the same --prefix and --prune --yes. Ordinary tmux sessions may remain running.'
+  case "$(uname -s)" in
+    Darwin) os=darwin ;;
+    Linux) os=linux; getconf GNU_LIBC_VERSION >/dev/null 2>&1 || fail 'Linux requires glibc (musl/Alpine is not supported)' ;;
+    *) fail 'Supported systems: macOS and glibc Linux, including supported WSL distributions' ;;
+  esac
+  case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=x64 ;; *) fail 'Supported architectures: ARM64 and x64' ;; esac
+  for tool in curl tar gzip awk mktemp grep; do command -v "$tool" >/dev/null 2>&1 || fail "Missing required tool: $tool"; done
+  command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail 'A SHA-256 tool is required'
   stage=$(mktemp -d "$root/releases/.install.XXXXXX")
+  candidate="$root/releases/install-${stage##*.install.}"
   printf 'Installing tmux-ide@%s for %s-%s…\n' "$version" "$os" "$arch"
   fetch https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt "$stage/SHASUMS256.txt"
   archive=$(awk -v suffix="-$os-$arch.tar.gz" '$2 ~ /^node-v24\.[0-9]+\.[0-9]+-/ && substr($2,length($2)-length(suffix)+1)==suffix {print $2}' "$stage/SHASUMS256.txt")
   case "$archive" in ''|*[!a-zA-Z0-9.-]*) fail 'Could not resolve an official Node.js archive' ;; esac
   expected=$(awk -v file="$archive" '$2==file {print $1}' "$stage/SHASUMS256.txt")
   [ "${#expected}" -eq 64 ] || fail 'Invalid Node.js checksum manifest'
-  fetch "https://nodejs.org/dist/latest-v24.x/$archive" "$stage/node.tar.gz"
+  node_version=${archive#node-}
+  node_version=${node_version%%-*}
+  fetch "https://nodejs.org/dist/$node_version/$archive" "$stage/node.tar.gz"
   [ "$(digest "$stage/node.tar.gz")" = "$expected" ] || fail 'Node.js checksum mismatch'
   mkdir "$stage/node"
   tar -xzf "$stage/node.tar.gz" --strip-components=1 -C "$stage/node"
@@ -63,7 +142,19 @@ main() {
   node --input-type=module - "$(dirname "$native")/manifest.json" <<'JS'
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const bundle = path.dirname(process.argv[2]);
+if (manifest.platform !== process.platform || manifest.arch !== process.arch || !manifest.files?.tmux)
+  throw new Error('Bundled tmux platform or checksum manifest is invalid');
+for (const [file, expected] of Object.entries(manifest.files)) {
+  const target = path.resolve(bundle, file);
+  if (!target.startsWith(bundle + path.sep) || !fs.realpathSync(target).startsWith(fs.realpathSync(bundle) + path.sep) || !/^[a-f0-9]{64}$/.test(expected))
+    throw new Error('Invalid bundled tmux file manifest');
+  const actual = createHash('sha256').update(fs.readFileSync(target)).digest('hex');
+  if (actual !== expected) throw new Error(`Bundled tmux checksum mismatch: ${file}`);
+}
 const mac = process.platform === 'darwin';
 const minimum = mac ? manifest.minimumMacOS : manifest.minimumGlibc;
 const current = mac
@@ -88,24 +179,64 @@ JS
   node --input-type=module - "$root" "$prefix" "$stage" <<'JS'
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 const [root, prefix, stage] = process.argv.slice(2);
 const destination = path.join(root, 'releases', path.basename(stage).replace('.install.', 'install-'));
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 const launcher = `#!/bin/sh\n# tmux-ide universal installer v1\nroot=${quote(root)}\nexport PATH="$root/current/node/bin:$PATH"\nexport npm_config_prefix="$root/current/npm"\nexec "$root/current/node/bin/node" "$root/current/npm/lib/node_modules/tmux-ide/bin/cli.js" "$@"\n`;
+const current = path.join(root, 'current');
+const previous = path.join(root, 'previous');
+const unlink = file => { try { fs.unlinkSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; } };
+const marker = path.join(root, 'installer-v1');
+const launcherPath = path.join(prefix, 'bin', 'tmux-ide');
 const temporaryLauncher = path.join(prefix, 'bin', '.tmux-ide-install');
-fs.writeFileSync(temporaryLauncher, launcher, {mode: 0o755});
-fs.renameSync(stage, destination);
 const next = path.join(root, 'current.next');
-try { fs.unlinkSync(next); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-fs.symlinkSync(destination, next);
-fs.renameSync(next, path.join(root, 'current'));
-fs.renameSync(temporaryLauncher, path.join(prefix, 'bin', 'tmux-ide'));
-fs.writeFileSync(path.join(root, 'installer-v1'), '1\n');
-console.log(`Add this to your shell profile if needed:\n  export PATH=${quote(path.join(prefix, 'bin'))}:"$PATH"`);
+const readLink = file => { try { return fs.readlinkSync(file); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
+const oldCurrent = readLink(current), oldPrevious = readLink(previous);
+const oldLauncher = fs.existsSync(launcherPath) ? fs.readFileSync(launcherPath) : null;
+const oldMarker = fs.existsSync(marker);
+const replaceLink = (target, link) => {
+  const temporary = `${link}.next`;
+  unlink(temporary);
+  if (target === null) unlink(link);
+  else { fs.symlinkSync(target, temporary); fs.renameSync(temporary, link); }
+};
+let activated = false;
+try {
+  fs.renameSync(stage, destination);
+  const node = path.join(destination, 'node/bin/node');
+  const pkg = path.join(destination, 'npm/lib/node_modules/tmux-ide');
+  const version = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8')).version;
+  const env = {...process.env, PATH: `${path.join(destination, 'node/bin')}:${process.env.PATH}`, npm_config_global: 'false', npm_config_prefix: path.join(destination, 'npm')};
+  // Complete package setup at its final path before switching the active release.
+  // Global host integration and daemon upgrades are explicit follow-up actions.
+  execFileSync(node, [path.join(pkg, 'scripts/postinstall.js')], {env, stdio: 'inherit', timeout: 60000});
+  const actual = execFileSync(node, [path.join(pkg, 'bin/cli.js'), '--version'], {env, encoding: 'utf8', timeout: 30000}).trim();
+  if (actual !== `tmux-ide v${version}`) throw new Error('Relocated CLI failed its version check');
+  fs.writeFileSync(path.join(destination, '.installer-release-v1'), '1\n', {mode: 0o600, flag: 'wx'});
+  fs.writeFileSync(temporaryLauncher, launcher, {mode: 0o755});
+  fs.writeFileSync(marker, '1\n');
+  if (oldCurrent) replaceLink(oldCurrent, previous);
+  replaceLink(destination, current);
+  activated = true;
+  fs.renameSync(temporaryLauncher, launcherPath);
+} catch (error) {
+  if (activated) replaceLink(oldCurrent, current);
+  replaceLink(oldPrevious, previous);
+  if (!oldMarker) unlink(marker);
+  if (oldLauncher) fs.writeFileSync(launcherPath, oldLauncher, {mode: 0o755});
+  else unlink(launcherPath);
+  fs.rmSync(destination, {recursive: true, force: true});
+  throw error;
+} finally {
+  unlink(temporaryLauncher);
+  unlink(next);
+}
+console.log(`\nInstalled successfully.\n\nStart now:\n  ${quote(launcherPath)} app\n\nUpdate later:\n  ${quote(launcherPath)} update`);
+console.log(`\nTo use the short command in sh, bash or zsh, run:\n  export PATH=${quote(path.join(prefix, 'bin'))}:"$PATH"\nAdd that line to your shell profile to keep it for new terminals.`);
+console.log(`\nExisting tmux sessions are preserved. Reopen any running tmux-ide UI.\nTo update a running daemon explicitly:\n  ${quote(launcherPath)} update --daemon --if-running`);
 JS
   export PATH="$root/current/node/bin:$PATH"
-  npm_config_global=true node "$root/current/npm/lib/node_modules/tmux-ide/scripts/postinstall.js"
   "$launcher" --version
-  printf '\nInstalled. Start with: %s\nExisting tmux sessions are preserved. Reopen any running tmux-ide UI.\n' "$launcher"
 }
 main "$@"

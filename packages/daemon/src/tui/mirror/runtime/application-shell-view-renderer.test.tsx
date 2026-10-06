@@ -1440,16 +1440,15 @@ describe("production ApplicationShellView", () => {
     measuredStage = "rename";
     const renamedB = { ...activeB, windowName: "renamed-beta" };
     setLayout({ current: renamedB, windows: [inactiveA, renamedB] });
-    // Content-sized tabs need one geometry frame and one painted-text frame when
-    // a rename changes the tab's natural width. The retained terminal owners do
-    // not remount or blit during either frame.
-    await waitForMeasuredFrame(4);
-    await expectQuiet(4);
+    // A content-sized rename is fully painted in its first frame. Layout
+    // callbacks must not schedule a second identical frame after it settles.
+    await waitForMeasuredFrame(3);
+    await expectQuiet(3);
     expect(setup.captureCharFrame()).toContain("renamed-beta");
     expect(tracked.blits).toEqual([]);
     expect(tracked.lifecycle.subscriptions).toBe(2);
     expect(tracked.lifecycle.unsubscriptions).toBe(0);
-    expect(measuredFrameStages).toEqual(["warm-a", "warm-b", "rename", "rename"]);
+    expect(measuredFrameStages).toEqual(["warm-a", "warm-b", "rename"]);
     setup.renderer.off("frame", onMeasuredFrame);
     // Motion may paint chrome frames, but must not reblit or remount terminals.
     setTheme(createSemanticThemeSnapshot({ mode: "dark" }));
@@ -1639,6 +1638,60 @@ describe("production ApplicationShellView", () => {
     await setup.renderOnce();
     expect(second.lifecycle.unsubscriptions).toBe(1);
     expect(setup.captureCharFrame()).not.toContain("CANONICAL-CELL");
+    setup.renderer.destroy();
+  });
+
+  it("shares grouped sidebar reads across rows and sizing while rendering catalog changes", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const canonical = semantic();
+    let groupReads = 0;
+    const [groupLabel, setGroupLabel] = createSignal("Before replacement");
+    const legacyOpens: string[] = [];
+    const surfaces: string[] = [];
+    const setup = await renderForTest(
+      () => (
+        <ApplicationShellView
+          dimensions={() => ({ width: 120, height: 40 })}
+          surface={() => "terminals"}
+          semantic={() => canonical}
+          generationStatus={() => "live"}
+          sessions={["main", "website"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => null}
+          layout={() => ({ current: null, windows: [] })}
+          focusedPane={() => null}
+          theme={theme}
+          palette={createTerminalPaletteProjection(theme)}
+          onOpenSurface={(name) => surfaces.push(name)}
+          onOpenSession={(name) => legacyOpens.push(name)}
+          onSetPaletteOpen={() => {}}
+          onSelectPane={() => {}}
+          onResizePreview={() => {}}
+          onResizePane={() => {}}
+          machineSidebar={{
+            groups: () => {
+              groupReads++;
+              return [{ id: "remote", label: groupLabel(), state: "ready" as const, sessions: [] }];
+            },
+            activeMachineId: () => "remote",
+            activeSessionName: () => null,
+            onOpen: () => {},
+            onSelectMachine: () => {},
+          }}
+        />
+      ),
+      { width: 120, height: 40 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Before replacement");
+    expect(groupReads).toBe(1);
+    setGroupLabel("After replacement");
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("After replacement");
+    expect(setup.captureCharFrame()).not.toContain("Before replacement");
+    expect(groupReads).toBe(2);
     setup.renderer.destroy();
   });
 

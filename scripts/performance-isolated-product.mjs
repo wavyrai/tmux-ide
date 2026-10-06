@@ -6,8 +6,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createScratchFleet } from "../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
-import { startDaemon } from "../apps/desktop-renderer/e2e/fixtures/daemon.ts";
+import { createScratchFleet } from "./lib/product-fixtures/scratch-fleet.ts";
+import { startDaemon } from "./lib/product-fixtures/daemon.ts";
 import { createPackedCancellation } from "./lib/packed-cancellation.mjs";
 import { prepareStartupDiagnostic } from "./lib/startup-launch-diagnostic.mjs";
 

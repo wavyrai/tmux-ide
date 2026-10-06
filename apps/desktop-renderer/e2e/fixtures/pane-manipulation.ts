@@ -13,7 +13,7 @@ import { writeFile } from "node:fs/promises";
 
 import type { Page, TestInfo } from "@playwright/test";
 
-import type { ScratchFleet } from "./scratch-fleet.ts";
+import type { ScratchFleet } from "../../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 
 export const MANIPULATION_PHASES = [
   "idle",

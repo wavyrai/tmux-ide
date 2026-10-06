@@ -1,4 +1,4 @@
-import { type CanonicalDaemonInfo } from "@tmux-ide/contracts";
+import { DAEMON_WIRE_PROTOCOL_VERSION, type CanonicalDaemonInfo } from "@tmux-ide/contracts";
 import {
   canonicalDaemonUrl,
   isCanonicalDaemonAlive,
@@ -35,9 +35,9 @@ export async function readRemoteDaemonHandshake(
       "daemon-missing",
     );
   const parsed = RemoteDaemonHandshakeSchema.safeParse({ version: 1, daemon: info });
-  if (!parsed.success)
+  if (!parsed.success || info.protocolVersion !== DAEMON_WIRE_PROTOCOL_VERSION)
     throw new RemoteDaemonInfoError(
-      "The daemon does not support authenticated SSH discovery.",
+      "The daemon does not support this authenticated SSH discovery protocol.",
       "incompatible",
     );
   try {

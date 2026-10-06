@@ -9,8 +9,9 @@ import {
   renameSync,
   unlinkSync,
   writeFileSync,
+  watch,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { SavedMachineRegistrySchema, type SavedMachineRegistry } from "@tmux-ide/contracts";
 import { changeSavedMachines, type SavedMachineChange } from "@tmux-ide/core";
 import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
@@ -36,6 +37,44 @@ export function loadSavedMachines(path = savedMachinesPath()): SavedMachineRegis
   } finally {
     closeSync(fd);
   }
+}
+
+/** Watch the directory so atomic registry replacement does not detach the watcher. */
+export function watchSavedMachines(
+  onChange: (registry: SavedMachineRegistry) => void,
+  onError: () => void,
+  path = savedMachinesPath(),
+): () => void {
+  let stopped = false;
+  let pending: ReturnType<typeof setTimeout> | null = null;
+  const refresh = () => {
+    pending = null;
+    if (stopped) return;
+    try {
+      onChange(loadSavedMachines(path));
+    } catch {
+      // Keep the last valid routes while an editor is midway through a write.
+      onError();
+    }
+  };
+  // A first-run app can subscribe before the daemon creates its registry.
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const watcher = watch(dirname(path), (_event, file) => {
+    if (stopped || (file !== null && file.toString() !== basename(path))) return;
+    if (pending) clearTimeout(pending);
+    pending = setTimeout(refresh, 50);
+    pending.unref();
+  });
+  watcher.unref();
+  watcher.on("error", onError);
+  // Close the read-before-subscribe race at startup.
+  pending = setTimeout(refresh, 0);
+  pending.unref();
+  return () => {
+    stopped = true;
+    if (pending) clearTimeout(pending);
+    watcher.close();
+  };
 }
 
 /** The daemon owns writes. Synchronous read/reduce/rename cannot interleave within it. */

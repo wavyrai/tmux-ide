@@ -130,6 +130,10 @@ describe("renderPlan version gating", () => {
 
 it("keeps unsupported and ambiguous layouts manual", () => {
   for (const [path, origin] of [
+    [
+      "/home/user/.local/share/tmux-ide/releases/install-abc/npm/lib/node_modules/tmux-ide/bin",
+      "installer",
+    ],
     ["/opt/homebrew/Cellar/tmux-ide/3.0.0/libexec/lib/node_modules/tmux-ide/bin", "homebrew"],
     ["/home/user/.npm/_npx/123/node_modules/tmux-ide/bin", "npx"],
     ["/home/user/.config/yarn/global/node_modules/tmux-ide/bin", "yarn"],

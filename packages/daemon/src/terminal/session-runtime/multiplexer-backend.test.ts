@@ -129,6 +129,7 @@ function rig() {
   );
   const registry = {
     generation: GENERATION,
+    verifyWindowOwnership: vi.fn(async () => {}),
     connect,
     createExecutionHandle: vi.fn(
       (_consumer, _controllerLease, allowedSourcePaneIds: readonly string[]) => {
@@ -193,6 +194,31 @@ function rig() {
 }
 
 describe("createSessionRuntimeMultiplexerBackend", () => {
+  it("waits for pending ownership proof before acquiring an owner controller", async () => {
+    const h = rig();
+    let ready!: () => void;
+    vi.mocked(h.registry.verifyWindowOwnership).mockReturnValue(
+      new Promise<void>((resolve) => {
+        ready = resolve;
+      }),
+    );
+    const result = h.backend.mutate(
+      request({
+        verb: "workspace.pane.resize",
+        workspaceName: "alpha",
+        semanticPaneId: "pane.alpha",
+        axis: "cols",
+        cells: 80,
+      }),
+      undefined,
+      undefined,
+      true,
+    );
+    expect(h.acquireController).not.toHaveBeenCalled();
+    ready();
+    await result;
+    expect(h.acquireController).toHaveBeenCalledOnce();
+  });
   it("shares one bounded owner for concurrent same-operation retries", async () => {
     const h = rig();
     const mutation = request({

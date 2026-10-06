@@ -208,7 +208,18 @@ const cyan = (s: string) => (noColor ? s : `\x1b[36m${s}\x1b[39m`);
 const dim = (s: string) => (noColor ? s : `\x1b[2m${s}\x1b[22m`);
 
 if (values.help && command !== "automation") {
-  printHelp();
+  if (
+    command === "daemon" &&
+    ["reserve-supervisor", "release-supervisor"].includes(positionals[1] ?? "")
+  ) {
+    const release = positionals[1] === "release-supervisor";
+    console.log(`Usage: tmux-ide daemon ${release ? "release-supervisor <id> --yes" : "reserve-supervisor <id>"} [--json]
+
+${release ? "Release the exact supervisor reservation after removing its service and stopping its owners." : "Reserve the current daemon namespace for an external supervisor after stopping its existing owner."}
+IDs: 1–128 characters; start with a letter or digit, then letters, digits, periods, underscores or hyphens.
+Inspect ownership: tmux-ide daemon info --json
+Managed service setup: tmux-ide daemon service install <absolute-stable-launcher>`);
+  } else printHelp();
   process.exit(0);
 }
 
@@ -226,6 +237,8 @@ ${bold("Usage:")}
   ${cyan("tmux-ide init")} [--template]  ${dim("Scaffold .tmux-ide/workspace.yml (auto-detects stack)")}
   ${cyan("tmux-ide stop")}               ${dim("Kill the current IDE session")}
   ${cyan("tmux-ide daemon reserve-supervisor <id>")} ${dim("Reserve this namespace before installing a supervisor")}
+  ${cyan("tmux-ide daemon service install <absolute-launcher>")} ${dim("Install an opt-in user service using a stable CLI launcher")}
+  ${cyan("tmux-ide daemon service <status|restart|remove>")} ${dim("Manage the owned user service; remove requires --yes")}
   ${cyan("tmux-ide daemon release-supervisor <id> --yes")} ${dim("Release after removing the stopped service")}
   ${cyan("tmux-ide daemon restart")}     ${dim("Reset the daemon runtime; preserve its process and tmux sessions")}
   ${cyan("tmux-ide daemon info")} [--json] ${dim("Daemon identity, supervisor and actual log destination (credential-free)")}
@@ -275,6 +288,8 @@ ${bold("Usage:")}
   ${cyan("tmux-ide servers create <id>")} --session-name NAME [--dir PATH] [--ssh HOST] [--json]
   ${cyan("tmux-ide servers add")} --socket-name NAME|--socket-path /PATH [--name LABEL] [--ssh HOST]
   ${cyan("tmux-ide machines")} ls|export|import <file>|add <alias> [--write] [--json]
+  ${cyan("tmux-ide machines")} edit <id-or-label> [--name <label>] [--ssh <alias>] [--write]
+  ${cyan("tmux-ide machines")} enable|disable|remove <id-or-label> [--write] [--json]
   ${cyan("tmux-ide machines start <alias> --write")} ${dim("Start the installed remote daemon explicitly")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
   ${cyan("tmux-ide update --daemon")}     ${dim("Upgrade the local daemon while preserving tmux sessions")}
@@ -704,8 +719,11 @@ try {
     });
   if (values.supervised !== undefined && !values.headless)
     throw new IdeError("--supervised requires --headless", { code: "USAGE", exitCode: 2 });
-  if (values.ssh !== undefined && (!["app", "servers"].includes(command ?? "") || values.headless))
-    throw new IdeError("--ssh is supported only by tmux-ide app or servers", {
+  const acceptsSshTarget =
+    ["app", "servers"].includes(command ?? "") ||
+    (command === "machines" && positionals[1] === "edit");
+  if (values.ssh !== undefined && (!acceptsSshTarget || values.headless))
+    throw new IdeError("--ssh is supported only by tmux-ide app, servers or machines edit", {
       code: "USAGE",
       exitCode: 2,
     });
@@ -837,6 +855,26 @@ try {
       break;
 
     case "daemon": {
+      if (positionals[1] === "service") {
+        const action = positionals[2];
+        if (
+          !["install", "status", "restart", "remove"].includes(action ?? "") ||
+          positionals.length !== (action === "install" ? 4 : 3) ||
+          (action === "remove" && values.yes !== true)
+        )
+          throw new IdeError(
+            "Usage: tmux-ide daemon service install <absolute-stable-launcher> | status | restart | remove --yes [--json]",
+            { code: "USAGE", exitCode: 2 },
+          );
+        const { manageDaemonService } =
+          await import("../packages/daemon/src/lib/daemon-service.ts");
+        const result = await manageDaemonService(
+          action as "install" | "status" | "restart" | "remove",
+          positionals[3],
+        );
+        console.log(json ? JSON.stringify(result) : `Daemon service: ${result.status}`);
+        break;
+      }
       if (positionals[1] === "reserve-supervisor" || positionals[1] === "release-supervisor") {
         const release = positionals[1] === "release-supervisor";
         if (positionals.length !== 3 || (release && values.yes !== true))
@@ -844,16 +882,21 @@ try {
             "Usage: tmux-ide daemon reserve-supervisor <id> [--json] | daemon release-supervisor <id> --yes [--json]",
             { code: "USAGE", exitCode: 2 },
           );
-        const { reserveCanonicalDaemonSupervision, releaseCanonicalDaemonSupervision } =
-          await import("../packages/daemon/src/lib/canonical-daemon.ts");
+        const {
+          reserveCanonicalDaemonSupervision,
+          releaseCanonicalDaemonSupervision,
+          CanonicalDaemonReservationError,
+        } = await import("../packages/daemon/src/lib/canonical-daemon.ts");
         try {
           if (release) releaseCanonicalDaemonSupervision(positionals[2]!);
           else reserveCanonicalDaemonSupervision(positionals[2]!);
-        } catch {
+        } catch (error) {
           throw new IdeError(
-            release
-              ? "Supervisor release refused: remove the service first and verify its exact ID and stopped owners."
-              : "Supervisor reservation refused: use a valid ID and a private namespace without a live or unknown owner.",
+            error instanceof CanonicalDaemonReservationError
+              ? error.message
+              : release
+                ? "Supervisor release refused: remove the service first and verify its exact ID and stopped owners."
+                : "Supervisor reservation refused: use a valid ID and a private namespace without a live or unknown owner.",
             { code: "DAEMON_SUPERVISION_REFUSED", exitCode: 1 },
           );
         }
@@ -957,10 +1000,16 @@ try {
     }
 
     case "machines": {
+      if (positionals[1] === "edit" && (values.ssh?.length ?? 0) > 1)
+        throw new IdeError("Machine edits accept one --ssh target.", {
+          code: "USAGE",
+          exitCode: 2,
+        });
       const { machines } = await import("../packages/daemon/src/machines.ts");
       const result = await machines(positionals[1], positionals[2], {
         write: values.write === true,
         label: typeof values.name === "string" ? values.name : undefined,
+        sshTarget: values.ssh?.[0],
       });
       process.stdout.write(`${JSON.stringify(result, null, json ? undefined : 2)}\n`);
       break;

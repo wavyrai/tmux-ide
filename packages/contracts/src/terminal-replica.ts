@@ -13,7 +13,7 @@ export type TerminalReplicaCellAttributes = z.infer<typeof TerminalReplicaCellAt
 export const TerminalReplicaCellSchemaZ = z
   .object({
     grapheme: z.string(),
-    width: z.union([z.literal(0), z.literal(1), z.literal(2)]),
+    width: z.literal([0, 1, 2]),
     foreground: TerminalReplicaColorSchemaZ,
     background: TerminalReplicaColorSchemaZ,
     attributes: TerminalReplicaCellAttributesSchemaZ,

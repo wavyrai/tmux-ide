@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   daemonPortRefusesConnections,
   verifyDaemonRetirement,
-} from "../e2e/fixtures/daemon-retirement.ts";
+} from "../../../scripts/lib/product-fixtures/daemon-retirement.ts";
 
 afterEach(() => vi.restoreAllMocks());
 const identity = { instanceId: "11111111-1111-4111-8111-111111111111", pid: 12345, port: 12345 };

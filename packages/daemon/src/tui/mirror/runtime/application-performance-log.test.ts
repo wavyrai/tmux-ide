@@ -31,6 +31,11 @@ it.each([false, true])(
     logger.markGenerationStatus({ status: "connecting", daemonGeneration: null });
     logger.tuiPerfMark("generation-runtime-fault", { message: "connection closed" });
     logger.tuiPerfMark("generation-runtime-progress", { runtimePhase: "coherent" });
+    logger.tuiPerfMark("machine-connection-status", {
+      status: "retrying",
+      failureCode: "daemon-missing",
+    });
+    logger.tuiPerfMark("machine-registry-error", { reason: "registry-unavailable-or-invalid" });
     for (const phase of [
       "renderer-frame",
       "terminal-wheel-route",
@@ -57,6 +62,13 @@ it.each([false, true])(
       ),
     ).toBe(true);
     expect(records.some((record) => record.runtimePhase === "coherent")).toBe(true);
+    expect(
+      records.some(
+        (record) =>
+          record.phase === "machine-connection-status" && record.failureCode === "daemon-missing",
+      ),
+    ).toBe(true);
+    expect(records.some((record) => record.phase === "machine-registry-error")).toBe(true);
     expect(records.some((record) => record.runtimePhase === "compact-decode")).toBe(explicit);
     expect(
       records.some((record) => record.phase === "terminal-host-focus-control-binding-ready"),
@@ -89,4 +101,31 @@ it("rejects shutdown marks and closes a real file stream exactly once", async ()
     .split("\n")
     .map((line) => JSON.parse(line));
   expect(records.map((record) => record.phase)).toEqual(["before-close"]);
+});
+
+it("preserves a short file-stream backpressure burst through immediate close", async () => {
+  directory = await mkdtemp(join(tmpdir(), "tmi-log-burst-"));
+  const path = join(directory, "trace.jsonl");
+  vi.stubEnv("TMUX_IDE_TUI_PERF_LOG", path);
+  vi.resetModules();
+  logger = await import("./application-performance-log.ts");
+  // More than the file stream's 64 KiB watermark, within the bounded backlog.
+  for (let index = 0; index < 90; index += 1) {
+    logger.tuiPerfMark("burst", { index, payload: "x".repeat(1000) });
+  }
+  expect(logger.tuiPerfCriticalMark("end", "burst-end")).toBe(true);
+  await logger.closeTuiPerfMarks();
+  expect(logger.tuiPerfDiagnostics()).toEqual({
+    droppedRecords: 0,
+    failed: false,
+    pendingCriticalRecords: 0,
+  });
+  const records = (await readFile(path, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  expect(
+    records.filter((record) => record.phase === "burst").map((record) => record.index),
+  ).toEqual(Array.from({ length: 90 }, (_, index) => index));
+  expect(records.at(-1)?.phase).toBe("burst-end");
 });

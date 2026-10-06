@@ -123,7 +123,10 @@ const STRUCTURAL_NOTIFICATIONS = new Set([
   "window-add",
   "window-close",
   "window-renamed",
+  "unlinked-window-add",
   "unlinked-window-close",
+  "session-renamed",
+  "sessions-changed",
 ]);
 const NATIVE_CLIENT_NOTIFICATIONS = new Set([
   "client-attached",
@@ -239,6 +242,10 @@ export interface MirrorFlowRecoveryObservation {
 }
 
 export interface SessionChannelOptions {
+  onWindowMembership?: (windows: readonly string[]) => void;
+  hasSharedWindowConflict?: () => boolean;
+  beforeIdentityRepair?: () => Promise<void>;
+  onWindowTopologyChanged?: () => void;
   ownedViewer?: Pick<OwnedViewerAdapter, "bindIo" | "tryDispatch" | "dispose"> &
     Partial<Pick<OwnedViewerAdapter, "atomicSnapshotEpoch">>;
   executeWindowLinkGuard?: (args: string[]) => Promise<{ status: number | null; stdout: string }>;
@@ -441,6 +448,7 @@ function layoutIdentitiesEqual(left: WindowLayout, right: WindowLayout): boolean
 }
 
 interface WindowSyncStage {
+  readonly observedAuthorityOrdinal: number;
   readonly windows: Map<string, WindowRecord>;
   readonly layouts: Map<string, ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }>;
   readonly currentWindow: string;
@@ -502,6 +510,7 @@ export class SessionChannel {
   private nativeClientProbePending = false;
   // Native captures fence every geometry event; inventory fences identity only.
   private windowAuthorityOrdinal = 0;
+  private readonly layoutNotificationOrdinals = new Map<string, number>();
   private windowIdentityOrdinal = 0;
   private paneIncarnation = 0;
   private recoveryOrdinal = 0;
@@ -1186,7 +1195,29 @@ export class SessionChannel {
     }
     this.input.flush();
     this.clearWindowViewports();
+    this.restoreWindowSizing(this.attachedIdentity?.runtimeSessionId ?? `=${this.opts.session}`);
     this.io.send(`refresh-client -C ${cols}x${rows}`);
+  }
+
+  private restoreWindowSizing(target: string): void {
+    if (!this.geometryParticipating) return;
+    // resize-window pins a window (including through inherited session options).
+    // Evaluate inside the existing control connection: no shell, polling, or extra
+    // request/response round trip. The shell also pre-fits hidden windows;
+    // only the active window may have its manual policy repaired.
+    const quoted = tmuxSingleQuote(target);
+    // if-shell emits its own reply and the selected branch emits another.
+    // Keep both branches at one command so either policy consumes exactly two
+    // FIFO slots; a discard-only send would misroute the next capture replies.
+    this.io.commandListInline(
+      `if-shell -F -t ${quoted} '#{&&:#{window_active},#{==:#{window-size},manual}}' ` +
+        tmuxSingleQuote(`set-option -w -t ${quoted} window-size latest`) +
+        " " +
+        tmuxSingleQuote(`display-message -p -t ${quoted} ''`),
+      2,
+      1,
+      () => {},
+    );
   }
 
   /**
@@ -1214,6 +1245,7 @@ export class SessionChannel {
     const previous = this.fittedWindows.get(window.runtimeId);
     if (previous?.cols === cols && previous.rows === rows) return;
     this.input.flush();
+    this.restoreWindowSizing(window.runtimeId);
     this.io.send(`refresh-client -C ${window.runtimeId}:${cols}x${rows}`);
     this.fittedWindows.set(window.runtimeId, { cols, rows });
   }
@@ -1288,6 +1320,7 @@ export class SessionChannel {
       pane.subs.clear();
     }
     this.pendingLayoutOutput.clear();
+    this.layoutNotificationOrdinals.clear();
     this.layoutSubscribers.clear();
     this.layoutAuthoritySubscribers.clear();
     await this.io.dispose();
@@ -2851,6 +2884,15 @@ export class SessionChannel {
   }
 
   private onNotify(name: string, rest: string): void {
+    if (
+      name === "window-add" ||
+      name === "window-close" ||
+      name === "unlinked-window-add" ||
+      name === "unlinked-window-close" ||
+      name === "session-renamed" ||
+      name === "sessions-changed"
+    )
+      this.opts.onWindowTopologyChanged?.();
     if (name === "subscription-changed") {
       const policy =
         /^tmux-ide-scroll-on-clear\s+\$[0-9]+\s+@[0-9]+\s+[0-9]+\s+(%[0-9]+)\s+:\s+([01])\s*$/u.exec(
@@ -2976,6 +3018,7 @@ export class SessionChannel {
         this.scheduleSync(); // never guess from a failed parse
         return;
       }
+      this.layoutNotificationOrdinals.set(change.windowId, this.windowAuthorityOrdinal);
       const pendingLayout = {
         ...parsed,
         zoomed: change.zoomed,
@@ -3294,8 +3337,10 @@ export class SessionChannel {
       previousCurrentWindow,
       syncOrdinal,
     );
-    for (const pane of this.panesByRuntime.values())
+    for (const pane of this.panesByRuntime.values()) {
+      if (pane.windowRuntimeId && this.pendingLayoutOutput.has(pane.windowRuntimeId)) continue;
       for (const sub of pane.subs) sub.resumeLayoutCapture?.(syncOrdinal);
+    }
     this.discovery.discover(listed);
   }
 
@@ -3593,6 +3638,29 @@ export class SessionChannel {
     previousCurrentWindow = this.currentWindow,
     syncOrdinal?: number,
   ): void {
+    // Control notifications in the same read chunk run before a promise-based
+    // inventory read resumes. Preserve newer geometry (and its pending border
+    // query) rather than letting that older inventory erase the notification.
+    const newerLayouts = new Set(
+      [...this.layoutNotificationOrdinals]
+        .filter(([, ordinal]) => ordinal > stage.observedAuthorityOrdinal)
+        .map(([runtimeId]) => runtimeId),
+    );
+    if (newerLayouts.size > 0) {
+      stage = { ...stage, windows: new Map(stage.windows), layouts: new Map(stage.layouts) };
+      for (const runtimeId of newerLayouts) {
+        const currentLayout = this.layoutByWindow.get(runtimeId);
+        const currentWindow = this.windowsByRuntime.get(runtimeId);
+        const stagedWindow = stage.windows.get(runtimeId);
+        if (currentLayout && currentWindow && stagedWindow) {
+          stage.layouts.set(runtimeId, currentLayout);
+          stage.windows.set(runtimeId, {
+            ...stagedWindow,
+            paneBorderStatus: currentWindow.paneBorderStatus,
+          });
+        }
+      }
+    }
     this.windowLinkAuthority?.reconcile(stage.links);
     this.latestWindowStage = stage;
     const changedWindows = new Set<string>();
@@ -3647,8 +3715,14 @@ export class SessionChannel {
           ),
         );
     for (const runtimeId of this.pendingLayoutOutput.keys())
-      if (!stage.windows.has(runtimeId)) this.pendingLayoutOutput.delete(runtimeId);
-    for (const runtimeId of layoutEmits) this.releasePendingLayout(runtimeId, syncOrdinal);
+      if (!stage.windows.has(runtimeId) && !newerLayouts.has(runtimeId))
+        this.pendingLayoutOutput.delete(runtimeId);
+    for (const runtimeId of this.layoutNotificationOrdinals.keys())
+      if (!stage.windows.has(runtimeId) && !newerLayouts.has(runtimeId))
+        this.layoutNotificationOrdinals.delete(runtimeId);
+    for (const runtimeId of layoutEmits)
+      if (!newerLayouts.has(runtimeId) || !this.pendingLayoutOutput.has(runtimeId))
+        this.releasePendingLayout(runtimeId, syncOrdinal);
     this.emitLayoutAuthority();
   }
 
@@ -3686,6 +3760,7 @@ export class SessionChannel {
   }
 
   private async stageWindows(target = this.opts.session): Promise<WindowSyncStage> {
+    const observedAuthorityOrdinal = this.windowAuthorityOrdinal;
     const lines = await this.io.request(
       `list-windows -t "${target}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}\t#{window_layout}\t#{mode-keys}\t#{window_index}"`,
     );
@@ -3791,6 +3866,10 @@ export class SessionChannel {
       if (!unzoomed) throw new Error(`full window layout for ${this.opts.session} is malformed`);
       nextLayoutByWindow.set(row.runtimeId, { ...parsed, zoomed: row.zoomed, unzoomed });
     }
+    // Publish validated physical membership before any identity repair writes.
+    // The receiving session may introduce duplicate stamps by linking a window.
+    this.opts.onWindowMembership?.([...backingRows.keys()]);
+    await this.opts.beforeIdentityRepair?.();
     // Valid unique stamps are identity; missing/invalid/duplicated stamps are
     // ALL regenerated and stamped back (the pane policy, applied to windows).
     const stampCounts = new Map<string, number>();
@@ -3808,7 +3887,7 @@ export class SessionChannel {
       let semanticId: string | null = null;
       if (row.stamp && stampCounts.get(row.stamp) === 1) {
         semanticId = row.stamp;
-      } else {
+      } else if (!this.opts.hasSharedWindowConflict?.()) {
         repairedIdentity = true;
         let candidate: string | null = null;
         for (let attempt = 0; attempt < 32 && !candidate; attempt += 1) {
@@ -3846,6 +3925,7 @@ export class SessionChannel {
       });
     }
     return {
+      observedAuthorityOrdinal,
       windows: next,
       layouts: nextLayoutByWindow,
       currentWindow: nextCurrentWindow,
@@ -3864,6 +3944,10 @@ export class SessionChannel {
     listed: ReadonlySet<string>,
   ): Promise<boolean> {
     if (this.disposed) return false;
+    if (this.opts.hasSharedWindowConflict?.()) {
+      this.settleFirstJoin();
+      return false;
+    }
     const snapshots: WorkspaceTmuxPaneSnapshot[] = descriptors
       .filter((descriptor) => listed.has(descriptor.runtimePaneId))
       .map((descriptor) => ({
@@ -4005,6 +4089,10 @@ export class SessionChannel {
     descriptors: readonly SessionPaneDescriptor[],
     layouts: ReadonlyMap<string, ParsedLayout & { zoomed: boolean; unzoomed?: ParsedLayout }>,
   ): Promise<boolean> {
+    if (this.opts.hasSharedWindowConflict?.())
+      throw new Error(
+        "Linked windows across controlled sessions are unsupported. Unlink the shared window before controlling this session.",
+      );
     const rectForRuntime = (runtimePaneId: string): WorkspacePaneRect => {
       for (const layout of layouts.values()) {
         const leaf = layout.leaves.find(({ id }) => id === runtimePaneId);

@@ -1026,6 +1026,36 @@ test("qualifies only the latest exact same-record window WorkspaceClient project
       semanticPaneId: "pane.two",
     },
   };
+  const link = {
+    liveSessionId: "live-session.one",
+    linkId: "window-link.one",
+    linkRevision: 4,
+    expectedSemanticWindowId: "window.two",
+  };
+  const linkRecord = structuredClone(record);
+  linkRecord.workspaceClient.committed.lastReceipt.operationKind = "workspace.window.link.select";
+  linkRecord.workspaceClient.committed.lastReceipt.proof = {
+    operationKind: "workspace.window.link.select",
+    outcome: "applied",
+    target: link,
+  };
+  const linkExpected = {
+    ...expectedState,
+    receipt: {
+      operationId: expectedState.receipt.operationId,
+      operationKind: "workspace.window.link.select",
+      windowLink: { ...link },
+    },
+  };
+  assert.equal(qualifyWindowWorkspaceState([linkRecord], linkExpected).record, linkRecord);
+  linkRecord.workspaceClient.committed.lastReceipt.proof.target.linkRevision += 1;
+  assert.throws(() => qualifyWindowWorkspaceState([linkRecord], linkExpected));
+  assert.throws(() =>
+    qualifyWindowWorkspaceState([linkRecord], {
+      ...linkExpected,
+      receipt: { ...linkExpected.receipt, windowLink: undefined },
+    }),
+  );
   const qualified = qualifyWindowWorkspaceState([record], expectedState);
   assert.equal(qualified.record, record);
   assert.equal(qualified.committed, record.workspaceClient.committed);
@@ -1302,4 +1332,24 @@ test("window lifecycle writer failures seal bounded health and transport pressur
       terminalResourceRevision: 7,
     },
   );
+});
+
+test("window-link phase evidence requires its own measured operations and preserves arithmetic checks", () => {
+  const evidence = exactEvidence();
+  for (const sample of evidence.switches)
+    sample.phaseTiming.daemon = {
+      selectionKind: "window-link",
+      semantic_workspace_lookupMs: 1,
+      window_link_effect_proofMs: 1,
+      semantic_mutation_effectMs: 3,
+    };
+  const outliers = summarizeWindowSwitchPhaseOutliers(evidence.switches);
+  assert.equal(outliers.length, 5);
+  assert.equal(outliers[0].daemonSelectionKind, "window-link");
+  assert.equal(outliers[0].daemonWindowLinkProofMs, 1);
+  assert.equal(Object.hasOwn(outliers[0], "daemonPaneResolutionMs"), false);
+  evidence.switches[0].phaseTiming.daemon.semantic_mutation_effectMs = 0;
+  assert.equal(summarizeWindowSwitchPhaseOutliers([evidence.switches[0]]).length, 0);
+  delete evidence.switches[1].phaseTiming.daemon.window_link_effect_proofMs;
+  assert.equal(summarizeWindowSwitchPhaseOutliers([evidence.switches[1]]).length, 0);
 });

@@ -226,6 +226,35 @@ describe("selected application machine authority", () => {
 });
 
 describe("machine connection controls", () => {
+  it("survives a missing-daemon interval during replacement without restarting the client", async () => {
+    const f = setup();
+    f.second.daemon = { ...remote, instanceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", port: 7001 };
+    f.deps.connect = vi
+      .fn()
+      .mockResolvedValueOnce(f.first)
+      .mockRejectedValueOnce(new SshConnectionError("temporarily absent", "daemon-missing"))
+      .mockResolvedValueOnce(f.second);
+    const generations: Array<string | null> = [];
+    try {
+      await f.authority.initialize("build");
+      const old = f.authority.read()!;
+      await f.authority.observe((generation) => generations.push(generation));
+      f.first.close();
+      await vi.waitFor(
+        () => expect(f.authority.read()?.instanceId).toBe(f.second.daemon.instanceId),
+        {
+          interval: 1,
+          timeout: 200,
+        },
+      );
+      expect(generations).toEqual([null, f.second.daemon.instanceId]);
+      expect(await f.authority.isAlive(old)).toBe(false);
+      expect(f.authority.endpoint().diagnostic?.phase).toBe("ready");
+      expect(f.first.dispose).toHaveBeenCalledOnce();
+    } finally {
+      f.authority.dispose();
+    }
+  });
   it("pauses permanent failure and explicitly retries without changing authority owner", async () => {
     const f = setup();
     f.deps.connect = vi

@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  captureGeneratedCliSource,
+  restoreGeneratedCliSource,
+} from "./lib/generated-cli-source.mjs";
 
 // Hermetic SSH proofs: no remote host, real SSH process, or live tmux mutation.
 const sshTests = [
@@ -235,10 +241,18 @@ const checks = [
       "run",
       "src/lib/__tests__/workspace-promotion.test.ts",
       "src/terminal/__tests__/native-runtime.test.ts",
+      "src/terminal/mirror/registered-window-guard.test.ts",
+      "src/terminal/mirror/shared-window-index.test.ts",
+      "src/terminal/mirror/mirror-service.test.ts",
+      "src/terminal/mirror/session-channel.test.ts",
+      "src/terminal/session-runtime/registry.test.ts",
+      "src/terminal/session-runtime/multiplexer-backend.test.ts",
+      "src/terminal/pane-stream/pane-stream-websocket.test.ts",
     ],
   },
   {
     boundary: "OpenTUI current CLI build",
+    buildsCli: true,
     command: "pnpm",
     args: ["build:cli"],
   },
@@ -276,6 +290,7 @@ const checks = [
       "vitest",
       "run",
       "src/tui/mirror/runtime/application-root-v2-input.test.ts",
+      "src/tui/mirror/workspace/connection-feedback.test.ts",
       "src/tui/mirror/runtime/application-generation-starter.test.ts",
       "src/tui/mirror/runtime/application-palette-command-owner.test.ts",
       "src/tui/mirror/runtime/application-shell-binding.test.ts",
@@ -329,6 +344,8 @@ const checks = [
       "src/lib/tmux-server-transport-live.test.ts",
       "src/lib/tmux-server-session-open-live.test.ts",
       "src/lib/tmux-server-coexistence-live.test.ts",
+      "src/terminal/mirror/manual-window-sizing-live.test.ts",
+      "src/terminal/session-runtime/linked-window-authority-live.test.ts",
       "src/lib/__tests__/workspace-promotion-live.test.ts",
     ],
   },
@@ -376,6 +393,11 @@ const checks = [
     ],
   },
   {
+    boundary: "OpenTUI workspace authority and presentation tests",
+    command: "bun",
+    args: ["test", "./packages/daemon-client/src/workspace-client.test.ts"],
+  },
+  {
     boundary: "OpenTUI canonical daemon election tests",
     command: "bun",
     args: ["test", "./packages/daemon/src/lib/canonical-daemon.test.ts"],
@@ -387,28 +409,49 @@ const checks = [
   },
   {
     boundary: "OpenTUI installed-package journey",
+    requiresCleanSource: true,
     command: "pnpm",
     args: ["test:pack-installed"],
   },
 ];
 
-for (const check of checks) {
-  process.stdout.write(`\n[release:opentui] ${check.boundary}\n`);
-  const result = spawnSync(check.command, check.args, {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: "inherit",
-  });
-  if (result.error) {
-    throw new Error(`${check.boundary} could not start: ${result.error.message}`, {
-      cause: result.error,
+const cliPath = join(process.cwd(), "bin/cli.js");
+let originalCli = null;
+let generatedCli = null;
+const restoreCli = () => {
+  if (!originalCli || !generatedCli) return;
+  restoreGeneratedCliSource(originalCli, generatedCli);
+  originalCli = null;
+  generatedCli = null;
+};
+
+try {
+  for (const check of checks) {
+    // Keep the freshly built CLI for live checks, but retire this gate's build
+    // output before the independently source-bound installed-package journey.
+    if (check.requiresCleanSource) restoreCli();
+    if (check.buildsCli) originalCli = captureGeneratedCliSource(cliPath);
+    process.stdout.write(`\n[release:opentui] ${check.boundary}\n`);
+    const result = spawnSync(check.command, check.args, {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: "inherit",
     });
+    if (result.error) {
+      throw new Error(`${check.boundary} could not start: ${result.error.message}`, {
+        cause: result.error,
+      });
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `${check.boundary} failed (${result.signal ? `signal ${result.signal}` : `exit ${result.status}`})`,
+      );
+    }
+    if (check.buildsCli) generatedCli = readFileSync(cliPath);
   }
-  if (result.status !== 0) {
-    throw new Error(
-      `${check.boundary} failed (${result.signal ? `signal ${result.signal}` : `exit ${result.status}`})`,
-    );
-  }
+} finally {
+  // Never erase a later edit: restoration requires the exact successful build.
+  restoreCli();
 }
 
 process.stdout.write("\n[release:opentui] focused release gate passed\n");

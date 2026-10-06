@@ -26,6 +26,7 @@ export interface SessionRuntimeMultiplexerBackendOptions {
     | "bindExecutionSource"
     | "assertExecutionHandle"
     | "submitPaneCredentialIntent"
+    | "verifyWindowOwnership"
   >;
   readonly resolveSession: (workspaceName: string) => string | null;
   readonly resolvePaneSourceBinding?: (
@@ -192,6 +193,7 @@ export function createSessionRuntimeMultiplexerBackend(
       if (!ownerAuthorized) {
         throw new Error("Semantic mutation requires a live host, pane, or owner principal");
       }
+      await options.registry.verifyWindowOwnership();
       const owner = acquireOwner(session);
       try {
         let lease: ReturnType<SessionRuntimeConsumer["acquireController"]>;

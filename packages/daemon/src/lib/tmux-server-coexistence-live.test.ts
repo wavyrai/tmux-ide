@@ -37,17 +37,33 @@ describe.skipIf(!executable)("combined multi-server/native-client coexistence", 
         env: { ...process.env, TMUX: "" },
       }).trim();
     let baseUrl = "";
+    // Keep fixture-owned admission failures behind the public HTTP boundary.
+    // A sanitized 503 alone cannot distinguish a native failure from a rejected
+    // promotion proof when this live test fails intermittently in CI.
+    const admissionFailures = new Map<string, unknown>();
     const manager = new TmuxServerOwners<NativeTmuxServerOwner>({
       probe: createTmuxServerProbe(tmux),
-      create: async (registration, scope, observation) =>
-        createNativeTmuxServerOwner({
+      create: async (registration, scope, observation) => {
+        const owner = await createNativeTmuxServerOwner({
           environmentId: "00000000-0000-4000-8000-000000000001",
           ...scope,
           tmuxAuthority: observation.authority,
           nativeServerIdentity: observation.nativeServerIdentity,
           stateDirectory: join(root, registration.serverId),
           webSocketUrl: baseUrl.replace("http:", "ws:") + tmuxServerPaneStreamPath(scope),
-        }),
+        });
+        const openSession = owner.openSession;
+        owner.openSession = async (liveSessionId) => {
+          admissionFailures.delete(scope.serverId);
+          try {
+            return await openSession(liveSessionId);
+          } catch (error) {
+            admissionFailures.set(scope.serverId, error);
+            throw error;
+          }
+        };
+        return owner;
+      },
     });
     const app = new Hono();
     mountTmuxServerRoutes(app, { owners: manager, ownerToken: "owner" });
@@ -156,7 +172,13 @@ describe.skipIf(!executable)("combined multi-server/native-client coexistence", 
         clients.push(client);
         const selected = (await client.sessions()).sessions[0]!;
 
-        const opened = await client.openSession(selected.liveSessionId);
+        const opened = await client.openSession(selected.liveSessionId).catch((error: unknown) => {
+          if (!admissionFailures.has(scope.serverId)) throw error;
+          throw new AggregateError(
+            [error, admissionFailures.get(scope.serverId)],
+            `Session admission failed for fixture server ${index}`,
+          );
+        });
         const target = {
           workspaceName: opened.workspaceName,
           daemon: {

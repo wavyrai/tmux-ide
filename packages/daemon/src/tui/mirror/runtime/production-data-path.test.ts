@@ -443,8 +443,24 @@ describe("production OpenTUI v2 data path", () => {
         /node:|\b(?:process|fetch|setInterval|setTimeout|createWorkspaceClient|createTerminalFastLane|createSignal|createEffect)\b/u,
       );
     }
+    // Remote startup/discovery share one fixed POSIX command builder and the
+    // existing quoting helper. These are pure strings, never transport owners.
+    const remoteCommandHelpers = [
+      "packages/daemon/src/lib/remote-tmux-command.ts",
+      "packages/daemon/src/lib/shell.ts",
+    ];
+    for (const path of remoteCommandHelpers) {
+      expect(authorityDataPathFiles).toContain(path);
+      expect(productionGraph.sourceByFile.get(path)).not.toMatch(
+        /node:|\b(?:process|fetch|spawn|execFile|execFileSync|setInterval|setTimeout|createWorkspaceClient|createTerminalFastLane)\b/u,
+      );
+    }
     expect(authorityDataPathFiles.length).toBeLessThanOrEqual(
-      154 + learningModules.length + inputHelpers.length + teamPresentationHelpers.length,
+      154 +
+        learningModules.length +
+        inputHelpers.length +
+        teamPresentationHelpers.length +
+        remoteCommandHelpers.length,
     );
   });
 });

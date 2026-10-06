@@ -358,9 +358,10 @@ describe("OpenTUI canonical application-shell controller", () => {
     expect(applicationRoot).not.toContain("new TerminalPaneInputRouter<");
     expect(applicationRoot).not.toContain("selectTerminalPane(");
     expect(terminalInteraction).toContain("new TerminalPaneInputRouter<{");
-    expect(terminalInteraction.replace(/\s+/gu, " ")).toContain(
-      "selectTerminalPane( expected, liveSelectionTarget, paneId, operationId, (failure) =>",
-    );
+    // Audit ownership here; recovery and stale-generation behavior are covered
+    // by the interaction controller's runtime tests, not a callback's spelling.
+    expect(terminalInteraction).toContain('from "./select-terminal-pane.ts";');
+    expect(terminalInteraction.match(/\bselectTerminalPane\(/gu)).toHaveLength(1);
     expect(app).toContain("active.fastLane.lane.sendInput(");
     expect(app).toContain("fixture?.probe");
     expect(app).toContain("<ApplicationTerminalWorkspace");

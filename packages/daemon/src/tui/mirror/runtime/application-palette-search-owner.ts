@@ -1,4 +1,4 @@
-import { createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal, untrack } from "solid-js";
 import {
   applicationCommandDescription,
   filterApplicationCommands,
@@ -28,7 +28,7 @@ export function createApplicationPaletteSearchOwner(options: {
   const [help, setHelp] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
-  const commands = createMemo(() =>
+  const readCommands = () =>
     filterApplicationCommands(
       options
         .commands()
@@ -36,8 +36,11 @@ export function createApplicationPaletteSearchOwner(options: {
           (c) => !localOnly() || typeof c === "string" || !c.fleet || c.fleet.machineId === "local",
         ),
       query(),
-    ),
-  );
+    );
+  // Closed overlays must not subscribe to catalog churn. Explicit reads still
+  // resolve current commands, including reset() before the open action commits.
+  const activeCommands = createMemo(() => (options.open() ? readCommands() : null));
+  const commands = () => activeCommands() ?? untrack(readCommands);
   const selection = () =>
     Math.max(
       0,

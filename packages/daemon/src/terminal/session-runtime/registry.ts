@@ -273,7 +273,10 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #sessions = new Map<string, SessionRuntime>();
   readonly #proofPrewarmOwnership = new Map<SessionRuntime, { owned: boolean; claims: number }>();
-  readonly #trustedInventoryTokens = new WeakMap<object, SessionRuntime>();
+  readonly #trustedInventoryTokens = new WeakMap<
+    object,
+    { runtime: SessionRuntime; epoch: number }
+  >();
   readonly #executionHandles = new WeakMap<object, ExecutionHandleState>();
   readonly #stopExitObserver: () => void;
   #disposed = false;
@@ -397,6 +400,10 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.#mirror = new MirrorService({
       ...options.mirror,
       ...diagnosticMirrorOptions,
+      onSharedWindowConflict: (session, conflict) => {
+        options.mirror?.onSharedWindowConflict?.(session, conflict);
+        if (conflict) this.#sessions.get(session)?.invalidateSharedWindowAuthority();
+      },
       onNativeClientActivity: (session) => {
         options.mirror?.onNativeClientActivity?.(session);
         this.#sessions.get(session)?.noteNativeGeometryActivity();
@@ -433,6 +440,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     signal?.throwIfAborted();
     const runtime = this.#runtime(session);
     await abortable(runtime.whenReady(), signal);
+    await abortable(this.#mirror.verifyRegisteredWindows(), signal);
     if (this.#sessions.get(session) !== runtime) {
       throw new Error(`SessionRuntime ${session} was retired while prewarming`);
     }
@@ -493,6 +501,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
         throw new Error(`SessionRuntime ${session} is attached to a different tmux identity`);
       }
       signal?.throwIfAborted();
+      await abortable(this.#mirror.verifyRegisteredWindows(), signal);
       runtime.qualifyTrustedInventory(runtimeSessionId);
     } finally {
       this.#releaseProofPrewarmRuntime(runtime);
@@ -521,28 +530,34 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     if (!runtime?.trustedInventoryQualified()) {
       throw new Error(`SessionRuntime ${session} has no proof-qualified inventory authority`);
     }
+    const epoch = runtime.trustedInventoryEpoch;
     const inventory = await this.#observeTerminalAttempt(
       "terminal-trusted-inventory-attempt",
       abortable(runtime.describeTrustedInventory(), signal),
     );
-    if (this.#sessions.get(session) !== runtime || !runtime.trustedInventoryQualified()) {
+    if (
+      this.#sessions.get(session) !== runtime ||
+      !runtime.trustedInventoryQualified() ||
+      runtime.trustedInventoryEpoch !== epoch
+    ) {
       throw new Error(`SessionRuntime ${session} changed during trusted inventory discovery`);
     }
     if (!inventory) {
       throw new Error(`SessionRuntime ${session} lost its retained inventory authority`);
     }
     const token = Object.freeze({});
-    this.#trustedInventoryTokens.set(token, runtime);
+    this.#trustedInventoryTokens.set(token, { runtime, epoch });
     return Object.freeze({ inventory, token });
   }
 
   isTrustedSessionInventoryCandidateCurrent(session: string, token: object): boolean {
     if (this.#disposed) return false;
-    const runtime = this.#trustedInventoryTokens.get(token);
+    const candidate = this.#trustedInventoryTokens.get(token);
     return (
-      runtime !== undefined &&
-      this.#sessions.get(session) === runtime &&
-      runtime.trustedInventoryQualified()
+      candidate !== undefined &&
+      this.#sessions.get(session) === candidate.runtime &&
+      candidate.runtime.trustedInventoryEpoch === candidate.epoch &&
+      candidate.runtime.trustedInventoryQualified()
     );
   }
 
@@ -565,6 +580,18 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   ): ReturnType<MirrorService["executeWindowLinkAction"]> {
     if (this.#disposed) return Promise.reject(new Error("Session runtime disposed"));
     return this.#mirror.executeWindowLinkAction(session, request);
+  }
+
+  /** Resolve pending ownership before an asynchronous owner-authorized mutation. */
+  async verifyWindowOwnership(): Promise<void> {
+    await this.#mirror.verifyRegisteredWindows();
+  }
+
+  /** Install the bounded registered-session membership reader. */
+  setRegisteredWindowReader(
+    reader: import("../mirror/registered-window-guard.ts").RegisteredWindowReader,
+  ): ReturnType<MirrorService["setRegisteredWindowReader"]> {
+    return this.#mirror.setRegisteredWindowReader(reader);
   }
 
   /** Retire one no-longer-registered session without disturbing siblings. */
@@ -1105,6 +1132,11 @@ class SessionRuntime {
   readonly #releasedLeases = new Set<string>();
   #disposed = false;
   #trustedInventoryRuntimeSessionId: string | null = null;
+  #trustedInventoryEpoch = 0;
+
+  get trustedInventoryEpoch(): number {
+    return this.#trustedInventoryEpoch;
+  }
   #activeCausalCellProbes = 0;
 
   constructor(
@@ -1195,6 +1227,7 @@ class SessionRuntime {
     clientId: string,
     authority: SessionRuntimeAuthorityKind,
   ): SessionRuntimeAuthorityLease | null {
+    this.assertNoSharedWindow();
     if (authority === "input" && this.#controllerClientId !== clientId) {
       // Input's executable proof is the compatibility controller lease. The
       // transport synchronization seam must establish/handoff it first.
@@ -1261,6 +1294,7 @@ class SessionRuntime {
   }
 
   acquireController(clientId: string): SessionRuntimeControllerLease {
+    this.assertNoSharedWindow();
     this.#assertConnected(clientId);
     if (this.#controllerClientId === clientId) {
       this.#authority.updatePresence(clientId, "foreground");
@@ -1335,6 +1369,7 @@ class SessionRuntime {
   }
 
   assertController(lease: SessionRuntimeControllerLease, callerClientId?: string): void {
+    this.assertNoSharedWindow();
     const parsedLease = this.#validatedLease(lease);
     if (
       parsedLease.generation !== this.generation ||
@@ -1547,6 +1582,7 @@ class SessionRuntime {
     rows: number,
     semanticWindowId?: string,
   ): void {
+    this.assertNoSharedWindow();
     const parsed = SessionRuntimeAuthorityLeaseSchemaZ.parse(lease);
     let exact: SessionRuntimeAuthorityLease;
     try {
@@ -1594,6 +1630,7 @@ class SessionRuntime {
   }
 
   qualifyTrustedInventory(runtimeSessionId: string): void {
+    this.assertNoSharedWindow();
     if (this.#disposed || !this.#retention) {
       throw new Error(`SessionRuntime ${this.session} is not retained`);
     }
@@ -1601,7 +1638,11 @@ class SessionRuntime {
   }
 
   trustedInventoryQualified(): boolean {
-    return !this.#disposed && this.#trustedInventoryRuntimeSessionId !== null;
+    return (
+      !this.#disposed &&
+      this.#trustedInventoryRuntimeSessionId !== null &&
+      !this.#mirror.hasSharedWindowConflict(this.session)
+    );
   }
 
   async describeTrustedInventory(): Promise<TrustedMirrorSessionInventory | null> {
@@ -1812,8 +1853,28 @@ class SessionRuntime {
     this.#publishAuthority();
   }
 
+  private assertNoSharedWindow(): void {
+    const message = this.#mirror.windowOwnershipMessage(this.session);
+    if (message) {
+      throw new SessionRuntimeControllerLeaseError("controller-conflict", message);
+    }
+  }
+
+  invalidateSharedWindowAuthority(): void {
+    this.#trustedInventoryRuntimeSessionId = null;
+    this.#trustedInventoryEpoch += 1;
+    this.#clearController();
+    for (const clientId of this.#consumersByClientId.keys()) {
+      for (const authority of ["input", "focus", "geometry"] as const)
+        this.#authority.release(clientId, authority);
+    }
+    this.#completedHandoffs.clear();
+    this.#publishAuthority();
+  }
+
   noteControlExit(): void {
     this.#trustedInventoryRuntimeSessionId = null;
+    this.#trustedInventoryEpoch += 1;
     const retention = this.#retention;
     this.#retention = null;
     this.#startPromise = null;
@@ -1833,6 +1894,7 @@ class SessionRuntime {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#trustedInventoryRuntimeSessionId = null;
+    this.#trustedInventoryEpoch += 1;
     const consumers = [...this.#consumers];
     await Promise.allSettled(consumers.map((consumer) => consumer.close()));
     this.#clearController();

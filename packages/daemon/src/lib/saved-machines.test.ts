@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSavedMachines, updateSavedMachines } from "./saved-machines.ts";
+import { loadSavedMachines, updateSavedMachines, watchSavedMachines } from "./saved-machines.ts";
 const dirs: string[] = [];
 const machine = {
   id: "a1ea9939-7496-4a45-bae2-7e611aecc011",
@@ -19,6 +19,50 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 describe("saved machine persistence", () => {
+  it("subscribes before the registry directory exists", async () => {
+    const { dir } = fixture();
+    const path = join(dir, "first-run", "machines.json");
+    const changed = vi.fn();
+    const stop = watchSavedMachines(changed, vi.fn(), path);
+    try {
+      updateSavedMachines({ type: "add", machine }, path);
+      await vi.waitFor(() =>
+        expect(changed).toHaveBeenLastCalledWith({ version: 1, machines: [machine] }),
+      );
+    } finally {
+      stop();
+    }
+  });
+  it("follows atomic edits, preserves valid state on corruption, and stops observing on cleanup", async () => {
+    const { path } = fixture();
+    const changed = vi.fn();
+    const failed = vi.fn();
+    const stop = watchSavedMachines(changed, failed, path);
+    try {
+      updateSavedMachines({ type: "add", machine }, path);
+      await vi.waitFor(() =>
+        expect(changed).toHaveBeenLastCalledWith({ version: 1, machines: [machine] }),
+      );
+      writeFileSync(path, "{broken");
+      await vi.waitFor(() => expect(failed).toHaveBeenCalled());
+      expect(changed).toHaveBeenLastCalledWith({ version: 1, machines: [machine] });
+      writeFileSync(path, JSON.stringify({ version: 1, machines: [machine] }));
+      updateSavedMachines({ type: "update", id: machine.id, patch: { enabled: false } }, path);
+      await vi.waitFor(() =>
+        expect(changed).toHaveBeenLastCalledWith({
+          version: 1,
+          machines: [{ ...machine, enabled: false }],
+        }),
+      );
+      stop();
+      changed.mockClear();
+      updateSavedMachines({ type: "update", id: machine.id, patch: { enabled: true } }, path);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(changed).not.toHaveBeenCalled();
+    } finally {
+      stop();
+    }
+  });
   it("round trips atomic private writes while preserving unrelated configuration", () => {
     const { dir, path } = fixture();
     writeFileSync(join(dir, "config.json"), '{"legacy":true}');

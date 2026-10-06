@@ -34,6 +34,8 @@ export const tuiLifecycleStream = stream ? Object.freeze({ enabled: true as cons
 export const tuiPerfStream = TUI_PERF_LOG ? tuiLifecycleStream : null;
 
 const LIFECYCLE_PHASES = new Set([
+  "machine-connection-status",
+  "machine-registry-error",
   "generation-status",
   "generation-connection-start",
   "generation-connection-resolved",
@@ -170,6 +172,7 @@ export function closeTuiPerfMarks(): Promise<void> {
   closing = true;
   closePromise = (async () => {
     if (!stream) return;
+    await writer?.flush();
     await flushTuiPerfMarks();
     // No drain callback may enqueue another critical record after end().
     stream.off("drain", drain);

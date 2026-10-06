@@ -1,3 +1,4 @@
+import { remoteTmuxIdeCommand } from "./remote-tmux-command.ts";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it, vi } from "vitest";
@@ -28,12 +29,11 @@ it("runs only the fixed installed-daemon command and never captures remote outpu
       "BatchMode=yes",
       "-o",
       "ConnectTimeout=10",
+      "-o",
+      "ForkAfterAuthentication=no",
       "--",
       "mini",
-      "tmux-ide",
-      "update",
-      "--daemon",
-      "--json",
+      remoteTmuxIdeCommand("start"),
     ],
     { stdio: ["ignore", "pipe", "pipe"] },
   ]);

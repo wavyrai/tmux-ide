@@ -2219,7 +2219,18 @@ export class PaneStreamLiveConnection {
         !this.#sessionRuntimeBinding.authoritySnapshot
       )
         return this.#failProtocol("protocol-error");
-      const lease = this.#sessionRuntimeBinding.requestAuthority(frame.authority);
+      let lease: SessionRuntimeAuthorityLease | null = null;
+      try {
+        lease = this.#sessionRuntimeBinding.requestAuthority(frame.authority);
+      } catch (error) {
+        // Topology changes can temporarily prevent ownership. Reject this
+        // request without letting an expected conflict terminate the daemon.
+        if (
+          !(error instanceof SessionRuntimeControllerLeaseError) ||
+          error.code !== "controller-conflict"
+        )
+          return this.#failProtocol("input-rejected");
+      }
       if (lease) this.#requestedAuthorities.add(frame.authority);
       this.#sendFrame(null, {
         type: "authority-receipt",

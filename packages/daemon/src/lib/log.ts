@@ -152,16 +152,16 @@ export function getLogStreamFailures(): readonly StreamName[] {
 function markStreamFailed(name: StreamName, error: unknown): void {
   if (streamState[name].failed) return;
   streamState[name].failed = true;
-  const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const detail = sanitizeLogMessage(
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    secrets,
+    budget,
+  );
   const warning = `[log.ts] ${name} write failed (${detail}); further records are retained in memory only\n`;
   const other: StreamName = name === "stdout" ? "stderr" : "stdout";
-  if (!streamState[other].failed) {
-    try {
-      process[other].write(warning);
-    } catch {
-      streamState[other].failed = true;
-    }
-  }
+  // The fallback can fail asynchronously too. Install the same error handling
+  // before writing it; failed flags prevent a warning loop if both streams fail.
+  if (!streamState[other].failed) writeToStream(other, warning);
 }
 
 function writeToStream(name: StreamName, line: string): void {
@@ -221,7 +221,11 @@ function writeStructuredLog(
       // Avoid recursion via the logger; write directly to stderr.
       writeToStream(
         "stderr",
-        `[log.ts] subscriber threw: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[log.ts] subscriber threw: ${sanitizeLogMessage(
+          err instanceof Error ? err.message : String(err),
+          secrets,
+          budget,
+        )}\n`,
       );
     }
   }

@@ -475,6 +475,55 @@ describe("identity join", () => {
     await channel.dispose();
   });
 
+  it.each([
+    { kind: "zoom", borderReply: "manual" as const },
+    { kind: "zoom", borderReply: undefined },
+    { kind: "resize", borderReply: "manual" as const },
+    { kind: "resize", borderReply: undefined },
+  ])(
+    "keeps a newer $kind notification when an older window truth read completes (border: $borderReply)",
+    async ({ kind, borderReply }) => {
+      const descriptorReply = { manual: false };
+      const rig = await startedRig({ borderReply, descriptorReply });
+      // Keep later descriptor reads behind the manually held border reply.
+      descriptorReply.manual = true;
+      const layouts: MirrorLayoutEvent[] = [];
+      const subscription = rig.channel.subscribeLayout((event) => layouts.push(event));
+      const originalRequest = rig.sim.request.bind(rig.sim);
+      let injected = false;
+      rig.sim.request = async (command) => {
+        const reply = await originalRequest(command);
+        if (command.startsWith("list-windows") && !injected) {
+          injected = true;
+          // A control read resolves its promise before processing the next
+          // notification in the same chunk. Its continuation must not erase it.
+          const visible =
+            kind === "zoom" ? "aaaa,200x50,0,0,1" : "aaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2}";
+          rig.sim.feedLines(
+            `%layout-change @1 ${FIXTURE.layoutW1} ${visible} ${kind === "zoom" ? "*Z" : "*"}`,
+          );
+        }
+        return reply;
+      };
+      try {
+        rig.sim.feedLines("%window-renamed @1 main");
+        rig.pendingSyncs.shift()!();
+        await vi.waitFor(() => expect(injected).toBe(true));
+        if (borderReply === "manual") rig.sim.reply(["off"]);
+        const latest = layouts
+          .filter((event) => event.semanticWindowId === "window.test.one")
+          .at(-1);
+        expect(latest?.zoomed).toBe(kind === "zoom");
+        expect(latest?.panes.find((pane) => pane.semanticPaneId === "pane.alpha")?.width).toBe(
+          kind === "zoom" ? 200 : 150,
+        );
+      } finally {
+        await subscription.close();
+        await rig.channel.dispose();
+      }
+    },
+  );
+
   it("projects one coherent refreshed trusted inventory and keeps raw ids daemon-private", async () => {
     const { channel, sim, state } = await startedRig();
     state.descriptorRows[2] = state.descriptorRows[2]!.replace(
@@ -3572,6 +3621,7 @@ describe("window viewport scope", () => {
     rig.channel.setGeometryParticipation(false);
     rig.channel.fitWindowViewport("window.test.one", 120, 40);
     expect(rig.sim.written.slice(before)).toEqual([
+      expect.stringContaining("if-shell -F -t '@1'"),
       "refresh-client -C @1:120x40",
       "refresh-client -C @1:",
       "refresh-client -f ignore-size",

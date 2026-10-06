@@ -400,11 +400,12 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         identity.acceptedRevision,
       ]);
       if (seen.has(key)) continue;
-      if (seen.size >= 256) this.#droppedCanonicalHostFrames += 1;
-      else {
-        seen.add(key);
-        identities.push(identity);
-      }
+      // Bound retained de-duplication history, not the renderer's lifetime.
+      // An evicted identity may be reported again only after another real paint.
+      // Pending identities still have their separate per-frame admission limit.
+      if (seen.size >= 256) seen.delete(seen.values().next().value!);
+      seen.add(key);
+      identities.push(identity);
     }
     const dropped = this.#droppedCanonicalHostFrames;
     this.#droppedCanonicalHostFrames = 0;

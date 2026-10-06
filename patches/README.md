@@ -16,6 +16,12 @@ verify them before an upgrade rather than assuming a patch is still necessary.
   animation deadline without removing the frame-rate ceiling. It also defers
   composition/baseline advancement while the destination feed is backpressured;
   split-footer capture retains its separate ordered commit contract.
+  Layout-resize callbacks mark buffers dirty for the current paint instead of
+  requesting an identical subsequent frame. Text viewport updates retain Yoga
+  invalidation and line-info notifications; property mutations from resize
+  listeners still request their own follow-up frames. This relies on layout
+  callbacks running before the current frame paints, and is covered by wrapped
+  text shrink/grow, resize-listener mutation and production window-rename tests.
   Regression evidence:
   [demand cadence](../packages/daemon/src/tui/mirror/runtime/application-demand-cadence-renderer.test.tsx)
   and [backpressure](../packages/daemon/src/tui/mirror/runtime/application-backpressure-renderer.test.tsx).
@@ -25,6 +31,12 @@ verify them before an upgrade rather than assuming a patch is still necessary.
   warning covering terminal content while retaining invalid-insertion diagnostics.
   Regression evidence:
   [insertion stability](../packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx).
+  The shared JSX transform also prevents automatic memo wrappers in conditional prop getters:
+  nested conditional component props otherwise allocate a new memo every time
+  their getter is read, retaining observers for the owner's lifetime. Ordinary
+  signal tracking, conditional child memoization and explicit memos remain active. Regression evidence:
+  [conditional prop retention and reactivity](../scripts/solid-conditional-props.test.tsx).
+  Validate the full TUI renderer suite when changing this compiler option.
 
 Both patches cover Bun and Node package outputs. Remove a patch only after the
 unpatched replacement passes the associated behavior tests. Upgrade Core and Solid
@@ -35,7 +47,9 @@ alongside the native ABI checks below; do not update only a version string.
 [Release pins](../scripts/lib/native-scroll-release-manifest.mjs) specify source
 `ad9a818d7a9d73f3386e92a445d0feb4b395c69e`, Core 0.5.1 and Zig 0.15.2.
 [The native scroll patch](./opentui-native-scroll-ad9a818.patch) adds guarded
-scroll-region support and its native tests. The
+scroll-region support and its native tests. Failed upstream word-wrap complexity
+checks also retain their five raw samples per width, medians and ratio; the
+workload and 5× threshold are unchanged. The
 [builder](../scripts/native/build-opentui-scroll.mjs) accepts an explicit clean
 checkout and Zig executable, supports `--preflight`, applies the patch in an
 output checkout, runs the native test suite, and emits build provenance and a

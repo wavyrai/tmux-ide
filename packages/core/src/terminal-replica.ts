@@ -10,12 +10,14 @@ import type {
   TerminalReplicaTombstonePayload,
 } from "@tmux-ide/contracts";
 import { consumeCompactReplicaCapability } from "./terminal-compact-capability.ts";
+import { freezeOwnedTerminalReplicaRow as freezeRow } from "./terminal-replica-owned-row.ts";
 import {
   hashCanonicalTerminalValue,
   hashCanonicalTerminalValueCooperatively,
   hashTerminalReplicaRowCached,
   hashTerminalReplicaRowCooperatively,
   isTerminalReplicaRowDeeplyFrozen,
+  TerminalReplicaRunEncodingCache,
 } from "./terminal-replica-hash-cache.ts";
 
 // Only rows validated and copied by this module can bypass a repeated copy.
@@ -835,27 +837,11 @@ function blankRow(cols: number): TerminalReplicaRow {
   }) as unknown as TerminalReplicaRow;
 }
 
-function freezeRow(row: TerminalReplicaRow): TerminalReplicaRow {
-  return Object.freeze({
-    wrapped: row.wrapped,
-    cells: Object.freeze(
-      row.cells.map((cell) =>
-        Object.freeze({
-          ...cell,
-          foreground: Object.freeze({ ...cell.foreground }),
-          background: Object.freeze({ ...cell.background }),
-        }),
-      ),
-    ),
-  }) as unknown as TerminalReplicaRow;
-}
-
 function validateAndFreezeRow(
   row: TerminalReplicaRow,
   profile?: MutableTerminalReplicaApplyProfile,
 ): TerminalReplicaRow {
   if (VALIDATED_PATCH_ROWS.has(row)) return row;
-  const cells = new Array(row.cells.length);
   for (let index = 0; index < row.cells.length; index += 1) {
     const cell = row.cells[index]!;
     if (profile) profile.counts.validatedCells += 1;
@@ -863,17 +849,11 @@ function validateAndFreezeRow(
       throw new TypeError("Malformed terminal replica row");
     if (cell.width === 0 && (index === 0 || row.cells[index - 1]?.width !== 2))
       throw new TypeError("Malformed terminal replica row");
-    cells[index] = Object.freeze({
-      ...cell,
-      foreground: Object.freeze({ ...cell.foreground }),
-      background: Object.freeze({ ...cell.background }),
-    });
-    if (profile) profile.counts.frozenCells += 1;
   }
-  const frozen = Object.freeze({
-    wrapped: row.wrapped,
-    cells: Object.freeze(cells),
-  }) as unknown as TerminalReplicaRow;
+  // Use the same copy owner as seed admission and encoding. Already owned rows
+  // retain identity; external rows still receive an immutable detached copy.
+  const frozen = freezeRow(row);
+  if (profile && frozen !== row) profile.counts.frozenCells += row.cells.length;
   VALIDATED_PATCH_ROWS.add(frozen);
   return frozen;
 }
@@ -1034,11 +1014,13 @@ function hashTerminalReplicaRow(
   row: TerminalReplicaRow,
   profile?: MutableTerminalReplicaApplyProfile,
   instrumentation?: TerminalReplicaApplyOptions["instrumentation"],
+  encodingCache?: TerminalReplicaRunEncodingCache,
 ): string {
   const started = readProfileClock(instrumentation);
   const hash = hashTerminalReplicaRowCached(
     row,
     profile ? () => (profile.counts.rowHashMisses += 1) : undefined,
+    encodingCache,
   );
   addProfileDuration(profile, "rowHash", started, instrumentation);
   return hash;
@@ -1051,12 +1033,13 @@ function hashTerminalReplicaRows(
 ): string {
   const cached = ROW_ARRAY_HASH_CACHE.get(rows);
   if (cached) return cached.hash.toString(16).padStart(16, "0");
+  const encodingCache = rows.length >= 64 ? new TerminalReplicaRunEncodingCache() : undefined;
   let hash = 0n;
   for (const row of rows)
     hash = BigInt.asUintN(
       64,
       hash * ROW_SEQUENCE_BASE +
-        BigInt(`0x${hashTerminalReplicaRow(row, profile, instrumentation)}`),
+        BigInt(`0x${hashTerminalReplicaRow(row, profile, instrumentation, encodingCache)}`),
     );
   if (Object.isFrozen(rows) && rows.every(isTerminalReplicaRowDeeplyFrozen))
     ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
@@ -1099,10 +1082,12 @@ export function registerTerminalReplicaRowsDeltaHash(
     );
     hash = BigInt.asUintN(64, hash - contribution);
   }
+  const encodingCache = append.length >= 64 ? new TerminalReplicaRunEncodingCache() : undefined;
   for (const row of append)
     hash = BigInt.asUintN(
       64,
-      hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row)}`),
+      hash * ROW_SEQUENCE_BASE +
+        BigInt(`0x${hashTerminalReplicaRow(row, undefined, undefined, encodingCache)}`),
     );
   if (Object.isFrozen(next) && next.every(isTerminalReplicaRowDeeplyFrozen))
     ROW_ARRAY_HASH_CACHE.set(next, { hash, length: next.length });

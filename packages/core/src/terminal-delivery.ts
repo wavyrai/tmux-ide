@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { isOwnedTerminalReplicaRow } from "./terminal-replica-owned-row.ts";
 import {
   TERMINAL_DELIVERY_CHUNK_BYTES,
   TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
@@ -209,6 +211,43 @@ type CompactColor = 0 | readonly [1 | 2, number];
 type CompactCellRun = [number, string, 0 | 1 | 2, CompactColor, CompactColor, number];
 type CompactRow = readonly [0 | 1, readonly CompactCellRun[]];
 
+// Repeated seeds share immutable core-owned rows. Validate each such row
+// with the strict contract before remembering it; ownership alone is not enough.
+// External rows still use the ordinary schema and detached parse result.
+const validatedOwnedEncodingRows = new WeakSet<TerminalReplicaRow>();
+const CompactEncodingRowSchema = z.union([
+  z.custom<TerminalReplicaRow>((input) => {
+    if (!isOwnedTerminalReplicaRow(input)) return false;
+    if (validatedOwnedEncodingRows.has(input)) return true;
+    if (!TerminalReplicaRowSchemaZ.safeParse(input).success) return false;
+    validatedOwnedEncodingRows.add(input);
+    return true;
+  }),
+  TerminalReplicaRowSchemaZ,
+]);
+const CompactEncodingPayloadSchema = z.discriminatedUnion("frame", [
+  TerminalSemanticDeliveryPayloadSchemaZ.options[0].extend({
+    snapshot: TerminalReplicaSnapshotSchemaZ.extend({
+      grid: z.array(CompactEncodingRowSchema),
+      history: z.array(CompactEncodingRowSchema),
+    }),
+  }),
+  TerminalSemanticDeliveryPayloadSchemaZ.options[1],
+  TerminalSemanticDeliveryPayloadSchemaZ.options[2],
+]);
+
+function hasOwnedSeedRow(input: TerminalSemanticDeliveryPayload): boolean {
+  // Select the optimized schema without reading user accessors. Its row union
+  // still validates every unowned row if a seed mixes owned and external data.
+  const snapshot = Object.getOwnPropertyDescriptor(input, "snapshot")?.value;
+  if (typeof snapshot !== "object" || snapshot === null) return false;
+  const grid = Object.getOwnPropertyDescriptor(snapshot, "grid")?.value;
+  return (
+    Array.isArray(grid) &&
+    isOwnedTerminalReplicaRow(Object.getOwnPropertyDescriptor(grid, "0")?.value)
+  );
+}
+
 /**
  * A negotiated exact semantic representation. It changes only the wire shape:
  * decode always returns the same strict canonical payload and hash authority.
@@ -216,7 +255,9 @@ type CompactRow = readonly [0 | 1, readonly CompactCellRun[]];
 export function encodeCompactSemanticTerminalUpdate(
   input: TerminalSemanticDeliveryPayload,
 ): Uint8Array {
-  const update = TerminalSemanticDeliveryPayloadSchemaZ.parse(input);
+  const update = (
+    hasOwnedSeedRow(input) ? CompactEncodingPayloadSchema : TerminalSemanticDeliveryPayloadSchemaZ
+  ).parse(input);
   // Compact payloads contain only arrays and primitives below this object.
   // Insert root keys in canonical order so the native serializer emits exactly
   // the same representation without recursively allocating JSON fragments.
@@ -344,7 +385,10 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
   for (const rows of [grid, history]) {
     write("[");
     for (let index = 0; index < rows.length; index++) {
-      const { cells, ...rowHeaderInput } = rows[index]!;
+      const row = rows[index]!;
+      const owned = isOwnedTerminalReplicaRow(row);
+      const validatedRow = owned && validatedOwnedEncodingRows.has(row);
+      const { cells, ...rowHeaderInput } = row;
       const rowHeader = CompactRowHeaderSchema.parse(rowHeaderInput);
       if (++rowCount > COMPACT_MAX_ROWS || !Array.isArray(cells) || cells.length !== metadata.cols)
         compactEncodingLimit();
@@ -361,7 +405,8 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
         wroteRun = true;
       };
       for (let offset = 0; offset < cells.length; offset += 256) {
-        const validated = CompactCellSliceSchema.parse(cells.slice(offset, offset + 256));
+        const slice = cells.slice(offset, offset + 256);
+        const validated = validatedRow ? slice : CompactCellSliceSchema.parse(slice);
         for (const cell of validated) {
           const encoded = compactCell(cell);
           if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;
@@ -381,6 +426,9 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
       }
       emitRun();
       write("]]");
+      // Header and every cell have passed the strict row contract, in bounded
+      // slices. Only a completed immutable row may be reused by either encoder.
+      if (owned) validatedOwnedEncodingRows.add(row);
     }
     write("],");
   }

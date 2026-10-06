@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { TextRenderable } from "@opentui/core";
+import { BoxRenderable, TextRenderable } from "@opentui/core";
 import { createTestRenderer, ManualClock } from "@opentui/core/testing";
 
 async function drainTasks() {
@@ -24,6 +24,97 @@ async function fixture(maxFps = Infinity) {
 }
 
 describe("actual OpenTUI demand scheduling", () => {
+  it("paints wrapped text and following rows in the same resize frame without an identical tail", async () => {
+    const clock = new ManualClock();
+    const setup = await createTestRenderer({
+      width: 40,
+      height: 8,
+      clock,
+      maxFps: Infinity,
+      useThread: false,
+    });
+    const column = new BoxRenderable(setup.renderer, {
+      id: "column",
+      width: 20,
+      flexDirection: "column",
+    });
+    const text = new TextRenderable(setup.renderer, { id: "wrapped", content: "alpha beta gamma" });
+    const footer = new TextRenderable(setup.renderer, { id: "footer", content: "END" });
+    column.add(text);
+    column.add(footer);
+    setup.renderer.root.add(column);
+    try {
+      await setup.renderOnce();
+      clock.advance(100);
+      await drainTasks();
+      clock.advance(100);
+      await drainTasks();
+      const frames: string[] = [];
+      setup.renderer.on("frame", () => frames.push(setup.captureCharFrame()));
+      column.width = 6;
+      clock.advance(0);
+      await drainTasks();
+      clock.advance(100);
+      await drainTasks();
+      expect(frames).toHaveLength(1);
+      expect(
+        frames[0]!
+          .split("\n")
+          .slice(0, 4)
+          .map((line) => line.trimEnd()),
+      ).toEqual(["alpha", "beta", "gamma", "END"]);
+      column.width = 20;
+      clock.advance(0);
+      await drainTasks();
+      clock.advance(100);
+      await drainTasks();
+      expect(frames).toHaveLength(2);
+      expect(
+        frames[1]!
+          .split("\n")
+          .slice(0, 2)
+          .map((line) => line.trimEnd()),
+      ).toEqual(["alpha beta gamma", "END"]);
+      expect(setup.renderer.getSchedulerState().hasScheduledRender).toBe(false);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  it("preserves render requests made by resize listeners that change an earlier layout node", async () => {
+    const clock = new ManualClock();
+    const setup = await createTestRenderer({
+      width: 40,
+      height: 8,
+      clock,
+      maxFps: Infinity,
+      useThread: false,
+    });
+    const title = new TextRenderable(setup.renderer, { id: "earlier", content: "before" });
+    const box = new BoxRenderable(setup.renderer, { id: "later", width: 20, height: 1 });
+    setup.renderer.root.add(title);
+    setup.renderer.root.add(box);
+    try {
+      await setup.renderOnce();
+      clock.advance(100);
+      await drainTasks();
+      clock.advance(100);
+      await drainTasks();
+      box.on("resize", () => {
+        title.content = "callback changed the title";
+      });
+      box.width = 6;
+      clock.advance(0);
+      await drainTasks();
+      clock.advance(100);
+      await drainTasks();
+      expect(setup.captureCharFrame()).toContain("callback changed the title");
+      expect(setup.renderer.getSchedulerState().hasScheduledRender).toBe(false);
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
   it("preempts the animation deadline for live demand without leaving duplicate timers", async () => {
     const test = await fixture();
     const { renderer, clock, text } = test;

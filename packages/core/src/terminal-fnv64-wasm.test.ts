@@ -59,3 +59,13 @@ it("returns the JS-fallback signal when WASM is unavailable or initialization is
   expect(module.createBufferedFnv64()).toBeNull();
   expect(blocked).toHaveBeenCalledTimes(1);
 });
+
+it("continues an existing rolling state without rehashing its prefix", () => {
+  const bytes = Uint8Array.from({ length: 18000 }, (_, index) => index % 256);
+  for (const split of [0, 1, 4095, 4096, 8193, bytes.length]) {
+    const state = BigInt(`0x${reference(bytes.subarray(0, split))}`);
+    const writer = createBufferedFnv64(state)!;
+    writer.bytes(bytes.subarray(split));
+    expect(writer.digest()).toBe(reference(bytes));
+  }
+});

@@ -4,6 +4,7 @@ import type { TerminalReplicaRow, TerminalReplicaSnapshot } from "@tmux-ide/cont
 import { blankTerminalReplicaSnapshot, hashTerminalReplicaSnapshot } from "./terminal-replica.ts";
 import {
   hashCanonicalTerminalValue,
+  hashCanonicalTerminalValueCooperatively,
   hashTerminalReplicaRowCached,
   hashTerminalReplicaRowRunsCooperatively,
   TerminalReplicaRunEncodingCache,
@@ -36,6 +37,136 @@ const referenceHash = (value: unknown): string => {
 };
 
 describe("terminal canonical hash cache", () => {
+  it("preserves large mixed frame hashes through acceleration, yields and JS fallback", async () => {
+    const values = Array.from({ length: 3 }, (_, frame) => ({
+      prefix: "x".repeat(65520 + frame),
+      rows: Array.from({ length: 160 }, (_, index) => ({
+        attributes: index % 16,
+        foreground: { kind: "rgb", value: index * 17 },
+        text: ["界", "😀", "\ud800", "\0;:", "ASCII"][index % 5],
+        changed: frame + index,
+      })),
+      suffix: "tail".repeat(2048),
+    }));
+    const expected = values.map(referenceHash);
+    const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
+    try {
+      for (const fallback of [false, true]) {
+        if (fallback) factory.mockReturnValue(null);
+        expect(values.map(hashCanonicalTerminalValue)).toEqual(expected);
+        let yields = 0;
+        const actual = await Promise.all(
+          values.map((value) =>
+            hashCanonicalTerminalValueCooperatively(
+              value,
+              async () => {
+                yields++;
+                await Promise.resolve();
+              },
+              128,
+            ),
+          ),
+        );
+        expect(actual).toEqual(expected);
+        expect(yields).toBeGreaterThan(0);
+      }
+    } finally {
+      factory.mockRestore();
+    }
+  });
+
+  it("preserves canonical hashes across repeated, reordered and overflowing object shapes", async () => {
+    const inherited = Object.assign(Object.create({ inherited: "excluded" }), { z: 7, a: "界" });
+    Object.defineProperty(inherited, "hidden", { value: "excluded", enumerable: false });
+    const values = [
+      ...Array.from({ length: 80 }, (_, index) =>
+        index % 2 ? { z: index, a: "界" } : { a: "界", z: index },
+      ),
+      ...Array.from({ length: 20 }, (_, index) => ({ ["shape" + index]: index, tail: true })),
+      Object.fromEntries(Array.from({ length: 40 }, (_, index) => ["key" + (40 - index), index])),
+      inherited,
+      { z: 999, a: "changed" },
+    ];
+    const expected = referenceHash(values);
+    expect(hashCanonicalTerminalValue(values)).toBe(expected);
+    let yields = 0;
+    expect(
+      await hashCanonicalTerminalValueCooperatively(
+        values,
+        async () => {
+          yields++;
+        },
+        32,
+      ),
+    ).toBe(expected);
+    expect(yields).toBeGreaterThan(0);
+    values[0] = { z: -1, a: "fresh call" };
+    expect(hashCanonicalTerminalValue(values)).toBe(referenceHash(values));
+  });
+
+  it("preserves key byte encodings across token limits, Unicode and cache overflow", async () => {
+    const keys = ["", "kind", "a;b:", "\0\n", "x".repeat(32), "x".repeat(33), "界", "😀", "\ud800"];
+    const values = [
+      ...Array.from({ length: 3 }, (_, pass) =>
+        Object.fromEntries(keys.map((key, index) => [key, pass + index])),
+      ),
+      ...Array.from({ length: 24 }, (_, index) => ({ ["layout-" + index]: index, kind: "fresh" })),
+      Object.fromEntries(Array.from({ length: 40 }, (_, index) => ["field-" + index, index])),
+      Object.fromEntries(keys.map((key, index) => [key, "changed-" + index])),
+    ];
+    const expected = referenceHash(values);
+    expect(hashCanonicalTerminalValue(values)).toBe(expected);
+    let yields = 0;
+    expect(
+      await hashCanonicalTerminalValueCooperatively(
+        values,
+        async () => {
+          yields++;
+        },
+        32,
+      ),
+    ).toBe(expected);
+    expect(yields).toBeGreaterThan(0);
+    values[0] = { kind: "next call" };
+    expect(hashCanonicalTerminalValue(values)).toBe(referenceHash(values));
+  });
+
+  it("keeps batch row hashes canonical with bounded encoding reuse and a JS fallback", () => {
+    const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
+    const base = blankTerminalReplicaSnapshot(1, 1).grid[0]!.cells[0]!;
+    try {
+      for (const fallback of [false, true]) {
+        if (fallback) factory.mockReturnValue(null);
+        const cache = new TerminalReplicaRunEncodingCache();
+        const first = { ...base, grapheme: "界e\u0301\ud800", width: 2 as const };
+        expect(cache.prepare(first).cacheMiss).toBe(true);
+        expect(cache.prepare(first).cacheMiss).toBe(false);
+        for (let index = 0; index < 1_100; index++) {
+          const cell = {
+            ...base,
+            grapheme: `row-${index}`,
+            foreground: { kind: "rgb" as const, value: index },
+            background: { kind: "indexed" as const, index: index % 256 },
+          };
+          const row = { wrapped: index % 2 === 0, cells: [first, cell, base] };
+          expect(hashTerminalReplicaRowCached(row, undefined, cache)).toBe(
+            hashTerminalReplicaRowCached(row),
+          );
+        }
+        const uncached = { ...base, grapheme: "after-cache-cap" };
+        expect(cache.prepare(uncached).cacheMiss).toBe(true);
+        expect(cache.prepare(uncached).cacheMiss).toBe(true);
+        expect(cache.prepare(first).cacheMiss).toBe(false);
+        const oversized = { ...base, grapheme: "x".repeat(70_000) };
+        const fresh = new TerminalReplicaRunEncodingCache();
+        expect(fresh.prepare(oversized).cacheMiss).toBe(true);
+        expect(fresh.prepare(oversized).cacheMiss).toBe(true);
+      }
+    } finally {
+      factory.mockRestore();
+    }
+  });
+
   it("accelerates substantial transactions without changing hashes or cooperative checkpoints", async () => {
     const cache = new TerminalReplicaRunEncodingCache();
     const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");

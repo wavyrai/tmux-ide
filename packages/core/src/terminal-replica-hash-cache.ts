@@ -1,12 +1,18 @@
 import type { TerminalReplicaColor, TerminalReplicaRow } from "@tmux-ide/contracts";
-import { createBufferedFnv64 } from "./terminal-fnv64-wasm.ts";
+import { createBufferedFnv64, type BufferedFnv64 } from "./terminal-fnv64-wasm.ts";
 
 const ROW_HASH_CACHE = new WeakMap<object, string>();
 const DEEPLY_FROZEN_ROWS = new WeakSet<object>();
 const UTF8_ENCODER = new TextEncoder();
 
+interface CanonicalKeyOrder {
+  readonly original: string[];
+  readonly sorted: string[];
+  readonly tokens: readonly (string | null)[] | null;
+}
+
 /**
- * Allocation-free FNV-1a64 writer for the canonical terminal encoding.
+ * Streaming FNV-1a64 writer for the canonical terminal encoding.
  *
  * Keep the two 32-bit limbs: BigInt per byte made a unique 5k-row compact
  * delivery monopolize the OpenTUI event loop for almost a second.
@@ -14,6 +20,58 @@ const UTF8_ENCODER = new TextEncoder();
 class CanonicalFnv64 {
   #high = 0xcbf29ce4;
   #low = 0x84222325;
+  #remainingJsBytes: number;
+  #accelerator: BufferedFnv64 | null = null;
+
+  constructor(accelerateLargeFrame = false) {
+    this.#remainingJsBytes = accelerateLargeFrame ? 64 * 1024 : 0;
+  }
+
+  #considerAcceleration(bytes: number): void {
+    if (this.#remainingJsBytes <= 0) return;
+    this.#remainingJsBytes -= bytes;
+    if (this.#remainingJsBytes <= 0) {
+      // Transfer the exact rolling state once; never restart or reserialize.
+      // Each writer owns its buffer across cooperative yields. Blocked WASM
+      // keeps the original JS path, without repeated initialization attempts.
+      this.#accelerator = createBufferedFnv64((BigInt(this.#high) << 32n) | BigInt(this.#low));
+    }
+  }
+  // Per-hash only: terminal objects repeat a handful of small field layouts.
+  // Reuse sorted keys and short ASCII key tokens without retaining records,
+  // values, or future calls. Tokens share the 16-layout/32-key cache bound.
+  #keyOrders: CanonicalKeyOrder[] | null = null;
+
+  keyOrder(record: Record<string, unknown>): CanonicalKeyOrder {
+    const keys = Object.keys(record);
+    if (keys.length > 32) return { original: keys, sorted: keys.sort(), tokens: null };
+    for (const order of this.#keyOrders ?? []) {
+      if (order.original.length !== keys.length) continue;
+      let matches = true;
+      for (let index = 0; index < keys.length; index++) {
+        if (order.original[index] !== keys[index]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) return order;
+    }
+    if ((this.#keyOrders?.length ?? 0) >= 16)
+      return { original: keys, sorted: keys.sort(), tokens: null };
+    const sorted = keys.length < 2 ? keys : keys.slice().sort();
+    const order = {
+      original: keys,
+      sorted,
+      tokens: sorted.map((key) => {
+        if (key.length > 32) return null;
+        for (let index = 0; index < key.length; index++)
+          if (key.charCodeAt(index) > 0x7f) return null;
+        return `s${key.length}:${key};`;
+      }),
+    };
+    (this.#keyOrders ??= []).push(order);
+    return order;
+  }
 
   #byte(value: number): void {
     const low = (this.#low ^ value) >>> 0;
@@ -24,6 +82,8 @@ class CanonicalFnv64 {
   }
 
   ascii(value: string): number {
+    this.#considerAcceleration(value.length);
+    if (this.#accelerator) return this.#accelerator.ascii(value);
     // Canonical color/field tags dominate full-row hashing. Keep the limbs
     // local through each fragment instead of reading/writing fields per byte.
     let high = this.#high;
@@ -40,7 +100,9 @@ class CanonicalFnv64 {
   }
 
   bytes(value: Uint8Array): void {
-    for (const byte of value) this.#byte(byte);
+    this.#considerAcceleration(value.byteLength);
+    if (this.#accelerator) this.#accelerator.bytes(value);
+    else for (const byte of value) this.#byte(byte);
   }
 
   string(value: string): number {
@@ -56,13 +118,13 @@ class CanonicalFnv64 {
     if (ascii) {
       this.ascii(`s${value.length}:`);
       this.ascii(value);
-      this.#byte(0x3b);
+      this.ascii(";");
       return value.length;
     }
     const bytes = UTF8_ENCODER.encode(value);
     this.ascii(`s${bytes.byteLength}:`);
-    for (const byte of bytes) this.#byte(byte);
-    this.#byte(0x3b);
+    this.bytes(bytes);
+    this.ascii(";");
     return bytes.byteLength;
   }
 
@@ -99,22 +161,26 @@ class CanonicalFnv64 {
       return;
     }
     const record = value as Record<string, unknown>;
-    const keys = Object.keys(record).sort();
+    const { sorted: keys, tokens } = this.keyOrder(record);
     this.ascii(`o${keys.length}:`);
-    for (const key of keys) {
-      this.string(key);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
+      const token = tokens?.[index];
+      if (token !== null && token !== undefined) this.ascii(token);
+      else this.string(key);
       this.value(record[key]);
     }
     this.ascii(";");
   }
 
   digest(): string {
+    if (this.#accelerator) return this.#accelerator.digest();
     return `${this.#high.toString(16).padStart(8, "0")}${this.#low.toString(16).padStart(8, "0")}`;
   }
 }
 
 export function hashCanonicalTerminalValue(value: unknown): string {
-  const hash = new CanonicalFnv64();
+  const hash = new CanonicalFnv64(true);
   hash.value(value);
   return hash.digest();
 }
@@ -124,7 +190,7 @@ export async function hashCanonicalTerminalValueCooperatively(
   yieldControl: () => Promise<void>,
   workPerSlice = 4 * 1_024,
 ): Promise<string> {
-  const hash = new CanonicalFnv64();
+  const hash = new CanonicalFnv64(true);
   let work = 0;
   const checkpoint = (amount: number): boolean => {
     work += amount;
@@ -175,7 +241,7 @@ export async function hashCanonicalTerminalValueCooperatively(
       continue;
     }
     const record = entry as Record<string, unknown>;
-    const keys = Object.keys(record).sort();
+    const keys = hash.keyOrder(record).sorted;
     if (checkpoint(hash.ascii(`o${keys.length}:`) + keys.length)) await yieldControl();
     stack.push({ kind: "ascii", value: ";" });
     for (let index = keys.length - 1; index >= 0; index -= 1) {
@@ -215,6 +281,8 @@ const compactColorKey = (color: TerminalReplicaColor): number =>
 /** Package-private per-decode cache for exact canonical cell byte segments. */
 export class TerminalReplicaRunEncodingCache {
   #canonicalBytes = 0;
+  #cachedCells = 0;
+  #retainedEncodingBytes = 0;
 
   createHash(): CanonicalFnv64 | NonNullable<ReturnType<typeof createBufferedFnv64>> {
     // Small deliveries benefit more from row reuse than from crossing into
@@ -238,17 +306,14 @@ export class TerminalReplicaRunEncodingCache {
     readonly allocatedBytes: number;
     readonly cacheMiss: boolean;
   } {
-    const widths = this.#entries.get(cell.grapheme) ?? new Map();
-    this.#entries.set(cell.grapheme, widths);
     const foregroundKey = compactColorKey(cell.foreground);
-    const foregrounds = widths.get(cell.width) ?? new Map();
-    widths.set(cell.width, foregrounds);
     const backgroundKey = compactColorKey(cell.background);
-    const backgrounds = foregrounds.get(foregroundKey) ?? new Map();
-    foregrounds.set(foregroundKey, backgrounds);
-    const attributes = backgrounds.get(backgroundKey) ?? new Map();
-    backgrounds.set(backgroundKey, attributes);
-    const cached = attributes.get(cell.attributes);
+    const cached = this.#entries
+      .get(cell.grapheme)
+      ?.get(cell.width)
+      ?.get(foregroundKey)
+      ?.get(backgroundKey)
+      ?.get(cell.attributes);
     if (cached) return { prepared: cached, allocatedBytes: 0, cacheMiss: false };
     const graphemeBytes = UTF8_ENCODER.encode(cell.grapheme);
     const numberText = (value: number): string => {
@@ -268,30 +333,63 @@ export class TerminalReplicaRunEncodingCache {
         cell.background,
       )}${numberText(cell.attributes)};`,
     });
-    attributes.set(cell.attributes, prepared);
+    // A transaction may contain arbitrary text and RGB values. Bound both
+    // entry count and retained string/byte payload; uncached cells hash identically.
+    const retainedBytes =
+      graphemeBytes.byteLength +
+      2 * (cell.grapheme.length + prepared.prefix.length + prepared.suffix.length);
+    if (this.#cachedCells < 1_024 && this.#retainedEncodingBytes + retainedBytes <= 64 * 1_024) {
+      const widths = this.#entries.get(cell.grapheme) ?? new Map();
+      this.#entries.set(cell.grapheme, widths);
+      const foregrounds = widths.get(cell.width) ?? new Map();
+      widths.set(cell.width, foregrounds);
+      const backgrounds = foregrounds.get(foregroundKey) ?? new Map();
+      foregrounds.set(foregroundKey, backgrounds);
+      const attributes = backgrounds.get(backgroundKey) ?? new Map();
+      backgrounds.set(backgroundKey, attributes);
+      attributes.set(cell.attributes, prepared);
+      this.#cachedCells++;
+      this.#retainedEncodingBytes += retainedBytes;
+    }
     return { prepared, allocatedBytes: graphemeBytes.byteLength, cacheMiss: true };
   }
 }
 
-export function hashTerminalReplicaRowCached(row: TerminalReplicaRow, onMiss?: () => void): string {
+export function hashTerminalReplicaRowCached(
+  row: TerminalReplicaRow,
+  onMiss?: () => void,
+  encodingCache?: TerminalReplicaRunEncodingCache,
+): string {
   const cached = ROW_HASH_CACHE.get(row);
   if (cached) return cached;
   onMiss?.();
-  const hash = new CanonicalFnv64();
+  const hash = encodingCache?.createHash() ?? new CanonicalFnv64();
+  let canonicalBytes = 10 + String(row.cells.length).length;
   hash.ascii("a2:");
   hash.boolean(row.wrapped);
   hash.ascii(`a${row.cells.length}:`);
   for (const cell of row.cells) {
-    hash.ascii("a5:");
-    hash.string(cell.grapheme);
-    hash.number(cell.width);
-    writeColor(hash, cell.foreground);
-    writeColor(hash, cell.background);
-    hash.number(cell.attributes);
-    hash.ascii(";");
+    if (encodingCache) {
+      const { prepared } = encodingCache.prepare(cell);
+      hash.ascii(prepared.prefix);
+      hash.bytes(prepared.graphemeBytes);
+      hash.ascii(prepared.suffix);
+      canonicalBytes +=
+        prepared.prefix.length + prepared.graphemeBytes.length + prepared.suffix.length;
+    } else {
+      const direct = hash as CanonicalFnv64;
+      direct.ascii("a5:");
+      direct.string(cell.grapheme);
+      direct.number(cell.width);
+      writeColor(direct, cell.foreground);
+      writeColor(direct, cell.background);
+      direct.number(cell.attributes);
+      direct.ascii(";");
+    }
   }
   hash.ascii(";;");
   const digest = hash.digest();
+  encodingCache?.recordCanonicalBytes(canonicalBytes);
   if (isTerminalReplicaRowDeeplyFrozen(row)) {
     DEEPLY_FROZEN_ROWS.add(row);
     ROW_HASH_CACHE.set(row, digest);

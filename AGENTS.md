@@ -103,7 +103,7 @@ and validation paths. See `ARCHITECTURE.md` for import direction and
   `workspace/` workspace presentation, and `features/` optional feature modules.
 - `packages/daemon/src/widgets/` — explorer, changes, preview, config, setup and
   sidebar widgets; `resolve.ts` resolves entries and `lib/` holds shared helpers.
-- `apps/desktop-renderer/`, `apps/web-workspace/`, `apps/electron-shell/` — separate
+- `apps/desktop-renderer/`, `apps/electron-shell/` — separate
   web/desktop surfaces; not prerequisites for the terminal-only release gate.
 - Do not add an external or closed-source canvas SDK to the core, TUI or web GUI.
 

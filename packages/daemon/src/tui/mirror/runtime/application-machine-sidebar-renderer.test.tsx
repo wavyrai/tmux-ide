@@ -13,6 +13,61 @@ import {
 } from "./application-machine-sidebar.tsx";
 
 describe("machine sidebar", () => {
+  it("renders agent and session rows from one coherent reactive group snapshot", async () => {
+    const [revision, setRevision] = createSignal(0);
+    let reads = 0;
+    const groups = (): ApplicationMachineGroup[] => {
+      const current = revision();
+      const name = ++reads === 1 ? `current${current}` : "mixed-generation";
+      return [
+        {
+          id: "local",
+          label: "Local",
+          state: "ready",
+          sessions: [{ id: "session", name, paneCount: 1 }],
+          agents: [
+            {
+              id: "agent",
+              name: `${name} agent`,
+              sessionName: name,
+              paneId: "%1",
+              activity: "idle",
+              attention: false,
+              nativeIdentity: null,
+              interactionEndpoint: null,
+            },
+          ],
+        },
+      ];
+    };
+    const setup = await renderForTest(
+      () => (
+        <ApplicationMachineSidebar
+          width={40}
+          height={16}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          model={{
+            groups,
+            activeMachineId: () => "local",
+            activeSessionName: () => null,
+            onOpen: () => {},
+            onSelectMachine: () => {},
+          }}
+        />
+      ),
+      { width: 40, height: 16 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("current0");
+    expect(setup.captureCharFrame()).not.toContain("mixed-generation");
+    reads = 0;
+    setRevision(1);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("current1");
+    expect(setup.captureCharFrame()).not.toContain("current0");
+    expect(setup.captureCharFrame()).not.toContain("mixed-generation");
+  });
+
   it("retains keyed rows across fresh snapshots and reorder while actions use current data", async () => {
     const initial: ApplicationMachineGroup[] = [
       {
@@ -454,6 +509,74 @@ it("offers keyboard and mouse connection controls for the focused remote only", 
   setup.renderer.destroy();
   owner.dispose();
 });
+
+it.each([28, 34, 48])(
+  "shows complete missing-daemon recovery guidance at width %s",
+  async (width) => {
+    const [ready, setReady] = createSignal(false);
+    const calls: string[] = [];
+    const setup = await renderForTest(
+      () => (
+        <ApplicationMachineSidebar
+          width={width}
+          height={20}
+          agentRows={8}
+          agents={<text>Resident agents</text>}
+          theme={createSemanticThemeSnapshot({ mode: "dark" })}
+          model={{
+            groups: () => [
+              {
+                id: "mini",
+                label: "Mini",
+                state: ready() ? "ready" : "connecting",
+                sessions: [],
+                diagnostic: ready()
+                  ? { phase: "ready", failure: null, attempt: 0, nextRetryAt: null }
+                  : {
+                      phase: "reconnecting",
+                      failure: "daemon-missing",
+                      attempt: 1,
+                      nextRetryAt: null,
+                    },
+              },
+            ],
+            activeMachineId: () => "mini",
+            activeSessionName: () => null,
+            focused: () => true,
+            onOpen: () => {},
+            onSelectMachine: () => {},
+            onRetryMachine: (id) => {
+              calls.push(id);
+            },
+            onDisconnectMachine: () => {},
+          }}
+        />
+      ),
+      { width, height: 20 },
+    );
+    try {
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame.replace(/\s/gu, "")).toContain("starttmux-ideonthismachineifneeded.");
+      expect(frame).toContain("Retry connection");
+      expect(frame).toContain("Disconnect");
+      expect(frame).toContain("Resident agents");
+      await setup.mockMouse.click(
+        6,
+        frame.split("\n").findIndex((line) => line.includes("Retry connection")),
+        MouseButtons.LEFT,
+      );
+      expect(calls).toEqual(["mini"]);
+      setReady(true);
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("Connected");
+      expect(setup.captureCharFrame()).not.toContain("No running daemon");
+      expect(setup.captureCharFrame()).toContain("Resident agents");
+    } finally {
+      setup.renderer.destroy();
+    }
+  },
+);
 
 it("keeps retained session tabs out of the agent-first sidebar", async () => {
   const calls: string[] = [];

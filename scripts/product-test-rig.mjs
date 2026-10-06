@@ -30,18 +30,15 @@ import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import {
-  startDaemon,
-  waitForReadinessLadder,
-} from "../apps/desktop-renderer/e2e/fixtures/daemon.ts";
-import { verifyDaemonRetirement } from "../apps/desktop-renderer/e2e/fixtures/daemon-retirement.ts";
+import { startDaemon, waitForReadinessLadder } from "./lib/product-fixtures/daemon.ts";
+import { verifyDaemonRetirement } from "./lib/product-fixtures/daemon-retirement.ts";
 import { shellChromeLayout } from "../packages/daemon/src/tui/mirror/shell-chrome.ts";
 import { startDevServer } from "../apps/desktop-renderer/e2e/fixtures/dev-server.ts";
 import {
   SCRATCH_INITIAL_PANE_COMMAND_INVALID,
   createScratchFleet,
   validateScratchInitialPaneCommand,
-} from "../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
+} from "./lib/product-fixtures/scratch-fleet.ts";
 import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
   PRODUCT_RIG_SOURCE_INVENTORY_MAX_BYTES,
@@ -57,6 +54,7 @@ import {
   buildProductDiagnosticReport,
   buildWebStartupEvidence,
   causalFixtureBaselineReadiness,
+  causalCellMatchesCapture,
   causalInputSamples,
   causalInputSampleHasIncarnation,
   causalProbeEpochState,
@@ -96,6 +94,7 @@ import {
   runCausalFixtureTeardownGate,
   selectProductResourceEndpoint,
   summarizeProductResources,
+  collectProductResourceEvidence,
   shouldCaptureWebConsoleMessage,
   waitForLifecycleEntry,
   writeJsonAtomic,
@@ -124,6 +123,7 @@ import {
   qualifyCanonicalSeedPaint,
   qualifyCoherentFrameCausality,
   qualifyPreseededPaneEvidence,
+  qualifyWorkspaceClientState,
   waitForCanonicalFrameFence,
   waitForQualifiedWorkspaceClientState,
 } from "./lib/product-configless-owner.mjs";
@@ -512,6 +512,52 @@ function partialProductRuntimeEvidence(state) {
   });
 }
 
+async function captureRuntimeDiagnosticState(state, captureEvidence) {
+  const processId = captureEvidence?.tuiStatus?.processId;
+  const generation = captureEvidence?.tuiStatus?.daemon?.instanceId;
+  if (!Number.isSafeInteger(processId) || generation !== state.daemon.instanceId)
+    throw new Error("runtime correlation has no exact captured renderer/daemon identity");
+  const records = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"));
+  const record = records.findLast(
+    (entry) =>
+      entry?.phase === "generation-workspace-client-state" &&
+      entry.processId === `opentui:${processId}` &&
+      entry.daemonGeneration === generation,
+  );
+  const selected = record?.workspaceClient?.committed?.terminalResources?.filter(
+    (entry) => entry.active,
+  );
+  if (selected?.length !== 1) throw new Error("runtime correlation has no unique selected pane");
+  const daemonRecord = await observePublicElectedDaemon(
+    state.runtimeNamespace.daemonInfoDir,
+    5_000,
+  );
+  if (daemonRecord.instanceId !== generation || daemonRecord.pid !== state.daemon.pid)
+    throw new Error("runtime correlation daemon changed during capture");
+  const identity = await card5ArtifactIdentity(
+    {
+      record: daemonRecord,
+      baseUrl: `http://${daemonRecord.bindHostname ?? "127.0.0.1"}:${daemonRecord.port}`,
+    },
+    state.session,
+    selected[0].semanticPaneId,
+  );
+  const workspaceClient = qualifyWorkspaceClientState([record], {
+    ...identity,
+    processId: `opentui:${processId}`,
+    daemonGeneration: generation,
+    canonicalGeneration: generation,
+    workspaceName: state.workspace,
+    sessionName: state.session,
+  });
+  return {
+    ...state,
+    daemon: { ...state.daemon, revision: identity.catalogRevision, revisionKind: "fleet-catalog" },
+    convergence: { ...state.convergence, workspaceClient },
+    journeyEvidence: { ...state.journeyEvidence, runtimeQualification: identity },
+  };
+}
+
 function productDiagnosticCorrelation(state, captureEvidence) {
   const tuiAvailable = Boolean(captureEvidence?.tuiPath && existsSync(captureEvidence.tuiPath));
   const webAvailable = Boolean(captureEvidence?.webPath && existsSync(captureEvidence.webPath));
@@ -577,7 +623,7 @@ function productDiagnosticCorrelation(state, captureEvidence) {
                           sessionRecreate.hostile?.tmuxServerRecreate?.identity?.catalogRevision,
                         semanticPaneId: sessionRecreate.hostile?.tmuxServerRecreate?.semanticPaneId,
                       }
-                    : null;
+                    : (state?.journeyEvidence?.runtimeQualification ?? null);
   return buildProductDiagnosticCorrelation({
     state,
     tuiAvailable,
@@ -2707,12 +2753,15 @@ function exactWindowSwitchDaemonTiming(records, started) {
     throw error;
   };
   if (!Array.isArray(records) || records.length > 4_096) fail("record-cardinality");
-  const operations = [
-    "semantic-pane-inventory-lookup",
-    "semantic-pane-resolution",
-    "tmux-selection-effect-proof",
-    "semantic-mutation-effect",
-  ];
+  const operations =
+    started.selectionKind === "window-link"
+      ? ["semantic-workspace-lookup", "window-link-effect-proof", "semantic-mutation-effect"]
+      : [
+          "semantic-pane-inventory-lookup",
+          "semantic-pane-resolution",
+          "tmux-selection-effect-proof",
+          "semantic-mutation-effect",
+        ];
   const exact = records.filter(
     (record) =>
       record?.type === "performance.stage" &&
@@ -2720,7 +2769,7 @@ function exactWindowSwitchDaemonTiming(records, started) {
       record.scenario === "window-switch",
   );
   if (exact.length !== operations.length) fail("phase-cardinality");
-  const values = {};
+  const values = { selectionKind: started.selectionKind ?? "pane" };
   const spans = [];
   let clockIdentity = null;
   for (const operation of operations) {
@@ -2757,12 +2806,14 @@ function exactWindowSwitchDaemonTiming(records, started) {
     values[`${operation.replaceAll("-", "_")}Ms`] =
       (span.endedAtMicros - span.startedAtMicros) / 1_000;
   }
-  const [inventory, resolution, selection, total] = spans;
+  const total = spans.at(-1);
+  const phases = spans.slice(0, -1);
   if (
-    total.startedAtMicros > inventory.startedAtMicros ||
-    inventory.endedAtMicros > resolution.startedAtMicros ||
-    resolution.endedAtMicros > selection.startedAtMicros ||
-    selection.endedAtMicros > total.endedAtMicros
+    total.startedAtMicros > phases[0].startedAtMicros ||
+    phases.at(-1).endedAtMicros > total.endedAtMicros ||
+    phases.some(
+      (span, index) => index > 0 && phases[index - 1].endedAtMicros > span.startedAtMicros,
+    )
   )
     fail("phase-order");
   return Object.freeze(values);
@@ -8088,6 +8139,21 @@ async function provePreseededPanePublication(state, seed, canonicalResources, ti
     });
     throw error;
   }
+  // Bind the first coherent publication to its seed identity. A later fit can
+  // return to the same geometry with a different revision; that is not a
+  // duplicate of the first frame and must not race this startup proof.
+  const initialSeed = readJsonLines(state.tui.performanceTracePath).find(
+    (record) =>
+      record?.type === "performance.terminal-canonical-publication" &&
+      record.updateType === "terminal.seed" &&
+      record.semanticPaneId === sample.semanticPaneId &&
+      record.generation === state.daemon.instanceId &&
+      record.processId === hostFrame.processId &&
+      record.clockId === hostFrame.clockId &&
+      record.clockKind === "performance-now" &&
+      record.sourceEpoch === 1,
+  );
+  if (!initialSeed) throw new Error("coherent frame is missing its canonical seed identity");
   const fencedTrace = await waitForCanonicalFrameFence(
     () => readJsonLines(state.tui.performanceTracePath),
     {
@@ -8096,6 +8162,9 @@ async function provePreseededPanePublication(state, seed, canonicalResources, ti
       daemonGeneration: state.daemon.instanceId,
       rendererEpoch: hostFrame.rendererEpoch,
       semanticPaneId: sample.semanticPaneId,
+      revision: initialSeed.revision,
+      stateHash: initialSeed.stateHash,
+      incarnation: initialSeed.incarnation,
       sourceEpoch: 1,
       canonicalCols: sample.geometry.width,
       canonicalRows: sample.geometry.height,
@@ -8103,7 +8172,10 @@ async function provePreseededPanePublication(state, seed, canonicalResources, ti
       viewportRows: sample.geometry.height,
     },
   );
-  const performanceRecords = fencedTrace.records;
+  // Preserve the complete trace on disk; only this first-frame proof ends at
+  // the exact consumed seed fence. Later resize/paint work has its own checks.
+  const fenceIndex = fencedTrace.records.indexOf(fencedTrace.fence);
+  const performanceRecords = fencedTrace.records.slice(0, fenceIndex + 1);
   let canonicalSeedPaint;
   try {
     const seedPublication = performanceRecords.find(
@@ -8919,8 +8991,8 @@ async function diagnoseRuntimeQualification(planEntry) {
             candidate &&
             geometryStable &&
             exactProof &&
-            beforeNativeCell === causalPainted.beforeGrapheme &&
-            beforeTuiCell === causalPainted.beforeGrapheme &&
+            causalCellMatchesCapture(beforeNativeCell, causalPainted.beforeGrapheme) &&
+            causalCellMatchesCapture(beforeTuiCell, causalPainted.beforeGrapheme) &&
             afterNativeCell === expectedCell &&
             afterTuiCell === expectedCell &&
             causalPainted.afterGrapheme === expectedCell
@@ -9254,7 +9326,7 @@ async function diagnoseRuntimeQualification(planEntry) {
     resourceObservation = summarizeProductResources(
       clientStages,
       deliveries,
-      resourceEndpointTraceIds,
+      collectProductResourceEvidence(loadRecords, resourceEndpointTraceIds),
     );
     const settledIdle = await observeProductIdleProcessWindow(
       state,
@@ -9283,6 +9355,12 @@ async function diagnoseRuntimeQualification(planEntry) {
   );
   diagnosticCaptures.set(planEntry.runId, captureEvidence);
   diagnosticAttemptPhases.set(planEntry.runId, "report-correlation");
+  let runtimeCorrelationFailure = null;
+  try {
+    state = await captureRuntimeDiagnosticState(state, captureEvidence);
+  } catch (error) {
+    runtimeCorrelationFailure = error instanceof Error ? error.message : String(error);
+  }
   // A closed collector summary is the only truthful proof that trace
   // backpressure did not drop or oversize records. Stop the hosted TUI after
   // all visual journeys, then build the report from its final streams.
@@ -9350,7 +9428,7 @@ async function diagnoseRuntimeQualification(planEntry) {
     status: correlation.complete ? "passed" : "unmeasured",
     detail: correlation.complete
       ? "daemon revision, WorkspaceClient state and Web semantic state aligned"
-      : `missing ${correlation.missing.join(", ")}`,
+      : `missing ${correlation.missing.join(", ")}${runtimeCorrelationFailure ? `; ${runtimeCorrelationFailure}` : ""}`,
   };
   const report = {
     ...baseReport,
@@ -11369,8 +11447,8 @@ async function owner() {
           if (
             activeAfter.paneId !== namespace.paneId ||
             paneGeometryIdentity([baseline.active]) !== paneGeometryIdentity([activeAfter]) ||
-            terminalCellAt(nativeBefore, row, column) !== beforeGrapheme ||
-            terminalCellAt(bodyBefore, row, column) !== beforeGrapheme ||
+            !causalCellMatchesCapture(terminalCellAt(nativeBefore, row, column), beforeGrapheme) ||
+            !causalCellMatchesCapture(terminalCellAt(bodyBefore, row, column), beforeGrapheme) ||
             terminalCellAt(nativeAfter, row, column) !== afterGrapheme ||
             terminalCellAt(bodyAfter, row, column) !== afterGrapheme
           )
@@ -17879,8 +17957,15 @@ async function owner() {
             minimumTerminalResourceRevision: created.terminalResourceRevision,
             receipt: {
               operationId: settled.traceId,
-              operationKind: "workspace.pane.select",
-              semanticPaneId: created.selected.semanticPaneId,
+              ...(settled.selectionKind === "window-link"
+                ? {
+                    operationKind: "workspace.window.link.select",
+                    windowLink: settled.windowLink,
+                  }
+                : {
+                    operationKind: "workspace.pane.select",
+                    semanticPaneId: created.selected.semanticPaneId,
+                  }),
             },
           });
           const tmux = await exactWindowTmuxSnapshot(state, primedWindows);
@@ -17894,6 +17979,7 @@ async function owner() {
             traceId: settled.traceId,
             operationId: settled.traceId,
             selectionApplied: settled.selectionApplied,
+            selectionKind: settled.selectionKind,
             canonicalIdentity: Object.freeze({
               sourceEpoch: settled.sourceEpoch,
               generation: settled.generation,
@@ -18008,7 +18094,9 @@ async function owner() {
             primed?.visibleFrame?.semanticPaneId !== created.selected.semanticPaneId ||
             primed?.workspaceClient?.committed?.lastReceipt?.operationId !== primed?.traceId ||
             primed?.workspaceClient?.committed?.lastReceipt?.operationKind !==
-              "workspace.pane.select" ||
+              (primed.selectionKind === "window-link"
+                ? "workspace.window.link.select"
+                : "workspace.pane.select") ||
             primed?.workspaceClient?.committed?.lastReceipt?.phase !== "observed" ||
             primed?.workspaceClient?.committed?.lastReceipt?.proof?.outcome !== "applied" ||
             !Number.isSafeInteger(primed?.workspaceClient?.record?.monotonicMicros) ||
