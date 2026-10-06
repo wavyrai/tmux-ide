@@ -1492,11 +1492,13 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       atInput: topologyStatus(),
       sameNativePane: activePane("journey-beta") === recreatedAgentPane,
     };
-    if (evidenceDir)
+    if (evidenceDir) {
+      mkdirSync(evidenceDir, { recursive: true });
       writeFileSync(
         join(evidenceDir, "topology-input-trigger.json"),
         JSON.stringify(trigger, null, 2),
       );
+    }
     if (!trigger.sameNativePane) throw new Error("Topology trigger changed the selected pane");
   }
   const recreatedAgentMarker = `PACK_AGENT_RECREATED_${process.pid}`;
