@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { AppIcon } from "@/components/app-icon";
 import { CopyAgentPrompt } from "@/components/copy-agent-prompt";
+import { GitHubMark } from "@/components/docs/assistant-marks";
 import { LandingFaqJsonLd } from "@/components/landing-faq-json-ld";
 import {
   Band,
@@ -112,12 +113,9 @@ export default async function HomePage() {
                 />
                 <div className="hero-cta-row">
                   <CopyAgentPrompt size="hero" showPrompt={false} />
-                  <div className="type-body flex items-center gap-x-5 text-fd-muted-foreground">
-                    <Link
-                      href="/docs/getting-started"
-                      className="marketing-link-action text-fd-foreground"
-                    >
-                      Docs →
+                  <div className="hero-cta-links">
+                    <Link href="/docs/getting-started" className="hero-secondary">
+                      Docs <span aria-hidden>→</span>
                     </Link>
                     <a
                       href="https://github.com/wavyrai/tmux-ide"
@@ -128,13 +126,13 @@ export default async function HomePage() {
                           ? "tmux-ide on GitHub (opens in a new tab)"
                           : `tmux-ide on GitHub, ${stars} stars (opens in a new tab)`
                       }
-                      className="marketing-link-action inline-flex items-center gap-1.5 text-fd-foreground"
+                      className="hero-secondary"
                     >
+                      <GitHubMark />
                       <span>GitHub</span>
                       {stars !== null ? (
-                        <span className="type-caption-1 inline-flex items-center gap-1 font-mono text-fd-muted-foreground">
-                          <span aria-hidden>★</span>
-                          <span>{formatStars(stars)}</span>
+                        <span className="hero-secondary-count">
+                          <span aria-hidden>★</span> {formatStars(stars)}
                         </span>
                       ) : null}
                     </a>
