@@ -189,13 +189,6 @@ export default async function HomePage() {
               titleMuted="Go straight to the right pane."
               description="Name each agent, watch its state, and open its exact pane."
             />
-            <p className="type-body mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 text-fd-muted-foreground">
-              <span className="text-fd-foreground">Name</span>
-              <span aria-hidden>→</span>
-              <span className="text-fd-foreground">Monitor</span>
-              <span aria-hidden>→</span>
-              <span className="text-fd-foreground">Navigate</span>
-            </p>
             <Mosaic bleed className="mt-12 lg:grid-cols-3">
               {LANDING_AGENT_FEATURES.map((feature, index) => (
                 <Cell
