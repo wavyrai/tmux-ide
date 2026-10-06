@@ -1015,6 +1015,25 @@
   }
 }
 
+/* The banner's dither field: a tile of white pixel cells in scattered greys
+   (cached file, not an inline data URI), fading in toward the right edge. */
+.banner-dither {
+  position: absolute;
+  inset: 0;
+  z-index: -10;
+  pointer-events: none;
+  background-image: url("./dither-light.svg");
+  background-size: 24px 24px;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    transparent 18%,
+    rgb(0 0 0 / 35%) 42%,
+    rgb(0 0 0 / 75%) 70%,
+    black 100%
+  );
+}
+
 /* The footer is an intentionally permanent dark close, independent of the
    reader's theme. Rebinding the same semantic tokens keeps every child on the
    design system instead of scattering one-off white/black utilities. */

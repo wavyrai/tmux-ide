@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { PrototyperWordmark } from "@/components/prototyper-wordmark";
-import { DITHER_MASK_RIGHT, DITHER_SIZE, DITHER_URL } from "@/components/dither";
 import { SITE_REPOSITORY } from "@/lib/site";
 
 /** The arrow nudges out on hover — the only motion in the bar. */
@@ -30,16 +29,7 @@ export function TopBanner() {
     // stacking (fumadocs' #nd-nav is sticky top-0 z-40 — global.css pushes it
     // down by the banner's height, and the banner sits at z-50 above it).
     <div className="sticky top-0 z-50 h-10 w-full overflow-hidden bg-black text-white isolate">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10"
-        style={{
-          backgroundImage: DITHER_URL,
-          backgroundSize: DITHER_SIZE,
-          maskImage: DITHER_MASK_RIGHT,
-          WebkitMaskImage: DITHER_MASK_RIGHT,
-        }}
-      />
+      <div aria-hidden className="banner-dither" />
       {/* The shared site rail (--site-max, --site-gutter in global.css), so
           the Prototyper wordmark lands on the same left edge as the tmux-ide
           logo, every section and the footer. The var is only defined
