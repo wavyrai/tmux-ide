@@ -1473,24 +1473,48 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
             patch: { rows: [], cursor: snapshot.cursor },
           };
 
+    const seedStartedAt = performance.now();
     owner.emit(canonicalUpdate(0, snapshots[0]!));
-    await vi.waitFor(
-      () => {
-        expect(
-          messages.filter((message) => message.type === "terminal.delivery.fault"),
-          "compact seed must not be refused",
-        ).toEqual([]);
-        expect(
-          messages.some((message) => message.type === "terminal.delivery"),
-          JSON.stringify({
-            metrics: hub.metrics(),
-            recentSpans: spans.slice(-8),
-            messageTypes: messages.map((message) => message.type),
-          }),
-        ).toBe(true);
-      },
-      { timeout: 10_000 },
-    );
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            messages.filter((message) => message.type === "terminal.delivery.fault"),
+            "compact seed must not be refused",
+          ).toEqual([]);
+          expect(
+            messages.some((message) => message.type === "terminal.delivery"),
+            JSON.stringify({
+              metrics: hub.metrics(),
+              recentSpans: spans.slice(-8),
+              messageTypes: messages.map((message) => message.type),
+            }),
+          ).toBe(true);
+        },
+        { timeout: 10_000 },
+      );
+    } catch (error) {
+      // Keep the original deadline and failure. Observe late completion only
+      // after a failure so CI distinguishes slow encoding from stalled work.
+      let lateDelivery = false;
+      try {
+        await vi.waitFor(
+          () => expect(messages.some((message) => message.type === "terminal.delivery")).toBe(true),
+          { timeout: 20_000 },
+        );
+        lateDelivery = true;
+      } catch {
+        // The original assertion below remains the reported test failure.
+      }
+      console.error("compact seed after-deadline diagnostic", {
+        elapsedMs: performance.now() - seedStartedAt,
+        lateDelivery,
+        metrics: hub.metrics(),
+        recentSpans: spans.slice(-8),
+        messageTypes: messages.map((message) => message.type),
+      });
+      throw error;
+    }
     const first = messages.find(
       (message) => message.type === "terminal.delivery",
     ) as TerminalDeliveryEnvelope;
