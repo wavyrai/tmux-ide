@@ -1,3 +1,5 @@
+import { SpriteIcon } from "@/components/icons/sprite-icon";
+
 /**
  * Marks for the docs page actions, rendered at one 14px optical size. All are
  * decorative (aria-hidden): the link or button text carries the name. Fills
@@ -54,28 +56,14 @@ export function PerplexityMark({ className = "" }: MarkProps) {
   );
 }
 
-/** The GitHub mark (Octicons, MIT). */
+/** The GitHub mark (Octicons, MIT), from the icon sprite. */
 export function GitHubMark({ className = "" }: MarkProps) {
-  return (
-    <svg {...frame} className={className}>
-      <path
-        fill="currentColor"
-        d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"
-      />
-    </svg>
-  );
+  return <SpriteIcon name="github" className={className} />;
 }
 
-/** An open book for documentation (Hugeicons free set, MIT: book-open-01). */
+/** An open book for documentation (Hugeicons free set, MIT: book-open-01), from the icon sprite. */
 export function DocsMark({ className = "" }: MarkProps) {
-  return (
-    <svg {...frame} viewBox="0 0 24 24" className={className}>
-      <g {...line} strokeWidth={1.5}>
-        <path d="M5.33333 3.00001C7.79379 2.99657 10.1685 3.88709 12 5.5V21C10.1685 19.3871 7.79379 18.4966 5.33333 18.5C3.77132 18.5 2.99032 18.5 2.64526 18.2792C2.4381 18.1466 2.35346 18.0619 2.22086 17.8547C2 17.5097 2 16.8941 2 15.6629V6.40322C2 4.97543 2 4.26154 2.54874 3.68286C3.09748 3.10418 3.65923 3.07432 4.78272 3.0146C4.965 3.00491 5.14858 3.00001 5.33333 3.00001Z" />
-        <path d="M18.6667 3.00001C16.2062 2.99657 13.8315 3.88709 12 5.5V21C13.8315 19.3871 16.2062 18.4966 18.6667 18.5C20.2287 18.5 21.0097 18.5 21.3547 18.2792C21.5619 18.1466 21.6465 18.0619 21.7791 17.8547C22 17.5097 22 16.8941 22 15.6629V6.40322C22 4.97543 22 4.26154 21.4513 3.68286C20.9025 3.10418 20.3408 3.07432 19.2173 3.0146C19.035 3.00491 18.8514 3.00001 18.6667 3.00001Z" />
-      </g>
-    </svg>
-  );
+  return <SpriteIcon name="docs" className={className} />;
 }
 
 /** The Markdown mark: an "M" and a down arrow in a rounded frame. */

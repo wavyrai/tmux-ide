@@ -39,7 +39,7 @@ SOFTWARE.
 ## Hugeicons (free set)
 
 Used for the copy and check icons (`components/copy-status.tsx`) and the docs
-book icon (`components/docs/assistant-marks.tsx`).
+book icon (`components/icons/sprite.svg`).
 
 Source: https://hugeicons.com (package `@hugeicons/core-free-icons`, MIT)
 
@@ -69,7 +69,7 @@ SOFTWARE.
 
 ## Octicons
 
-Used for the GitHub mark (`components/docs/assistant-marks.tsx`).
+Used for the GitHub mark (`components/icons/sprite.svg`).
 
 Source: https://github.com/primer/octicons
 
@@ -100,7 +100,7 @@ SOFTWARE.
 ## Simple Icons
 
 Used for the Claude Code and Cursor marks (`public/marks/claude-code.svg`,
-`components/harness-marks.tsx`).
+`components/icons/sprite.svg`).
 
 Source: https://simpleicons.org, released under CC0 1.0 Universal (public
 domain dedication); credit is given as a courtesy.
