@@ -478,6 +478,16 @@ fixture above; it does not join both into a live PTY journey or prove physical
 terminal paint. The fixture runs in `test:tui-renderer` with the repository's
 pinned Bun version. Cleanup removes the frame observer and destroys the renderer.
 
+`terminal-draw-failure-renderer.test.tsx` covers retry after a one-shot drawing
+exception through the same production owner, lane, adapter and surface. A failure
+inside a grapheme draw previously consumed row damage while leaving an incomplete
+retained surface and stale cursor. PaneSurface now marks the next walk as a full
+repaint before rethrowing the original error. The test requires a complete frame
+and cursor on retry without another canonical update, followed by normal output.
+A postprocess exception after a completed surface walk remains a passing control.
+These are injected failure paths, not evidence of an ordinary user action causing
+the native drawing exception or of physical terminal rendering.
+
 ## Retained viewers and prior-release upgrades
 
 `scripts/lib/product-tui-recovery-live.test.mjs` now waits for each retained TUI
@@ -487,6 +497,14 @@ bottom markers before recording the recovery baseline. The SIGKILL case keeps
 eight TUI processes alive across replacement, then verifies content, input
 acknowledgements, geometry and the single replacement control client. This
 qualification does not cover SSH interruption or every recovery mode.
+
+The `control` termination case detaches only the exact private tmux control
+client. All eight retained viewers recover automatically while the public daemon
+identity, native session and pane processes remain unchanged. The old control
+process must disappear and exactly one replacement must attach to the same
+session. Content, cursor, geometry and resumed input are checked before teardown;
+the fixture verifies all recorded owned processes exit. This is control-transport
+recovery, separate from daemon replacement and SSH forwarding loss.
 
 The former pre-viewer geometry assertion was inconsistent with viewport fitting:
 clients intentionally replace the initial manual size. Uncontrolled startup can
@@ -507,8 +525,12 @@ Qualification with the published 2.9.2 package passed against current source.
 That fixture includes tmux on PATH. A separate clean-PATH installer journey found
 that published 2.9.3's `status --json` still attempts system `tmux` despite a
 bundled executable. Installer activation and rollback success alone therefore do
-not establish complete clean-install usability; this command-resolution defect
-requires its own same-path regression and fix.
+not establish complete clean-install usability. The ordinary-client selection
+fix below is qualified by a separate same-path clean-PATH regression: the former
+compiled CLI fails with `ENOENT`, while the fixed CLI preserves the private
+server/session/pane identities and resolves the bundled executable successfully.
+This is candidate-source evidence, not a claim that the published package already
+contains the fix.
 
 ## Next extensions, in order
 
