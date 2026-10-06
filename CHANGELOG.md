@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.3
+
+- Recover SSH connections after daemon replacement and apply saved-machine edits in the running app, with clearer connection errors and lifecycle logs.
+- Preserve supervised daemon ownership through restart and update, including interrupted or failed launcher recovery.
+- Repair managed-window resizing and reject conflicting linked-window control with actionable recovery guidance.
+- Fix duplicate link-event handling, stale agent completion identity, and silent interaction-observer loss.
+- Improve the managed installer, update, rollback, and uninstall paths, including failed-download preservation and prefixes containing spaces.
+- Use https://tmux-ide.com as the canonical website and installation entry point.
+- Remove the retired experimental React web client and contributor test files from the published runtime package.
+
+Existing tmux sessions are preserved. Performance budgets remain unchanged; this release does not claim native performance parity. Physical terminal-emulator modifier handling remains a separate manual qualification item.
+
 ## 2.9.2
 
 - Promote the terminal-first Home and Terminals experience to the stable channel.
