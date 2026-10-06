@@ -1,0 +1,1304 @@
+/* Pane and tree figures: the site's diagrams drawn in tmux-ide's own visual
+   language. Type sizes follow the app's mono screen; status colours are the
+   app's default Light and Dark palettes, each paired with its glyph. */
+
+.pf,
+.tf {
+  --pf-loop: 16s;
+  --pf-working: #1769d2;
+  --pf-blocked: #8d5c00;
+  --pf-done: #18764b;
+  --pf-idle: #61616c;
+  margin: 0;
+  color: var(--color-fd-foreground);
+}
+
+.dark .pf,
+.dark .tf {
+  --pf-working: #62b9ff;
+  --pf-blocked: #f0bd5c;
+  --pf-done: #62d49a;
+  --pf-idle: #8b8b99;
+}
+
+.pf-working {
+  color: var(--pf-working);
+}
+.pf-blocked {
+  color: var(--pf-blocked);
+}
+.pf-done {
+  color: var(--pf-done);
+}
+.pf-idle {
+  color: var(--pf-idle);
+}
+.pf-dim {
+  color: var(--pf-dim, var(--color-fd-muted-foreground));
+}
+
+.pf-kicker {
+  color: var(--color-fd-muted-foreground);
+}
+
+.pf-title {
+  margin-top: 1rem;
+}
+
+.pf-sub {
+  margin-top: 1rem;
+  max-width: 60ch;
+  color: var(--color-fd-muted-foreground);
+}
+
+.pf-key {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.875rem;
+}
+
+/* The stage: a tmux-ide session in the app's default Light theme, or its
+   default Dark theme on the dark site. */
+.pf-stage {
+  --pf-canvas: #f5f5f7;
+  --pf-head: #ececf1;
+  --pf-line: #dcdce3;
+  --pf-ink: #202027;
+  --pf-dim: #6c6c6c;
+  --pf-wire: #a2a2ad;
+  margin-top: 2.5rem;
+  border: 1px solid var(--marketing-line);
+  background: var(--pf-canvas);
+  color: var(--pf-ink);
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+
+.dark .pf-stage {
+  --pf-canvas: var(--terminal-stage);
+  --pf-head: #17171f;
+  --pf-line: rgb(255 255 255 / 13%);
+  --pf-ink: #dedee6;
+  --pf-dim: #8a8a8a;
+  --pf-wire: rgb(255 255 255 / 26%);
+}
+
+.pf-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  border-bottom: 1px solid var(--pf-line);
+  background: var(--pf-head);
+  padding: 0.375rem 0.75rem;
+  color: var(--pf-dim);
+}
+
+.pf-sess {
+  border-radius: var(--radius-pill);
+  background: var(--pf-ink);
+  padding: 0 0.5rem;
+  color: var(--pf-canvas);
+}
+
+.pf-tab {
+  color: var(--pf-ink);
+}
+
+.pf-bar .pf-key {
+  margin-left: auto;
+}
+
+.pf-body {
+  padding: 1.5rem 1.25rem 1.75rem;
+}
+
+.pf-row {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(0, 1fr);
+  gap: 1.25rem;
+}
+
+.pf-win {
+  padding-top: 0.25rem;
+  color: var(--pf-dim);
+}
+
+/* Panes take a third of the column each and centre, so the buses can be
+   drawn from the pane counts alone. */
+.pf-panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  margin-inline: auto;
+  width: 100%;
+}
+
+.pf-n1 {
+  width: calc((100% - 1.5rem) / 3);
+}
+
+.pf-n2 {
+  width: calc((100% - 1.5rem) / 3 * 2 + 0.75rem);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pf-n3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pf-pane {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--pf-line);
+  background: var(--pf-canvas);
+}
+
+.pf-alert {
+  position: absolute;
+  inset: -1px;
+  border: 1px solid var(--pf-blocked);
+  pointer-events: none;
+}
+
+.pf-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--pf-line);
+  background: var(--pf-head);
+  padding: 0.25rem 0.625rem;
+  white-space: nowrap;
+}
+
+.pf-stack {
+  display: grid;
+}
+
+.pf-stack > * {
+  grid-area: 1 / 1;
+}
+
+.pf-head b {
+  width: 1ch;
+  font-weight: 400;
+  text-align: center;
+}
+
+.pf-role {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--pf-dim);
+}
+
+.pf-id {
+  margin-left: auto;
+  color: var(--pf-dim);
+}
+
+.pf-mark {
+  flex-shrink: 0;
+}
+
+.pf-mark-opencode {
+  color: var(--pf-ink, var(--color-fd-foreground));
+}
+
+/* Codex in its brand blues: the deep end on light, the mid tone on dark. */
+.pf-mark-codex {
+  color: #3941ff;
+}
+
+.dark .pf-mark-codex {
+  color: #7a9dff;
+}
+
+.pf-scr {
+  padding: 0.5rem 0.75rem 0.625rem;
+}
+
+.pf-scr p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-spin::before {
+  content: "⠋";
+  display: inline-block;
+  width: 1ch;
+  margin-right: 1ch;
+  animation: pf-spin 0.8s steps(1) infinite;
+}
+
+@keyframes pf-spin {
+  0% {
+    content: "⠋";
+  }
+  12.5% {
+    content: "⠙";
+  }
+  25% {
+    content: "⠹";
+  }
+  37.5% {
+    content: "⠸";
+  }
+  50% {
+    content: "⠼";
+  }
+  62.5% {
+    content: "⠴";
+  }
+  75% {
+    content: "⠦";
+  }
+  87.5% {
+    content: "⠧";
+  }
+}
+
+/* Buses between rows, in the panes' column. */
+.pf-wire {
+  position: relative;
+  height: 4.5rem;
+  margin-left: 9.75rem;
+}
+
+.pf-wire svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.pf-wire path {
+  fill: none;
+  stroke: var(--pf-wire);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.pf-wire .pf-dash {
+  stroke-dasharray: 3 3;
+}
+
+.pf-wire .pf-hi {
+  stroke: var(--pf-working);
+  stroke-width: 1.5;
+}
+
+.pf-l {
+  position: absolute;
+  top: 48%;
+  transform: translateY(-50%);
+  background: var(--pf-canvas);
+  padding: 0 0.375rem;
+  white-space: nowrap;
+  color: var(--pf-dim);
+  font-size: 0.6875rem;
+}
+
+.pf-notes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+  color: var(--color-fd-muted-foreground);
+}
+
+.pf-notes a {
+  color: var(--color-fd-primary);
+  white-space: nowrap;
+}
+
+.pf-foot {
+  margin-top: 1.25rem;
+  color: var(--color-fd-muted-foreground);
+}
+
+.pf-foot p + p {
+  margin-top: 0.25rem;
+}
+
+.pf-foot strong {
+  font-weight: 600;
+  color: var(--color-fd-foreground);
+}
+
+@media (width < 64rem) {
+  .pf-body {
+    padding: 1rem;
+  }
+
+  .pf-bar .pf-key {
+    margin-left: 0;
+  }
+
+  .pf-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  .pf-panes,
+  .pf-n1,
+  .pf-n2 {
+    width: auto;
+    margin-inline: 0;
+  }
+
+  .pf-n2,
+  .pf-n3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Stacked: the rail is drawn by the labels, so it appears with them. */
+  .pf-wire {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    margin-left: 1rem;
+    padding: 0.5rem 0;
+  }
+
+  .pf-wire svg {
+    display: none;
+  }
+
+  .pf-l {
+    position: static;
+    transform: none;
+    border-left: 1px solid var(--pf-wire);
+    background: none;
+    padding: 0.25rem 0 0.25rem 1rem;
+  }
+
+  .pf-notes {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+}
+
+/* Tree figures (docs column). */
+.tf-title {
+  margin-top: 0.75rem;
+}
+
+.tf-frame {
+  margin-top: 1.5rem;
+  border: 1px solid var(--color-fd-border);
+}
+
+.tf-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  border-bottom: 1px solid var(--color-fd-border);
+  background: var(--color-fd-muted);
+  padding: 0.625rem 1rem;
+  color: var(--color-fd-muted-foreground);
+}
+
+.tf-list {
+  padding: 0.5rem 0;
+}
+
+.tf-row {
+  --in: 1.5rem;
+  --d: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 1.5rem;
+  padding: 0 1rem;
+}
+
+.tf-d1 {
+  --d: 1;
+}
+
+.tf-d2 {
+  --d: 2;
+}
+
+.tf-row + .tf-row > * {
+  border-top: 1px dashed var(--color-fd-border);
+}
+
+.tf-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: baseline;
+  gap: 0 0.625rem;
+  padding: 0.875rem 0 0.875rem calc(var(--d) * var(--in));
+}
+
+/* Guides: the elbow into this row, and rails for ancestors that continue. */
+.tf-elbow,
+.tf-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--color-fd-muted-foreground);
+  opacity: 0.5;
+}
+
+.tf-elbow {
+  left: calc(1rem + (var(--d) - 1) * var(--in) + 0.3rem);
+}
+
+.tf-row[data-last] .tf-elbow {
+  bottom: auto;
+  height: 1.625rem;
+}
+
+.tf-elbow::before {
+  content: "";
+  position: absolute;
+  top: 1.625rem;
+  left: 0;
+  width: calc(var(--in) - 0.8rem);
+  border-top: 1px solid var(--color-fd-muted-foreground);
+}
+
+.tf-c1 {
+  left: 1.3rem;
+}
+
+.tf-c2 {
+  left: calc(1.3rem + var(--in));
+}
+
+.tf-glyph {
+  width: 1ch;
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+.tf-main .pf-mark {
+  align-self: center;
+}
+
+/* Line one: glyph, mark, name and id; the role sits on its own line below. */
+.tf-role {
+  order: 5;
+  flex-basis: 100%;
+  padding-left: calc(1ch + 0.625rem);
+  color: var(--color-fd-muted-foreground);
+}
+
+.tf-meta {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.tf-flow {
+  order: 6;
+  flex-basis: 100%;
+  margin-top: 0.25rem;
+  padding-left: calc(1ch + 0.625rem);
+  color: var(--color-fd-muted-foreground);
+}
+
+.tf-note {
+  padding: 0.875rem 0;
+  color: var(--color-fd-muted-foreground);
+}
+
+.tf-found {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+  border-top: 1px solid var(--color-fd-border);
+  background: var(--color-fd-muted);
+  padding: 0.625rem 1rem;
+  color: var(--color-fd-muted-foreground);
+}
+
+@media (width < 48rem) {
+  .tf-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    --in: 1.25rem;
+  }
+
+  .tf-row + .tf-row > .tf-note {
+    border-top: 0;
+  }
+
+  .tf-note {
+    padding: 0 0 0.875rem calc(var(--d) * var(--in) + 1ch + 0.625rem);
+  }
+}
+
+/* The loop. Each timing class names its moment in one shared cycle (see
+   pane-figure.tsx); the settled final frame is the base style, so reduced
+   motion simply turns the animations off. */
+@media (prefers-reduced-motion: reduce) {
+  .pf-loop *,
+  .pf-loop *::before {
+    animation: none !important;
+  }
+}
+
+/* Generated from the timing classes in figures.tsx; regenerate when they change. */
+.pf-loop .d22,
+.pf-loop .d34,
+.pf-loop .o4,
+.pf-loop .o27,
+.pf-loop .o39,
+.pf-loop .o42,
+.pf-loop .o45,
+.pf-loop .t8-18,
+.pf-loop .t44-54,
+.pf-loop .u58,
+.pf-loop .u74,
+.pf-loop .v4-14,
+.pf-loop .v4-94,
+.pf-loop .v8-94,
+.pf-loop .v12-20,
+.pf-loop .v14-27,
+.pf-loop .v20-94,
+.pf-loop .v22-30,
+.pf-loop .v24-94,
+.pf-loop .v27-66,
+.pf-loop .v27-78,
+.pf-loop .v27-94,
+.pf-loop .v30-94,
+.pf-loop .v36-94,
+.pf-loop .v39-56,
+.pf-loop .v39-94,
+.pf-loop .v42-60,
+.pf-loop .v45-62,
+.pf-loop .v56-64,
+.pf-loop .v56-94,
+.pf-loop .v60-94,
+.pf-loop .v62-94,
+.pf-loop .v64-94,
+.pf-loop .v66-74,
+.pf-loop .v74-94,
+.pf-loop .v76-94,
+.pf-loop .v78-94 {
+  animation-duration: var(--pf-loop);
+  animation-timing-function: var(--ease-smooth);
+  animation-iteration-count: infinite;
+}
+
+/* Transient states are hidden in the settled frame. */
+.pf-loop .v4-14,
+.pf-loop .v12-20,
+.pf-loop .v14-27,
+.pf-loop .v22-30,
+.pf-loop .v27-66,
+.pf-loop .v27-78,
+.pf-loop .v39-56,
+.pf-loop .v42-60,
+.pf-loop .v45-62,
+.pf-loop .v56-64,
+.pf-loop .v66-74 {
+  opacity: 0;
+}
+
+.pf-loop .d22 {
+  animation-name: pf-d22;
+}
+.pf-loop .d34 {
+  animation-name: pf-d34;
+}
+.pf-loop .o4 {
+  animation-name: pf-o4;
+}
+.pf-loop .o27 {
+  animation-name: pf-o27;
+}
+.pf-loop .o39 {
+  animation-name: pf-o39;
+}
+.pf-loop .o42 {
+  animation-name: pf-o42;
+}
+.pf-loop .o45 {
+  animation-name: pf-o45;
+}
+.pf-loop .t8-18 {
+  animation-name: pf-t8-18;
+}
+.pf-loop .t44-54 {
+  animation-name: pf-t44-54;
+}
+.pf-loop .u58 {
+  animation-name: pf-u58;
+}
+.pf-loop .u74 {
+  animation-name: pf-u74;
+}
+.pf-loop .v4-14 {
+  animation-name: pf-v4-14;
+}
+.pf-loop .v4-94 {
+  animation-name: pf-v4-94;
+}
+.pf-loop .v8-94 {
+  animation-name: pf-v8-94;
+}
+.pf-loop .v12-20 {
+  animation-name: pf-v12-20;
+}
+.pf-loop .v14-27 {
+  animation-name: pf-v14-27;
+}
+.pf-loop .v20-94 {
+  animation-name: pf-v20-94;
+}
+.pf-loop .v22-30 {
+  animation-name: pf-v22-30;
+}
+.pf-loop .v24-94 {
+  animation-name: pf-v24-94;
+}
+.pf-loop .v27-66 {
+  animation-name: pf-v27-66;
+}
+.pf-loop .v27-78 {
+  animation-name: pf-v27-78;
+}
+.pf-loop .v27-94 {
+  animation-name: pf-v27-94;
+}
+.pf-loop .v30-94 {
+  animation-name: pf-v30-94;
+}
+.pf-loop .v36-94 {
+  animation-name: pf-v36-94;
+}
+.pf-loop .v39-56 {
+  animation-name: pf-v39-56;
+}
+.pf-loop .v39-94 {
+  animation-name: pf-v39-94;
+}
+.pf-loop .v42-60 {
+  animation-name: pf-v42-60;
+}
+.pf-loop .v45-62 {
+  animation-name: pf-v45-62;
+}
+.pf-loop .v56-64 {
+  animation-name: pf-v56-64;
+}
+.pf-loop .v56-94 {
+  animation-name: pf-v56-94;
+}
+.pf-loop .v60-94 {
+  animation-name: pf-v60-94;
+}
+.pf-loop .v62-94 {
+  animation-name: pf-v62-94;
+}
+.pf-loop .v64-94 {
+  animation-name: pf-v64-94;
+}
+.pf-loop .v66-74 {
+  animation-name: pf-v66-74;
+}
+.pf-loop .v74-94 {
+  animation-name: pf-v74-94;
+}
+.pf-loop .v76-94 {
+  animation-name: pf-v76-94;
+}
+.pf-loop .v78-94 {
+  animation-name: pf-v78-94;
+}
+
+@keyframes pf-d22 {
+  0%,
+  22% {
+    clip-path: inset(0 0 100% 0);
+    opacity: 1;
+  }
+  27%,
+  94% {
+    clip-path: inset(0);
+    opacity: 1;
+  }
+  97%,
+  100% {
+    clip-path: inset(0);
+    opacity: 0;
+  }
+}
+
+@keyframes pf-d34 {
+  0%,
+  34% {
+    clip-path: inset(0 0 100% 0);
+    opacity: 1;
+  }
+  39%,
+  94% {
+    clip-path: inset(0);
+    opacity: 1;
+  }
+  97%,
+  100% {
+    clip-path: inset(0);
+    opacity: 0;
+  }
+}
+
+@keyframes pf-o4 {
+  0%,
+  4% {
+    opacity: 0;
+    transform: translateY(0.375rem);
+  }
+  6%,
+  94% {
+    opacity: 1;
+    transform: none;
+  }
+  97%,
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+@keyframes pf-o27 {
+  0%,
+  27% {
+    opacity: 0;
+    transform: translateY(0.375rem);
+  }
+  29%,
+  94% {
+    opacity: 1;
+    transform: none;
+  }
+  97%,
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+@keyframes pf-o39 {
+  0%,
+  39% {
+    opacity: 0;
+    transform: translateY(0.375rem);
+  }
+  41%,
+  94% {
+    opacity: 1;
+    transform: none;
+  }
+  97%,
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+@keyframes pf-o42 {
+  0%,
+  42% {
+    opacity: 0;
+    transform: translateY(0.375rem);
+  }
+  44%,
+  94% {
+    opacity: 1;
+    transform: none;
+  }
+  97%,
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+@keyframes pf-o45 {
+  0%,
+  45% {
+    opacity: 0;
+    transform: translateY(0.375rem);
+  }
+  47%,
+  94% {
+    opacity: 1;
+    transform: none;
+  }
+  97%,
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+@keyframes pf-t8-18 {
+  0%,
+  8% {
+    clip-path: inset(0 100% 0 0);
+    animation-timing-function: steps(30, end);
+  }
+  18%,
+  94% {
+    clip-path: inset(0);
+    opacity: 1;
+  }
+  97%,
+  100% {
+    clip-path: inset(0);
+    opacity: 0;
+  }
+}
+
+@keyframes pf-t44-54 {
+  0%,
+  44% {
+    clip-path: inset(0 100% 0 0);
+    animation-timing-function: steps(30, end);
+  }
+  54%,
+  94% {
+    clip-path: inset(0);
+    opacity: 1;
+  }
+  97%,
+  100% {
+    clip-path: inset(0);
+    opacity: 0;
+  }
+}
+
+@keyframes pf-u58 {
+  0%,
+  58% {
+    clip-path: inset(100% 0 0 0);
+    opacity: 1;
+  }
+  63%,
+  94% {
+    clip-path: inset(0);
+    opacity: 1;
+  }
+  97%,
+  100% {
+    clip-path: inset(0);
+    opacity: 0;
+  }
+}
+
+@keyframes pf-u74 {
+  0%,
+  74% {
+    clip-path: inset(100% 0 0 0);
+    opacity: 1;
+  }
+  79%,
+  94% {
+    clip-path: inset(0);
+    opacity: 1;
+  }
+  97%,
+  100% {
+    clip-path: inset(0);
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v4-14 {
+  0%,
+  4% {
+    opacity: 0;
+  }
+  5.5%,
+  14% {
+    opacity: 1;
+  }
+  15.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v4-94 {
+  0%,
+  4% {
+    opacity: 0;
+  }
+  5.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v8-94 {
+  0%,
+  8% {
+    opacity: 0;
+  }
+  9.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v12-20 {
+  0%,
+  12% {
+    opacity: 0;
+  }
+  13.5%,
+  20% {
+    opacity: 1;
+  }
+  21.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v14-27 {
+  0%,
+  14% {
+    opacity: 0;
+  }
+  15.5%,
+  27% {
+    opacity: 1;
+  }
+  28.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v20-94 {
+  0%,
+  20% {
+    opacity: 0;
+  }
+  21.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v22-30 {
+  0%,
+  22% {
+    opacity: 0;
+  }
+  23.5%,
+  30% {
+    opacity: 1;
+  }
+  31.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v24-94 {
+  0%,
+  24% {
+    opacity: 0;
+  }
+  25.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v27-66 {
+  0%,
+  27% {
+    opacity: 0;
+  }
+  28.5%,
+  66% {
+    opacity: 1;
+  }
+  67.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v27-78 {
+  0%,
+  27% {
+    opacity: 0;
+  }
+  28.5%,
+  78% {
+    opacity: 1;
+  }
+  79.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v27-94 {
+  0%,
+  27% {
+    opacity: 0;
+  }
+  28.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v30-94 {
+  0%,
+  30% {
+    opacity: 0;
+  }
+  31.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v36-94 {
+  0%,
+  36% {
+    opacity: 0;
+  }
+  37.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v39-56 {
+  0%,
+  39% {
+    opacity: 0;
+  }
+  40.5%,
+  56% {
+    opacity: 1;
+  }
+  57.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v39-94 {
+  0%,
+  39% {
+    opacity: 0;
+  }
+  40.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v42-60 {
+  0%,
+  42% {
+    opacity: 0;
+  }
+  43.5%,
+  60% {
+    opacity: 1;
+  }
+  61.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v45-62 {
+  0%,
+  45% {
+    opacity: 0;
+  }
+  46.5%,
+  62% {
+    opacity: 1;
+  }
+  63.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v56-64 {
+  0%,
+  56% {
+    opacity: 0;
+  }
+  57.5%,
+  64% {
+    opacity: 1;
+  }
+  65.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v56-94 {
+  0%,
+  56% {
+    opacity: 0;
+  }
+  57.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v60-94 {
+  0%,
+  60% {
+    opacity: 0;
+  }
+  61.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v62-94 {
+  0%,
+  62% {
+    opacity: 0;
+  }
+  63.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v64-94 {
+  0%,
+  64% {
+    opacity: 0;
+  }
+  65.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v66-74 {
+  0%,
+  66% {
+    opacity: 0;
+  }
+  67.5%,
+  74% {
+    opacity: 1;
+  }
+  75.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v74-94 {
+  0%,
+  74% {
+    opacity: 0;
+  }
+  75.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v76-94 {
+  0%,
+  76% {
+    opacity: 0;
+  }
+  77.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pf-v78-94 {
+  0%,
+  78% {
+    opacity: 0;
+  }
+  79.5%,
+  94% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
