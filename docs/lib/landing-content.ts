@@ -46,6 +46,11 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
       "tmux-ide is an open-source (MIT) terminal app for running coding agents such as Claude Code and Codex inside ordinary tmux sessions. Home lists every agent across your local and SSH machines and shows which ones are working or need you. Terminals mirrors the live tmux session with clickable windows, pane headers and controls. tmux keeps owning processes, panes and persistence, so closing tmux-ide never stops an agent.",
   },
   {
+    question: "How do I install tmux-ide?",
+    answer:
+      "Run `curl -fsSL https://tmux-ide.com/install.sh | sh`, then `tmux-ide app`. The installer works on macOS and glibc Linux, needs no sudo, and bundles tmux 3.7c and its own Node.js runtime. With Node.js 20 or newer you can use `npm install -g tmux-ide` instead.",
+  },
+  {
     question: "Is tmux-ide a new terminal multiplexer?",
     answer:
       "No. tmux remains responsible for processes, PTYs, sessions, windows, panes, and persistence. tmux-ide is a visual, agent-aware control surface for the tmux sessions you already own.",
@@ -73,7 +78,7 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
     question: "Does it work over SSH?",
     answer:
-      "Yes. The app and tmux are terminal-native, so the same agents, pane controls, navigation and durable sessions work over SSH, either by running tmux-ide on the remote machine or with `tmux-ide app --ssh <host>`.",
+      "Yes. Install the same tmux-ide version on the remote machine and start its daemon there with `tmux-ide --headless`. Then run `tmux-ide app --ssh <host>` on your computer. If the connection drops, the remote tmux sessions and agents keep running.",
   },
   {
     question: "Can it restore my sessions after the tmux server crashes?",

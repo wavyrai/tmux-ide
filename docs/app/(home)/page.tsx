@@ -73,6 +73,19 @@ function keepHyphenatedWords(text: string) {
   );
 }
 
+/** Backtick spans in plain-text copy render as inline code. */
+function withCode(text: string) {
+  return text.split(/`([^`]+)`/u).map((part, index) =>
+    index % 2 ? (
+      <code key={index} className="font-mono text-fd-foreground">
+        {part}
+      </code>
+    ) : (
+      part
+    ),
+  );
+}
+
 function formatStars(count: number): string {
   if (count >= 1000) return `${(count / 1000).toFixed(1).replace(/\.0$/, "")}k`;
   return String(count);
@@ -170,7 +183,7 @@ export default async function HomePage() {
               className="bg-marketing-raise px-(--site-gutter) py-5"
               action={
                 <Link href="/docs/demo" className="marketing-link-action shrink-0 text-fd-primary">
-                  Method notes →
+                  How this demo is made →
                 </Link>
               }
             >
@@ -298,7 +311,7 @@ export default async function HomePage() {
                       +
                     </span>
                   </summary>
-                  <p className={`marketing-faq-answer pt-4 ${bodyCopy}`}>{answer}</p>
+                  <p className={`marketing-faq-answer pt-4 ${bodyCopy}`}>{withCode(answer)}</p>
                 </details>
               ))}
             </div>

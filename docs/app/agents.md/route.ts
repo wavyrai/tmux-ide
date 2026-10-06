@@ -12,6 +12,17 @@ const manual = `# tmux-ide — manual for AI agents
 
 tmux-ide ${SOFTWARE_VERSION}. Docs: ${SITE_URL}/docs · Index for LLMs: ${SITE_URL}/llms.txt · Full text: ${SITE_URL}/llms-full.txt
 
+## Quick reference
+
+\`\`\`bash
+tmux set-option -p @agent_state "working:$(date +%s)"                 # report state: working|blocked|done|idle
+tmux-ide team --json                                                  # every session, window and per-pane agent state
+tmux-ide send <target> "message"                                      # type into another pane and press Enter (--no-enter to stage)
+tmux-ide wait agent-status <session> --status done --timeout 600000   # exit 0 on match, 1 on timeout
+tmux-ide agent explain <pane> --json                                  # why a pane has its state
+tmux-ide validate --json                                              # after any workspace.yml change
+\`\`\`
+
 tmux-ide is an open-source (MIT) agent workspace built around tmux, by Prototyper. tmux keeps
 owning processes, PTYs, sessions, windows and panes; tmux-ide adds a terminal app with live
 agent status, named agents and panes, and exact pane navigation, plus an optional status-bar chrome
@@ -35,6 +46,7 @@ tmux-ide app [session]                  # open the app (bare \`tmux-ide\` does t
 tmux-ide adopt <session>                # add the status-bar chrome to an existing tmux session
 tmux-ide adopt --all                    # adopt every live session; \`unadopt <session>\` reverts
 tmux-ide integration install claude     # Claude Code hooks: ground-truth agent status + skill
+tmux-ide integration install opencode   # capture opencode session ids for restore --resume-agents
 tmux-ide integration status --json      # what is detected and wired up
 \`\`\`
 
@@ -55,7 +67,8 @@ authoritative signal; screen scraping is only the fallback.
 tmux set-option -p @agent_state "working:$(date +%s)"    # working | blocked | done | idle
 tmux set-option -p @agent_status_text "refactoring auth"  # optional, plain text, max 32 chars
 tmux set-option -p @agent_display_name "reviewer"         # optional name shown in the UI
-tmux set-option -p @agent_session_id "<id>"               # optional, used by restore --resume-agents
+tmux set-option -p @agent_hint <manifest-id>              # force a detection manifest (e.g. claude, codex)
+tmux set-option -p @agent_session_id "<id>"               # set only to your harness's real resume id; restore --resume-agents uses it
 \`\`\`
 
 The status text and display name are honored only while \`@agent_state\` is fresh.
@@ -66,17 +79,23 @@ automatically after \`tmux-ide integration install claude\` (new sessions only).
 
 ## Observe and coordinate
 
-Most commands accept \`--json\`; prefer it.
+Commands that list \`--json\` in \`tmux-ide --help\` return structured output; prefer it.
 
 \`\`\`bash
 tmux-ide team --json                               # every session, pane and agent status
 tmux-ide agent explain <pane> --json               # how a pane's status was detected
 tmux-ide send <target> "message"                   # type into another pane's agent (%id, title or name)
 tmux-ide wait agent-status <session> --status done # block until a session reaches a status
-tmux-ide wait output <pane> --match "<regex>"      # block until a pane prints a match
+tmux-ide wait output <pane> --match "<regex>" [--timeout <ms>]  # block until a pane prints a match
 tmux-ide events --follow --json                    # stream agent-status transitions
 tmux-ide serve                                     # local control socket for long-running loops
+tmux-ide team assign <%pane> "<team>"              # group panes into a named team; team unassign <%pane> removes
+tmux-ide automation panes --json                   # scoped, attributed pane reads/sends with retry-safe handles
+tmux-ide mcp                                       # the same automation tools over MCP stdio
 \`\`\`
+
+Both waits exit 0 on match, 1 on timeout. Use \`send\`/\`wait\` for quick messages; use
+\`automation\` or \`mcp\` when you need exact pane identity, attribution and retry-safe handles (${SITE_URL}/docs/automation).
 
 Claude Code agent teams: set \`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1\` and \`teammateMode\`
 \`"tmux"\` (or \`"auto"\` inside tmux) in \`~/.claude/settings.json\`; releases after 2.9.3 set this up
@@ -97,7 +116,11 @@ tmux-ide worktree create <branch>      # git worktree on a new branch with its o
 
 - Never kill, unadopt or rename a user's sessions unless asked; use scratch sessions for tests.
 - Do not present task or mission orchestration as available; it is not part of this release.
+- Use \`tmux-ide send\`, not raw \`tmux send-keys\`, so the target resolves by id, title or name and long
+  messages go through a dispatch file.
 - When unsure about a command, run \`tmux-ide --help\` or read ${SITE_URL}/docs/commands.
+- Docs for depth: ${SITE_URL}/docs/agent-detection · ${SITE_URL}/docs/multi-agent-teams ·
+  ${SITE_URL}/docs/restore-resume · ${SITE_URL}/docs/automation
 `;
 
 export function GET() {

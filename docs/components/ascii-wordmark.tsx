@@ -26,6 +26,7 @@ export function AsciiWordmark({
       width={630}
       height={126}
       unoptimized
+      loading={size === "footer" ? "lazy" : "eager"}
       className={cn(
         "block shrink-0 select-none dark:invert",
         animated && "marketing-enter",

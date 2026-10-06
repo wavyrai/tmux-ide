@@ -1616,6 +1616,12 @@
   animation-name: marketing-enter;
 }
 
+/* Inline commands in FAQ answers: one step under the body size, so the mono
+   face does not read heavier than the sentence around it. */
+.marketing-faq-answer code {
+  font-size: 0.9em;
+}
+
 .marketing-feedback-enter {
   animation-name: marketing-feedback-enter;
   animation-duration: 150ms;
