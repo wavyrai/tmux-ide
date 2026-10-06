@@ -298,16 +298,35 @@ it.skipIf(!binary).each(["cells", "tab-wrap"] as const)(
           onFault: (fault) => faults.push(String(fault)),
         },
       );
-      await owner.subscribe((update) => {
-        if (update.type === "terminal.seed") snapshot = update.snapshot;
-        else if (update.type === "terminal.patch" && snapshot)
-          snapshot = applyTerminalReplicaPatch(snapshot, update.patch);
-      });
       if (identity.sourceReceipt !== null) {
         expect(identity.sourceReceipt.binarySha256 ?? identity.sourceReceipt.files?.tmux).toBe(
           identity.sha256,
         );
       }
+      if (!native && scenario === "tab-wrap") {
+        let publications = 0;
+        await expect(
+          owner.subscribe(() => {
+            publications++;
+          }),
+        ).rejects.toThrow("exact snapshot of saved tab cells");
+        expect(publications).toBe(0);
+        expect(faults).toHaveLength(1);
+        trace.push({
+          phase: "stock-tab-unavailable",
+          published: publications,
+          rawText: run("capture-pane", "-p", "-t", "physical"),
+          rawPaintedCapture: run("capture-pane", "-p", "-e", "-J", "-t", "physical"),
+          limitation:
+            "Stock ANSI capture loses stored tab widths, so paint placement cannot be reconstructed",
+        });
+        return;
+      }
+      await owner.subscribe((update) => {
+        if (update.type === "terminal.seed") snapshot = update.snapshot;
+        else if (update.type === "terminal.patch" && snapshot)
+          snapshot = applyTerminalReplicaPatch(snapshot, update.patch);
+      });
       const assertCheckpoint = async (stage: "initial" | "edited") => {
         // The OSC title is emitted after every fixture byte, including final
         // cursor positioning. Text alone is not a trailing-escape barrier.

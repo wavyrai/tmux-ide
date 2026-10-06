@@ -1,3 +1,4 @@
+import { StockCaptureTabUnavailableError } from "./stock-capture-fidelity.ts";
 import {
   MAX_RETAINED_NATIVE_BACKING_BYTES,
   takeNativeSeedBacking,
@@ -201,6 +202,8 @@ interface ClientState {
   readonly outgoing: Array<() => TerminalDeliveryServerMessage>;
   sending: boolean;
   retireAfterDrain: boolean;
+  /** A capture capability failure is terminal before the fault sink drains. */
+  captureUnavailable: boolean;
   lastAck: TerminalDeliveryAck | null;
   /** Delivery displaced by authoritative source close; its racing ACK is benign. */
   sourceClosedFlight: TerminalDeliveryEnvelope | null;
@@ -416,6 +419,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         outgoing: [],
         sending: false,
         retireAfterDrain: false,
+        captureUnavailable: false,
         lastAck: null,
         sourceClosedFlight: null,
         backgroundTimer: null,
@@ -440,9 +444,35 @@ export class SessionRuntimeTerminalDeliveryHub {
         },
         close: async () => this.#closeClient(client),
       };
+    } catch (error) {
+      if (!(error instanceof StockCaptureTabUnavailableError)) throw error;
+      // Negotiation still settles this pane; no invented canonical seed is published.
+      await accept({
+        type: "terminal.delivery.fault",
+        reason: "source-closed",
+        message: error.message,
+        deliveryNonce: negotiation.negotiated.deliveryNonce,
+      });
+      return {
+        negotiation,
+        closed: Promise.resolve("closed" as const),
+        ack: () => {},
+        nack: () => {},
+        setVisibility: () => {},
+        close: async () => {},
+      };
     } finally {
       this.#pendingClients.delete(key);
     }
+  }
+
+  /** Retire only this pane's delivery owners before its canonical owner is disposed. */
+  failPaneCapture(semanticPaneId: string, error: StockCaptureTabUnavailableError): void {
+    for (const client of this.#clients.values())
+      if (client.paneId === semanticPaneId && !client.closed && !client.captureUnavailable) {
+        client.captureUnavailable = true;
+        this.#fault(client, "source-closed", error.message);
+      }
   }
 
   retainedNativeBacking(
@@ -875,7 +905,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     pane.revisions.set(update.revision, record);
     this.#pruneCanonicalRevisions(semanticPaneId);
     for (const client of this.#clients.values()) {
-      if (client.paneId !== semanticPaneId || client.closed) continue;
+      if (client.paneId !== semanticPaneId || client.closed || client.captureUnavailable) continue;
       if (!client.lifecycleOpenRecorded)
         client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
       if (
@@ -948,6 +978,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   #schedule(client: ClientState): void {
     if (
       client.closed ||
+      client.captureUnavailable ||
       client.inFlight ||
       client.encoding ||
       client.latestRevision === null ||
@@ -988,6 +1019,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       !pane ||
       !target ||
       client.closed ||
+      client.captureUnavailable ||
       client.inFlight ||
       client.encoding ||
       client.visibility === "hidden" ||
@@ -1688,6 +1720,22 @@ export class SessionRuntimeTerminalDeliveryHub {
 
   #nack(client: ClientState, input: TerminalDeliveryNack): void {
     const nack = TerminalDeliveryNackSchemaZ.parse(input);
+    const closed = client.sourceClosedFlight;
+    // A decoder may have sent this NACK before observing the pane-local fault.
+    // Only the exact displaced transaction is inert; unrelated feedback still
+    // follows the normal protocol-violation path below.
+    if (
+      client.captureUnavailable &&
+      !client.inFlight &&
+      closed &&
+      nack.workspaceName === closed.workspaceName &&
+      nack.semanticPaneId === closed.semanticPaneId &&
+      nack.generation === closed.generation &&
+      nack.incarnation === closed.incarnation &&
+      nack.deliveryNonce === closed.deliveryNonce &&
+      nack.transactionId === closed.transactionId
+    )
+      return;
     const envelope = client.inFlight?.envelope;
     if (
       !envelope ||

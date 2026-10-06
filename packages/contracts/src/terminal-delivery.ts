@@ -9,6 +9,10 @@ import {
   TerminalReplicaTombstonePayloadSchemaZ,
 } from "./terminal-replica.ts";
 
+/** Stable capability diagnosis carried by the existing pane-scoped source-closed fault. */
+export const STOCK_CAPTURE_TAB_UNAVAILABLE =
+  "This tmux server cannot provide an exact snapshot of saved tab cells. Continue this session in native tmux, or use a new session started with tmux-ide's bundled server.";
+
 export const TERMINAL_DELIVERY_PROTOCOL_VERSION = 1 as const;
 export const TERMINAL_DELIVERY_CHUNK_BYTES = 256 * 1024;
 export const TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = 512 * 1024;

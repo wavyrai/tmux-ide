@@ -1,3 +1,4 @@
+import { STOCK_CAPTURE_TAB_UNAVAILABLE } from "@tmux-ide/contracts";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -237,6 +238,7 @@ function rig(
   coherent = true,
   corruptBeforeCoherent = false,
   encoding: "semantic-v1" | "semantic-compact-v1" = "semantic-v1",
+  unavailablePane?: string,
 ) {
   let streamOptions: OpenPaneStreamClientOptions | null = null;
   const receiptListeners = new Set<(receipt: InteractionReceipt) => void>();
@@ -308,6 +310,15 @@ function rig(
         ],
       });
       for (const [index, pane] of options.stream.panes.entries()) {
+        if (pane === unavailablePane) {
+          options.onTerminalDelivery(pane, {
+            type: "terminal.delivery.fault",
+            reason: "source-closed",
+            message: STOCK_CAPTURE_TAB_UNAVAILABLE,
+            deliveryNonce: NONCE,
+          });
+          continue;
+        }
         const seed = seedDelivery(
           pane,
           blankTerminalReplicaSnapshot(4, 2),
@@ -2379,3 +2390,125 @@ it("rejects a replacement session before granting the selected terminal input", 
   expect(test.client.sendTerminalInput).not.toHaveBeenCalled();
   expect(test.client.close).toHaveBeenCalled();
 });
+
+describe("stock capture pane-local unavailability", () => {
+  it.each(["initial", "late"])(
+    "settles %s failure without retiring the healthy sibling",
+    async (phase) => {
+      const test = rig(true, false, "semantic-v1", phase === "initial" ? PANE_A : undefined);
+      const port = await connectOpenTuiWorkspaceRuntimePort({
+        inventory: inventory(),
+        routing: test.routing,
+      });
+      const unavailable = await port.subscribeTerminal({
+        workspaceName: WORKSPACE,
+        semanticPaneId: PANE_A,
+      });
+      const messages: string[] = [];
+      unavailable.onUnavailable?.(() => {
+        throw Error("consumer");
+      });
+      unavailable.onUnavailable?.((message) => messages.push(message));
+      if (phase === "late")
+        test.options().onTerminalDelivery(PANE_A, {
+          type: "terminal.delivery.fault",
+          reason: "source-closed",
+          message: STOCK_CAPTURE_TAB_UNAVAILABLE,
+          deliveryNonce: NONCE,
+        });
+      expect(messages).toEqual([STOCK_CAPTURE_TAB_UNAVAILABLE]);
+      const late: string[] = [];
+      const off = unavailable.onUnavailable?.((m) => late.push(m));
+      expect(late).toEqual([STOCK_CAPTURE_TAB_UNAVAILABLE]);
+      off?.();
+      const healthy = await port.subscribeTerminal({
+        workspaceName: WORKSPACE,
+        semanticPaneId: PANE_B,
+      });
+      const updates: unknown[] = [];
+      healthy.onUpdate((u) => updates.push(u));
+      expect(updates).toHaveLength(1);
+      expect(test.client.close).not.toHaveBeenCalled();
+      expect(
+        await port.sendTerminalInput(
+          { workspaceName: WORKSPACE, semanticPaneId: PANE_A },
+          { kind: "text", data: "bad" },
+        ),
+      ).toBe("authority-lost");
+      expect(
+        await port.sendTerminalInput(
+          { workspaceName: WORKSPACE, semanticPaneId: PANE_B },
+          { kind: "text", data: "ok" },
+        ),
+      ).toBe("ok");
+      expect(await port.fitViewport(120, 40)).toBe("ok");
+      expect(test.client.sendTerminalInput).toHaveBeenCalledTimes(1);
+      await port.close();
+    },
+  );
+  it.each(["near-match", "stale-nonce"])(
+    "does not admit %s as local capability failure",
+    async (kind) => {
+      const test = rig(false);
+      const opening = connectOpenTuiWorkspaceRuntimePort({
+        inventory: inventory(),
+        routing: test.routing,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      test.options().onTerminalDelivery(PANE_A, {
+        type: "terminal.delivery.fault",
+        reason: "source-closed",
+        message: STOCK_CAPTURE_TAB_UNAVAILABLE + (kind === "near-match" ? "!" : ""),
+        deliveryNonce: kind === "stale-nonce" ? GENERATION : NONCE,
+      });
+      await expect(opening).rejects.toThrow();
+      expect(test.client.close).toHaveBeenCalledOnce();
+    },
+  );
+});
+
+it("invalidates cooperative decode on pane capability failure without closing siblings", async () => {
+  const test = rig(true, false, "semantic-compact-v1");
+  const port = await connectOpenTuiWorkspaceRuntimePort({
+    inventory: inventory(),
+    routing: test.routing,
+  });
+  const subscription = await port.subscribeTerminal({
+    workspaceName: WORKSPACE,
+    semanticPaneId: PANE_A,
+  });
+  const listener = vi.fn();
+  subscription.onUpdate(listener);
+  listener.mockClear();
+  test.client.ack.mockClear();
+  test.client.nack.mockClear();
+  const delivery = compactHistoryPatchDelivery(
+    blankTerminalReplicaSnapshot(132, 41),
+    0,
+    1,
+    uniqueHistoryRows(0, 1_000),
+    "304",
+  );
+  test.options().onTerminalDelivery(PANE_A, delivery.envelope);
+  for (const chunk of delivery.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+  expect(test.client.ack).not.toHaveBeenCalled();
+  test.options().onTerminalDelivery(PANE_A, {
+    type: "terminal.delivery.fault",
+    reason: "source-closed",
+    message: STOCK_CAPTURE_TAB_UNAVAILABLE,
+    deliveryNonce: NONCE,
+  });
+  expect(test.client.close).not.toHaveBeenCalled();
+  expect(
+    await port.sendTerminalInput(
+      { workspaceName: WORKSPACE, semanticPaneId: PANE_B },
+      { kind: "text", data: "healthy" },
+    ),
+  ).toBe("ok");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(listener).not.toHaveBeenCalled();
+  expect(test.client.ack).not.toHaveBeenCalled();
+  expect(test.client.nack).not.toHaveBeenCalled();
+  await port.close();
+}, 10_000);

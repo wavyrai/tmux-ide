@@ -374,6 +374,8 @@ export interface SessionRuntimeTerminalSubscription<
   Tombstone = unknown,
 > {
   readonly generation: SessionRuntimeGeneration;
+  /** Pane-local terminal capability failure, replayed to late listeners. */
+  onUnavailable?(listener: (message: string) => void): () => void;
   close(): Promise<void>;
   freeze(): void;
   thaw(): void;

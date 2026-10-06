@@ -1,3 +1,4 @@
+import { StockCaptureTabUnavailableError } from "./stock-capture-fidelity.ts";
 import type { OwnedNativePlanCompletion } from "../../lib/owned-native-interaction-bindings.ts";
 import type {
   NativeBackingIdentity,
@@ -1863,8 +1864,10 @@ class SessionRuntime {
             current.epoch += 1;
             this.#terminalReplicaClocks.set(semanticPaneId, current);
           },
-          onFault: () => {
+          onFault: (error) => {
             if (this.#terminalReplicas.get(semanticPaneId) !== candidate) return;
+            if (error instanceof StockCaptureTabUnavailableError)
+              this.#terminalDeliveryHub.failPaneCapture(semanticPaneId, error);
             this.#outputTraces?.clearPane(semanticPaneId);
             this.#terminalReplicas.delete(semanticPaneId);
             this.#restartBarrier = this.#restartBarrier.then(async () => {

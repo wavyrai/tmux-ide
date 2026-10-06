@@ -263,6 +263,7 @@ export interface WorkspaceClient<
       update: TerminalReplicaUpdate<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
       metadata?: TerminalReplicaDeliveryMetadata,
     ) => void,
+    onUnavailable?: (message: string) => void,
   ): () => void;
   requestTerminalRepair(
     target: TerminalReplicaAddress,

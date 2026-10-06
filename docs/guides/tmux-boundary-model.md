@@ -641,3 +641,38 @@ The runtime and test clients share a process. CPU/heap measurements therefore
 include fixture work and do not isolate daemon detection or physical rendering.
 Socket/listener ledgers do not count every internal listener. Five-minute results
 are bounded observations, not long-session leak or native-performance verdicts.
+
+### Stock capture tabs: explicit unavailable pane
+
+A stock server serializes a saved tab span as one HT byte. That loses historical
+span width, so paint cannot be placed reliably; current tab stops cannot reconstruct that width. The retained
+TM04 raw-capture counterexamples and original red background test remain evidence
+of this limitation. Native bundled-server capture preserves the full cells.
+
+The canonical terminal now rejects a non-native painted capture containing HT
+before publishing its seed. It shows an actionable unavailable message for that
+pane, keeps healthy sibling panes usable, and does not repeatedly reconnect the
+whole workspace. Tab-free stock capture remains supported within its existing
+limits. Ordinary live HT remains cursor motion; native seeds and their live tail
+are not rejected. Missing current data is not displayed as a fresh blank seed.
+
+For an affected existing session, attach with native tmux to that same server to
+continue existing work. Alternatively, deliberately start a new session using
+tmux-ide's bundled server. Selecting a bundled **client** or reinstalling the app
+does not upgrade an already-running stock **server**. tmux-ide does not kill or
+replace that server, restart its panes, or clear their history to repair fidelity.
+
+The existing `source-closed` delivery fault carries a shared exact diagnostic
+constant as the current compatibility discriminator. Its nonce must match the
+negotiation. Other faults remain connection failures. A pane-local optional
+`onUnavailable` callback carries the message through the existing subscription
+and renderer paths; it is separate from canonical cell updates. It clears stale
+pending/decode state, disables input for that pane, and settles startup without
+inventing a seed. A newer runtime generation can provide a valid new baseline.
+
+Controlled checks cover seed/live-byte provenance, immutable capture admission,
+initial and late failure, prepared-generation stale replay, observer isolation,
+nonce mismatch, cooperative decode cancellation, sibling input, viewport fitting,
+and the mounted error overlay/new-generation recovery. Real stock/candidate
+`stock-capture-unavailable-live.test.ts` qualification is a separate required
+execution; adding its fixture alone does not establish server-lifetime safety.

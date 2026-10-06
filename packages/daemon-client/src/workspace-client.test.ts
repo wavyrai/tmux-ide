@@ -206,6 +206,17 @@ class WorkspaceClientEventSocket implements WorkspaceEventSocket {
 }
 
 class FakeTerminalSubscription {
+  readonly unavailableListeners = new Set<(message: string) => void>();
+  unavailableMessage: string | null = null;
+  onUnavailable(listener: (message: string) => void): () => void {
+    this.unavailableListeners.add(listener);
+    if (this.unavailableMessage) listener(this.unavailableMessage);
+    return () => this.unavailableListeners.delete(listener);
+  }
+  unavailable(message: string): void {
+    this.unavailableMessage = message;
+    for (const listener of this.unavailableListeners) listener(message);
+  }
   readonly listeners = new Set<(update: TerminalReplicaUpdate<string, string>) => void>();
   closeCount = 0;
   closeGate: Promise<void> | null = null;
@@ -2978,4 +2989,66 @@ describe("semantic mutation acknowledgement across topology replacement", () => 
     await expect(completion).rejects.toThrow("client generation was retired");
     await client.dispose();
   });
+});
+
+it("activates healthy siblings while discarding pre-fault candidate bytes and isolates late unavailable observers", async () => {
+  const ids = ["pane.bad", "pane.good"];
+  const shell = shellBroker({ alpha: shellResource("alpha", ids) });
+  const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+  const coherent = deferred<void>();
+  const client = createWorkspaceClient<string, string>({
+    target: target("alpha"),
+    ports: {
+      shell: shell.transport,
+      connectRuntime: async (_a, _b, _c, prepare) => {
+        await prepare(runtime);
+        await coherent.promise;
+        return runtime;
+      },
+      actions,
+    },
+  });
+  const bad: unknown[] = [];
+  const good: unknown[] = [];
+  const unavailable: string[] = [];
+  client.subscribeTerminal(
+    { workspaceName: "alpha", semanticPaneId: ids[0]! },
+    (u) => bad.push(u),
+    () => {
+      throw Error("observer");
+    },
+  );
+  client.subscribeTerminal(
+    { workspaceName: "alpha", semanticPaneId: ids[0]! },
+    () => {},
+    (m) => unavailable.push(m),
+  );
+  client.subscribeTerminal({ workspaceName: "alpha", semanticPaneId: ids[1]! }, (u) =>
+    good.push(u),
+  );
+  shell.connections[0]!.handlers.onVerifiedOpen();
+  await settle();
+  const first = runtime.subscriptions.get(ids[0]!)!;
+  first.emit(terminalSeedFor(ids[0]!, ALPHA_DAEMON.instanceId));
+  first.unavailable("saved tab snapshot unsupported");
+  first.emit(terminalSeedFor(ids[0]!, ALPHA_DAEMON.instanceId));
+  runtime.subscriptions.get(ids[1]!)!.emit(terminalSeedFor(ids[1]!, ALPHA_DAEMON.instanceId));
+  coherent.resolve();
+  await settle();
+  expect(bad).toHaveLength(0);
+  expect(good).toHaveLength(1);
+  expect(unavailable).toEqual(["saved tab snapshot unsupported"]);
+  const replay: string[] = [];
+  client.subscribeTerminal(
+    { workspaceName: "alpha", semanticPaneId: ids[0]! },
+    () => {},
+    (m) => replay.push(m),
+  );
+  expect(replay).toEqual(unavailable);
+  runtime.subscriptions.get(ids[1]!)!.unavailable("late failure");
+  await client.dispose();
+  await settle();
+  expect(first.unavailableListeners.size).toBe(0);
+  first.unavailable("stale");
+  expect(unavailable).toHaveLength(1);
 });

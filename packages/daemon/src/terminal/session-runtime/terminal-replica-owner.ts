@@ -77,6 +77,7 @@ interface ReseedCandidate {
   readonly layoutLease: LayoutLease | null;
   readonly subscriptionEpoch: number;
   readonly chunks: Uint8Array[];
+  readonly captureChunks: Uint8Array[];
   readonly trace: SessionRuntimeTraceContext | null;
 }
 
@@ -435,6 +436,7 @@ export class SessionRuntimeTerminalReplicaOwner {
         layoutLease: this.#layoutLease,
         subscriptionEpoch: this.#subscriptionEpoch,
         chunks: [],
+        captureChunks: [],
         trace: this.#consumeOutputTrace(),
       };
     } else if (event.type === "seed" || event.type === "delta") {
@@ -443,7 +445,11 @@ export class SessionRuntimeTerminalReplicaOwner {
         if (event.type === "seed" && event.requiresNativeRecapture)
           this.#reseed.requiresNativeRecapture = true;
         if (event.type === "seed" && event.native) this.#reseed.native = event.native;
-        else this.#reseed.chunks.push(event.data.slice());
+        else {
+          const bytes = Uint8Array.from(event.data);
+          this.#reseed.chunks.push(bytes);
+          if (event.type === "seed") this.#reseed.captureChunks.push(bytes);
+        }
       } else
         this.#supervise(
           this.#interpreter.enqueue({
@@ -466,6 +472,7 @@ export class SessionRuntimeTerminalReplicaOwner {
               cols: reseed.nativeCols,
               rows: reseed.nativeRows,
               chunks: reseed.chunks,
+              captureChunks: reseed.captureChunks,
               native: reseed.native,
               historyLimit: event.historyLimit,
               historySize: event.historySize,

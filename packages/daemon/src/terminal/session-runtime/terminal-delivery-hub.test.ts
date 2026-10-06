@@ -1,3 +1,4 @@
+import { StockCaptureTabUnavailableError } from "./stock-capture-fidelity.ts";
 import { projectNativeGridRow } from "../mirror/native-grid-projection.ts";
 import { decodeNativeGridCapture } from "../mirror/native-grid-capture.ts";
 import * as nativeSeeds from "./native-seed-backing.ts";
@@ -2642,3 +2643,219 @@ function blankNative(): NativeGridCapture {
     ],
   };
 }
+
+it("negotiates a failed stock pane without poisoning healthy source ownership", async () => {
+  const healthy = new FakeOwner();
+  const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", (pane) =>
+    pane === "bad"
+      ? {
+          subscribeSource: async () => {
+            throw new StockCaptureTabUnavailableError();
+          },
+        }
+      : healthy,
+  );
+  const offer = {
+    protocolVersions: [1],
+    encodings: ["semantic-v1"],
+    richPlacements: false,
+  } as const;
+  const bad: TerminalDeliveryServerMessage[] = [];
+  const good: TerminalDeliveryServerMessage[] = [];
+  const a = await hub.open("reader", "bad", offer, (m) => {
+    bad.push(m);
+  });
+  const b = await hub.open("reader", "pane-a", offer, (m) => {
+    good.push(m);
+  });
+  expect(a.negotiation.accepted).toBe(true);
+  expect(bad).toEqual([
+    expect.objectContaining({
+      type: "terminal.delivery.fault",
+      reason: "source-closed",
+      message: new StockCaptureTabUnavailableError().message,
+    }),
+  ]);
+  healthy.emit(seed());
+  await settle();
+  expect(good.some((m) => m.type === "terminal.delivery")).toBe(true);
+  hub.failPaneCapture("pane-a", new StockCaptureTabUnavailableError());
+  await settle();
+  expect(good.at(-1)).toMatchObject({
+    type: "terminal.delivery.fault",
+    message: new StockCaptureTabUnavailableError().message,
+  });
+  await a.close();
+  await b.close();
+  await hub.close();
+});
+
+it.each([
+  ["scheduled", false],
+  ["sending", false],
+  ["scheduled", true],
+  ["sending", true],
+] as const)(
+  "retires capability-fault delivery synchronously while its sink is blocked (%s, tombstone=%s)",
+  async (mode, withTombstone) => {
+    const owner = new FakeOwner();
+    const sibling = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", (pane) =>
+      pane === "pane-a" ? owner : sibling,
+    );
+    const siblingMessages: TerminalDeliveryServerMessage[] = [];
+    const siblingConnection = await hub.open(
+      "reader",
+      "pane-b",
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+      (message) => {
+        siblingMessages.push(message);
+      },
+    );
+    const messages: TerminalDeliveryServerMessage[] = [];
+    let releaseFault!: () => void;
+    let releaseRepresentation!: () => void;
+    const faultBlocked = new Promise<void>((resolve) => {
+      releaseFault = resolve;
+    });
+    const representationBlocked = new Promise<void>((resolve) => {
+      releaseRepresentation = resolve;
+    });
+    const connection = await hub.open(
+      "reader",
+      "pane-a",
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+      (message) => {
+        messages.push(message);
+        if (message.type === "terminal.delivery.fault") return faultBlocked;
+        if (mode === "sending" && message.type === "terminal.delivery")
+          return representationBlocked;
+      },
+    );
+    let retired = false;
+    void connection.closed?.then(() => {
+      retired = true;
+    });
+    try {
+      owner.emit(seed());
+      await settle();
+      if (mode === "scheduled") connection.ack(ack(messages[0] as TerminalDeliveryEnvelope));
+      owner.emit(patch(1, 1));
+      hub.failPaneCapture("pane-a", new StockCaptureTabUnavailableError());
+      await settle();
+      const faultIndex = messages.findIndex(
+        (message) => message.type === "terminal.delivery.fault",
+      );
+      expect(faultIndex).toBeGreaterThan(-1);
+      // The actionable fault is still blocked: unrelated delivery must progress.
+      sibling.emit({ ...seed(), semanticPaneId: "pane-b" });
+      await settle();
+      siblingConnection.ack(ack(siblingMessages[0] as TerminalDeliveryEnvelope));
+      sibling.emit({ ...patch(1, 1), semanticPaneId: "pane-b" });
+      await settle();
+      expect(
+        siblingMessages
+          .filter((message) => message.type === "terminal.delivery")
+          .map((message) => message.canonicalRevision),
+      ).toEqual([0, 1]);
+      // Owner disposal can publish its terminal tombstone before transport drains.
+      if (withTombstone) owner.emit(tombstone(2));
+      releaseRepresentation();
+      await settle();
+      expect(retired).toBe(false);
+      releaseFault();
+      await settle();
+      expect(retired).toBe(true);
+      expect(
+        messages.slice(faultIndex + 1).filter((message) => message.type === "terminal.delivery"),
+      ).toEqual([]);
+      expect(messages.filter((message) => message.type === "terminal.delivery.fault")).toHaveLength(
+        1,
+      );
+    } finally {
+      releaseFault();
+      releaseRepresentation();
+      await connection.close();
+      await siblingConnection.close();
+      await hub.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "handles pre-capability-fault NACK identity without broadening unrelated feedback (mismatch=%s)",
+  async (mismatch) => {
+    const owner = new FakeOwner();
+    const sibling = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", (pane) =>
+      pane === "pane-a" ? owner : sibling,
+    );
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const healthy: TerminalDeliveryServerMessage[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const offer = {
+      protocolVersions: [1],
+      encodings: ["semantic-v1"],
+      richPlacements: false,
+    } as const;
+    const connection = await hub.open("reader", "pane-a", offer, (message) => {
+      messages.push(message);
+      if (message.type === "terminal.delivery.fault" && message.reason === "source-closed")
+        return blocked;
+    });
+    const other = await hub.open("reader", "pane-b", offer, (message) => {
+      healthy.push(message);
+    });
+    try {
+      owner.emit(seed());
+      await settle();
+      const envelope = messages[0] as TerminalDeliveryEnvelope;
+      expect(envelope.type).toBe("terminal.delivery");
+      hub.failPaneCapture("pane-a", new StockCaptureTabUnavailableError());
+      await settle();
+      const nack = {
+        type: "terminal.delivery.nack" as const,
+        workspaceName: envelope.workspaceName,
+        semanticPaneId: envelope.semanticPaneId,
+        generation: envelope.generation,
+        incarnation: envelope.incarnation,
+        deliveryNonce: envelope.deliveryNonce,
+        transactionId: mismatch ? "00000000-0000-4000-8000-000000000099" : envelope.transactionId,
+        reason: "decode-failed" as const,
+        appliedRevision: -1,
+      };
+      expect(() => connection.nack({ ...nack, reason: "invalid" } as never)).toThrow();
+      connection.nack(nack);
+      // Matched displaced ACK already follows the same race-safe contract.
+      if (!mismatch) connection.ack(ack(envelope));
+      sibling.emit({ ...seed(), semanticPaneId: "pane-b" });
+      await settle();
+      other.ack(ack(healthy[0] as TerminalDeliveryEnvelope));
+      sibling.emit({ ...patch(1, 1), semanticPaneId: "pane-b" });
+      await settle();
+      expect(
+        healthy
+          .filter((message) => message.type === "terminal.delivery")
+          .map((message) => message.canonicalRevision),
+      ).toEqual([0, 1]);
+      expect(hub.metrics().nacks).toBe(0);
+      release();
+      await settle();
+      expect(
+        messages
+          .filter((message) => message.type === "terminal.delivery.fault")
+          .map((message) => message.reason),
+      ).toEqual(mismatch ? ["source-closed", "protocol-violation"] : ["source-closed"]);
+
+      expect(messages.filter((message) => message.type === "terminal.delivery")).toHaveLength(1);
+    } finally {
+      release();
+      await connection.close();
+      await other.close();
+      await hub.close();
+    }
+  },
+);

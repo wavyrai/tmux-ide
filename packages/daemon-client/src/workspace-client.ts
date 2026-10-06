@@ -75,6 +75,9 @@ interface TerminalInterest<Snapshot, Patch, Tombstone> {
     ReturnType<WorkspaceClientRuntimePort<Snapshot, Patch, Tombstone>["subscribeTerminal"]>
   > | null;
   unsubscribeUpdate: (() => void) | null;
+  unsubscribeUnavailable: (() => void) | null;
+  unavailable: string | null;
+  readonly unavailableListeners: Set<(message: string) => void>;
   opening: boolean;
 }
 
@@ -89,6 +92,8 @@ interface PreparedTerminalBinding<Snapshot, Patch, Tombstone> {
     ReturnType<WorkspaceClientRuntimePort<Snapshot, Patch, Tombstone>["subscribeTerminal"]>
   >;
   readonly unsubscribeUpdate: () => void;
+  readonly unsubscribeUnavailable: () => void;
+  unavailable: string | null;
   readonly pending: Array<{
     readonly update: TerminalReplicaUpdate<Snapshot, Patch, Tombstone>;
     readonly metadata?: TerminalReplicaDeliveryMetadata;
@@ -518,6 +523,9 @@ export function createWorkspaceClient<
     interest: TerminalInterest<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
   ): Promise<void> => {
     interest.opening = false;
+    interest.unsubscribeUnavailable?.();
+    interest.unsubscribeUnavailable = null;
+    interest.unavailable = null;
     interest.unsubscribeUpdate?.();
     interest.unsubscribeUpdate = null;
     const subscription = interest.subscription;
@@ -534,6 +542,7 @@ export function createWorkspaceClient<
     const closing: Promise<void>[] = [];
     for (const binding of prepared.bindings.values()) {
       binding.unsubscribeUpdate();
+      binding.unsubscribeUnavailable();
       closing.push(closeSubscription(binding.subscription));
     }
     prepared.bindings.clear();
@@ -559,6 +568,19 @@ export function createWorkspaceClient<
         listener(update, metadata);
       } catch {
         // One renderer observer cannot interrupt sibling terminal delivery.
+      }
+    }
+  };
+  const publishUnavailable = (
+    interest: TerminalInterest<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+    message: string,
+  ): void => {
+    interest.unavailable = message;
+    for (const listener of [...interest.unavailableListeners]) {
+      try {
+        listener(message);
+      } catch {
+        /* One pane observer cannot interrupt siblings. */
       }
     }
   };
@@ -591,8 +613,19 @@ export function createWorkspaceClient<
           return closeSubscription(subscription);
         }
         interest.subscription = subscription;
+        interest.unsubscribeUnavailable =
+          subscription.onUnavailable?.((message) => {
+            if (
+              disposed ||
+              generation !== expectedGeneration ||
+              runtime !== expectedRuntime ||
+              interest.subscription !== subscription
+            )
+              return;
+            publishUnavailable(interest, message);
+          }) ?? null;
         interest.unsubscribeUpdate = subscription.onUpdate((update, metadata) => {
-          if (generation !== expectedGeneration) return;
+          if (generation !== expectedGeneration || interest.unavailable) return;
           publishTerminalUpdate(interest, expectedRuntime, update, metadata);
         });
       })
@@ -702,12 +735,17 @@ export function createWorkspaceClient<
         for (const binding of bindings) {
           binding.interest.subscription = binding.subscription;
           binding.interest.unsubscribeUpdate = binding.unsubscribeUpdate;
+          binding.interest.unsubscribeUnavailable = binding.unsubscribeUnavailable;
           binding.interest.opening = false;
         }
         prepared.bindings.clear();
         owner.prepared = null;
         prepared.activated = true;
         for (const binding of bindings) {
+          if (binding.unavailable) {
+            publishUnavailable(binding.interest, binding.unavailable);
+            binding.pending.length = 0;
+          }
           for (const delivery of binding.pending) {
             publishTerminalUpdate(
               binding.interest,
@@ -778,8 +816,9 @@ export function createWorkspaceClient<
               TerminalPatch,
               TerminalTombstone
             >["pending"] = [];
+            let subscriptionUnavailable = false;
             const unsubscribeUpdate = subscription.onUpdate((update, metadata) => {
-              if (prepared.closed) return;
+              if (prepared.closed || subscriptionUnavailable) return;
               if (prepared.activated) {
                 publishTerminalUpdate(interest, nextRuntime, update, metadata);
                 return;
@@ -821,12 +860,31 @@ export function createWorkspaceClient<
               await closeSubscription(subscription);
               return;
             }
-            prepared.bindings.set(key, {
+            const binding = {
               interest,
               subscription,
               unsubscribeUpdate,
+              unsubscribeUnavailable: () => {},
+              unavailable: null as string | null,
               pending,
-            });
+            };
+            binding.unsubscribeUnavailable =
+              subscription.onUnavailable?.((message) => {
+                if (
+                  prepared.closed ||
+                  disposed ||
+                  generation !== owner.clientGeneration ||
+                  (activeRuntimeOwner !== owner && candidateRuntimeOwner !== owner) ||
+                  terminals.get(key) !== interest
+                )
+                  return;
+                subscriptionUnavailable = true;
+                binding.unavailable = message;
+                binding.pending.length = 0;
+                if (prepared.activated && runtime === nextRuntime)
+                  publishUnavailable(interest, message);
+              }) ?? (() => {});
+            prepared.bindings.set(key, binding);
           }),
         ];
       });
@@ -1327,7 +1385,7 @@ export function createWorkspaceClient<
         throw error;
       }
     },
-    subscribeTerminal(nextTarget, listener) {
+    subscribeTerminal(nextTarget, listener, onUnavailable) {
       if (disposed) return () => undefined;
       const key = terminalKey(nextTarget);
       const interest =
@@ -1337,19 +1395,34 @@ export function createWorkspaceClient<
           listeners: new Set(),
           subscription: null,
           unsubscribeUpdate: null,
+          unsubscribeUnavailable: null,
+          unavailable: null,
+          unavailableListeners: new Set<(message: string) => void>(),
           opening: false,
         } satisfies TerminalInterest<TerminalSnapshot, TerminalPatch, TerminalTombstone>);
       terminals.set(key, interest);
       interest.listeners.add(listener);
+      if (onUnavailable) {
+        interest.unavailableListeners.add(onUnavailable);
+        if (interest.unavailable) {
+          try {
+            onUnavailable(interest.unavailable);
+          } catch {
+            /* Availability observers cannot interrupt sibling delivery. */
+          }
+        }
+      }
       openTerminal(interest);
       return () => {
         interest.listeners.delete(listener);
+        if (onUnavailable) interest.unavailableListeners.delete(onUnavailable);
         if (interest.listeners.size > 0) return;
         for (const owner of [activeRuntimeOwner, candidateRuntimeOwner]) {
           const prepared = owner?.prepared?.bindings.get(key);
           if (!prepared) continue;
           owner!.prepared!.bindings.delete(key);
           prepared.unsubscribeUpdate();
+          prepared.unsubscribeUnavailable();
           void closeSubscription(prepared.subscription);
         }
         terminals.delete(key);

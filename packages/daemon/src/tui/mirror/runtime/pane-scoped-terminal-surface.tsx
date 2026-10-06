@@ -1,5 +1,12 @@
 /* @jsxImportSource @opentui/solid */
-import { createRenderEffect, onCleanup, untrack, type Accessor } from "solid-js";
+import {
+  createRenderEffect,
+  createSignal,
+  Show,
+  onCleanup,
+  untrack,
+  type Accessor,
+} from "solid-js";
 
 import type {
   PaneSearchHighlight,
@@ -13,6 +20,7 @@ import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 export interface PaneScopedTerminalAdapter {
   readonly renderSource: import("../pane-surface.tsx").TerminalPaneRenderSource;
   paneVersion(paneId: string): number;
+  paneUnavailable?(paneId: string): string | null;
   panePresentationVersion?(paneId: string): number;
   paneSourceEpoch(): number;
   /** Coalesced exceptional recovery when a formerly coherent snapshot is absent. */
@@ -63,6 +71,7 @@ export interface PaneScopedTerminalSurfaceProps {
 /** One Solid owner per terminal pane; terminal output never wakes the root shell. */
 export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps) {
   let surface: PaneSurfaceRenderable | undefined;
+  const [unavailable, setUnavailable] = createSignal<string | null>(null);
   let activationEpoch = 0;
   let wasActive = false;
   let hadCanonicalSnapshot = false;
@@ -74,6 +83,9 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
     adapter: PaneScopedTerminalAdapter,
     paneId: string,
   ): void => {
+    const message = adapter.paneUnavailable?.(paneId) ?? null;
+    setUnavailable(message);
+    if (message) return;
     const identity = adapter.renderSource.paneCanonicalIdentity?.(paneId) ?? null;
     if (identity) {
       hadCanonicalSnapshot = true;
@@ -122,35 +134,53 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
   });
 
   return (
-    <pane_surface
-      ref={(renderable: PaneSurfaceRenderable) => {
-        surface = renderable;
-        renderable.contentVersion = props.adapter.paneVersion(props.paneId);
-        renderable.presentationVersion = props.adapter.panePresentationVersion?.(props.paneId) ?? 0;
-        renderable.sourceEpoch = props.sourceEpoch + props.adapter.paneSourceEpoch();
-        renderable.presentationGeneration = currentPresentationGeneration();
-        ensureRetainedCanonicalState(props.adapter, props.paneId);
-      }}
-      width={props.width}
-      height={props.height}
-      mirror={props.adapter.renderSource}
-      paneId={props.paneId}
-      defaultFg={props.defaultFg}
-      defaultBg={props.defaultBg}
-      terminalPalette={props.terminalPalette}
-      searchHl={props.searchHl}
-      searchCur={props.searchCur}
-      scrollOffset={props.scrollOffset}
-      viewportOrigin={props.viewportOrigin}
-      paneFocused={props.paneFocused}
-      contentVersion={props.adapter.paneVersion(props.paneId)}
-      presentationVersion={props.adapter.panePresentationVersion?.(props.paneId) ?? 0}
-      sourceEpoch={props.sourceEpoch + props.adapter.paneSourceEpoch()}
-      rendererEpoch={props.sourceEpoch}
-      hostFocusTransitionOwner={props.hostFocusTransitionOwner}
-      selRange={props.selRange}
-      copyCursor={props.copyCursor}
-      search={props.search}
-    />
+    <box width={props.width} height={props.height}>
+      <pane_surface
+        ref={(renderable: PaneSurfaceRenderable) => {
+          surface = renderable;
+          renderable.contentVersion = props.adapter.paneVersion(props.paneId);
+          renderable.presentationVersion =
+            props.adapter.panePresentationVersion?.(props.paneId) ?? 0;
+          renderable.sourceEpoch = props.sourceEpoch + props.adapter.paneSourceEpoch();
+          renderable.presentationGeneration = currentPresentationGeneration();
+          ensureRetainedCanonicalState(props.adapter, props.paneId);
+        }}
+        width={props.width}
+        height={props.height}
+        mirror={props.adapter.renderSource}
+        paneId={props.paneId}
+        defaultFg={props.defaultFg}
+        defaultBg={props.defaultBg}
+        terminalPalette={props.terminalPalette}
+        searchHl={props.searchHl}
+        searchCur={props.searchCur}
+        scrollOffset={props.scrollOffset}
+        viewportOrigin={props.viewportOrigin}
+        paneFocused={props.paneFocused}
+        contentVersion={props.adapter.paneVersion(props.paneId)}
+        presentationVersion={props.adapter.panePresentationVersion?.(props.paneId) ?? 0}
+        sourceEpoch={props.sourceEpoch + props.adapter.paneSourceEpoch()}
+        rendererEpoch={props.sourceEpoch}
+        hostFocusTransitionOwner={props.hostFocusTransitionOwner}
+        selRange={props.selRange}
+        copyCursor={props.copyCursor}
+        search={props.search}
+      />
+      <Show when={unavailable()}>
+        {(message) => (
+          <box
+            position="absolute"
+            left={0}
+            top={0}
+            width={props.width}
+            height={props.height}
+            backgroundColor={`#${props.defaultBg.toString(16).padStart(6, "0")}`}
+            padding={1}
+          >
+            <text fg={`#${props.defaultFg.toString(16).padStart(6, "0")}`}>{message()}</text>
+          </box>
+        )}
+      </Show>
+    </box>
   );
 }

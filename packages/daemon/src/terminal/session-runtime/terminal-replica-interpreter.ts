@@ -1,3 +1,4 @@
+import { assertStockCaptureRepresentable } from "./stock-capture-fidelity.ts";
 import { rememberNativeSeedBacking } from "./native-seed-backing.ts";
 import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
@@ -72,6 +73,8 @@ export type TerminalReplicaInterpreterOperation =
       readonly cols: number;
       readonly rows: number;
       readonly chunks: readonly Uint8Array[];
+      /** Explicit capture provenance; excludes post-capture live data. Legacy callers capture all chunks. */
+      readonly captureChunks?: readonly Uint8Array[];
       readonly cursor: { readonly x: number; readonly y: number };
       readonly wraparound?: boolean;
       readonly observedModes?: MirrorObservedTerminalModes;
@@ -101,6 +104,8 @@ export interface TerminalReplicaInterpreterOptions {
     readonly baseRevision: number;
     readonly revision: number;
     readonly chunks: readonly Uint8Array[];
+    /** Explicit capture provenance; excludes post-capture live data. Legacy callers capture all chunks. */
+    readonly captureChunks?: readonly Uint8Array[];
     readonly contiguous: boolean;
   }) => void;
   /** Request native truth without publishing an unknown saved-buffer projection. */
@@ -243,7 +248,13 @@ export class TerminalReplicaInterpreter {
     this.#flushWrites();
     const admitted =
       operation.type === "reseed"
-        ? { ...operation, chunks: operation.chunks.map((chunk) => chunk.slice()) }
+        ? {
+            ...operation,
+            chunks: operation.chunks.map((chunk) => Uint8Array.from(chunk)),
+            ...(operation.captureChunks
+              ? { captureChunks: operation.captureChunks.map((chunk) => Uint8Array.from(chunk)) }
+              : {}),
+          }
         : operation;
     return this.#append(admitted);
   }
@@ -343,6 +354,8 @@ export class TerminalReplicaInterpreter {
   ): Promise<void> {
     if (this.#closed) return;
     if (operation.type === "reseed") {
+      if (operation.bootstrap === "painted-capture" && !operation.native)
+        assertStockCaptureRepresentable(operation.captureChunks ?? operation.chunks);
       this.#causalCell?.fail("reseeded");
       const nativeCols = operation.nativeCols ?? operation.cols;
       const nativeRows = operation.nativeRows ?? operation.rows;
