@@ -119,8 +119,6 @@ export function SocialCard({ description, eyebrow, title }: SocialCardProps) {
               display: "flex",
               fontFamily: "monospace",
               fontSize: 19,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
             }}
           >
             {eyebrow}
