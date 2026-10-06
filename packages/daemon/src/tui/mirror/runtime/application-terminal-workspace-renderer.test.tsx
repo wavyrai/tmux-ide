@@ -10,6 +10,7 @@ import {
   createSemanticThemeSnapshot,
   createTerminalPaletteProjection,
 } from "../theme.ts";
+import { blitSemanticRow } from "../semantic-pane-render-source.ts";
 import { renderForTest } from "../testing/renderer-harness.test.ts";
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
 import {
@@ -1367,6 +1368,8 @@ describe("ApplicationTerminalWorkspace", () => {
         placements: [],
         bootstrap: { kind: "authoritative-stream", hiddenState: "observed-from-start" },
       };
+      replica.grid[1]!.cells[2] = { ...replica.grid[1]!.cells[2]!, grapheme: "界", width: 2 };
+      replica.grid[1]!.cells[3] = { ...replica.grid[1]!.cells[3]!, grapheme: "", width: 0 };
       const [workspaceHeight, setWorkspaceHeight] = createSignal(9);
       const forwarded: string[] = [];
       const wireEncodings: Array<string | undefined> = [];
@@ -1409,6 +1412,34 @@ describe("ApplicationTerminalWorkspace", () => {
               historyTrim: 0,
             }
           : null;
+      const fallbackBlit = liveAdapter.renderSource.blitPane;
+      liveAdapter.renderSource.blitPane = (
+        paneId,
+        buffers,
+        width,
+        height,
+        scroll,
+        fg,
+        bg,
+        options,
+      ) => {
+        if (paneId !== "pane.a")
+          return fallbackBlit(paneId, buffers, width, height, scroll, fg, bg, options);
+        for (let row = 0; row < height; row++) {
+          blitSemanticRow(
+            replica.grid[row],
+            buffers,
+            row,
+            width,
+            fg,
+            bg,
+            options.graphemes,
+            palette,
+          );
+          options.dirtyRows.push(row);
+        }
+        return null;
+      };
       let connection = {};
       let client = {};
       const setup = await renderForTest(
@@ -1454,6 +1485,55 @@ describe("ApplicationTerminalWorkspace", () => {
         { width: 30, height: 11 },
       );
       await setup.renderOnce();
+
+      expect(setup.captureCharFrame()).toContain("界");
+      // Application mouse uses physical hit cells, unlike semantic selection:
+      // leading and continuation halves of a wide glyph must stay distinct.
+      await setup.mockMouse.click(2, 4, MouseButtons.LEFT);
+      await setup.mockMouse.click(3, 4, MouseButtons.LEFT);
+      expect(forwarded).toEqual(
+        encoding === "sgr"
+          ? ["\x1b[<0;3;2M", "\x1b[<0;3;2m", "\x1b[<0;4;2M", "\x1b[<0;4;2m"]
+          : ["1b5b4d202322", "1b5b4d232322", "1b5b4d202422", "1b5b4d232422"],
+      );
+      forwarded.length = 0;
+      await setup.mockMouse.click(3, 4, MouseButtons.LEFT, {
+        modifiers: { ctrl: true, alt: true },
+      });
+      expect(forwarded).toEqual(
+        encoding === "sgr" ? ["\x1b[<24;4;2M", "\x1b[<24;4;2m"] : ["1b5b4d382422", "1b5b4d3b2422"],
+      );
+      forwarded.length = 0;
+      Object.assign(replica.modes, { mouseProtocol: "x10" });
+      canonicalRevision++;
+      await setup.mockMouse.click(3, 4, MouseButtons.LEFT);
+      expect(forwarded).toEqual(encoding === "sgr" ? ["\x1b[<0;4;2M"] : ["1b5b4d202422"]);
+      forwarded.length = 0;
+      Object.assign(replica.modes, { mouseProtocol: "vt200" });
+      canonicalRevision++;
+      await setup.mockMouse.pressDown(3, 4, MouseButtons.LEFT);
+      await setup.mockMouse.moveTo(4, 4);
+      await setup.mockMouse.release(4, 4, MouseButtons.LEFT);
+      expect(forwarded).toEqual(
+        encoding === "sgr" ? ["\x1b[<0;4;2M", "\x1b[<0;5;2m"] : ["1b5b4d202422", "1b5b4d232522"],
+      );
+      forwarded.length = 0;
+      Object.assign(replica.modes, { mouseProtocol: "any" });
+      canonicalRevision++;
+      await setup.mockMouse.moveTo(5, 4);
+      expect(forwarded).toEqual(encoding === "sgr" ? ["\x1b[<35;6;2M"] : ["1b5b4d432622"]);
+      forwarded.length = 0;
+      Object.assign(replica.modes, { mouseProtocol: "drag" });
+      canonicalRevision++;
+      await setup.mockMouse.pressDown(3, 4, MouseButtons.LEFT);
+      Object.assign(replica.modes, { mouseProtocol: "x10" });
+      canonicalRevision++;
+      await setup.mockMouse.release(3, 4, MouseButtons.LEFT);
+      expect(forwarded).toEqual(encoding === "sgr" ? ["\x1b[<0;4;2M"] : ["1b5b4d202422"]);
+      Object.assign(replica.modes, { mouseProtocol: "drag" });
+      canonicalRevision++;
+      forwarded.length = 0;
+      wireEncodings.length = 0;
 
       // The header overflow and keyboard accelerators share the exact pane-scoped
       // action model; close remains deliberately two-step.
