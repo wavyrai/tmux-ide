@@ -132,9 +132,7 @@ interface BundleCallbacks {
   readonly didRetireRuntime: () => void;
   readonly didFaultRuntime: (runtime: OpenTuiWorkspaceRuntimePort | null, error: Error) => void;
   readonly didRuntimeDiagnostic: (
-    phase:
-      | Parameters<NonNullable<ConnectOpenTuiWorkspaceRuntimePortOptions["onDiagnostic"]>>[0]
-      | "pane-retention",
+    phase: Parameters<NonNullable<ConnectOpenTuiWorkspaceRuntimePortOptions["onDiagnostic"]>>[0],
     details: Readonly<Record<string, unknown>>,
   ) => void;
 }
@@ -260,26 +258,6 @@ function buildProductionBundle(
       })
     : null;
   let fastLane: OpenTuiWorkspaceTerminalFastLane | null = null;
-  const diagnosePaneRetention = (operation: string, paneIds: readonly string[]): void => {
-    if (!callbacks.performanceDiagnostics) return;
-    try {
-      callbacks.didRuntimeDiagnostic("pane-retention", {
-        operation,
-        panes: paneIds.map((paneId) => {
-          const state = fastLane?.lane.paneState(paneId);
-          return {
-            paneId,
-            hasState: Boolean(state),
-            hasSnapshot: Boolean(state?.snapshot),
-            revision: state?.revision ?? null,
-            lastUpdate: fastLane?.lane.paneLastAcceptedUpdateType(paneId) ?? null,
-          };
-        }),
-      });
-    } catch {
-      // Diagnostic observation cannot alter terminal ownership.
-    }
-  };
   const candidateStages = new WeakMap<OpenTuiWorkspaceRuntimePort, () => void>();
   let client!: OpenTuiProductionWorkspaceClient;
   client = createWorkspaceClient({
@@ -293,12 +271,7 @@ function buildProductionBundle(
         // Candidate interests must exist before WorkspaceClient asks the
         // runtime to prepare. Staging is additive: the incumbent inventory and
         // its exact retained frame remain intact until atomic activation.
-        const release = fastLane.lane.stagePanes(inventory.semanticPaneIds);
-        diagnosePaneRetention("stage", inventory.semanticPaneIds);
-        const releaseStage = () => {
-          release();
-          diagnosePaneRetention("release-stage", inventory.semanticPaneIds);
-        };
+        const releaseStage = fastLane.lane.stagePanes(inventory.semanticPaneIds);
         try {
           let connectedRuntime: OpenTuiWorkspaceRuntimePort | null = null;
           const runtime = await connectOpenTuiWorkspaceRuntimePort({
@@ -330,7 +303,6 @@ function buildProductionBundle(
         // Commit before releasing the additive candidate stage. This is the
         // sole point at which removed incumbent panes may be trimmed.
         fastLane?.lane.retainPanes(inventory.semanticPaneIds);
-        diagnosePaneRetention("commit", inventory.semanticPaneIds);
         const candidate = runtime as OpenTuiWorkspaceRuntimePort;
         const releaseStage = candidateStages.get(candidate);
         candidateStages.delete(candidate);

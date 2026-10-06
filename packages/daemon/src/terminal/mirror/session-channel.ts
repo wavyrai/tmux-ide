@@ -238,13 +238,6 @@ export interface MirrorFlowRecoveryObservation {
   readonly collectorFailureReason: AtomicPaneSnapshotFailureReason | null;
 }
 
-export interface MirrorCursorProbeObservation {
-  readonly semanticPaneId: string;
-  readonly lineCount: number;
-  readonly firstLineBytes: number;
-  readonly numericPrefix: readonly (number | null)[];
-}
-
 export interface SessionChannelOptions {
   ownedViewer?: Pick<OwnedViewerAdapter, "bindIo" | "tryDispatch" | "dispose"> &
     Partial<Pick<OwnedViewerAdapter, "atomicSnapshotEpoch">>;
@@ -282,7 +275,6 @@ export interface SessionChannelOptions {
     timing?: MirrorOutputTiming,
   ) => void;
   onFlowRecoveryObserved?: (observation: MirrorFlowRecoveryObservation) => void;
-  onInvalidCursorProbe?: (observation: MirrorCursorProbeObservation) => void;
 }
 
 export interface PaneSubscriptionHandle {
@@ -1531,26 +1523,6 @@ export class SessionChannel {
         // retaining this recipe's original deadline and one queue lease.
         const windowId = sub.pane.windowRuntimeId;
         const probe = parseCursorProbe(reply.lines[0] ?? "");
-        if (!probe && this.opts.onInvalidCursorProbe) {
-          try {
-            const firstLine = reply.lines[0] ?? "";
-            this.opts.onInvalidCursorProbe({
-              semanticPaneId: sub.pane.semanticId,
-              lineCount: reply.lines.length,
-              firstLineBytes: firstLine.length,
-              numericPrefix: firstLine
-                .trim()
-                .split(/\s+/u)
-                .slice(0, 4)
-                .map((field) => {
-                  const value = Number(field);
-                  return field !== "" && Number.isSafeInteger(value) ? value : null;
-                }),
-            });
-          } catch {
-            // Optional diagnostics must not affect capture publication.
-          }
-        }
         const validCaptureGeometry =
           probe &&
           Number.isSafeInteger(probe.x) &&

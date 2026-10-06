@@ -416,7 +416,6 @@ export class SessionRuntimeTerminalReplicaOwner {
       this.#scheduleHistoryCheck();
     }
     if (event.type === "reset") {
-      this.#noteLifecycle("capture-started");
       // Deterministic capture point: reset opens the atomic capture. A probe
       // armed after reset belongs to the next post-capture delta, never to this
       // already-started reseed.
@@ -444,7 +443,6 @@ export class SessionRuntimeTerminalReplicaOwner {
           }),
         );
     } else if (event.type === "cursor") {
-      if (this.#reseed) this.#noteLifecycle("capture-completed");
       this.#waitingForGeometryCapture = false;
       const reseed = this.#reseed;
       this.#reseed = null;
@@ -539,7 +537,6 @@ export class SessionRuntimeTerminalReplicaOwner {
     this.#reseedRetryCount = 0;
     if (!this.#bootstrapped || this.#reseed || this.#waitingForGeometryCapture) return;
     this.#waitingForGeometryCapture = true;
-    this.#noteLifecycle("geometry-capture-requested");
     void this.#start.then(() => {
       if (!this.#disposed && this.#waitingForGeometryCapture) this.#upstream?.reseed();
     });
@@ -691,9 +688,6 @@ export class SessionRuntimeTerminalReplicaOwner {
       | "upstream-closed"
       | "reseed-exhausted"
       | "reseed-retry"
-      | "capture-started"
-      | "capture-completed"
-      | "geometry-capture-requested"
       | "interpreter-fault",
     diagnostic?: SessionRuntimeReseedDiagnostic,
   ): void {
@@ -708,7 +702,7 @@ export class SessionRuntimeTerminalReplicaOwner {
         at,
         null,
         undefined,
-        { workspaceName: this.session, semanticPaneId: this.semanticPaneId },
+        undefined,
         diagnostic,
       );
     } catch {

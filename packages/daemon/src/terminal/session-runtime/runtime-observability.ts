@@ -56,11 +56,6 @@ export interface SessionRuntimeStageSpan {
   readonly operation: string;
   readonly terminalReseed?: SessionRuntimeReseedDiagnostic;
   readonly terminalDelivery?: Readonly<{
-    readonly mirrorCursorProbe?: {
-      readonly lineCount: number;
-      readonly firstLineBytes: number;
-      readonly numericPrefix: readonly (number | null)[];
-    };
     readonly representationCacheBytes?: number;
     readonly rawJournalBytes?: number;
     readonly queueDepth?: number;

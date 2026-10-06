@@ -693,10 +693,6 @@ export function createApplicationTerminalInteractionController(
             rendererEpoch: active?.rendererEpoch ?? null,
             clientGeneration: clientGeneration ?? null,
             identity: identity ?? null,
-            laneHasState: Boolean(active?.fastLane?.lane.paneState(pane)),
-            laneHasSnapshot: Boolean(active?.fastLane?.lane.paneState(pane)?.snapshot),
-            laneLastUpdate: active?.fastLane?.lane.paneLastAcceptedUpdateType(pane) ?? null,
-            laneTombstoneReason: active?.fastLane?.lane.paneState(pane)?.tombstone?.reason ?? null,
             laneCounters: active?.fastLane?.lane.counters() ?? null,
           });
         }

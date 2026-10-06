@@ -403,28 +403,6 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       },
       ...(observeOutput ? { onOutputObserved: observeOutput } : {}),
       ...(observeFlowRecovery ? { onFlowRecoveryObserved: observeFlowRecovery } : {}),
-      ...(this.#observability.enabled
-        ? {
-            onInvalidCursorProbe: (session, observation) => {
-              options.mirror?.onInvalidCursorProbe?.(session, observation);
-              const at = this.#observability.nowMicros();
-              const { semanticPaneId, ...probe } = observation;
-              this.#observability.recordSpan(
-                "tmux",
-                "terminal-invalid-cursor-probe",
-                at,
-                at,
-                null,
-                undefined,
-                {
-                  workspaceName: session,
-                  semanticPaneId,
-                  mirrorCursorProbe: probe,
-                },
-              );
-            },
-          }
-        : {}),
     });
     this.#semanticMutations = options.semanticMutations
       ? new SessionSemanticMutationExecutor({

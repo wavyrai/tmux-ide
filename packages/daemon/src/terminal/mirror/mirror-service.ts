@@ -90,10 +90,6 @@ export interface MirrorServiceOptions {
     timing?: MirrorOutputTiming,
   ) => void;
   onFlowRecoveryObserved?: (session: string, observation: MirrorFlowRecoveryObservation) => void;
-  onInvalidCursorProbe?: (
-    session: string,
-    observation: Parameters<NonNullable<SessionChannelOptions["onInvalidCursorProbe"]>>[0],
-  ) => void;
   /** Qualification-only clock; absent from production's disabled observer. */
   nowMicros?: () => number;
 }
@@ -544,12 +540,6 @@ export class MirrorService {
             this.opts.onOutputObserved?.(session, semanticPaneId, ageMs, timing),
           onFlowRecoveryObserved: (observation) =>
             this.opts.onFlowRecoveryObserved?.(session, observation),
-          ...(this.opts.onInvalidCursorProbe
-            ? {
-                onInvalidCursorProbe: (observation) =>
-                  this.opts.onInvalidCursorProbe?.(session, observation),
-              }
-            : {}),
         };
         channel = new SessionChannel(channelOptions);
       } catch (cause) {
