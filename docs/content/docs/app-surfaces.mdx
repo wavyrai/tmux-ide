@@ -197,12 +197,12 @@ switches to your local daemon. Remote sessions and their processes remain owned
 by tmux when you close the viewer. To create a session on a remote machine,
 select that machine in Sessions (`F6`) and press `Ctrl+N`.
 
-On Linux, system tmux can serve the connection and normal terminal streaming.
-Without the optional patched tmux build, retained history uses compatible
-semantic reflow rather than native physical-grid backing. Older tmux versions
-also expose fewer terminal-mode details, so this is not a claim of identical
-behavior to the qualified native setup. Installing a different tmux executable
-does not upgrade an already-running tmux server.
+Each machine needs tmux 3.7 or newer. tmux-ide starts new tmux servers with its
+bundled tmux 3.7c, which carries tmux-ide's native-grid patch on every supported
+platform. A server you started yourself with a system tmux also works, but its
+retained history uses compatible reflow instead of native grid backing.
+Installing or updating a tmux executable does not upgrade a server that is
+already running.
 
 The TUI still runs locally with `app --ssh`, so local macOS clipboard copying
 continues to use the system clipboard. Running the TUI itself inside an SSH shell
