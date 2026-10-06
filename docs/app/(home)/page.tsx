@@ -83,7 +83,7 @@ export default async function HomePage() {
     <MarketingFrame id="main-content" tabIndex={-1}>
       <Stretch ground="paper">
         <Band>
-          <BandBody className="pb-12 pt-12! md:pb-14 md:pt-16!">
+          <BandBody className="pb-16 pt-12! md:pb-20 md:pt-16!">
             {/* One centred text column over the full-width demo below. */}
             <div className="mx-auto flex max-w-[58rem] flex-col items-center text-center">
               <Link
@@ -102,42 +102,43 @@ export default async function HomePage() {
               <p className="type-hero-lede marketing-enter marketing-enter-step-3 mt-6 max-w-[58ch] text-hero-body">
                 {LANDING_HERO.ledeLead} {LANDING_HERO.lede}
               </p>
-              <div className="marketing-enter marketing-enter-step-4 mt-8 flex w-full flex-col items-center gap-6">
+              {/* One CTA block on the install box's width: the box (tabs, command,
+                  follow-up), its requirements line, then the agent prompt and links. */}
+              <div className="hero-cta marketing-enter marketing-enter-step-4 mt-8">
                 <InstallTabs
                   name="install-method-hero"
                   methods={INSTALL_METHODS}
-                  className="install-tabs-centred"
+                  then={APP_COMMAND}
                 />
-                <CopyAgentPrompt size="hero" className="max-w-md" />
-                <div className="type-body flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-fd-muted-foreground">
-                  <span>
-                    Then run <code className="font-mono text-fd-foreground">{APP_COMMAND}</code>
-                  </span>
-                  <Link
-                    href="/docs/getting-started"
-                    className="marketing-link-action text-fd-foreground"
-                  >
-                    Docs →
-                  </Link>
-                  <a
-                    href="https://github.com/wavyrai/tmux-ide"
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={
-                      stars === null
-                        ? "tmux-ide on GitHub (opens in a new tab)"
-                        : `tmux-ide on GitHub, ${stars} stars (opens in a new tab)`
-                    }
-                    className="marketing-link-action inline-flex items-center gap-1.5 text-fd-foreground"
-                  >
-                    <span>GitHub</span>
-                    {stars !== null ? (
-                      <span className="type-caption-1 inline-flex items-center gap-1 font-mono text-fd-muted-foreground">
-                        <span aria-hidden>★</span>
-                        <span>{formatStars(stars)}</span>
-                      </span>
-                    ) : null}
-                  </a>
+                <div className="hero-cta-row">
+                  <CopyAgentPrompt size="hero" showPrompt={false} />
+                  <div className="type-body flex items-center gap-x-5 text-fd-muted-foreground">
+                    <Link
+                      href="/docs/getting-started"
+                      className="marketing-link-action text-fd-foreground"
+                    >
+                      Docs →
+                    </Link>
+                    <a
+                      href="https://github.com/wavyrai/tmux-ide"
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={
+                        stars === null
+                          ? "tmux-ide on GitHub (opens in a new tab)"
+                          : `tmux-ide on GitHub, ${stars} stars (opens in a new tab)`
+                      }
+                      className="marketing-link-action inline-flex items-center gap-1.5 text-fd-foreground"
+                    >
+                      <span>GitHub</span>
+                      {stars !== null ? (
+                        <span className="type-caption-1 inline-flex items-center gap-1 font-mono text-fd-muted-foreground">
+                          <span aria-hidden>★</span>
+                          <span>{formatStars(stars)}</span>
+                        </span>
+                      ) : null}
+                    </a>
+                  </div>
                 </div>
               </div>
             </div>

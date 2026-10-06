@@ -24,13 +24,13 @@ export const INSTALL_METHODS: readonly InstallMethod[] = [
     id: "curl",
     label: "curl",
     command: INSTALL_COMMAND,
-    note: "macOS and glibc Linux. Installs under ~/.local without sudo.",
+    note: "macOS and glibc Linux · installs to ~/.local · no sudo",
   },
   {
     id: "npm",
     label: "npm",
     command: "npm install -g tmux-ide",
-    note: "Requires Node.js 20 or newer.",
+    note: "Requires Node.js 20 or newer",
   },
 ] as const;
 

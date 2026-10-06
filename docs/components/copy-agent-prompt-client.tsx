@@ -27,9 +27,11 @@ const GLYPH_SIZE = { hero: 15, default: 14 } as const;
 export function CopyAgentPromptClient({
   size,
   marks,
+  showPrompt,
   className,
 }: {
   size: "default" | "hero";
+  showPrompt: boolean;
   /** Server-rendered harness marks, passed through so their paths stay out of the bundle. */
   marks: ReactNode;
   className: string;
@@ -65,6 +67,7 @@ export function CopyAgentPromptClient({
           data-size={size}
           data-state={status}
           aria-describedby={promptId}
+          title={showPrompt ? undefined : AGENT_PROMPT}
           className="prompt-pill"
         >
           {marks}
@@ -73,7 +76,7 @@ export function CopyAgentPromptClient({
         </button>
         <span aria-hidden className="prompt-beam" />
       </span>
-      <p className="type-caption-1 mt-3 text-fd-muted-foreground">
+      <p className={showPrompt ? "type-caption-1 mt-3 text-fd-muted-foreground" : "sr-only"}>
         Copies{" "}
         <span id={promptId} className="select-all text-fd-foreground">
           {AGENT_PROMPT}
