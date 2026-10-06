@@ -28,8 +28,8 @@ A switch repaints every app-owned surface at once. The choice is saved to
 
 New or unset appearance settings follow the terminal (**system**). Saved light,
 dark, and named theme choices stay selected. System mode uses the terminal's
-reported default background and foreground; ANSI black and white are palette
-colors, so partial palette replies do not decide whether the canvas is light
+reported default background and foreground. ANSI black and white are palette
+colors, so a partial palette reply does not decide whether the canvas is light
 or dark. If color queries are unavailable, terminal mode notifications still
 update the app using built-in defaults.
 
@@ -93,7 +93,7 @@ does not force an application's explicitly dark background to become light.
 In **Appearance**, click **Contrast** or press **Ctrl+A** to turn correction
 off and preserve the original foreground colors after theme palette mapping. The setting is saved as
 `theme.automaticContrast` in the app configuration. Theme previews and contrast
-changes apply immediately; cancelling Appearance restores the previous settings.
+changes apply immediately; canceling Appearance restores the previous settings.
 
 Correction targets the [4.5:1 text contrast ratio](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum)
 for opaque text color pairs. Dim text
@@ -124,3 +124,9 @@ running retain the environment with which they started.
 Appearance changes repaint existing terminal content, including scrollback and
 reverse-video text. They do not restart panes or change running programs'
 environment or their own theme settings.
+
+## See also
+
+- [Configuration](/docs/configuration#theme) — the `theme` settings
+- [tmux chrome](/docs/the-dock) — status-bar colors and glyphs
+- [App tour](/docs/app-surfaces) — the views a theme colors

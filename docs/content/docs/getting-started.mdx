@@ -33,7 +33,7 @@ tmux-ide app
 <CopyAgentPrompt />
 
 The installer prints a PATH instruction if your shell needs one. It installs
-under `~/.local`, verifies Node and TUI downloads, and preserves existing tmux
+under `~/.local`, verifies the Node.js and app runtime downloads, and preserves existing tmux
 sessions. To inspect it before running, download `install.sh` and read it first.
 
 To choose a version or a different user-owned location:
@@ -57,9 +57,9 @@ so.
 With Node.js 20+ already installed, `npm install -g tmux-ide` is also supported.
 The npm package does not change Claude Code settings.
 
-For package-manager installations, if the exact-version runtime is not already installed, the first explicit app
-launch downloads it, verifies its release metadata and SHA-256 digest, and
-caches it under `~/.tmux-ide/bin`. tmux-ide starts its daemon (the background
+For npm installations, the first app launch downloads the exact-version
+runtime if it is missing. It verifies the release metadata and SHA-256 digest,
+then caches the runtime under `~/.tmux-ide/bin`. tmux-ide starts its daemon (the background
 process that discovers sessions and tracks agent state) only after the app
 runtime is in place.
 
@@ -163,9 +163,9 @@ same actions to the mouse.
 Type to search, `↑` `↓` to choose, `Enter` to activate, `Esc` to go back.
 `Ctrl+Space` switches to navigation mode (`j` `k` move, `g` `G` first/last,
 `i` returns to search). In Sessions, `Ctrl+H` toggles local/all hosts, `Ctrl+F`
-favorites, `Ctrl+P` toggles the preview, `Ctrl+E` expands it, `Ctrl+N` creates
-a session, `Ctrl+X` closes one (with confirmation), `Ctrl+R` retries a host, and
-`Ctrl+←` / `Ctrl+→` browse windows without switching.
+favorites, and `Ctrl+P` toggles the preview, which `Ctrl+E` expands. `Ctrl+N`
+creates a session, `Ctrl+X` closes one after confirmation, `Ctrl+R` retries a
+host, and `Ctrl+←` / `Ctrl+→` browse windows without switching.
 
 ## Update, roll back or uninstall
 

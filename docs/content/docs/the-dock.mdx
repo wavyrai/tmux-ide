@@ -9,9 +9,9 @@ in a plain tmux client — `tmux attach`, a phone over SSH, another terminal —
 **tmux chrome** brings agent awareness there too. It is a separate, shipped
 surface built from tmux options; nothing it draws appears inside the app.
 
-`tmux-ide adopt <session>` adds the chrome — a status bar (the dock), keys,
-menus and popups — to any existing session: a fleet of tabs, live agent-status
-glyphs, and popups for the fleet home, keys and session switching. Everything it draws is a tmux
+`tmux-ide adopt <session>` adds the chrome to any existing session: a status
+bar (the dock) with a tab per session and live agent-status glyphs, plus keys,
+menus and popups for the fleet home, the cheat sheet and session switching. Everything it draws is a tmux
 option, so it renders on the server and shows up on every client (including SSH),
 and `unadopt` reverts it completely.
 
@@ -96,11 +96,11 @@ faster shortcut when it's available.
 ### Why prefix-first
 
 The prefix twins are the **reliable** path: they work under every keyboard
-protocol. The `⌥` (root-table) binds are a one-keystroke fast path, but an
-agent pane can temporarily switch how the terminal encodes keys (the kitty
-keyboard protocol), which can swallow a root-table `Alt` bind before tmux ever
-sees it. tmux-ide registers kitty-encoded fallbacks for the `⌥` keys, but coverage
-varies by terminal — the prefix is immune by construction, so lead with it.
+protocol. The `⌥` (root-table) binds are a one-keystroke fast path. But an agent
+pane can temporarily switch how the terminal encodes keys (the kitty keyboard
+protocol), and then tmux may never see the `Alt` bind. tmux-ide registers
+kitty-encoded fallbacks for the `⌥` keys, but coverage varies by terminal. The
+prefix always works, so lead with it.
 
 Both forms come from the same entries in `~/.tmux-ide/config.json` (`keys.*`):
 rebind the `⌥` key and its prefix twin follows the new letter, unless tmux
@@ -162,7 +162,7 @@ The session keeps running as ordinary tmux.
 
 ## See also
 
-- [App surfaces](/docs/app-surfaces) — the Home and Terminals app
+- [App tour](/docs/app-surfaces) — the Home and Terminals app
 - [Agent detection](/docs/agent-detection) — what the glyphs mean and where they come from
 - [Configuration](/docs/configuration#global-config) — rebind every key and recolor every glyph
 - [CLI reference](/docs/commands#tmux-chrome-adopt-existing-sessions) — every chrome command

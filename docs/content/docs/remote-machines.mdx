@@ -131,7 +131,7 @@ kill its tmux sessions. Enable a disabled profile to reconnect it.
 ## Upgrade remote daemons
 
 Global installation upgrades an older running daemon on that machine. Its tmux
-sessions keep running while TUI clients reconnect. A fresh install does not start
+sessions keep running while app clients reconnect. A fresh install does not start
 a daemon. If lifecycle scripts were skipped, app and headless launch also check
 for an older daemon; you can explicitly run `tmux-ide update --daemon` to upgrade
 it. An older CLI never replaces a newer daemon.
@@ -210,6 +210,6 @@ processes placed inside a service cgroup that systemd kills.
 
 ## See also
 
-- [App surfaces](/docs/app-surfaces) — Home, Terminals and the machine sidebar
+- [App tour](/docs/app-surfaces) — Home, Terminals and the machine sidebar
 - [CLI reference](/docs/commands#saved-ssh-machines) — every `machines` and `daemon` command
 - [Troubleshooting](/docs/troubleshooting) — connection and daemon problems
