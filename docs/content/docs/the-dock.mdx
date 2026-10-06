@@ -1,10 +1,15 @@
 ---
-title: The Dock & Keys
-description: The native tmux chrome that adopt adds to any session — fleet tabs, agent glyphs, and every keystroke
+title: tmux chrome
+description: tmux-ide adopt adds a status bar, agent glyphs, prefix keys, menus and notifications to sessions you use from a plain tmux client — no app required.
 ---
 
-`tmux-ide adopt <session>` adds a **dock** — a native tmux chrome row — to any
-existing session. It's the always-on surface: a fleet of tabs, live agent-status
+The [app](/docs/app-surfaces) is the main way to use tmux-ide. If you also work
+in a plain tmux client — `tmux attach`, a phone over SSH, another terminal —
+**tmux chrome** brings agent awareness there too. It is a separate, shipped
+surface built from tmux options; nothing it draws appears inside the app.
+
+`tmux-ide adopt <session>` adds the chrome — a status bar (the dock), keys,
+menus and popups — to any existing session. It's the always-on surface: a fleet of tabs, live agent-status
 glyphs, and triggers into the rest of the app. Everything it draws is a tmux
 option, so it renders on the server and shows up on every client (including SSH),
 and `unadopt` reverts it completely.
@@ -26,6 +31,19 @@ and `unadopt` reverts it completely.
 
 Per-pane, the border chip reads the agent for that specific pane, e.g.
 `claude · working`.
+
+## The background updater
+
+Adopting a session starts a small background updater in an internal
+`_tmux-ide-chrome` tmux session. Besides refreshing the bar, it:
+
+- sends [notifications](/docs/notifications-events) when an agent becomes blocked or done;
+- writes the [event log](/docs/notifications-events#the-event-stream);
+- writes the snapshot that [`tmux-ide restore`](/docs/restore-resume) rebuilds from;
+- captures Codex and Cursor session ids for resume.
+
+Sessions and agents created from the app start the same updater, so these work
+whether or not you use the status bar.
 
 ## Adopt, unadopt, and safety
 
@@ -52,7 +70,8 @@ Every surface tmux-ide draws speaks the same five keys:
 | `esc`     | Back out / close           |
 | `?`       | Show keys for this surface |
 
-Learn it once; it works in the home cockpit, the sidebar, and every panel.
+Learn it once; it works in the home cockpit, the sidebar, and every panel. (The
+app has its own keys — see [Getting started](/docs/getting-started#keys).)
 
 ## The keys
 
@@ -84,8 +103,9 @@ sees it. tmux-ide registers kitty-encoded fallbacks for the `⌥` keys, but cove
 varies by terminal — the prefix is immune by construction, so lead with it.
 
 Both forms come from the same entries in `~/.tmux-ide/config.json` (`keys.*`):
-rebind the fast-path key and its prefix twin follows. See
-[Theming & config](/docs/theming).
+rebind the `⌥` key and its prefix twin follows the new letter, unless tmux
+already uses that letter after the prefix. Re-run `tmux-ide adopt` to apply
+changes. See [Configuration](/docs/configuration#other-sections).
 
 On a fresh install, a first-run welcome card names the core keys once. Reprint the
 full sheet any time:
@@ -105,8 +125,22 @@ have to remember which surface owns a command.
 tmux-ide menu [--client N]
 ```
 
+## Panels
+
+`prefix e`, `prefix g` and `prefix v` open the file explorer, git changes and
+workspace config as floating tmux popups (`Esc` closes). The same widgets can
+run as [widget panes](/docs/configuration#widget-panes) in a workspace layout:
+
+```bash
+tmux-ide popup explorer
+tmux-ide popup changes
+tmux-ide popup config
+```
+
+These are tmux chrome panels, separate from the app.
+
 ## See also
 
-- [Home, sidebar & panels](/docs/app-surfaces) — the floating surfaces the dock triggers
+- [App surfaces](/docs/app-surfaces) — the Home and Terminals app
 - [Agent detection](/docs/agent-detection) — what the glyphs mean and where they come from
-- [Theming & config](/docs/theming) — rebind every key and recolor every glyph
+- [Configuration](/docs/configuration#global-config) — rebind every key and recolor every glyph
