@@ -2,12 +2,14 @@
 
 <!-- tmux-ide-skill-version: 2.6.0 -->
 
-tmux-ide is a **dock around tmux**: one command adds a native chrome to any tmux
-session — a fleet of tabs with live agent-status glyphs, ground-truth
-working/blocked/done detection, notifications when an agent needs a human, and a
-crash-proof restore. It's built _around_ tmux (adopt is additive tmux config, no
-wrapper process), and the whole UI is one keystroke away — one interaction
-grammar, one theme file. `.tmux-ide/workspace.yml` is optional; adopt works on any session.
+tmux-ide is **the open-source workspace for coding agents**, built on tmux. The
+app (`tmux-ide app`) shows every agent across local and SSH machines with
+ground-truth working/blocked/done status, and drives the live tmux session.
+`tmux-ide adopt` adds the same status to plain tmux clients as tmux chrome: a
+status bar, keys and menus, all additive tmux options with no wrapper process.
+Around both: notifications when an agent needs a human, and crash-proof restore.
+tmux owns every process and pane, so sessions survive tmux-ide. `.tmux-ide/workspace.yml`
+is optional.
 
 ## When to use
 
