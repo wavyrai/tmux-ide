@@ -1,6 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMDX } from "fumadocs-mdx/next";
+import { LEGACY_REDIRECTS } from "./lib/legacy-redirects.mjs";
 
 const withMDX = createMDX();
 const docsDir = dirname(fileURLToPath(import.meta.url));
@@ -53,8 +54,11 @@ const config = {
   },
   async redirects() {
     return [
-      // Links published before the guide moved to its descriptive slug.
-      { source: "/docs/agent-teams", destination: "/docs/multi-agent-teams", permanent: true },
+      ...Object.entries(LEGACY_REDIRECTS).map(([source, destination]) => ({
+        source,
+        destination,
+        permanent: true,
+      })),
     ];
   },
   async rewrites() {
