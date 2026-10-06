@@ -488,6 +488,69 @@ describe("WorkspaceClient", () => {
     await client.dispose();
   });
 
+  it("refreshes presentation when terminal authority withdraws panes without a shell event", async () => {
+    const initial = shellResource("alpha", ["pane.alpha"]);
+    const shell = shellBroker({ alpha: initial });
+    let reads = 0;
+    const fetchShell = shell.transport.fetchApplicationShell;
+    shell.transport.fetchApplicationShell = (...args) => {
+      reads += 1;
+      return fetchShell(...args);
+    };
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async () => new FakeRuntime(ALPHA_DAEMON.instanceId),
+        actions,
+      },
+    });
+    const base = {
+      workspaceName: "alpha",
+      workspaceId: "workspace.alpha",
+      sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+    };
+    client.adoptTerminalRuntimeInventory({
+      ...base,
+      resourceRevision: 1,
+      semanticPaneIds: ["pane.alpha"],
+    });
+    await settle();
+    const refused = ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...initial,
+      terminalInventory: {
+        ...initial.terminalInventory,
+        resources: initial.terminalInventory!.resources.map((resource) => ({
+          ...resource,
+          attachability: { status: "unavailable", reason: "duplicate-runtime-pane-binding" },
+        })),
+      },
+    });
+    shell.byWorkspace.set("alpha", refused);
+    const empty = { ...base, resourceRevision: 2, semanticPaneIds: [] };
+    client.adoptTerminalRuntimeInventory(empty);
+    await settle();
+    expect(client.getSnapshot().authorityShell?.terminalInventory).toEqual(
+      refused.terminalInventory,
+    );
+    const afterRefresh = reads;
+    for (let i = 0; i < 20; i++) client.adoptTerminalRuntimeInventory(empty);
+    await settle();
+    expect(reads).toBe(afterRefresh);
+    shell.byWorkspace.set("alpha", initial);
+    client.adoptTerminalRuntimeInventory({
+      ...base,
+      resourceRevision: 3,
+      semanticPaneIds: ["pane.alpha"],
+    });
+    await settle();
+    expect(client.getSnapshot().authorityShell?.terminalInventory).toEqual(
+      initial.terminalInventory,
+    );
+    await client.dispose();
+  });
+
   it("never lets late V2 topology roll back a newer terminal revision", async () => {
     const lateV2 = deferred<ApplicationShellProjectionInputV3>();
     const shellConnections: ShellConnection[] = [];
@@ -647,7 +710,10 @@ describe("WorkspaceClient", () => {
 
     await settle();
     await settle();
-    expect(refreshes).toBe(2);
+    expect(refreshes).toBe(1);
+    expect(client.getSnapshot().authorityShell?.terminalInventory).toEqual(
+      shellResource("alpha", ["pane.b"]).terminalInventory,
+    );
     expect(inventories).toEqual([["pane.a"], ["pane.b"]]);
     await client.dispose();
   });
@@ -715,7 +781,10 @@ describe("WorkspaceClient", () => {
     await settle();
 
     expect(inventories).toEqual([["pane.a"], ["pane.a"], ["pane.b"]]);
-    expect(refreshes).toBe(2);
+    expect(refreshes).toBe(1);
+    expect(client.getSnapshot().authorityShell?.terminalInventory).toEqual(
+      shellResource("alpha", ["pane.b"]).terminalInventory,
+    );
     expect(activatedInventories).toEqual([["pane.a"], ["pane.b"]]);
     await client.dispose();
   });

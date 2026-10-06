@@ -1257,7 +1257,10 @@ export function createWorkspaceClient<
       startApplicationShell();
       if (authorityShell !== null) {
         if (!shellMatchesTerminalAuthority(authorityShell, resource))
-          requestTerminalMismatchRefresh(authorityShell, resource);
+          // A newer terminal revision has already established topology. Read
+          // its presentation/refusal details instead of refreshing that same
+          // terminal revision again while leaving the shell stale.
+          shellSession?.refresh();
       }
       return true;
     },
