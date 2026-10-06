@@ -788,12 +788,13 @@ if (args[0] === "--client") {
     assert.deepEqual(await state(neighbour), neighbourBefore);
     save("remote-manual-sizing.json", receipts.remoteManualSizing);
   }
-  async function tunnel(side: string, remotePort: number, routeSide = side) {
+  async function tunnel(side: string, remotePort: number, routeSide = side, excludingPid?: number) {
     await tracker.capture();
     const candidates = tracker
       .snapshot()
       .ancestry.filter((v: { rootPid: number }) => v.rootPid === clients[side].handle.pid);
     for (const row of candidates) {
+      if (row.pid === excludingPid) continue;
       const command = await run("/bin/ps", ["-p", String(row.pid), "-o", "command="], 1000).catch(
         () => "",
       );
@@ -899,6 +900,50 @@ if (args[0] === "--client") {
     }, 30000);
     assert(background);
     await unchanged("add");
+    const sessionRows = () =>
+      clients.a
+        .frame()
+        .split("\n")
+        .filter((line: string) => line.trimStart().startsWith(descriptor.session)).length;
+    await wait(() => sessionRows() === 2 && clients.a.frame().includes(profile.label));
+    for (const routeSide of ["a", "b"] as const) {
+      const operation = routeSide === "a" ? "edit-duplicate-route" : "edit-route-restore";
+      stage = "installed-registry-" + operation;
+      event(stage);
+      const retiring = background;
+      const edited = await request("PATCH", {
+        change: { id: profile.id, operation: "edit", patch: { sshTarget: ssh[routeSide].alias } },
+      });
+      assert.equal(
+        edited.machines.find((value: { id: string }) => value.id === profile.id).sshTarget,
+        ssh[routeSide].alias,
+      );
+      await wait(async () => (await kernel.identify(retiring.pid)) === null);
+      let replacement: Awaited<ReturnType<typeof tunnel>> | undefined;
+      await wait(async () => {
+        try {
+          replacement = await tunnel(
+            "a",
+            routeSide === "a" ? originalA.port : originalB.port,
+            routeSide,
+            retained.pid,
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      }, 30000);
+      assert(replacement && replacement.pid !== retiring.pid);
+      background = replacement;
+      await wait(() =>
+        routeSide === "a"
+          ? sessionRows() === 1 && !clients.a.frame().includes(profile.label)
+          : sessionRows() === 2 && clients.a.frame().includes(profile.label),
+      );
+      await unchanged(operation);
+      Object.assign(facts.at(-1)!, { retired: retiring, replacement, sessionRows: sessionRows() });
+      save("registry-" + operation + "-frame.json", { frame: clients.a.frame() });
+    }
     stage = "installed-registry-disable";
     event(stage);
     const disabled = await request("PATCH", { change: { id: profile.id, operation: "disable" } });

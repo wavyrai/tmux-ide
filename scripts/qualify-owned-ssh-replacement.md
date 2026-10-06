@@ -88,8 +88,12 @@ selected-host and sibling-app tunnel identities, retained renderers and terminal
 IO. The installed mode also renames and restores the selected profile through the
 registry API, checking updated labels, unchanged tunnel and renderer identities,
 and continued input in both apps. Selected-profile disable/remove and restoration
-are exercised before daemon replacement. Route edits, duplicate-route presentation,
-remote installation and external hosts remain separate acceptance cases.
+are exercised before daemon replacement. The background profile is also edited to target the selected host, then restored.
+Its old tunnel must retire, a new tunnel must appear, and the two verified routes
+to the same environment must display one session row. Restoring the other host
+must restore its separate row. Selected and sibling connections retain their
+identities throughout. Remote installation and external hosts remain separate
+acceptance cases.
 
 The runner selects actual terminal views, verifies encoded shell output and typed
 input, then stops only A's daemon. It confirms the original SSH tunnel and forward
