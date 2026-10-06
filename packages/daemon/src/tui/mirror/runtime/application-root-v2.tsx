@@ -427,6 +427,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           const currentShell = shell();
           semanticViewportResize.adopt(dimensions(), currentShell.semantic, generation());
           focusedPane();
+          if (activeSurface() !== "terminals") terminalInputIngress.cancelRecovery();
           terminalInputIngress.adopt();
         });
         const sidebarShortcut = createApplicationSidebarShortcuts(
