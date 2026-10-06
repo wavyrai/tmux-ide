@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 
 import { AppIcon } from "@/components/app-icon";
+import { CopyAgentPrompt } from "@/components/copy-agent-prompt";
 import { AsciiWordmark } from "@/components/ascii-wordmark";
 import { LandingFaqJsonLd } from "@/components/landing-faq-json-ld";
 import {
@@ -80,14 +81,14 @@ export default async function HomePage() {
               <AsciiWordmark animated className="marketing-enter-step-2" />
             </div>
             <MarketingGrid className="items-end gap-y-8 lg:gap-x-12">
-              <Cell className="marketing-enter marketing-enter-step-3 lg:col-span-14">
+              <Cell className="marketing-enter marketing-enter-step-3 lg:col-span-13">
                 <p className="type-subheadline text-fd-muted-foreground">{LANDING_HERO.eyebrow}</p>
                 <h1 className="type-page-title mt-4 max-w-[17ch] text-fd-foreground">
                   {LANDING_HERO.title}
                 </h1>
               </Cell>
 
-              <Cell className="marketing-enter marketing-enter-step-4 lg:col-span-10">
+              <Cell className="marketing-enter marketing-enter-step-4 lg:col-span-11">
                 <p className="type-marketing-lede mt-7 max-w-[62ch] text-fd-muted-foreground">
                   {LANDING_HERO.lede}
                 </p>
@@ -126,6 +127,7 @@ export default async function HomePage() {
                     ) : null}
                   </a>
                 </div>
+                <CopyAgentPrompt className="mt-8 max-w-xl" />
               </Cell>
             </MarketingGrid>
           </BandBody>
