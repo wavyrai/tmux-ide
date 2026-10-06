@@ -33,6 +33,29 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it("shares only exact plain blanks in the backend and retains styled and wide cell semantics", async () => {
+    const backend = createXtermTerminalInterpreterBackend({ cols: 12, rows: 2, scrollback: 20 });
+    try {
+      await backend.write(" \x1b[1m \x1b[0m\x1b[41m \x1b[0m界é");
+      const projected = backend.project(core.blankTerminalReplicaSnapshot(12, 2));
+      const cells = projected.grid[0]!.cells;
+      expect(cells[0]).toBe(core.TERMINAL_REPLICA_SPACE_CELL);
+      expect(cells[1]).toMatchObject({ grapheme: " ", width: 1, attributes: 1 });
+      expect(cells[1]).not.toBe(core.TERMINAL_REPLICA_SPACE_CELL);
+      expect(cells[2]).toMatchObject({ grapheme: " ", background: { kind: "indexed", index: 1 } });
+      expect(cells[2]).not.toBe(core.TERMINAL_REPLICA_SPACE_CELL);
+      expect(cells[3]).toMatchObject({ grapheme: "界", width: 2 });
+      expect(cells[4]).toMatchObject({ width: 0 });
+      expect(cells[4]).not.toBe(core.TERMINAL_REPLICA_EMPTY_CELL);
+      expect(cells[5]).toMatchObject({ grapheme: "é", width: 1 });
+      expect(cells[6]).toBe(core.TERMINAL_REPLICA_EMPTY_CELL);
+      expect(projected.grid[1]!.cells[0]).toBe(core.TERMINAL_REPLICA_EMPTY_CELL);
+      expect(cells[0]).not.toBe(cells[6]);
+    } finally {
+      backend.dispose();
+    }
+  });
+
   it("hashes each new projection once while reusing committed hashes for seeds and no-ops", async () => {
     const hash = vi.spyOn(core, "hashTerminalReplicaSnapshot");
     const updates: CanonicalTerminalReplicaUpdate[] = [];

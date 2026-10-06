@@ -10,7 +10,16 @@ import type {
   TerminalReplicaTombstonePayload,
 } from "@tmux-ide/contracts";
 import { consumeCompactReplicaCapability } from "./terminal-compact-capability.ts";
-import { freezeOwnedTerminalReplicaRow as freezeRow } from "./terminal-replica-owned-row.ts";
+import {
+  freezeOwnedTerminalReplicaRow as freezeRow,
+  freezeOwnedTerminalReplicaCell,
+  TERMINAL_REPLICA_DEFAULT_COLOR,
+} from "./terminal-replica-owned-row.ts";
+export {
+  TERMINAL_REPLICA_DEFAULT_COLOR,
+  TERMINAL_REPLICA_EMPTY_CELL,
+  TERMINAL_REPLICA_SPACE_CELL,
+} from "./terminal-replica-owned-row.ts";
 import {
   hashCanonicalTerminalValue,
   hashCanonicalTerminalValueCooperatively,
@@ -24,7 +33,6 @@ import {
 // External Object.freeze calls do not establish this provenance.
 const VALIDATED_PATCH_ROWS = new WeakSet<TerminalReplicaRow>();
 
-const DEFAULT_COLOR = Object.freeze({ kind: "default" } as const);
 const ROW_ARRAY_HASH_CACHE = new WeakMap<
   object,
   { readonly hash: bigint; readonly length: number }
@@ -503,11 +511,7 @@ export async function applyTerminalReplicaUpdateCooperatively(
         const wrapped = row.wrapped;
         for (let index = 0; index < cols; index++) {
           const sourceCell = row.cells[index]!;
-          const cell = Object.freeze({
-            ...sourceCell,
-            foreground: Object.freeze({ ...sourceCell.foreground }),
-            background: Object.freeze({ ...sourceCell.background }),
-          });
+          const cell = freezeOwnedTerminalReplicaCell(sourceCell);
           if ((priorWidth === 2 && cell.width !== 0) || (cell.width === 0 && priorWidth !== 2))
             return complete(conflict());
           priorWidth = cell.width;
@@ -827,8 +831,8 @@ function blankRow(cols: number): TerminalReplicaRow {
         Object.freeze({
           grapheme: " ",
           width: 1 as const,
-          foreground: DEFAULT_COLOR,
-          background: DEFAULT_COLOR,
+          foreground: TERMINAL_REPLICA_DEFAULT_COLOR,
+          background: TERMINAL_REPLICA_DEFAULT_COLOR,
           attributes: 0,
         }),
       ),

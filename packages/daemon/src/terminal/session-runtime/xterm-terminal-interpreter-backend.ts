@@ -10,7 +10,12 @@ import type {
   TerminalReplicaRow,
   TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
-import { freezeTerminalReplicaRow } from "@tmux-ide/core";
+import {
+  freezeTerminalReplicaRow,
+  TERMINAL_REPLICA_DEFAULT_COLOR,
+  TERMINAL_REPLICA_EMPTY_CELL,
+  TERMINAL_REPLICA_SPACE_CELL,
+} from "@tmux-ide/core";
 import type {
   TerminalInterpreterBackend,
   TerminalInterpreterBackendFactoryOptions,
@@ -583,16 +588,23 @@ function projectRowCached(
   const cells: TerminalReplicaCell[] = [];
   for (let column = 0; column < cols; column += 1) {
     line?.getCell(column, cell);
-    cells.push({
-      // Empty width-one cells are unused storage; literal spaces are content.
-      // Both paint as blanks, but preserving the distinction is necessary for
-      // reflow and for recognizing padding before a wrapped wide glyph.
-      grapheme: line && column + cell.getWidth() <= cols ? cell.getChars() : "",
-      width: line && column + cell.getWidth() <= cols ? (cell.getWidth() as 0 | 1 | 2) : 1,
-      foreground: line ? cellColor(cell, "foreground") : { kind: "default" },
-      background: line ? cellColor(cell, "background") : { kind: "default" },
-      attributes: line ? cellAttributes(cell) : 0,
-    });
+    // Compute the same clipped cell values before selecting trusted blanks.
+    const grapheme = line && column + cell.getWidth() <= cols ? cell.getChars() : "";
+    const width = line && column + cell.getWidth() <= cols ? (cell.getWidth() as 0 | 1 | 2) : 1;
+    const foreground = line ? cellColor(cell, "foreground") : TERMINAL_REPLICA_DEFAULT_COLOR;
+    const background = line ? cellColor(cell, "background") : TERMINAL_REPLICA_DEFAULT_COLOR;
+    const attributes = line ? cellAttributes(cell) : 0;
+    if (
+      width === 1 &&
+      attributes === 0 &&
+      foreground === TERMINAL_REPLICA_DEFAULT_COLOR &&
+      background === TERMINAL_REPLICA_DEFAULT_COLOR &&
+      (grapheme === "" || grapheme === " ")
+    ) {
+      cells.push(grapheme === "" ? TERMINAL_REPLICA_EMPTY_CELL : TERMINAL_REPLICA_SPACE_CELL);
+    } else {
+      cells.push({ grapheme, width, foreground, background, attributes });
+    }
   }
   const row = freezeTerminalReplicaRow({ cells, wrapped: line?.isWrapped ?? false });
   if (line && cacheKey)
@@ -642,7 +654,7 @@ function cellColor(
   const value = channel === "foreground" ? cell.getFgColor() : cell.getBgColor();
   if (rgb) return { kind: "rgb", value };
   if (palette) return { kind: "indexed", index: value };
-  return { kind: "default" };
+  return TERMINAL_REPLICA_DEFAULT_COLOR;
 }
 
 function cellAttributes(cell: ReturnType<Terminal["buffer"]["active"]["getNullCell"]>): number {

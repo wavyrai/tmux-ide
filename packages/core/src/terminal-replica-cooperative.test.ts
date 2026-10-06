@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { CanonicalTerminalReplicaSeed } from "@tmux-ide/contracts";
 import {
+  TERMINAL_REPLICA_EMPTY_CELL,
+  TERMINAL_REPLICA_SPACE_CELL,
+  TERMINAL_REPLICA_DEFAULT_COLOR,
   applyTerminalReplicaUpdate,
   applyTerminalReplicaUpdateCooperatively,
   blankTerminalReplicaSnapshot,
@@ -30,6 +33,70 @@ function seed(cols = 128, rows = 64): CanonicalTerminalReplicaSeed {
 }
 const yielding = { yieldControl: async () => {} };
 describe("cooperative terminal seed reduction", () => {
+  it("preserves only trusted blank identities while validating a large seed", async () => {
+    const update = { ...structuredClone(seed()) };
+    for (const row of update.snapshot.grid)
+      row.cells = row.cells.map((_, i) =>
+        i % 2 ? TERMINAL_REPLICA_SPACE_CELL : TERMINAL_REPLICA_EMPTY_CELL,
+      );
+    update.stateHash = hashTerminalReplicaSnapshot(update.snapshot);
+    let yields = 0;
+    const result = await applyTerminalReplicaUpdateCooperatively(null, update, {
+      yieldControl: async () => {
+        yields++;
+      },
+    });
+    expect(result.status).toBe("applied");
+    expect(yields).toBeGreaterThan(0);
+    expect(result.state!.snapshot!.grid[0]!.cells[0]).toBe(TERMINAL_REPLICA_EMPTY_CELL);
+    expect(result.state!.snapshot!.grid[0]!.cells[1]).toBe(TERMINAL_REPLICA_SPACE_CELL);
+    expect(hashTerminalReplicaSnapshot(result.state!.snapshot!)).toBe(update.stateHash);
+  });
+  it("detaches foreign blank, getter, extra fields and styled color cells", async () => {
+    const update = { ...structuredClone(seed()) };
+    const foreign = {
+      ...TERMINAL_REPLICA_EMPTY_CELL,
+      foreground: { kind: "default" as const },
+      extra: "retained",
+    };
+    const frozenForeign = Object.freeze({ ...TERMINAL_REPLICA_SPACE_CELL });
+    let reads = 0;
+    const styled = {
+      ...TERMINAL_REPLICA_SPACE_CELL,
+      attributes: 1,
+      foreground: { kind: "indexed" as const, index: 17 },
+    };
+    Object.defineProperty(foreign, "grapheme", {
+      enumerable: true,
+      get: () => {
+        reads++;
+        return "";
+      },
+    });
+    update.snapshot.grid[0]!.cells[0] = foreign;
+    update.snapshot.grid[0]!.cells[1] = foreign;
+    update.snapshot.grid[0]!.cells[2] = frozenForeign;
+    update.snapshot.grid[0]!.cells[3] = styled;
+    update.stateHash = hashTerminalReplicaSnapshot(update.snapshot);
+    reads = 0;
+    const result = await applyTerminalReplicaUpdateCooperatively(null, update, yielding);
+    expect(result.status).toBe("applied");
+    expect(reads).toBe(2);
+    const cells = result.state!.snapshot!.grid[0]!.cells;
+    expect(cells[0]).not.toBe(foreign);
+    expect(cells[0]).not.toBe(cells[1]);
+    expect(cells[2]).not.toBe(frozenForeign);
+    expect(cells[0]).toHaveProperty("extra", "retained");
+    expect(cells[0]!.foreground).toBe(TERMINAL_REPLICA_DEFAULT_COLOR);
+    expect(cells[3]!.foreground).not.toBe(styled.foreground);
+    styled.foreground.index = 99;
+    foreign.extra = "changed";
+    expect(cells[3]!.foreground).toEqual({ kind: "indexed", index: 17 });
+    expect(cells[0]).toHaveProperty("extra", "retained");
+    expect(Object.isFrozen(cells[0])).toBe(true);
+    expect(hashTerminalReplicaSnapshot(result.state!.snapshot!)).toBe(update.stateHash);
+  });
+
   it("matches ordinary state and exact frame hash for large seeds and replay", async () => {
     const update = seed();
     const sync = applyTerminalReplicaUpdate(null, update);
