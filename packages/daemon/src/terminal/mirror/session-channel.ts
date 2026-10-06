@@ -639,7 +639,10 @@ export class SessionChannel {
                 marker = value;
               },
               (reply) => {
-                if (!reply.ok && marker) this.retireInternalReadMarker(runtime, marker);
+                if (marker) {
+                  if (reply.ok) this.clearInternalReadMarkerOption(runtime, marker);
+                  else this.retireInternalReadMarker(runtime, marker);
+                }
                 onReply(reply);
               },
               limits,
@@ -1379,8 +1382,16 @@ export class SessionChannel {
     if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtime))
       throw new TypeError("internal read cleanup requires a runtime pane id");
     retireInternalReadOperation(marker, runtime);
+    this.clearInternalReadMarkerOption(runtime, marker);
+  }
+
+  private clearInternalReadMarkerOption(runtime: string, marker: string): void {
+    if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtime))
+      throw new TypeError("internal read cleanup requires a runtime pane id");
+    // Success must keep the in-memory proof redeemable by a delayed observer.
+    // The server option must still be removed when no observer hook is installed.
     // Pane capture phases overlap under cancellation. Clear only the exact
-    // failed marker so a late A callback cannot erase the newer B authority.
+    // owned marker so a late A callback cannot erase the newer B authority.
     // Both selected branches must emit one reply in addition to if-shell's
     // own reply. An empty false branch emits none and shifts the control FIFO
     // whenever the true branch runs during capture cancellation.

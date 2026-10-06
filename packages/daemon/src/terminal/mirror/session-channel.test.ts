@@ -2833,6 +2833,32 @@ describe("native capture semantic ownership", () => {
       JSON.stringify({ row, flags: 0, used: 0, cells: [] }),
     ),
   ];
+  it("clears successful backing metadata without retiring delayed observer proof", async () => {
+    const rig = await startedRig();
+    try {
+      const capture = rig.channel.captureNativeBacking("pane.alpha");
+      const command = rig.sim.written.findLast((line) => line.includes("capture-pane -p -R"))!;
+      const marker = /@tmux_ide_read_operation ([^ ;]+)/u.exec(command)![1]!;
+      const beforeReply = rig.sim.written.length;
+      rig.sim.reply(raw());
+      expect((await capture).status).toBe("captured");
+      const cleanup = rig.sim.written
+        .slice(beforeReply)
+        .filter((line) => line.includes(INTERNAL_READ_OPERATION_OPTION));
+      // A newer pane marker must not be deleted by this older read's cleanup.
+      expect(cleanup).toEqual([
+        `if-shell -t %1 -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" ` +
+          `"set-option -pu -t %1 ${INTERNAL_READ_OPERATION_OPTION}" ` +
+          `"display-message -p -t %1 ''"`,
+      ]);
+      // The asynchronous observer may redeem after the server option is gone.
+      expect(consumeInternalReadOperation(marker, "%1", "workspace.pane.read")).toBe(true);
+      expect(consumeInternalReadOperation(marker, "%1", "workspace.pane.read")).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
   it("rejects raw backing crossed by pane output but permits sibling output and retry", async () => {
     const rig = await startedRig();
     try {
