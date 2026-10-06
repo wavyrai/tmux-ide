@@ -85,6 +85,7 @@ export function TuiMiniFigure({ variant, figure, className, motionCount, motionI
           <TuiCursor
             actor={frame.cursor.actor as CursorActor}
             style={cursorPath(frame.cursor.from, frame.cursor.at, frame.cursor.to)}
+            flip={[frame.cursor.from, frame.cursor.at, frame.cursor.to].some(([x = 0]) => x > 85)}
           />
         </div>
       </div>

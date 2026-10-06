@@ -14,13 +14,12 @@
   position: absolute;
   left: 0;
   top: 0;
-  display: flex;
-  align-items: flex-start;
-  gap: 1px;
+  display: block;
   transform-origin: 0 0;
   translate: -3.3px -2.1px;
 }
 .tui-cursor-arrow {
+  color: var(--cursor-fill);
   width: 20px;
   height: 20px;
   flex: none;
@@ -28,7 +27,9 @@
   filter: drop-shadow(0 1px 2px rgb(0 0 0/0.35));
 }
 .tui-cursor-label {
-  margin-top: 15px;
+  position: absolute;
+  top: 15px;
+  left: 17px;
   padding: 1px 6px;
   border-radius: var(--radius-pill);
   background: var(--cursor-fill);
@@ -39,6 +40,11 @@
     monospace;
   white-space: nowrap;
   box-shadow: 0 1px 3px rgb(0 0 0/0.25);
+}
+/* Near the right edge the pill sits left of the arrow so it is never clipped. */
+.tui-cursor-flip .tui-cursor-label {
+  left: auto;
+  right: calc(100% - 6px);
 }
 .tui-cursor-you {
   --cursor-fill: #2563eb;

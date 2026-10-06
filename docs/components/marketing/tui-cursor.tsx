@@ -1,13 +1,13 @@
 import { cn } from "@/lib/cn";
 import type { CSSProperties } from "react";
-import frames from "./tui-mini-figure-frames.json";
+import { SpriteIcon } from "@/components/icons/sprite-icon";
 // Cached CSS chunk, not page HTML: the rules would otherwise ship twice (HTML + RSC).
 import "./tui-cursor.css";
 
 /**
  * Named, multiplayer-style cursors over the rendered app: an arrow in the
  * actor's colour (white outline, soft shadow) with a name pill. The arrow is
- * one <symbol> in the figure sprite; movement is CSS-only (transform and
+ * the `cursor-arrow` symbol in the cached icon sprite, painted via `color`; movement is CSS-only (transform and
  * opacity, tui-cursor.css), so the cursors cost no client JavaScript.
  *
  * A cursor's track is a layer the size of its container, so `translate()`
@@ -45,17 +45,18 @@ export function TuiCursor({
   actor,
   className,
   style,
+  flip = false,
 }: {
   actor: CursorActor;
   className?: string;
   style?: CSSProperties;
+  /** Put the name pill left of the arrow (paths that reach the right edge). */
+  flip?: boolean;
 }) {
   return (
     <span className={cn("tui-cursor-track", className)} style={style}>
-      <span className={`tui-cursor tui-cursor-${ACTOR[actor]}`}>
-        <svg className="tui-cursor-arrow" viewBox="0 0 24 24" aria-hidden="true">
-          <use href={`${frames.sprite}#cursor`} />
-        </svg>
+      <span className={cn("tui-cursor", `tui-cursor-${ACTOR[actor]}`, flip && "tui-cursor-flip")}>
+        <SpriteIcon name="cursor-arrow" size={20} className="tui-cursor-arrow" />
         <span className="tui-cursor-label">{actor}</span>
       </span>
     </span>
@@ -66,7 +67,7 @@ export function TuiCursor({
 export function TuiHeroCursors() {
   return (
     <div className="tui-hero-cursors" aria-hidden="true">
-      <TuiCursor actor="You" className="tui-hero-you" />
+      <TuiCursor actor="You" className="tui-hero-you" flip />
       <TuiCursor actor="Codex" className="tui-hero-codex" />
     </div>
   );

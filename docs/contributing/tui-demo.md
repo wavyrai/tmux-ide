@@ -34,7 +34,7 @@ pnpm demo:font           # rebuild the embedded glyph subset (needs uv)
   `components/marketing/tui-mini-figure.tsx` references with `<use>`. Each
   figure also names who performs its action ("You", "Claude Code" or "Codex")
   and where (`from` → `at` → `to`); `components/marketing/tui-cursor.tsx`
-  draws that as a CSS-only cursor (the sprite's `#cursor` arrow plus a name
+  draws that as a CSS-only cursor (the icon sprite's `#cursor-arrow` plus a name
   pill) on the figure's slot of the page's motion queue, and the same
   component overlays Fig. 01 with two cursors on its 12 s loop.
 - `tui-demo-font/` builds the Geist Mono subset (SIL OFL 1.1). The build also
