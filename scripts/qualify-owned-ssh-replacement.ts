@@ -418,14 +418,19 @@ if (args[0] === "--client") {
       target = "target-" + side,
       i = instances[role],
       fixture = ssh[side];
-    const config = clientConfiguration({
-      root: fixture.root,
-      account: fixture.account,
-      port: fixture.port,
-      alias: fixture.alias,
-      sharing: false,
-      defaults: false,
-    });
+    const routes = descriptor.installedClient && side === "a" ? [ssh.a, ssh.b] : [fixture];
+    const config = routes
+      .map((route) =>
+        clientConfiguration({
+          root: route.root,
+          account: route.account,
+          port: route.port,
+          alias: route.alias,
+          sharing: false,
+          defaults: false,
+        }),
+      )
+      .join("\n");
     writeFileSync(join(fixture.root, "ssh_config"), config, { flag: "wx", mode: 0o600 });
     fixture.files.capture("ssh_config");
     fixture.config = join(fixture.root, "ssh_config");
@@ -458,14 +463,12 @@ if (args[0] === "--client") {
         join(home, ".tmux-ide", "machines.json"),
         JSON.stringify({
           version: 1,
-          machines: [
-            {
-              id: randomUUID(),
-              label: "Owned remote " + side,
-              sshTarget: fixture.alias,
-              enabled: true,
-            },
-          ],
+          machines: [fixture].map((route) => ({
+            id: randomUUID(),
+            label: "Owned remote " + (route === ssh.a ? "a" : "b"),
+            sshTarget: route.alias,
+            enabled: true,
+          })),
         }),
         { flag: "wx", mode: 0o600 },
       );
@@ -780,7 +783,7 @@ if (args[0] === "--client") {
     assert.deepEqual(await state(neighbour), neighbourBefore);
     save("remote-manual-sizing.json", receipts.remoteManualSizing);
   }
-  async function tunnel(side: string, remotePort: number) {
+  async function tunnel(side: string, remotePort: number, routeSide = side) {
     await tracker.capture();
     const candidates = tracker
       .snapshot()
@@ -793,7 +796,7 @@ if (args[0] === "--client") {
         `(?:^| )-L 127\\.0\\.0\\.1:(\\d+):127\\.0\\.0\\.1:${remotePort}(?: |$)`,
       );
       const match = pattern.exec(command);
-      if (match && command.includes("-- " + ssh[side].alias)) {
+      if (match && command.includes("-- " + ssh[routeSide].alias)) {
         const identity = await kernel.identify(row.pid);
         assert(identity !== null);
         return {
@@ -814,6 +817,122 @@ if (args[0] === "--client") {
     assert.equal(c.exitCode, 0);
     if (!descriptor.installedClient)
       await wait(() => readdirSync(join(instances["client-" + side].root, "apps")).length === 0);
+  }
+  async function qualifyInstalledRegistry() {
+    if (!descriptor.installedClient) return;
+    stage = "installed-registry-setup";
+    event(stage);
+    const home = join(descriptor.store, "home-a", ".tmux-ide");
+    const local = JSON.parse(readFileSync(join(home, "daemon.json"), "utf8"));
+    assert.equal(local.bindHostname, "127.0.0.1");
+    assert(await kernel.identify(local.pid));
+    const registry = JSON.parse(readFileSync(join(home, "machines.json"), "utf8"));
+    assert.equal(registry.machines.length, 1);
+    const profile = {
+      id: randomUUID(),
+      label: "Owned remote b",
+      sshTarget: ssh.b.alias,
+      enabled: true,
+    };
+    const originalA = await fingerprint("target-a"),
+      originalB = await fingerprint("target-b");
+    const retained = await tunnel("a", originalA.port);
+    const sibling = await tunnel("b", originalB.port);
+    let background: Awaited<ReturnType<typeof tunnel>> | undefined;
+    const facts: Array<Record<string, unknown>> = [];
+    async function request(method: string, payload: Record<string, unknown>) {
+      const response = await fetch(`http://127.0.0.1:${local.port}/api/resources/saved-machines`, {
+        method,
+        redirect: "error",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${local.authToken}` },
+        body: JSON.stringify({ expectedInstanceId: local.instanceId, ...payload }),
+        signal: AbortSignal.any([cancellation.signal, AbortSignal.timeout(5000)]),
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.daemon.instanceId, local.instanceId);
+      assert.equal(body.daemon.startedAt, local.startedAt);
+      assert.deepEqual(
+        JSON.parse(readFileSync(join(home, "machines.json"), "utf8")),
+        body.registry,
+      );
+      return body.registry;
+    }
+    async function unchanged(label: string) {
+      assert.deepEqual(await tunnel("a", originalA.port), retained);
+      assert.deepEqual(await tunnel("b", originalB.port), sibling);
+      await io("a", "registry-" + label);
+      await io("b", "registry-" + label);
+      assert.deepEqual(await fingerprint("target-a"), originalA);
+      assert.deepEqual(await fingerprint("target-b"), originalB);
+      facts.push({ operation: label, retained, sibling, renderer: clients.a.renderer });
+    }
+    stage = "installed-registry-add";
+    event(stage);
+    await request("POST", { registry: { version: 1, machines: [profile] } });
+    await wait(async () => {
+      try {
+        background = await tunnel("a", originalB.port, "b");
+        return true;
+      } catch {
+        return false;
+      }
+    }, 30000);
+    assert(background);
+    await unchanged("add");
+    stage = "installed-registry-disable";
+    event(stage);
+    const disabled = await request("PATCH", { change: { id: profile.id, operation: "disable" } });
+    assert.equal(
+      disabled.machines.find((value: { id: string }) => value.id === profile.id).enabled,
+      false,
+    );
+    const disabledTunnel = background;
+    await wait(async () => (await kernel.identify(disabledTunnel.pid)) === null);
+    await unchanged("disable");
+    stage = "installed-registry-enable";
+    event(stage);
+    await request("PATCH", { change: { id: profile.id, operation: "enable" } });
+    let enabled: Awaited<ReturnType<typeof tunnel>> | undefined;
+    await wait(async () => {
+      try {
+        enabled = await tunnel("a", originalB.port, "b");
+        return true;
+      } catch {
+        return false;
+      }
+    }, 30000);
+    assert(enabled && enabled.pid !== background.pid);
+    background = enabled;
+    await unchanged("enable");
+    stage = "installed-registry-remove";
+    event(stage);
+    const removed = await request("PATCH", { change: { id: profile.id, operation: "remove" } });
+    assert(!removed.machines.some((value: { id: string }) => value.id === profile.id));
+    const removedTunnel = background;
+    await wait(async () => (await kernel.identify(removedTunnel.pid)) === null);
+    await unchanged("remove");
+    stage = "installed-registry-readd";
+    event(stage);
+    await request("POST", { registry: { version: 1, machines: [profile] } });
+    let restored: Awaited<ReturnType<typeof tunnel>> | undefined;
+    await wait(async () => {
+      try {
+        restored = await tunnel("a", originalB.port, "b");
+        return true;
+      } catch {
+        return false;
+      }
+    }, 30000);
+    assert(restored && restored.pid !== background.pid);
+    await unchanged("readd");
+    receipts.installedRegistry = {
+      qualified: true,
+      profileId: profile.id,
+      operations: facts,
+      restored,
+    };
+    save("installed-registry.json", receipts.installedRegistry);
   }
   try {
     event(stage);
@@ -949,6 +1068,7 @@ if (args[0] === "--client") {
     stage = "remote-manual-sizing";
     event(stage);
     await qualifyRemoteManualSizing();
+    await qualifyInstalledRegistry();
     const original = await fingerprint("target-a"),
       sibling = await fingerprint("target-b"),
       oldCanonical = await canonical("target-a"),

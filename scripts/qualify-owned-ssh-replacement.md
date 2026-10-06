@@ -81,8 +81,12 @@ homes only after client and tracked-process teardown succeeds, the exact private
 tmux server is retired, and no local daemon record or private tmux socket remains.
 The server PID, kernel identity and socket inode are checked before retirement.
 A remaining local daemon is a cleanup refusal to investigate, not permission to
-discard its state. This mode does not by itself
-qualify machine-registry mutations, remote installation or external SSH hosts.
+discard its state. The installed mode also adds, disables, enables, removes and restores a second
+saved host through the authenticated local registry API while the app stays open.
+It checks persisted responses, background tunnel retirement/replacement, unchanged
+selected-host and sibling-app tunnel identities, retained renderers and terminal
+IO. These background-profile operations do not prove selected-profile removal,
+route edits, duplicate-route presentation, remote installation or external hosts.
 
 The runner selects actual terminal views, verifies encoded shell output and typed
 input, then stops only A's daemon. It confirms the original SSH tunnel and forward
@@ -219,3 +223,28 @@ startup, and a later behavior-passing run refused stale-socket cleanup. This is 
 npm-installed client against owned localhost SSH targets. Saved-machine mutations,
 external hosts, remote installation and runtime performance budgets remain outside
 this proof.
+
+## Live installed registry mutations
+
+A further clean29aa installed-client run adds a second saved SSH host through the
+local daemon's authenticated registry API after both apps are running. It then
+disables, enables, removes and restores that background profile. Every response
+matches the persisted registry and exact local daemon generation. Removed or
+disabled routes lose their tunnel; restored routes obtain a new tunnel. The
+selected host's tunnel and the second app's tunnel retain their exact identities,
+both renderers survive, both terminals accept input and remote daemon/tmux/pane
+fingerprints remain unchanged. The ordinary sizing and replacement journey then
+passes with these mutated profiles still loaded.
+
+The 114,829ms run and all cleanup fields passed. Independent checks found 94 PIDs
+absent, ten ports closed and both installed homes/sockets removed. CLI/TUI hashes
+and fixture source remained stable. Evidence is retained at
+`.tasks/sfora-foundation-mission/installed-ssh-registry-live-add-29aa9d31`; the manager
+was `7873adca` plus its recorded fixture extension, with unchanged clean29aa product
+artifacts. A previous two-profile startup attempt exceeded the fixture producer's
+six-second response bound and remains a separate failed receipt with clean
+teardown. No product timeout or performance budget was changed.
+
+This proves background-profile mutation in a running installed app. Selected-route
+removal, route edits and duplicate-route presentation are additional scenarios;
+this receipt does not establish those behaviors or external-host readiness.
