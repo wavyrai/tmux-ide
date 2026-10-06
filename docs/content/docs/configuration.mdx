@@ -12,8 +12,8 @@ tmux-ide reads two files, both optional:
 
 ## Workspace file
 
-`.tmux-ide/workspace.yml` is **optional**. The app discovers ordinary tmux
-sessions without it. Use a workspace file when you want tmux-ide to build a
+`.tmux-ide/workspace.yml` is **optional**. The app and `tmux-ide adopt` work
+with ordinary tmux sessions without it. Use a workspace file when you want tmux-ide to build a
 repeatable layout with named panes, commands, working directories, and
 environment variables.
 
@@ -27,26 +27,28 @@ Scaffold one from your detected stack:
 tmux-ide init          # or: tmux-ide detect --write
 ```
 
-### Minimal example
+Or [start from a template](/docs/templates).
+
+### Example layout
 
 ```yaml
 version: 1
 name: my-app # tmux session name
+before: pnpm install # runs before the layout launches
 
 terminal:
   rows:
     - size: 70% # row height
       panes:
-        - title: Claude
-          command: claude
-          focus: true
-        - title: Shell
+        - { title: Claude, command: claude, focus: true, size: 50% }
+        - { title: Shell }
     - panes:
-        - title: Dev Server
-          command: pnpm dev
-        - title: Tests
-          command: pnpm test
+        - { title: Changes, type: changes }
+        - { title: Dev, command: pnpm dev, dir: apps/web, env: { PORT: "3000" } }
 ```
+
+Launch it with `tmux-ide` or `tmux-ide start` in the project directory; see
+[Open tmux-ide](/docs/commands#open-tmux-ide).
 
 ### Fields
 
@@ -124,26 +126,9 @@ keeps working.
 
 ### Agent profiles and mission defaults
 
-The `harnesses`, `agents` and `missions` blocks are validated declarative
-profiles. Nothing in 2.9 launches or dispatches them; start agents with
-**Commands → New agent…** in the app or with pane `command`s instead.
-
-```yaml
-harnesses:
-  claude:
-    adapter: claude
-    command: [claude, --dangerously-skip-permissions]
-
-agents:
-  lead:
-    harness: claude
-    role: manager # manager | implementer | reviewer | researcher | validator
-
-missions:
-  manager: lead
-  isolation: worktree
-  max_concurrent_tasks: 3
-```
+The `harnesses`, `agents` and `missions` blocks are validated, so existing
+files keep working, but nothing in 2.9.3 launches or dispatches them. Start
+agents with **Commands → New agent…** in the app or with a pane `command`.
 
 ### Per-session theme
 
@@ -238,12 +223,33 @@ See [Notifications and events](/docs/notifications-events).
 
 ### Other sections
 
-| Section        | Fields (defaults)                                                                        | Effect                                                                        |
-| -------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `restore`      | `resumeAgents` (`false`)                                                                 | Make `tmux-ide restore` resume agent conversations by default                 |
-| `updater`      | `tickMs` (`2000`), `snapshotEvery` (`15`)                                                | Background updater cadence and how often it writes restore snapshots          |
-| `updates`      | `check` (`true`), `manifests` (`false`)                                                  | Daily update check; also refresh the agent-detection manifest pack            |
-| `worktrees`    | `dir` (`""`)                                                                             | Base directory for `tmux-ide worktree`; empty means `<repo>-worktrees`        |
-| `welcome`      | `show` (`true`)                                                                          | Allow the one-time tmux chrome welcome card                                   |
-| `integrations` | `offer` (`true`)                                                                         | Allow the one-time offer to install the Claude Code integration               |
-| `keys`         | `home` `M-h`, `popup` `M-p`, `cheatsheet` `M-k`, `menu` `M-m`, `sidebar` `M-b`, `panels` | Key binds for the [tmux chrome](/docs/the-dock#the-keys); not used by the app |
+| Section        | Fields (defaults)                                                                                                                            | Effect                                                                                                      |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `restore`      | `resumeAgents` (`false`)                                                                                                                     | Make [`tmux-ide restore`](/docs/restore-resume) resume agent conversations by default                       |
+| `updater`      | `tickMs` (`2000`), `snapshotEvery` (`15`)                                                                                                    | Background updater cadence and how often it writes restore snapshots                                        |
+| `updates`      | `check` (`true`), `manifests` (`false`)                                                                                                      | Daily update check; also refresh the agent-detection manifest pack                                          |
+| `worktrees`    | `dir` (`""`)                                                                                                                                 | Base directory for [`tmux-ide worktree`](/docs/worktrees); empty means `<repo>-worktrees`                   |
+| `welcome`      | `show` (`true`)                                                                                                                              | Allow the one-time tmux chrome welcome card                                                                 |
+| `integrations` | `offer` (`true`)                                                                                                                             | Allow the one-time offer to install the Claude Code integration                                             |
+| `keys`         | `home` `M-h`, `popup` `M-p`, `cheatsheet` `M-k`, `menu` `M-m`, `sidebar` `M-b`, `panels` (`explorer` `M-e`, `changes` `M-g`, `config` `M-,`) | Key binds for the [tmux chrome](/docs/the-dock#the-keys); each also gets a prefix twin. Not used by the app |
+
+## Common questions
+
+### Do I need a workspace file?
+
+No. The app discovers ordinary tmux sessions, and `tmux-ide adopt` works on any
+session. A workspace file only matters when you want tmux-ide to build a
+repeatable layout.
+
+### Where does the session name come from?
+
+From `name` in `.tmux-ide/workspace.yml`, or the project directory's name when
+`name` is not set.
+
+### How do I check my file?
+
+```bash
+tmux-ide validate --json
+```
+
+Run it after every change to the file.

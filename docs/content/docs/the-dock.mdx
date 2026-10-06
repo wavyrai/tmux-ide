@@ -59,7 +59,7 @@ keep running as ordinary tmux without the decoration.
 
 ## One interaction grammar
 
-Every surface tmux-ide draws speaks the same five keys:
+Every tmux chrome surface uses the same five keys:
 
 | Key       | Action                     |
 | --------- | -------------------------- |
@@ -95,7 +95,7 @@ faster shortcut when it's available.
 ### Why prefix-first
 
 The prefix twins are the **reliable** path: they work under every keyboard
-protocol. The `⌥` (root-table) binds are a genuine one-keystroke fast path, but an
+protocol. The `⌥` (root-table) binds are a one-keystroke fast path, but an
 agent pane can temporarily switch how the terminal encodes keys (the kitty
 keyboard protocol), which can swallow a root-table `Alt` bind before tmux ever
 sees it. tmux-ide registers kitty-encoded fallbacks for the `⌥` keys, but coverage
@@ -138,8 +138,30 @@ tmux-ide popup config
 
 These are tmux chrome panels, separate from the app.
 
+## Common questions
+
+### Does adopt change my tmux.conf?
+
+No. `adopt` sets tmux options and key bindings on the running server; it never
+writes `tmux.conf`. Root-table bindings such as `⌥h` apply to the whole tmux
+server, not just the adopted session.
+
+### Why doesn't ⌥h work inside Claude Code?
+
+Claude Code can switch the terminal to a key encoding that tmux can't match
+against `⌥` bindings. Use `prefix h` instead.
+
+### How do I remove it?
+
+```bash
+tmux-ide unadopt <session>
+```
+
+The session keeps running as ordinary tmux.
+
 ## See also
 
 - [App surfaces](/docs/app-surfaces) — the Home and Terminals app
 - [Agent detection](/docs/agent-detection) — what the glyphs mean and where they come from
 - [Configuration](/docs/configuration#global-config) — rebind every key and recolor every glyph
+- [CLI reference](/docs/commands#tmux-chrome-adopt-existing-sessions) — every chrome command
