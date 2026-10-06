@@ -142,6 +142,19 @@ describe.skipIf(!hasTmux)("a mirror subscriber survives a window resize", () => 
     events: readonly MirrorPaneEvent[],
     label: string,
   ): Promise<void> {
+    // subscribe() retains the pane before its asynchronous seed arrives. A
+    // snapshot represents current screen state; it cannot contain transient
+    // alternate-screen bytes emitted before that baseline. Wait only for the
+    // initial seed; later resizes still race live output as this test intends.
+    // Plain subscribers receive layout separately and need not get a new seed.
+    await vi.waitFor(
+      () => {
+        const resetIndex = events.findIndex((event) => event.type === "reset");
+        expect(resetIndex).toBeGreaterThanOrEqual(0);
+        expect(events.slice(resetIndex + 1).some((event) => event.type === "cursor")).toBe(true);
+      },
+      { timeout: 20_000, interval: 50 },
+    );
     const suffix = randomUUID().slice(0, 6).toUpperCase();
     const normal = `NORMAL_${label}_${suffix}`;
     const indexed = `INDEXED_${label}_${suffix}`;
