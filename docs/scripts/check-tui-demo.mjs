@@ -55,20 +55,17 @@ for (const variant of variants)
   for (const state of ["before", "after"])
     if (!sprite.includes(`id="${variant}-${state}"`))
       failures.push(`tui-figures.svg lacks #${variant}-${state}`);
-// Each figure names who performs its action; the cursor is pure CSS over the frames.
-const actors = new Set(["You", "Claude Code", "Codex"]);
+// Each figure says how the reader's "You" cursor performs its action.
 for (const [variant, figure] of Object.entries(frames.figures)) {
   const cursor = figure.cursor;
   const point = (p) => Array.isArray(p) && p.length === 2 && p.every((v) => v >= 0 && v <= 100);
   if (
     !cursor ||
-    !actors.has(cursor.actor) ||
+    "actor" in cursor ||
     !["click", "drag", "hover"].includes(cursor.kind) ||
     ![cursor.from, cursor.at, cursor.to].every(point)
   )
-    failures.push(
-      `${variant} figure needs a named cursor with from/at/to points inside the figure`,
-    );
+    failures.push(`${variant} figure needs a "You" cursor path with from/at/to inside the figure`);
 }
 const icons = readFileSync(resolve(docsDir, "components/icons/sprite.svg"), "utf8");
 if (!icons.includes('<symbol id="cursor-arrow"'))
@@ -79,5 +76,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  `TUI demo verified: current with the app's presentation code, self-contained glyphs, ${variants.length} figures with named cursors.`,
+  `TUI demo verified: current with the app's presentation code, self-contained glyphs, ${variants.length} figures with cursor paths.`,
 );

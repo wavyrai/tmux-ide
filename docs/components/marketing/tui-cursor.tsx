@@ -5,24 +5,17 @@ import { SpriteIcon } from "@/components/icons/sprite-icon";
 import "./tui-cursor.css";
 
 /**
- * Named, multiplayer-style cursors over the rendered app: an arrow in the
- * actor's colour (white outline, soft shadow) with a name pill. The arrow is
- * the `cursor-arrow` symbol in the cached icon sprite, painted via `color`; movement is CSS-only (transform and
- * opacity, tui-cursor.css), so the cursors cost no client JavaScript.
+ * The reader's multiplayer-style cursor ("You") over the rendered app: an
+ * arrow (white outline, soft shadow) with a name pill. Agents act in their
+ * panes, not with pointers, so there is no agent cursor. The arrow is the
+ * `cursor-arrow` symbol in the cached icon sprite, painted via `color`;
+ * movement is CSS-only (transform and opacity, tui-cursor.css), so the cursor
+ * costs no client JavaScript.
  *
  * A cursor's track is a layer the size of its container, so `translate()`
  * percentages are percentages of the figure, matching the points
  * `pnpm demo:tui` records for each action.
  */
-export type CursorActor = "You" | "Claude Code" | "Codex";
-
-const ACTOR: Record<CursorActor, string> = {
-  You: "you",
-  "Claude Code": "claude",
-  Codex: "codex",
-};
-
-/** [x, y] in % of the container (JSON imports widen tuples to arrays). */
 type Point = readonly number[];
 const pct = ([x = 0, y = 0]: Point) => [`${x}%`, `${y}%`] as const;
 
@@ -42,12 +35,10 @@ export function cursorPath(from: Point, at: Point, to: Point): CSSProperties {
 }
 
 export function TuiCursor({
-  actor,
   className,
   style,
   flip = false,
 }: {
-  actor: CursorActor;
   className?: string;
   style?: CSSProperties;
   /** Put the name pill left of the arrow (paths that reach the right edge). */
@@ -55,9 +46,9 @@ export function TuiCursor({
 }) {
   return (
     <span className={cn("tui-cursor-track", className)} style={style}>
-      <span className={cn("tui-cursor", `tui-cursor-${ACTOR[actor]}`, flip && "tui-cursor-flip")}>
+      <span className={cn("tui-cursor", flip && "tui-cursor-flip")}>
         <SpriteIcon name="cursor-arrow" size={20} className="tui-cursor-arrow" />
-        <span className="tui-cursor-label">{actor}</span>
+        <span className="tui-cursor-label">You</span>
       </span>
     </span>
   );
@@ -67,8 +58,7 @@ export function TuiCursor({
 export function TuiHeroCursors() {
   return (
     <div className="tui-hero-cursors" aria-hidden="true">
-      <TuiCursor actor="You" className="tui-hero-you" flip />
-      <TuiCursor actor="Codex" className="tui-hero-codex" />
+      <TuiCursor className="tui-hero-you" flip />
     </div>
   );
 }

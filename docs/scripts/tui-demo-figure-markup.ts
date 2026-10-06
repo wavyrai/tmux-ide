@@ -39,9 +39,8 @@ import {
 
 export interface FigureMarkup {
   readonly label: string;
-  /** Who acts and how; points are percentages of the figure (cell centres). */
+  /** How "You" acts; points are percentages of the figure (cell centres). */
   readonly cursor: {
-    readonly actor: string;
     readonly kind: "click" | "drag" | "hover";
     readonly from: readonly [number, number];
     readonly at: readonly [number, number];

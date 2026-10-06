@@ -20,10 +20,8 @@ export type FigureVariant =
 /** A frame of the app, or a plain terminal (the app has quit). */
 export type FigureFrame = Scene | { readonly shell: readonly DemoLine[] };
 
-export type CursorActor = "You" | "Claude Code" | "Codex";
 type Cell = readonly [column: number, row: number];
 export interface FigureCursor {
-  readonly actor: CursorActor;
   readonly kind: "click" | "drag" | "hover";
   readonly from: Cell;
   readonly at: Cell;
@@ -38,7 +36,7 @@ export interface FigureSpec {
   /** Top-left cell of the CROP_COLS × CROP_ROWS window shown on the page. */
   readonly crop: readonly [column: number, row: number];
   /**
-   * Who performs the action and how, in cropped cells: the cursor enters at
+   * How "You" performs the action, in cropped cells: the cursor enters at
    * `from`, acts at `at` (a click or drag press lands as the frame changes),
    * then settles at `to` (a drag's release point).
    */
@@ -231,7 +229,6 @@ const shellPane = (title: string, width = COLS, height = PANE_ROWS): DemoPane =>
 });
 
 const you = (kind: FigureCursor["kind"], from: Cell, at: Cell, to: Cell): FigureCursor => ({
-  actor: "You",
   kind,
   from,
   at,
@@ -253,7 +250,7 @@ export const FIGURES: readonly FigureSpec[] = [
     before: terminals({ sidebar: true }),
     after: terminals({ sidebar: true, left: claude("done"), right: codex("blocked") }),
     crop: [0, 1],
-    cursor: { actor: "Codex", kind: "hover", from: [40, 9], at: [3, 3], to: [6, 3] },
+    cursor: you("hover", [40, 9], [3, 3], [6, 3]),
   },
   {
     variant: "navigate",
@@ -285,7 +282,7 @@ export const FIGURES: readonly FigureSpec[] = [
     before: home({}),
     after: home({ left: claude("done"), right: codex("blocked") }),
     crop: [6, 1],
-    cursor: { actor: "Codex", kind: "hover", from: [40, 12], at: [3, 11], to: [5, 11] },
+    cursor: you("hover", [40, 12], [3, 11], [5, 11]),
   },
   {
     variant: "opentui",

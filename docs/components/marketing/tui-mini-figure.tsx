@@ -2,7 +2,7 @@ import { cn } from "@/lib/cn";
 import type { CSSProperties } from "react";
 import { TechnicalCaption } from "./technical-caption";
 import frames from "./tui-mini-figure-frames.json";
-import { TuiCursor, cursorPath, type CursorActor } from "./tui-cursor";
+import { TuiCursor, cursorPath } from "./tui-cursor";
 
 /**
  * Landing-page mini-figures. Each is a crop of the real `tmux-ide app`,
@@ -83,7 +83,6 @@ export function TuiMiniFigure({ variant, figure, className, motionCount, motionI
         </svg>
         <div className="tui-figure-cursors" data-kind={frame.cursor.kind} aria-hidden="true">
           <TuiCursor
-            actor={frame.cursor.actor as CursorActor}
             style={cursorPath(frame.cursor.from, frame.cursor.at, frame.cursor.to)}
             flip={[frame.cursor.from, frame.cursor.at, frame.cursor.to].some(([x = 0]) => x > 85)}
           />

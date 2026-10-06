@@ -1,9 +1,9 @@
-/* Named cursors over the rendered app (tui-cursor.tsx): CSS-only movement,
+/* The reader's "You" cursor over the rendered app (tui-cursor.tsx): CSS-only movement,
    transform and opacity only. Figure cursors play in their figure's 4 s slot of
    the page's motion queue (3, 6 or 9 figures; --mockup-delay offsets the slot):
    enter, reach the target just before the frame changes (about 27% into the
    slot), press, then settle on the result or carry a drag to its release.
-   The hero pair runs on Fig. 01's 12 s loop. */
+   The hero cursor runs on Fig. 01's 12 s loop. */
 .tui-cursor-track {
   position: absolute;
   inset: 0;
@@ -11,6 +11,7 @@
   will-change: transform;
 }
 .tui-cursor {
+  --cursor-fill: #2563eb;
   position: absolute;
   left: 0;
   top: 0;
@@ -45,15 +46,6 @@
 .tui-cursor-flip .tui-cursor-label {
   left: auto;
   right: calc(100% - 6px);
-}
-.tui-cursor-you {
-  --cursor-fill: #2563eb;
-}
-.tui-cursor-claude {
-  --cursor-fill: #c96442;
-}
-.tui-cursor-codex {
-  --cursor-fill: #0f8f6b;
 }
 .tui-figure-cursors {
   position: absolute;
@@ -303,9 +295,6 @@
 .tui-hero-you .tui-cursor {
   animation: tui-hero-press 12s linear infinite both;
 }
-.tui-hero-codex {
-  animation: tui-hero-codex 12s cubic-bezier(0.45, 0, 0.25, 1) infinite both;
-}
 @keyframes tui-hero-you {
   0% {
     transform: translate(55%, 62%);
@@ -357,31 +346,6 @@
   58.5%,
   100% {
     transform: scale(1);
-  }
-}
-@keyframes tui-hero-codex {
-  0%,
-  34% {
-    transform: translate(68%, 40%);
-    opacity: 0;
-  }
-  38% {
-    opacity: 1;
-  }
-  52% {
-    transform: translate(65.5%, 44%);
-  }
-  68% {
-    transform: translate(70%, 42%);
-  }
-  88% {
-    transform: translate(66.5%, 45%);
-    opacity: 1;
-  }
-  93%,
-  100% {
-    transform: translate(66.5%, 45%);
-    opacity: 0;
   }
 }
 @keyframes tui-cursor-dragpath-3 {
@@ -454,8 +418,5 @@
   }
   .tui-hero-you {
     transform: translate(92.5%, 98.9%);
-  }
-  .tui-hero-codex {
-    transform: translate(66.5%, 44%);
   }
 }
