@@ -506,6 +506,28 @@ session. Content, cursor, geometry and resumed input are checked before teardown
 the fixture verifies all recorded owned processes exit. This is control-transport
 recovery, separate from daemon replacement and SSH forwarding loss.
 
+`application-ssh-terminal-reconnect-renderer.test.tsx` separately composes an
+owned local OpenSSH server and forwarding process with a real native tmux owner,
+HTTP/WebSocket routes, the production generation host and a mounted PaneSurface.
+It kills the identified forward, waits for authority revocation, emits output
+during the outage, then requires a new transport/client and fresh rendered
+baseline. Subsequent output and exact text-plus-Enter input must work while native
+session/pane identities stay unchanged. The private processes and listening ports
+must disappear on cleanup. Run this opt-in macOS fixture with the repository's
+pinned Bun and an explicit qualified native binary:
+
+```sh
+TMUX_IDE_OWNED_TERMINAL_SSH=1 TMUX_IDE_TMUX_BIN=/absolute/path/to/qualified/tmux \
+  bun test --preload @opentui/solid/preload \
+  --preload ./packages/daemon/test-support/opentui-renderer-preload.ts \
+  ./packages/daemon/src/tui/mirror/runtime/application-ssh-terminal-reconnect-renderer.test.tsx
+```
+
+The next connection is temporarily gated to make outage output deterministic;
+handshake results and terminal data remain real. This is a local SSH transport
+qualification with a native test renderer, not remote installation, WAN behavior
+or a physical emulator test.
+
 The former pre-viewer geometry assertion was inconsistent with viewport fitting:
 clients intentionally replace the initial manual size. Uncontrolled startup can
 also select a smaller viewer, so a taller observer's native content need not end
@@ -520,6 +542,13 @@ Both requests must converge on one replacement while pane identity and full
 history survive. The default cases still use current daemon code with older
 metadata to exercise manual/systemd/launchd provenance; they are not historical
 code compatibility tests or actual service-manager runs.
+
+`headless-cli-entrypoint.test.ts` accepts an absolute
+`TMUX_IDE_HEADLESS_TEST_CLI` to qualify an isolated installed package's entrypoint.
+The incompatible-protocol case repeats the public headless launch, requires
+`DAEMON_PROTOCOL_MISMATCH`, and checks that the owner record remains byte-identical
+and its identity endpoint remains available. The endpoint represents a controlled
+future protocol; this does not claim compatibility with an actual future release.
 
 Qualification with the published 2.9.2 package passed against current source.
 That fixture includes tmux on PATH. A separate clean-PATH installer journey found
