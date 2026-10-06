@@ -140,6 +140,17 @@ jobs:
           path: ${{ runner.temp }}/daemon-service-receipt.json
           if-no-files-found: error
           retention-days: 14
+      - name: Qualify published installer upgrade and managed rollback
+        if: ${{ inputs.qualification_only }}
+        timeout-minutes: 35
+        run: node scripts/qualify-installer-service.mjs "$RUNNER_TEMP/installer-service"
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && inputs.qualification_only }}
+        with:
+          name: installer-service-${{ matrix.platform }}
+          path: ${{ runner.temp }}/installer-service
+          if-no-files-found: error
+          retention-days: 14
       - name: Qualify native grid and daemon client transport
         run: |
           bundle="$PWD/packages/daemon/dist/native/tmux/$(node -p 'process.platform + "-" + process.arch')"
