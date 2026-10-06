@@ -11,6 +11,9 @@ import { MirrorControlChannel } from "./control-channel.ts";
 import { MirrorService } from "./mirror-service.ts";
 import {
   INITIAL_BYTES,
+  TAB_INITIAL_BYTES,
+  TAB_EDIT_BYTES,
+  knownTabFrame,
   EDIT_BYTES,
   comparePhysicalFrame,
   knownFrame,
@@ -78,8 +81,10 @@ it.each([
   if (mutation === "row-flags") Reflect.deleteProperty(raw.rows[0]!, "flags");
   else if (mutation === "string-color") cell[4] = "8";
   else if (mutation === "float-width") cell[1] = 1.5;
-  else if (mutation === "missing-cell") raw.rows[0]!.cells.pop();
-  else if (mutation === "unknown-attributes") cell[3] = 0x2000;
+  else if (mutation === "missing-cell") {
+    raw.rows[0]!.used = 8;
+    raw.rows[0]!.cells.pop();
+  } else if (mutation === "unknown-attributes") cell[3] = 0x2000;
   else if (mutation === "underline-color") cell[6] = 1;
   else if (mutation === "link") cell[7] = 2;
   else if (mutation === "rendition") raw.header.currentAttributes = [1, 8, 8, 8];
@@ -117,9 +122,71 @@ it("rejects delivered attribute bits outside the declared oracle vocabulary", ()
   ).toThrow("delivered attributes");
 });
 
-it.skipIf(!binary)(
-  "compares known styled native cells and one ICH/DCH transition with independent tmux truth",
-  async () => {
+it("accepts only exact fully unallocated default rows", () => {
+  const raw = rawBlankFixture();
+  raw.rows[2]!.cells = [];
+  const serialize = () =>
+    [raw.header, ...raw.rows].map((record) => JSON.stringify(record)).join("\n");
+  expect(readPhysicalFrame(serialize()).cells[2]).toEqual(knownTabFrame("initial").cells[2]);
+  raw.rows[2]!.used = 1;
+  expect(() => readPhysicalFrame(serialize())).toThrow("row used");
+});
+it("normalizes sparse default tails without hiding painted-cell mismatches", () => {
+  const raw = rawBlankFixture();
+  raw.rows[1]!.used = 1;
+  raw.rows[1]!.cells = [
+    [0, 1, "43", 0, 8, 8, 8, 0, 0],
+    [64, 1, "20", 0, 8, 8, 8, 0, 64],
+  ];
+  const serialize = () =>
+    [raw.header, ...raw.rows].map((record) => JSON.stringify(record)).join("\n");
+  expect(readPhysicalFrame(serialize()).cells[1]).toEqual(knownTabFrame("edited").cells[1]);
+  raw.rows[1]!.cells[1]![5] = 1;
+  expect(() =>
+    comparePhysicalFrame(readPhysicalFrame(serialize()), {
+      ...knownTabFrame("edited"),
+      cells: [
+        knownTabFrame("initial").cells[2]!,
+        knownTabFrame("edited").cells[1]!,
+        knownTabFrame("initial").cells[2]!,
+        knownTabFrame("initial").cells[3]!,
+      ],
+      cursor: [0, 0],
+      wrapped: [false, false, false, false],
+    }),
+  ).toThrow(".background mismatch");
+});
+it.each(["span", "owner-bytes", "continuation", "continuation-style"])(
+  "rejects malformed tab %s",
+  (mutation) => {
+    const raw = rawBlankFixture();
+    raw.rows[0]!.cells[1] = [128, 6, "202020202020", 0, 8, 16777233, 8, 0, 136];
+    for (let x = 2; x < 7; x++) raw.rows[0]!.cells[x] = [4, 1, "21", 0, 8, 8, 8, 0, 4];
+    const serialize = () =>
+      [raw.header, ...raw.rows].map((record) => JSON.stringify(record)).join("\n");
+    expect(() => readPhysicalFrame(serialize())).not.toThrow();
+    if (mutation === "span") raw.rows[0]!.cells[1]![1] = 7;
+    else if (mutation === "owner-bytes") raw.rows[0]!.cells[1]![2] = "09";
+    else if (mutation === "continuation") raw.rows[0]!.cells[2]![0] = 0;
+    else raw.rows[0]!.cells[2]![5] = 1;
+    expect(() => readPhysicalFrame(serialize())).toThrow();
+  },
+);
+it.each(["tab-cell", "pending-cursor"])("detects incorrect %s independently", (field) => {
+  const truth = knownTabFrame("initial"),
+    wrong = structuredClone(truth);
+  if (field === "tab-cell") wrong.cells[0]![3]!.text = " ";
+  else wrong.cursor = [7, 0];
+  expect(() => comparePhysicalFrame(wrong, truth)).toThrow(
+    field === "tab-cell" ? ".text mismatch" : "cursor mismatch",
+  );
+});
+
+it.skipIf(!binary).each(["cells", "tab-wrap"] as const)(
+  "compares %s with independent native cell truth",
+  async (scenario) => {
+    const initialBytes = scenario === "cells" ? INITIAL_BYTES : TAB_INITIAL_BYTES;
+    const editBytes = scenario === "cells" ? EDIT_BYTES : TAB_EDIT_BYTES;
     expect(isAbsolute(binary!)).toBe(true);
     const expectedCapability = process.env.TMUX_IDE_ORACLE_EXPECT_NATIVE;
     expect(["0", "1"]).toContain(expectedCapability);
@@ -181,11 +248,17 @@ it.skipIf(!binary)(
       const script = join(root, "paint.cjs");
       writeFileSync(
         script,
-        `process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write(${JSON.stringify(INITIAL_BYTES)});process.stdin.on('data',data=>{for(const byte of data)if(byte===120)process.stdout.write(${JSON.stringify(EDIT_BYTES)});});\n`,
+        `process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write(${JSON.stringify(initialBytes)});process.stdin.on('data',data=>{for(const byte of data)if(byte===120)process.stdout.write(${JSON.stringify(editBytes)});});\n`,
       );
       run("respawn-pane", "-k", "-t", "physical", `${quote(process.execPath)} ${quote(script)}`);
       const nativeText = (stage: "initial" | "edited") =>
-        stage === "initial" ? "A界é R\nABCDEF\nZ\nREADY" : "A界é R\nAB CDEF\nZ\nDONE";
+        scenario === "tab-wrap"
+          ? stage === "initial"
+            ? "A\tB"
+            : "A\tB\nC"
+          : stage === "initial"
+            ? "A界é R\nABCDEF\nZ\nREADY"
+            : "A界é R\nAB CDEF\nZ\nDONE";
       await vi.waitFor(
         () => expect(run("capture-pane", "-p", "-t", "physical")).toBe(nativeText("initial")),
         { timeout: 4500, interval: 20 },
@@ -250,14 +323,20 @@ it.skipIf(!binary)(
           { timeout: 4500, interval: 20 },
         );
         const raw = native ? run("capture-pane", "-p", "-R", "-S", "-", "-t", "physical") : null;
-        const expected = knownFrame(stage);
+        const expected = scenario === "cells" ? knownFrame(stage) : knownTabFrame(stage);
+        // Canonical cursor is the visible cell; tmux exports an offscreen
+        // end-column cursor for pending wrap. Continuation below verifies it.
+        const deliveredExpected =
+          scenario === "tab-wrap" && stage === "initial"
+            ? { ...expected, cursor: [7, 0] }
+            : expected;
         if (raw !== null) comparePhysicalFrame(readPhysicalFrame(raw), expected);
         const metadata = run(
           "display-message",
           "-p",
           "-t",
           "physical",
-          "#{cursor_x}|#{cursor_y}|#{alternate_on}|#{cursor_flag}|#{keypad_cursor_flag}|#{keypad_flag}|#{bracket_paste_flag}",
+          "#{cursor_x}|#{cursor_y}|#{alternate_on}|#{cursor_flag}|#{keypad_cursor_flag}|#{keypad_flag}|#{bracket_paste_flag}|#{wrap_flag}",
         ).split("|");
         expect(metadata.slice(0, 6)).toEqual([
           String(expected.cursor[0]),
@@ -267,12 +346,13 @@ it.skipIf(!binary)(
           "0",
           "0",
         ]);
+        expect(metadata[7]).toBe("1");
         const bracketedPaste = metadata[6] === "" ? "unknown" : metadata[6];
         expect(["0", "unknown"]).toContain(bracketedPaste);
         await vi.waitFor(
           () => {
             expect(snapshot).not.toBeNull();
-            if (native) comparePhysicalFrame(readDeliveredFrame(snapshot!), expected);
+            if (native) comparePhysicalFrame(readDeliveredFrame(snapshot!), deliveredExpected);
             else {
               const text = snapshot!.grid
                 .map((row) =>
@@ -283,16 +363,23 @@ it.skipIf(!binary)(
                 )
                 .join("\n")
                 .trimEnd();
-              expect(text).toBe(nativeText(stage));
+              expect(text).toBe(
+                scenario === "tab-wrap"
+                  ? stage === "initial"
+                    ? "A      B"
+                    : "A      B\nC"
+                  : nativeText(stage),
+              );
               expect(snapshot!.cursor).toMatchObject({
-                x: expected.cursor[0],
-                y: expected.cursor[1],
+                x: deliveredExpected.cursor[0],
+                y: deliveredExpected.cursor[1],
               });
             }
             expect(snapshot!.modes).toMatchObject({
               alternateScreen: false,
               applicationCursor: false,
               applicationKeypad: false,
+              wraparound: true,
             });
           },
           { timeout: 2500, interval: 20 },
@@ -301,6 +388,7 @@ it.skipIf(!binary)(
           phase: stage,
           raw,
           expected,
+          deliveredExpected,
           delivered: readDeliveredFrame(snapshot!),
           metadata: {
             cursor: metadata.slice(0, 2),
@@ -309,6 +397,7 @@ it.skipIf(!binary)(
             applicationCursor: metadata[4],
             applicationKeypad: metadata[5],
             bracketedPaste,
+            wraparound: metadata[7],
           },
         });
       };
@@ -343,7 +432,7 @@ it.skipIf(!binary)(
         serverPid,
         socket,
         root,
-        fixture: { initial: INITIAL_BYTES, edit: EDIT_BYTES },
+        fixture: { scenario, initial: initialBytes, edit: editBytes },
         native,
         trace,
         commands,

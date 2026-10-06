@@ -63,28 +63,30 @@ export function readPhysicalFrame(raw: string): OracleFrame {
   if (JSON.stringify(header.currentAttributes) !== "[0,8,8,8]")
     throw new Error("oracle unexpected fixture rendition");
   const cells = records.map((row, y): OracleCell[] => {
-    if (row.row !== y || !Array.isArray(row.cells) || row.cells.length !== 8)
+    if (row.row !== y || !Array.isArray(row.cells) || row.cells.length > 8)
       throw new Error("oracle malformed row");
     integer(row.flags, "row flags", 0, 3);
-    integer(row.used, "row used", 0, 8);
+    integer(row.used, "row used", 0, row.cells.length);
     const result = Array.from({ length: 8 }, blank);
-    for (let x = 0; x < 8; x++) {
+    // Native v2 omits unallocated default suffix cells. Allocation length is
+    // not logical content: reject used beyond allocation, then supply only
+    // default suffix cells. Literal colored-tail expectations still catch loss.
+    for (let x = 0; x < row.cells.length; x++) {
       const cell = row.cells[x];
       if (!Array.isArray(cell) || cell.length !== 9) throw new Error("oracle invalid cell record");
       const [flags, width, hex, attrs, fg, bg] = cell;
-      integer(flags, "cell flags", 0, 127);
-      integer(width, "cell width", 1, 2);
+      integer(flags, "cell flags", 0, 255);
+      integer(width, "cell width", 1, flags & 128 ? 6 : 2);
       integer(attrs, "cell attributes", 0, 0x17f);
       integer(cell[6], "underline color", 8, 8);
       integer(cell[7], "link", 0, 0);
-      integer(cell[8], "storage flags", 0, 127);
+      integer(cell[8], "storage flags", 0, 255);
       if (
         !Array.isArray(cell) ||
         cell.length !== 9 ||
         typeof hex !== "string" ||
         !/^(?:[0-9a-f]{2})+$/u.test(hex) ||
-        (attrs & ~0x17f) !== 0 ||
-        flags & 0x80
+        (attrs & ~0x17f) !== 0
       )
         throw new Error("oracle unsupported cell");
       const style = {
@@ -92,7 +94,18 @@ export function readPhysicalFrame(raw: string): OracleFrame {
         background: nativeColor(bg),
         attributes: names.filter((_, index) => (attrs & nativeBits[index]!) !== 0),
       };
-      if (flags & 4) {
+      if (flags & 128) {
+        // Pinned grid_set_tab stores width spaces, not byte09. HT preserves
+        // the pre-existing blank rendition, independently of current SGR.
+        if (x !== 1 || width !== 6 || hex !== "20".repeat(6) || (flags & ~(128 | 64)) !== 0)
+          throw new Error("oracle unsupported tab span");
+        for (let offset = 1; offset < 6; offset++)
+          if (JSON.stringify(row.cells[x + offset]) !== '[4,1,"21",0,8,8,8,0,4]')
+            throw new Error("oracle invalid tab continuation");
+        for (let offset = 0; offset < 6; offset++)
+          result[x + offset] = { ...style, text: "", width: 1 };
+        x += 5;
+      } else if (flags & 4) {
         // A normal wide continuation is logically owned by the preceding cell.
         if (x === 0 || result[x - 1]!.width !== 2)
           throw new Error("oracle fixture has detached padding");
@@ -117,7 +130,9 @@ export function readPhysicalFrame(raw: string): OracleFrame {
     rows: 4,
     history: 0,
     cursor: header.cursor,
-    wrapped: records.map((row) => (row.flags & 1) !== 0),
+    // tmux marks the row that wraps onward; logical canonical rows mark
+    // continuation from the previous row. Literal wrap fixtures check both.
+    wrapped: records.map((_, index) => index > 0 && (records[index - 1].flags & 1) !== 0),
     cells,
   };
 }
@@ -222,3 +237,27 @@ export const INITIAL_BYTES =
   "\x1b[0m\x1b[2J\x1b[H\x1b[1;3;4;31;48;5;17mA界é\x1b[0m \x1b[38;2;1;2;3;48;2;4;5;6mR\x1b[0m\x1b[K\x1b[2;1HABCDEF\x1b[3;1H\x1b[48;5;17m\x1b[2KZ\x1b[0m\x1b[4;1HREADY\x1b[2;3H\x1b]2;tm04-initial\x07";
 export const EDIT_BYTES =
   "\x1b[2;3H\x1b[2@\x1b[2;4H\x1b[P\x1b[4;1HDONE\x1b[K\x1b[2;4H\x1b]2;tm04-edited\x07";
+
+/** Default tab stops only: col1 tabs to col7 in this eight-column screen. */
+export function knownTabFrame(stage: "initial" | "edited"): OracleFrame {
+  const cells = Array.from({ length: 4 }, () => Array.from({ length: 8 }, blank));
+  cells[0] = Array.from({ length: 8 }, (_, x) => ({
+    text: x === 0 ? "A" : x === 7 ? "B" : "",
+    width: 1,
+    foreground: x === 0 || x === 7 ? "indexed:2" : "default",
+    background: "indexed:17",
+    attributes: x === 0 || x === 7 ? ["bold"] : [],
+  }));
+  if (stage === "edited") cells[1]![0] = { ...blank(), text: "C" };
+  return {
+    cols: 8,
+    rows: 4,
+    history: 0,
+    cursor: stage === "initial" ? [8, 0] : [1, 1],
+    wrapped: [false, stage === "edited", false, false],
+    cells,
+  };
+}
+export const TAB_INITIAL_BYTES =
+  "\x1b[0m\x1b[2J\x1b[2;1H\x1b[2K\x1b[3;1H\x1b[2K\x1b[4;1H\x1b[2K\x1b[H\x1b[48;5;17m\x1b[2K\x1b[1;32mA\tB\x1b[0m\x1b]2;tm04-initial\x07";
+export const TAB_EDIT_BYTES = "C\x1b]2;tm04-edited\x07";

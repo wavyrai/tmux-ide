@@ -411,6 +411,19 @@ modes and explicitly reports that physical capture is unavailable. These two
 authored checkpoints do not establish complete mode/history/reflow coverage or
 continuous frame correctness.
 
+The default-tab extension paints a known row background, checks native tab-span
+occupancy and pending wrap, then emits one printable character to verify the
+next-row continuation. Raw tmux's end-column cursor and the canonical visible
+cursor are asserted separately; their different representations are not treated
+as equal. This fixture does not scroll or establish custom tab-stop state.
+
+**Known stock snapshot discrepancy:** the ANSI capture includes a tab preceded
+by a background-color sequence, but replay moves across existing cells without
+painting that background. The stock canonical tab span therefore loses the
+fixture's pre-erased background; bundled native capture preserves it. Stock
+text/cursor/mode checks passing do not resolve this visible style mismatch. The
+independent fixture retains that limitation while capture replay is investigated.
+
 | Evidence                               | First-slice status                                                                 | Remaining boundary                                                   |
 | -------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | Transcript delivery under a valid seam | Generated schedules and corruption negative control                                | Real wire scheduler, failed replies and overflow                     |
