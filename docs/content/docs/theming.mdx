@@ -21,7 +21,7 @@ and the theme presets below.
 | `Esc`           | Cancel and restore the previous theme and contrast |
 | `Ctrl+A`        | Toggle automatic contrast                          |
 
-A switch repaints every app-owned surface at once. The choice is saved to
+A switch repaints every part of the app at once. The choice is saved to
 `theme.mode` and `theme.preset` in [`~/.tmux-ide/config.json`](/docs/configuration#theme).
 
 ### How System mode detects light or dark
@@ -82,7 +82,7 @@ from their semantic palette, including status and accent colors.
 ## Automatic contrast
 
 Automatic contrast correction is enabled by default for every appearance. It
-checks text against its rendered background across the TUI, including menus,
+checks text against its rendered background across the app, including menus,
 syntax previews, and applications inside terminal panes. Low-contrast text is
 adjusted for readability; already readable color pairs stay unchanged.
 

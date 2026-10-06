@@ -4,16 +4,18 @@ metaTitle: Agent status bar for tmux (tmux chrome)
 description: tmux-ide adopt adds a status bar, agent glyphs, prefix keys, menus and notifications to sessions you use from a plain tmux client, no app required.
 ---
 
-The [app](/docs/app-surfaces) is the main way to use tmux-ide. If you also work
-in a plain tmux client — `tmux attach`, a phone over SSH, another terminal —
-**tmux chrome** brings agent awareness there too. It is a separate, shipped
-surface built from tmux options; nothing it draws appears inside the app.
+**tmux chrome** is the status bar, keys and menus that `tmux-ide adopt` adds to a
+tmux session, so you see agent status in a plain tmux client: `tmux attach`, a
+phone over SSH, another terminal. It is built from tmux options and is separate
+from [the app](/docs/app-surfaces); nothing it draws appears inside the app.
 
 `tmux-ide adopt <session>` adds the chrome to any existing session: a status
 bar (the dock) with a tab per session and live agent-status glyphs, plus keys,
 menus and popups for the fleet home, the cheat sheet and session switching. Everything it draws is a tmux
-option, so it renders on the server and shows up on every client (including SSH),
-and `unadopt` reverts it completely.
+option, so it renders on the server and shows up on every client (including SSH).
+`unadopt` removes it from that session. The keys and mouse bindings are
+server-wide, so unadopting one session also removes them for the other adopted
+sessions; run `tmux-ide adopt` on one of those to restore them.
 
 ## What's on the bar
 
@@ -119,7 +121,7 @@ tmux-ide cheatsheet
 Right-click any pane or the status bar to open a native tmux menu **at the
 pointer** — it opens on button _release_. The same menu is on `prefix u` (or
 `⌥m`). Either way the action set is identical wherever you invoke it, so you never
-have to remember which surface owns a command.
+have to remember which popup owns a command.
 
 ```bash
 tmux-ide menu [--client N]
@@ -158,7 +160,9 @@ against `⌥` bindings. Use `prefix h` instead.
 tmux-ide unadopt <session>
 ```
 
-The session keeps running as ordinary tmux.
+The session keeps running as ordinary tmux. The chrome keys and mouse bindings
+are server-wide, so this also removes them for your other adopted sessions. Run
+`tmux-ide adopt <session>` on one of them to bring the keys back.
 
 ## See also
 

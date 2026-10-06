@@ -15,6 +15,23 @@ For quick, human-style messaging between agents, `tmux-ide send` and
 Use automation when you need exact pane identity, attribution and retry-safe
 handles.
 
+## Read and send in two commands
+
+List the panes you can target, then pass one endpoint in a read or send intent on
+stdin. This example uses `jq` to pick the pane titled `Tests`:
+
+```bash
+tmux-ide automation panes --json > panes.json
+jq '{kind: "read", target: (.panes[] | select(.title == "Tests") | .endpoint)}' panes.json \
+  | tmux-ide automation read --json
+jq '{kind: "send", target: (.panes[] | select(.title == "Tests") | .endpoint), text: "npm test", enter: true}' panes.json \
+  | tmux-ide automation send --json
+```
+
+`read` returns up to 16 KiB of the pane's text. `send` types the text and, with
+`enter: true`, presses Enter. The sections below explain endpoints, the
+two-step reserve and execute flow for safe retries, and sender attribution.
+
 ## Find a pane's endpoint
 
 ```bash
