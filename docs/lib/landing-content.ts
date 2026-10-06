@@ -78,7 +78,7 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
     question: "Is there a tmux sidebar for agents?",
     answer:
-      "Yes. In the app, `F10` shows or hides a sidebar that lists your machines, sessions and agents, with each agent's live status. In plain tmux, `tmux-ide adopt <session>` adds tmux chrome, and `prefix b` opens a sidebar pane listing your projects, sessions and windows with live status glyphs. See [tmux chrome](/docs/the-dock).",
+      "Yes. In the app, `F10` shows or hides a sidebar that lists your machines, sessions and agents, with each agent's live status. In plain tmux, `tmux-ide adopt <session>` adds tmux chrome, and `prefix b` opens a sidebar pane listing your projects, sessions and windows with live status glyphs. See [tmux chrome](/docs/the-dock#agent-sidebar-for-tmux).",
   },
   {
     question: "Does it work over SSH?",
