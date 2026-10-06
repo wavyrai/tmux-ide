@@ -5,25 +5,37 @@ description: An animated tour of the tmux-ide app, showing Home, an agent-aware 
 
 ![Animated tmux-ide OpenTUI tour showing Home, Terminals, and Commands](/tui-demo.svg)
 
-This is not a hand-built browser imitation. The artifact renders the production
-`ApplicationShellView`, pane surfaces, theme tokens, terminal adapter contract,
-and command palette against a deterministic in-memory tmux fixture. It cycles
-through Home, an agent-aware four-pane workspace, and Commands.
+This is not a hand-built browser imitation. Each frame is the production
+`ApplicationShellView` from `tmux-ide app` — the machine sidebar, the Home agent
+roster, real pane headers with status markers, and the Commands palette —
+rendered headlessly over a deterministic fixture fleet. Only the terminal
+contents are invented.
 
-Only the external tmux authority is replaced with deterministic demo data; the
-product UI is the real one. tmux-ide's release client is a native terminal
-renderer, so the checked-in demo is an animated SVG capture rather than a second
-browser implementation.
+The tour cycles through three frames:
 
-Regenerate it from a checkout:
+| Frame     | Shows                                                    |
+| --------- | -------------------------------------------------------- |
+| Home      | Agents across the machine with their status (`F1`)       |
+| Terminals | The live session with named panes and window tabs (`F2`) |
+| Commands  | The `F5` palette over Terminals                          |
+
+tmux-ide's release client is a native terminal renderer, so the demo is an
+animated SVG capture rather than a second browser implementation. Glyphs ship
+inside the SVG as a Geist Mono subset, so it looks the same on every OS.
+
+With reduced motion enabled, the SVG shows the Terminals frame without
+animation, and the working spinner shows a steady `●`.
+
+## Regenerate it
+
+From a checkout:
 
 ```bash
 pnpm demo:tui
 ```
 
-The command writes `docs/public/tui-demo.svg`. It requires the same Bun and
-OpenTUI development dependencies used by renderer tests; installed users do
-not need them.
-
-With reduced motion enabled, the SVG shows the Terminals frame without
-animation.
+The command writes `docs/public/tui-demo.svg` and records fingerprints of the
+presentation code it renders. `pnpm docs:build` fails, naming the changed
+files, when the demo is out of date. It requires the same Bun and OpenTUI
+development dependencies used by renderer tests; installed users do not need
+them.
