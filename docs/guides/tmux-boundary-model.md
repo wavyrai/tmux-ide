@@ -283,6 +283,41 @@ duplicate output, lose output or misroute a reply. Each is detected and reduced
 to one operation that passes without the injected corruption; their original
 and reduced schedules are retained as `negative.json` receipts.
 
+### Generated SessionChannel lifecycle schedules
+
+`session-channel-model.test.ts` drives the real SessionChannel and control parser
+through a constrained stock-server transport. Its independent reference is an
+append-only producer transcript, capture cuts and public subscriber lifetimes;
+it does not use the production snapshot reducer to compute expected content.
+Server execution, capture and wire delivery are distinct steps. The transport
+checks the installed owned hook before synthesizing its replies.
+
+There are 32 recorded seeds and 128 wider seeds, each containing 12 rounds.
+Continuing rounds vary reseed, shared subscription, cancellation, freeze/thaw and
+recovery after an observed pause with missing live output. The final round varies
+disconnect, output overflow or an aborted capture. Reads are coalesced, fragmented
+byte by byte, or split into varying chunks. Operation and partition coverage are
+asserted. Deliberately delivered stale wire after disconnect is a separate fault
+lane, not a legal tmux schedule.
+
+The checker requires exact transcripts, current subscriber generations, complete
+metadata before retained output, and a real ordinary drain fence before admitting
+the queued pane after cancellation. An aborted capture must fail explicitly
+within its deadline and drain that exact failed collector; retaining the old
+display alone is not success. Overflow must not publish a partial baseline or
+tail. Negative controls drop or duplicate output, publish to a retired subscriber,
+or deliver output before baseline metadata. Whole-round reduction preserves the
+invariant and victim, with original/reduced traces and unmutated passing controls.
+Reply identity and misrouting negative controls belong to the separate generated
+control-parser suite described above; this lifecycle suite does not independently
+establish every ordinary reply's origin.
+
+This model uses two panes, fixed geometry and short ASCII transcripts. It does
+not model terminal emulation, native-Q/dual capture, topology changes, every
+cancellation phase or automatic reconnection. The real ordering and cancellation
+witnesses qualify representative server phase orders; generated read partitions
+are not a claim about a particular kernel's chunk boundaries.
+
 ## Real-tmux checkpoints
 
 `tmux-boundary-model-live.test.ts` drives the actual MirrorService and canonical
@@ -324,10 +359,9 @@ renderer, flow recovery and linked-window tests remain necessary.
 
 ## Next extensions, in order
 
-- Broaden stock/old-server failure and lifecycle qualification beyond the retained
-  regressions, then connect generated legal wire-event schedules to SessionChannel
-  with an independent oracle and shrinking. Cover cancellation, disconnect, stale
-  publication, response failures and bounded overflow.
+- Broaden the bounded stock lifecycle model to additional cancellation phases,
+  topology changes and native/mixed snapshot paths, retaining independent oracles
+  and real-tmux correspondence for newly claimed legal schedules.
 - Add native physical-cell and mode checkpoints, alternate screens, wrapping,
   erase/insert operations, Unicode transitions and large-history reflow.
 - Model geometry generations and continuously check published frames during
