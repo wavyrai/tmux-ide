@@ -40,7 +40,9 @@ test(
       "repeated cycles require automatic tmux recovery",
     );
     assert.ok(
-      ["graceful", "kill", "tmux", "tmux-auto", "socket", "settings"].includes(termination),
+      ["graceful", "kill", "tmux", "tmux-auto", "socket", "settings", "control"].includes(
+        termination,
+      ),
       "unknown recovery termination mode",
     );
     const root = mkdtempSync("/tmp/tmi-tui-recovery-");
@@ -89,6 +91,26 @@ test(
         encoding: "utf8",
         timeout: 2_000,
       }).trimEnd();
+    const nativeIdentity = () =>
+      native(
+        "list-panes",
+        "-a",
+        "-F",
+        "#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{pane_pid}|#{@tmux_ide_pane_id}",
+      );
+    const controlClients = () =>
+      native(
+        "list-clients",
+        "-F",
+        "#{client_name}|#{client_pid}|#{client_control_mode}|#{session_id}",
+      )
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const [name, pid, control, sessionId] = line.split("|");
+          return { name, pid: Number(pid), control: control === "1", sessionId };
+        })
+        .filter((client) => client.control);
     function nativeObservation() {
       const panes = native(
         "list-panes",
@@ -497,6 +519,30 @@ process.stdout.write('\\x1b[?1049h');process.on('SIGWINCH',()=>{previous='';draw
           assert.ok(panes.every((id) => !previousRuntimeIds.includes(id)));
           report.tmuxReplacements ??= [];
           report.tmuxReplacements.push(report.tmuxReplacement);
+        } else if (cycleTermination === "control") {
+          const controls = controlClients();
+          assert.equal(controls.length, 1, "expected one owned session control client");
+          const target = controls[0];
+          assert.equal(
+            target.sessionId,
+            native("display-message", "-p", "-t", session, "#{session_id}"),
+          );
+          assert.ok(target.name && Number.isSafeInteger(target.pid) && target.pid > 0);
+          assert.notEqual(target.pid, old.record.pid);
+          report.controlLoss = {
+            before: target,
+            nativeIdentity: nativeIdentity(),
+            daemon: { pid: old.record.pid, generation: old.record.instanceId },
+          };
+          // Exact live client name from this private server. No session-wide
+          // detach, daemon refresh, client restart or replacement subscriber.
+          native("detach-client", "-t", target.name);
+          const deadline = Date.now() + 5_000;
+          while (alive(target.pid) && Date.now() < deadline) await delay(25);
+          assert.ok(!alive(target.pid), "detached control process did not exit");
+          assert.ok(alive(old.record.pid), "control loss killed the daemon");
+          assert.equal(nativeIdentity(), report.controlLoss.nativeIdentity);
+          writeFileSync(stageFile, afterMarker, { mode: 0o600 });
         } else {
           if (cycleTermination === "kill") {
             // The PID comes from this test's own startDaemon child receipt.
@@ -515,6 +561,27 @@ process.stdout.write('\\x1b[?1049h');process.on('SIGWINCH',()=>{previous='';draw
         }
         await waitForReadinessLadder(daemon);
         await coherent(`${cycle}-after`, afterMarker);
+        if (cycleTermination === "control") {
+          const controls = controlClients();
+          assert.equal(controls.length, 1, "control loss did not recover one authority");
+          assert.notEqual(controls[0].pid, report.controlLoss.before.pid);
+          assert.equal(controls[0].sessionId, report.controlLoss.before.sessionId);
+          assert.ok(!alive(report.controlLoss.before.pid));
+          assert.ok(alive(report.controlLoss.daemon.pid));
+          assert.equal(daemon.record.pid, report.controlLoss.daemon.pid);
+          assert.equal(daemon.record.instanceId, report.controlLoss.daemon.generation);
+          const identityResponse = await fetch(`${daemon.baseUrl}/identity`, {
+            signal: AbortSignal.timeout(2000),
+          });
+          assert.equal(identityResponse.status, 200);
+          const actualDaemon = await identityResponse.json();
+          assert.equal(actualDaemon.ok, true);
+          assert.equal(actualDaemon.pid, report.controlLoss.daemon.pid);
+          assert.equal(actualDaemon.instanceId, report.controlLoss.daemon.generation);
+          report.controlLoss.actualDaemonAfter = actualDaemon;
+          assert.equal(nativeIdentity(), report.controlLoss.nativeIdentity);
+          report.controlLoss.after = controls[0];
+        }
         if (report.socketRecreation) {
           const nextPaneIds = native(
             "list-panes",
@@ -618,7 +685,14 @@ process.stdout.write('\\x1b[?1049h');process.on('SIGWINCH',()=>{previous='';draw
           clients: controls,
         });
       }
-      assert.equal(new Set(report.generations.map((g) => g.generation)).size, cycles + 1);
+      assert.equal(
+        new Set(report.generations.map((g) => g.generation)).size,
+        termination === "control" ? 1 : cycles + 1,
+      );
+      if (termination === "control") {
+        assert.equal(nativeIdentity(), report.controlLoss.nativeIdentity);
+        assert.ok(alive(report.controlLoss.daemon.pid));
+      }
       report.passed = true;
     } catch (error) {
       failure = error;
