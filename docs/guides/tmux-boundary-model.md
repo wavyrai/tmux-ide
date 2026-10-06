@@ -612,3 +612,32 @@ representation cache; the private server and producer must exit.
 This fixture runs in the boundary gate. It verifies semantic delivery, not
 physical WebSocket buffering or renderer work; the stalled-observer wire test
 and rendering fixtures cover those separate boundaries.
+
+## Populated runtime resource qualification
+
+`terminal-runtime-soak-live.test.ts` is an opt-in real native-owner/WebSocket
+workload for one or fifteen populated panes and two viewers. It combines output,
+hidden/revealed views, input, observer reconnect, resizing and transient pane
+creation/deletion. It retains the declared budgets, exact fixture source, runtime
+hashes, time series and owned-resource cleanup observations. Run each pane count
+separately in a fresh worker, using an explicit qualified native binary:
+
+```sh
+TMUX_IDE_RUNTIME_SOAK=1 TMUX_IDE_RUNTIME_SOAK_PANES=15 \
+  TMUX_IDE_BOUNDARY_TEST_BINARY=/absolute/path/to/qualified/tmux \
+  pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts \
+  src/terminal/session-runtime/terminal-runtime-soak-live.test.ts
+```
+
+The default schedule has a 60-second warm-up, five measured minutes and a
+60-second trailing observation. `TMUX_IDE_RUNTIME_SOAK_SMOKE=1` selects a short
+fixture smoke, which cannot establish long-session bounds. The default producer
+overwrites fixed rows; `TMUX_IDE_RUNTIME_SOAK_WORKLOAD=full-clear` retains the
+separate repeated-screen-clear stress case. With tmux's default `scroll-on-clear`,
+that case grows history up to its native limit. Its initial smoke exceeded the
+declared RSS-growth cap; that failure is not superseded by the fixed-row pass.
+
+The runtime and test clients share a process. CPU/heap measurements therefore
+include fixture work and do not isolate daemon detection or physical rendering.
+Socket/listener ledgers do not count every internal listener. Five-minute results
+are bounded observations, not long-session leak or native-performance verdicts.
