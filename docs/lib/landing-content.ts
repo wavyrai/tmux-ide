@@ -58,7 +58,7 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
     question: "Which coding agents does it recognize?",
     answer:
-      "Claude Code and Codex, with detection tuned on their real output, plus conservative rules for 15 other agent CLIs. Any agent can report its own state with one tmux option, and ordinary shells keep working alongside them.",
+      "Claude Code, Codex and Aider, with detection tuned on their real output, plus conservative rules for 14 other agent CLIs. Any agent can report its own state with one tmux option, and ordinary shells keep working alongside them.",
   },
   {
     question: "Does it work with Claude Code agent teams?",
