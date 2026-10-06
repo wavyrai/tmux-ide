@@ -47,6 +47,11 @@ export interface TerminalReplicaQualificationSnapshot {
   readonly revision: number | null;
   readonly stateHash: string | null;
   readonly stats: TerminalReplicaInterpreterStats;
+  readonly listeners: {
+    readonly canonical: number;
+    readonly raw: number;
+    readonly upstream: number;
+  };
 }
 
 /** Daemon-private backing admission; this is not a client transport schema. */
@@ -231,6 +236,11 @@ export class SessionRuntimeTerminalReplicaOwner {
       revision: seed?.revision ?? null,
       stateHash: seed?.stateHash ?? null,
       stats: this.#interpreter.stats(),
+      listeners: Object.freeze({
+        canonical: this.#listeners.size,
+        raw: this.#rawListeners.size,
+        upstream: this.#upstream ? 1 : 0,
+      }),
     });
   }
 

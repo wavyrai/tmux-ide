@@ -71,6 +71,11 @@ export interface TerminalDeliveryMetrics {
   /** Unique delivery subscribers, independent of their pane count. */
   readonly clients: number;
   readonly connections: number;
+  readonly sourceSubscriptions: number;
+  readonly sourceCloseFailures: number;
+  readonly pendingSourceCloses: number;
+  readonly pendingSourceSubscriptions: number;
+  readonly pendingClients: number;
   readonly inFlight: number;
   readonly latestPointers: number;
   readonly coalesced: number;
@@ -312,6 +317,8 @@ export class SessionRuntimeTerminalDeliveryHub {
   readonly #observability: SessionRuntimeObservability;
   readonly #panes = new Map<string, PaneState>();
   readonly #clients = new Map<string, ClientState>();
+  #sourceCloseFailures = 0;
+  #pendingSourceCloses = 0;
   /** Synchronous reservations held while an async pane source is starting. */
   readonly #pendingClients = new Map<string, string>();
   readonly #cache = new Map<string, CachedRepresentation>();
@@ -506,6 +513,12 @@ export class SessionRuntimeTerminalDeliveryHub {
     return Object.freeze({
       clients: new Set([...this.#clients.values()].map((client) => client.clientId)).size,
       connections: this.#clients.size,
+      sourceSubscriptions: [...this.#panes.values()].filter((pane) => pane.source !== null).length,
+      pendingSourceSubscriptions: [...this.#panes.values()].filter((pane) => pane.source === null)
+        .length,
+      pendingClients: this.#pendingClients.size,
+      sourceCloseFailures: this.#sourceCloseFailures,
+      pendingSourceCloses: this.#pendingSourceCloses,
       inFlight: [...this.#clients.values()].filter((client) => client.inFlight).length,
       latestPointers: [...this.#clients.values()].filter((client) => client.latestRevision !== null)
         .length,
@@ -588,8 +601,20 @@ export class SessionRuntimeTerminalDeliveryHub {
       pane.pendingCanonicalCells = 0;
       pane.canonicalScheduled = false;
     }
-    await Promise.allSettled(panes.map((pane) => pane.source?.close()));
+    await Promise.allSettled(panes.map((pane) => pane.source && this.#closeSource(pane.source)));
     this.#clearCache();
+  }
+
+  async #closeSource(source: TerminalReplicaSourceSubscription): Promise<void> {
+    this.#pendingSourceCloses += 1;
+    try {
+      await source.close();
+    } catch (error) {
+      this.#sourceCloseFailures += 1;
+      throw error;
+    } finally {
+      this.#pendingSourceCloses -= 1;
+    }
   }
 
   async close(): Promise<void> {
@@ -646,7 +671,7 @@ export class SessionRuntimeTerminalDeliveryHub {
           this.#panes.get(semanticPaneId) !== pane ||
           pane?.canonicalAbort.signal.aborted
         ) {
-          await source.close();
+          await this.#closeSource(source);
           throw new Error("Terminal delivery source retired during startup");
         }
         pane!.source = source;
@@ -880,7 +905,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         pane.pendingCanonical.length = 0;
         pane.pendingCanonicalCells = 0;
         pane.canonicalScheduled = false;
-        void pane.source?.close().catch(() => undefined);
+        void (pane.source && this.#closeSource(pane.source).catch(() => undefined));
         this.#clearCache();
       }, 0);
     }
@@ -1825,7 +1850,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       pane.pendingCanonicalCells = 0;
       pane.canonicalScheduled = false;
     }
-    await pane?.source?.close().catch(() => undefined);
+    if (pane?.source) await this.#closeSource(pane.source).catch(() => undefined);
     this.#clearCache();
   }
 

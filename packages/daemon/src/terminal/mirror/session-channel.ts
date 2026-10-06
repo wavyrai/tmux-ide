@@ -1043,6 +1043,14 @@ export class SessionChannel {
     };
   }
 
+  qualificationListeners() {
+    return Object.freeze({
+      pane: [...this.panesByRuntime.values()].reduce((sum, pane) => sum + pane.subs.size, 0),
+      layout: this.layoutSubscribers.size,
+      layoutAuthority: this.layoutAuthoritySubscribers.size,
+    });
+  }
+
   /** Session geometry without a dummy pane feed or terminal-content seed. */
   subscribeLayout(onLayout: (event: MirrorLayoutEvent) => void): LayoutSubscriptionHandle {
     if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);

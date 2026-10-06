@@ -608,6 +608,87 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     expect(lateClose).toHaveBeenCalledOnce();
   });
 
+  it("counts a detached source close until its asynchronous rejection settles", async () => {
+    const owner = new FakeOwner();
+    let rejectClose!: (error: Error) => void;
+    const deferred = new Promise<void>((_resolve, reject) => {
+      rejectClose = reject;
+    });
+    owner.subscribeSource = async (...args) => {
+      const source = await FakeOwner.prototype.subscribeSource.apply(owner, args);
+      return { ...source, close: () => deferred };
+    };
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    try {
+      await hub.open(
+        "reader",
+        "pane-a",
+        {
+          protocolVersions: [1],
+          encodings: ["semantic-v1"],
+          richPlacements: false,
+        },
+        () => {},
+      );
+      owner.emit(seed());
+      await settle();
+      owner.emit(tombstone(1));
+      await settle();
+      expect(hub.metrics()).toMatchObject({
+        sourceSubscriptions: 0,
+        pendingSourceCloses: 1,
+        sourceCloseFailures: 0,
+      });
+      // close() retains its existing non-waiting behavior for the detached source.
+      await hub.close();
+      expect(hub.metrics().pendingSourceCloses).toBe(1);
+      rejectClose(new Error("deferred source close failure"));
+      await settle();
+      expect(hub.metrics()).toMatchObject({
+        sourceSubscriptions: 0,
+        pendingSourceCloses: 0,
+        sourceCloseFailures: 1,
+      });
+    } finally {
+      rejectClose(new Error("test cleanup"));
+      await hub.close();
+    }
+  });
+
+  it.each(["last-client", "hub"] as const)(
+    "retains failed source-close evidence after %s removal",
+    async (path) => {
+      const owner = new FakeOwner();
+      owner.subscribeSource = async (...args) => {
+        const source = await FakeOwner.prototype.subscribeSource.apply(owner, args);
+        return {
+          ...source,
+          close: async () => {
+            throw new Error("injected source close failure");
+          },
+        };
+      };
+      const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+      try {
+        const connection = await hub.open(
+          "reader",
+          "pane-a",
+          {
+            protocolVersions: [1],
+            encodings: ["semantic-v1"],
+            richPlacements: false,
+          },
+          () => {},
+        );
+        if (path === "last-client") await connection.close();
+        else await hub.close();
+        expect(hub.metrics()).toMatchObject({ sourceSubscriptions: 0, sourceCloseFailures: 1 });
+      } finally {
+        await hub.close();
+      }
+    },
+  );
+
   it("reserves concurrent opens before awaiting pane startup so capacity cannot oversubscribe", async () => {
     let release!: () => void;
     const startGate = new Promise<void>((resolve) => {
@@ -631,10 +712,32 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     await expect(hub.open("client-64", "pane-a", offer, () => undefined)).rejects.toThrow(
       "Terminal delivery client limit reached",
     );
+    expect(hub.metrics()).toMatchObject({
+      sourceSubscriptions: 0,
+      pendingSourceSubscriptions: 1,
+      pendingClients: 64,
+    });
     release();
     const connections = await Promise.all(admitted);
-    expect(hub.metrics()).toMatchObject({ clients: 64, connections: 64 });
-    await Promise.all(connections.map((connection) => connection.close()));
+    expect(hub.metrics()).toMatchObject({
+      clients: 64,
+      connections: 64,
+      sourceSubscriptions: 1,
+      pendingSourceSubscriptions: 0,
+      pendingClients: 0,
+    });
+    expect(owner.subscriptions).toBe(1);
+    await Promise.all(connections.slice(1).map((connection) => connection.close()));
+    expect(hub.metrics().sourceSubscriptions).toBe(1);
+    expect(owner.closes).toBe(0);
+    await connections[0]!.close();
+    expect(hub.metrics()).toMatchObject({
+      connections: 0,
+      sourceSubscriptions: 0,
+      pendingSourceSubscriptions: 0,
+      pendingClients: 0,
+    });
+    expect(owner.closes).toBe(1);
     await hub.close();
   });
 

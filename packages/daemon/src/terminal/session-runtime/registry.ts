@@ -119,14 +119,56 @@ export interface TrustedSessionInventoryCandidate {
   readonly token: object;
 }
 
+interface RuntimeListenerCounts {
+  readonly authority: number;
+  readonly mirrorSubscriptions: number;
+  readonly replicaSubscriptions: number;
+  readonly deliveryConnections: number;
+}
+// Final-disposal observations for owners still held by this runtime/registry.
+// This is not a historical count of owners retired by earlier incarnation changes.
+interface ListenerDisposalSummary {
+  readonly sessions: number;
+  readonly owners: number;
+  readonly failures: number;
+  readonly canonical: number;
+  readonly raw: number;
+  readonly upstream: number;
+  readonly authority: number;
+  readonly consumerHandles: number;
+  readonly deliveryConnections: number;
+  readonly deliverySources: number;
+  readonly pendingDeliverySources: number;
+  readonly pendingSourceCloses: number;
+  readonly pendingDeliveryClients: number;
+}
+const emptyListenerDisposal = (): ListenerDisposalSummary => ({
+  sessions: 0,
+  owners: 0,
+  failures: 0,
+  canonical: 0,
+  raw: 0,
+  upstream: 0,
+  authority: 0,
+  consumerHandles: 0,
+  deliveryConnections: 0,
+  deliverySources: 0,
+  pendingDeliverySources: 0,
+  pendingSourceCloses: 0,
+  pendingDeliveryClients: 0,
+});
+
 export interface SessionRuntimeQualificationSnapshot {
   readonly generation: SessionRuntimeGeneration;
   readonly controlChannels: number;
+  readonly mirrorListeners: ReturnType<MirrorService["qualificationListeners"]>;
+  readonly listenerDisposal: ListenerDisposalSummary | null;
   readonly controllerLeases: number;
   readonly sessions: readonly {
     readonly session: string;
     readonly consumers: number;
     readonly retained: boolean;
+    readonly listeners: RuntimeListenerCounts;
     readonly delivery: TerminalDeliveryMetrics;
     readonly convergence: TerminalDeliveryConvergenceSnapshot;
     readonly replicas: Readonly<Record<string, TerminalReplicaQualificationSnapshot>>;
@@ -272,6 +314,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly #observability: SessionRuntimeObservability;
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #sessions = new Map<string, SessionRuntime>();
+  #listenerDisposal: ListenerDisposalSummary | null = null;
   readonly #proofPrewarmOwnership = new Map<SessionRuntime, { owned: boolean; claims: number }>();
   readonly #trustedInventoryTokens = new WeakMap<
     object,
@@ -981,6 +1024,8 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return Object.freeze({
       generation: this.generation,
       controlChannels: this.activeControlChannelCount(),
+      mirrorListeners: this.#mirror.qualificationListeners(),
+      listenerDisposal: this.#listenerDisposal,
       controllerLeases: this.activeControllerLeaseCount(),
       sessions: Object.freeze(
         [...this.#sessions.values()].map((runtime) => runtime.qualificationSnapshot()),
@@ -996,7 +1041,30 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       this.#stopExitObserver();
       this.#disposePromise = (async () => {
         await this.#semanticMutations?.dispose();
-        await Promise.allSettled([...this.#sessions.values()].map((runtime) => runtime.dispose()));
+        const runtimes = [...this.#sessions.values()];
+        const results = await Promise.allSettled(runtimes.map((runtime) => runtime.dispose()));
+        const final = { ...emptyListenerDisposal(), sessions: runtimes.length };
+        runtimes.forEach((runtime, index) => {
+          const counts = runtime.listenerDisposal;
+          if (!counts || results[index]?.status === "rejected") final.failures += 1;
+          if (counts)
+            for (const key of [
+              "owners",
+              "failures",
+              "canonical",
+              "raw",
+              "upstream",
+              "authority",
+              "consumerHandles",
+              "deliveryConnections",
+              "deliverySources",
+              "pendingDeliverySources",
+              "pendingSourceCloses",
+              "pendingDeliveryClients",
+            ] as const)
+              final[key] += counts[key];
+        });
+        this.#listenerDisposal = Object.freeze(final);
         this.#sessions.clear();
         this.#proofPrewarmOwnership.clear();
         await this.#mirror.dispose();
@@ -1099,6 +1167,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
 class SessionRuntime {
   readonly #mirror: MirrorService;
   readonly #consumers = new Set<SessionRuntimeConsumerImpl>();
+  listenerDisposal: ListenerDisposalSummary | null = null;
   readonly #consumersByClientId = new Map<string, SessionRuntimeConsumerImpl>();
   readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
   readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
@@ -1275,11 +1344,28 @@ class SessionRuntime {
     return this.#consumers.size > 0;
   }
 
+  private listenerCounts(): RuntimeListenerCounts {
+    const counts = {
+      authority: this.#authorityListeners.size,
+      mirrorSubscriptions: 0,
+      replicaSubscriptions: 0,
+      deliveryConnections: 0,
+    };
+    for (const consumer of this.#consumers) {
+      const handles = consumer.qualificationListeners();
+      counts.mirrorSubscriptions += handles.mirrorSubscriptions;
+      counts.replicaSubscriptions += handles.replicaSubscriptions;
+      counts.deliveryConnections += handles.deliveryConnections;
+    }
+    return Object.freeze(counts);
+  }
+
   qualificationSnapshot(): SessionRuntimeQualificationSnapshot["sessions"][number] {
     return Object.freeze({
       session: this.session,
       consumers: this.#consumers.size,
       retained: this.#retention !== null,
+      listeners: this.listenerCounts(),
       delivery: this.#terminalDeliveryHub.metrics(),
       convergence: this.#terminalDeliveryHub.convergenceSnapshot(),
       replicas: Object.freeze(
@@ -1896,22 +1982,51 @@ class SessionRuntime {
     this.#trustedInventoryRuntimeSessionId = null;
     this.#trustedInventoryEpoch += 1;
     const consumers = [...this.#consumers];
-    await Promise.allSettled(consumers.map((consumer) => consumer.close()));
+    const consumerResults = await Promise.allSettled(consumers.map((consumer) => consumer.close()));
     this.#clearController();
     this.#authority.dispose();
     this.#authorityListeners.clear();
     this.#completedHandoffs.clear();
     this.#releasedLeases.clear();
     this.#outputTraces?.clear();
-    await Promise.allSettled(
-      [...this.#terminalReplicas.values()].map((owner) => owner.dispose("runtime-disposed")),
+    const owners = [...this.#terminalReplicas.values()];
+    const results = await Promise.allSettled(
+      owners.map((owner) => owner.dispose("runtime-disposed")),
     );
+    const final = {
+      ...emptyListenerDisposal(),
+      sessions: 1,
+      owners: owners.length,
+      failures: [...results, ...consumerResults].filter((result) => result.status === "rejected")
+        .length,
+    };
+    for (const owner of owners) {
+      const counts = owner.qualificationSnapshot().listeners;
+      final.canonical += counts.canonical;
+      final.raw += counts.raw;
+      final.upstream += counts.upstream;
+    }
+    for (const consumer of consumers) {
+      const counts = consumer.qualificationListeners();
+      final.failures += counts.closeFailures;
+      final.consumerHandles +=
+        counts.mirrorSubscriptions + counts.replicaSubscriptions + counts.deliveryConnections;
+    }
+    final.authority = this.#authorityListeners.size;
     this.#terminalReplicas.clear();
     await this.#terminalDeliveryHub.close();
     await this.#startPromise?.catch(() => undefined);
     await this.#restartBarrier;
     await this.#retention?.close();
     this.#retention = null;
+    const delivery = this.#terminalDeliveryHub.metrics();
+    final.deliveryConnections = delivery.connections;
+    final.deliverySources = delivery.sourceSubscriptions;
+    final.pendingDeliverySources = delivery.pendingSourceSubscriptions;
+    final.pendingSourceCloses = delivery.pendingSourceCloses;
+    final.pendingDeliveryClients = delivery.pendingClients;
+    final.failures += delivery.sourceCloseFailures;
+    this.listenerDisposal = Object.freeze(final);
   }
 
   #assertConnected(clientId: string): void {
@@ -2218,6 +2333,17 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     return connection;
   }
 
+  #closeFailures = 0;
+
+  qualificationListeners() {
+    return Object.freeze({
+      closeFailures: this.#closeFailures,
+      mirrorSubscriptions: this.#subscriptions.size,
+      replicaSubscriptions: this.#replicaSubscriptions.size,
+      deliveryConnections: this.#deliveryConnections.size,
+    });
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
@@ -2230,9 +2356,18 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     // Authority retirement is synchronous. A slow/frozen mirror subscription
     // must never keep controller leases or previously issued handles alive.
     this.#runtime.release(this);
-    await Promise.allSettled(subscriptions.map((subscription) => subscription.close()));
-    await Promise.allSettled(replicaSubscriptions.map((subscription) => subscription.close()));
-    await Promise.allSettled(deliveryConnections.map((connection) => connection.close()));
+    const mirrorResults = await Promise.allSettled(
+      subscriptions.map((subscription) => subscription.close()),
+    );
+    const replicaResults = await Promise.allSettled(
+      replicaSubscriptions.map((subscription) => subscription.close()),
+    );
+    const deliveryResults = await Promise.allSettled(
+      deliveryConnections.map((connection) => connection.close()),
+    );
+    this.#closeFailures += [...mirrorResults, ...replicaResults, ...deliveryResults].filter(
+      (result) => result.status === "rejected",
+    ).length;
   }
 
   #assertOpen(): void {
