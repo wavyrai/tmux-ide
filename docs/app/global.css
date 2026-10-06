@@ -693,6 +693,56 @@
   margin-top: 1rem;
 }
 
+.hero-cta-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+/* Secondary actions: pills on a quiet neutral fill, the hero pill's size.
+   Install box = primary, agent prompt = inverted, these = secondary. */
+.hero-secondary {
+  display: inline-flex;
+  height: 2.5rem;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-fd-muted);
+  padding: 0 1rem;
+  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.375rem;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--color-fd-foreground);
+  transition: background-color 150ms var(--ease-smooth);
+}
+
+@media (hover: hover) {
+  .hero-secondary:hover {
+    background-color: color-mix(in oklab, var(--color-fd-foreground) 9%, var(--color-fd-muted));
+  }
+}
+
+.hero-secondary:active {
+  background-color: color-mix(in oklab, var(--color-fd-foreground) 14%, var(--color-fd-muted));
+}
+
+.hero-secondary-count {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 400;
+  color: var(--color-fd-muted-foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-secondary {
+    transition: none;
+  }
+}
+
 @media (width >= 40rem) {
   .hero-cta-row {
     flex-direction: row;
