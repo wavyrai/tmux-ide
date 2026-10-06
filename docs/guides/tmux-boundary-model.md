@@ -433,6 +433,28 @@ independent fixture retains that limitation while capture replay is investigated
 | Physical display / input               | Not established                                                                    | Installed OpenTUI and real emulator verification                     |
 | Performance parity                     | Not measured                                                                       | Comparable successful-work latency and resource measurements         |
 
+## Canonical publications during client resize
+
+`canonical-resize-publication-live.test.ts` observes every delivered canonical
+callback during four real attached-client PTY resizes. Each resize and producer
+output occurs while a real client snapshot collector is unresolved. The fixture
+waits for convergence between sizes; it does not claim simultaneous server
+capture execution, an uninterrupted resize storm, or every OpenTUI host paint.
+
+Each published seed carries the trace identity of its original reset batch.
+The checker compares that batch's layout epoch with the independently observed
+layout, including repeated dimensions after a reversal. It also checks revision
+and identity continuity, physical cell structure, cursor bounds, retained
+sentinel content and the final native cursor. The initial cached subscriber seed
+is explicitly distinguished from later commit-time publications. A surviving
+pane cannot publish a tombstone during this schedule.
+
+Copies of actual successful publications with an obsolete same-size batch or
+an out-of-bounds cursor must fail. These are labelled transcript mutations, not
+real server failures. The fixture preserves native window sizing policy and
+records bounded teardown and private server/client/producer absence. It runs in
+the bundled boundary gate; stock snapshot limitations remain separate.
+
 ## Next extensions, in order
 
 - Broaden the bounded stock lifecycle model to additional cancellation phases,
