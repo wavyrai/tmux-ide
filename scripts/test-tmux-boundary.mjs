@@ -40,6 +40,7 @@ for (const [config, test] of [
   ["vitest.live.config.ts", "src/terminal/mirror/session-channel-cancellation-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/mirror/native-physical-cell-oracle-live.test.ts"],
   ["vitest.live.config.ts", "src/tui/mirror/runtime/terminal-input-ordering-live.test.ts"],
+  ["vitest.live.config.ts", "src/tui/mirror/runtime/terminal-native-input-death-live.test.ts"],
   [
     "vitest.live.config.ts",
     "src/tui/mirror/runtime/terminal-input-session-replacement-live.test.ts",
@@ -47,7 +48,7 @@ for (const [config, test] of [
 ]) {
   const result = spawnSync("pnpm", ["exec", "vitest", "run", "--config", config, test], {
     cwd,
-    env: process.env,
+    env: { ...process.env, TMUX_IDE_NATIVE_JOURNAL_TEST_BINARY: binary },
     stdio: "inherit",
   });
   if (result.error) throw result.error;

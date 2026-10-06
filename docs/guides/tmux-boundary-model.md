@@ -26,6 +26,11 @@ the command. The ordinary daemon
 suite always collects the model; its live lane skips this optional qualification
 when no binary was selected. The explicit gate cannot pass by skipping it.
 
+The complete gate qualifies the patched bundled runtime: native guarded input
+and scheduler-barrier cases require its extensions. Setting the physical oracle
+expectation to `0` does not make the whole gate a stock compatibility gate.
+Run selected stock-compatible live fixtures separately with the stock binary.
+
 The live fixture owns a UUID-named tmux socket, a noninteractive pane and one
 attached PTY client. It disposes the replica and control connections and kills
 only its own server. It does not attach to production sessions.
@@ -371,6 +376,14 @@ same session name and semantic pane stamp. Old text/key calls must remain no-ops
 the new raw receiver accepts only fresh input. Both runtime session and pane IDs
 must differ. This proves isolation after observed closure, not rejection of input
 already queued before deletion or controller-generation authorization.
+
+`terminal-native-input-death-live.test.ts` exercises the production owned-viewer
+route without custom IO. A real tmux lock holds accepted input behind a waiting
+command while another client deletes the target pane. After unlocking, native
+guards must reject the queued commands without ordinary-input fallback, and the
+replacement receiver must remain empty. Fresh native input then succeeds. This
+tests physical target death with a different replacement ID and birth, not
+runtime-ID reuse or every input-admission race.
 
 ## Coverage matrix
 
