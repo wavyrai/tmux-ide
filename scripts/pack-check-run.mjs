@@ -56,6 +56,7 @@ function boundedSpawnSync(file, args, options = {}) {
 // Read only intentional top-level selectors before dropping all ambient child overrides.
 const gateEvidenceDir = process.env.TMUX_IDE_PACK_EVIDENCE_DIR;
 const runtimeTraceEnabled = process.env.TMUX_IDE_PACK_RUNTIME_TRACE === "1";
+const topologyInputReproEnabled = process.env.TMUX_IDE_PACK_TOPOLOGY_INPUT === "1";
 const interruptionMode = process.env.TMUX_IDE_PACK_INTERRUPT_AT;
 if (interruptionMode && !["hold-input-ready", "fail-input-ready"].includes(interruptionMode))
   throw new Error("Unknown packed interruption fixture");
@@ -1452,6 +1453,52 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     () => activePane("journey-beta") === recreatedAgentPane,
     one.diagnostics,
   );
+  if (topologyInputReproEnabled) {
+    const topologyStatus = () =>
+      readFileSync(one.performancePath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((row) => row.phase === "generation-status")
+        .at(-1);
+    await observe(
+      "pre-topology renderer live",
+      10_000,
+      () => topologyStatus()?.status === "live",
+      one.diagnostics,
+    );
+    const before = topologyStatus();
+    const background = tmuxResult([
+      "new-window",
+      "-d",
+      "-t",
+      "journey-beta",
+      "-n",
+      "topology-rebind-input",
+      "/bin/sh",
+    ]);
+    if (background.status !== 0) throw new Error("Owned background topology trigger failed");
+    await observe(
+      "topology rebinding before immediate input",
+      10_000,
+      () => {
+        const row = topologyStatus();
+        return row?.status === "rebinding" && row.elapsedMs > before.elapsedMs;
+      },
+      one.diagnostics,
+    );
+    const trigger = {
+      before,
+      atInput: topologyStatus(),
+      sameNativePane: activePane("journey-beta") === recreatedAgentPane,
+    };
+    if (evidenceDir)
+      writeFileSync(
+        join(evidenceDir, "topology-input-trigger.json"),
+        JSON.stringify(trigger, null, 2),
+      );
+    if (!trigger.sameNativePane) throw new Error("Topology trigger changed the selected pane");
+  }
   const recreatedAgentMarker = `PACK_AGENT_RECREATED_${process.pid}`;
   typeCommand(one, recreatedAgentMarker);
   await observe(
