@@ -4,11 +4,10 @@ import { INSTALL_COMMAND } from "@/lib/site";
  * The hero is one constant so the headline can change in a single place.
  */
 export const LANDING_HERO = {
-  title: "A dedicated workspace for your coding agents.",
+  title: "The open-source workspace for coding agents.",
   // The lede leads with one foreground sentence; the rest reads in the muted tone.
-  ledeLead:
-    "Build, coordinate, and navigate a team of coding agents from one agent-aware communication plane.",
-  lede: "See what every agent is doing and jump directly to the one that needs you.",
+  ledeLead: "Run and coordinate a team of coding agents in the tmux sessions you already use.",
+  lede: "See what every agent is doing, and jump straight to the one that needs you.",
 } as const;
 
 export interface InstallMethod {

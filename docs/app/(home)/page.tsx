@@ -77,12 +77,12 @@ export default async function HomePage() {
               className="marketing-enter-fast marketing-pill-action mb-8 inline-flex items-center gap-2 rounded-full border border-marketing-line bg-marketing-raise type-caption-1 px-3 py-1.5 text-fd-foreground"
             >
               <span className="text-fd-muted-foreground">New</span>
-              <span>OpenTUI workspace in 2.9</span>
+              <span>The OpenTUI app in 2.9</span>
               <span aria-hidden className="text-fd-muted-foreground">
                 →
               </span>
             </Link>
-            <h1 className="type-hero-title marketing-enter marketing-enter-step-2 max-w-[22ch] text-fd-foreground">
+            <h1 className="type-hero-title marketing-enter marketing-enter-step-2 max-w-[22ch] lg:max-w-[27ch] text-fd-foreground">
               {LANDING_HERO.title}
             </h1>
             <p className="type-marketing-lede marketing-enter marketing-enter-step-3 mt-6 max-w-[60ch] text-fd-muted-foreground">
