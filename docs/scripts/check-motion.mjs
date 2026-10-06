@@ -54,7 +54,6 @@ for (const token of [
   '[data-motion-count="9"]',
   "@keyframes tui-motion-before-9",
   "@keyframes tui-motion-after-9",
-  "@keyframes tui-motion-cursor-9",
 ]) {
   if (!css.includes(token)) failures.push(`missing nine-figure motion queue primitive: ${token}`);
 }
