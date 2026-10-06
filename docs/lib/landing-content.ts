@@ -76,6 +76,11 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
       "Yes. Selecting an agent resolves its exact tmux session, window, and pane, then focuses that pane. The names you give agents and panes make targets easy to identify; routing always uses the exact pane, never the name.",
   },
   {
+    question: "Is there a tmux sidebar for agents?",
+    answer:
+      "Yes. In the app, `F10` shows or hides a sidebar that lists your machines, sessions and agents, with each agent's live status. In plain tmux, `tmux-ide adopt <session>` adds tmux chrome, and `prefix b` opens a sidebar pane listing your projects, sessions and windows with live status glyphs. See [tmux chrome](/docs/the-dock).",
+  },
+  {
     question: "Does it work over SSH?",
     answer:
       "Yes. Install the same tmux-ide version on the remote machine and start its daemon there with `tmux-ide --headless`. Then run `tmux-ide app --ssh <host>` on your computer. If the connection drops, the remote tmux sessions and agents keep running. See [remote machines](/docs/remote-machines) for the setup.",
