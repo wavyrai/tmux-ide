@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { InputCoalescer } from "../../../terminal/protocol/input-coalescer.ts";
+
 import { terminalInputForOpenTuiKey, terminalInputsForPaste } from "./terminal-input-adapter.ts";
 
 const key = (
@@ -32,4 +34,26 @@ describe("OpenTUI terminal input adapter", () => {
     );
     expect(() => terminalInputsForPaste("a\0b")).toThrow(/NUL/u);
   });
+  it.each([1016, 1017, 1018, 2040, 2041, 2042])(
+    "preserves supplementary paste bytes across independently delivered messages at offset %i",
+    async (prefixLength) => {
+      const text = "a".repeat(prefixLength) + "😀" + "界e\u0301" + "z".repeat(1100);
+      const inputs = terminalInputsForPaste(text);
+      const received: Buffer[] = [];
+      const coalescer = new InputCoalescer((action) => {
+        if (action.kind !== "literal") throw new Error("unexpected non-text paste action");
+        received.push(Buffer.from(action.text, "utf8"));
+      }, queueMicrotask);
+      for (const input of inputs) {
+        expect(input.data.length).toBeLessThanOrEqual(1024);
+        // Separate transport deliveries may flush independently; adjacent messages
+        // must not depend on one microtask rejoining a split surrogate pair.
+        coalescer.literal("%1", JSON.parse(JSON.stringify(input)).data);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      const expectedHex =
+        "1b5b3230307e" + Buffer.from(text, "utf8").toString("hex") + "1b5b3230317e";
+      expect(Buffer.concat(received).toString("hex")).toBe(expectedHex);
+    },
+  );
 });

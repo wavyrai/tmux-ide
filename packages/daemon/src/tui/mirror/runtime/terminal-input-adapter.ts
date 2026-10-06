@@ -53,17 +53,20 @@ export function terminalInputsForPaste(text: string): readonly SessionRuntimeTer
   if (text.includes("\0")) throw new TypeError("terminal paste must not contain NUL");
   const framed = `\u001b[200~${text}\u001b[201~`;
   const inputs: SessionRuntimeTerminalInput[] = [];
-  for (
-    let offset = 0;
-    offset < framed.length;
-    offset += SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS
-  ) {
+  for (let offset = 0; offset < framed.length; ) {
+    let end = Math.min(offset + SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS, framed.length);
+    // Messages can be encoded independently. Keep a supplementary code point
+    // intact instead of relying on the receiver to rejoin its UTF-16 halves.
+    const last = framed.charCodeAt(end - 1);
+    const next = framed.charCodeAt(end);
+    if (last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end -= 1;
     inputs.push(
       SessionRuntimeTerminalInputSchemaZ.parse({
         kind: "text",
-        data: framed.slice(offset, offset + SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS),
+        data: framed.slice(offset, end),
       }),
     );
+    offset = end;
   }
   return Object.freeze(inputs);
 }
