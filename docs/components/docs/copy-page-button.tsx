@@ -3,7 +3,13 @@
 import { CopyGlyph, useCopy } from "@/components/copy-status";
 
 /** Copies the current page as Markdown, fetched from its .mdx twin route. */
-export function CopyPageButton({ markdownUrl }: { markdownUrl: string }) {
+export function CopyPageButton({
+  markdownUrl,
+  className = "docs-action",
+}: {
+  markdownUrl: string;
+  className?: string;
+}) {
   const { status, copy } = useCopy();
 
   const onClick = () => {
@@ -16,7 +22,7 @@ export function CopyPageButton({ markdownUrl }: { markdownUrl: string }) {
 
   return (
     <>
-      <button type="button" onClick={onClick} className="docs-action">
+      <button type="button" onClick={onClick} className={className}>
         <CopyGlyph status={status} />
         Copy page
       </button>

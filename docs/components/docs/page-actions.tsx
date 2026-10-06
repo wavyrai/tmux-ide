@@ -1,4 +1,11 @@
-import { ChatGptMark, ClaudeMark, PerplexityMark } from "@/components/docs/assistant-marks";
+import {
+  ChatGptMark,
+  ClaudeMark,
+  ExternalArrow,
+  GitHubMark,
+  MarkdownMark,
+  PerplexityMark,
+} from "@/components/docs/assistant-marks";
 import { CopyPageButton } from "@/components/docs/copy-page-button";
 
 /** The prompt each assistant receives; `pageUrl` is absolute. */
@@ -17,39 +24,105 @@ export function exploreLinks(pageUrl: string) {
   ] as const;
 }
 
-/**
- * The row above every docs title: copy the page as Markdown, open the raw
- * Markdown, edit the source, or hand the page to an assistant. Everything but
- * the copy button is a plain link, so the row works without JavaScript.
- */
-export function PageActions({
-  pageUrl,
-  markdownUrl,
-  sourceUrl,
-}: {
+type PageActionProps = {
   /** Absolute canonical URL of the page. */
   pageUrl: string;
   /** Site-relative URL of the page's Markdown twin. */
   markdownUrl: string;
   /** GitHub URL of the page's MDX source. */
   sourceUrl: string;
-}) {
+};
+
+const newTab = <span className="sr-only"> (opens in a new tab)</span>;
+
+/**
+ * Page actions in the table-of-contents rail, below "On this page": a
+ * "Page" group (copy, Markdown, source) and an "Explore with AI" group.
+ * Everything but Copy page is a plain link, so it works without JavaScript.
+ */
+export function RailActions({ pageUrl, markdownUrl, sourceUrl }: PageActionProps) {
   return (
-    <div className="docs-page-actions not-prose mb-8 flex flex-wrap items-center gap-x-2 gap-y-3">
+    <div className="docs-rail-actions">
+      <section aria-labelledby="rail-page-actions">
+        <p id="rail-page-actions" className="docs-rail-label">
+          Page
+        </p>
+        <ul>
+          <li>
+            <CopyPageButton markdownUrl={markdownUrl} className="docs-rail-link" />
+          </li>
+          <li>
+            <a href={markdownUrl} className="docs-rail-link">
+              <MarkdownMark />
+              View as Markdown
+            </a>
+          </li>
+          <li>
+            <a
+              href={sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="docs-rail-link"
+            >
+              <GitHubMark />
+              Edit on GitHub
+              <ExternalArrow className="docs-rail-arrow" />
+              {newTab}
+            </a>
+          </li>
+        </ul>
+      </section>
+      <section aria-labelledby="rail-explore-ai">
+        <p id="rail-explore-ai" className="docs-rail-label">
+          Explore with AI
+        </p>
+        <ul>
+          {exploreLinks(pageUrl).map(({ name, href, Mark }) => (
+            <li key={name}>
+              <a href={href} target="_blank" rel="noopener noreferrer" className="docs-rail-link">
+                <Mark />
+                Open in {name}
+                <ExternalArrow className="docs-rail-arrow" />
+                {newTab}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+/**
+ * The compact row above the title, for layouts without the rail (narrow
+ * screens, full-width pages). The page template shows it only then.
+ */
+export function PageActions({
+  pageUrl,
+  markdownUrl,
+  sourceUrl,
+  className = "",
+}: PageActionProps & { className?: string }) {
+  return (
+    <div
+      className={`docs-page-actions not-prose mb-8 flex flex-wrap items-center gap-x-2 gap-y-3 ${className}`}
+    >
       <CopyPageButton markdownUrl={markdownUrl} />
       <a href={markdownUrl} className="docs-action">
+        <MarkdownMark />
         View as Markdown
       </a>
       <a href={sourceUrl} target="_blank" rel="noopener noreferrer" className="docs-action">
+        <GitHubMark />
         Edit on GitHub
-        <span className="sr-only"> (opens in a new tab)</span>
+        {newTab}
       </a>
       <div
         role="group"
-        aria-labelledby="explore-ai-label"
-        className="flex flex-wrap items-center gap-x-2 gap-y-3 lg:ml-auto"
+        aria-labelledby="row-explore-ai"
+        className="flex flex-wrap items-center gap-x-2 gap-y-3"
       >
-        <span id="explore-ai-label" className="type-caption-1 pr-1 text-fd-muted-foreground">
+        <span id="row-explore-ai" className="type-caption-1 pr-1 text-fd-muted-foreground">
           Explore with AI
         </span>
         {exploreLinks(pageUrl).map(({ name, href, Mark }) => (
@@ -63,7 +136,7 @@ export function PageActions({
             <Mark />
             {/* Phones show the marks only; the name stays the accessible label. */}
             <span className="max-sm:sr-only">{name}</span>
-            <span className="sr-only"> (opens in a new tab)</span>
+            {newTab}
           </a>
         ))}
       </div>

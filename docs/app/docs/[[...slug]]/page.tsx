@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { getMDXComponents } from "@/mdx-components";
 import type { Metadata } from "next";
 import { createRelativeLink } from "fumadocs-ui/mdx";
-import { PageActions } from "@/components/docs/page-actions";
+import { PageActions, RailActions } from "@/components/docs/page-actions";
 import { gitConfig } from "@/lib/layout.shared";
 import { docLastModified } from "@/lib/git-dates";
 import { PUBLISHER_ID, SITE_DESCRIPTION, SITE_URL, absoluteUrl } from "@/lib/site";
@@ -60,6 +60,12 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
     ],
   };
 
+  const actions = {
+    pageUrl,
+    markdownUrl: `${page.url}.mdx`,
+    sourceUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/content/docs/${page.path}`,
+  };
+
   return (
     <>
       <script
@@ -71,14 +77,14 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
         tabIndex={-1}
         toc={page.data.toc}
         full={page.data.full}
+        tableOfContent={{ footer: <RailActions {...actions} /> }}
         className="docs-article"
       >
         {/* First child of the article, so it sits above the title on every page. */}
-        <PageActions
-          pageUrl={pageUrl}
-          markdownUrl={`${page.url}.mdx`}
-          sourceUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/docs/content/docs/${page.path}`}
-        />
+        {/* The table-of-contents rail carries the page actions from xl up;
+            this compact row stands in when the rail is hidden (narrow
+            screens, full-width pages). */}
+        <PageActions {...actions} className={page.data.full ? "" : "xl:hidden"} />
         <DocsTitle className="docs-title">{page.data.title}</DocsTitle>
         <DocsDescription className="docs-description mb-0">{description}</DocsDescription>
         <hr className="border-fd-border" />

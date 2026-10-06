@@ -61,6 +61,7 @@
   --chart-6: oklch(0.79 0.15 78);
   --mark-claude: oklch(0.68 0.15 40);
   --mark-codex: oklch(0.63 0.17 278);
+  --mark-perplexity: oklch(0.66 0.1 200);
   --color-success: oklch(0.78 0.17 150);
 }
 
@@ -316,6 +317,7 @@ body {
   top: 2.5rem !important;
 }
 
+
 [data-slot="docs-site"] {
   --fd-banner-height: 2.5rem;
 }
@@ -498,6 +500,75 @@ body {
   .copy-glyph {
     transition: none;
   }
+}
+
+/* Page actions in the table-of-contents rail: two labelled groups below
+   "On this page", one row per action with a 14px mark, quiet until hovered. */
+.docs-rail-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  margin-top: 2rem;
+  border-top: 1px solid var(--color-fd-border);
+  padding-top: 1.5rem;
+}
+
+.docs-rail-label {
+  padding-bottom: 0.25rem;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--color-fd-muted-foreground);
+}
+
+.docs-rail-link {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  text-align: left;
+  color: var(--color-fd-muted-foreground);
+  cursor: pointer;
+  transition: color 150ms var(--ease-smooth);
+}
+
+.docs-rail-link > svg,
+.docs-rail-link > [aria-hidden] {
+  flex-shrink: 0;
+}
+
+/* Keep the copy glyph (and its cell) at the rail's 14px optical size. */
+.docs-rail-link > span[aria-hidden],
+.docs-rail-link .copy-glyph {
+  width: 14px;
+  height: 14px;
+}
+
+.docs-rail-arrow {
+  margin-left: auto;
+  opacity: 0.6;
+}
+
+@media (hover: hover) {
+  .docs-rail-link:hover {
+    color: var(--color-fd-foreground);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docs-rail-link {
+    transition: none;
+  }
+}
+
+.mark-claude {
+  color: var(--mark-claude);
+}
+
+.mark-perplexity {
+  color: var(--mark-perplexity);
 }
 
 /* Copy agent prompt: an inverted pill (ink on light pages, paper on dark)
