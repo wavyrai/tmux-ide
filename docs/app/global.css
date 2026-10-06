@@ -562,13 +562,15 @@
 }
 
 /* Install method switch: native radios, so it works before hydration and
-   without JavaScript. Only the panel matching the checked radio is shown. */
-.install-panel {
+   without JavaScript. Only the panel and note matching the checked radio
+   are shown. */
+.install-panel,
+.install-note {
   display: none;
 }
 
-.install-tabs:has(input[value="curl"]:checked) .install-panel[data-method="curl"],
-.install-tabs:has(input[value="npm"]:checked) .install-panel[data-method="npm"] {
+.install-tabs:has(input[value="curl"]:checked) [data-method="curl"],
+.install-tabs:has(input[value="npm"]:checked) [data-method="npm"] {
   display: block;
 }
 
@@ -588,37 +590,120 @@
   display: none;
 }
 
-/* Centred variant for the hero: tab row and note centre under the command. */
-.install-tabs-centred {
-  margin-inline: auto;
+/* The install box: the hero's primary call to action. An ink box with the
+   method tabs on its top edge, the command row as the copy button and the
+   follow-up command beneath. Square corners like every surface. */
+.install-box {
+  background-color: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+  text-align: left;
 }
 
-.install-tabs-centred fieldset {
-  justify-content: center;
-}
-
-.install-tabs-centred .install-panel p {
-  text-align: center;
+.install-box-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-fd-primary-foreground) 14%, transparent);
+  padding: 0.5rem 0.75rem;
 }
 
 .install-tab {
   cursor: pointer;
   border-radius: var(--radius-pill);
-  padding: 0.25rem 0.75rem;
+  padding: 0.125rem 0.625rem;
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 0.75rem;
-  line-height: 1rem;
-  color: var(--color-fd-muted-foreground);
+  line-height: 1.25rem;
+  color: color-mix(in oklab, var(--color-fd-primary-foreground) 60%, transparent);
+  transition:
+    background-color 150ms var(--ease-smooth),
+    color 150ms var(--ease-smooth);
 }
 
 .install-tab:has(input:checked) {
-  background-color: var(--color-fd-accent);
-  color: var(--color-fd-foreground);
+  background-color: color-mix(in oklab, var(--color-fd-primary-foreground) 14%, transparent);
+  color: var(--color-fd-primary-foreground);
 }
 
 .install-tab:has(input:focus-visible) {
   outline: 2px solid var(--color-fd-ring);
   outline-offset: 2px;
+}
+
+[data-slot="marketing-home"] .install-box-command {
+  display: flex;
+  width: 100%;
+  cursor: pointer;
+  align-items: center;
+  gap: 0.75rem;
+  border-radius: 0;
+  padding: 0.875rem 1.25rem 0.375rem;
+  text-align: left;
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+}
+
+.install-box-copy {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  opacity: 0.65;
+}
+
+.install-box-then {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.125rem 1.25rem 0.875rem;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.1875rem;
+  color: color-mix(in oklab, var(--color-fd-primary-foreground) 55%, transparent);
+}
+
+.install-box-then code {
+  color: var(--color-fd-primary-foreground);
+}
+
+.install-box-then span:last-child {
+  margin-left: auto;
+  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.75rem;
+}
+
+.install-note {
+  margin-top: 0.5rem;
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--color-fd-muted-foreground);
+}
+
+/* The hero CTA block: one column on the install box's width, 16px rhythm. */
+.hero-cta {
+  width: 100%;
+  max-width: 36rem;
+}
+
+.hero-cta-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+@media (width >= 40rem) {
+  .hero-cta-row {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .install-tab {
+    transition: none;
+  }
 }
 
 /* Corner mapping: controls are pills (search triggers, theme toggles and

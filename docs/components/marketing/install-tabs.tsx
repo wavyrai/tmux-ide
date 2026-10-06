@@ -13,34 +13,60 @@ import type { InstallMethod } from "@/lib/landing-content";
 export function InstallTabs({
   name,
   methods,
+  then,
   className = "",
 }: {
   name: string;
   methods: readonly InstallMethod[];
+  /** Optional follow-up command shown inside the box under the install line. */
+  then?: string;
   className?: string;
 }) {
   return (
-    <div className={`install-tabs w-full max-w-xl ${className}`}>
-      <fieldset className="flex items-center gap-1">
-        <legend className="sr-only">Install method</legend>
-        {methods.map((method, index) => (
-          <label key={method.id} className="install-tab marketing-pill-action">
-            <input
-              type="radio"
-              name={name}
-              value={method.id}
-              defaultChecked={index === 0}
-              className="sr-only"
-            />
-            {method.label}
-          </label>
+    <div className={`install-tabs w-full ${className}`}>
+      <div className="install-box">
+        <fieldset className="install-box-tabs">
+          <legend className="sr-only">Install method</legend>
+          {methods.map((method, index) => (
+            <label key={method.id} className="install-tab">
+              <input
+                type="radio"
+                name={name}
+                value={method.id}
+                defaultChecked={index === 0}
+                className="sr-only"
+              />
+              {method.label}
+            </label>
+          ))}
+        </fieldset>
+        {methods.map((method) => (
+          <div key={method.id} className="install-panel" data-method={method.id}>
+            <CopyButton
+              text={method.command}
+              label={`Copy ${method.label} install command`}
+              className="install-box-command"
+            >
+              <span aria-hidden className="font-mono">
+                $
+              </span>
+              <code className="install-command-text font-mono">{method.command}</code>
+              <span className="install-box-copy">Copy</span>
+            </CopyButton>
+          </div>
         ))}
-      </fieldset>
+        {then ? (
+          <p className="install-box-then">
+            <span aria-hidden>$</span>
+            <code>{then}</code>
+            <span aria-hidden>then open the app</span>
+          </p>
+        ) : null}
+      </div>
       {methods.map((method) => (
-        <div key={method.id} className="install-panel mt-2" data-method={method.id}>
-          <InstallCommand command={method.command} label={`Copy ${method.label} install command`} />
-          <p className="type-caption-1 mt-2 text-fd-muted-foreground">{method.note}</p>
-        </div>
+        <p key={method.id} className="install-note" data-method={method.id}>
+          {method.note}
+        </p>
       ))}
     </div>
   );

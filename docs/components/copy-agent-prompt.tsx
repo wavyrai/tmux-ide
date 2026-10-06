@@ -7,14 +7,18 @@ import { HarnessMarks } from "@/components/harness-marks";
  */
 export function CopyAgentPrompt({
   size = "default",
+  showPrompt = true,
   className = "",
 }: {
   size?: "default" | "hero";
+  /** Show the "Copies …" line; when false it stays for assistive tech and as a tooltip. */
+  showPrompt?: boolean;
   className?: string;
 }) {
   return (
     <CopyAgentPromptClient
       size={size}
+      showPrompt={showPrompt}
       className={className}
       marks={<HarnessMarks size={size === "hero" ? 16 : 14} />}
     />
