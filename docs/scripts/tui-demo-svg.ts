@@ -304,7 +304,7 @@ export async function svgDocument(
         ...text(layer.grid),
       ].join("")}</g>`,
   );
-  return `<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="t d" viewBox="0 0 ${x(size.cols)} ${y(size.rows)}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="t d" width="${x(size.cols)}" height="${y(size.rows)}" viewBox="0 0 ${x(size.cols)} ${y(size.rows)}">
 <title id="t">tmux-ide app</title>
 <desc id="d">The tmux-ide app cycling through ${frames.map((frame) => frame.label).join(", then ")}: an agent roster on Home, live agent panes with status headers in Terminals, and the command palette.</desc>
 <!-- Glyphs: a Geist Mono subset (SIL Open Font License 1.1), renamed as a modified version. -->

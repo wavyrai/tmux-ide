@@ -9,7 +9,12 @@ const manifestPath = resolve(nextDir, "server/app/(home)/page_client-reference-m
 const rawBudget = Number(process.env.TMUX_IDE_HOME_JS_RAW_BUDGET ?? 200 * 1024);
 const gzipBudget = Number(process.env.TMUX_IDE_HOME_JS_GZIP_BUDGET ?? 70 * 1024);
 const htmlGzipBudget = Number(process.env.TMUX_IDE_HOME_HTML_GZIP_BUDGET ?? 28 * 1024);
-const demoGzipBudget = Number(process.env.TMUX_IDE_DEMO_GZIP_BUDGET ?? 8 * 1024);
+// Fig. 01 is the real app rendered to SVG (see docs/contributing/tui-demo.md).
+// Loaded as an <img>, it cannot use page fonts, so it embeds a Geist Mono
+// subset to render identically on every OS. Measured at the 18 KB decision:
+// three frames ≈ 5.7 KB gzip + regular and bold glyph subsets ≈ 5.4 KB each
+// (WOFF2 does not recompress) = 15.7 KB. 8 KB held only system-font text.
+const demoGzipBudget = Number(process.env.TMUX_IDE_DEMO_GZIP_BUDGET ?? 18 * 1024);
 
 const source = readFileSync(manifestPath, "utf8");
 const assignment = source.indexOf(" = {");

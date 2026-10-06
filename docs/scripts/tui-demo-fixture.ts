@@ -52,6 +52,8 @@ function welcomeBox(rows: readonly Segment[][]): DemoLine[] {
 export interface DemoPane {
   readonly id: string;
   readonly title: string;
+  /** Where the app got the title; tmux-ide names panes it creates ("generated"). */
+  readonly nameSource?: "title" | "generated";
   readonly left: number;
   readonly top: number;
   readonly width: number;

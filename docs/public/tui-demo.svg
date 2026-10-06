@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="t d" viewBox="0 0 1344 800.8">
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="t d" width="1344" height="800.8" viewBox="0 0 1344 800.8">
 <title id="t">tmux-ide app</title>
 <desc id="d">The tmux-ide app cycling through Home, then Terminals, then Commands: an agent roster on Home, live agent panes with status headers in Terminals, and the command palette.</desc>
 <!-- Glyphs: a Geist Mono subset (SIL Open Font License 1.1), renamed as a modified version. -->

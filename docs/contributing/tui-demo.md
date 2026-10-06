@@ -40,6 +40,16 @@ pnpm demo:font           # rebuild the embedded glyph subset (needs uv)
   fails and says so. Add the character, run `pnpm demo:font`, then
   `pnpm demo:tui`.
 
+## Size budget
+
+`check:performance` caps `tui-demo.svg` at 18 KB gzip. When the cap was set,
+the three frames measured about 5.7 KB and each embedded glyph subset (regular
+and bold) about 5.4 KB, for 15.7 KB in total. Real bold is kept because the
+app draws headings, tabs and tool calls in bold. The SVG is an `<img>` that
+does not block first paint. The landing figures share one sprite
+(`tui-figures.svg`, about 3.8 KB gzip) and two font files, so they add almost
+nothing to the homepage HTML.
+
 ## Staying current
 
 `pnpm demo:tui` records a hash of every presentation file it imports (the

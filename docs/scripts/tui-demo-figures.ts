@@ -213,14 +213,15 @@ const shellPane = (title: string, width = COLS, height = PANE_ROWS): DemoPane =>
   width,
   height,
   lines: [line(["~/src/acme-web", "accent"], ["$ ", "muted"])],
+  nameSource: "generated",
 });
 
 export const FIGURES: readonly FigureSpec[] = [
   {
     variant: "names",
     label: "Renaming an agent's pane so the team can refer to it by name",
-    before: compactCodex(codex("working"), { rename: { paneId: "pane.codex", value: "reviewer" } }),
-    after: compactCodex(codex("working", "reviewer")),
+    before: compactCodex(codex("working"), { rename: { paneId: "pane.codex", value: "Reviewer" } }),
+    after: compactCodex(codex("working", "Reviewer")),
     crop: [0, 0],
     cursor: [["click", 30, 11]],
   },
@@ -284,9 +285,9 @@ export const FIGURES: readonly FigureSpec[] = [
     after: compact(
       {},
       {
-        windows: ["zsh"],
+        windows: ["warm-redwood"],
         activeWindow: 1,
-        panes: [shellPane("zsh", CROP_COLS, CROP_ROWS - 4)],
+        panes: [shellPane("warm-redwood", CROP_COLS, CROP_ROWS - 4)],
         backgroundPanes: compact({}).panes,
         focusedPane: "pane.shell",
       },

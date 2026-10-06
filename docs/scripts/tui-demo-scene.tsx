@@ -116,7 +116,7 @@ function layout(scene: Scene, panes: readonly DemoPane[], focused: string) {
     panes: members.map((pane) => ({
       pane: pane.id,
       displayName: pane.title,
-      displayNameSource: "title" as const,
+      displayNameSource: pane.nameSource ?? "title",
       left: pane.left,
       top: pane.top,
       width: pane.width,
