@@ -101,7 +101,7 @@ export function llmsIndex(): string {
       "up in the installer); split-pane teammates then appear in tmux-ide grouped under " +
       "their team, named as the lead named them, with normal agent status. tmux-ide reads " +
       "`~/.claude/teams/<team>/config.json` read-only; Claude Code owns spawning, tasks and messaging. " +
-      `Docs: ${absoluteUrl("/docs/multi-agent-teams#claude-code-agent-teams")}`,
+      `Docs: ${absoluteUrl("/docs/claude-code-agent-teams")}`,
     "",
     "Every documentation page is also available as Markdown: append `.md` (or `.mdx`) to its URL " +
       `(for example ${absoluteUrl("/docs/getting-started.md")}).`,
