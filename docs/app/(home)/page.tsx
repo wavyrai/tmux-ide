@@ -4,7 +4,6 @@ import Link from "next/link";
 
 import { AppIcon } from "@/components/app-icon";
 import { CopyAgentPrompt } from "@/components/copy-agent-prompt";
-import { AsciiWordmark } from "@/components/ascii-wordmark";
 import { LandingFaqJsonLd } from "@/components/landing-faq-json-ld";
 import {
   Band,
@@ -72,7 +71,7 @@ export default async function HomePage() {
     <MarketingFrame id="main-content" tabIndex={-1}>
       <Stretch ground="paper">
         <Band>
-          <BandBody className="pb-10 pt-10! md:pb-12 md:pt-12!">
+          <BandBody className="pb-12 pt-12! md:pb-14 md:pt-16!">
             <Link
               href={CURRENT_RELEASE_PATH}
               className="marketing-enter-fast marketing-pill-action mb-8 inline-flex items-center gap-2 rounded-full border border-marketing-line bg-marketing-raise type-caption-1 px-3 py-1.5 text-fd-foreground"
@@ -83,60 +82,51 @@ export default async function HomePage() {
                 →
               </span>
             </Link>
-            <div className="mb-10 w-full max-w-3xl">
-              <AsciiWordmark animated className="marketing-enter-step-2" />
+            <h1 className="type-hero-title marketing-enter marketing-enter-step-2 max-w-[22ch] text-fd-foreground">
+              {LANDING_HERO.title}
+            </h1>
+            <p className="type-marketing-lede marketing-enter marketing-enter-step-3 mt-6 max-w-[60ch] text-fd-muted-foreground">
+              <span className="text-fd-foreground">{LANDING_HERO.ledeLead}</span>{" "}
+              {LANDING_HERO.lede}
+            </p>
+            <div className="marketing-enter marketing-enter-step-4 mt-8 flex flex-col gap-6">
+              {/* Install and the agent prompt sit side by side from lg up; the
+                  pill drops by the tab row's height to line up with the command. */}
+              <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
+                <InstallTabs name="install-method-hero" methods={INSTALL_METHODS} />
+                <CopyAgentPrompt size="hero" className="max-w-sm lg:pt-[2.125rem]" />
+              </div>
+              <div className="type-body flex flex-wrap items-center gap-x-5 gap-y-2 text-fd-muted-foreground">
+                <span>
+                  Then run <code className="font-mono text-fd-foreground">{APP_COMMAND}</code>
+                </span>
+                <Link
+                  href="/docs/getting-started"
+                  className="marketing-link-action text-fd-foreground"
+                >
+                  Docs →
+                </Link>
+                <a
+                  href="https://github.com/wavyrai/tmux-ide"
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={
+                    stars === null
+                      ? "tmux-ide on GitHub (opens in a new tab)"
+                      : `tmux-ide on GitHub, ${stars} stars (opens in a new tab)`
+                  }
+                  className="marketing-link-action inline-flex items-center gap-1.5 text-fd-foreground"
+                >
+                  <span>GitHub</span>
+                  {stars !== null ? (
+                    <span className="type-caption-1 inline-flex items-center gap-1 font-mono text-fd-muted-foreground">
+                      <span aria-hidden>★</span>
+                      <span>{formatStars(stars)}</span>
+                    </span>
+                  ) : null}
+                </a>
+              </div>
             </div>
-            <MarketingGrid className="items-end gap-y-8 lg:gap-x-12">
-              <Cell className="marketing-enter marketing-enter-step-3 lg:col-span-13">
-                <p className="type-subheadline text-fd-muted-foreground">{LANDING_HERO.eyebrow}</p>
-                <h1 className="type-page-title mt-4 max-w-[17ch] text-fd-foreground">
-                  {LANDING_HERO.title}
-                </h1>
-              </Cell>
-
-              <Cell className="marketing-enter marketing-enter-step-4 overflow-visible lg:col-span-11">
-                <p className="type-marketing-lede mt-7 max-w-[62ch] text-fd-muted-foreground">
-                  <span className="text-fd-foreground">{LANDING_HERO.ledeLead}</span>{" "}
-                  {LANDING_HERO.lede}
-                </p>
-                <InstallTabs
-                  name="install-method-hero"
-                  methods={INSTALL_METHODS}
-                  className="mt-7"
-                />
-                <div className="type-body mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-fd-muted-foreground">
-                  <span>
-                    Then run <code className="font-mono text-fd-foreground">{APP_COMMAND}</code>
-                  </span>
-                  <Link
-                    href="/docs/getting-started"
-                    className="marketing-link-action text-fd-foreground"
-                  >
-                    Docs →
-                  </Link>
-                  <a
-                    href="https://github.com/wavyrai/tmux-ide"
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={
-                      stars === null
-                        ? "tmux-ide on GitHub (opens in a new tab)"
-                        : `tmux-ide on GitHub, ${stars} stars (opens in a new tab)`
-                    }
-                    className="marketing-link-action inline-flex items-center gap-1.5 text-fd-foreground"
-                  >
-                    <span>GitHub</span>
-                    {stars !== null ? (
-                      <span className="type-caption-1 inline-flex items-center gap-1 font-mono text-fd-muted-foreground">
-                        <span aria-hidden>★</span>
-                        <span>{formatStars(stars)}</span>
-                      </span>
-                    ) : null}
-                  </a>
-                </div>
-                <CopyAgentPrompt size="hero" className="mt-8 max-w-xl" />
-              </Cell>
-            </MarketingGrid>
           </BandBody>
           <figure
             id="figure-01"
