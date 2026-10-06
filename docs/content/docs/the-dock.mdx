@@ -25,7 +25,7 @@ and `unadopt` reverts it completely.
   agent state: blocked, working, done, or idle. One glance across the bar tells
   you where the fleet stands. See [Agent detection](/docs/agent-detection).
 - **Triggers** — clickable `[ ⌂ home ]`, `[ ? keys ]`, and `[ ⧉ switch ]` open
-  the home cockpit, the cheat sheet, and the session switcher. Each advertises
+  the fleet home, the cheat sheet, and the session switcher. Each advertises
   its **prefix twin** (`^b h`, `^b k`, `^b j`) — the key form that works
   everywhere (see below).
 
@@ -55,8 +55,7 @@ tmux-ide unadopt work      # remove the chrome; session keeps running
 
 Adoption is **purely additive tmux configuration**. There is no wrapper process
 between you and tmux. If tmux-ide crashes or you uninstall it, adopted sessions
-keep running as ordinary tmux — you just lose the decoration. That's the whole
-point: no lock-in, no risk.
+keep running as ordinary tmux without the decoration.
 
 ## One interaction grammar
 
@@ -70,7 +69,7 @@ Every surface tmux-ide draws speaks the same five keys:
 | `esc`     | Back out / close           |
 | `?`       | Show keys for this surface |
 
-Learn it once; it works in the home cockpit, the sidebar, and every panel. (The
+Learn it once; it works in the fleet home, the sidebar, and every panel. (The
 app has its own keys — see [Getting started](/docs/getting-started#keys).)
 
 ## The keys
@@ -81,7 +80,7 @@ faster shortcut when it's available.
 
 | Action         | Prefix (always works) | Alt fast-path |
 | -------------- | --------------------- | ------------- |
-| Home cockpit   | `prefix h`            | `⌥h`          |
+| Fleet home     | `prefix h`            | `⌥h`          |
 | Switch session | `prefix j`            | `⌥p`          |
 | Cheat sheet    | `prefix k`            | `⌥k`          |
 | Actions menu   | `prefix u`            | `⌥m`          |

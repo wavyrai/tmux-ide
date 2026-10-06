@@ -3,9 +3,9 @@ title: Notifications and events
 description: "Get told when an agent is blocked or done: tmux toasts, macOS and terminal banners, sound, a JSONL event stream, and wait commands for scripts."
 ---
 
-The reason to know your fleet's status is to act on it. tmux-ide surfaces every
-agent-status transition three ways: **notifications** for humans, an **event
-stream** for scripts, and **wait** primitives for coordination.
+tmux-ide tells you when an agent becomes blocked or done. Every agent-status
+change reaches you three ways: **notifications** for you, an **event stream**
+for scripts, and **wait** commands for coordination.
 
 Notifications and the event stream come from the background updater described
 in [tmux chrome](/docs/the-dock#the-background-updater). It runs once any

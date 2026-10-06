@@ -3,9 +3,9 @@ title: CLI reference
 description: "Every public tmux-ide 2.9.3 command and flag, with JSON output for scripts and agents: open the app, adopt, restore, send, wait, automation and more."
 ---
 
-This page follows the public surface printed by `tmux-ide --help` in
-`2.9.3`. `--json` is available on the scripting commands that explicitly
-list it below; interactive commands do not emit JSON.
+This is every public `tmux-ide` command in `2.9.3`, as printed by
+`tmux-ide --help`. Scripting commands that list `--json` below print JSON;
+interactive commands do not.
 
 ## Open tmux-ide
 
@@ -17,8 +17,8 @@ list it below; interactive commands do not emit JSON.
 | `tmux-ide app [session]`    | Open Home, or bypass Home and open a live session                                                      |
 | `tmux-ide app --detachable` | Host the app in `_tmux-ide-app`; `Ctrl+Q` detaches and the viewer survives                             |
 | `tmux-ide app --hosted`     | Alias for `--detachable`                                                                               |
-| `tmux-ide team [--json]`    | Open the classic fleet cockpit, or print fleet state as JSON                                           |
-| `tmux-ide --team`           | Force the classic fleet cockpit for a bare invocation                                                  |
+| `tmux-ide team [--json]`    | Open the classic fleet view, or print fleet state as JSON                                              |
+| `tmux-ide --team`           | Force the classic fleet view for a bare invocation                                                     |
 
 `app.detachable` in `~/.tmux-ide/config.json` makes detachable mode the default.
 
@@ -195,7 +195,7 @@ ordinary terminal surface.
 | Command                                 | What it does                                                         |
 | --------------------------------------- | -------------------------------------------------------------------- |
 | `tmux-ide update [--dry-run] [--json]`  | Update according to the detected install method, or print the plan   |
-| `tmux-ide update --tui-binary [--json]` | Download and verify the matching compiled OpenTUI runtime            |
+| `tmux-ide update --tui-binary [--json]` | Download and verify the matching compiled app runtime                |
 | `tmux-ide update --manifests [--json]`  | Refresh the agent-detection manifest pack; local overrides still win |
 | `tmux-ide skill-sync [--json]`          | Refresh the managed Claude Code skill in `~/.claude/skills/tmux-ide` |
 
