@@ -65,3 +65,21 @@ app's UI layer and visual tokens) in `docs/scripts/tui-demo.sources.json`.
 render, names the changed files, and also verifies the sprite and cursor set.
 After a TUI change, run `pnpm demo:tui`, review the result, and commit the
 regenerated files with the change.
+
+## README media
+
+The README can't run the landing page's CSS, so `pnpm readme:media` exports
+the agent-teams diagram (Fig. 5) as files in `.github/assets/`, which sits
+outside the npm package:
+
+- `agent-teams-light.gif` and `agent-teams-dark.gif`: one 18 s loop each, at
+  12 fps and 2× scale (1948 × 1158).
+- `agent-teams-light.png` and `agent-teams-dark.png`: the settled final frame
+  (the reduced-motion view), as a static fallback.
+
+Run `pnpm docs:build` first. The script starts the production build on a free
+port and pauses every animation, seeking it frame by frame in each site
+theme. It then encodes the frames with ffmpeg and Pillow, which uv provides,
+so no system packages are needed. It uses Playwright's Chromium from the
+desktop renderer workspace; set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use another
+Chromium. Regenerate the files when Fig. 5 changes.
