@@ -24,7 +24,7 @@
   "scripts": {
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --exclude src/terminal-compact-cold.test.ts && vitest run src/terminal-compact-cold.test.ts --maxWorkers=1"
   },
   "dependencies": {
     "@tmux-ide/contracts": "workspace:*",

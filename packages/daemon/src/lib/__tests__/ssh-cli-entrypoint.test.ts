@@ -140,7 +140,7 @@ describe("SSH app CLI entry", () => {
       "next-builder",
       "--json",
     ]);
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr || result.stdout).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       written: false,
       registry: { machines: [{ ...profile, label: "Renamed", sshTarget: "next-builder" }] },
