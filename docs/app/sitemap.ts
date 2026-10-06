@@ -4,12 +4,16 @@ import { source } from "@/lib/source";
 import { absoluteUrl } from "@/lib/site";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const docs = source.getPages().map((page) => ({
-    url: absoluteUrl(page.url),
-    lastModified: docLastModified(page.path),
-    changeFrequency: "weekly" as const,
-    priority: page.url === "/docs" ? 0.9 : 0.7,
-  }));
+  // noindex pages stay reachable but are not advertised to search engines.
+  const docs = source
+    .getPages()
+    .filter((page) => !page.data.noindex)
+    .map((page) => ({
+      url: absoluteUrl(page.url),
+      lastModified: docLastModified(page.path),
+      changeFrequency: "weekly" as const,
+      priority: page.url === "/docs" ? 0.9 : 0.7,
+    }));
 
   const routes: MetadataRoute.Sitemap = [
     {

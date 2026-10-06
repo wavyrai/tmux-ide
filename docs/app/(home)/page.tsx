@@ -59,6 +59,19 @@ async function fetchStarCount(): Promise<number | null> {
   }
 }
 
+/** Keeps hyphenated words such as "open-source" from breaking at the hyphen. */
+function keepHyphenatedWords(text: string) {
+  return text.split(/(\S+-\S+)/u).map((part, index) =>
+    index % 2 === 1 ? (
+      <span key={part} className="whitespace-nowrap">
+        {part}
+      </span>
+    ) : (
+      part
+    ),
+  );
+}
+
 function formatStars(count: number): string {
   if (count >= 1000) return `${(count / 1000).toFixed(1).replace(/\.0$/, "")}k`;
   return String(count);
@@ -72,59 +85,61 @@ export default async function HomePage() {
       <Stretch ground="paper">
         <Band>
           <BandBody className="pb-12 pt-12! md:pb-14 md:pt-16!">
-            <Link
-              href={CURRENT_RELEASE_PATH}
-              className="marketing-enter-fast marketing-pill-action mb-8 inline-flex items-center gap-2 rounded-full border border-marketing-line bg-marketing-raise type-caption-1 px-3 py-1.5 text-fd-foreground"
-            >
-              <span className="text-fd-muted-foreground">New</span>
-              <span>The OpenTUI app in 2.9</span>
-              <span aria-hidden className="text-fd-muted-foreground">
-                →
-              </span>
-            </Link>
-            <h1 className="type-hero-title marketing-enter marketing-enter-step-2 max-w-[22ch] lg:max-w-[27ch] text-fd-foreground">
-              {LANDING_HERO.title}
-            </h1>
-            <p className="type-marketing-lede marketing-enter marketing-enter-step-3 mt-6 max-w-[60ch] text-fd-muted-foreground">
-              <span className="text-fd-foreground">{LANDING_HERO.ledeLead}</span>{" "}
-              {LANDING_HERO.lede}
-            </p>
-            <div className="marketing-enter marketing-enter-step-4 mt-8 flex flex-col gap-6">
-              {/* Install and the agent prompt sit side by side from lg up; the
-                  pill drops by the tab row's height to line up with the command. */}
-              <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
-                <InstallTabs name="install-method-hero" methods={INSTALL_METHODS} />
-                <CopyAgentPrompt size="hero" className="max-w-sm lg:pt-[2.125rem]" />
-              </div>
-              <div className="type-body flex flex-wrap items-center gap-x-5 gap-y-2 text-fd-muted-foreground">
-                <span>
-                  Then run <code className="font-mono text-fd-foreground">{APP_COMMAND}</code>
+            {/* One centred text column over the full-width demo below. */}
+            <div className="mx-auto flex max-w-[58rem] flex-col items-center text-center">
+              <Link
+                href={CURRENT_RELEASE_PATH}
+                className="marketing-enter-fast marketing-pill-action mb-8 inline-flex items-center gap-2 rounded-full border border-marketing-line bg-marketing-raise type-caption-1 px-3 py-1.5 text-fd-foreground"
+              >
+                <span className="text-fd-muted-foreground">New</span>
+                <span>The tmux-ide app in 2.9</span>
+                <span aria-hidden className="text-fd-muted-foreground">
+                  →
                 </span>
-                <Link
-                  href="/docs/getting-started"
-                  className="marketing-link-action text-fd-foreground"
-                >
-                  Docs →
-                </Link>
-                <a
-                  href="https://github.com/wavyrai/tmux-ide"
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={
-                    stars === null
-                      ? "tmux-ide on GitHub (opens in a new tab)"
-                      : `tmux-ide on GitHub, ${stars} stars (opens in a new tab)`
-                  }
-                  className="marketing-link-action inline-flex items-center gap-1.5 text-fd-foreground"
-                >
-                  <span>GitHub</span>
-                  {stars !== null ? (
-                    <span className="type-caption-1 inline-flex items-center gap-1 font-mono text-fd-muted-foreground">
-                      <span aria-hidden>★</span>
-                      <span>{formatStars(stars)}</span>
-                    </span>
-                  ) : null}
-                </a>
+              </Link>
+              <h1 className="type-hero-title marketing-enter marketing-enter-step-2 text-hero-ink">
+                {keepHyphenatedWords(LANDING_HERO.title)}
+              </h1>
+              <p className="type-hero-lede marketing-enter marketing-enter-step-3 mt-6 max-w-[58ch] text-hero-body">
+                {LANDING_HERO.ledeLead} {LANDING_HERO.lede}
+              </p>
+              <div className="marketing-enter marketing-enter-step-4 mt-8 flex w-full flex-col items-center gap-6">
+                <InstallTabs
+                  name="install-method-hero"
+                  methods={INSTALL_METHODS}
+                  className="install-tabs-centred"
+                />
+                <CopyAgentPrompt size="hero" className="max-w-md" />
+                <div className="type-body flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-fd-muted-foreground">
+                  <span>
+                    Then run <code className="font-mono text-fd-foreground">{APP_COMMAND}</code>
+                  </span>
+                  <Link
+                    href="/docs/getting-started"
+                    className="marketing-link-action text-fd-foreground"
+                  >
+                    Docs →
+                  </Link>
+                  <a
+                    href="https://github.com/wavyrai/tmux-ide"
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={
+                      stars === null
+                        ? "tmux-ide on GitHub (opens in a new tab)"
+                        : `tmux-ide on GitHub, ${stars} stars (opens in a new tab)`
+                    }
+                    className="marketing-link-action inline-flex items-center gap-1.5 text-fd-foreground"
+                  >
+                    <span>GitHub</span>
+                    {stars !== null ? (
+                      <span className="type-caption-1 inline-flex items-center gap-1 font-mono text-fd-muted-foreground">
+                        <span aria-hidden>★</span>
+                        <span>{formatStars(stars)}</span>
+                      </span>
+                    ) : null}
+                  </a>
+                </div>
               </div>
             </div>
           </BandBody>
@@ -137,7 +152,7 @@ export default async function HomePage() {
               <div className="border border-terminal-line bg-terminal-stage">
                 <Image
                   src="/tui-demo.svg"
-                  alt="Animated production tmux-ide OpenTUI showing agent status, terminal panes, window controls, and the command palette"
+                  alt="Animated tmux-ide app showing agent status, terminal panes, window controls, and Commands"
                   width={tuiDemoSize.width}
                   height={tuiDemoSize.height}
                   unoptimized
@@ -158,7 +173,7 @@ export default async function HomePage() {
                 </Link>
               }
             >
-              Production OpenTUI / sessions, agents, panes, and commands
+              Production app / sessions, agents, panes, and Commands
             </TechnicalCaption>
           </figure>
         </Band>
@@ -169,9 +184,9 @@ export default async function HomePage() {
           <BandBody>
             <SectionHeader
               eyebrow="One workspace, every agent accounted for"
-              title="Name them. See their state."
+              title="Named agents with live status."
               titleMuted="Go straight to the right pane."
-              description="A clear three-step loop replaces terminal hunting with a workspace the whole team can understand."
+              description="Name each agent, watch its state, and open its exact pane."
             />
             <p className="type-body mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 text-fd-muted-foreground">
               <span className="text-fd-foreground">Name</span>
@@ -203,14 +218,25 @@ export default async function HomePage() {
                 </Cell>
               ))}
             </Mosaic>
+            <div className="type-body mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+              <Link href="/docs/agent-detection" className="marketing-link-action text-fd-primary">
+                How agent status is detected →
+              </Link>
+              <Link
+                href="/docs/multi-agent-teams"
+                className="marketing-link-action text-fd-primary"
+              >
+                Coordinate a team of agents →
+              </Link>
+            </div>
           </BandBody>
         </Band>
         <Band>
           <BandBody>
             <SectionHeader
               eyebrow="Durable by architecture"
-              title="Close the interface. Disconnect SSH."
-              titleMuted="Your agents keep running."
+              title="Agents keep running in tmux."
+              titleMuted="Close the app or lose SSH."
               description={
                 <>
                   tmux has already absorbed years of terminal, resize, shell, disconnect, and remote
@@ -243,6 +269,17 @@ export default async function HomePage() {
                 </Cell>
               ))}
             </Mosaic>
+            <div className="type-body mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+              <Link href="/docs/restore-resume" className="marketing-link-action text-fd-primary">
+                Restore sessions after a crash →
+              </Link>
+              <Link
+                href="/docs/app-surfaces#connect-to-another-machine-over-ssh"
+                className="marketing-link-action text-fd-primary"
+              >
+                Connect to a machine over SSH →
+              </Link>
+            </div>
             <div className="type-body mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 text-fd-muted-foreground">
               <span className="text-fd-foreground">Local terminal</span>
               <span aria-hidden>→</span>
@@ -251,9 +288,8 @@ export default async function HomePage() {
               <span className="text-fd-foreground">Same durable tmux workspace</span>
             </div>
             <p className="type-marketing-body mt-6 max-w-[72ch] text-fd-muted-foreground">
-              That makes tmux-ide legible to both humans and agents: inspect sessions, target a
-              named pane, and communicate through established tmux primitives rather than teaching
-              every agent a proprietary control plane.
+              Humans and agents use the same tmux primitives: inspect sessions, target a named pane,
+              send and wait. No agent needs a proprietary control plane.
             </p>
           </BandBody>
         </Band>
@@ -264,7 +300,7 @@ export default async function HomePage() {
           <BandBody>
             <SectionHeader
               eyebrow="Everything remains ordinary tmux"
-              title="Create, arrange, and operate without breaking flow."
+              title="Windows, splits and resizing are real tmux operations."
               description="The visual layer maps directly onto familiar tmux operations. Use it when it helps, then drop back to tmux whenever you want."
             />
             <Mosaic bleed className="mt-12 lg:grid-cols-3">
@@ -310,7 +346,7 @@ export default async function HomePage() {
         <Band>
           <BandBody>
             <LandingFaqJsonLd />
-            <SectionHeader eyebrow="Questions, answered" title="The important details." />
+            <SectionHeader eyebrow="Questions, answered" title="tmux-ide FAQ" />
             <div id="faq" className="mt-12 border-t border-fd-border">
               {LANDING_FAQ.map(({ question, answer }) => (
                 <details key={question} className="group border-b border-fd-border py-6">
@@ -347,7 +383,7 @@ export default async function HomePage() {
                     </span>
                   }
                   title="Build your team of agents."
-                  description="Install tmux-ide, open the app, and turn the tmux sessions you already use into one clear agent workspace."
+                  description="Install tmux-ide, open the app, and see every agent in the tmux sessions you already use."
                 />
                 <div className="mt-8 flex flex-col items-center text-center">
                   <InstallCommand command={INSTALL_COMMAND} />

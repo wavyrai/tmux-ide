@@ -7,7 +7,7 @@ export const SITE_NAME = "tmux-ide";
 export const SITE_TAGLINE = "The open-source workspace for coding agents.";
 export const SITE_TITLE = "tmux-ide — the open-source workspace for coding agents";
 export const SITE_DESCRIPTION =
-  "Give coding agents a dedicated tmux workspace with named agents, live status, exact pane navigation, terminal-native controls, durable sessions, and SSH support.";
+  "Run Claude Code, Codex and other coding agents in the tmux sessions you already use. See which agent is working or needs you, and jump to its pane.";
 export const SITE_IMAGE = "/og-image.png";
 export const SITE_REPOSITORY = "https://github.com/wavyrai/tmux-ide";
 export const SOFTWARE_DOWNLOAD_URL = "https://www.npmjs.com/package/tmux-ide";

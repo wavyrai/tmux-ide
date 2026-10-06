@@ -267,6 +267,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide integration install opencode")} ${dim("Capture opencode session ids for restore --resume-agents")}
   ${cyan("tmux-ide integration uninstall")} <claude|opencode> ${dim("Remove tmux-ide's integration entries")}
   ${cyan("tmux-ide integration status")} [--json]  ${dim("Show discovered agents, integration state, and resume-id capture")}
+  ${cyan("tmux-ide integration agent-teams")} [enable|disable|status] [--json] ${dim("Claude Code agent teams (installer enables; opt-out respected)")}
   ${cyan("tmux-ide agent explain")} <pane> [--json]  ${dim("Debug how a pane's agent state is detected")}
   ${cyan("tmux-ide cheatsheet")}         ${dim("Print the key cheat sheet (⌥k / [ ? keys ] popup)")}
   ${cyan("tmux-ide menu")} [--client N]  ${dim("Open the right-click actions menu (⌥m / right-click any pane or the bar)")}
@@ -1546,14 +1547,53 @@ try {
       const installable = agent === "claude" || agent === "opencode";
       if (!sub || (needsAgent && !installable)) {
         console.error(
-          "Usage: tmux-ide integration <install|uninstall|status|offer> [claude|opencode]\n" +
+          "Usage: tmux-ide integration <install|uninstall|status|offer|agent-teams> [claude|opencode]\n" +
             "  install    claude: hook lifecycle events into tmux pane state\n" +
             "             opencode: plugin that records the session id for restore --resume-agents\n" +
             "  uninstall  remove exactly the tmux-ide entries for that agent\n" +
             "  status     list discovered agents + integration/capture state\n" +
-            "  offer      one-time first-adopt install prompt (used by the popup)",
+            "  offer      one-time first-adopt install prompt (used by the popup)\n" +
+            "  agent-teams [enable|disable|status]  Claude Code agent teams in ~/.claude/settings.json",
         );
         process.exit(1);
+      }
+      if (sub === "agent-teams") {
+        // Claude Code agent teams: env flag + teammateMode in ~/.claude/settings.json.
+        // The installer runs `enable` by default; an explicit opt-out ("0") is respected.
+        const action = agent ?? "status";
+        if (action !== "enable" && action !== "disable" && action !== "status") {
+          console.error(
+            "Usage: tmux-ide integration agent-teams [enable [--if-not-disabled]|disable|status] [--json]",
+          );
+          process.exit(1);
+        }
+        const teams = await import("../packages/daemon/src/tui/integrations/claude-agent-teams.ts");
+        const { homedir } = await import("node:os");
+        const tilde = (text: string) => text.replaceAll(`${homedir()}/`, "~/");
+        if (action === "status") {
+          const status = teams.claudeAgentTeamsStatus();
+          if (json) console.log(JSON.stringify(status, null, 2));
+          else {
+            console.log(`settings:      ${tilde(status.settingsPath)}`);
+            console.log(`claude:        ${status.claudeDetected ? "detected" : "not found"}`);
+            console.log(`agent teams:   ${status.setting}`);
+            console.log(`teammateMode:  ${status.teammateMode ?? "(unset)"}`);
+          }
+          if (status.setting === "invalid-settings") process.exit(1);
+          break;
+        }
+        // An explicit `enable` is the user's choice and overrides an earlier opt-out;
+        // the installer passes --if-not-disabled so it never undoes one.
+        const result =
+          action === "enable"
+            ? teams.enableClaudeAgentTeams(undefined, undefined, {
+                overrideOptOut: values["if-not-disabled"] !== true,
+              })
+            : teams.disableClaudeAgentTeams();
+        if (json) console.log(JSON.stringify(result, null, 2));
+        else console.log(tilde(result.message));
+        if (result.action === "invalid") process.exit(1);
+        break;
       }
       if (needsAgent && agent === "opencode") {
         const oc = await import("../packages/daemon/src/tui/integrations/opencode.ts");

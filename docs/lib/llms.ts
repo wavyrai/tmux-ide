@@ -96,6 +96,12 @@ export function llmsIndex(): string {
     "",
     `AI agents: read ${absoluteUrl("/agents.md")} first — install, status reporting, and coordination commands in one page.`,
     "",
+    "Claude Code agent teams: set `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` and `teammateMode` " +
+      '`"tmux"` in `~/.claude/settings.json`; split-pane teammates then appear in tmux-ide grouped under ' +
+      "their team, named as the lead named them, with normal agent status. tmux-ide reads " +
+      "`~/.claude/teams/<team>/config.json` read-only; Claude Code owns spawning, tasks and messaging. " +
+      `Docs: ${absoluteUrl("/docs/multi-agent-teams#claude-code-agent-teams")}`,
+    "",
     "Every documentation page is also available as Markdown: append `.mdx` to its URL " +
       `(for example ${absoluteUrl("/docs/getting-started.mdx")}).`,
   ];

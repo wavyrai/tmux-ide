@@ -18,6 +18,21 @@
   --color-marketing-line: var(--marketing-line);
   --color-terminal-stage: var(--terminal-stage);
   --color-terminal-line: var(--terminal-line);
+  --color-hero-ink: var(--hero-ink);
+  --color-hero-body: var(--hero-body);
+
+  /* Corners are either square or fully rounded: every radius step is 0,
+     and pills use --radius-pill (or rounded-full). Fumadocs' rounded-*
+     classes resolve through these tokens too. */
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+  --radius-4xl: 0;
+  --radius-pill: 9999px;
 
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out-fluid: cubic-bezier(0.32, 0.72, 0, 1);
@@ -66,6 +81,9 @@
   --chart-5: oklch(0.68 0.18 352);
   --chart-6: oklch(0.79 0.15 78);
   --color-success: oklch(0.78 0.17 150);
+  /* Hero inks: a charcoal headline over a warm body tone. */
+  --hero-ink: oklch(0.315 0.002 106);
+  --hero-body: oklch(0.4 0.008 70);
   /* The inverted pill: charcoal fill, off-white ink. */
   --pill-fill: oklch(0.315 0.002 106);
   --pill-ink: oklch(0.987 0 0);
@@ -98,6 +116,8 @@
   --terminal-line: rgb(255 255 255 / 10%);
   --docs-prose-body: oklch(0.9848 0 0);
   --color-success: oklch(0.6 0.17 150);
+  --hero-ink: oklch(0.955 0.002 80);
+  --hero-body: oklch(0.87 0.004 75);
   --pill-fill: oklch(0.9848 0 0);
   --pill-ink: oklch(0.1405 0.004 285.8);
 }
@@ -320,25 +340,31 @@
   }
 }
 
-/* The landing headline, set in the brand's pixel face now that the header
-   carries the wordmark: 32/44 on phones, 48/64 from sm, 64/80 from lg,
-   tracked at -0.02em like the other display roles. */
+/* The landing headline and lede: a centred display block in the heading
+   face (51.2px, 67.2px from sm; line height 1.02; -0.03em) over a 16px /
+   17.5px lede with relaxed leading, in the hero's own ink tones. */
 @utility type-hero-title {
-  font-family: var(--font-brand), var(--font-display), ui-sans-serif, system-ui, sans-serif;
-  font-size: 2rem;
-  line-height: 2.75rem;
-  letter-spacing: -0.02em;
-  font-weight: 500;
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  /* Phones scale with the viewport (about 41px at 390, 38px at 360) so the
+     headline sets in three lines without an orphaned first word. */
+  font-size: clamp(2.375rem, 10.6vw, 3.2rem);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  font-weight: 600;
   text-wrap: balance;
 
   @media (width >= 40rem) {
-    font-size: 3rem;
-    line-height: 4rem;
+    font-size: 4.2rem;
   }
+}
 
-  @media (width >= 64rem) {
-    font-size: 4rem;
-    line-height: 5rem;
+@utility type-hero-lede {
+  font-size: 1rem;
+  line-height: 1.625;
+  text-wrap: pretty;
+
+  @media (width >= 40rem) {
+    font-size: 1.09375rem;
   }
 }
 
@@ -409,7 +435,7 @@
 [data-slot="marketing-home"] [data-marketing-button] {
   font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
   font-weight: 500;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
 }
 
 [data-slot="docs-site"] button {
@@ -487,6 +513,7 @@
 }
 
 .docs-prose :where(:not(pre) > code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  border-radius: 0;
   font-size: 0.8125rem;
 }
 
@@ -512,10 +539,10 @@
   color: var(--color-fd-primary-foreground);
 }
 
-/* A command can wrap on narrow screens, so it keeps a rounded rectangle
-   rather than the pill shape other marketing buttons use. */
+/* The install command is a square box (it can wrap on narrow screens),
+   not a pill like the other marketing buttons. */
 [data-slot="marketing-home"] .marketing-command {
-  border-radius: 0.875rem;
+  border-radius: 0;
 }
 
 /* Install method switch: native radios, so it works before hydration and
@@ -529,9 +556,38 @@
   display: block;
 }
 
+/* The command never wraps: one line that scrolls sideways on narrow
+   screens, with the scrollbar hidden and a fade at the trailing edge. The
+   whole box stays the copy target. */
+.install-command-text {
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
+}
+
+.install-command-text::-webkit-scrollbar {
+  display: none;
+}
+
+/* Centred variant for the hero: tab row and note centre under the command. */
+.install-tabs-centred {
+  margin-inline: auto;
+}
+
+.install-tabs-centred fieldset {
+  justify-content: center;
+}
+
+.install-tabs-centred .install-panel p {
+  text-align: center;
+}
+
 .install-tab {
   cursor: pointer;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   padding: 0.25rem 0.75rem;
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 0.75rem;
@@ -549,13 +605,24 @@
   outline-offset: 2px;
 }
 
+/* Corner mapping: controls are pills (search triggers, theme toggles and
+   the sidebar toolbar that holds them); surfaces stay square through the
+   zeroed radius tokens. Fumadocs gives some of these controls stepped radii,
+   so they are set here explicitly. */
+[data-search-full],
+[data-theme-toggle],
+[data-theme-toggle] > *,
+:has(> [data-theme-toggle]) {
+  border-radius: var(--radius-pill) !important;
+}
+
 /* Docs page actions: quiet outlined pills above the title. */
 .docs-action {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
   border: 1px solid var(--color-fd-border);
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   padding: 0.25rem 0.75rem;
   font-size: 0.8125rem;
   line-height: 1.1875rem;
@@ -644,7 +711,7 @@
 .prompt-frame {
   position: relative;
   display: inline-flex;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   isolation: isolate;
 }
 
@@ -653,7 +720,7 @@
   height: 2.25rem;
   align-items: center;
   gap: 0.375rem;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   background-color: var(--pill-fill);
   padding: 0 0.875rem;
   font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;

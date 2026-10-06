@@ -53,7 +53,7 @@ export function InstallCommand({ command, label }: { command: string; label?: st
       <span aria-hidden className="font-mono">
         $
       </span>
-      <code className="min-w-0 break-all font-mono">{command}</code>
+      <code className="install-command-text font-mono">{command}</code>
       <span className="type-caption-1 ml-auto opacity-65">Copy</span>
     </CopyButton>
   );
