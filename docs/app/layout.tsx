@@ -36,7 +36,7 @@ const image = {
   url: SITE_IMAGE,
   width: 1200,
   height: 630,
-  alt: "tmux-ide — a dedicated workspace for coding agents",
+  alt: SITE_TITLE,
 };
 
 export const metadata: Metadata = {

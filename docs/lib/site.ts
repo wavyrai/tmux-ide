@@ -4,7 +4,8 @@ const configuredUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
 
 export const SITE_URL = (configuredUrl || "https://tmux-ide.com").replace(/\/+$/u, "");
 export const SITE_NAME = "tmux-ide";
-export const SITE_TITLE = "tmux-ide — a dedicated workspace for coding agents";
+export const SITE_TAGLINE = "The open-source workspace for coding agents.";
+export const SITE_TITLE = "tmux-ide — the open-source workspace for coding agents";
 export const SITE_DESCRIPTION =
   "Give coding agents a dedicated tmux workspace with named agents, live status, exact pane navigation, terminal-native controls, durable sessions, and SSH support.";
 export const SITE_IMAGE = "/og-image.png";
