@@ -28,7 +28,11 @@ per-user temporary directory; keep SSH strict ownership checks enabled.
 
 The matrix covers an existing shared master, dedicated-forward disposal,
 ProxyJump, private noninteractive PATH, rejected keys and host trust, cancellation,
-delayed discovery and oversized discovery output. A baseline connection checks
+delayed discovery, oversized discovery output, an unreachable SSH endpoint, and
+structured missing-daemon/incompatible/unavailable preflight responses. Refusals
+check the public error category, retryability, bounded process count and sanitized
+message. Structured responses are synthetic; this does not qualify a real remote
+service reservation or installation. A baseline connection checks
 that disposing or failing another transport does not destroy it. This baseline
 is an HTTP fixture, not evidence of healthy TUI input under load.
 Recorded durations include fixture instrumentation and process scans; they are

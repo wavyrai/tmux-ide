@@ -241,6 +241,12 @@ async function refused(
     expectedFailureCode = error.code;
     caseFacts.step = "error-code";
     assert(error.code === expectedCode);
+    assert(
+      error.retryable === (expectedCode === "unavailable" || expectedCode === "daemon-missing"),
+    );
+    assert(!error.message.includes(root));
+    caseFacts.retryable = error.retryable;
+    caseFacts.sanitizedMessage = error.message;
     rejected = true;
   }
   caseFacts.elapsedMs = Date.now() - started;
@@ -470,6 +476,36 @@ try {
   await runCase("missing-path-no-installed-fallback", async () => {
     await refused(missing.config, undefined, 0, "remote-cli-missing");
     assert(missing.metrics().requests === 0);
+    await marker();
+  });
+  for (const code of ["daemon-missing", "incompatible", "unavailable"] as const) {
+    const preflight = await fixture({
+      targetPort,
+      handshake: () => ({ version: 1, error: { code } }),
+    });
+    await runCase("remote-preflight-" + code, async () => {
+      await refused(preflight.config, undefined, 0, code);
+      assert(preflight.metrics().requests === 1);
+      await marker();
+    });
+  }
+  const unreachablePort = await unusedLoopbackPort();
+  const unreachableConfig = join(target.root, "unreachable_config");
+  privateWrite(
+    unreachableConfig,
+    clientConfiguration({
+      root: target.root,
+      account: target.account,
+      port: unreachablePort,
+      sharing: false,
+      defaults: false,
+    }),
+  );
+  target.files.capture("unreachable_config");
+  await runCase("unreachable-ssh-endpoint", async () => {
+    const requests = target.metrics().requests;
+    await refused(unreachableConfig);
+    assert(target.metrics().requests === requests);
     await marker();
   });
   await runCase("pre-aborted", async () => {
