@@ -385,7 +385,6 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         onCleanup(() => {
           connectionProgress.dispose();
           terminalInputIngress.dispose();
-          interaction.cancelPendingInput();
           semanticViewportResize.dispose();
           stopLayout();
           stopShell();
@@ -428,11 +427,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           const currentShell = shell();
           semanticViewportResize.adopt(dimensions(), currentShell.semantic, generation());
           focusedPane();
-          if (activeSurface() !== "terminals") {
-            terminalInputIngress.cancelRecovery();
-            interaction.cancelPendingInput();
-          }
-          terminalInputIngress.adopt();
+          terminalInputIngress.adopt(activeSurface() === "terminals");
         });
         const sidebarShortcut = createApplicationSidebarShortcuts(
           activeSurface,

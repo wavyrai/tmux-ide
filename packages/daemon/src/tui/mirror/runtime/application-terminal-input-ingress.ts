@@ -208,11 +208,14 @@ export function createApplicationTerminalInputIngress(
     else setNote(`terminal unavailable · ${kind} was not sent`);
   };
 
+  const cancelInteractionInput = () => {
+    cancelRecovery();
+    interaction.cancelPendingInput();
+  };
   return {
-    cancelRecovery,
     wrapStarter(starter: GenerationStarter): GenerationStarter {
       const start = async (...args: Parameters<GenerationStarter>) => {
-        cancelRecovery();
+        cancelInteractionInput();
         const [sessionName] = args;
         const identity = pending.begin(sessionName);
         const result = await starter(...args);
@@ -226,13 +229,14 @@ export function createApplicationTerminalInputIngress(
       };
       return Object.assign(start, {
         cancel() {
-          cancelRecovery();
+          cancelInteractionInput();
           pending.dispose();
           starter.cancel();
         },
       });
     },
-    adopt(): void {
+    adopt(terminalsActive = true): void {
+      if (!terminalsActive) cancelInteractionInput();
       flush();
       flushRecovery();
     },
@@ -291,7 +295,7 @@ export function createApplicationTerminalInputIngress(
       );
     },
     dispose(): void {
-      cancelRecovery();
+      cancelInteractionInput();
       pending.dispose();
     },
   };

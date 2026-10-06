@@ -15,6 +15,23 @@ function deferred<Value>() {
 }
 
 describe("application terminal input ingress", () => {
+  it("cancels controller input when leaving terminals and on disposal", () => {
+    const cancelPendingInput = vi.fn();
+    const ingress = createApplicationTerminalInputIngress(
+      { cancelPendingInput } as unknown as ApplicationTerminalInteractionController,
+      () => null,
+      () => null,
+      () => null,
+      () => undefined,
+    );
+    ingress.adopt();
+    expect(cancelPendingInput).not.toHaveBeenCalled();
+    ingress.adopt(false);
+    expect(cancelPendingInput).toHaveBeenCalledTimes(1);
+    ingress.dispose();
+    expect(cancelPendingInput).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["count", "bytes", "timeout", "refusal"])(
     "bounds recovery input: %s",
     async (scenario) => {
@@ -34,7 +51,10 @@ describe("application terminal input ingress", () => {
       } as unknown as OpenTuiSessionOwner;
       const notes: Array<string | null> = [];
       const ingress = createApplicationTerminalInputIngress(
-        { sendInputToPane } as unknown as ApplicationTerminalInteractionController,
+        {
+          sendInputToPane,
+          cancelPendingInput: vi.fn(),
+        } as unknown as ApplicationTerminalInteractionController,
         () => snapshot,
         () => owner,
         () => "pane.alpha",
@@ -90,7 +110,10 @@ describe("application terminal input ingress", () => {
       } as unknown as OpenTuiSessionOwner;
       const notes: Array<string | null> = [];
       const ingress = createApplicationTerminalInputIngress(
-        { sendInputToPane } as unknown as ApplicationTerminalInteractionController,
+        {
+          sendInputToPane,
+          cancelPendingInput: vi.fn(),
+        } as unknown as ApplicationTerminalInteractionController,
         () => snapshot,
         () => owner,
         () => pane,
@@ -139,7 +162,10 @@ describe("application terminal input ingress", () => {
         snapshot: () => snapshot,
       } as unknown as OpenTuiSessionOwner;
       const ingress = createApplicationTerminalInputIngress(
-        { sendInputToPane } as unknown as ApplicationTerminalInteractionController,
+        {
+          sendInputToPane,
+          cancelPendingInput: vi.fn(),
+        } as unknown as ApplicationTerminalInteractionController,
         () => snapshot,
         () => owner,
         () => "pane.alpha",
@@ -168,7 +194,10 @@ describe("application terminal input ingress", () => {
 
   it("retains recovery input for the same connection and exact pane", async () => {
     const sendInputToPane = vi.fn(async (_pane: string, _input: unknown) => true);
-    const interaction = { sendInputToPane } as unknown as ApplicationTerminalInteractionController;
+    const interaction = {
+      sendInputToPane,
+      cancelPendingInput: vi.fn(),
+    } as unknown as ApplicationTerminalInteractionController;
     const client = { getSnapshot: () => ({ generation: 1 }) };
     let snapshot = {
       status: "rebinding",
@@ -216,7 +245,10 @@ describe("application terminal input ingress", () => {
 
   it("retains first key and paste until the exact opened generation owns focus", async () => {
     const sendInput = vi.fn(async () => true);
-    const interaction = { sendInput } as unknown as ApplicationTerminalInteractionController;
+    const interaction = {
+      sendInput,
+      cancelPendingInput: vi.fn(),
+    } as unknown as ApplicationTerminalInteractionController;
     let snapshot = {
       status: "connecting",
       daemonGeneration: null,
@@ -275,6 +307,7 @@ describe("application terminal input ingress", () => {
     const setNote = vi.fn();
     const interaction = {
       sendInput: vi.fn(),
+      cancelPendingInput: vi.fn(),
     } as unknown as ApplicationTerminalInteractionController;
     const ingress = createApplicationTerminalInputIngress(
       interaction,
