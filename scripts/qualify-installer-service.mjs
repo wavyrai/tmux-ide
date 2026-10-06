@@ -83,6 +83,7 @@ const receipt = {
   scope:
     "Published 2.9.0-beta.50 to 2.9.2 install/managed restart/rollback; candidate supplies service controller, not downloaded runtime",
   runtimeVersions: ["2.9.0-beta.50", "2.9.2"],
+  runtimeArtifacts: [],
   installerSha256: hash(readFileSync(installer)),
   steps: [],
   cleanup: {},
@@ -90,6 +91,7 @@ const receipt = {
 let timedOut = false,
   tmux,
   witness,
+  tmuxAttempted = false,
   serviceAttempted = false;
 const observedDaemons = new Set();
 function raw(file, args, options = {}) {
@@ -169,6 +171,25 @@ function pane() {
     "#{pid}|#{pane_id}|#{pane_pid}",
   ]);
 }
+function recordRuntime(release, version) {
+  const pkg = join(release, "npm/lib/node_modules/tmux-ide");
+  const native = join(pkg, "packages/daemon/dist/native/tmux", platform);
+  const files = {
+    node: join(release, "node/bin/node"),
+    cli: join(pkg, "bin/cli.js"),
+    package: join(pkg, "package.json"),
+    nativeManifest: join(native, "manifest.json"),
+    tmux: join(native, "tmux"),
+    tui: join(state, "bin", `tmux-ide-tui-${platform}-${version}`),
+  };
+  receipt.runtimeArtifacts.push({
+    version,
+    nodeVersion: checked(files.node, ["--version"]),
+    sha256: Object.fromEntries(
+      Object.entries(files).map(([name, path]) => [name, hash(readFileSync(path))]),
+    ),
+  });
+}
 async function health(expected, version) {
   const info = JSON.parse(readFileSync(join(state, "daemon.json"), "utf8"));
   assert.equal(info.instanceId, expected.instanceId);
@@ -236,6 +257,7 @@ try {
   install("install-beta50", ["--version", "2.9.0-beta.50"]);
   assert.equal(checked(launcher, ["--version"]), "tmux-ide v2.9.0-beta.50");
   const oldRelease = realpathSync(join(managed, "current"));
+  recordRuntime(oldRelease, "2.9.0-beta.50");
   tmux = join(
     oldRelease,
     "npm/lib/node_modules/tmux-ide/packages/daemon/dist/native/tmux",
@@ -243,6 +265,7 @@ try {
     "tmux",
   );
   receipt.oldTmuxSha256 = hash(readFileSync(tmux));
+  tmuxAttempted = true;
   checked(tmux, [
     "-S",
     socket,
@@ -263,6 +286,7 @@ try {
   install("update-2.9.2", ["--version", "2.9.2"]);
   assert.equal(checked(launcher, ["--version"]), "tmux-ide v2.9.2");
   const newRelease = realpathSync(join(managed, "current"));
+  recordRuntime(newRelease, "2.9.2");
   assert.notEqual(newRelease, oldRelease);
   await health(first, "2.9.0-beta.50");
   const doctor = JSON.parse(checked(launcher, ["doctor", "--json"]));
@@ -325,6 +349,7 @@ try {
       receipt.cleanup.observedDaemonsAbsent,
       "Retaining roots while an observed daemon is alive",
     );
+    assert(!tmuxAttempted || witness, "Retaining roots without a tmux owner witness");
     if (witness) {
       assert.deepEqual(
         packedTmuxWitnessDifferences(witness, capturePackedTmuxWitness(socket, witness.pid)),
