@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sourcesForPath } from "./git-date-sources.mjs";
@@ -59,6 +59,16 @@ if (/<title>[^<]*\| tmux-ide<\/title>/u.test(html) && /<title>tmux-ide[^<]*\|/u.
 if (!/^# tmux-ide\n\n> \S/u.test(llmsIndex))
   throw new Error("llms.txt must start with '# tmux-ide' and a '>' summary");
 if (/\]\(\//u.test(llmsIndex)) throw new Error("llms.txt links must be absolute URLs");
+// Every same-site page llms.txt points agents at must be a built route.
+for (const [, href] of llmsIndex.matchAll(/\]\((https?:\/\/[^)\s]+)\)/gu)) {
+  const url = new URL(href);
+  if (url.origin !== canonicalOrigin) continue;
+  const route = url.pathname.replace(/^\/+|\/+$/gu, "") || "index";
+  const built = [`${route}.html`, `${route}.body`].some((file) =>
+    existsSync(resolve(appDir, file)),
+  );
+  if (!built) throw new Error(`llms.txt links to ${href}, which is not a built route`);
+}
 
 for (const marker of ["ascii-wordmark.svg", "icon-dark.png", 'background: "#0d0d10"']) {
   if (!socialCard.includes(marker)) {

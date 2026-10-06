@@ -65,6 +65,11 @@ export function llmsIndex(): string {
   };
   for (const group of groups) add(group.title, pageLines(group.nodes));
   add("Project", [
+    link(
+      "Manual for AI agents",
+      "/agents.md",
+      "install, the agent status contract, and the commands agents use to coordinate",
+    ),
     `- [Source code on GitHub](${SITE_REPOSITORY}): issues, releases, and the MIT license`,
     `- [npm package](${SOFTWARE_DOWNLOAD_URL}): the published \`tmux-ide\` CLI`,
     `- [${PUBLISHER_NAME}](${PUBLISHER_URL}): the team that builds tmux-ide`,
@@ -88,6 +93,8 @@ export function llmsIndex(): string {
       "so sessions keep running if tmux-ide closes.",
     "",
     `Install: \`${INSTALL_COMMAND}\` — then run \`${APP_COMMAND}\`.`,
+    "",
+    `AI agents: read ${absoluteUrl("/agents.md")} first — install, status reporting, and coordination commands in one page.`,
     "",
     "Every documentation page is also available as Markdown: append `.mdx` to its URL " +
       `(for example ${absoluteUrl("/docs/getting-started.mdx")}).`,
