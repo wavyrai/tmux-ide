@@ -910,7 +910,9 @@
 .afig-title {
   margin: 1.75rem 0 0.875rem;
   font-family: var(--figure-title-font);
-  font-size: clamp(2rem, 4.6vw, 3.5rem);
+  /* Sized by the figure's own width: about 30px in the docs column;
+     wide (landing) figures use 56px below. */
+  font-size: clamp(1.5rem, 4.4cqi, 3.5rem);
   line-height: 1.12;
   letter-spacing: -0.03em;
   font-weight: 500;
@@ -1174,7 +1176,23 @@
 /* When the figure itself is wide enough (the landing, not the docs column),
    the levels sit in three columns (letter, cards, note) and the connectors
    are drawn between them; narrower figures keep the stacked layout. */
+/* Narrow figures (docs column, phones) read at body scale under the title. */
+@container afig (width < 62rem) {
+  .afig-title {
+    margin-top: 1.25rem;
+  }
+
+  .afig-sub {
+    font-size: 0.9375rem;
+    line-height: 1.5rem;
+  }
+}
+
 @container afig (width >= 62rem) {
+  .afig-title {
+    font-size: 3.5rem;
+  }
+
   .afig-level,
   .afig-wire {
     grid-template-columns: 9.5rem minmax(0, 1fr) 15rem;
