@@ -245,7 +245,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide restart")}            ${dim("Stop and relaunch the IDE session")}
   ${cyan("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
                               ${dim("Rebuild the fleet from the last snapshot after a tmux crash")}
-                              ${dim("(--resume-agents revives claude conversations via claude --resume)")}
+                              ${dim("(--resume-agents resumes Claude Code, Codex, opencode, Cursor and Copilot sessions by their captured ids)")}
   ${cyan("tmux-ide attach")}             ${dim("Reattach to a running session")}
   ${cyan("tmux-ide team assign")} %PANE TEAM ${dim("Group a pane; unassign removes membership")}
   ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
@@ -274,7 +274,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide popup")} <widget>     ${dim("Open a widget as a floating panel (explorer/changes/config; ⌥e/⌥g/⌥,)")}
   ${cyan("tmux-ide widget")} <markdown|image|card> [file]  ${dim("Render rich live content in the current pane")}
   ${cyan("tmux-ide show")} <file>          ${dim("Show Markdown, images, GIFs, or cards by file type")}
-  ${cyan("tmux-ide sidebar-toggle")} [--session S]  ${dim("Toggle the app nav column (⌥b on adopted sessions)")}
+  ${cyan("tmux-ide sidebar-toggle")} [--session S]  ${dim("Toggle the tmux chrome sidebar column (prefix b / ⌥b in adopted sessions)")}
   ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
                               ${dim("Add a git worktree (new branch) + open a session in it")}
   ${cyan("tmux-ide worktree open")} <branch>    ${dim("Open (or switch to) the session for an existing worktree")}
@@ -1954,7 +1954,7 @@ try {
     }
 
     case "sidebar-toggle": {
-      // Toggle the app nav column in a session (bound to `keys.sidebar`, default
+      // Toggle the tmux chrome sidebar column in a session (bound to `keys.sidebar`, default
       // M-b, via `run-shell` which expands `--session '#{session_name}'`). If a
       // sidebar pane already exists → close it; else split a full-height left
       // column running the sidebar widget. Runs inside tmux key dispatch, so it
