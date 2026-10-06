@@ -1,5 +1,5 @@
 import type { TerminalReplicaColor, TerminalReplicaRow } from "@tmux-ide/contracts";
-import { createBufferedFnv64 } from "./terminal-fnv64-wasm.ts";
+import { createBufferedFnv64, type BufferedFnv64 } from "./terminal-fnv64-wasm.ts";
 
 const ROW_HASH_CACHE = new WeakMap<object, string>();
 const DEEPLY_FROZEN_ROWS = new WeakSet<object>();
@@ -20,6 +20,23 @@ interface CanonicalKeyOrder {
 class CanonicalFnv64 {
   #high = 0xcbf29ce4;
   #low = 0x84222325;
+  #remainingJsBytes: number;
+  #accelerator: BufferedFnv64 | null = null;
+
+  constructor(accelerateLargeFrame = false) {
+    this.#remainingJsBytes = accelerateLargeFrame ? 64 * 1024 : 0;
+  }
+
+  #considerAcceleration(bytes: number): void {
+    if (this.#remainingJsBytes <= 0) return;
+    this.#remainingJsBytes -= bytes;
+    if (this.#remainingJsBytes <= 0) {
+      // Transfer the exact rolling state once; never restart or reserialize.
+      // Each writer owns its buffer across cooperative yields. Blocked WASM
+      // keeps the original JS path, without repeated initialization attempts.
+      this.#accelerator = createBufferedFnv64((BigInt(this.#high) << 32n) | BigInt(this.#low));
+    }
+  }
   // Per-hash only: terminal objects repeat a handful of small field layouts.
   // Reuse sorted keys and short ASCII key tokens without retaining records,
   // values, or future calls. Tokens share the 16-layout/32-key cache bound.
@@ -65,6 +82,8 @@ class CanonicalFnv64 {
   }
 
   ascii(value: string): number {
+    this.#considerAcceleration(value.length);
+    if (this.#accelerator) return this.#accelerator.ascii(value);
     // Canonical color/field tags dominate full-row hashing. Keep the limbs
     // local through each fragment instead of reading/writing fields per byte.
     let high = this.#high;
@@ -81,7 +100,9 @@ class CanonicalFnv64 {
   }
 
   bytes(value: Uint8Array): void {
-    for (const byte of value) this.#byte(byte);
+    this.#considerAcceleration(value.byteLength);
+    if (this.#accelerator) this.#accelerator.bytes(value);
+    else for (const byte of value) this.#byte(byte);
   }
 
   string(value: string): number {
@@ -97,13 +118,13 @@ class CanonicalFnv64 {
     if (ascii) {
       this.ascii(`s${value.length}:`);
       this.ascii(value);
-      this.#byte(0x3b);
+      this.ascii(";");
       return value.length;
     }
     const bytes = UTF8_ENCODER.encode(value);
     this.ascii(`s${bytes.byteLength}:`);
-    for (const byte of bytes) this.#byte(byte);
-    this.#byte(0x3b);
+    this.bytes(bytes);
+    this.ascii(";");
     return bytes.byteLength;
   }
 
@@ -153,12 +174,13 @@ class CanonicalFnv64 {
   }
 
   digest(): string {
+    if (this.#accelerator) return this.#accelerator.digest();
     return `${this.#high.toString(16).padStart(8, "0")}${this.#low.toString(16).padStart(8, "0")}`;
   }
 }
 
 export function hashCanonicalTerminalValue(value: unknown): string {
-  const hash = new CanonicalFnv64();
+  const hash = new CanonicalFnv64(true);
   hash.value(value);
   return hash.digest();
 }
@@ -168,7 +190,7 @@ export async function hashCanonicalTerminalValueCooperatively(
   yieldControl: () => Promise<void>,
   workPerSlice = 4 * 1_024,
 ): Promise<string> {
-  const hash = new CanonicalFnv64();
+  const hash = new CanonicalFnv64(true);
   let work = 0;
   const checkpoint = (amount: number): boolean => {
     work += amount;

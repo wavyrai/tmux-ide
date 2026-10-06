@@ -50,9 +50,9 @@ function initialize(): NativeHasher | null {
 }
 
 /** Internal optional accelerator. Canonical serialization remains the caller's responsibility. */
-export function createBufferedFnv64(): BufferedFnv64 | null {
+export function createBufferedFnv64(initialState = OFFSET_BASIS): BufferedFnv64 | null {
   const hasher = initialize();
-  return hasher ? new BufferedHasher(hasher) : null;
+  return hasher ? new BufferedHasher(hasher, initialState) : null;
 }
 
 class BufferedHasher implements BufferedFnv64 {
@@ -61,8 +61,9 @@ class BufferedHasher implements BufferedFnv64 {
   #length = 0;
   #state = OFFSET_BASIS;
 
-  constructor(hasher: NativeHasher) {
+  constructor(hasher: NativeHasher, initialState: bigint) {
     this.#native = hasher;
+    this.#state = BigInt.asUintN(64, initialState);
   }
 
   #flush(): void {

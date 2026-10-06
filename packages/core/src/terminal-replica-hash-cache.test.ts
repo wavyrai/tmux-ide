@@ -37,6 +37,44 @@ const referenceHash = (value: unknown): string => {
 };
 
 describe("terminal canonical hash cache", () => {
+  it("preserves large mixed frame hashes through acceleration, yields and JS fallback", async () => {
+    const values = Array.from({ length: 3 }, (_, frame) => ({
+      prefix: "x".repeat(65520 + frame),
+      rows: Array.from({ length: 160 }, (_, index) => ({
+        attributes: index % 16,
+        foreground: { kind: "rgb", value: index * 17 },
+        text: ["界", "😀", "\ud800", "\0;:", "ASCII"][index % 5],
+        changed: frame + index,
+      })),
+      suffix: "tail".repeat(2048),
+    }));
+    const expected = values.map(referenceHash);
+    const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
+    try {
+      for (const fallback of [false, true]) {
+        if (fallback) factory.mockReturnValue(null);
+        expect(values.map(hashCanonicalTerminalValue)).toEqual(expected);
+        let yields = 0;
+        const actual = await Promise.all(
+          values.map((value) =>
+            hashCanonicalTerminalValueCooperatively(
+              value,
+              async () => {
+                yields++;
+                await Promise.resolve();
+              },
+              128,
+            ),
+          ),
+        );
+        expect(actual).toEqual(expected);
+        expect(yields).toBeGreaterThan(0);
+      }
+    } finally {
+      factory.mockRestore();
+    }
+  });
+
   it("preserves canonical hashes across repeated, reordered and overflowing object shapes", async () => {
     const inherited = Object.assign(Object.create({ inherited: "excluded" }), { z: 7, a: "界" });
     Object.defineProperty(inherited, "hidden", { value: "excluded", enumerable: false });
