@@ -17,7 +17,10 @@ you jump straight to the one that needs you. tmux keeps owning every process and
 pane, so closing tmux-ide never stops an agent.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/docs/public/tui-demo.svg" alt="Animated tmux-ide app demo showing Home, named coding agents, live status, terminal panes, and Commands" width="960" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/docs/public/tui-demo.svg" />
+    <img src="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/docs/public/tui-demo-light.svg" alt="Animated tmux-ide app demo showing Home, named coding agents, live status, terminal panes, and Commands" width="960" />
+  </picture>
 </p>
 
 ## Install
@@ -62,7 +65,12 @@ be tmux 3.7 or newer; tmux-ide never replaces a running server.
 
 ## Agent teams
 
-<!-- agent-teams diagram: added once the exported light/dark images land -->
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/.github/assets/agent-teams-dark.gif" />
+    <img src="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/.github/assets/agent-teams-light.gif" alt="An agent team in five tmux panes: a Claude Code orchestrator hands a goal to a Codex goal agent, which splits research across Claude Code, opencode and Codex panes; you answer the one that needs input, and the outcome flows back up." width="974" />
+  </picture>
+</p>
 
 Run several coding agents as a team, each in its own tmux pane. With
 [Claude Code agent teams](https://tmux-ide.com/docs/claude-code-agent-teams), a
