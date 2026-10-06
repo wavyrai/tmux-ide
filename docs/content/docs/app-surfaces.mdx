@@ -92,7 +92,10 @@ Explicit manual pane names are retained. For native Claude split-pane teams,
 tmux-ide reads the local runtime team metadata and matches each member against
 the Claude process running inside that pane. Matched teammate names take
 precedence over automatic names and changing activity titles. Otherwise,
-meaningful native pane titles appear ahead of generic process labels.
+meaningful native pane titles appear ahead of generic process labels. A pane
+with nothing better gets a stable, memorable fallback such as `warm-redwood`;
+an unnamed agent is listed by its harness, Claude Code or Codex. Rename any pane
+from its menu (`R`).
 
 The same naming rules feed pane headers, the sidebar, Home and agent details.
 Team metadata is refreshed on inventory reads with a two-second cache; deleted
