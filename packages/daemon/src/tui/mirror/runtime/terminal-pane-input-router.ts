@@ -27,6 +27,10 @@ export class TerminalPaneInputRouter<Input> {
     this.#options = options;
   }
 
+  get selectionVersion(): number {
+    return this.#selectionToken;
+  }
+
   get focusedPane(): string | null {
     return this.#focusedPane;
   }

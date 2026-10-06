@@ -40,6 +40,139 @@ function splitLayout(): OpenTuiWorkspaceLayoutSnapshot {
 }
 
 describe("application terminal interaction controller", () => {
+  it.each([
+    "same",
+    "replacement",
+    "connection",
+    "daemon",
+    "client-generation",
+    "cancel",
+    "timeout",
+    "count",
+    "bytes",
+    "refusal",
+  ])(
+    "retains pending-selection input only across the same control connection (%s)",
+    async (scenario) => {
+      const replacement = scenario === "replacement";
+      let clientGeneration = 4;
+      let settle!: (value: unknown) => void;
+      const dispatch = vi.fn(
+        () =>
+          new Promise((resolve) => {
+            settle = resolve;
+          }),
+      );
+      const oldSend = vi.fn(async () => ({ status: "sent" }));
+      const recoveredSend = vi.fn(async () => ({
+        status: scenario === "refusal" ? "rejected" : "sent",
+      }));
+      const client = {
+        ownsRuntimeAuthority: () => true,
+        requestAuthority: async () => ({}),
+        dispatch,
+        getSnapshot: () => ({ generation: clientGeneration }),
+      };
+      let snapshot = layout(0);
+      let generation = {
+        status: "live",
+        daemonGeneration: "generation-a",
+        rendererEpoch: 7,
+        connection: { workspaceName: "workspace.alpha" },
+        client,
+        fastLane: { lane: { sendInput: oldSend } },
+        adapter: {},
+      };
+      const controller = createApplicationTerminalInteractionController({
+        generation: () => generation as never,
+        layout: () => snapshot,
+        setFocusedPane: () => undefined,
+        diagnosticsEnabled: false,
+        diagnose: () => undefined,
+        causalCellFixtureEnabled: () => false,
+      });
+      controller.adoptGeneration(generation as never);
+      controller.adoptLayout(snapshot);
+      controller.selectPane("pane.logs");
+      const heldInputs = Array.from({ length: scenario === "count" ? 65 : 1 }, (_, index) =>
+        scenario === "bytes"
+          ? "a".repeat(1024 * 1024 + 1)
+          : scenario === "count"
+            ? `held-key-${index}`
+            : "held-selection-key",
+      );
+      const typing = Promise.all(
+        heldInputs.map((data) => controller.sendInput({ kind: "text", data })),
+      );
+      expect(oldSend).not.toHaveBeenCalled();
+      if (scenario === "timeout") vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      generation = { ...generation, status: "rebinding" };
+      controller.adoptGeneration(generation as never);
+      settle({
+        kind: "semantic-intent",
+        operationId: "select-op",
+        result: {
+          verb: "workspace.pane.select",
+          semanticPaneId: "pane.logs",
+          workspaceName: "workspace.alpha",
+          daemonInstanceId: "generation-a",
+          operationId: "select-op",
+          outcome: "applied",
+        },
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(oldSend).not.toHaveBeenCalled();
+      if (scenario === "cancel") controller.cancelPendingInput();
+      if (scenario === "timeout") {
+        await vi.advanceTimersByTimeAsync(5001);
+        vi.useRealTimers();
+      }
+      if (scenario === "client-generation") clientGeneration++;
+      generation = {
+        ...generation,
+        status: "live",
+        rendererEpoch: 8,
+        client: replacement ? { ...client, getSnapshot: () => ({ generation: 5 }) } : client,
+        connection:
+          scenario === "connection" ? { ...generation.connection } : generation.connection,
+        daemonGeneration: scenario === "daemon" ? "generation-b" : generation.daemonGeneration,
+        fastLane: { lane: { sendInput: recoveredSend } },
+        adapter: {},
+      };
+      snapshot = layout(1);
+      controller.adoptGeneration(generation as never);
+      controller.adoptLayout(snapshot);
+      const fresh = controller.sendInput({ kind: "text", data: "fresh-key" });
+      await typing;
+      await fresh;
+      expect(oldSend).not.toHaveBeenCalled();
+      if (scenario === "count") {
+        expect(
+          recoveredSend.mock.calls.map(
+            (call) => (call as unknown as [string, { data: string }])[1].data,
+          ),
+        ).toEqual([...heldInputs.slice(0, 64), "fresh-key"]);
+      } else if (scenario !== "same" && scenario !== "refusal") {
+        expect(recoveredSend).toHaveBeenCalledTimes(1);
+        expect((recoveredSend.mock.calls[0] as unknown as [string, { data: string }])[1].data).toBe(
+          "fresh-key",
+        );
+      } else {
+        expect(
+          recoveredSend.mock.calls.map(
+            (call) => (call as unknown as [string, { data: string }])[1].data,
+          ),
+        ).toEqual(["held-selection-key", "fresh-key"]);
+        expect(recoveredSend).toHaveBeenCalledWith(
+          "pane.logs",
+          { kind: "text", data: "held-selection-key" },
+          undefined,
+          undefined,
+        );
+      }
+    },
+  );
+
   it("selects and unlinks exact duplicate links without pane selection or stale retries", async () => {
     const backing = layout().windows[0]!;
     const ids = ["a", "b"].map((letter) => `window-link.${letter.repeat(32)}`);
