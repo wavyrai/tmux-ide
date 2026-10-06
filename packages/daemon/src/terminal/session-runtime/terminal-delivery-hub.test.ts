@@ -243,12 +243,12 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     expect(hub.metrics().canonicalRevisions).toBe(3);
     clients[1]!.ack(ack(latest(1)));
     await settle();
-    expect(latest(1)).toMatchObject({ frame: "seed", canonicalRevision: 160 });
+    expect(latest(1)).toMatchObject({ frame: "patch", canonicalRevision: 160 });
     clients[1]!.ack(ack(latest(1)));
     expect(hub.metrics().canonicalRevisions).toBe(2);
     clients[2]!.setVisibility("visible");
     await settle();
-    expect(latest(2)).toMatchObject({ frame: "seed", canonicalRevision: 160 });
+    expect(latest(2)).toMatchObject({ frame: "patch", canonicalRevision: 160 });
     clients[2]!.ack(ack(latest(2)));
     expect(hub.metrics().canonicalRevisions).toBe(1);
     await Promise.all(clients.map((client) => client.close()));
@@ -923,7 +923,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
         (message) => message.type === "terminal.delivery",
       ) as TerminalDeliveryEnvelope;
       expect(resumed.canonicalRevision).toBe(20);
-      expect(resumed.frame).toBe("seed");
+      expect(resumed.frame).toBe("patch");
       expect(resumed.encoding).toBe(encoding);
       expect(resumed.canonicalStateHash).toBe(latest.canonicalStateHash);
       slow.ack(ack(resumed));
@@ -1198,7 +1198,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     await hub.close();
   });
 
-  it("coalesces a frozen revision flood into one latest seed on thaw", async () => {
+  it("coalesces a frozen revision flood into one exact latest patch on thaw", async () => {
     const owner = new FakeOwner();
     const spans: SessionRuntimeStageSpan[] = [];
     const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
@@ -1224,7 +1224,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     const resumed = messages.findLast(
       (message) => message.type === "terminal.delivery",
     ) as TerminalDeliveryEnvelope;
-    expect(resumed).toMatchObject({ frame: "seed", canonicalRevision: 20 });
+    expect(resumed).toMatchObject({ frame: "patch", canonicalRevision: 20 });
     expect(
       spans.findLast(
         (span) =>
@@ -1232,11 +1232,11 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
           span.terminalDelivery?.canonicalRevision === 20,
       )?.terminalDelivery,
     ).toMatchObject({
-      representation: "seed",
+      representation: "patch",
       representationBytes: resumed.representationBytes,
-      attemptedPatchBytes: null,
-      attemptedSeedBytes: resumed.representationBytes,
-      selectionStatus: "direct-seed",
+      attemptedPatchBytes: resumed.representationBytes,
+      attemptedSeedBytes: null,
+      selectionStatus: "patch-preferred",
     });
     expect(hub.metrics().latestPointers).toBe(1);
     await connection.close();
@@ -1674,14 +1674,15 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     const coalesced = messages.findLast(
       (message) => message.type === "terminal.delivery",
     ) as TerminalDeliveryEnvelope;
-    expect(coalesced).toMatchObject({ frame: "seed", canonicalRevision: 2 });
+    expect(coalesced).toMatchObject({ frame: "patch", canonicalRevision: 2, baseRevision: 0 });
     expect(decodeCompactSemanticTerminalUpdate(assembledBytes(coalesced, messages))).toMatchObject({
-      frame: "seed",
+      frame: "patch",
       revision: 2,
-      snapshot: snapshots[2],
+      baseRevision: 0,
     });
     const coalescedCommit = commitMessages(clientState, coalesced, messages);
     clientState = coalescedCommit.state;
+    expect(clientState.canonicalSnapshot).toEqual(snapshots[2]);
     connection.ack(coalescedCommit.ack);
 
     const next = { ...snapshots[2]!, cursor: { ...snapshots[2]!.cursor, x: 3 } };

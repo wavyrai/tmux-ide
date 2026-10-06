@@ -28,6 +28,8 @@ import {
 } from "@tmux-ide/contracts";
 import {
   TerminalDeliveryStateTooLargeError,
+  terminalReplicaRowsEqual,
+  TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS,
   applyTerminalReplicaUpdate,
   applyTerminalReplicaUpdateCooperatively,
   terminalReplicaUpdateNeedsCooperativeReduction,
@@ -1387,7 +1389,12 @@ export class SessionRuntimeTerminalDeliveryHub {
         };
         this.#reseeds += 1;
       } else {
-        const patchPayload = semanticPayload(client.baselineRevision, baseline, target);
+        const patchPayload = semanticPayload(
+          client.baselineRevision,
+          baseline,
+          target,
+          pane.revisions.get(client.baselineRevision)?.update.incarnation,
+        );
         const seedPayload = patchPayload.frame === "tombstone" ? null : semanticSeed(target);
         const legacyAttempts = null;
         if (patchPayload.frame !== "patch") {
@@ -2306,6 +2313,7 @@ function semanticPayload(
   baselineRevision: number,
   baseline: TerminalReplicaSnapshot | null,
   target: RevisionRecord,
+  baselineIncarnation?: string,
 ): TerminalSemanticDeliveryPayload {
   const update = target.update;
   if (!target.state.snapshot) {
@@ -2317,8 +2325,8 @@ function semanticPayload(
       tombstone: update.tombstone,
     };
   }
-  // Adjacent canonical patches are already the cheapest exact diff. A skipped
-  // revision uses an atomic seed; the m56.2 adjacent reducer is never weakened.
+  // Adjacent canonical patches are already the cheapest exact diff. Preserve
+  // this direct path before considering an exact coalesced snapshot patch.
   if (baseline && update.type === "terminal.patch" && update.baseRevision === baselineRevision)
     return {
       frame: "patch",
@@ -2326,6 +2334,59 @@ function semanticPayload(
       revision: update.revision,
       patch: update.patch,
     };
+  // A skipped revision may still have an exact small representation. Only
+  // append-only history is proved here; trim/reflow and changed dimensions
+  // retain the full seed boundary. Equality includes wrapped and all cells.
+  const snapshot = target.state.snapshot;
+  if (
+    baseline &&
+    baselineIncarnation === update.incarnation &&
+    baseline.cols === snapshot.cols &&
+    baseline.rows === snapshot.rows &&
+    baseline.history.length <= snapshot.history.length
+  ) {
+    // Identity reuse is cheap, but detached equal histories must not turn a
+    // cooperative seed into an unbounded synchronous cell comparison.
+    let comparisonCells = 0;
+    const equal = (
+      left: TerminalReplicaSnapshot["grid"][number],
+      right: TerminalReplicaSnapshot["grid"][number],
+    ) => {
+      if (left === right) return true;
+      comparisonCells += right.cells.length;
+      return comparisonCells <= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS
+        ? terminalReplicaRowsEqual(left, right)
+        : null;
+    };
+    for (let index = 0; index < baseline.history.length; index++)
+      if (equal(baseline.history[index]!, snapshot.history[index]!) !== true)
+        return semanticSeed(target);
+    const rows: { index: number; row: TerminalReplicaSnapshot["grid"][number] }[] = [];
+    for (let index = 0; index < snapshot.grid.length; index++) {
+      const same = equal(baseline.grid[index]!, snapshot.grid[index]!);
+      if (same === null) return semanticSeed(target);
+      if (!same) rows.push({ index, row: snapshot.grid[index]! });
+    }
+    const appendedRows = snapshot.history.length - baseline.history.length;
+    // Compact patches serialize synchronously. Do not move a large appended
+    // suffix or repaint across the seed-only cooperative encoding boundary.
+    if ((rows.length + appendedRows) * snapshot.cols >= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS)
+      return semanticSeed(target);
+    const append = snapshot.history.slice(baseline.history.length);
+    return {
+      frame: "patch",
+      baseRevision: baselineRevision,
+      revision: update.revision,
+      patch: {
+        rows,
+        ...(append.length ? { historyDelta: { trim: 0, append } } : {}),
+        cursor: snapshot.cursor,
+        modes: snapshot.modes,
+        placements: snapshot.placements,
+        bootstrap: snapshot.bootstrap,
+      },
+    };
+  }
   return semanticSeed(target);
 }
 
