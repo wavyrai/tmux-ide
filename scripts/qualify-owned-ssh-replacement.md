@@ -233,8 +233,8 @@ matches the persisted registry and exact local daemon generation. Removed or
 disabled routes lose their tunnel; restored routes obtain a new tunnel. The
 selected host's tunnel and the second app's tunnel retain their exact identities,
 both renderers survive, both terminals accept input and remote daemon/tmux/pane
-fingerprints remain unchanged. The ordinary sizing and replacement journey then
-passes with these mutated profiles still loaded.
+fingerprints remain unchanged. Sizing passes before registry mutation; daemon replacement subsequently passes
+with the mutated profiles still loaded.
 
 The 114,829ms run and all cleanup fields passed. Independent checks found 94 PIDs
 absent, ten ports closed and both installed homes/sockets removed. CLI/TUI hashes
