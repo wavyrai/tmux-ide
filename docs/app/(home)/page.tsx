@@ -133,7 +133,7 @@ export default async function HomePage() {
                     ) : null}
                   </a>
                 </div>
-                <CopyAgentPrompt className="mt-8 max-w-xl" />
+                <CopyAgentPrompt size="hero" className="mt-8 max-w-xl" />
               </Cell>
             </MarketingGrid>
           </BandBody>

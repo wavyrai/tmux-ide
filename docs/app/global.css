@@ -500,56 +500,152 @@ body {
   }
 }
 
-/* Agent setup prompt: the sentence an agent receives, with a copy action
-   that keeps its size while its glyph swaps. */
-.agent-prompt-box {
-  display: flex;
+/* Copy agent prompt: an inverted pill (ink on light pages, paper on dark)
+   with harness marks, a fixed label and a copy glyph that turns into a green
+   check. Hero size is 40px tall with a 15px label; default is 36px / 14px. */
+.prompt-pill {
+  position: relative;
+  display: inline-flex;
+  height: 2.25rem;
   align-items: center;
-  gap: 0.75rem;
-  border: 1px solid var(--color-fd-border);
-  border-radius: 0.875rem;
-  background-color: var(--color-fd-card);
-  padding: 0.625rem 0.625rem 0.625rem 1rem;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  background-color: var(--color-fd-primary);
+  padding: 0 0.875rem;
+  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--color-fd-primary-foreground);
+  cursor: pointer;
+  transition:
+    opacity 150ms var(--ease-smooth),
+    transform 150ms var(--ease-smooth);
 }
 
-.agent-prompt-button {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 0.375rem;
-  border: 1px solid var(--color-fd-border);
-  border-radius: 9999px;
-  background-color: var(--color-fd-background);
-  padding: 0.375rem 0.75rem;
-  font-size: 0.8125rem;
-  line-height: 1.1875rem;
-  font-weight: 500;
-  color: var(--color-fd-foreground);
-  cursor: pointer;
-  transition: background-color 150ms var(--ease-smooth);
+.prompt-pill[data-size="hero"] {
+  height: 2.5rem;
+  padding: 0 1rem;
+  font-size: 0.9375rem;
+  line-height: 1.375rem;
 }
 
 @media (hover: hover) {
-  .agent-prompt-button:hover {
-    background-color: var(--color-fd-accent);
+  .prompt-pill:hover {
+    opacity: 0.9;
   }
 }
 
-@media (max-width: 30rem) {
-  .agent-prompt-box {
-    flex-direction: column;
-    align-items: stretch;
-    padding: 0.875rem;
+@media (prefers-reduced-motion: no-preference) {
+  .prompt-pill:active {
+    transform: scale(0.98);
   }
+}
 
-  .agent-prompt-button {
-    justify-content: center;
+/* De-emphasised through colour, so the glyph's own opacity swap still works. */
+.prompt-pill .copy-glyph-copy {
+  color: color-mix(in oklab, var(--color-fd-primary-foreground) 60%, transparent);
+}
+
+.prompt-pill .copy-glyph-check {
+  color: var(--color-success);
+}
+
+.harness-marks {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.harness-mark-claude {
+  color: var(--mark-claude);
+}
+
+.harness-mark-codex {
+  color: var(--mark-codex);
+}
+
+.harness-mark-codex-glyph {
+  stroke: oklch(1 0 0);
+}
+
+/* The cube is drawn in the pill's text colour; its edges cut back to the
+   pill fill so the faces read on either theme. */
+.harness-mark-cursor-edge {
+  stroke: var(--color-fd-primary);
+}
+
+/* Border beam: a conic gradient spun by a registered angle property and
+   masked down to a 2px ring just outside the pill. JS only toggles
+   data-beam on a successful copy; reduced motion never shows it. */
+@property --beam-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.prompt-pill::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--beam-angle),
+    var(--chart-1),
+    var(--chart-2),
+    var(--chart-3),
+    var(--chart-4),
+    var(--chart-5),
+    var(--chart-6),
+    var(--chart-1)
+  );
+  mask:
+    linear-gradient(black 0 0) content-box,
+    linear-gradient(black 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.prompt-pill[data-beam="on"]::after {
+  animation:
+    prompt-beam-spin 1.5s linear,
+    prompt-beam-fade 1.5s var(--ease-smooth) forwards;
+}
+
+@keyframes prompt-beam-spin {
+  from {
+    --beam-angle: 0deg;
+  }
+  to {
+    --beam-angle: 540deg;
+  }
+}
+
+@keyframes prompt-beam-fade {
+  0% {
+    opacity: 0;
+  }
+  12%,
+  66% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-prompt-button {
+  .prompt-pill {
     transition: none;
+  }
+
+  .prompt-pill::after {
+    display: none;
   }
 }
 
