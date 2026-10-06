@@ -1407,12 +1407,15 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     await hub.close();
   }, 60_000);
 
-  it("delivers a compact 5000-row state through the real hub, coalesces exactly, and reseeds reconnects", async () => {
+  it("delivers a compact 5000-row state through the real hub, coalesces exactly, and reseeds reconnects", async ({
+    onTestFinished,
+  }) => {
     const owner = new FakeOwner();
     const spans: SessionRuntimeStageSpan[] = [];
     const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
       observability: createSessionRuntimeObservability({ onSpan: (span) => spans.push(span) }),
     });
+    onTestFinished(() => hub.close());
     const messages: TerminalDeliveryServerMessage[] = [];
     const connection = await hub.open(
       "compact-client",
@@ -1472,7 +1475,20 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
 
     owner.emit(canonicalUpdate(0, snapshots[0]!));
     await vi.waitFor(
-      () => expect(messages.some((message) => message.type === "terminal.delivery")).toBe(true),
+      () => {
+        expect(
+          messages.filter((message) => message.type === "terminal.delivery.fault"),
+          "compact seed must not be refused",
+        ).toEqual([]);
+        expect(
+          messages.some((message) => message.type === "terminal.delivery"),
+          JSON.stringify({
+            metrics: hub.metrics(),
+            recentSpans: spans.slice(-8),
+            messageTypes: messages.map((message) => message.type),
+          }),
+        ).toBe(true);
+      },
       { timeout: 10_000 },
     );
     const first = messages.find(
