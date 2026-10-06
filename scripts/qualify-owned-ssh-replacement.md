@@ -248,3 +248,35 @@ teardown. No product timeout or performance budget was changed.
 This proves background-profile mutation in a running installed app. Selected-route
 removal, route edits and duplicate-route presentation are additional scenarios;
 this receipt does not establish those behaviors or external-host readiness.
+
+## Selected-profile restoration and subsequent daemon replacement
+
+The installed journey also disables and removes the selected profile, restores it
+through the local API, reopens its sidebar session and verifies fresh terminal IO
+in the same renderer. Background and sibling-app tunnels must retain their exact
+identities. The subsequent daemon replacement exposed a navigation defect: a
+retained session key/name was treated as the same selection after authority had
+fallen back to Local. Reopening created a server-scoped route without its live
+session identity, so later replacement could not requalify that session.
+
+The same-selection shortcut now also requires the same selected machine. A focused
+regression fails before this change; all 40 affected navigation, route and machine
+ownership tests pass afterward, alongside typechecking and lint. Temporary route
+tracing confirmed that replacement reached the observer but stopped before server
+verification; that instrumentation is removed from runtime source.
+
+The corrected TUI passed the complete journey in 124,305ms, including all seven
+registry cases, manual sizing, retained-renderer replacement and credential
+isolation. Every cleanup field passed. Independent checks found 110 PIDs absent,
+14 ports closed and both private homes/sockets removed, with stable source and
+artifact hashes. Evidence is at
+`.tasks/sfora-foundation-mission/selected-route-fix-bounded-discovery`. This proof
+uses the unchanged clean29aa installed CLI/native targets and a source-hashed
+corrected TUI; it is not a clean single-candidate package/release qualification.
+
+Two fixture corrections are independently recorded: visible frames must clip
+headless backing rows to the current column count after shrink, and concurrent
+native-artifact verification exceeded the fixture's six-second producer deadline.
+This qualification selects a bounded ten-second producer timeout, below the
+unchanged fifteen-second product SSH timeout. Other fixtures keep their existing
+default. All 23 fixture tests pass. Earlier failed receipts remain separate.

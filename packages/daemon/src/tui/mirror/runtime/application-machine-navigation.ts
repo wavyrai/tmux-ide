@@ -157,7 +157,10 @@ export function createApplicationMachineNavigation(options: {
       return false;
     }
     const selected = candidates[0]!;
-    const sameSelection = activeSessionKey() === selected.id && options.sessionName() === name;
+    const sameSelection =
+      manager.snapshot().selectedMachineId === id &&
+      activeSessionKey() === selected.id &&
+      options.sessionName() === name;
     setActiveSessionKey(selected.id);
     expectedLiveSessionId = selected.liveSessionId;
     server = selected.server;

@@ -423,6 +423,44 @@ it("reselects exact same-machine incarnation when sidebar leaves a pinned tab fo
   expect(callbacks.resetWorkspace).not.toHaveBeenCalled();
 });
 
+it("retains the live session identity when reopening a selected profile after local fallback", async () => {
+  const { owner, callbacks } = navigation();
+  const server = {
+    serverId: `tmux-server.${"a".repeat(32)}`,
+    generation: "11111111-1111-4111-8111-111111111111",
+  };
+  const publish = () =>
+    state.listener?.({
+      selectedMachineId: state.selected,
+      groups: [
+        {
+          id: "A",
+          label: "A",
+          state: "ready",
+          sessions: [
+            {
+              id: "A:shared",
+              name: "shared",
+              liveSessionId: "live-shared",
+              server,
+              disabled: false,
+            },
+          ],
+        },
+      ],
+    });
+  publish();
+  await owner.sidebar.onOpen("A", "shared", "mouse");
+  vi.spyOn(callbacks, "sessionName").mockReturnValue("shared");
+  // Profile retirement selects Local while the last terminal remains visible.
+  state.selected = "local";
+  publish();
+  callbacks.resetWorkspace.mockClear();
+  await owner.sidebar.onOpen("A", "shared", "mouse");
+  expect(callbacks.resetWorkspace).toHaveBeenCalledWith("A", "live-shared", server);
+  expect(callbacks.openSession).toHaveBeenLastCalledWith("shared", "mouse");
+});
+
 it("routes duplicate names by exact server session and rejects replaced tabs/history/palette", async () => {
   const { owner, callbacks } = navigation();
   const serverA = {

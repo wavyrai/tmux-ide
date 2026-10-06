@@ -92,12 +92,17 @@ type Pty = {
   onExit(callback: (value: { exitCode: number }) => void): void;
 };
 type Vt = {
+  cols: number;
   rows: number;
   resize(cols: number, rows: number): void;
   write(text: string, callback?: () => void): void;
   dispose(): void;
   buffer: {
-    active: { getLine(index: number): { translateToString(trim: boolean): string } | undefined };
+    active: {
+      getLine(
+        index: number,
+      ): { translateToString(trim: boolean, start?: number, end?: number): string } | undefined;
+    };
   };
 };
 type Handle = EventEmitter & {
@@ -565,7 +570,7 @@ if (args[0] === "--client") {
       frame: () =>
         Array.from(
           { length: vt.rows },
-          (_, n) => vt.buffer.active.getLine(n)?.translateToString(true) ?? "",
+          (_, n) => vt.buffer.active.getLine(n)?.translateToString(true, 0, vt.cols) ?? "",
         ).join("\n"),
     };
     clients[side] = client;
@@ -926,6 +931,59 @@ if (args[0] === "--client") {
     }, 30000);
     assert(restored && restored.pid !== background.pid);
     await unchanged("readd");
+    const selectedProfile = registry.machines[0];
+    const backgroundRetained = restored;
+    for (const operation of ["disable", "remove"] as const) {
+      stage = "installed-registry-selected-" + operation;
+      event(stage);
+      const retiring = await tunnel("a", originalA.port);
+      await request("PATCH", { change: { id: selectedProfile.id, operation } });
+      await wait(async () => (await kernel.identify(retiring.pid)) === null);
+      await wait(() => clients.a.frame().split("\n")[0]!.includes("Local"));
+      assert.equal(await kernel.identify(clients.a.renderer!.pid), clients.a.renderer!.identity);
+      assert.deepEqual(await tunnel("a", originalB.port, "b"), backgroundRetained);
+      assert.deepEqual(await tunnel("b", originalB.port), sibling);
+      await io("b", "registry-selected-" + operation);
+      assert.deepEqual(await fingerprint("target-a"), originalA);
+      assert.deepEqual(await fingerprint("target-b"), originalB);
+      save("registry-selected-" + operation + "-frame.json", { frame: clients.a.frame() });
+      if (operation === "disable")
+        await request("PATCH", { change: { id: selectedProfile.id, operation: "enable" } });
+      else await request("POST", { registry: { version: 1, machines: [selectedProfile] } });
+      let resumed: Awaited<ReturnType<typeof tunnel>> | undefined;
+      await wait(async () => {
+        try {
+          resumed = await tunnel("a", originalA.port);
+          return true;
+        } catch {
+          return false;
+        }
+      }, 30000);
+      assert(resumed && resumed.pid !== retiring.pid);
+      clients.a.child.write("\x1bOQ");
+      let row = -1;
+      await wait(() => {
+        const lines = clients.a.frame().split("\n");
+        const machineRow = lines.findIndex((line) => line.includes("Owned remote a"));
+        row = lines.findIndex(
+          (line, index) => index > machineRow && line.trimStart().startsWith(descriptor.session),
+        );
+        return machineRow >= 0 && row > machineRow;
+      });
+      clients.a.child.write(`\x1b[<0;8;${row + 1}M\x1b[<0;8;${row + 1}m`);
+      await wait(() => frameShowsTerminalFocus(clients.a.frame()));
+      await io("a", "registry-selected-" + operation + "-restored");
+      assert.deepEqual(await tunnel("a", originalB.port, "b"), backgroundRetained);
+      assert.deepEqual(await tunnel("b", originalB.port), sibling);
+      facts.push({
+        operation: "selected-" + operation,
+        retired: retiring,
+        resumed,
+        backgroundRetained,
+        sibling,
+        renderer: clients.a.renderer,
+      });
+    }
     receipts.installedRegistry = {
       qualified: true,
       profileId: profile.id,
@@ -978,6 +1036,9 @@ if (args[0] === "--client") {
         parent: sshParent,
         node: descriptor.node,
         targetPort: lease.port,
+        // Concurrent immutable native-artifact verification can exceed six
+        // seconds. Keep this fixture deadline below the product's 15s budget.
+        handshakeTimeoutMs: 10000,
         processes: tracker,
         onAllocated: (v: Allocation) => allocations.push(v),
         handshake: async () => {

@@ -547,12 +547,15 @@ export async function createOwnedSshFixture({
   jump = false,
   missingPath = false,
   handshake,
+  handshakeTimeoutMs = 6000,
   processes,
   onAllocated,
 }) {
   if (process.platform !== "darwin" || process.getuid() === 0 || userInfo().shell !== "/bin/zsh")
     throw fail();
   if (typeof onAllocated !== "function") throw fail();
+  if (!Number.isInteger(handshakeTimeoutMs) || handshakeTimeoutMs < 1 || handshakeTimeoutMs > 15000)
+    throw fail();
   parent = fixturePath(realpathSync(fixturePath(parent)));
   node = fixturePath(realpathSync(fixturePath(node)));
   socketPath(join(parent, "ssh-XXXXXX", "discovery.sock"));
@@ -654,7 +657,7 @@ export async function createOwnedSshFixture({
       const deliver = () => {
         if (socket.destroyed) return;
         const task = handshakeWork
-          .encode(mode)
+          .encode(mode, handshakeTimeoutMs)
           .then((value) => {
             if (socket.destroyed) return;
             metrics.deliveredBytes += Buffer.byteLength(value);
