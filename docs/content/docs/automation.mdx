@@ -5,8 +5,8 @@ description: Let agents and scripts read and type into specific tmux panes throu
 ---
 
 Agent automation lets scripts and agents read another tmux pane's output and type
-into it, like a scoped and auditable `tmux send-keys` / `capture-pane`, through
-the tmux-ide CLI, an MCP server or the SDK. All three share one
+into it, like a scoped and auditable `tmux send-keys` / `capture-pane`. It works
+through the tmux-ide CLI, an MCP server or the SDK. All three share one
 operation API. They need a running daemon of the same version, and they never
 fall back to raw tmux when a request fails.
 

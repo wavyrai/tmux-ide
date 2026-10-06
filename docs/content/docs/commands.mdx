@@ -5,7 +5,7 @@ description: "Every public tmux-ide 2.9.3 command and flag, with JSON output for
 ---
 
 The `tmux-ide` command opens the app, adds tmux chrome to existing sessions,
-reports agent state, coordinates agents, and rebuilds sessions after a tmux
+reports agent state, messages and waits on agents, and rebuilds sessions after a tmux
 crash. This page lists every public command in `2.9.3`, matching
 `tmux-ide --help`. Scripting commands that list `--json` below print JSON;
 interactive commands do not.
@@ -70,23 +70,23 @@ them.
 
 See [Agent detection](/docs/agent-detection) for how agent states are decided.
 
-| Command                                                                           | What it does                                                                                                         |
-| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `tmux-ide integration install claude`                                             | Install Claude Code lifecycle hooks and refresh the bundled Claude skill                                             |
-| `tmux-ide integration install opencode`                                           | Install session-ID capture for future opencode sessions                                                              |
-| `tmux-ide integration uninstall <claude\|opencode>`                               | Remove only tmux-ide's integration entries                                                                           |
-| `tmux-ide integration status [--json]`                                            | Show discovered agents, integration state, and resume-ID capture                                                     |
-| `tmux-ide integration agent-teams [enable\|disable\|status] [--json]`             | Turn Claude Code agent teams on or off in `~/.claude/settings.json`; the installer enables them unless you opted out |
-| `tmux-ide agent explain <pane\|session> [--json]`                                 | Explain exactly how an agent state was classified                                                                    |
-| `tmux-ide send <target> <message> [--no-enter] [--json]`                          | Type into a pane selected by ID, title, semantic name, or supported legacy role                                      |
-| `tmux-ide send --to <target> <message> [--no-enter] [--json]`                     | Equivalent explicit target form                                                                                      |
-| `tmux-ide events [--follow] [--json]`                                             | Read recent agent-state transitions or follow them                                                                   |
-| `tmux-ide events --follow --socket[=<path>]`                                      | Follow pushed events from a running control server                                                                   |
-| `tmux-ide wait agent-status <session> --status <state> [--timeout <ms>] [--json]` | Wait for a session status; exit 0 on match and 1 on timeout                                                          |
-| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>] [--json]`  | Wait until visible pane output matches                                                                               |
-| `tmux-ide team assign <%pane> <team> [--json]`                                    | Group a pane under a named team in Home and the sidebar                                                              |
-| `tmux-ide team unassign <%pane> [--json]`                                         | Remove a pane's manual team membership                                                                               |
-| `tmux-ide serve [socket-path]`                                                    | Run the foreground, owner-only local NDJSON control socket                                                           |
+| Command                                                                           | What it does                                                                                                                       |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `tmux-ide integration install claude`                                             | Install Claude Code lifecycle hooks and refresh the bundled Claude skill                                                           |
+| `tmux-ide integration install opencode`                                           | Install session-ID capture for future opencode sessions                                                                            |
+| `tmux-ide integration uninstall <claude\|opencode>`                               | Remove only tmux-ide's integration entries                                                                                         |
+| `tmux-ide integration status [--json]`                                            | Show discovered agents, integration state, and resume-ID capture                                                                   |
+| `tmux-ide integration agent-teams [enable\|disable\|status] [--json]`             | Next release: turn Claude Code agent teams on or off in `~/.claude/settings.json`; the installer enables them unless you opted out |
+| `tmux-ide agent explain <pane\|session> [--json]`                                 | Explain exactly how an agent state was classified                                                                                  |
+| `tmux-ide send <target> <message> [--no-enter] [--json]`                          | Type into a pane selected by ID, title, semantic name, or supported legacy role                                                    |
+| `tmux-ide send --to <target> <message> [--no-enter] [--json]`                     | Equivalent explicit target form                                                                                                    |
+| `tmux-ide events [--follow] [--json]`                                             | Read recent agent-state transitions or follow them                                                                                 |
+| `tmux-ide events --follow --socket[=<path>]`                                      | Follow pushed events from a running control server                                                                                 |
+| `tmux-ide wait agent-status <session> --status <state> [--timeout <ms>] [--json]` | Wait for a session status; exit 0 on match and 1 on timeout                                                                        |
+| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>] [--json]`  | Wait until visible pane output matches                                                                                             |
+| `tmux-ide team assign <%pane> <team> [--json]`                                    | Group a pane under a named team in Home and the sidebar                                                                            |
+| `tmux-ide team unassign <%pane> [--json]`                                         | Remove a pane's manual team membership                                                                                             |
+| `tmux-ide serve [socket-path]`                                                    | Run the foreground, owner-only local NDJSON control socket                                                                         |
 
 `team assign` and `team unassign` take `--socket-name` or `--socket-path` to
 select another tmux server; see [Multi-agent teams](/docs/multi-agent-teams).
@@ -284,3 +284,9 @@ as one row.
 version, preserving tmux sessions. Add `--if-running` to leave fresh installs
 idle, and `--json` for structured status. This command does not update a remote
 machine; install the same version there and run the command in its shell.
+
+## See also
+
+- [Getting started](/docs/getting-started) — install and first run
+- [Troubleshooting](/docs/troubleshooting) — the command for each common problem
+- [Configuration](/docs/configuration) — the files these commands read and write

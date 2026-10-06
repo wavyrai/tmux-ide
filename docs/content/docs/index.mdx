@@ -21,9 +21,9 @@ in [Getting started](/docs/getting-started#requirements).
 
 ## What ships in 2.9
 
-The app has two root surfaces:
+The app has two main views:
 
-| Surface              | What it does                                                                                         |
+| View                 | What it does                                                                                         |
 | -------------------- | ---------------------------------------------------------------------------------------------------- |
 | **Home** (`F1`)      | Agents across your machines with search, a machine filter, and All / Working / Needs attention views |
 | **Terminals** (`F2`) | The selected tmux session, mirrored live with window tabs, pane headers and agent state              |
@@ -36,7 +36,7 @@ Around them:
 - Mouse and keyboard control for focus, splitting, resizing, renaming and
   confirmed closing — all real tmux operations, not a parallel layout model.
 
-See [App surfaces](/docs/app-surfaces) for the full tour and
+See [App tour](/docs/app-surfaces) for the full tour and
 [Getting started](/docs/getting-started) for every key.
 
 ## Why tmux-ide is built on tmux
@@ -57,7 +57,8 @@ If the app or daemon stops, your sessions remain ordinary tmux sessions.
 - [Agent detection](/docs/agent-detection) — ground-truth status from Claude
   Code hooks or any agent's self-report, with a transparent fallback.
 - [Agent automation](/docs/automation) and [multi-agent teams](/docs/multi-agent-teams)
-  — scriptable reads, sends and waits through the CLI, MCP and SDK.
+  — send, wait and read from the CLI, with scoped reads and sends over MCP and
+  the SDK.
 - [tmux chrome](/docs/the-dock) — `tmux-ide adopt` adds a status bar, keys and
   notifications to sessions you use from a plain tmux client.
 - [Restore after a tmux crash](/docs/restore-resume) and
