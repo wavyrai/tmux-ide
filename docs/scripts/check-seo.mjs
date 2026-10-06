@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sourcesForPath } from "./git-date-sources.mjs";
 
 const docsDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const appDir = resolve(docsDir, ".next/server/app");
@@ -95,21 +96,23 @@ if (!locations.some((location) => /\/$/u.test(location)))
   throw new Error("Built sitemap does not contain the canonical homepage URL");
 if (!locations.some((location) => /\/docs(?:\/|$)/u.test(location)))
   throw new Error("Built sitemap does not contain documentation URLs");
-// <lastmod> must be the source's last commit time, never the build time. Dates
+// <lastmod> must be exactly the last commit time of the URL's source files
+// (re-derived here with `git log -1 -- <sources>`), never the build time. Dates
 // a shallow clone cannot back are omitted, so only check entries that have one.
 const entries = [...sitemap.matchAll(/<url>([\s\S]*?)<\/url>/gu)].map((match) => ({
   loc: match[1].match(/<loc>([^<]+)<\/loc>/u)?.[1],
   lastmod: match[1].match(/<lastmod>([^<]+)<\/lastmod>/u)?.[1],
 }));
-const buildStartedNear = Date.now() - 60 * 60 * 1000;
-let recentCommitTimes;
 for (const { loc, lastmod } of entries) {
   if (!lastmod) continue;
-  const time = Date.parse(lastmod);
-  if (Number.isNaN(time)) throw new Error(`Sitemap lastmod is not a date: ${loc} ${lastmod}`);
-  if (time > Date.now()) throw new Error(`Sitemap lastmod is in the future: ${loc} ${lastmod}`);
-  if (time > buildStartedNear && !lastmodBackedByGit(time))
-    throw new Error(`Sitemap lastmod looks like build time, not a commit time: ${loc} ${lastmod}`);
+  const sources = sourcesForPath(new URL(loc).pathname);
+  if (!sources) throw new Error(`Sitemap URL has a lastmod but no known source: ${loc}`);
+  const expected = git(["log", "-1", "--format=%cI", "--", ...sources]);
+  if (!expected || Date.parse(expected) !== Date.parse(lastmod))
+    throw new Error(
+      `Sitemap lastmod is not the source's last commit time: ${loc} ${lastmod} ` +
+        `(git: ${expected || "no commit"} for ${sources.join(", ")})`,
+    );
 }
 const dated = entries.filter((entry) => entry.lastmod).length;
 if (isFullHistory() && dated !== entries.length)
@@ -130,21 +133,6 @@ function git(args) {
 }
 function isFullHistory() {
   return git(["rev-parse", "--is-shallow-repository"]) === "false";
-}
-// Every commit time inside the window being tested, however many commits landed.
-function lastmodBackedByGit(time) {
-  recentCommitTimes ??= new Set(
-    (
-      git([
-        "log",
-        `--since=${new Date(buildStartedNear - 60_000).toISOString()}`,
-        "--format=%cI",
-      ]) ?? ""
-    )
-      .split("\n")
-      .map((iso) => Date.parse(iso)),
-  );
-  return recentCommitTimes.has(time);
 }
 
 const headerKeys = new Set(

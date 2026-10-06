@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { contentDir, docsDir, homeSources } from "./git-date-sources.mjs";
 
 // Source-backed modification dates for sitemap <lastmod> and dateModified,
 // computed once at build time so server code never touches git or the
@@ -11,11 +12,7 @@ import { resolve } from "node:path";
 // that comes from a boundary commit is unknown and left out rather than guessed.
 // Full history on the build host (e.g. VERCEL_DEEP_CLONE=true) dates every page.
 
-const docsDir = resolve(import.meta.dirname, "..");
 const outputPath = resolve(docsDir, ".source/git-dates.json");
-const contentDir = "content/docs";
-/** Sources that render the marketing homepage. */
-const homeSources = ["app/(home)", "lib/landing-content.ts", "components/marketing"];
 
 function git(args) {
   try {
@@ -23,7 +20,6 @@ function git(args) {
       cwd: docsDir,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      maxBuffer: 64 * 1024 * 1024,
     }).trim();
   } catch {
     return null;
@@ -37,37 +33,20 @@ if (shallowFile && existsSync(shallowFile)) {
     if (line.trim()) boundary.add(line.trim());
   }
 }
-const prefix = git(["rev-parse", "--show-prefix"]) ?? "";
-
-/** The commit date if it is backed by history, else null. */
-function datedCommit(hash, iso) {
+/** Date of the last commit touching `paths`, or null when history cannot back it. */
+function lastCommitDate(paths) {
+  const [hash, iso] = (git(["log", "-1", "--format=%H %cI", "--", ...paths]) ?? "").split(" ");
   if (!hash || boundary.has(hash) || Number.isNaN(Date.parse(iso))) return null;
   return new Date(iso).toISOString();
 }
 
 const pages = {};
-const log = git(["log", "--format=commit %H %cI", "--name-only", "--", contentDir]) ?? "";
-let commit = null;
-for (const line of log.split("\n")) {
-  if (line.startsWith("commit ")) {
-    const [, hash, iso] = line.split(" ");
-    commit = { hash, iso };
-  } else if (line && commit && line.startsWith(prefix)) {
-    const path = line.slice(prefix.length).slice(contentDir.length + 1);
-    // The newest commit touching a file decides; an undatable one stays null.
-    const isPage = /\.mdx?$/u.test(path) && existsSync(resolve(docsDir, contentDir, path));
-    if (isPage && !(path in pages)) {
-      pages[path] = datedCommit(commit.hash, commit.iso);
-    }
-  }
+for (const file of readdirSync(resolve(docsDir, contentDir), { recursive: true })) {
+  if (/\.mdx?$/u.test(file)) pages[file] = lastCommitDate([`${contentDir}/${file}`]);
 }
 
-const [homeHash, homeIso] = (
-  git(["log", "-1", "--format=%H %cI", "--", ...homeSources]) ?? ""
-).split(" ");
-
 const dates = {
-  home: datedCommit(homeHash, homeIso),
+  home: lastCommitDate(homeSources),
   pages: Object.fromEntries(
     Object.entries(pages)
       .filter(([, date]) => date !== null)
