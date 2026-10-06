@@ -94835,7 +94835,7 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide restart")}            ${dim3("Stop and relaunch the IDE session")}
   ${cyan2("tmux-ide restore")} [--dry-run] [--run-commands] [--resume-agents] [--json]
                               ${dim3("Rebuild the fleet from the last snapshot after a tmux crash")}
-                              ${dim3("(--resume-agents revives claude conversations via claude --resume)")}
+                              ${dim3("(--resume-agents resumes Claude Code, Codex, opencode, Cursor and Copilot sessions by their captured ids)")}
   ${cyan2("tmux-ide attach")}             ${dim3("Reattach to a running session")}
   ${cyan2("tmux-ide team assign")} %PANE TEAM ${dim3("Group a pane; unassign removes membership")}
   ${cyan2("tmux-ide team")} [--json]      ${dim3("TUI over all tmux sessions (--json prints fleet state)")}
@@ -94864,7 +94864,7 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide popup")} <widget>     ${dim3("Open a widget as a floating panel (explorer/changes/config; \u2325e/\u2325g/\u2325,)")}
   ${cyan2("tmux-ide widget")} <markdown|image|card> [file]  ${dim3("Render rich live content in the current pane")}
   ${cyan2("tmux-ide show")} <file>          ${dim3("Show Markdown, images, GIFs, or cards by file type")}
-  ${cyan2("tmux-ide sidebar-toggle")} [--session S]  ${dim3("Toggle the app nav column (\u2325b on adopted sessions)")}
+  ${cyan2("tmux-ide sidebar-toggle")} [--session S]  ${dim3("Toggle the tmux chrome sidebar column (prefix b / \u2325b in adopted sessions)")}
   ${cyan2("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
                               ${dim3("Add a git worktree (new branch) + open a session in it")}
   ${cyan2("tmux-ide worktree open")} <branch>    ${dim3("Open (or switch to) the session for an existing worktree")}
