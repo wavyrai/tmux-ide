@@ -44,7 +44,7 @@ export function SiteFooter() {
         {/* A line-colored canvas owns every internal seam; dark cells repaint
             the surface so adjacent columns can never manufacture double rules. */}
         <div className="footer-rule-grid grid grid-cols-1 gap-px border-b sm:grid-cols-2 lg:grid-cols-5">
-          <div className="footer-surface px-6 py-12 sm:col-span-2 lg:py-16 xl:px-10">
+          <div className="footer-surface px-(--site-gutter) py-12 sm:col-span-2 lg:py-16">
             <Link
               href="/"
               aria-label="tmux-ide home"
@@ -68,13 +68,13 @@ export function SiteFooter() {
         </div>
 
         <div className="footer-rule-grid grid grid-cols-1 gap-px border-b sm:grid-cols-2">
-          <div className="footer-muted footer-surface type-caption-1 flex items-center gap-2 px-6 py-6 xl:px-10">
+          <div className="footer-muted footer-surface type-caption-1 flex items-center gap-2 px-(--site-gutter) py-6">
             <span className="text-emerald-400" aria-hidden>
               ●
             </span>
             <span>An open-source project by Prototyper · MIT license</span>
           </div>
-          <div className="footer-muted footer-surface type-caption-1 flex flex-wrap items-center gap-x-5 gap-y-2 px-6 py-6 sm:justify-end xl:px-10">
+          <div className="footer-muted footer-surface type-caption-1 flex flex-wrap items-center gap-x-5 gap-y-2 px-(--site-gutter) py-6 sm:justify-end">
             <span>© {new Date().getFullYear()} tmux-ide</span>
             <span>tmux owns the processes. tmux-ide gives them a workspace.</span>
           </div>
@@ -85,9 +85,9 @@ export function SiteFooter() {
           target="_blank"
           rel="noreferrer"
           aria-label="Prototyper (opens in a new tab)"
-          className="footer-foreground footer-surface group block px-4 pt-6 sm:px-6 sm:pt-8 xl:px-8"
+          className="footer-foreground footer-surface group block px-(--site-gutter) pt-6 sm:pt-8"
         >
-          <span className="footer-wordmark marketing-wordmark-action mx-auto block w-[90%] translate-y-[40%]">
+          <span className="footer-wordmark marketing-wordmark-action block w-full translate-y-[40%]">
             <PrototyperWordmark width="100%" outline className="block h-auto w-full" />
           </span>
         </Link>
@@ -104,7 +104,7 @@ function FooterLinkGroup({
   links: readonly (readonly [string, string])[];
 }) {
   return (
-    <nav className="footer-surface px-6 py-12 lg:py-16" aria-label={`${title} links`}>
+    <nav className="footer-surface px-(--site-gutter) py-12 lg:py-16" aria-label={`${title} links`}>
       <p className="footer-muted type-caption-1">{title}</p>
       <ul className="mt-6 space-y-3">
         {links.map(([label, href]) => (
