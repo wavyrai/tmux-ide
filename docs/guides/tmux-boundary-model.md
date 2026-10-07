@@ -844,3 +844,14 @@ summaries are separated by process and clock domain. Six generic labels do not
 prove the mission's six boundaries, and a calibration record alone does not
 establish a usable cross-process timeline. Those verdicts remain not measured
 until their own evidence is admitted.
+
+Opt-in daemon traces now end with `performance.daemon-trace.summary`, recording
+offered and accepted records, saturation drops and construction/write failures.
+The writer keeps the existing 64 KiB stream high-water mark and drops on
+saturation; a separate new 64 KiB record limit rejects oversized diagnostics.
+Close uses a one-second timeout for drain/end, and startup rollback marks the
+capture failed. Whole-capture admission must require zero losses and successful
+owner shutdown as well as the final summary: the summary is written before the
+end callback completes and is not an fsync durability guarantee. Ring-buffer
+overwrites are separate from file loss. Live positive-witness readers do not
+gain exhaustive coverage from this summary.
