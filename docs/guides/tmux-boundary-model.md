@@ -680,3 +680,32 @@ nonce mismatch, cooperative decode cancellation, sibling input, viewport fitting
 and the mounted error overlay/new-generation recovery. Real stock/candidate
 `stock-capture-unavailable-live.test.ts` qualification is a separate required
 execution; adding its fixture alone does not establish server-lifetime safety.
+
+### Required local styled SSH qualification
+
+Run on a non-root macOS account whose login shell is `/bin/zsh`:
+
+```sh
+pnpm qualify:styled-ssh --binary /absolute/bundle/tmux --manifest /absolute/bundle/manifest.json --bun /absolute/pinned/bun --evidence-dir /absolute/new/evidence-directory
+```
+
+The bundled native manifest must match current source provenance;
+Bun must match `.bun-version`. This command fails on unavailable prerequisites,
+a skipped fixture, missing receipts or incomplete cleanup instead of treating
+those conditions as qualification.
+
+The wrapper selects the styled native branch of the maintained SSH renderer
+fixture with its existing 60-second test deadline. It requires the public
+40→24→40 viewport changes, window selection and exact input witnesses, native
+cell/completed-frame comparisons and corruption controls, reconnection to a new
+source epoch, and owned native/SSH cleanup. It records source hashes, native
+closure, Bun identity, output and the raw fixture receipt, then verifies source,
+native files and Bun have not changed. Dirty source is recorded explicitly; this
+is source qualification, not an installed-package or clean-commit claim.
+
+The outer timeout only signals its creation-owned test child. If the fixture
+cannot provide verified cleanup, the run fails and retains evidence for review;
+the wrapper does not infer authority to kill PIDs from a receipt. Receipt files
+are copied only from the fixture's owned `/tmp` namespace. This local lane does
+not establish WAN behavior, physical terminal paint or Linux SSH support, and
+its addition alone does not make a CI status mandatory.
