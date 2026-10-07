@@ -1,4 +1,7 @@
-import { TERMINAL_REPLICA_DEFAULT_COLOR } from "./terminal-replica-owned-row.ts";
+import {
+  isSchemaValidProjectedTerminalReplicaRow,
+  TERMINAL_REPLICA_DEFAULT_COLOR,
+} from "./terminal-replica-owned-row.ts";
 import type { TerminalReplicaColor, TerminalReplicaRow } from "@tmux-ide/contracts";
 import { createBufferedFnv64, type BufferedFnv64 } from "./terminal-fnv64-wasm.ts";
 
@@ -156,6 +159,36 @@ class CanonicalFnv64 {
     this.ascii(value ? "b1;" : "b0;");
   }
 
+  #projectedRow(row: TerminalReplicaRow): void {
+    this.ascii("o2:s5:cells;");
+    const cells = row.cells;
+    this.ascii(`a${cells.length}:`);
+    let index = 0;
+    // Preserve dynamic array iteration. A replaced inherited iterator can yield
+    // foreign values; only the exact immutable cell at this slot earns the path.
+    for (const cell of cells) {
+      if (index < cells.length && cell === cells[index]) {
+        this.ascii("o5:s10:attributes;");
+        this.number(cell.attributes);
+        this.ascii("s10:background;");
+        writeColor(this, cell.background);
+        this.ascii("s10:foreground;");
+        writeColor(this, cell.foreground);
+        this.ascii("s8:grapheme;");
+        this.string(cell.grapheme);
+        this.ascii("s5:width;");
+        this.number(cell.width);
+        this.ascii(";");
+      } else {
+        this.value(cell);
+      }
+      index++;
+    }
+    this.ascii(";s7:wrapped;");
+    this.boolean(row.wrapped);
+    this.ascii(";");
+  }
+
   value(value: unknown): void {
     if (value === null) {
       this.ascii("n;");
@@ -177,6 +210,10 @@ class CanonicalFnv64 {
       this.ascii(`a${value.length}:`);
       for (const entry of value) this.value(entry);
       this.ascii(";");
+      return;
+    }
+    if (isSchemaValidProjectedTerminalReplicaRow(value)) {
+      this.#projectedRow(value as TerminalReplicaRow);
       return;
     }
     const record = value as Record<string, unknown>;

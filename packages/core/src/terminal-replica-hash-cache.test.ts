@@ -1,4 +1,9 @@
-import { TERMINAL_REPLICA_DEFAULT_COLOR } from "./terminal-replica-owned-row.ts";
+import {
+  createProjectedTerminalReplicaRowBuilder,
+  freezeOwnedTerminalReplicaRow,
+  isSchemaValidProjectedTerminalReplicaRow,
+  TERMINAL_REPLICA_DEFAULT_COLOR,
+} from "./terminal-replica-owned-row.ts";
 import { describe, expect, it, vi } from "vitest";
 import * as bufferedHash from "./terminal-fnv64-wasm.ts";
 import type { TerminalReplicaRow, TerminalReplicaSnapshot } from "@tmux-ide/contracts";
@@ -676,5 +681,83 @@ describe("exact default-color canonical key layout", () => {
         async () => {},
       ),
     ).rejects.toBe(failure);
+  });
+});
+
+describe("schema-proven projected rows in generic synchronous frame hashes", () => {
+  const projected = (size: number) => {
+    const builder = createProjectedTerminalReplicaRowBuilder();
+    for (let index = 0; index < size; index++) {
+      builder.append(
+        index % 3 === 0 ? "界e\u0301\ud800" : index % 3 === 1 ? " " : "",
+        index % 3 === 0 ? 2 : index % 3 === 1 ? 0 : 1,
+        index % 256,
+        index % 2 ? "indexed" : "default",
+        index % 2 ? -0 : NaN,
+        "rgb",
+        index % 2 ? 0xffffff : -0,
+      );
+    }
+    return builder.finish(true);
+  };
+
+  it("matches the independent canonical byte oracle across acceleration and fallback", () => {
+    const row = projected(1600);
+    expect(isSchemaValidProjectedTerminalReplicaRow(row)).toBe(true);
+    const input = { rows: [row], revision: 3, metadata: { label: "seed" } };
+    const expected = referenceHash(input);
+    const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
+    try {
+      expect(hashCanonicalTerminalValue(input)).toBe(expected);
+      expect(factory).toHaveBeenCalled();
+      factory.mockReturnValue(null);
+      expect(hashCanonicalTerminalValue(input)).toBe(expected);
+    } finally {
+      factory.mockRestore();
+    }
+  });
+
+  it("preserves generic extra fields for unproven copies and invalid constructed rows", () => {
+    const builder = createProjectedTerminalReplicaRowBuilder();
+    builder.append("x", 1, 256, "indexed", 256, "rgb", 0x1000000);
+    const invalid = builder.finish(false);
+    const foreign = freezeOwnedTerminalReplicaRow(structuredClone(projected(3)));
+    for (const row of [invalid, foreign]) {
+      expect(isSchemaValidProjectedTerminalReplicaRow(row)).toBe(false);
+      expect(hashCanonicalTerminalValue(row)).toBe(referenceHash(row));
+    }
+    const value = { ...foreign, extra: "retained" };
+    expect(hashCanonicalTerminalValue(value)).toBe(referenceHash(value));
+    expect(hashCanonicalTerminalValue(value)).not.toBe(hashCanonicalTerminalValue(foreign));
+  });
+
+  it("preserves inherited array iteration and foreign yielded value reads", () => {
+    const row = projected(3);
+    const original = Array.prototype[Symbol.iterator];
+    const trace: string[] = [];
+    const foreign = {
+      get value() {
+        trace.push("value");
+        return "foreign";
+      },
+    };
+    const expected = referenceHash({ cells: [row.cells[0], foreign, row.cells[0]], wrapped: true });
+    Array.prototype[Symbol.iterator] = function* (this: readonly unknown[]) {
+      if (this !== row.cells) {
+        yield* Reflect.apply(original, this, []);
+        return;
+      }
+      yield row.cells[0];
+      yield foreign;
+      yield row.cells[0];
+    } as typeof original;
+    let actual: string;
+    try {
+      actual = hashCanonicalTerminalValue(row);
+    } finally {
+      Array.prototype[Symbol.iterator] = original;
+    }
+    expect(actual).toBe(expected);
+    expect(trace).toEqual(["value", "value"]);
   });
 });
