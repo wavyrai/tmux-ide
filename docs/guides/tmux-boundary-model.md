@@ -687,6 +687,24 @@ include fixture work and do not isolate daemon detection or physical rendering.
 Socket/listener ledgers do not count every internal listener. Five-minute results
 are bounded observations, not long-session leak or native-performance verdicts.
 
+The combined worker remains a required fixture envelope: each sample must stay
+below 1 GiB RSS and 512 MiB heap. Trailing growth must stay below 128 MiB RSS
+and 64 MiB heap, subtracting the first measured sample from the last trailing
+sample. The `long`
+profile (`TMUX_IDE_RUNTIME_SOAK_PROFILE=long`) extends the measured interval to
+30 minutes; it keeps the same warm-up, trailing interval and budgets. Diagnostic
+slopes, history occupancy and heap snapshots help explain a failure; they do not
+replace these assertions. A failed assertion leaves later checks unproven.
+
+Installed-process resource qualification is additional coverage. Before running
+it, declare the exact daemon, active TUI, second viewer and native-server process
+membership, viewer lifecycle, sample alignment and per-process/aggregate budgets.
+Record each process separately as well as simultaneous totals. Summed RSS can
+count shared pages more than once; source-built Node consumers do not measure
+the installed Bun TUI. Neither a separated-process diagnostic nor an installed
+result supersedes a failed combined-worker cohort. Retain the original failures
+and verify any proposed fix against the same workload and assertions.
+
 ### Stock capture tabs: explicit unavailable pane
 
 A stock server serializes a saved tab span as one HT byte. That loses historical
