@@ -1693,6 +1693,7 @@ interface CompactParsedRowsSlice {
 
 class CooperativeJsonSource {
   readonly #bytes: Uint8Array;
+  readonly #decoder = new TextDecoder("utf-8", { fatal: true });
   readonly length: number;
 
   constructor(bytes: Uint8Array) {
@@ -1711,7 +1712,8 @@ class CooperativeJsonSource {
   }
 
   slice(start: number, end: number): string {
-    return new TextDecoder("utf-8", { fatal: true }).decode(this.#bytes.subarray(start, end));
+    // Non-streaming decode resets UTF-8/BOM state for every independent slice.
+    return this.#decoder.decode(this.#bytes.subarray(start, end));
   }
 
   bytes(start: number, end: number): Uint8Array {
