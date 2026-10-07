@@ -81,6 +81,7 @@ test("file admission rejects incomplete evidence, preserves oracle result and ex
       [header],
       [header, { ...summary, failed: true }],
       [header, { ...summary, saturated: true }],
+      [header, { ...summary, writableLength: -1 }],
       [header, { ...summary, acceptedRecords: 2 }],
       [{ ...header, commit: "b".repeat(40) }, summary],
       [{ ...header, tree: "dirty" }, summary],

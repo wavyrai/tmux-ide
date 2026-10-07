@@ -44,6 +44,8 @@ export function admitComparativeTrace(path, expected) {
       summary.version !== 1 ||
       summary.failed !== false ||
       summary.saturated !== false ||
+      !Number.isSafeInteger(summary.writableLength) ||
+      summary.writableLength < 0 ||
       summary.acceptedRecords !== records.length - 1 ||
       [
         "droppedRecords",
