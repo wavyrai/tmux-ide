@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   isOwnedTerminalReplicaRow,
+  isSchemaValidProjectedTerminalReplicaRow,
   TERMINAL_REPLICA_EMPTY_CELL,
   TERMINAL_REPLICA_SPACE_CELL,
 } from "./terminal-replica-owned-row.ts";
@@ -246,7 +247,8 @@ const CompactOwnedEncodingRowSchema = TerminalReplicaRowSchemaZ.extend({
 const CompactEncodingRowSchema = z.union([
   z.custom<TerminalReplicaRow>((input) => {
     if (!isOwnedTerminalReplicaRow(input)) return false;
-    if (validatedOwnedEncodingRows.has(input)) return true;
+    if (validatedOwnedEncodingRows.has(input) || isSchemaValidProjectedTerminalReplicaRow(input))
+      return true;
     const schema = prefersTrustedCellValidation(input.cells)
       ? CompactOwnedEncodingRowSchema
       : TerminalReplicaRowSchemaZ;
@@ -275,7 +277,11 @@ const CompactPatchEncodingRowSchema = z
   .custom<TerminalReplicaRow>(() => true)
   .transform((input, context) => {
     const owned = isOwnedTerminalReplicaRow(input);
-    if (owned && validatedOwnedEncodingRows.has(input)) return input;
+    if (
+      owned &&
+      (validatedOwnedEncodingRows.has(input) || isSchemaValidProjectedTerminalReplicaRow(input))
+    )
+      return input;
     if (owned && prefersTrustedCellValidation(input.cells)) {
       const optimized = CompactOwnedEncodingRowSchema.safeParse(input);
       if (optimized.success) {
@@ -531,7 +537,9 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
     for (let index = 0; index < rows.length; index++) {
       const row = rows[index]!;
       const owned = isOwnedTerminalReplicaRow(row);
-      const validatedRow = owned && validatedOwnedEncodingRows.has(row);
+      const validatedRow =
+        owned &&
+        (validatedOwnedEncodingRows.has(row) || isSchemaValidProjectedTerminalReplicaRow(row));
       const { cells, ...rowHeaderInput } = row;
       const rowHeader = CompactRowHeaderSchema.parse(rowHeaderInput);
       if (++rowCount > COMPACT_MAX_ROWS || !Array.isArray(cells) || cells.length !== metadata.cols)

@@ -7,6 +7,16 @@ import type {
 // Ownership proves immutable, ordinary data properties, not schema validity.
 // There is no registration API: callers can only obtain ownership by copying.
 const OWNED_ROWS = new WeakSet<TerminalReplicaRow>();
+// Earned only by exact scalar construction, never by immutable foreign copies.
+const SCHEMA_VALID_PROJECTED_ROWS = new WeakSet<TerminalReplicaRow>();
+
+export function isSchemaValidProjectedTerminalReplicaRow(row: unknown): boolean {
+  return (
+    typeof row === "object" &&
+    row !== null &&
+    SCHEMA_VALID_PROJECTED_ROWS.has(row as TerminalReplicaRow)
+  );
+}
 
 export const TERMINAL_REPLICA_DEFAULT_COLOR = Object.freeze({ kind: "default" } as const);
 
@@ -94,6 +104,7 @@ export function createOwnedTerminalReplicaRowBuilder() {
 class ProjectedTerminalReplicaRowBuilder {
   readonly #cells: TerminalReplicaCell[] = [];
   #finished = false;
+  #schemaValid = true;
 
   append(
     grapheme: string,
@@ -120,6 +131,16 @@ class ProjectedTerminalReplicaRowBuilder {
           : TERMINAL_REPLICA_SPACE_CELL
         : Object.freeze({ grapheme, width, foreground, background, attributes });
     this.#cells.push(cell);
+    // Describe the emitted exact-key cell, preserving all original throws and
+    // invalid-but-owned construction. Default color does not emit its value.
+    this.#schemaValid =
+      this.#schemaValid &&
+      (width === 0 || width === 1 || width === 2) &&
+      Number.isInteger(attributes) &&
+      attributes >= 0 &&
+      attributes <= 0xff &&
+      projectedColorIsSchemaValid(foregroundKind, foregroundValue) &&
+      projectedColorIsSchemaValid(backgroundKind, backgroundValue);
   }
 
   finish(wrapped: boolean): TerminalReplicaRow {
@@ -131,12 +152,20 @@ class ProjectedTerminalReplicaRowBuilder {
       cells: Object.freeze(this.#cells),
     }) as unknown as TerminalReplicaRow;
     OWNED_ROWS.add(row);
+    if (this.#schemaValid) SCHEMA_VALID_PROJECTED_ROWS.add(row);
     return row;
   }
 
   #assertOpen(): void {
     if (this.#finished) throw new Error("Projected terminal row already finished");
   }
+}
+
+function projectedColorIsSchemaValid(kind: TerminalReplicaColor["kind"], value: number): boolean {
+  return (
+    kind === "default" ||
+    (Number.isInteger(value) && value >= 0 && value <= (kind === "indexed" ? 255 : 0xffffff))
+  );
 }
 
 function projectedColor(kind: TerminalReplicaColor["kind"], value: number): TerminalReplicaColor {
