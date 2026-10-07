@@ -863,3 +863,14 @@ record counts and zero loss. Reused append files retain their original file
 identity and prefix hash; replaced files, foreign records and multiple summaries
 fail admission. This checks file integrity and owner shutdown only. It does not
 establish causal stage coverage, latency acceptance or physical-terminal parity.
+
+For an owned two-stream diagnostic, run the reference collector from a clean
+linked worktree with `--owned-daemon-capture`,
+`--capture-renderer-manifest /absolute/path/to/qualified-manifest.json` and
+`--report /absolute/path/to/report.json`. This mode builds the qualified TUI
+before the daemon CLI, creates private state and tmux namespaces, and collects
+at least 30 sequential inputs with input-detail tracing enabled. It retains the
+TUI trace, controller mapping, daemon trace and shutdown receipt beside the
+report. Input-detail tracing adds overhead; startup and memory measurements are
+not part of this mode. The original local input-to-consumed-paint calculation
+remains separate from missing causal, cross-clock and terminal-output evidence.

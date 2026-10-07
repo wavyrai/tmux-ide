@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 
+import {
+  assertOwnedReferenceWorktree,
+  withOwnedReferenceCapture,
+} from "./lib/owned-reference-capture.mjs";
 import { randomBytes } from "node:crypto";
 import {
   completedReferenceRecords,
@@ -39,95 +43,197 @@ const budgets = JSON.parse(
 );
 const options = parseOptions(process.argv.slice(2));
 const reportPath = resolve(root, options.report);
-const reference = referenceTarget(root);
-const lifecyclePath = join(reference.runtimeDir, "performance.jsonl");
-const testdriveStatePath = join(reference.runtimeDir, "home/app-state.json");
-const target = `tmux-ide-reference-${process.pid}`;
-const referenceProjectDir = mkdtempSync(join(tmpdir(), `${target}-`));
 const source = gitSourceIdentity(root);
+let reference,
+  lifecyclePath,
+  testdriveStatePath,
+  target,
+  referenceProjectDir,
+  provenance,
+  measurements,
+  ownedMetadata;
+if (options.ownedCapture) {
+  assertOwnedReferenceWorktree(root, options.captureRendererManifest);
+  const { createScratchFleet } = await import("./lib/product-fixtures/scratch-fleet.ts");
+  const { startDaemon } = await import("./lib/product-fixtures/daemon.ts");
+  await withOwnedReferenceCapture({
+    rendererManifest: options.captureRendererManifest,
+    createFleet: createScratchFleet,
+    startDaemon,
+    root,
+    output: `${reportPath}.capture`,
+    source,
+    run: async (env, metadata) => {
+      const original = { ...process.env };
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, env);
+      ownedMetadata = metadata;
+      try {
+        await executeReference();
+        return {
+          reportPath,
+          inputAdmission: measurements?.inputToPaint?.admission,
+          controllerMapping: measurements?.inputToPaint?.controllerMapping,
+        };
+      } finally {
+        if (referenceProjectDir) rmSync(referenceProjectDir, { recursive: true, force: true });
+        for (const key of Object.keys(process.env)) delete process.env[key];
+        Object.assign(process.env, original);
+      }
+    },
+  });
+} else await executeReference();
 
-if (source.dirty)
-  throw new Error(
-    "Reference measurements require a clean worktree so commit/tree provenance is reproducible",
-  );
-if (platform() !== budgets.referenceHost.platform || arch() !== budgets.referenceHost.arch)
-  throw new Error(
-    `Reference measurements require ${budgets.referenceHost.platform}/${budgets.referenceHost.arch}; got ${platform()}/${arch()}`,
-  );
-preflightCanonicalDaemon();
+async function executeReference() {
+  reference = referenceTarget(root);
+  lifecyclePath = join(reference.runtimeDir, "performance.jsonl");
+  testdriveStatePath = join(reference.runtimeDir, "home/app-state.json");
+  target = `tmux-ide-reference-${process.pid}`;
+  referenceProjectDir = mkdtempSync(join(tmpdir(), `${target}-`));
 
-if (options.build) run("pnpm", ["build:tui"]);
-process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON = "1";
-rmSync(testdriveStatePath, { force: true });
-const provenance = {
-  host: hostname(),
-  cpuModel: cpus()[0]?.model ?? "unknown",
-  arch: arch(),
-  platform: platform(),
-  osRelease: release(),
-  osVersion: osVersion(),
-  nodeVersion: process.version,
-  bunVersion: commandVersion("bun", ["--version"]),
-  tmuxVersion: commandVersion("tmux", ["-V"]),
-  commit: source.commit,
-  tree: source.tree,
-  dirty: source.dirty,
-};
-
-let measurements;
-let succeeded = false;
-try {
-  mkdirSync(join(referenceProjectDir, ".tmux-ide"), { recursive: true });
-  writeFileSync(
-    join(referenceProjectDir, ".tmux-ide/workspace.yml"),
-    [
-      "version: 1",
-      `name: ${target}`,
-      "terminal:",
-      "  rows:",
-      "    - panes:",
-      "        - title: Echo",
-      "          focus: true",
-      `          command: ${JSON.stringify(`/bin/zsh -f -c 'stty raw -echo; while read -rk 1 ch; do print -rn -- "$ch"; done'`)}`,
-      "",
-    ].join("\n"),
-  );
-  await registerReferenceProject();
-  const readiness = await launchReferenceWorkspace();
-  qualifyBunPaneStream(readiness);
-  if (options.preflightOnly) await collectInputTrace(1);
-  if (!options.preflightOnly) {
-    const startup = await measureStartup();
-    const collected = options.inputTrace ? null : await collectInputTrace();
-    const inputTrace = options.inputTrace ?? collected.path;
-    measurements = {
-      startup,
-      inputToPaint: {
-        ...measureInputToPaint(inputTrace),
-        controllerMapping: collected?.controllerMappingArtifact ?? {
-          status: "not-collected",
-          scope: "Imported trace: captured-input accounting only",
-        },
-      },
-      memory: measureMemory(),
-    };
-  }
-  succeeded = true;
-} finally {
-  if (!options.keepOnFailure || succeeded) {
-    spawnSync("node", ["scripts/tui-testdrive.mjs", "stop"], { cwd: root, stdio: "ignore" });
-    spawnSync("tmux", [...reference.socketArgs, "kill-session", "-t", `=${target}`], {
-      stdio: "ignore",
-    });
-    await unregisterReferenceProject().catch(() => undefined);
-    rmSync(referenceProjectDir, { recursive: true, force: true });
-  } else {
-    process.stderr.write(
-      `Reference fixture retained after failure:\n` +
-        `  project: ${referenceProjectDir}\n` +
-        `  session: ${target}\n` +
-        `  TUI: tmux attach -t _tmux-ide-testdrive\n`,
+  if (source.dirty)
+    throw new Error(
+      "Reference measurements require a clean worktree so commit/tree provenance is reproducible",
     );
+  if (platform() !== budgets.referenceHost.platform || arch() !== budgets.referenceHost.arch)
+    throw new Error(
+      `Reference measurements require ${budgets.referenceHost.platform}/${budgets.referenceHost.arch}; got ${platform()}/${arch()}`,
+    );
+  preflightCanonicalDaemon();
+
+  if (options.build) run("pnpm", ["build:tui"]);
+  process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON = "1";
+  rmSync(testdriveStatePath, { force: true });
+  provenance = {
+    host: hostname(),
+    cpuModel: cpus()[0]?.model ?? "unknown",
+    arch: arch(),
+    platform: platform(),
+    osRelease: release(),
+    osVersion: osVersion(),
+    nodeVersion: process.version,
+    bunVersion: commandVersion("bun", ["--version"]),
+    tmuxVersion: commandVersion("tmux", ["-V"]),
+    commit: source.commit,
+    tree: source.tree,
+    dirty: source.dirty,
+  };
+
+  let succeeded = false;
+  try {
+    mkdirSync(join(referenceProjectDir, ".tmux-ide"), { recursive: true });
+    writeFileSync(
+      join(referenceProjectDir, ".tmux-ide/workspace.yml"),
+      [
+        "version: 1",
+        `name: ${target}`,
+        "terminal:",
+        "  rows:",
+        "    - panes:",
+        "        - title: Echo",
+        "          focus: true",
+        `          command: ${JSON.stringify(`/bin/zsh -f -c 'stty raw -echo; while read -rk 1 ch; do print -rn -- "$ch"; done'`)}`,
+        "",
+      ].join("\n"),
+    );
+    await registerReferenceProject();
+    const readiness = await launchReferenceWorkspace();
+    qualifyBunPaneStream(readiness);
+    if (options.preflightOnly) await collectInputTrace(1);
+    if (!options.preflightOnly) {
+      const startup = options.ownedCapture
+        ? { status: "not-measured", reason: "Owned input capture only", budgets: budgets.startup }
+        : await measureStartup();
+      const collected = options.inputTrace ? null : await collectInputTrace();
+      const inputTrace = options.inputTrace ?? collected.path;
+      measurements = {
+        startup,
+        inputToPaint: {
+          ...measureInputToPaint(inputTrace),
+          controllerMapping: collected?.controllerMappingArtifact ?? {
+            status: "not-collected",
+            scope: "Imported trace: captured-input accounting only",
+          },
+        },
+        memory: options.ownedCapture
+          ? { status: "not-measured", reason: "Owned input capture only", budgets: budgets.memory }
+          : measureMemory(),
+      };
+    }
+    succeeded = true;
+  } finally {
+    if (!options.keepOnFailure || succeeded) {
+      const tuiStop = spawnSync("node", ["scripts/tui-testdrive.mjs", "stop"], {
+        cwd: root,
+        stdio: "ignore",
+        ...(options.ownedCapture ? { timeout: 10000 } : {}),
+      });
+      if (options.ownedCapture && tuiStop.status !== 0)
+        ownedMetadata.cleanupErrors.push("Reference TUI stop did not complete successfully");
+      spawnSync("tmux", [...reference.socketArgs, "kill-session", "-t", `=${target}`], {
+        stdio: "ignore",
+      });
+      await unregisterReferenceProject().catch((error) => {
+        if (options.ownedCapture)
+          ownedMetadata.cleanupErrors.push(`Reference unregister failed: ${error.message}`);
+      });
+      rmSync(referenceProjectDir, { recursive: true, force: true });
+    } else {
+      process.stderr.write(
+        `Reference fixture retained after failure:\n` +
+          `  project: ${referenceProjectDir}\n` +
+          `  session: ${target}\n` +
+          `  TUI: tmux attach -t _tmux-ide-testdrive\n`,
+      );
+    }
+  }
+
+  if (options.preflightOnly) {
+    mkdirSync(dirname(reportPath), { recursive: true });
+    writeFileSync(
+      reportPath,
+      JSON.stringify(
+        {
+          version: 1,
+          kind: "reference-preflight",
+          passed: true,
+          provenance,
+          timingQualification: false,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    const report = {
+      version: REFERENCE_REPORT_VERSION,
+      statusScope:
+        "Configured startup, local input-to-consumed-paint and memory budgets only; not six-stage pipeline acceptance",
+      measuredAt: new Date().toISOString(),
+      status: Object.values(measurements).some(({ status }) => status === "failed")
+        ? "failed"
+        : Object.values(measurements).every(({ status }) => status === "passed")
+          ? "passed"
+          : "incomplete",
+      provenance,
+      measurements,
+      ...(options.ownedCapture
+        ? {
+            timingQualification: false,
+            purpose: "owned-input-two-stream-capture",
+            ownedCapture: ownedMetadata,
+          }
+        : {}),
+      ...(options.startupDiagnosticRoot
+        ? { timingQualification: false, purpose: "startup-launch-diagnostic" }
+        : {}),
+    };
+    validateReferenceReport(report, source);
+    mkdirSync(dirname(reportPath), { recursive: true });
+    writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    process.stdout.write(`Reference qualification: ${report.status}\nReport: ${reportPath}\n`);
+    if (report.status === "failed" || (options.requireComplete && report.status !== "passed"))
+      process.exitCode = 1;
   }
 }
 
@@ -304,46 +410,6 @@ function preflightCanonicalDaemon() {
     throw new Error(
       "Canonical daemon predates the measured commit. Rebuild/restart the daemon from this clean checkout before running reference qualification.",
     );
-}
-if (options.preflightOnly) {
-  mkdirSync(dirname(reportPath), { recursive: true });
-  writeFileSync(
-    reportPath,
-    JSON.stringify(
-      {
-        version: 1,
-        kind: "reference-preflight",
-        passed: true,
-        provenance,
-        timingQualification: false,
-      },
-      null,
-      2,
-    ),
-  );
-} else {
-  const report = {
-    version: REFERENCE_REPORT_VERSION,
-    statusScope:
-      "Configured startup, local input-to-consumed-paint and memory budgets only; not six-stage pipeline acceptance",
-    measuredAt: new Date().toISOString(),
-    status: Object.values(measurements).some(({ status }) => status === "failed")
-      ? "failed"
-      : Object.values(measurements).every(({ status }) => status === "passed")
-        ? "passed"
-        : "incomplete",
-    provenance,
-    measurements,
-    ...(options.startupDiagnosticRoot
-      ? { timingQualification: false, purpose: "startup-launch-diagnostic" }
-      : {}),
-  };
-  validateReferenceReport(report, source);
-  mkdirSync(dirname(reportPath), { recursive: true });
-  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-  process.stdout.write(`Reference qualification: ${report.status}\nReport: ${reportPath}\n`);
-  if (report.status === "failed" || (options.requireComplete && report.status !== "passed"))
-    process.exitCode = 1;
 }
 
 async function measureStartup() {
@@ -789,6 +855,8 @@ function readJsonLines(path) {
 function parseOptions(args) {
   const parsed = {
     report: "artifacts/performance-reference.json",
+    ownedCapture: false,
+    captureRendererManifest: null,
     startupSamples: 6,
     memorySamples: 24,
     inputSamples: 36,
@@ -806,6 +874,8 @@ function parseOptions(args) {
     else if (arg === "--memory-samples") parsed.memorySamples = Number(args[++index]);
     else if (arg === "--input-samples") parsed.inputSamples = Number(args[++index]);
     else if (arg === "--input-trace") parsed.inputTrace = args[++index];
+    else if (arg === "--owned-daemon-capture") parsed.ownedCapture = true;
+    else if (arg === "--capture-renderer-manifest") parsed.captureRendererManifest = args[++index];
     else if (arg === "--preflight-only") parsed.preflightOnly = true;
     else if (arg === "--no-build") parsed.build = false;
     else if (arg === "--require-complete") parsed.requireComplete = true;
@@ -813,6 +883,22 @@ function parseOptions(args) {
     else if (arg === "--startup-diagnostic-root")
       parsed.startupDiagnosticRoot = resolve(args[++index]);
     else throw new Error(`Unknown option ${arg}`);
+  }
+  if (!parsed.ownedCapture && parsed.captureRendererManifest)
+    throw new Error("Renderer manifest requires owned capture");
+  if (parsed.ownedCapture) {
+    if (
+      parsed.preflightOnly ||
+      parsed.requireComplete ||
+      parsed.inputTrace ||
+      parsed.keepOnFailure ||
+      parsed.startupDiagnosticRoot ||
+      parsed.inputSamples < 30
+    )
+      throw new Error(
+        "Owned capture requires fresh >=30 inputs and cannot be a full reference gate",
+      );
+    parsed.build = false;
   }
   if (parsed.startupDiagnosticRoot && (parsed.startupSamples !== 6 || parsed.preflightOnly))
     throw new Error("Startup diagnostics require exactly one cold and five warm samples");
