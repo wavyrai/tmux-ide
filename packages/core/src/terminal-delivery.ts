@@ -1432,7 +1432,7 @@ export function decodeVerifiedCompactSemanticTerminalUpdate(
       );
   if (hash !== expectedHash) throw new TypeError("Canonical state hash mismatch");
   compactCommitCapabilities.set(payload, Object.freeze({ snapshot, hash }));
-  if (options?.grantReducerAdoption)
+  if (options?.grantReducerAdoption) {
     grantCompactReplicaCapability(
       payload.frame === "seed"
         ? payload.snapshot
@@ -1442,7 +1442,13 @@ export function decodeVerifiedCompactSemanticTerminalUpdate(
       baseline,
       snapshot,
       hash,
+      payload.frame === "tombstone"
+        ? { baseRevision: payload.baseRevision, revision: payload.revision }
+        : undefined,
     );
+    if (payload.frame === "patch" && payload.revision > payload.baseRevision + 1 && snapshot)
+      grantCompactReplicaCapability(snapshot, baseline, snapshot, hash);
+  }
   if (options?.onComplete && decodeBudget) {
     try {
       options.onComplete(
@@ -1605,7 +1611,7 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
         payload.frame === "tombstone" ? payload.tombstone.reason : "protocol",
       );
   if (hash !== expectedHash) throw new TypeError("Canonical state hash mismatch");
-  if (options.grantReducerAdoption)
+  if (options.grantReducerAdoption) {
     grantCompactReplicaCapability(
       payload.frame === "seed"
         ? payload.snapshot
@@ -1615,7 +1621,13 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
       baseline,
       snapshot,
       hash,
+      payload.frame === "tombstone"
+        ? { baseRevision: payload.baseRevision, revision: payload.revision }
+        : undefined,
     );
+    if (payload.frame === "patch" && payload.revision > payload.baseRevision + 1 && snapshot)
+      grantCompactReplicaCapability(snapshot, baseline, snapshot, hash);
+  }
   if (options.onComplete) {
     try {
       options.onComplete(
@@ -2609,7 +2621,12 @@ export function decodeVerifiedLegacySemanticTerminalUpdate(
     baseline,
     snapshot,
     hash,
+    payload.frame === "tombstone"
+      ? { baseRevision: payload.baseRevision, revision: payload.revision }
+      : undefined,
   );
+  if (payload.frame === "patch" && payload.revision > payload.baseRevision + 1 && snapshot)
+    grantCompactReplicaCapability(snapshot, baseline, snapshot, hash);
   return Object.freeze({ payload, canonicalSnapshot: snapshot });
 }
 

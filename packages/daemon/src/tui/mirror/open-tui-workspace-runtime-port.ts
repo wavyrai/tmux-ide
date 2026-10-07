@@ -358,7 +358,12 @@ function updateFromDelivery(
     stateHash: envelope.canonicalStateHash,
     hashAlgorithm: "fnv1a64-v1" as const,
   };
-  if (payload.frame === "seed") {
+  // Wire patches may span skipped revisions; ordinary canonical patches may not.
+  // Publish the fully verified resulting state at its actual revision.
+  if (
+    payload.frame === "seed" ||
+    (payload.frame === "patch" && payload.revision > payload.baseRevision + 1)
+  ) {
     return Object.freeze({
       ...common,
       type: "terminal.seed" as const,

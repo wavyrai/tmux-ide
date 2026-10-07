@@ -9,7 +9,10 @@ import type {
   TerminalReplicaSnapshot,
   TerminalReplicaTombstonePayload,
 } from "@tmux-ide/contracts";
-import { consumeCompactReplicaCapability } from "./terminal-compact-capability.ts";
+import {
+  consumeCompactReplicaCapability,
+  consumeVerifiedTombstoneInterval,
+} from "./terminal-compact-capability.ts";
 import {
   freezeOwnedTerminalReplicaRow as freezeRow,
   createOwnedTerminalReplicaRowBuilder,
@@ -138,6 +141,10 @@ export function blankTerminalReplicaSnapshot(cols: number, rows: number): Termin
   });
 }
 
+// Only accepted verified coalesced tombstones need their original interval for replay.
+// Weak state keys preserve exact-duplicate idempotency without retaining retired replicas.
+const verifiedTombstoneBases = new WeakMap<TerminalReplicaState, number>();
+
 export function applyTerminalReplicaUpdate(
   current: TerminalReplicaState | null,
   update: CanonicalTerminalReplicaUpdate,
@@ -218,7 +225,8 @@ export function applyTerminalReplicaUpdate(
     if (update.type === "terminal.tombstone") {
       return complete(
         update.revision === current.revision &&
-          update.baseRevision === current.revision - 1 &&
+          (update.baseRevision === current.revision - 1 ||
+            verifiedTombstoneBases.get(current) === update.baseRevision) &&
           update.stateHash === current.hash &&
           current.tombstone?.reason === update.tombstone.reason &&
           current.frameHash === receivedFrameHash
@@ -241,7 +249,20 @@ export function applyTerminalReplicaUpdate(
           : { status: "stale", state: current },
     );
   }
-  if (update.baseRevision !== current.revision || update.revision !== current.revision + 1) {
+  const verifiedTombstoneJump =
+    update.type === "terminal.tombstone" &&
+    update.revision > current.revision + 1 &&
+    consumeVerifiedTombstoneInterval(
+      update.tombstone,
+      current.snapshot,
+      update.stateHash,
+      update.baseRevision,
+      update.revision,
+    );
+  if (
+    update.baseRevision !== current.revision ||
+    (update.revision !== current.revision + 1 && !verifiedTombstoneJump)
+  ) {
     return complete({
       status: "gap",
       state: current,
@@ -273,6 +294,7 @@ export function applyTerminalReplicaUpdate(
       hash,
       frameHash: receivedFrameHash,
     });
+    if (verifiedTombstoneJump) verifiedTombstoneBases.set(state, update.baseRevision);
     return complete({ status: "applied", state });
   }
   if (current.snapshot === null) {

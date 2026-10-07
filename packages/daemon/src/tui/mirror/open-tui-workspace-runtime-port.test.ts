@@ -1,3 +1,4 @@
+import { createTerminalFastLane } from "../../../../daemon-client/src/terminal-fast-lane.ts";
 import { STOCK_CAPTURE_TAB_UNAVAILABLE } from "@tmux-ide/contracts";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -16,6 +17,7 @@ import {
   encodeSemanticTerminalUpdate,
   hashTerminalDeliveryRepresentation,
   hashTerminalReplicaSnapshot,
+  hashTerminalReplicaTombstone,
   negotiateTerminalDelivery,
   splitTerminalDeliveryChunks,
   type TerminalReplicaState,
@@ -2512,3 +2514,273 @@ it("invalidates cooperative decode on pane capability failure without closing si
   expect(test.client.nack).not.toHaveBeenCalled();
   await port.close();
 }, 10_000);
+
+describe("verified coalesced delivery canonical adaptation", () => {
+  it.each(["semantic-compact-v1", "semantic-v1"] as const)(
+    "admits a verified coalesced patch through the real fast lane (%s)",
+    async (encoding) => {
+      const test = rig(true, false, encoding);
+      const faults: Error[] = [];
+      const port = await connectOpenTuiWorkspaceRuntimePort({
+        inventory: inventory(),
+        routing: test.routing,
+        onFault: (error) => faults.push(error),
+      });
+      const subscription = await port.subscribeTerminal({
+        workspaceName: WORKSPACE,
+        semanticPaneId: PANE_A,
+      });
+      const repairs: unknown[] = [];
+      const lane = createTerminalFastLane({
+        address: { workspaceName: WORKSPACE, generation: GENERATION },
+        source: { subscribe: (_address, listener) => subscription.onUpdate(listener) },
+        control: {
+          owns: () => true,
+          request: async () => true,
+          write: async () => "ok",
+          resize: async () => "ok",
+        },
+        repair: {
+          request: (request) => {
+            repairs.push(request);
+            port.requestTerminalRepair?.(request.address, request.reason);
+          },
+        },
+      });
+      const release = lane.subscribePane(PANE_A, () => undefined);
+      try {
+        expect(lane.paneState(PANE_A)?.revision).toBe(0);
+        test.client.ack.mockClear();
+        const patch = patchDelivery(
+          PANE_A,
+          blankTerminalReplicaSnapshot(4, 2),
+          0,
+          3,
+          "980",
+          encoding,
+        );
+        test.options().onTerminalDelivery(PANE_A, patch.envelope);
+        for (const chunk of patch.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(repairs).toEqual([]);
+        expect(faults).toEqual([]);
+        expect(lane.paneState(PANE_A)?.revision).toBe(3);
+        expect(lane.paneState(PANE_A)?.snapshot?.cursor.x).toBe(1);
+        expect(test.client.ack).toHaveBeenCalledWith(
+          expect.objectContaining({
+            canonicalRevision: 3,
+            canonicalStateHash: patch.envelope.canonicalStateHash,
+          }),
+        );
+        const adjacent = patchDelivery(
+          PANE_A,
+          lane.paneState(PANE_A)!.snapshot!,
+          3,
+          4,
+          "982",
+          encoding,
+        );
+        test.options().onTerminalDelivery(PANE_A, adjacent.envelope);
+        for (const chunk of adjacent.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(lane.paneState(PANE_A)?.revision).toBe(4);
+        const payload = {
+          frame: "tombstone" as const,
+          baseRevision: 4,
+          revision: 7,
+          tombstone: { reason: "pane-closed" as const },
+        };
+        const bytes =
+          encoding === "semantic-compact-v1"
+            ? encodeCompactSemanticTerminalUpdate(payload)
+            : encodeSemanticTerminalUpdate(payload);
+        const envelope: TerminalDeliveryEnvelope = {
+          ...adjacent.envelope,
+          transactionId: "00000000-0000-4000-8000-000000000983",
+          baseRevision: 4,
+          canonicalRevision: 7,
+          frame: "tombstone",
+          history: "not-applicable",
+          canonicalStateHash: hashTerminalReplicaTombstone("pane-closed"),
+          representationHash: hashTerminalDeliveryRepresentation(bytes),
+          representationBytes: bytes.length,
+          chunkCount: 1,
+        };
+        test.options().onTerminalDelivery(PANE_A, envelope);
+        for (const chunk of splitTerminalDeliveryChunks(envelope.transactionId, bytes))
+          test.options().onTerminalDelivery(PANE_A, chunk);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(repairs).toEqual([]);
+        expect(faults).toEqual([]);
+        expect(lane.paneState(PANE_A)?.revision).toBe(7);
+        expect(lane.paneState(PANE_A)?.snapshot).toBeNull();
+        expect(test.client.ack).toHaveBeenCalledWith(
+          expect.objectContaining({
+            canonicalRevision: 7,
+            canonicalStateHash: envelope.canonicalStateHash,
+          }),
+        );
+      } finally {
+        release();
+        lane.dispose();
+        await subscription.close();
+        await port.close();
+      }
+    },
+  );
+});
+describe("verified coalesced tombstone canonical adaptation", () => {
+  it.each(["semantic-compact-v1", "semantic-v1"] as const)(
+    "admits a verified coalesced tombstone through the real fast lane (%s)",
+    async (encoding) => {
+      const test = rig(true, false, encoding);
+      const faults: Error[] = [];
+      const port = await connectOpenTuiWorkspaceRuntimePort({
+        inventory: inventory(),
+        routing: test.routing,
+        onFault: (error) => faults.push(error),
+      });
+      const subscription = await port.subscribeTerminal({
+        workspaceName: WORKSPACE,
+        semanticPaneId: PANE_A,
+      });
+      const repairs: unknown[] = [];
+      const lane = createTerminalFastLane({
+        address: { workspaceName: WORKSPACE, generation: GENERATION },
+        source: { subscribe: (_address, listener) => subscription.onUpdate(listener) },
+        control: {
+          owns: () => true,
+          request: async () => true,
+          write: async () => "ok",
+          resize: async () => "ok",
+        },
+        repair: {
+          request: (request) => {
+            repairs.push(request);
+            port.requestTerminalRepair?.(request.address, request.reason);
+          },
+        },
+      });
+      const release = lane.subscribePane(PANE_A, () => undefined);
+      try {
+        expect(lane.paneState(PANE_A)?.revision).toBe(0);
+        test.client.ack.mockClear();
+        const template = patchDelivery(
+          PANE_A,
+          blankTerminalReplicaSnapshot(4, 2),
+          0,
+          3,
+          "981",
+          encoding,
+        );
+        const payload = {
+          frame: "tombstone" as const,
+          baseRevision: 0,
+          revision: 3,
+          tombstone: { reason: "pane-closed" as const },
+        };
+        const bytes =
+          encoding === "semantic-compact-v1"
+            ? encodeCompactSemanticTerminalUpdate(payload)
+            : encodeSemanticTerminalUpdate(payload);
+        const envelope: TerminalDeliveryEnvelope = {
+          ...template.envelope,
+          frame: "tombstone",
+          history: "not-applicable",
+          canonicalStateHash: hashTerminalReplicaTombstone("pane-closed"),
+          representationHash: hashTerminalDeliveryRepresentation(bytes),
+          representationBytes: bytes.length,
+          chunkCount: 1,
+        };
+        const patch = {
+          envelope,
+          chunks: splitTerminalDeliveryChunks(envelope.transactionId, bytes),
+        };
+        test.options().onTerminalDelivery(PANE_A, patch.envelope);
+        for (const chunk of patch.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(repairs).toEqual([]);
+        expect(faults).toEqual([]);
+        expect(lane.paneState(PANE_A)?.revision).toBe(3);
+        expect(lane.paneState(PANE_A)?.snapshot).toBeNull();
+        expect(lane.paneState(PANE_A)?.tombstone?.reason).toBe("pane-closed");
+        expect(test.client.ack).toHaveBeenCalledWith(
+          expect.objectContaining({
+            canonicalRevision: 3,
+            canonicalStateHash: patch.envelope.canonicalStateHash,
+          }),
+        );
+      } finally {
+        release();
+        lane.dispose();
+        await subscription.close();
+        await port.close();
+      }
+    },
+  );
+});
+
+describe("invalid coalesced delivery admission", () => {
+  for (const encoding of ["semantic-compact-v1", "semantic-v1"] as const)
+    for (const invalid of ["base", "hash", "generation"]) {
+      it(`does not ACK ${invalid} (${encoding})`, async () => {
+        const test = rig(true, false, encoding);
+        const faults: Error[] = [];
+        const port = await connectOpenTuiWorkspaceRuntimePort({
+          inventory: inventory(),
+          routing: test.routing,
+          onFault: (error) => faults.push(error),
+        });
+        const subscription = await port.subscribeTerminal({
+          workspaceName: WORKSPACE,
+          semanticPaneId: PANE_A,
+        });
+        const repairs: unknown[] = [];
+        const lane = createTerminalFastLane({
+          address: { workspaceName: WORKSPACE, generation: GENERATION },
+          source: { subscribe: (_address, listener) => subscription.onUpdate(listener) },
+          control: {
+            owns: () => true,
+            request: async () => true,
+            write: async () => "ok",
+            resize: async () => "ok",
+          },
+          repair: {
+            request: (request) => {
+              repairs.push(request);
+              port.requestTerminalRepair?.(request.address, request.reason);
+            },
+          },
+        });
+        const release = lane.subscribePane(PANE_A, () => undefined);
+        try {
+          test.client.ack.mockClear();
+          const delivery = patchDelivery(
+            PANE_A,
+            blankTerminalReplicaSnapshot(4, 2),
+            invalid === "base" ? 1 : 0,
+            3,
+            "985",
+            encoding,
+          );
+          const envelope = {
+            ...delivery.envelope,
+            ...(invalid === "hash" ? { canonicalStateHash: "0000000000000000" } : {}),
+            ...(invalid === "generation"
+              ? { generation: "00000000-0000-4000-8000-000000000009" }
+              : {}),
+          };
+          test.options().onTerminalDelivery(PANE_A, envelope);
+          for (const chunk of delivery.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(test.client.ack).not.toHaveBeenCalled();
+          expect(lane.paneState(PANE_A)?.revision).toBe(0);
+        } finally {
+          release();
+          lane.dispose();
+          await subscription.close();
+          await port.close();
+        }
+      });
+    }
+});
