@@ -1,3 +1,8 @@
+import {
+  packedRendererSelection,
+  assertPackedRendererSelectionUnchanged,
+  packedRendererBuildArgs,
+} from "./lib/packed-renderer-selection.mjs";
 import assert from "node:assert/strict";
 import { verifyBoundaryResults } from "./lib/boundary-results.mjs";
 import {
@@ -63,6 +68,9 @@ function boundedSpawnSync(file, args, options = {}) {
 }
 
 // Read only intentional top-level selectors before dropping all ambient child overrides.
+const rendererSelection = packedRendererSelection(
+  process.env.TMUX_IDE_PACK_RELEASE_SCROLL_MANIFEST,
+);
 const gateEvidenceDir = process.env.TMUX_IDE_PACK_EVIDENCE_DIR;
 const runtimeTraceEnabled = process.env.TMUX_IDE_PACK_RUNTIME_TRACE === "1";
 const topologyInputReproEnabled = process.env.TMUX_IDE_PACK_TOPOLOGY_INPUT === "1";
@@ -416,9 +424,11 @@ async function runInstalledTuiGate(installedCli) {
       maxBuffer: 1024 * 1024,
     }),
   );
-  await runAsync("bun", ["scripts/build-tui.mjs", "--outfile", mockReleaseBinaryPath], {
+  assertPackedRendererSelectionUnchanged(rendererSelection);
+  await runAsync("bun", packedRendererBuildArgs(rendererSelection, mockReleaseBinaryPath), {
     stdio: "inherit",
   });
+  assertPackedRendererSelectionUnchanged(rendererSelection);
   const runtimeProvenanceResult = boundedSpawnSync(
     mockReleaseBinaryPath,
     ["__release-provenance"],
@@ -439,7 +449,7 @@ async function runInstalledTuiGate(installedCli) {
     commit: releaseCommit,
     platform: platformTag,
     sourceState: compiledSourceState,
-    nativeRenderer: "stock",
+    nativeRenderer: rendererSelection.nativeRenderer,
   };
   if (JSON.stringify(runtimeProvenance) !== JSON.stringify(expectedProvenance)) {
     throw new Error(
@@ -2735,6 +2745,7 @@ try {
       generatedSource,
       installedVersion,
       runtime: runtimeEvidence,
+      rendererSelection,
       artifacts: copied,
       diagnosticArtifacts,
       journey: journeyObservations,

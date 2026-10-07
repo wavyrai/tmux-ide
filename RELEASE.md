@@ -21,6 +21,13 @@ pnpm docs:build
 git diff --check
 ```
 
+To qualify the native scroll renderer used by release binaries, set
+`TMUX_IDE_PACK_RELEASE_SCROLL_MANIFEST` to the absolute path of its qualified
+`release-manifest.json` when running the focused gate or `pnpm test:pack-installed`.
+The installed-package journey forwards this manifest to the existing build
+verifier, checks that it stays unchanged during the build, and requires matching
+renderer provenance. Without this selector, the journey tests the stock renderer.
+
 The focused gate must prove:
 
 - lint, format, and daemon typecheck;
