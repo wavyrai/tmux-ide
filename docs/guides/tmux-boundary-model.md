@@ -908,3 +908,16 @@ retained sidecar cap. This changes the offer schedule and adds observer work;
 the original local input clock/budget is unchanged, while terminal-output timing,
 styles, physical display and native parity remain unmeasured. All 36 observation
 outcomes and failed evidence are retained separately from valid input mappings.
+
+For a separate causal-cell correctness fixture, use the owned reference capture
+with `--capture-causal-cell` (exactly 36 inputs). This selects the existing
+creation-owned producer that initially clears its screen/history, disables wrap,
+and overwrites one fixed last-column cell. It retains all offered outcomes,
+independent native/host viewport text observations, and a `causal-cell.json`
+assessment. The unchanged full per-input causal predicates must pass for every
+trace; final admission follows successful daemon shutdown and admission of both
+trace files. Original one-input/30-input gates and the append-content variant
+remain separate. Observations change scheduling; no speedup, native parity or
+terminal-output completion timing is established. The causal ledger checks
+semantic state internally; external native/host observations cover visible text,
+not independently observed hidden history or styles.

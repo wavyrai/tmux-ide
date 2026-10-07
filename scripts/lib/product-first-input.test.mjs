@@ -1772,3 +1772,126 @@ test("first input baseline follows accepted patches after the initial seed paint
     /no exact canonical paint/,
   );
 });
+
+test("explicit sample export preserves full predicates and original 1/30 cardinalities", async () => {
+  const { assessProductInputSample } = await import("./product-first-input.mjs");
+  const records = trace("key", 0),
+    origin = records.find((r) => r.type === "performance.input-origin");
+  const expected = { ...EXPECTED, variant: "key", document: productFirstInputDocument("key", 0) };
+  assert.deepEqual(
+    assessProductInputSample(records, origin, expected, productFirstInputPayload(expected.document))
+      .qualified,
+    assessProductFirstInput(records, expected).qualified,
+  );
+  const extra = [...records, ...trace("key", 1)];
+  assert.equal(assessProductFirstInput(extra, expected).qualified, null);
+  assert.equal(assessProductInputDistribution(extra, expected).qualified, null);
+});
+
+test("whole36 causal wrapper preserves all stages, identities, outcomes and revision chain", async () => {
+  const { assessReferenceCausalCells } = await import("./performance-reference-causal-cell.mjs");
+  const records = [],
+    daemon = [],
+    attempts = [];
+  for (let i = 0; i < 36; i++) {
+    const payload = i % 2 ? "y" : "x";
+    const e = withSharedClockEvidence(trace("key", i), daemonTrace(i));
+    const origin = e.tui.find((r) => r.type === "performance.input-origin");
+    origin.payloadByteCount = 1;
+    origin.payloadFingerprint = productFirstInputFingerprint(
+      EXPECTED.inputFingerprintKey,
+      origin.traceId,
+      Buffer.from(payload),
+    );
+    for (const r of e.tui.filter((r) =>
+      ["causal-cell-painted", "causal-cell-delivered"].includes(r.operation),
+    ))
+      Object.assign(r, {
+        row: 0,
+        column: 10,
+        beforeGrapheme: i === 0 ? " " : i % 2 ? "x" : "y",
+        afterGrapheme: payload,
+        causalAttribution: true,
+      });
+    records.push(...e.tui.filter((r) => i === 0 || r.type !== "performance.clock-calibration"));
+    daemon.push(
+      ...e.daemon.map((r) => ({
+        ...r,
+        authority: { generation: EXPECTED.generation, incarnation: EXPECTED.incarnation },
+      })),
+    );
+    attempts.push({ ordinal: i, status: "matched", traceId: origin.traceId, payload });
+  }
+  const expected = {
+    ...EXPECTED,
+    revision: 0,
+    stateHash: "hash-0",
+    daemonProcessId: "daemon:1",
+    daemonClockId: "daemon-performance-now",
+    initialCell: { row: 0, column: 10, cols: 11, rows: 1, grapheme: " " },
+  };
+  const result = assessReferenceCausalCells(records, daemon, attempts, expected);
+  assert.equal(result.status, "complete", JSON.stringify(result));
+  assert.equal(result.observed, 36);
+  const checks = [
+    (r) => {
+      r.find((x) => x.operation === "causal-cell-painted").afterGrapheme = "z";
+    },
+    (r) => {
+      r.find((x) => x.operation === "causal-cell-delivered").beforeGrapheme = "!";
+    },
+    (r) => {
+      r.find((x) => x.operation === "causal-cell-painted").column = 9;
+    },
+    (r) => r.push({ ...r.find((x) => x.type === "performance.input-origin") }),
+    (r) =>
+      r.push({
+        type: "performance.stage",
+        stage: "client",
+        operation: "causal-cell-painted",
+        traceId: "foreign",
+      }),
+    (r) =>
+      r.push({
+        type: "performance.stage",
+        stage: "client",
+        operation: "causal-cell-failed:timeout",
+        traceId: attempts[0].traceId,
+      }),
+    (r) =>
+      r.splice(
+        r.findIndex((x) => x.operation === "causal-cell-delivered"),
+        1,
+      ),
+    (r) => {
+      r.find(
+        (x) => x.type === "performance.input-origin" && x.traceId === attempts[1].traceId,
+      ).revision += 1;
+    },
+  ];
+  for (const mutate of checks) {
+    const bad = structuredClone(records);
+    mutate(bad);
+    assert.notEqual(assessReferenceCausalCells(bad, daemon, attempts, expected).status, "complete");
+  }
+  assert.notEqual(assessReferenceCausalCells(records, [], attempts, expected).status, "complete");
+  assert.notEqual(
+    assessReferenceCausalCells(records, daemon, attempts, {
+      ...expected,
+      daemonProcessId: "daemon:foreign",
+    }).status,
+    "complete",
+  );
+  assert.equal(
+    assessProductFirstInput(records, {
+      ...expected,
+      variant: "key",
+      document: productFirstInputDocument("key", 0),
+    }).qualified,
+    null,
+  );
+  assert.equal(
+    assessProductInputDistribution(records, { ...expected, variant: "key" }).qualified,
+    null,
+  );
+});

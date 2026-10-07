@@ -118,11 +118,15 @@ export async function withOwnedReferenceCapture({
   source,
   rendererManifest,
   outputContentRequired = false,
+  causalCellRequired = false,
+  validateClosed,
   environment = process.env,
   prepare = prepareOwnedReferenceArtifact,
   inspectNative = nativeIdentity,
   retire = retireFleet,
 }) {
+  if (causalCellRequired && typeof validateClosed !== "function")
+    throw new Error("Causal capture requires final closed-trace validation");
   if (existsSync(output)) throw new Error("Owned capture output already exists");
   await mkdir(output, { recursive: true });
   let fleet, daemon, nativePid, artifacts, metadata;
@@ -212,8 +216,20 @@ export async function withOwnedReferenceCapture({
       }
       try {
         await daemon.stop();
+        if (causalCellRequired && result) {
+          result.causalCell = await validateClosed({ tracePath, daemon: metadata.daemon });
+          if (result.causalCell?.status !== "complete" || result.causalCell.observed !== 36) {
+            errors.push(new Error("Final causal-cell admission incomplete"));
+            result.causalCell = {
+              status: "failed",
+              reason: "Final causal-cell admission incomplete",
+            };
+          }
+        }
       } catch (error) {
         errors.push(error);
+        if (causalCellRequired && result)
+          result.causalCell = { status: "failed", reason: error.message };
       }
       try {
         await persistDaemonOutput("after-stop");
@@ -226,6 +242,7 @@ export async function withOwnedReferenceCapture({
         "input-trace.jsonl",
         "input-trace.jsonl.controller-attempts.json",
         ...(outputContentRequired ? ["output-content.json"] : []),
+        ...(causalCellRequired ? ["causal-cell.json"] : []),
       ]) {
         const path = join(fleet.root, "reference-tui", name),
           destination = join(output, name);
@@ -250,11 +267,13 @@ export async function withOwnedReferenceCapture({
             ["sourceArtifact", "input-trace.jsonl"],
             ["controllerMapping", "input-trace.jsonl.controller-attempts.json"],
             ...(outputContentRequired ? [["outputContent", "output-content.json"]] : []),
+            ...(causalCellRequired ? [["causalCell", "causal-cell.json"]] : []),
           ]) {
             const artifact = retained.find((item) => item.name === name);
             if (artifact)
               measurement[field] = {
                 ...measurement[field],
+                ...(field === "causalCell" ? result.causalCell : {}),
                 path: artifact.path,
                 sha256: artifact.sha256,
               };

@@ -34,7 +34,8 @@ const stableKeys = [
 ];
 const equalKeys = (a, b, keys) => keys.every((key) => a?.[key] === b?.[key]);
 
-export function parseReferenceNativeIdentity(text, sessionName) {
+export function parseReferenceNativeIdentity(text, sessionName, mode = "append") {
+  assert(["append", "causal-cell"].includes(mode), "Unknown output content mode");
   const fields = text.trimEnd().split("\t");
   assert.equal(fields.length, 16, "Native identity field count");
   const [name, sessionId, windowId, paneId, semanticPaneId, ...numeric] = fields;
@@ -66,7 +67,7 @@ export function parseReferenceNativeIdentity(text, sessionName) {
     alternate === 0 &&
       insert === 0 &&
       origin === 0 &&
-      wrap === 1 &&
+      wrap === (mode === "causal-cell" ? 0 : 1) &&
       scrollTop === 0 &&
       scrollBottom === rows - 1,
     "Unsupported producer terminal modes",
@@ -91,12 +92,27 @@ export function parseReferenceNativeIdentity(text, sessionName) {
   };
 }
 
-export function expectedReferencePrefix(baseline, payloads) {
+export function expectedReferencePrefix(baseline, payloads, mode = "append") {
+  assert(["append", "causal-cell"].includes(mode), "Unknown output content mode");
   assert(
     payloads.every((p) => p === "x" || p === "y"),
     "Unsupported echo payload",
   );
   const { identity, cells } = baseline;
+  if (mode === "causal-cell") {
+    assert(
+      identity.wrap === 0 && identity.cursorX === identity.cols - 1,
+      "Causal fixture requires fixed last-column cursor",
+    );
+    const expected = cells.map((row) => [...row]);
+    let previous = expected[identity.cursorY][identity.cursorX];
+    for (const payload of payloads) {
+      assert(payload !== previous, "Causal fixture must change the declared cell");
+      previous = payload;
+    }
+    expected[identity.cursorY][identity.cursorX] = previous;
+    return { cells: expected, cursorX: identity.cursorX, cursorY: identity.cursorY };
+  }
   assert(
     identity.cursorX + payloads.length < identity.cols,
     "Echo would wrap or reach pending-wrap boundary",
@@ -111,12 +127,19 @@ export function expectedReferencePrefix(baseline, payloads) {
   };
 }
 
-export function checkReferenceOutputContent({ baseline, native, hostCells, rect, payloads }) {
+export function checkReferenceOutputContent({
+  baseline,
+  native,
+  hostCells,
+  rect,
+  payloads,
+  mode = "append",
+}) {
   assert(
     equalKeys(baseline.identity, native.identity, stableKeys),
     "Producer identity/geometry/modes changed",
   );
-  const expected = expectedReferencePrefix(baseline, payloads);
+  const expected = expectedReferencePrefix(baseline, payloads, mode);
   assert.deepEqual(
     native.cells,
     expected.cells,
@@ -203,6 +226,7 @@ export async function createReferenceOutputWitness({
   records,
   payloads,
   expectedHost,
+  mode = "append",
   command = (binary, args, options) => execFileSync(binary, args, options),
   now = () => performance.now(),
 }) {
@@ -226,6 +250,7 @@ export async function createReferenceOutputWitness({
   const path = join(reference.runtimeDir, "output-content.json");
   const evidence = {
     version: 1,
+    mode,
     status: "pending",
     scope:
       "Per-input source and host full-viewport text correctness; not styles, terminal-output latency or native parity",
@@ -260,7 +285,7 @@ export async function createReferenceOutputWitness({
       1,
       "Reference requires exactly one producer pane",
     );
-    return parseReferenceNativeIdentity(raw, target);
+    return parseReferenceNativeIdentity(raw, target, mode);
   };
   const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
   const cellsFor = (line, width) => {
@@ -392,10 +417,12 @@ export async function createReferenceOutputWitness({
           canonicalPaneId: native.identity.semanticPaneId,
         });
         assert(rect && rect.width > 0 && rect.bodyRows > 0, "Unsupported viewport projection");
-        expectedReferencePrefix(baseline, payloads);
+        expectedReferencePrefix(baseline, payloads, mode);
         assert(
           baseline.identity.cursorY < rect.bodyRows &&
-            baseline.identity.cursorX + payloads.length < rect.width,
+            (mode === "causal-cell"
+              ? baseline.identity.cursorX
+              : baseline.identity.cursorX + payloads.length) < rect.width,
           "Predicted echo not wholly visible",
         );
       } else {
@@ -481,6 +508,7 @@ export async function createReferenceOutputWitness({
         hostCells,
         rect,
         payloads: ordinal === null ? [] : payloads.slice(0, ordinal + 1),
+        mode,
       });
       assert(now() <= deadline, "Output observation exceeded deadline after comparison");
       entry.canonical = beforeCanonical;
@@ -512,6 +540,19 @@ export async function createReferenceOutputWitness({
   observe(null, null);
   return {
     path,
+    causalBaseline: () => {
+      assert.equal(mode, "causal-cell");
+      return {
+        ...canonical,
+        initialCell: {
+          row: baseline.identity.cursorY,
+          column: baseline.identity.cursorX,
+          cols: baseline.identity.cols,
+          rows: baseline.identity.rows,
+          grapheme: baseline.cells[baseline.identity.cursorY][baseline.identity.cursorX],
+        },
+      };
+    },
     observe(ordinal, match) {
       assert(
         ordinal >= 0 &&

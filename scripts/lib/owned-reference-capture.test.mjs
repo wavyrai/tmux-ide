@@ -54,6 +54,7 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
       "content-success",
       "content-incomplete",
       "content-copy-error",
+      "causal-final-error",
     ]) {
       const root = join(parent, mode),
         output = join(root, "out"),
@@ -75,6 +76,15 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
         output,
         source: { commit: "c", tree: "t", dirty: false },
         outputContentRequired: mode.startsWith("content-"),
+        causalCellRequired: mode === "causal-final-error",
+        validateClosed: async () => {
+          assert(order.includes("stop"));
+          await writeFile(
+            join(fleetRoot, "reference-tui/causal-cell.json"),
+            JSON.stringify({ status: "failed", reason: "full predicate" }),
+          );
+          throw new Error("full predicate");
+        },
         prepare: async () => {
           order.push("build-tui");
           assert.equal(process.env.TMUX_IDE_HOSTILE, undefined);
@@ -190,6 +200,20 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
       if (original === undefined) delete process.env.TMUX_IDE_HOSTILE;
       else process.env.TMUX_IDE_HOSTILE = original;
       if (mode === "receipt-error") continue;
+      if (mode === "causal-final-error") {
+        const receipt = JSON.parse(await readFile(join(output, "owner-result.json"), "utf8"));
+        assert.equal(receipt.status, "failed");
+        assert(receipt.errors.includes("full predicate"));
+        assert.equal(
+          JSON.parse(await readFile(join(output, "causal-cell.json"), "utf8")).status,
+          "failed",
+        );
+        assert.equal(
+          JSON.parse(await readFile(reportPath, "utf8")).measurements.inputToPaint.causalCell
+            .status,
+          "failed",
+        );
+      }
       if (mode === "inspect-error") {
         const receipt = JSON.parse(await readFile(join(output, "owner-result.json"), "utf8"));
         assert.equal(receipt.status, "failed");

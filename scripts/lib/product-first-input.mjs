@@ -1054,6 +1054,13 @@ function qualifyOne(records, origin, expected, payload, predicates = []) {
   });
 }
 
+/** Full existing per-input predicates, for callers owning an explicit whole-capture denominator. */
+export function assessProductInputSample(records, origin, expected, payload) {
+  const predicates = [];
+  const qualified = qualifyOne(records, origin, expected, payload, predicates);
+  return freezeAssessment(qualified, predicates);
+}
+
 export function assessProductFirstInput(records, expected) {
   const predicates = [];
   const origins = records.filter(

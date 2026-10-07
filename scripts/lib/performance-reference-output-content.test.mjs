@@ -101,7 +101,7 @@ test("mode/identity parser fails closed on absent flags, alternate screen and fo
   );
 });
 
-function rig() {
+function rig(mode = "append") {
   const root = mkdtempSync(join(tmpdir(), "reference-output-unit-"));
   let count = 0,
     revision = 2;
@@ -159,9 +159,9 @@ function rig() {
       viewportRows: 40,
       sourceEpoch: 1,
       rendererEpoch: 1,
-      cursorX: 5 + count,
+      cursorX: mode === "causal-cell" ? 131 : 5 + count,
       cursorY: 1,
-      screenX: 34 + count,
+      screenX: mode === "causal-cell" ? 160 : 34 + count,
       screenY: 5,
       visible: !state.hidden,
     },
@@ -190,7 +190,7 @@ function rig() {
           if (state.decodeDeadline && state.layoutCalls >= 4) state.clock = 1e12;
           return "abcd,132x41,0,0,1\t@1\t0\ttop\t%1\tpane\t1\n";
         }
-        return `owned\t$1\t@1\t%1\tpane\t9\t${state.changeGeometry ? 133 : 132}\t40\t${5 + count}\t1\t0\t0\t0\t1\t0\t39\n`;
+        return `owned\t$1\t@1\t%1\tpane\t9\t${state.changeGeometry ? 133 : 132}\t40\t${mode === "causal-cell" ? 131 : 5 + count}\t1\t0\t0\t0\t${mode === "causal-cell" ? 0 : 1}\t0\t39\n`;
       }
       assert(args.includes("capture-pane"));
       if (state.persistenceFailure) {
@@ -224,7 +224,7 @@ function rig() {
     records,
     hostIdentity,
     advance() {
-      native[1][5 + count] = count % 2 ? "y" : "x";
+      native[1][mode === "causal-cell" ? 131 : 5 + count] = count % 2 ? "y" : "x";
       count++;
       revision++;
       return {
@@ -247,6 +247,7 @@ function rig() {
         records,
         payloads: ["x", "y"],
         expectedHost: hostIdentity,
+        mode,
         command,
         now: () => state.clock ?? performance.now(),
       });
@@ -375,5 +376,45 @@ test("CLI rejects non-owned or non-36 content variants before creating resources
     });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /requires owned capture and exactly 36 inputs/u);
+  }
+});
+
+test("causal mode checks every native/host cell with fixed cursor and no-op refusal", () => {
+  const baseline = small();
+  baseline.identity.wrap = 0;
+  baseline.identity.cursorX = 7;
+  const payloads = ["x", "y"],
+    expected = expectedReferencePrefix(baseline, payloads, "causal-cell");
+  const input = {
+    baseline,
+    payloads,
+    mode: "causal-cell",
+    native: { identity: { ...baseline.identity }, cells: expected.cells },
+    hostCells: expected.cells.map((r) => [...r]),
+    rect: { width: 8, bodyRows: 2 },
+  };
+  assert.equal(checkReferenceOutputContent(input).observedPrefix, 2);
+  assert.equal(input.native.identity.cursorX, 7);
+  assert.throws(() => expectedReferencePrefix(baseline, ["x", "x"], "causal-cell"));
+  assert.throws(() => expectedReferencePrefix(baseline, payloads, "unknown"));
+  input.hostCells[0][0] = "!";
+  assert.throws(() => checkReferenceOutputContent(input));
+  input.hostCells = expected.cells.map((r) => [...r]);
+  input.native.identity.cursorX = 6;
+  assert.throws(() => checkReferenceOutputContent(input));
+});
+
+test("actual causal observer mode captures sequential fixed-cell changes without changing append default", async () => {
+  const r = rig("causal-cell");
+  try {
+    const w = await r.start();
+    w.observe(0, r.advance());
+    w.observe(1, r.advance());
+    assert.equal(w.finish().observed, 2);
+    const saved = JSON.parse(readFileSync(w.path, "utf8"));
+    assert.equal(saved.mode, "causal-cell");
+    assert(saved.attempts.every((a) => a.proof.nativeCursor.x === 131));
+  } finally {
+    rmSync(r.state.root, { recursive: true, force: true });
   }
 });

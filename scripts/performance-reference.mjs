@@ -51,7 +51,8 @@ let reference,
   referenceProjectDir,
   provenance,
   measurements,
-  ownedMetadata;
+  ownedMetadata,
+  finalizeCausalCapture;
 if (options.ownedCapture) {
   assertOwnedReferenceWorktree(root, options.captureRendererManifest);
   const { createScratchFleet } = await import("./lib/product-fixtures/scratch-fleet.ts");
@@ -64,6 +65,11 @@ if (options.ownedCapture) {
     output: `${reportPath}.capture`,
     source,
     outputContentRequired: options.captureOutputContent,
+    causalCellRequired: options.captureCausalCell,
+    validateClosed: (context) => {
+      if (!finalizeCausalCapture) throw new Error("Missing causal capture finalizer");
+      return finalizeCausalCapture(context);
+    },
     run: async (env, metadata) => {
       const original = { ...process.env };
       for (const key of Object.keys(process.env)) delete process.env[key];
@@ -134,7 +140,11 @@ async function executeReference() {
         "    - panes:",
         "        - title: Echo",
         "          focus: true",
-        `          command: ${JSON.stringify(`/bin/zsh -f -c 'stty raw -echo; while read -rk 1 ch; do print -rn -- "$ch"; done'`)}`,
+        `          command: ${JSON.stringify(
+          options.captureCausalCell
+            ? `${shellQuote(process.execPath)} ${shellQuote(join(root, "scripts/lib/product-rig-causal-cell-fixture.mjs"))}`
+            : `/bin/zsh -f -c 'stty raw -echo; while read -rk 1 ch; do print -rn -- "$ch"; done'`,
+        )}`,
         "",
       ].join("\n"),
     );
@@ -225,9 +235,11 @@ async function executeReference() {
       ...(options.ownedCapture
         ? {
             timingQualification: false,
-            purpose: options.captureOutputContent
-              ? "instrumented-per-input-output-content-correctness"
-              : "owned-input-two-stream-capture",
+            purpose: options.captureCausalCell
+              ? "instrumented-causal-cell-correctness"
+              : options.captureOutputContent
+                ? "instrumented-per-input-output-content-correctness"
+                : "owned-input-two-stream-capture",
             ...(options.captureOutputContent
               ? {
                   observationSchedule:
@@ -531,7 +543,25 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
     ...(options.captureOutputContent ? { outputObservation: "not-observed" } : {}),
   }));
   let finalVerification = { status: "pending" };
-  let outputWitness, outputContentArtifact, observeOutputAttempt, collectionError;
+  let outputWitness, outputContentArtifact, observeOutputAttempt, collectionError, causalExpected;
+  const causalPath = join(reference.runtimeDir, "causal-cell.json");
+  const causalEvidence = {
+    status: "pending",
+    workload:
+      "creation-owned clear/history-clear, wrap-disabled fixed last column; no reset during offers",
+    attempts: attempts.map((a) => ({ ordinal: a.ordinal, status: "not-observed" })),
+  };
+  const saveCausal = () => {
+    const text = JSON.stringify(causalEvidence, null, 2);
+    if (Buffer.byteLength(text) > 8 * 1024 * 1024) throw new Error("Causal evidence exceeds 8 MiB");
+    writeFileSync(causalPath, text, { mode: 0o600 });
+  };
+  if (options.captureCausalCell) saveCausal();
+  const readDaemonRecords = () =>
+    existsSync(process.env.TMUX_IDE_SESSION_RUNTIME_TRACE_LOG)
+      ? completedReferenceRecords(readFileSync(process.env.TMUX_IDE_SESSION_RUNTIME_TRACE_LOG))
+      : [];
+
   const collectionCleanupErrors = [];
   const saveAttempts = () =>
     writeFileSync(
@@ -559,6 +589,9 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
     TMUX_IDE_PERFORMANCE_TRACE_TREE: source.tree,
     TMUX_IDE_PERFORMANCE_TRACE_INPUT_ORIGIN: "1",
     TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY: key,
+    ...(options.captureCausalCell
+      ? { TMUX_IDE_CAUSAL_CELL_FIXTURE: "1", TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL: "1" }
+      : {}),
   };
   run(
     "node",
@@ -591,6 +624,47 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
       2_000,
     );
     await delay(50);
+    if (options.captureCausalCell) {
+      const deadline = Date.now() + 5000;
+      let ready = false;
+      do {
+        const fixture = execFileSync(
+          "tmux",
+          [
+            ...reference.socketArgs,
+            "list-panes",
+            "-t",
+            `=${target}`,
+            "-F",
+            "#{@tmux_ide_causal_fixture}\t#{pane_width}\t#{cursor_x}\t#{cursor_y}\t#{wrap_flag}",
+          ],
+          {
+            encoding: "utf8",
+            timeout: Math.max(1, Math.min(1000, deadline - Date.now())),
+            maxBuffer: 4096,
+          },
+        ).trim();
+        const canonical = records().findLast(
+          (r) => r.type === "performance.terminal-canonical-mode",
+        );
+        const fields = fixture.split("\t");
+        ready =
+          fields.length === 5 &&
+          fields[0] === "ready-v1" &&
+          fields.slice(1).every((v) => /^\d+$/u.test(v)) &&
+          Number(fields[1]) > 1 &&
+          Number(fields[2]) === Number(fields[1]) - 1 &&
+          fields[3] === "0" &&
+          fields[4] === "0" &&
+          canonical?.generation === ownedMetadata.daemon.instanceId &&
+          canonical.wraparound === false &&
+          canonical.cursor?.x === Number(fields[2]) &&
+          canonical.cursor?.y === 0;
+        if (ready) break;
+        await delay(20);
+      } while (Date.now() < deadline);
+      if (!ready) throw new Error("Causal fixture readiness/geometry did not settle");
+    }
     if (options.captureOutputContent) {
       const { createReferenceOutputWitness, observeReferenceOutputAttempt } =
         await import("./lib/performance-reference-output-content.mjs");
@@ -614,7 +688,79 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
         generation: ownedMetadata.daemon.instanceId,
         records,
         payloads: attempts.map((a) => a.payload),
+        mode: options.captureCausalCell ? "causal-cell" : "append",
       });
+    }
+    if (options.captureCausalCell) {
+      causalExpected = {
+        ...outputWitness.causalBaseline(),
+        inputFingerprintKey: key,
+        daemonProcessId: `daemon:${ownedMetadata.daemon.pid}`,
+        daemonClockId: "node-performance-now",
+      };
+      const { assessReferenceCausalCells } =
+        await import("./lib/performance-reference-causal-cell.mjs");
+      finalizeCausalCapture = async ({ tracePath: daemonPath, daemon }) => {
+        const errors = [];
+        let result;
+        try {
+          const { admitDaemonTrace } = await import("./lib/daemon-trace-admission.mjs");
+          const daemonBytes = readFileSync(daemonPath);
+          const receipt = JSON.parse(
+            readFileSync(`${daemonPath}.${daemon.instanceId}.admission.json`, "utf8"),
+          );
+          const admission = admitDaemonTrace(
+            daemonBytes,
+            { pid: daemon.pid, daemonInstanceId: daemon.instanceId },
+            receipt.ownerClose,
+          );
+          if (
+            receipt.status !== "complete" ||
+            admission.status !== "complete" ||
+            receipt.sha256 !== sourceArtifactDigest(daemonPath)
+          )
+            throw new Error("Final daemon trace admission failed");
+          const tuiRecords = completedReferenceRecords(readFileSync(tracePath), true);
+          const clientAdmission = admitReferenceInputTrace(tuiRecords, source);
+          const header = tuiRecords.find((r) => r.type === "performance.trace.header");
+          if (
+            !clientAdmission.complete ||
+            header?.processId !== causalExpected.processId ||
+            header.clockId !== causalExpected.clockId
+          )
+            throw new Error("Final TUI identity/admission failed");
+          const daemonRecords = completedReferenceRecords(daemonBytes, true);
+          const clocks = new Set(
+            daemonRecords.filter((r) => r.type === "performance.stage").map((r) => r.clockId),
+          );
+          if (clocks.size !== 1 || !clocks.has(causalExpected.daemonClockId))
+            throw new Error("Ambiguous admitted daemon clock");
+          const assessment = assessReferenceCausalCells(
+            tuiRecords,
+            daemonRecords,
+            attempts,
+            causalExpected,
+          );
+          Object.assign(causalEvidence, assessment, {
+            traceHashes: { tui: sourceArtifactDigest(tracePath), daemon: receipt.sha256 },
+          });
+          if (assessment.status !== "complete")
+            throw new Error(`Final causal admission: ${assessment.reason}`);
+          result = { status: "complete", observed: 36, path: causalPath, scope: assessment.scope };
+        } catch (error) {
+          errors.push(error);
+          causalEvidence.status = "failed";
+          causalEvidence.error = error.message;
+        }
+        try {
+          saveCausal();
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length)
+          throw new AggregateError(errors, "Final causal validation failed", { cause: errors[0] });
+        return result;
+      };
     }
     for (let ordinal = 0; ordinal < sampleCount; ordinal += 1) {
       const attempt = attempts[ordinal];
@@ -646,12 +792,51 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
             `--- stderr ---\n${readFileSync(join(reference.runtimeDir, "stderr.log"), "utf8")}`,
         );
       Object.assign(attempt, match, { status: "matched" });
+      if (options.captureCausalCell) {
+        const { assessReferenceCausalCells } =
+          await import("./lib/performance-reference-causal-cell.mjs");
+        const deadline = Date.now() + 2000;
+        let assessment;
+        do {
+          assessment = assessReferenceCausalCells(
+            records(),
+            readDaemonRecords(),
+            attempts,
+            causalExpected,
+            ordinal + 1,
+          );
+          if (["complete", "prefix-complete"].includes(assessment.status)) break;
+          await delay(10);
+        } while (Date.now() < deadline);
+        causalEvidence.attempts[ordinal] = { ordinal, status: assessment.status, assessment };
+        const errors = [];
+        if (!["complete", "prefix-complete"].includes(assessment.status)) {
+          causalEvidence.status = "failed";
+          errors.push(new Error(`Causal prefix failed: ${assessment.reason}`));
+        }
+        try {
+          saveCausal();
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length)
+          throw new AggregateError(errors, "Causal prefix validation failed", { cause: errors[0] });
+      }
       saveAttempts();
       if (outputWitness) observeOutputAttempt(outputWitness, attempt, match, saveAttempts);
     }
     if (outputWitness) outputContentArtifact = outputWitness.finish();
   } catch (error) {
     collectionError = error;
+    if (options.captureCausalCell) {
+      causalEvidence.status = "failed";
+      causalEvidence.error = error.message;
+      try {
+        saveCausal();
+      } catch (persistError) {
+        collectionCleanupErrors.push(persistError);
+      }
+    }
     const pending = attempts.find((a) => a.status === "offered");
     if (pending) Object.assign(pending, { status: "failed", error: String(error.message) });
     finalVerification = { status: "failed", error: String(error.message) };
@@ -922,6 +1107,7 @@ function parseOptions(args) {
     report: "artifacts/performance-reference.json",
     ownedCapture: false,
     captureOutputContent: false,
+    captureCausalCell: false,
     captureRendererManifest: null,
     startupSamples: 6,
     memorySamples: 24,
@@ -940,6 +1126,7 @@ function parseOptions(args) {
     else if (arg === "--memory-samples") parsed.memorySamples = Number(args[++index]);
     else if (arg === "--input-samples") parsed.inputSamples = Number(args[++index]);
     else if (arg === "--input-trace") parsed.inputTrace = args[++index];
+    else if (arg === "--capture-causal-cell") parsed.captureCausalCell = true;
     else if (arg === "--capture-output-content") parsed.captureOutputContent = true;
     else if (arg === "--owned-daemon-capture") parsed.ownedCapture = true;
     else if (arg === "--capture-renderer-manifest") parsed.captureRendererManifest = args[++index];
@@ -950,6 +1137,11 @@ function parseOptions(args) {
     else if (arg === "--startup-diagnostic-root")
       parsed.startupDiagnosticRoot = resolve(args[++index]);
     else throw new Error(`Unknown option ${arg}`);
+  }
+  if (parsed.captureCausalCell) {
+    if (!parsed.ownedCapture || parsed.inputSamples !== 36)
+      throw new Error("Causal-cell variant requires owned capture and exactly 36 inputs");
+    parsed.captureOutputContent = true;
   }
   if (parsed.captureOutputContent && (!parsed.ownedCapture || parsed.inputSamples !== 36))
     throw new Error(
@@ -1004,4 +1196,8 @@ function commandOutput(command, args) {
   const result = spawnSync(command, args, { cwd: root, encoding: "utf8", stdio: "pipe" });
   if (result.status !== 0) throw new Error(`Unable to run ${command} ${args.join(" ")}`);
   return result.stdout.trim();
+}
+
+function shellQuote(value) {
+  return "'" + value.replaceAll("'", "'\\''") + "'";
 }
