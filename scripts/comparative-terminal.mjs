@@ -32,6 +32,7 @@ import {
 } from "./comparative-terminal-support.mjs";
 import {
   typingScenario,
+  typingGeometryReady,
   assertTypingFrame,
   floodIdentity,
   typingAttempts,
@@ -95,8 +96,12 @@ export async function runTarget(target, options, directory) {
   let client, screen, tmuxPid, last, failure, producerPid, producerBirth, tmuxBirth;
   let clientExited = false;
   let tmuxAttempted = false;
-  let cols = options.cols + (target === "tmux" ? 0 : 28);
-  let rows = options.rows + (target === "tmux" ? 1 : 5);
+  let cols = scenario
+    ? scenario.outerGeometries[target].cols
+    : options.cols + (target === "tmux" ? 0 : 28);
+  let rows = scenario
+    ? scenario.outerGeometries[target].rows
+    : options.rows + (target === "tmux" ? 1 : 5);
   const start = nowMs();
   const tmux = (...args) =>
     command(options.binaries.tmux, ["-S", socket, "-f", "/dev/null", ...args], env, root);
@@ -424,26 +429,41 @@ export async function runTarget(target, options, directory) {
     report.startupMs = nowMs() - start;
     report.clientLaunchToProducerReadyMs = nowMs() - launchAt;
     await delay(300);
-    for (
-      let attempt = 0;
-      attempt < 4 && (last.cols !== options.cols || last.rows !== options.rows);
-      attempt++
-    ) {
-      cols += options.cols - last.cols;
-      rows += options.rows - last.rows;
-      last = null;
-      screen.resize(cols, rows);
-      client.resize(cols, rows);
+    if (scenario) {
+      report.outerGeometry = { cols, rows };
       await until(
-        () => {
+        async () => {
           healthy();
-          return last !== null;
+          const native = (
+            await tmux("display-message", "-p", "-t", `=${session}`, "#{pane_width}|#{pane_height}")
+          ).trim();
+          report.geometryAdmission = { native, marker: last, outer: { cols, rows } };
+          return typingGeometryReady(native, last, lastFrame, scenario.contentRects[target]);
         },
-        "matched content geometry",
+        "fixed native and coherent content geometry",
         5000,
       );
-      await delay(300);
-    }
+    } else
+      for (
+        let attempt = 0;
+        attempt < 4 && (last.cols !== options.cols || last.rows !== options.rows);
+        attempt++
+      ) {
+        cols += options.cols - last.cols;
+        rows += options.rows - last.rows;
+        last = null;
+        screen.resize(cols, rows);
+        client.resize(cols, rows);
+        await until(
+          () => {
+            healthy();
+            return last !== null;
+          },
+          "matched content geometry",
+          5000,
+        );
+        await delay(300);
+      }
     if (last.cols !== options.cols || last.rows !== options.rows)
       throw new Error("Could not match content geometry");
     const sampleResources = async (phase) => {
@@ -691,6 +711,7 @@ export async function runTarget(target, options, directory) {
     report.status = "passed";
   } catch (error) {
     if (scenario) {
+      report.failedFrame = lastFrame;
       if (!attempts.length) attempts = typingAttempts(0);
       report.samples = attempts;
       report.inputDenominator = finishTypingAttempts(attempts);

@@ -1,6 +1,6 @@
 // Versioned before measurement; changes require a new descriptor and qualification.
 export const TYPING_SCENARIO = Object.freeze({
-  version: 1,
+  version: 2,
   paneCount: 1,
   inputMode: "line",
   warmups: 2,
@@ -12,7 +12,7 @@ export const TYPING_SCENARIO = Object.freeze({
   floodTicks: 152,
   foreground: 0xd2dce6,
   background: 0x141e28,
-  sentinelForeground: 0x12abef,
+  sentinelForeground: 0xe6f5ff,
   sentinelBackground: 0x345678,
   cursor: Object.freeze({ x: 2, y: 3 }),
   inputOutput:
@@ -38,9 +38,10 @@ export function typingScenario(options) {
     (options.resizeSamples ?? 0) !== 0 ||
     (options.paneCount ?? 1) !== 1
   )
-    throw Error("Typing v1 requires100 samples,line input,one pane,no resize samples");
+    throw Error("Typing v2 requires100 samples,line input,one pane,no resize samples");
+  if (options.cols !== 80 || options.rows !== 30) throw Error("Typing v2 freezes80x30 content");
   if (options.targets.some((target) => !["tmux", "tmux-ide"].includes(target)))
-    throw Error("Typing v1 supports native/current only");
+    throw Error("Typing v2 supports native/current only");
   for (const target of options.targets) {
     const rect = options.contentRects?.[target];
     if (
@@ -52,7 +53,23 @@ export function typingScenario(options) {
     )
       throw Error(`Explicit content rectangle required for ${target}`);
   }
+  const outerGeometries = { tmux: { cols: 80, rows: 31 }, "tmux-ide": { cols: 108, rows: 34 } };
+  for (const target of options.targets) {
+    const actual = options.outerGeometries?.[target],
+      want = outerGeometries[target];
+    const rect = options.contentRects[target],
+      expectedRect = target === "tmux" ? { x: 0, y: 0 } : { x: 28, y: 3 };
+    if (
+      !actual ||
+      actual.cols !== want.cols ||
+      actual.rows !== want.rows ||
+      rect.x !== expectedRect.x ||
+      rect.y !== expectedRect.y
+    )
+      throw Error("Typing v2 requires frozen source-derived outer geometry and crop");
+  }
   return {
+    outerGeometries,
     ...TYPING_SCENARIO,
     kind: options.scenario,
     cols: options.cols,
@@ -83,7 +100,7 @@ export function expectedTypingCells(cols, rows, sequence, flood) {
     Array.from({ length: cols }, (_, x) => ({
       text: text[y]?.[x] ?? " ",
       width: 1,
-      fg: y === 2 ? 0x12abef : 0xd2dce6,
+      fg: y === 2 ? 0xe6f5ff : 0xd2dce6,
       bg: y === 2 ? 0x345678 : 0x141e28,
       bold: y === 2,
       italic: false,
@@ -104,7 +121,27 @@ export function assertTypingFrame(frame, rect, cols, rows, sequence, flood) {
     for (let x = 0; x < cols; x++) {
       const actual = frame.cells[rect.y + y]?.[rect.x + x],
         want = expected[y][x];
-      if (!actual || Object.keys(want).some((key) => actual[key] !== want[key]))
+      // Native EL/BCE redraw may replace an undecorated space's invisible RGB foreground
+      // with default. Admit only this observed representation; background/styles stay exact.
+      const plainBlank =
+        want.text === " " &&
+        want.width === 1 &&
+        [
+          "bold",
+          "italic",
+          "underline",
+          "inverse",
+          "dim",
+          "blink",
+          "invisible",
+          "strikethrough",
+        ].every((key) => want[key] === false);
+      if (
+        !actual ||
+        Object.keys(want).some(
+          (key) => actual[key] !== want[key] && !(key === "fg" && plainBlank && actual.fg === null),
+        )
+      )
         throw Error(`Cell mismatch ${x},${y}`);
     }
   if (
@@ -162,4 +199,20 @@ export function finishTypingAttempts(attempts) {
     succeeded: attempts.filter((a) => !a.warmup && a.status === "passed").length,
     failed: attempts.filter((a) => !a.warmup && a.status !== "passed").length,
   };
+}
+
+export function typingGeometryReady(nativeGeometry, marker, frame, rect) {
+  if (
+    nativeGeometry !== "80|30" ||
+    marker?.cols !== 80 ||
+    marker?.rows !== 30 ||
+    marker?.sequence !== 0
+  )
+    return false;
+  try {
+    assertTypingFrame(frame, rect, 80, 30, 0, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }

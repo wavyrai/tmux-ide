@@ -34,7 +34,7 @@ export function typingPaint(cols, rows, sequence, flood) {
     bytes +=
       `\x1b[${y + 1};1H` +
       (y === 2
-        ? "\x1b[0;1;38;2;18;171;239;48;2;52;86;120m"
+        ? "\x1b[0;1;38;2;230;245;255;48;2;52;86;120m"
         : "\x1b[0;38;2;210;220;230;48;2;20;30;40m") +
       (lines[y] ?? "").padEnd(cols).slice(0, cols);
   }
