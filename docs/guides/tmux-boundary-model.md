@@ -837,3 +837,10 @@ The mapping assumes the isolated fixture is the sole input producer: the HMAC
 binds payload and trace ID, not an offer ordinal. Fingerprint collection adds
 diagnostic work inside the original input clock; controller and collector clocks
 are never subtracted to infer latency.
+
+Reference reports show generic stage-label coverage separately from the local
+latency verdict. Missing, duplicate and orphan spans stay visible; stage duration
+summaries are separated by process and clock domain. Six generic labels do not
+prove the mission's six boundaries, and a calibration record alone does not
+establish a usable cross-process timeline. Those verdicts remain not measured
+until their own evidence is admitted.

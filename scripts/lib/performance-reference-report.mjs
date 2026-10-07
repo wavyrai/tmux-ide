@@ -267,3 +267,75 @@ export function admitReferenceInputTrace(events, source) {
     return { complete: false, reason: error.message };
   }
 }
+
+/** Stage-local durations only. Presence of calibration records is not calibration admission. */
+export function referenceStageCoverage(events) {
+  const spans = events.filter(
+    (event) => event?.type === "performance.stage" && validateReferenceStageEvent(event),
+  );
+  const traceIds = new Set(
+    spans.filter((event) => event.stage === "input").map((event) => event.traceId),
+  );
+  const orphanSpans = spans.filter((event) => !traceIds.has(event.traceId)).length;
+  const stages = Object.fromEntries(
+    PERFORMANCE_STAGES.map((stage) => {
+      let missing = 0,
+        duplicate = 0;
+      const domains = new Map();
+      for (const traceId of traceIds) {
+        const matches = spans.filter((event) => event.traceId === traceId && event.stage === stage);
+        if (matches.length === 0) {
+          missing++;
+          continue;
+        }
+        if (matches.length !== 1) {
+          duplicate++;
+          continue;
+        }
+        const span = matches[0];
+        const domain = {
+          processId: span.processId,
+          clockId: span.clockId,
+          clockKind: span.clockKind,
+        };
+        const key = JSON.stringify(domain);
+        const entry = domains.get(key) ?? { ...domain, values: [] };
+        entry.values.push((span.endedAtMicros - span.startedAtMicros) / 1000);
+        domains.set(key, entry);
+      }
+      return [
+        stage,
+        {
+          expected: traceIds.size,
+          missing,
+          duplicate,
+          domains: [...domains.values()].map(({ values, ...domain }) => ({
+            ...domain,
+            summaryMs: summarize(values),
+          })),
+        },
+      ];
+    }),
+  );
+  return {
+    status:
+      traceIds.size > 0 &&
+      orphanSpans === 0 &&
+      Object.values(stages).every((stage) => stage.missing === 0 && stage.duplicate === 0)
+        ? "complete"
+        : "incomplete",
+    scope:
+      "Generic stage-label coverage only: exactly one span per captured input. Not the six mission boundaries, causal attribution, physical paint, or exhaustive daemon trace admission",
+    missionBoundaryVerdict: "not-measured",
+    inputCount: traceIds.size,
+    orphanSpans,
+    stages,
+    crossDomainTimeline: {
+      status: "not-measured",
+      calibrationRecords: events.filter((event) => event?.type === "performance.clock-calibration")
+        .length,
+      reason:
+        "This analyzer does not admit clock calibration, compose cross-domain endpoints, or sum potentially overlapping stages",
+    },
+  };
+}

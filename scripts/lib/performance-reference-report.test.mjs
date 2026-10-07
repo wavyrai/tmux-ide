@@ -192,3 +192,62 @@ test("input admission cannot turn enough fast successful pairs into an all-input
   const wrongClock = pairs.map((p, i) => (i === 1 ? { ...p, clockId: "other" } : p));
   assert.equal(admitReferenceInputTrace([header, ...wrongClock, summary], source).complete, false);
 });
+
+test("local input/paint budget success does not imply generic six-stage or mission coverage", async () => {
+  const { referenceStageCoverage } = await import("./performance-reference-report.mjs");
+  const span = (stage) => ({
+    type: "performance.stage",
+    traceId: "a",
+    stage,
+    processId: "p",
+    clockId: "c",
+    clockKind: "performance-now",
+    startedAtMicros: 1,
+    endedAtMicros: 2,
+  });
+  const result = referenceStageCoverage([span("input"), span("paint")]);
+  assert.equal(result.status, "incomplete");
+  assert.equal(result.stages.parse.missing, 1);
+  assert.equal(result.stages.input.domains[0].summaryMs.count, 1);
+  assert.equal(result.missionBoundaryVerdict, "not-measured");
+  assert.equal(validateReferenceReport(report(), source).status, "passed");
+  const complete = referenceStageCoverage(
+    ["input", "tmux", "parse", "reduce", "transport", "paint"].map(span),
+  );
+  assert.equal(complete.status, "complete");
+  assert.equal(complete.missionBoundaryVerdict, "not-measured");
+  assert.equal(complete.crossDomainTimeline.status, "not-measured");
+});
+
+test("duplicate and orphan stages are incomplete, and local clock domains never merge", async () => {
+  const { referenceStageCoverage } = await import("./performance-reference-report.mjs");
+  const span = (traceId, stage, processId = "p", clockId = "c") => ({
+    type: "performance.stage",
+    traceId,
+    stage,
+    processId,
+    clockId,
+    clockKind: "performance-now",
+    startedAtMicros: 1,
+    endedAtMicros: 2,
+  });
+  const events = [
+    span("a", "input"),
+    span("a", "paint"),
+    span("a", "parse"),
+    span("a", "parse"),
+    span("b", "input", "q", "d"),
+    span("b", "paint", "q", "d"),
+    span("unknown", "transport"),
+    { type: "performance.clock-calibration", outcome: { status: "accepted" } },
+  ];
+  const result = referenceStageCoverage(events);
+  assert.equal(result.status, "incomplete");
+  assert.equal(result.stages.parse.duplicate, 1);
+  assert.equal(result.stages.parse.domains.length, 0);
+  assert.equal(result.stages.input.domains.length, 2);
+  assert.equal(result.orphanSpans, 1);
+  assert.equal(result.crossDomainTimeline.calibrationRecords, 1);
+  assert.equal(result.crossDomainTimeline.status, "not-measured");
+  assert.equal(referenceStageCoverage([]).status, "incomplete");
+});

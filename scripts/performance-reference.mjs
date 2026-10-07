@@ -22,6 +22,7 @@ import {
 
 import {
   admitReferenceInputTrace,
+  referenceStageCoverage,
   PERFORMANCE_STAGES,
   REFERENCE_REPORT_VERSION,
   gitSourceIdentity,
@@ -323,6 +324,8 @@ if (options.preflightOnly) {
 } else {
   const report = {
     version: REFERENCE_REPORT_VERSION,
+    statusScope:
+      "Configured startup, local input-to-consumed-paint and memory budgets only; not six-stage pipeline acceptance",
     measuredAt: new Date().toISOString(),
     status: Object.values(measurements).some(({ status }) => status === "failed")
       ? "failed"
@@ -661,7 +664,8 @@ function measureInputToPaint(inputPath) {
       localInputToConsumedPaintMs: (paint.endedAtMicros - input.startedAtMicros) / 1_000,
       stages: Object.fromEntries(
         PERFORMANCE_STAGES.flatMap((stage) => {
-          const span = spans.find((candidate) => candidate.stage === stage);
+          const matches = spans.filter((candidate) => candidate.stage === stage);
+          const span = matches.length === 1 ? matches[0] : null;
           return span ? [[stage, (span.endedAtMicros - span.startedAtMicros) / 1_000]] : [];
         }),
       ),
@@ -670,12 +674,11 @@ function measureInputToPaint(inputPath) {
   const summary = summarize(
     rawSamples.map(({ localInputToConsumedPaintMs }) => localInputToConsumedPaintMs),
   );
+  const stageCoverage = referenceStageCoverage(events);
   const stageSummaries = Object.fromEntries(
     PERFORMANCE_STAGES.map((stage) => {
-      const values = rawSamples.flatMap(({ stages }) =>
-        typeof stages[stage] === "number" ? [stages[stage]] : [],
-      );
-      return [stage, values.length > 0 ? summarize(values) : null];
+      const domains = stageCoverage.stages[stage].domains;
+      return [stage, domains.length === 1 ? domains[0].summaryMs : null];
     }),
   );
   const passed =
@@ -687,6 +690,9 @@ function measureInputToPaint(inputPath) {
     sampleCount: rawSamples.length,
     rawSamples,
     summary: { localInputToConsumedPaintMs: summary, stages: stageSummaries },
+    stageCoverage,
+    statusScope:
+      "Local input-to-consumed-paint budget only; six-stage coverage and calibration are separate",
     admission,
     budgets: budgets.inputToPaint,
     sourceArtifact: { path: absolutePath, sha256: sourceArtifactDigest(absolutePath) },
