@@ -1473,6 +1473,10 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
             patch: { rows: [], cursor: snapshot.cursor },
           };
 
+    // Coverage instrumentation slows compact encoding of the 5000-row seed
+    // (CI measured late delivery at ~12 s, not a stall). Only the coverage job
+    // sets this flag; every other run keeps the strict 10 s guard.
+    const seedDeadlineMs = process.env.TMUX_IDE_TEST_COVERAGE === "1" ? 30_000 : 10_000;
     const seedStartedAt = performance.now();
     owner.emit(canonicalUpdate(0, snapshots[0]!));
     try {
@@ -1491,7 +1495,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
             }),
           ).toBe(true);
         },
-        { timeout: 10_000 },
+        { timeout: seedDeadlineMs },
       );
     } catch (error) {
       // Keep the original deadline and failure. Observe late completion only
