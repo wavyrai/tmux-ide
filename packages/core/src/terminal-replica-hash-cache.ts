@@ -4,6 +4,8 @@ import { createBufferedFnv64, type BufferedFnv64 } from "./terminal-fnv64-wasm.t
 const ROW_HASH_CACHE = new WeakMap<object, string>();
 const DEEPLY_FROZEN_ROWS = new WeakSet<object>();
 const UTF8_ENCODER = new TextEncoder();
+// Fixed ASCII headers cover common terminal strings without retaining values.
+const SHORT_ASCII_HEADERS = Array.from({ length: 33 }, (_, length) => `s${length}:`);
 
 interface CanonicalKeyOrder {
   readonly original: string[];
@@ -116,7 +118,7 @@ class CanonicalFnv64 {
       }
     }
     if (ascii) {
-      this.ascii(`s${value.length}:`);
+      this.ascii(SHORT_ASCII_HEADERS[value.length] ?? `s${value.length}:`);
       this.ascii(value);
       this.ascii(";");
       return value.length;

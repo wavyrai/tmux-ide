@@ -510,3 +510,42 @@ describe("terminal canonical hash cache", () => {
     expect(hashTerminalReplicaSnapshot(mutableRowSnapshot)).not.toBe(rowInitial);
   });
 });
+
+it("preserves short ASCII value headers and long/Unicode fallback across accelerated slices", async () => {
+  const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
+  const values = [
+    ...Array.from({ length: 34 }, (_, length) => "v".repeat(length)),
+    "\0;:\n",
+    "界",
+    "😀",
+    "e\u0301",
+    "\ud800",
+    "\udc00",
+    "x".repeat(4097),
+  ];
+  const input = Array.from({ length: 64 }, (_, index) => ({ index, values }));
+  const expected = referenceHash(input);
+  const yieldsByPath: number[] = [];
+  try {
+    for (const fallback of [false, true]) {
+      if (fallback) factory.mockReturnValue(null);
+      expect(hashCanonicalTerminalValue(input)).toBe(expected);
+      let yields = 0;
+      expect(
+        await hashCanonicalTerminalValueCooperatively(
+          input,
+          async () => {
+            yields++;
+          },
+          127,
+        ),
+      ).toBe(expected);
+      yieldsByPath.push(yields);
+    }
+    expect(yieldsByPath[1]).toBe(yieldsByPath[0]);
+    expect(yieldsByPath[0]).toBeGreaterThan(0);
+    expect(factory).toHaveBeenCalled();
+  } finally {
+    factory.mockRestore();
+  }
+});
