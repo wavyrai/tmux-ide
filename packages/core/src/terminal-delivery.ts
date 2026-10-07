@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { isOwnedTerminalReplicaRow } from "./terminal-replica-owned-row.ts";
+import {
+  isOwnedTerminalReplicaRow,
+  TERMINAL_REPLICA_EMPTY_CELL,
+  TERMINAL_REPLICA_SPACE_CELL,
+} from "./terminal-replica-owned-row.ts";
 import {
   TERMINAL_DELIVERY_CHUNK_BYTES,
   TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
@@ -304,6 +308,21 @@ const CompactSeedMetadataSchema = /* @__PURE__ */ TerminalReplicaSnapshotSchemaZ
 });
 const CompactRowHeaderSchema = /* @__PURE__ */ TerminalReplicaRowSchemaZ.omit({ cells: true });
 const CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
+let trustedBlankCellsValidated = false;
+
+function isValidatedTrustedBlankSlice(cells: readonly TerminalReplicaCell[]): boolean {
+  if (
+    !cells.every(
+      (cell) => cell === TERMINAL_REPLICA_EMPTY_CELL || cell === TERMINAL_REPLICA_SPACE_CELL,
+    )
+  )
+    return false;
+  if (!trustedBlankCellsValidated) {
+    CompactCellSliceSchema.parse([TERMINAL_REPLICA_EMPTY_CELL, TERMINAL_REPLICA_SPACE_CELL]);
+    trustedBlankCellsValidated = true;
+  }
+  return true;
+}
 
 export function terminalSemanticUpdateNeedsCooperativeEncoding(
   input: TerminalSemanticDeliveryPayload,
@@ -406,7 +425,10 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
       };
       for (let offset = 0; offset < cells.length; offset += 256) {
         const slice = cells.slice(offset, offset + 256);
-        const validated = validatedRow ? slice : CompactCellSliceSchema.parse(slice);
+        const validated =
+          validatedRow || (owned && isValidatedTrustedBlankSlice(slice))
+            ? slice
+            : CompactCellSliceSchema.parse(slice);
         for (const cell of validated) {
           const encoded = compactCell(cell);
           if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;
