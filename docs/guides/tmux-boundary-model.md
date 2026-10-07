@@ -795,3 +795,23 @@ resource soak remains separate. The fixture has a 45-second test timeout and
 bounded cleanup operations; the boundary script uses its existing synchronous
 child execution and does not add the diagnostic runner's independent 90-second
 process-group watchdog. Reports include a separate production-viewer receipt.
+
+### Optional comparative trace integrity
+
+The options JSON for `scripts/comparative-terminal.mjs` may set
+`"traceEvidence": { "commit": "<40-character TUI commit>", "tree": "clean" }`.
+This requires matching `provenance.tui.commit` and `provenance.tui.sourceState`
+`"clean"`. Only the tmux-ide child receives the existing collector environment;
+each trial writes its own `performance.trace.jsonl`. Without this option,
+collection and admission behavior are unchanged.
+
+After teardown, the comparator checks the unique header/final summary, declared
+provenance, accepted-record count and zero writer loss, failure or pending work.
+Missing or incomplete evidence produces status `incomplete`, preserves
+`originalOracleStatus`, and excludes the trial from successful timing aggregates.
+The trace tree is a matched declaration, not independent source verification.
+This checks file integrity only: it does not establish all timing stages,
+calibrated cross-process clocks, physical paint, or the separate 16.67ms
+client-framebuffer-consumption budget. Collector event coalescing and exceptions
+before append remain outside writer accounting. No writer limits or workload
+scheduling are changed.

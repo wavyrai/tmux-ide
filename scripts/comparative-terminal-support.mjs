@@ -1,3 +1,4 @@
+import { validateTraceEvidenceOption } from "./lib/comparative-terminal-trace.mjs";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
@@ -123,6 +124,7 @@ export function createScreen(cols, rows, reply, observe, fullCells = false) {
   };
 }
 export function validateOptions(options) {
+  validateTraceEvidenceOption(options);
   typingScenario(options);
   tuiRendererConfiguration(options.tuiRenderer);
   if (

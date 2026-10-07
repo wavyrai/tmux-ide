@@ -43,6 +43,7 @@ import {
 } from "./comparative-terminal-scenario.mjs";
 import { sampleProcessTree } from "./lib/comparative-terminal-resources.mjs";
 import { renderComparativeTerminalReport } from "./lib/comparative-terminal-report.mjs";
+import { applyComparativeTraceAdmission } from "./lib/comparative-terminal-trace.mjs";
 const execute = promisify(execFile);
 const require = createRequire(new URL("../packages/daemon/package.json", import.meta.url));
 const pty = require("node-pty");
@@ -61,6 +62,11 @@ async function until(check, description, timeout = 30000) {
 }
 
 export async function runTarget(target, options, directory) {
+  const tracePath =
+    target === "tmux-ide" && options.traceEvidence
+      ? join(directory, "performance.trace.jsonl")
+      : null;
+  if (tracePath && existsSync(tracePath)) throw new Error("Trace output already exists");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const root = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "tmi-cmp-"));
   const session = `compare-${randomUUID().slice(0, 8)}`;
@@ -392,7 +398,21 @@ export async function runTarget(target, options, directory) {
       },
       Boolean(scenario),
     );
-    client = pty.spawn(binary, args, { name: "xterm-256color", cols, rows, cwd: root, env });
+    const clientEnv = tracePath
+      ? {
+          ...env,
+          TMUX_IDE_PERFORMANCE_TRACE_LOG: tracePath,
+          TMUX_IDE_PERFORMANCE_TRACE_COMMIT: options.traceEvidence.commit,
+          TMUX_IDE_PERFORMANCE_TRACE_TREE: options.traceEvidence.tree,
+        }
+      : env;
+    client = pty.spawn(binary, args, {
+      name: "xterm-256color",
+      cols,
+      rows,
+      cwd: root,
+      env: clientEnv,
+    });
     report.owned.push({ pid: client.pid, binary, args });
     client.onExit(() => {
       clientExited = true;
@@ -754,6 +774,7 @@ export async function runTarget(target, options, directory) {
     }
     report.error = String(error.stack ?? error);
   } finally {
+    if (tracePath) report.originalOracleStatus = report.status;
     try {
       await cleanup();
     } catch (error) {
@@ -763,6 +784,7 @@ export async function runTarget(target, options, directory) {
     }
     process.off("SIGINT", signal);
     process.off("SIGTERM", signal);
+    if (tracePath) applyComparativeTraceAdmission(report, tracePath, options.traceEvidence);
     report.loadAfter = loadavg();
     writeFileSync(join(directory, "report.json"), JSON.stringify(report, null, 2));
   }
@@ -828,6 +850,7 @@ export async function main(options, output) {
             ["support", new URL("./comparative-terminal-support.mjs", import.meta.url)],
             ["runner", import.meta.url],
             ["report", new URL("./lib/comparative-terminal-report.mjs", import.meta.url)],
+            ["traceAdmission", new URL("./lib/comparative-terminal-trace.mjs", import.meta.url)],
             ["lock", new URL("../pnpm-lock.yaml", import.meta.url)],
           ].map(([name, url]) => [name, artifact(fileURLToPath(url))]),
         )

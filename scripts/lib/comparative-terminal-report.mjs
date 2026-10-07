@@ -131,6 +131,8 @@ export function summarizeComparativeTerminalReport(report) {
       },
       runs: own.map((run) => ({
         status: run.status,
+        originalOracleStatus: run.originalOracleStatus ?? run.status,
+        traceEvidence: run.traceEvidence ?? null,
         inputDenominator: run.inputDenominator ?? null,
         echo: runDistribution(run.samples),
         resize: runDistribution(run.resizeSamples),
@@ -139,7 +141,10 @@ export function summarizeComparativeTerminalReport(report) {
         warmups: (run.samples ?? []).filter((sample) => sample.warmup).length,
         resizeSamples: measured(run.resizeSamples).length,
         startupMs: validNumber(run.startupMs) ? run.startupMs : null,
-        error: run.error ?? (run.cleanupFailed ? "Owned process cleanup failed" : null),
+        error:
+          run.error ??
+          run.traceEvidence?.error ??
+          (run.cleanupFailed ? "Owned process cleanup failed" : null),
       })),
     };
   });
