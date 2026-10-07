@@ -909,6 +909,16 @@ the original local input clock/budget is unchanged, while terminal-output timing
 styles, physical display and native parity remain unmeasured. All 36 observation
 outcomes and failed evidence are retained separately from valid input mappings.
 
+The qualified OpenTUI 0.5.1 renderer's `frame` event follows a successful
+`renderNative` return, but is not a successful terminal-output completion receipt.
+On the default macOS stdout path, native rendering queues a worker write before
+returning; the stdout sink also swallows write/flush errors. Split flushes use the
+same output backend. A frame fence therefore cannot upper-bound successful output
+completion. Later host captures prove received visible content, not the end of the
+TUI's emitted byte batch or physical display. Keep these boundaries distinct when
+reporting latency; exact output completion needs batch identity and a completion
+receipt that preserves output failures.
+
 For a separate causal-cell correctness fixture, use the owned reference capture
 with `--capture-causal-cell` (exactly 36 inputs). This selects the existing
 creation-owned producer that initially clears its screen/history, disables wrap,
