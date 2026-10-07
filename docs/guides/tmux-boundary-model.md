@@ -874,3 +874,9 @@ TUI trace, controller mapping, daemon trace and shutdown receipt beside the
 report. Input-detail tracing adds overhead; startup and memory measurements are
 not part of this mode. The original local input-to-consumed-paint calculation
 remains separate from missing causal, cross-clock and terminal-output evidence.
+
+Owned capture must preserve the scratch fleet's validated `TMUX` locator as
+well as its explicit socket setting: legacy launch commands still rely on that
+environment locator. Clearing it can route those commands to the default server.
+The first two-stream live attempt exposed this failure and produced no TUI timing
+evidence; its process-cleanup receipt did not establish complete isolation.

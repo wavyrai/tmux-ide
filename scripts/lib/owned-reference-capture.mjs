@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, copyFile, writeFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 const hash = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 export function validateOwnedWorktree({ common, local, dirty }) {
@@ -34,10 +34,22 @@ function sanitizedBaseEnvironment(base) {
   return env;
 }
 export function ownedReferenceEnvironment(base, fleet, tracePath, tuiPath) {
+  const locator = fleet.environment.TMUX;
+  const parts = typeof locator === "string" ? locator.split(",") : [];
+  const canonicalSocket = (path) => join(realpathSync(dirname(path)), basename(path));
+  if (
+    parts.length !== 3 ||
+    !isAbsolute(parts[0]) ||
+    !/^[1-9][0-9]*$/.test(parts[1]) ||
+    !/^[0-9]+$/.test(parts[2]) ||
+    !Number.isSafeInteger(Number(parts[1])) ||
+    canonicalSocket(parts[0]) !== canonicalSocket(fleet.socketPath)
+  )
+    throw new Error("Owned capture requires the exact private fleet TMUX locator");
   return {
     ...sanitizedBaseEnvironment(base),
     ...fleet.environment,
-    TMUX: "",
+    TMUX: locator,
     TMUX_IDE_TMUX_SOCKET_PATH: fleet.socketPath,
     TMUX_IDE_SESSION_RUNTIME_TRACE_LOG: tracePath,
     TMUX_IDE_TESTDRIVE_CANONICAL_HOME: fleet.daemonInfoDir,

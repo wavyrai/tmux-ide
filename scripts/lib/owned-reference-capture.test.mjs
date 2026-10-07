@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, mkdir, writeFile, readFile, rm, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,9 +17,13 @@ test("primary/dirty worktrees refuse, complete private environment cannot inheri
   validateOwnedWorktree({ common: "/common", local: "/linked", dirty: false });
   const fleet = {
     root: "/private",
-    socketPath: "/private/s",
+    socketPath: "/tmp/private-s",
     daemonInfoDir: "/private/d",
-    environment: { HOME: "/private/home", TMUX_IDE_HOME: "/private/state" },
+    environment: {
+      HOME: "/private/home",
+      TMUX_IDE_HOME: "/private/state",
+      TMUX: "/tmp/private-s,123,0",
+    },
   };
   const env = ownedReferenceEnvironment(
     { TMUX: "old", TMUX_IDE_CONFIG: "old", NODE_OPTIONS: "bad" },
@@ -78,7 +83,10 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
             root: fleetRoot,
             socketPath: join(fleetRoot, "sock"),
             daemonInfoDir: join(fleetRoot, "daemon"),
-            environment: { HOME: join(fleetRoot, "home") },
+            environment: {
+              HOME: join(fleetRoot, "home"),
+              TMUX: `${join(fleetRoot, "sock")},123,0`,
+            },
           };
         },
         inspectNative: () => {
@@ -197,4 +205,50 @@ test("build command uses actual build-tui default output in the selected worktre
       { cwd: "/linked", stdio: "pipe", timeout: 120000 },
     ],
   ]);
+});
+
+test("bare tmux subprocess inherits only validated private locator; empty/mismatched locators refuse", async () => {
+  const root = await mkdtemp(join(tmpdir(), "owned-routing-"));
+  try {
+    const executable = join(root, "tmux");
+    await writeFile(executable, '#!/bin/sh\nprintf "%s" "$TMUX"\n');
+    await chmod(executable, 0o700);
+    const socketPath = join(root, "t.sock");
+    const fleet = {
+      root,
+      socketPath,
+      daemonInfoDir: join(root, "daemon"),
+      environment: { TMUX: `${socketPath},123,0` },
+    };
+    const environment = ownedReferenceEnvironment(
+      { ...process.env, TMUX: "/tmp/default,1,0" },
+      fleet,
+      join(root, "trace"),
+      "/tui",
+    );
+    environment.PATH = root;
+    assert.equal(
+      execFileSync("tmux", ["list-sessions"], { env: environment, encoding: "utf8" }),
+      fleet.environment.TMUX,
+    );
+    for (const invalid of [
+      undefined,
+      "",
+      "/tmp/other.sock,123,0",
+      `${socketPath},0,0`,
+      `${socketPath},123`,
+    ])
+      assert.throws(
+        () =>
+          ownedReferenceEnvironment(
+            {},
+            { ...fleet, environment: { TMUX: invalid } },
+            "/trace",
+            "/tui",
+          ),
+        /private fleet TMUX locator/,
+      );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
