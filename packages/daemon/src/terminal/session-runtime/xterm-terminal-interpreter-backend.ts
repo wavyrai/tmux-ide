@@ -10,12 +10,7 @@ import type {
   TerminalReplicaRow,
   TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
-import {
-  freezeTerminalReplicaRow,
-  TERMINAL_REPLICA_DEFAULT_COLOR,
-  TERMINAL_REPLICA_EMPTY_CELL,
-  TERMINAL_REPLICA_SPACE_CELL,
-} from "@tmux-ide/core";
+import { createProjectedTerminalReplicaRowBuilder } from "@tmux-ide/core";
 import type {
   TerminalInterpreterBackend,
   TerminalInterpreterBackendFactoryOptions,
@@ -585,28 +580,28 @@ function projectRowCached(
       return prior.row;
   }
   const cell = buffer.getNullCell();
-  const cells: TerminalReplicaCell[] = [];
+  const builder = createProjectedTerminalReplicaRowBuilder();
   for (let column = 0; column < cols; column += 1) {
     line?.getCell(column, cell);
     // Compute the same clipped cell values before selecting trusted blanks.
     const grapheme = line && column + cell.getWidth() <= cols ? cell.getChars() : "";
     const width = line && column + cell.getWidth() <= cols ? (cell.getWidth() as 0 | 1 | 2) : 1;
-    const foreground = line ? cellColor(cell, "foreground") : TERMINAL_REPLICA_DEFAULT_COLOR;
-    const background = line ? cellColor(cell, "background") : TERMINAL_REPLICA_DEFAULT_COLOR;
+    const foregroundKind = line ? cellColorKind(cell, "foreground") : "default";
+    const foregroundValue = line ? cell.getFgColor() : 0;
+    const backgroundKind = line ? cellColorKind(cell, "background") : "default";
+    const backgroundValue = line ? cell.getBgColor() : 0;
     const attributes = line ? cellAttributes(cell) : 0;
-    if (
-      width === 1 &&
-      attributes === 0 &&
-      foreground === TERMINAL_REPLICA_DEFAULT_COLOR &&
-      background === TERMINAL_REPLICA_DEFAULT_COLOR &&
-      (grapheme === "" || grapheme === " ")
-    ) {
-      cells.push(grapheme === "" ? TERMINAL_REPLICA_EMPTY_CELL : TERMINAL_REPLICA_SPACE_CELL);
-    } else {
-      cells.push({ grapheme, width, foreground, background, attributes });
-    }
+    builder.append(
+      grapheme,
+      width,
+      attributes,
+      foregroundKind,
+      foregroundValue,
+      backgroundKind,
+      backgroundValue,
+    );
   }
-  const row = freezeTerminalReplicaRow({ cells, wrapped: line?.isWrapped ?? false });
+  const row = builder.finish(line?.isWrapped ?? false);
   if (line && cacheKey)
     cache.set(cacheKey, {
       data: lineData(line)?.slice() ?? null,
@@ -645,16 +640,15 @@ function rawRowsEqual(left: Uint32Array | null, right: Uint32Array | null): bool
   return true;
 }
 
-function cellColor(
+function cellColorKind(
   cell: ReturnType<Terminal["buffer"]["active"]["getNullCell"]>,
   channel: "foreground" | "background",
-): TerminalReplicaColor {
+): TerminalReplicaColor["kind"] {
   const rgb = channel === "foreground" ? cell.isFgRGB() : cell.isBgRGB();
   const palette = channel === "foreground" ? cell.isFgPalette() : cell.isBgPalette();
-  const value = channel === "foreground" ? cell.getFgColor() : cell.getBgColor();
-  if (rgb) return { kind: "rgb", value };
-  if (palette) return { kind: "indexed", index: value };
-  return TERMINAL_REPLICA_DEFAULT_COLOR;
+  if (rgb) return "rgb";
+  if (palette) return "indexed";
+  return "default";
 }
 
 function cellAttributes(cell: ReturnType<Terminal["buffer"]["active"]["getNullCell"]>): number {
@@ -687,7 +681,7 @@ interface NativeImportBuffer {
   x: number;
   y: number;
 }
-/** Inverse of this pinned adapter's cellColor/cellAttributes projection. */
+/** Inverse of this pinned adapter's cellColorKind/cellAttributes projection. */
 function nativeImportAttributes(cell: TerminalReplicaCell): [number, number] {
   const color = (value: TerminalReplicaColor) =>
     value.kind === "default"

@@ -88,3 +88,66 @@ export function createOwnedTerminalReplicaRowBuilder() {
     },
   });
 }
+
+/** Parser construction seam: accepts primitives, never caller-owned objects or
+ * arrays. Ownership proves detached immutable data, not schema validity. */
+class ProjectedTerminalReplicaRowBuilder {
+  readonly #cells: TerminalReplicaCell[] = [];
+  #finished = false;
+
+  append(
+    grapheme: string,
+    width: 0 | 1 | 2,
+    attributes: number,
+    foregroundKind: TerminalReplicaColor["kind"],
+    foregroundValue: number,
+    backgroundKind: TerminalReplicaColor["kind"],
+    backgroundValue: number,
+  ): void {
+    this.#assertOpen();
+    if (typeof grapheme !== "string" || typeof width !== "number" || typeof attributes !== "number")
+      throw new TypeError("Projected terminal cell values must be primitive");
+    const foreground = projectedColor(foregroundKind, foregroundValue);
+    const background = projectedColor(backgroundKind, backgroundValue);
+    const cell =
+      width === 1 &&
+      attributes === 0 &&
+      foreground === TERMINAL_REPLICA_DEFAULT_COLOR &&
+      background === TERMINAL_REPLICA_DEFAULT_COLOR &&
+      (grapheme === "" || grapheme === " ")
+        ? grapheme === ""
+          ? TERMINAL_REPLICA_EMPTY_CELL
+          : TERMINAL_REPLICA_SPACE_CELL
+        : Object.freeze({ grapheme, width, foreground, background, attributes });
+    this.#cells.push(cell);
+  }
+
+  finish(wrapped: boolean): TerminalReplicaRow {
+    this.#assertOpen();
+    if (typeof wrapped !== "boolean") throw new TypeError("Projected row wrapped must be boolean");
+    this.#finished = true;
+    const row = Object.freeze({
+      wrapped,
+      cells: Object.freeze(this.#cells),
+    }) as unknown as TerminalReplicaRow;
+    OWNED_ROWS.add(row);
+    return row;
+  }
+
+  #assertOpen(): void {
+    if (this.#finished) throw new Error("Projected terminal row already finished");
+  }
+}
+
+function projectedColor(kind: TerminalReplicaColor["kind"], value: number): TerminalReplicaColor {
+  if (typeof value !== "number")
+    throw new TypeError("Projected terminal color value must be primitive");
+  if (kind === "default") return TERMINAL_REPLICA_DEFAULT_COLOR;
+  if (kind === "indexed") return Object.freeze({ kind, index: value });
+  if (kind === "rgb") return Object.freeze({ kind, value });
+  throw new TypeError("Unknown projected terminal color kind");
+}
+
+export function createProjectedTerminalReplicaRowBuilder() {
+  return new ProjectedTerminalReplicaRowBuilder();
+}

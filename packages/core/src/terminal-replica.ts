@@ -17,6 +17,7 @@ import {
   TERMINAL_REPLICA_DEFAULT_COLOR,
 } from "./terminal-replica-owned-row.ts";
 export {
+  createProjectedTerminalReplicaRowBuilder,
   TERMINAL_REPLICA_DEFAULT_COLOR,
   TERMINAL_REPLICA_EMPTY_CELL,
   TERMINAL_REPLICA_SPACE_CELL,
