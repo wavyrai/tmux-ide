@@ -129,6 +129,30 @@ export async function withOwnedReferenceCapture({
   let result;
   let retainRoot = false;
   const retained = [];
+  const daemonOutput = [];
+  const persistDaemonOutput = async (phase) => {
+    const text = daemon.output();
+    const limit = 2 * 1024 * 1024;
+    const totalBytes = Buffer.byteLength(text);
+    const suffix = Buffer.from(text.slice(-limit));
+    const tail = suffix.subarray(Math.max(0, suffix.length - limit));
+    const path = join(
+      output,
+      phase === "before-stop" ? "daemon-output.before-stop.log" : "daemon-output.log",
+    );
+    const record = {
+      phase,
+      path,
+      totalBytes,
+      bytes: tail.length,
+      truncated: totalBytes > tail.length,
+      persisted: false,
+    };
+    daemonOutput.push(record);
+    await writeFile(path, tail, { mode: 0o600 });
+    record.persisted = true;
+    record.sha256 = hash(path);
+  };
   const original = { ...process.env };
   const tracePath = join(output, "daemon.jsonl");
   try {
@@ -174,12 +198,23 @@ export async function withOwnedReferenceCapture({
     errors.push(error);
   } finally {
     for (const error of metadata?.cleanupErrors ?? []) errors.push(new Error(error));
-    if (daemon)
+    if (daemon) {
+      try {
+        await persistDaemonOutput("before-stop");
+      } catch (error) {
+        errors.push(error);
+      }
       try {
         await daemon.stop();
       } catch (error) {
         errors.push(error);
       }
+      try {
+        await persistDaemonOutput("after-stop");
+      } catch (error) {
+        errors.push(error);
+      }
+    }
     if (fleet) {
       for (const name of ["input-trace.jsonl", "input-trace.jsonl.controller-attempts.json"]) {
         const path = join(fleet.root, "reference-tui", name),
@@ -240,6 +275,7 @@ export async function withOwnedReferenceCapture({
             errors: errors.map((e) => e.message),
             result,
             retained,
+            daemonOutput,
             nativePid,
             retainedSourceRoot: retainRoot ? fleet?.root : null,
             scope:

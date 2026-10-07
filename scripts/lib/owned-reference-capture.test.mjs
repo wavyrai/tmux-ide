@@ -49,6 +49,8 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
       "copy-error",
       "receipt-error",
       "inspect-error",
+      "output-error",
+      "large-output",
     ]) {
       const root = join(parent, mode),
         output = join(root, "out"),
@@ -98,9 +100,12 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
           assert.equal(process.env.TMUX_IDE_HOSTILE, undefined);
           return {
             record: { pid: 456, instanceId: "g" },
+            output: () =>
+              (mode === "large-output" ? "x".repeat(3 * 1024 * 1024) : "") +
+              (order.includes("stop") ? "final daemon failure" : "before daemon stop"),
             stop: async () => {
               order.push("stop");
-              if (mode === "stop-error") throw Error("stop failed");
+              if (mode === "stop-error" || mode === "output-error") throw Error("stop failed");
             },
           };
         },
@@ -121,6 +126,7 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
               },
             }),
           );
+          if (mode === "output-error") await mkdir(join(output, "daemon-output.log"));
           if (mode === "copy-error") await mkdir(join(output, "input-trace.jsonl"));
           if (mode === "receipt-error") {
             await mkdir(join(output, "owner-result.json"));
@@ -140,11 +146,15 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
           if (!retainRoot) await rm(fleetRoot, { recursive: true, force: true });
         },
       });
-      if (mode === "success") await operation;
+      if (mode === "success" || mode === "large-output") await operation;
       else
         await assert.rejects(operation, (error) => {
           if (mode === "receipt-error") {
             assert.equal(error.errors[0].message, "original run failure");
+            assert.equal(error.errors.length, 2);
+          }
+          if (mode === "output-error") {
+            assert.equal(error.errors[0].message, "stop failed");
             assert.equal(error.errors.length, 2);
           }
           return true;
@@ -179,7 +189,17 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
         "trace\n",
       );
       const receipt = JSON.parse(await readFile(join(output, "owner-result.json"), "utf8"));
-      assert.equal(receipt.status, mode === "success" ? "captured" : "failed");
+      assert.equal(
+        receipt.status,
+        mode === "success" || mode === "large-output" ? "captured" : "failed",
+      );
+      assert.equal(receipt.daemonOutput.length, 2);
+      if (mode !== "output-error") {
+        const bytes = await readFile(join(output, "daemon-output.log"));
+        assert.ok(bytes.toString().endsWith("final daemon failure"));
+        assert.ok(bytes.length <= 2 * 1024 * 1024);
+        assert.equal(receipt.daemonOutput[1].truncated, mode === "large-output");
+      }
       if (mode === "success")
         assert.equal(
           JSON.parse(await readFile(reportPath, "utf8")).measurements.inputToPaint.sourceArtifact
