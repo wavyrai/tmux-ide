@@ -407,6 +407,13 @@ export class TerminalReplicaInterpreter {
       this.#nativeSeedBackingCandidate = operation.native;
       try {
         this.#commit(true, undefined, operation.trace ?? null);
+      } catch (error) {
+        try {
+          previous.dispose();
+        } catch {
+          // Preserve the commit failure; replacement remains owned until close.
+        }
+        throw error;
       } finally {
         this.#nativeSeedBackingCandidate = undefined;
       }
