@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
+import { admitReferenceInputTrace } from "../../../../../scripts/lib/performance-reference-report.mjs";
 
 import {
   createReferencePerformanceTraceSink,
@@ -232,6 +233,7 @@ describe("reference performance trace", () => {
   it("does not emit an unconsumed input or a paint with no matching input", () => {
     const records: Readonly<Record<string, unknown>>[] = [];
     const sink = createReferencePerformanceTraceSink({
+      processId: "opentui:test",
       commit: "a".repeat(40),
       tree: "b".repeat(40),
       createTraceId: () => "00000000-0000-4000-8000-000000000002",
@@ -261,6 +263,7 @@ describe("reference performance trace", () => {
     const records: Readonly<Record<string, unknown>>[] = [];
     const times = [1_000, 1_100];
     const sink = createReferencePerformanceTraceSink({
+      processId: "opentui:test",
       commit: "a".repeat(40),
       tree: "b".repeat(40),
       createTraceId: () => "00000000-0000-4000-8000-000000000004",
@@ -452,6 +455,7 @@ describe("reference performance trace", () => {
     let clock = 1_000;
     let ordinal = 0;
     const sink = createReferencePerformanceTraceSink({
+      processId: "opentui:test",
       commit: "a".repeat(40),
       tree: "b".repeat(40),
       nowMicros: () => clock,
@@ -512,10 +516,180 @@ describe("reference performance trace", () => {
     });
     for (let index = 0; index < 300; index += 1) sink.beginTerminalInput!().finish();
 
-    expect(sink.snapshot()).toEqual({ pendingInputs: 1, droppedInputs: 0 });
+    expect(sink.snapshot()).toMatchObject({ pendingInputs: 1, droppedInputs: 0 });
     sink.beginTerminalInput!().cancel();
-    expect(sink.snapshot()).toEqual({ pendingInputs: 0, droppedInputs: 0 });
+    expect(sink.snapshot()).toMatchObject({ pendingInputs: 0, droppedInputs: 0 });
   });
+
+  it("accounts for failed attempt construction without hiding the original exception", () => {
+    const failure = new Error("trace ID construction failed");
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "clean",
+      append: () => undefined,
+      createTraceId: () => {
+        throw failure;
+      },
+    });
+    expect(() => sink.beginTerminalInput!()).toThrow(failure);
+    expect(sink.close()).toMatchObject({
+      inputAttempts: {
+        begun: 1,
+        completed: 0,
+        superseded: 0,
+        expired: 0,
+        cancelled: 1,
+        pending: 0,
+      },
+    });
+  });
+
+  it("conserves completed, superseded, expired and cancelled attempts exactly once", () => {
+    let clock = 1000;
+    let ordinal = 0;
+    const sink = createReferencePerformanceTraceSink({
+      processId: "opentui:test",
+      commit: "a".repeat(40),
+      tree: "clean",
+      nowMicros: () => clock,
+      createTraceId: () => `attempt-${++ordinal}`,
+      append: () => undefined,
+    });
+    const first = sink.beginTerminalInput!();
+    first.finish();
+    const completed = sink.beginTerminalInput!();
+    completed.finish();
+    const paint = {
+      traceId: completed.traceId,
+      scenario: "terminal-input-to-paint" as const,
+      stage: "paint" as const,
+      processId: "opentui:test",
+      clockId: "opentui-performance-now" as const,
+      clockKind: "performance-now" as const,
+      startedAtMicros: 1100,
+      endedAtMicros: 1200,
+      generation: "g",
+      incarnation: "i",
+      semanticPaneId: "pane",
+      revision: 1,
+      stateHash: "hash",
+      paintStateIdentity: "latest-canonical-state-blitted" as const,
+    };
+    sink.terminalTraceSpan!({ ...paint, traceId: "unknown" });
+    sink.terminalTraceSpan!({ ...paint, processId: "opentui:foreign" });
+    sink.terminalTraceSpan!({ ...paint, endedAtMicros: Number.NaN });
+    sink.terminalTraceSpan!({ ...paint, startedAtMicros: 900 });
+    sink.terminalTraceSpan!({ ...paint, endedAtMicros: 900 });
+    expect(sink.snapshot()).toMatchObject({
+      inputAttempts: { begun: 2, completed: 0, superseded: 1, pending: 1 },
+    });
+    sink.terminalTraceSpan!(paint);
+    sink.terminalTraceSpan!(paint);
+    completed.cancel();
+    first.cancel();
+    const expired = sink.beginTerminalInput!();
+    expired.finish();
+    clock += 5000001;
+    const cancelled = sink.beginTerminalInput!();
+    cancelled.cancel();
+    cancelled.cancel();
+    sink.terminalTraceSpan!({ ...paint, traceId: expired.traceId });
+    const late = sink.beginTerminalInput!();
+    late.finish();
+    sink.terminalTraceSpan!({
+      ...paint,
+      traceId: late.traceId,
+      startedAtMicros: clock + 5000001,
+      endedAtMicros: clock + 5000002,
+    });
+    sink.beginTerminalInput!();
+    const closed = sink.close();
+    expect(closed).toMatchObject({
+      pendingInputs: 0,
+      droppedInputs: 0,
+      inputAttempts: {
+        begun: 6,
+        completed: 1,
+        superseded: 1,
+        expired: 2,
+        cancelled: 2,
+        pending: 0,
+      },
+    });
+    const calls = ordinal;
+    const after = sink.beginTerminalInput!();
+    after.finish();
+    after.cancel();
+    sink.terminalTraceSpan!(paint);
+    expect(sink.close()).toEqual(closed);
+    expect(ordinal).toBe(calls);
+  });
+
+  it.each([false, true])(
+    "admits actual sink/writer JSONL only with completed attempts: %s",
+    async (complete) => {
+      class Writable extends EventEmitter {
+        writableLength = 0;
+        destroyed = false;
+        readonly writes: string[] = [];
+        write(line: string) {
+          this.writes.push(line);
+          return true;
+        }
+        end(line: string, callback: () => void) {
+          this.writes.push(line);
+          callback();
+        }
+        destroy() {
+          this.destroyed = true;
+        }
+      }
+      const stream = new Writable();
+      const writer = createReferenceTraceWriter(stream);
+      const sink = createReferencePerformanceTraceSink({
+        commit: "a".repeat(40),
+        tree: "clean",
+        processId: "opentui:test",
+        nowMicros: () => 1000,
+        append: writer.append,
+      });
+      const input = sink.beginTerminalInput!();
+      input.finish();
+      if (complete)
+        sink.terminalTraceSpan!({
+          traceId: input.traceId,
+          scenario: "terminal-input-to-paint",
+          stage: "paint",
+          processId: "opentui:test",
+          clockId: "opentui-performance-now",
+          clockKind: "performance-now",
+          startedAtMicros: 1100,
+          endedAtMicros: 1200,
+          generation: "g",
+          incarnation: "i",
+          semanticPaneId: "pane",
+          revision: 1,
+          stateHash: "hash",
+          paintStateIdentity: "latest-canonical-state-blitted",
+        });
+      const report = await writer.close(sink.close());
+      const expected = {
+        begun: 1,
+        completed: complete ? 1 : 0,
+        superseded: 0,
+        expired: 0,
+        cancelled: complete ? 0 : 1,
+        pending: 0,
+      };
+      expect(report.inputAttempts).toEqual(expected);
+      expect(JSON.parse(stream.writes.at(-1)!).inputAttempts).toEqual(expected);
+      const admission = admitReferenceInputTrace(
+        stream.writes.map((line) => JSON.parse(line)),
+        { commit: "a".repeat(40), tree: "clean" },
+      );
+      expect(admission.complete).toBe(complete);
+    },
+  );
 
   it("cancels the final unpainted probe when the collector closes", () => {
     const sink = createReferencePerformanceTraceSink({
@@ -526,7 +700,7 @@ describe("reference performance trace", () => {
       append: () => undefined,
     });
     sink.beginTerminalInput!().finish();
-    expect(sink.close()).toEqual({ pendingInputs: 0, droppedInputs: 0 });
+    expect(sink.close()).toMatchObject({ pendingInputs: 0, droppedInputs: 0 });
   });
 
   it("exposes canonical mode and fresh queue proof only to the opt-in detailed collector", () => {

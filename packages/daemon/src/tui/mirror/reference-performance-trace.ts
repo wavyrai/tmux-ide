@@ -59,14 +59,30 @@ export interface ReferenceTraceWriterSnapshot {
   readonly firstDroppedRecord: ReferenceTraceDroppedRecordKind | null;
 }
 
+export interface ReferenceInputAttempts {
+  readonly begun: number;
+  readonly completed: number;
+  readonly superseded: number;
+  readonly expired: number;
+  readonly cancelled: number;
+  readonly pending: number;
+}
+
+interface ReferenceInputReport {
+  readonly pendingInputs: number;
+  readonly droppedInputs: number;
+  readonly inputAttempts?: ReferenceInputAttempts;
+}
+
 export interface ReferenceTraceCollectorReport extends ReferenceTraceWriterSnapshot {
   readonly pendingInputs: number;
   readonly droppedInputs: number;
+  readonly inputAttempts?: ReferenceInputAttempts;
 }
 
 interface ReferencePerformanceTraceSink extends TuiPerformanceEventSink {
-  snapshot(): { readonly pendingInputs: number; readonly droppedInputs: number };
-  close(): { readonly pendingInputs: number; readonly droppedInputs: number };
+  snapshot(): ReferenceInputReport & { readonly inputAttempts: ReferenceInputAttempts };
+  close(): ReferenceInputReport & { readonly inputAttempts: ReferenceInputAttempts };
 }
 
 interface ActiveCollector {
@@ -137,10 +153,7 @@ export function createReferenceTraceWriter(
   readonly append: (value: Readonly<Record<string, unknown>>) => void;
   readonly appendCritical: (value: Readonly<Record<string, unknown>>) => void;
   readonly snapshot: () => ReferenceTraceWriterSnapshot;
-  readonly close: (sink: {
-    readonly pendingInputs: number;
-    readonly droppedInputs: number;
-  }) => Promise<ReferenceTraceCollectorReport>;
+  readonly close: (sink: ReferenceInputReport) => Promise<ReferenceTraceCollectorReport>;
 } {
   let acceptedRecords = 0;
   let droppedRecords = 0;
@@ -273,10 +286,7 @@ export function createReferenceTraceWriter(
   const append = (value: Readonly<Record<string, unknown>>): void => appendValue(value, false);
   const appendCritical = (value: Readonly<Record<string, unknown>>): void =>
     appendValue(value, true);
-  const close = (sink: {
-    readonly pendingInputs: number;
-    readonly droppedInputs: number;
-  }): Promise<ReferenceTraceCollectorReport> => {
+  const close = (sink: ReferenceInputReport): Promise<ReferenceTraceCollectorReport> => {
     if (closePromise) return closePromise;
     closed = true;
     closePromise = (async () => {
@@ -380,7 +390,13 @@ export function createReferencePerformanceTraceSink(options: {
   >();
   let droppedInputs = 0;
   let closed = false;
-  const snapshot = () => Object.freeze({ pendingInputs: inputs.size, droppedInputs });
+  const attempts = { begun: 0, completed: 0, superseded: 0, expired: 0, cancelled: 0 };
+  const snapshot = () =>
+    Object.freeze({
+      pendingInputs: inputs.size,
+      droppedInputs,
+      inputAttempts: Object.freeze({ ...attempts, pending: inputs.size }),
+    });
   return Object.freeze({
     detailedWindowPresentationFrames: detailed ? true : undefined,
     frame: (intervalMs: number, window?: TuiWindowPresentationFrameEvidence | null) => {
@@ -584,71 +600,81 @@ export function createReferencePerformanceTraceSink(options: {
         }
       : {}),
     beginTerminalInput: (origin?: TuiTerminalInputOrigin) => {
-      const startedAtMicros = nowMicros();
-      expireInputs(inputs, startedAtMicros);
-      // The transport carries one latest-only performance trace id. Once a
-      // newer input is admitted, an older probe can no longer be attributed to
-      // the exact changed-cell paint without lying. Retire it as superseded;
-      // `droppedInputs` is reserved for actual capacity loss.
-      inputs.clear();
-      while (inputs.size >= MAX_PENDING_INPUTS) {
-        inputs.delete(inputs.keys().next().value!);
-        droppedInputs += 1;
+      if (closed) return Object.freeze({ traceId: "", finish: () => {}, cancel: () => {} });
+      attempts.begun += 1;
+      let traceId: string;
+      try {
+        const startedAtMicros = nowMicros();
+        attempts.expired += expireInputs(inputs, startedAtMicros);
+        // The transport carries one latest-only performance trace id. Once a
+        // newer input is admitted, an older probe can no longer be attributed to
+        // the exact changed-cell paint without lying. Retire it as superseded;
+        // `droppedInputs` is reserved for actual capacity loss.
+        attempts.superseded += inputs.size;
+        inputs.clear();
+        while (inputs.size >= MAX_PENDING_INPUTS) {
+          inputs.delete(inputs.keys().next().value!);
+          droppedInputs += 1;
+          attempts.cancelled += 1;
+        }
+        traceId = createTraceId();
+        if (
+          (detailed || options.inputOrigin) &&
+          origin &&
+          !closed &&
+          typeof options.inputFingerprintKey === "string" &&
+          options.inputFingerprintKey.length >= 32
+        ) {
+          const payload = Buffer.from(origin.payload);
+          const event: TuiTerminalInputOriginEvent = {
+            processId,
+            clockId: "opentui-performance-now",
+            clockKind: "performance-now",
+            atMicros:
+              Number.isSafeInteger(origin.ingressAtMicros) &&
+              origin.ingressAtMicros! <= startedAtMicros
+                ? origin.ingressAtMicros!
+                : startedAtMicros,
+            origin: origin.origin,
+            payloadByteCount: payload.byteLength,
+            payloadFingerprint: createHmac("sha256", options.inputFingerprintKey)
+              .update(traceId)
+              .update("\0")
+              .update(payload)
+              .digest("hex"),
+            parserConsumption:
+              origin.origin === "keyboard"
+                ? "keyboard-event"
+                : origin.origin === "bracketed-paste"
+                  ? "paste-event"
+                  : "pointer-event",
+            ...(origin.gestureId ? { gestureId: origin.gestureId } : {}),
+            ...(origin.pointerAction ? { pointerAction: origin.pointerAction } : {}),
+            ...(Number.isSafeInteger(origin.pointerColumn)
+              ? { pointerColumn: origin.pointerColumn }
+              : {}),
+            ...(Number.isSafeInteger(origin.pointerRow) ? { pointerRow: origin.pointerRow } : {}),
+            ...(origin.pointerButton === null || Number.isSafeInteger(origin.pointerButton)
+              ? { pointerButton: origin.pointerButton }
+              : {}),
+            traceId,
+            semanticPaneId: origin.semanticPaneId,
+            generation: origin.generation,
+            incarnation: origin.incarnation,
+            revision: origin.revision,
+            stateHash: origin.stateHash,
+          };
+          options.append({ version: 1, type: "performance.input-origin", ...event });
+        }
+        inputs.set(traceId, {
+          startedAtMicros,
+          expiresAtMicros: startedAtMicros + INPUT_EXPIRY_MICROS,
+          endedAtMicros: null,
+        });
+      } catch (error) {
+        attempts.cancelled += 1;
+        throw error;
       }
-      const traceId = createTraceId();
-      if (
-        (detailed || options.inputOrigin) &&
-        origin &&
-        !closed &&
-        typeof options.inputFingerprintKey === "string" &&
-        options.inputFingerprintKey.length >= 32
-      ) {
-        const payload = Buffer.from(origin.payload);
-        const event: TuiTerminalInputOriginEvent = {
-          processId,
-          clockId: "opentui-performance-now",
-          clockKind: "performance-now",
-          atMicros:
-            Number.isSafeInteger(origin.ingressAtMicros) &&
-            origin.ingressAtMicros! <= startedAtMicros
-              ? origin.ingressAtMicros!
-              : startedAtMicros,
-          origin: origin.origin,
-          payloadByteCount: payload.byteLength,
-          payloadFingerprint: createHmac("sha256", options.inputFingerprintKey)
-            .update(traceId)
-            .update("\0")
-            .update(payload)
-            .digest("hex"),
-          parserConsumption:
-            origin.origin === "keyboard"
-              ? "keyboard-event"
-              : origin.origin === "bracketed-paste"
-                ? "paste-event"
-                : "pointer-event",
-          ...(origin.gestureId ? { gestureId: origin.gestureId } : {}),
-          ...(origin.pointerAction ? { pointerAction: origin.pointerAction } : {}),
-          ...(Number.isSafeInteger(origin.pointerColumn)
-            ? { pointerColumn: origin.pointerColumn }
-            : {}),
-          ...(Number.isSafeInteger(origin.pointerRow) ? { pointerRow: origin.pointerRow } : {}),
-          ...(origin.pointerButton === null || Number.isSafeInteger(origin.pointerButton)
-            ? { pointerButton: origin.pointerButton }
-            : {}),
-          traceId,
-          semanticPaneId: origin.semanticPaneId,
-          generation: origin.generation,
-          incarnation: origin.incarnation,
-          revision: origin.revision,
-          stateHash: origin.stateHash,
-        };
-        options.append({ version: 1, type: "performance.input-origin", ...event });
-      }
-      inputs.set(traceId, {
-        startedAtMicros,
-        expiresAtMicros: startedAtMicros + INPUT_EXPIRY_MICROS,
-        endedAtMicros: null,
-      });
       let finished = false;
       return Object.freeze({
         traceId,
@@ -658,11 +684,16 @@ export function createReferencePerformanceTraceSink(options: {
           const input = inputs.get(traceId);
           if (input) input.endedAtMicros = nowMicros();
         },
-        cancel: () => inputs.delete(traceId),
+        cancel: () => {
+          if (inputs.delete(traceId)) attempts.cancelled += 1;
+        },
       });
     },
-    terminalTraceSpan: (paint: TuiTerminalTraceSpanEvent) =>
-      recordCompletedTrace(inputs, paint, options.append),
+    terminalTraceSpan: (paint: TuiTerminalTraceSpanEvent) => {
+      if (closed || paint.processId !== processId) return;
+      const outcome = recordCompletedTrace(inputs, paint, options.append);
+      if (outcome) attempts[outcome] += 1;
+    },
     terminalTraceStage: (event: TuiTerminalTraceStageEvent) => {
       if ((detailed || options.inputDetail) && !closed)
         options.append({ version: 1, type: "performance.stage", ...event });
@@ -681,6 +712,7 @@ export function createReferencePerformanceTraceSink(options: {
       // Shutdown cancels probes that can no longer observe a future paint.
       // They are not backpressure loss and must not survive as phantom work in
       // a closed collector summary.
+      attempts.cancelled += inputs.size;
       inputs.clear();
       return snapshot();
     },
@@ -698,12 +730,21 @@ function recordCompletedTrace(
   >,
   paint: TuiTerminalTraceSpanEvent,
   appendRecord: (value: Readonly<Record<string, unknown>>) => void,
-): void {
+): "completed" | "expired" | null {
   const input = inputs.get(paint.traceId);
-  if (!input || input.endedAtMicros === null) return;
+  if (!input || input.endedAtMicros === null) return null;
+  if (
+    paint.clockId !== "opentui-performance-now" ||
+    paint.clockKind !== "performance-now" ||
+    !Number.isFinite(paint.startedAtMicros) ||
+    !Number.isFinite(paint.endedAtMicros) ||
+    paint.startedAtMicros < input.endedAtMicros ||
+    paint.endedAtMicros < paint.startedAtMicros
+  )
+    return null;
   if (paint.startedAtMicros > input.expiresAtMicros) {
     inputs.delete(paint.traceId);
-    return;
+    return "expired";
   }
   inputs.delete(paint.traceId);
   appendRecord({
@@ -720,14 +761,18 @@ function recordCompletedTrace(
     authority: { generation: paint.generation, incarnation: paint.incarnation },
   });
   appendRecord({ version: 1, type: "performance.stage", ...paint });
+  return "completed";
 }
 
 function expireInputs(
   inputs: Map<string, { readonly expiresAtMicros: number }>,
   nowMicros: number,
-): void {
+): number {
+  let expired = 0;
   for (const [traceId, input] of inputs) {
     if (input.expiresAtMicros > nowMicros) break;
     inputs.delete(traceId);
+    expired += 1;
   }
+  return expired;
 }

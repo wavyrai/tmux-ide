@@ -95,3 +95,100 @@ test("reference traces distinguish client point diagnostics from measured spans"
     /ordered safe/,
   );
 });
+
+test("input admission cannot turn enough fast successful pairs into an all-input pass", async () => {
+  const { admitReferenceInputTrace } = await import("./performance-reference-report.mjs");
+  const header = {
+    version: 1,
+    type: "performance.trace.header",
+    commit: source.commit,
+    tree: source.tree,
+    processId: "tui:1",
+    clockId: "tui",
+    clockKind: "performance-now",
+  };
+  const pairs = Array.from({ length: 36 }, (_, i) =>
+    ["input", "paint"].map((stage) => ({
+      version: 1,
+      type: "performance.stage",
+      traceId: `input-${i}`,
+      stage,
+      processId: "tui:1",
+      clockId: "tui",
+      clockKind: "performance-now",
+      startedAtMicros: stage === "input" ? 0 : 100,
+      endedAtMicros: stage === "input" ? 100 : 1000,
+    })),
+  ).flat();
+  const counts = { begun: 36, completed: 36, superseded: 0, expired: 0, cancelled: 0, pending: 0 };
+  const summary = {
+    version: 1,
+    type: "performance.trace.summary",
+    acceptedRecords: 37 + 36,
+    failed: false,
+    saturated: false,
+    writableLength: 0,
+    droppedRecords: 0,
+    oversizedRecords: 0,
+    pendingRecords: 0,
+    pendingCriticalRecords: 0,
+    pendingBytes: 0,
+    pendingStorageSlots: 0,
+    pendingInputs: 0,
+    droppedInputs: 0,
+    inputAttempts: counts,
+  };
+  const events = [header, ...pairs, summary];
+  assert.equal(
+    admitReferenceInputTrace(
+      [
+        header,
+        { ...summary, acceptedRecords: 1, inputAttempts: { ...counts, begun: 0, completed: 0 } },
+      ],
+      source,
+    ).complete,
+    false,
+  );
+  for (const patch of [{ processId: "foreign" }, { clockId: "foreign" }, { processId: undefined }])
+    assert.equal(
+      admitReferenceInputTrace([{ ...header, ...patch }, ...pairs, summary], source).complete,
+      false,
+    );
+  assert.equal(admitReferenceInputTrace(events, source).complete, true);
+  // Legacy analyzer takes these same36 1ms paints and passes its minimum/p95 gate.
+  for (const kind of ["superseded", "expired", "cancelled", "pending"]) {
+    const s = { ...summary, inputAttempts: { ...counts, begun: 37, [kind]: 1 } };
+    assert.equal(admitReferenceInputTrace([header, ...pairs, s], source).complete, false, kind);
+  }
+  for (const patch of [
+    { inputAttempts: undefined },
+    { inputAttempts: { ...counts, begun: 37 } },
+    { inputAttempts: { ...counts, completed: 35 } },
+    { droppedRecords: 1 },
+    { oversizedRecords: 1 },
+    { failed: true },
+    { pendingInputs: 1 },
+    { acceptedRecords: 72 },
+  ])
+    assert.equal(
+      admitReferenceInputTrace([header, ...pairs, { ...summary, ...patch }], source).complete,
+      false,
+    );
+  assert.equal(admitReferenceInputTrace(events.slice(0, -1), source).complete, false);
+  assert.equal(admitReferenceInputTrace([...events, summary], source).complete, false);
+  assert.equal(
+    admitReferenceInputTrace([{ ...header, commit: "c".repeat(40) }, ...pairs, summary], source)
+      .complete,
+    false,
+  );
+  const duplicate = [header, ...pairs, pairs[0], { ...summary, acceptedRecords: 74 }];
+  assert.equal(admitReferenceInputTrace(duplicate, source).complete, false);
+  const unmatched = pairs.filter((_, i) => i !== 1);
+  assert.equal(
+    admitReferenceInputTrace([header, ...unmatched, { ...summary, acceptedRecords: 72 }], source)
+      .complete,
+    false,
+  );
+  const wrongClock = pairs.map((p, i) => (i === 1 ? { ...p, clockId: "other" } : p));
+  assert.equal(admitReferenceInputTrace([header, ...wrongClock, summary], source).complete, false);
+});

@@ -182,3 +182,88 @@ export function validateReferenceStageEvent(event) {
     throw new TypeError("Trace event endpoints must be ordered safe monotonic microseconds");
   return true;
 }
+
+/** All captured sink inputs, not merely successful paints; no controller-attempt claim. */
+export function admitReferenceInputTrace(events, source) {
+  try {
+    const headers = events.filter((event) => event?.type === "performance.trace.header");
+    const summaries = events.filter((event) => event?.type === "performance.trace.summary");
+    if (
+      headers.length !== 1 ||
+      events[0] !== headers[0] ||
+      headers[0].version !== 1 ||
+      headers[0].commit !== source.commit ||
+      headers[0].tree !== source.tree ||
+      typeof headers[0].processId !== "string" ||
+      !headers[0].processId ||
+      typeof headers[0].clockId !== "string" ||
+      !headers[0].clockId ||
+      headers[0].clockKind !== "performance-now"
+    )
+      throw new Error("Input trace source/header mismatch");
+    if (summaries.length !== 1 || events.at(-1) !== summaries[0])
+      throw new Error("Input trace needs one final writer summary");
+    const summary = summaries[0];
+    if (
+      summary.version !== 1 ||
+      summary.failed !== false ||
+      summary.saturated !== false ||
+      summary.acceptedRecords !== events.length - 1 ||
+      !Number.isSafeInteger(summary.writableLength) ||
+      summary.writableLength < 0 ||
+      [
+        "droppedRecords",
+        "oversizedRecords",
+        "pendingRecords",
+        "pendingCriticalRecords",
+        "pendingBytes",
+        "pendingStorageSlots",
+        "pendingInputs",
+        "droppedInputs",
+      ].some((key) => summary[key] !== 0)
+    )
+      throw new Error("Input trace writer evidence is incomplete");
+    const counts = summary.inputAttempts;
+    const fields = ["begun", "completed", "superseded", "expired", "cancelled", "pending"];
+    if (!counts || fields.some((key) => !Number.isSafeInteger(counts[key]) || counts[key] < 0))
+      throw new Error("Input attempt denominator unavailable or invalid");
+    if (counts.begun !== fields.slice(1).reduce((sum, key) => sum + counts[key], 0))
+      throw new Error("Input attempt counters do not conserve attempts");
+    if (counts.completed === 0) throw new Error("No completed captured inputs");
+    if (counts.begun !== counts.completed || counts.pending !== 0)
+      throw new Error(
+        "Captured inputs include unmatched, expired, superseded or cancelled attempts",
+      );
+    const pairs = new Map();
+    for (const event of events) {
+      if (event?.type !== "performance.stage") continue;
+      validateReferenceStageEvent(event);
+      if (event.stage !== "input" && event.stage !== "paint") continue;
+      const pair = pairs.get(event.traceId) ?? {};
+      if (pair[event.stage]) throw new Error("Duplicate input/paint endpoint");
+      pair[event.stage] = event;
+      pairs.set(event.traceId, pair);
+    }
+    if (pairs.size !== counts.completed) throw new Error("Input pair count differs from attempts");
+    for (const { input, paint } of pairs.values()) {
+      if (!input || !paint) throw new Error("Unmatched input/paint endpoint");
+      if (
+        input.processId !== headers[0].processId ||
+        input.clockId !== headers[0].clockId ||
+        input.processId !== paint.processId ||
+        input.clockId !== paint.clockId ||
+        input.clockKind !== paint.clockKind ||
+        input.clockKind !== "performance-now" ||
+        input.endedAtMicros > paint.startedAtMicros
+      )
+        throw new Error("Input/paint clock or causal ordering mismatch");
+    }
+    return {
+      complete: true,
+      inputAttempts: counts,
+      scope: "All captured sink inputs; not controller-offered attempts or full six-stage coverage",
+    };
+  } catch (error) {
+    return { complete: false, reason: error.message };
+  }
+}

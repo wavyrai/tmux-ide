@@ -15,6 +15,7 @@ import {
 } from "./lib/startup-launch-diagnostic.mjs";
 
 import {
+  admitReferenceInputTrace,
   PERFORMANCE_STAGES,
   REFERENCE_REPORT_VERSION,
   gitSourceIdentity,
@@ -526,10 +527,27 @@ function measureInputToPaint(inputPath) {
       budgets: budgets.inputToPaint,
     };
   const absolutePath = resolve(root, inputPath);
-  const events = readJsonLines(absolutePath);
-  const header = events.find(({ type }) => type === "performance.trace.header");
-  if (!header || header.commit !== source.commit || header.tree !== source.tree)
-    throw new Error("Input trace header does not match the measured source commit/tree");
+  let events = [],
+    admission;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(absolutePath));
+    if (!text.endsWith("\n")) throw new Error("Input trace is truncated");
+    events = text.slice(0, -1).split("\n").map(JSON.parse);
+    admission = admitReferenceInputTrace(events, source);
+  } catch (error) {
+    admission = { complete: false, reason: `Input trace unreadable: ${error.message}` };
+  }
+  if (!admission.complete)
+    return {
+      status: "not-measured",
+      reason: admission.reason,
+      admission,
+      budgets: budgets.inputToPaint,
+      sourceArtifact: {
+        path: absolutePath,
+        sha256: existsSync(absolutePath) ? sourceArtifactDigest(absolutePath) : null,
+      },
+    };
   const groups = new Map();
   for (const event of events) {
     if (event.type !== "performance.stage") continue;
@@ -584,6 +602,7 @@ function measureInputToPaint(inputPath) {
     sampleCount: rawSamples.length,
     rawSamples,
     summary: { localInputToConsumedPaintMs: summary, stages: stageSummaries },
+    admission,
     budgets: budgets.inputToPaint,
     sourceArtifact: { path: absolutePath, sha256: sourceArtifactDigest(absolutePath) },
   };

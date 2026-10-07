@@ -815,3 +815,14 @@ calibrated cross-process clocks, physical paint, or the separate 16.67ms
 client-framebuffer-consumption budget. Collector event coalescing and exceptions
 before append remain outside writer accounting. No writer limits or workload
 scheduling are changed.
+
+The separate `scripts/performance-reference.mjs` input-to-consumed-paint report
+also requires complete input accounting. Its collector records begun, completed,
+superseded, expired, cancelled and pending attempts; every begun attempt must
+have exactly one outcome. Admission requires a loss-free final writer summary,
+all captured attempts completed, and exactly one input/paint pair per completion
+on the collector's process and clock. Older traces without these counters, or
+traces containing unmatched attempts, are reported as not measured rather than
+qualifying from their successful samples alone. These counters cover inputs
+received by the collector, not all inputs offered by an external controller.
+The original latency budget and live runner's per-input timeout stay unchanged.
