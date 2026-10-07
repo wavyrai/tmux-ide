@@ -1,3 +1,4 @@
+import { TERMINAL_REPLICA_EMPTY_CELL, TERMINAL_REPLICA_SPACE_CELL } from "@tmux-ide/core";
 import type {
   TerminalReplicaCell,
   TerminalReplicaColor,
@@ -23,13 +24,7 @@ export function nativeProjectedRowSource(row: TerminalReplicaRow) {
 }
 
 const defaultColor: TerminalReplicaColor = Object.freeze({ kind: "default" });
-const empty: TerminalReplicaCell = Object.freeze({
-  grapheme: "",
-  width: 1,
-  foreground: defaultColor,
-  background: defaultColor,
-  attributes: 0,
-});
+const empty = TERMINAL_REPLICA_EMPTY_CELL;
 const acsKeys = [..."+,-.0`abcdefghijklmnopqrstuvwxyz{|}~"];
 const acsValues = [..."→←↑↓▮◆▒␉␌␍␊°±␤␋┘┐┌└┼⎺⎻─⎼⎽├┤┴┬│≤≥π≠£·"];
 const acs = new Map(acsKeys.map((key, index) => [key, acsValues[index]!]));
@@ -45,7 +40,7 @@ function color(value: number): TerminalReplicaColor {
 
 function paint(cell: NativeGridCaptureCell): TerminalReplicaCell {
   const bits = cell.attributes;
-  return Object.freeze({
+  return {
     grapheme: bits & 0x80 ? (acs.get(cell.text) ?? cell.text) : cell.text,
     width: cell.width === 2 ? 2 : 1,
     foreground: color(cell.foreground),
@@ -58,7 +53,22 @@ function paint(cell: NativeGridCaptureCell): TerminalReplicaCell {
       (bits & 0x10 ? 32 : 0) |
       (bits & 0x20 ? 64 : 0) |
       (bits & 0x100 ? 128 : 0),
-  });
+  };
+}
+
+// Only normalized, internally constructed paint can reuse trusted core values.
+// Foreign native fields have already been read in the original paint order.
+function freezePaint(cell: TerminalReplicaCell): TerminalReplicaCell {
+  if (
+    cell.width === 1 &&
+    cell.attributes === 0 &&
+    cell.foreground === defaultColor &&
+    cell.background === defaultColor
+  ) {
+    if (cell.grapheme === "") return TERMINAL_REPLICA_EMPTY_CELL;
+    if (cell.grapheme === " ") return TERMINAL_REPLICA_SPACE_CELL;
+  }
+  return Object.freeze(cell);
 }
 
 /**
@@ -105,12 +115,12 @@ export function projectNativeGridRow(
       x + native.width > columns
     ) {
       const span = native.flags & 0x80 ? Math.max(1, Math.min(native.width, columns - x)) : 1;
-      const blank = Object.freeze({ ...styled, grapheme: "", width: 1 as const });
+      const blank = freezePaint({ ...styled, grapheme: "", width: 1 as const });
       for (let offset = 0; offset < span; offset++) cells[x + offset] = blank;
       x += span - 1;
       continue;
     }
-    cells[x] = styled;
+    cells[x] = freezePaint(styled);
     if (native.width === 2) {
       cells[++x] = Object.freeze({ ...styled, grapheme: "", width: 0 });
     }

@@ -123,3 +123,98 @@ it("preserves erased background and distinguishes it from explicitly written spa
     { kind: "indexed", index: 17 },
   ]);
 });
+
+it("shares only exact normalized default empty and space values through ownership", async () => {
+  const {
+    TERMINAL_REPLICA_EMPTY_CELL: empty,
+    TERMINAL_REPLICA_SPACE_CELL: space,
+    applyTerminalReplicaPatch,
+    blankTerminalReplicaSnapshot,
+  } = await import("@tmux-ide/core");
+  const source = {
+    flags: 0,
+    cells: [cell(""), cell(" "), cell(" ", 1, 64), cell("\t", 2, 0x80), cell("!", 1, 4)],
+  };
+  const row = projectNativeGridRow(source, 6)!;
+  expect(row.cells).toEqual([empty, space, empty, empty, empty, empty]);
+  expect(row.cells.map((c) => (c === empty ? "empty" : c === space ? "space" : "copied"))).toEqual([
+    "empty",
+    "space",
+    "empty",
+    "empty",
+    "empty",
+    "empty",
+  ]);
+  const owned = applyTerminalReplicaPatch(blankTerminalReplicaSnapshot(6, 1), {
+    rows: [{ index: 0, row }],
+  }).grid[0]!;
+  row.cells.forEach((c, i) => expect(owned.cells[i]).toBe(c));
+  expect(source.cells[2]!.text).toBe(" ");
+  expect(source.cells[3]!.text).toBe("\t");
+  expect(Reflect.set(empty, "grapheme", "changed")).toBe(false);
+});
+
+it("keeps styled blanks and wide continuations distinct from shared defaults", async () => {
+  const { TERMINAL_REPLICA_EMPTY_CELL: empty, TERMINAL_REPLICA_SPACE_CELL: space } =
+    await import("@tmux-ide/core");
+  for (const attributes of [1, 2, 4, 8, 16, 32, 64, 256, 512]) {
+    const result = projectNativeGridRow({ flags: 0, cells: [{ ...cell(" "), attributes }] }, 1)!
+      .cells[0]!;
+    expect(result).not.toBe(empty);
+    expect(result).not.toBe(space);
+    expect(result.attributes).not.toBe(0);
+  }
+  for (const background of [2, 0x01000011, 0x02010203]) {
+    const source = { flags: 0, cells: [{ ...cell("界", 2), background }, cell("", 0, 4)] };
+    const wide = projectNativeGridRow(source, 2)!;
+    expect(wide.cells.map((c) => c.width)).toEqual([2, 0]);
+    expect(wide.cells[1]).not.toBe(empty);
+    const clipped = projectNativeGridRow(source, 1, 1)!.cells[0]!;
+    expect(clipped.grapheme).toBe("");
+    expect(clipped.background).toEqual(wide.cells[0]!.background);
+    expect(clipped).not.toBe(empty);
+  }
+  const defaultWide = projectNativeGridRow(
+    { flags: 0, cells: [cell("界", 2), cell("", 0, 4)] },
+    2,
+  )!;
+  expect(defaultWide.cells[1]!.width).toBe(0);
+  expect(defaultWide.cells[1]).not.toBe(empty);
+});
+
+it("preserves foreign getter reads and detaches later foreign changes", () => {
+  const reads: string[] = [];
+  const backing = { ...cell(" ") };
+  const foreign = new Proxy(backing, {
+    get(target, key, receiver) {
+      reads.push(String(key));
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const row = projectNativeGridRow({ flags: 0, cells: [foreign] }, 1)!;
+  expect(reads).toEqual([
+    "flags",
+    "attributes",
+    "text",
+    "width",
+    "foreground",
+    "background",
+    "flags",
+    "width",
+    "width",
+    "width",
+    "width",
+  ]);
+  backing.text = "X";
+  backing.background = 2;
+  expect(row.cells[0]).toEqual({
+    grapheme: " ",
+    width: 1,
+    foreground: { kind: "default" },
+    background: { kind: "default" },
+    attributes: 0,
+  });
+  const next = projectNativeGridRow({ flags: 0, cells: [foreign] }, 1)!;
+  expect(next.cells[0]!.grapheme).toBe("X");
+  expect(next.cells[0]!.background).toEqual({ kind: "indexed", index: 2 });
+});
