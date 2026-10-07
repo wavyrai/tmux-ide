@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+import { randomBytes } from "node:crypto";
+import {
+  completedReferenceRecords,
+  matchReferenceControllerInput,
+  reconcileReferenceControllerInputs,
+} from "./lib/performance-reference-input-mapping.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, arch, cpus, platform, release, tmpdir, version as osVersion } from "node:os";
@@ -91,10 +97,17 @@ try {
   if (options.preflightOnly) await collectInputTrace(1);
   if (!options.preflightOnly) {
     const startup = await measureStartup();
-    const inputTrace = options.inputTrace ?? (await collectInputTrace());
+    const collected = options.inputTrace ? null : await collectInputTrace();
+    const inputTrace = options.inputTrace ?? collected.path;
     measurements = {
       startup,
-      inputToPaint: measureInputToPaint(inputTrace),
+      inputToPaint: {
+        ...measureInputToPaint(inputTrace),
+        controllerMapping: collected?.controllerMappingArtifact ?? {
+          status: "not-collected",
+          scope: "Imported trace: captured-input accounting only",
+        },
+      },
       memory: measureMemory(),
     };
   }
@@ -426,11 +439,40 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
     options.preflightOnly ? "diagnostic-input-trace.jsonl" : "input-trace.jsonl",
   );
   rmSync(tracePath, { force: true });
+  const key = randomBytes(32).toString("hex");
+  const attemptsPath = `${tracePath}.controller-attempts.json`;
+  const attempts = Array.from({ length: sampleCount }, (_, ordinal) => ({
+    ordinal,
+    payload: ordinal % 2 === 0 ? "x" : "y",
+    status: "not-offered",
+  }));
+  let finalVerification = { status: "pending" };
+  const saveAttempts = () =>
+    writeFileSync(
+      attemptsPath,
+      JSON.stringify(
+        {
+          scope:
+            "Sequential isolated controller only; HMAC does not encode ordinal; secret not retained",
+          instrumentation: "Input-origin HMAC/event collection enabled inside original input clock",
+          finalVerification,
+          attempts,
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+  const records = () =>
+    existsSync(tracePath) ? completedReferenceRecords(readFileSync(tracePath)) : [];
+  saveAttempts();
   const traceEnvironment = {
     ...process.env,
     TMUX_IDE_PERFORMANCE_TRACE_LOG: tracePath,
     TMUX_IDE_PERFORMANCE_TRACE_COMMIT: source.commit,
     TMUX_IDE_PERFORMANCE_TRACE_TREE: source.tree,
+    TMUX_IDE_PERFORMANCE_TRACE_INPUT_ORIGIN: "1",
+    TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY: key,
   };
   run(
     "node",
@@ -464,31 +506,81 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
     );
     await delay(50);
     for (let ordinal = 0; ordinal < sampleCount; ordinal += 1) {
-      const prior = countCompletedLocalTraces(tracePath);
+      const attempt = attempts[ordinal];
+      attempt.baseline = records().length;
+      attempt.status = "offered";
+      saveAttempts();
       // Keep the measured host free of a second Node startup/teardown per
       // keystroke. The trace clock begins inside OpenTUI, but that short-lived
       // wrapper still competes with the render process after injecting input.
-      tmux([
-        "send-keys",
-        "-t",
-        `=${reference.hostSession}:0.0`,
-        "-l",
-        ordinal % 2 === 0 ? "x" : "y",
-      ]);
+      tmux(["send-keys", "-t", `=${reference.hostSession}:0.0`, "-l", attempt.payload]);
+      attempt.sent = true;
       const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline && countCompletedLocalTraces(tracePath) <= prior) await delay(5);
-      if (countCompletedLocalTraces(tracePath) <= prior)
+      let match;
+      while (Date.now() < deadline) {
+        match = matchReferenceControllerInput(records(), {
+          baseline: attempt.baseline,
+          payload: attempt.payload,
+          key,
+          usedTraceIds: attempts.slice(0, ordinal).map((a) => a.traceId),
+        });
+        if (match) break;
+        await delay(5);
+      }
+      if (!match)
         throw new Error(
           `Timed out waiting for input-to-paint sample ${ordinal + 1}\n\n` +
             `--- initial canvas ---\n${canvasFrame}\n\n` +
             `--- current frame ---\n${captureTestdrive()}\n\n` +
             `--- stderr ---\n${readFileSync(join(reference.runtimeDir, "stderr.log"), "utf8")}`,
         );
+      Object.assign(attempt, match, { status: "matched" });
+      saveAttempts();
     }
+  } catch (error) {
+    const pending = attempts.find((a) => a.status === "offered");
+    if (pending) Object.assign(pending, { status: "failed", error: String(error.message) });
+    finalVerification = { status: "failed", error: String(error.message) };
+    throw error;
   } finally {
-    run("node", ["scripts/tui-testdrive.mjs", "stop"]);
+    try {
+      saveAttempts();
+    } finally {
+      run("node", ["scripts/tui-testdrive.mjs", "stop"]);
+    }
   }
-  return tracePath;
+  try {
+    const finalRecords = completedReferenceRecords(readFileSync(tracePath), true);
+    for (const attempt of attempts) {
+      const end = attempts[attempt.ordinal + 1]?.baseline ?? finalRecords.length;
+      const match = matchReferenceControllerInput(finalRecords, {
+        baseline: attempt.baseline,
+        originEnd: end,
+        payload: attempt.payload,
+        key,
+        usedTraceIds: attempts.slice(0, attempt.ordinal).map((a) => a.traceId),
+      });
+      if (match?.traceId !== attempt.traceId) throw new Error("Final controller mapping changed");
+    }
+    reconcileReferenceControllerInputs(finalRecords, attempts);
+    finalVerification = { status: "matched" };
+  } catch (error) {
+    finalVerification = { status: "failed", error: String(error.message) };
+    throw error;
+  } finally {
+    saveAttempts();
+  }
+  return {
+    path: tracePath,
+    controllerMappingArtifact: {
+      path: attemptsPath,
+      sha256: sourceArtifactDigest(attemptsPath),
+      status: "matched",
+      scope:
+        "Sequential isolated producer; origin HMAC binds payload and trace identity, not ordinal",
+      instrumentation: "Input-origin HMAC/event collection enabled",
+    },
+  };
 }
 
 async function waitForCapturedFrame(predicate, timeoutMs) {
@@ -509,13 +601,6 @@ function captureTestdrive() {
     stdio: "pipe",
   });
   return result.status === 0 ? result.stdout : `(capture unavailable: ${result.stderr.trim()})`;
-}
-
-function countCompletedLocalTraces(path) {
-  if (!existsSync(path)) return 0;
-  return readJsonLines(path).filter(
-    ({ type, stage }) => type === "performance.stage" && stage === "paint",
-  ).length;
 }
 
 function measureInputToPaint(inputPath) {

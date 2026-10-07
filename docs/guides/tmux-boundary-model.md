@@ -826,3 +826,14 @@ traces containing unmatched attempts, are reported as not measured rather than
 qualifying from their successful samples alone. These counters cover inputs
 received by the collector, not all inputs offered by an external controller.
 The original latency budget and live runner's per-input timeout stay unchanged.
+
+For traces collected by that runner, each sequential key offer is now matched to
+one new keyboard-origin fingerprint and its exact input/paint trace ID. The
+final capture must contain exactly the mapped origin and endpoint IDs, including
+no extra startup or between-offer inputs. A retained controller-attempt sidecar
+records failures and unoffered attempts; its hash is linked from the report.
+Imported traces do not acquire this controller proof from a neighboring file.
+The mapping assumes the isolated fixture is the sole input producer: the HMAC
+binds payload and trace ID, not an offer ordinal. Fingerprint collection adds
+diagnostic work inside the original input clock; controller and collector clocks
+are never subtracted to infer latency.
