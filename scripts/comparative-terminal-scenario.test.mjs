@@ -6,6 +6,7 @@ import {
   typingGeometryReady,
   parseTypingPaneCreation,
   assertTypingFrame,
+  expectedTypingCells,
   typingAttempts,
   observeTypingAttempt,
   finishTypingAttempts,
@@ -87,6 +88,48 @@ test("real parser output matches independent fullscene oracle for paint and fixe
     await screen.write("\x1b[?25h");
     assert.throws(() => assertTypingFrame(frame, { x: 1, y: 0 }, 40, 10, 7, 152));
     assert.throws(() => assertTypingFrame(frame, { x: 0, y: 0 }, 40, 10, 8, 152));
+  } finally {
+    screen.dispose();
+  }
+});
+
+test("producer stream prefixes can match all cells before the final cursor reset", async () => {
+  let frame;
+  const screen = createScreen(
+    80,
+    30,
+    () => {},
+    (_marker, _time, current) => {
+      frame = current;
+    },
+    true,
+  );
+  try {
+    // A write is a byte stream, not a guaranteed application frame. These
+    // positions cover marker padding and previously identical blank rows.
+    for (const cursor of [
+      { x: 60, y: 0 },
+      { x: 18, y: 7 },
+      { x: 71, y: 16 },
+    ]) {
+      await screen.write(typingPaint(80, 30, 8, 18));
+      const paint = typingPaint(80, 30, 9, 18);
+      const rowStart = `\x1b[${cursor.y + 1};1H`;
+      const rowOffset = paint.indexOf(rowStart);
+      assert.ok(rowOffset >= 0);
+      const style = /^\x1b\[[0-9;]*m/.exec(paint.slice(rowOffset + rowStart.length));
+      assert.ok(style);
+      const split = rowOffset + rowStart.length + style[0].length + cursor.x;
+      await screen.write(paint.slice(0, split));
+      assert.deepEqual(frame.cells, expectedTypingCells(80, 30, 9, 18));
+      assert.deepEqual(frame.cursor, { ...cursor, visible: true });
+      assert.throws(
+        () => assertTypingFrame(frame, { x: 0, y: 0 }, 80, 30, 9, 18),
+        /Cursor mismatch/,
+      );
+      await screen.write(paint.slice(split));
+      assertTypingFrame(frame, { x: 0, y: 0 }, 80, 30, 9, 18);
+    }
   } finally {
     screen.dispose();
   }

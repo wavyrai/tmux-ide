@@ -492,6 +492,47 @@ A postprocess exception after a completed surface walk remains a passing control
 These are injected failure paths, not evidence of an ordinary user action causing
 the native drawing exception or of physical terminal rendering.
 
+## Producer writes, canonical states and completed frames
+
+A producer's `write()` is not an application-frame boundary. The bundled tmux
+read callback passes currently available pane bytes to `input_parse_pane`, which
+parses that buffer into the pane screen. A read can end between repaint commands,
+with a valid intermediate cursor and already-correct cell contents. Snapshot
+atomicity means capturing one consistent tmux state; it does not mean waiting
+until an application's repaint is finished.
+
+This differs from the snapshot handoff invariant above: a renderer must not mix
+cells and cursor from different admitted canonical states. It may receive a
+canonical state whose cursor is still traversing an application repaint. A
+completed outer synchronized-output transaction alone does not establish that
+the application inside the pane has completed its own repaint.
+
+Explicit application synchronized output is a separate contract. The replica
+interpreter tests cover withholding intermediate publications during DEC 2026
+synchronization and bounded recovery when synchronization is left unfinished.
+Ordinary unsynchronized writes do not acquire that guarantee. Delivery may also
+coalesce admitted revisions into the exact latest state; an admission ACK is
+not a renderer-completion or physical-paint acknowledgment.
+
+The comparative typing producer writes its sequence marker first, repaints the
+rows, and resets the cursor last. It does not bracket that repaint with
+application-level synchronized-output markers. The parser regression in
+`scripts/comparative-terminal-scenario.test.mjs` splits the actual producer
+stream at three positions. All 2,400 expected cells and styles already match,
+but the unchanged full-frame oracle correctly rejects the intermediate cursor;
+consuming the suffix then passes. This is a constructive stream-prefix test,
+not evidence of the read boundaries taken by a particular native server.
+
+Keep three observations separate when investigating a paused reader: accepted
+input tokens, coherent per-sequence output witnesses, and final-state
+convergence. A missing per-sequence witness remains a failed attempt in the
+comparative report, including when output was coalesced. It is not sufficient
+evidence of lost input or renderer corruption. Conversely, final convergence
+does not excuse a demonstrated mixed canonical frame. Attribute a mismatch
+using the source identity, requested cursor and completed output; incomplete
+traces cannot establish that an unrecorded state never occurred. None of these
+checks establishes physical-display latency or native performance parity.
+
 ## Retained viewers and prior-release upgrades
 
 `scripts/lib/product-tui-recovery-live.test.mjs` now waits for each retained TUI
