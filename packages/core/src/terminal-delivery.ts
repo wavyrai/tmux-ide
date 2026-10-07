@@ -15,6 +15,7 @@ import {
   TerminalSemanticDeliveryPayloadSchemaZ,
   TerminalReplicaSnapshotSchemaZ,
   TerminalReplicaRowSchemaZ,
+  TerminalReplicaPatchPayloadSchemaZ,
   TerminalReplicaCellSchemaZ,
   TerminalReplicaPlacementSchemaZ,
   type TerminalDeliveryAck,
@@ -254,6 +255,84 @@ const CompactEncodingRowSchema = z.union([
   }),
   TerminalReplicaRowSchemaZ,
 ]);
+// Patch rows keep original strict issues, including their abort/continue state.
+// Catch exposes those issues before Zod formats away that state. The tagged
+// failure is local to this parser; arbitrary foreign getter errors still escape.
+class CompactPatchRowFailure {
+  readonly issues: z.RefinementCtx["issues"];
+  readonly value: TerminalReplicaRow;
+
+  constructor(issues: z.RefinementCtx["issues"], value: TerminalReplicaRow) {
+    this.issues = issues;
+    this.value = value;
+  }
+}
+const StrictCompactPatchRowSchema = TerminalReplicaRowSchemaZ.catch((context) => {
+  throw new CompactPatchRowFailure(context.issues, context.value as TerminalReplicaRow);
+});
+const CompactPatchEncodingRowSchema = z
+  .custom<TerminalReplicaRow>(() => true)
+  .transform((input, context) => {
+    const owned = isOwnedTerminalReplicaRow(input);
+    if (owned && validatedOwnedEncodingRows.has(input)) return input;
+    if (owned && prefersTrustedCellValidation(input.cells)) {
+      const optimized = CompactOwnedEncodingRowSchema.safeParse(input);
+      if (optimized.success) {
+        validatedOwnedEncodingRows.add(input);
+        return input;
+      }
+      // Only immutable owned data can be read again to recover strict issues.
+    }
+    try {
+      const parsed = StrictCompactPatchRowSchema.parse(input);
+      if (!owned) return parsed;
+      validatedOwnedEncodingRows.add(input);
+      return input;
+    } catch (error) {
+      if (!(error instanceof CompactPatchRowFailure)) throw error;
+      for (const issue of error.issues) context.issues.push(issue);
+      return error.value;
+    }
+  });
+const CompactPatchEncodingPayloadSchema =
+  TerminalSemanticDeliveryPayloadSchemaZ.options[1].safeExtend({
+    patch: TerminalReplicaPatchPayloadSchemaZ.extend({
+      rows: z.array(
+        TerminalReplicaPatchPayloadSchemaZ.shape.rows.element.extend({
+          row: CompactPatchEncodingRowSchema,
+        }),
+      ),
+      history: z.array(CompactPatchEncodingRowSchema).optional(),
+      historyDelta: TerminalReplicaPatchPayloadSchemaZ.shape.historyDelta
+        .unwrap()
+        .extend({ append: z.array(CompactPatchEncodingRowSchema) })
+        .optional(),
+    }),
+  });
+
+function hasOwnedPatchRow(input: TerminalSemanticDeliveryPayload): boolean {
+  if (Object.getOwnPropertyDescriptor(input, "frame")?.value !== "patch") return false;
+  const patch = Object.getOwnPropertyDescriptor(input, "patch")?.value;
+  if (typeof patch !== "object" || patch === null) return false;
+  const first = (array: unknown): unknown =>
+    Array.isArray(array) ? Object.getOwnPropertyDescriptor(array, "0")?.value : undefined;
+  const entry = first(Object.getOwnPropertyDescriptor(patch, "rows")?.value);
+  if (
+    typeof entry === "object" &&
+    entry !== null &&
+    isOwnedTerminalReplicaRow(Object.getOwnPropertyDescriptor(entry, "row")?.value)
+  )
+    return true;
+  if (isOwnedTerminalReplicaRow(first(Object.getOwnPropertyDescriptor(patch, "history")?.value)))
+    return true;
+  const delta = Object.getOwnPropertyDescriptor(patch, "historyDelta")?.value;
+  return (
+    typeof delta === "object" &&
+    delta !== null &&
+    isOwnedTerminalReplicaRow(first(Object.getOwnPropertyDescriptor(delta, "append")?.value))
+  );
+}
+
 const CompactEncodingPayloadSchema = z.discriminatedUnion("frame", [
   TerminalSemanticDeliveryPayloadSchemaZ.options[0].extend({
     snapshot: TerminalReplicaSnapshotSchemaZ.extend({
@@ -285,7 +364,11 @@ export function encodeCompactSemanticTerminalUpdate(
   input: TerminalSemanticDeliveryPayload,
 ): Uint8Array {
   const update = (
-    hasOwnedSeedRow(input) ? CompactEncodingPayloadSchema : TerminalSemanticDeliveryPayloadSchemaZ
+    hasOwnedPatchRow(input)
+      ? CompactPatchEncodingPayloadSchema
+      : hasOwnedSeedRow(input)
+        ? CompactEncodingPayloadSchema
+        : TerminalSemanticDeliveryPayloadSchemaZ
   ).parse(input);
   // Compact payloads contain only arrays and primitives below this object.
   // Insert root keys in canonical order so the native serializer emits exactly
