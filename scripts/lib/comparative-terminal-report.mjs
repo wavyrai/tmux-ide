@@ -106,6 +106,16 @@ export function summarizeComparativeTerminalReport(report) {
       succeeded: successful.length,
       passed: successful.length,
       failed: own.length - successful.length,
+      inputDenominator: own.some((run) => run.inputDenominator)
+        ? own.reduce(
+            (sum, run) => {
+              for (const key of ["attempted", "succeeded", "failed"])
+                sum[key] += run.inputDenominator?.[key] ?? 0;
+              return sum;
+            },
+            { attempted: 0, succeeded: 0, failed: 0 },
+          )
+        : null,
       echo: distribution(
         successful.flatMap((run) => measured(run.samples).map((s) => s.latencyMs)),
       ),
@@ -121,6 +131,7 @@ export function summarizeComparativeTerminalReport(report) {
       },
       runs: own.map((run) => ({
         status: run.status,
+        inputDenominator: run.inputDenominator ?? null,
         echo: runDistribution(run.samples),
         resize: runDistribution(run.resizeSamples),
         phaseCpu: phaseCpu(run),
@@ -152,7 +163,14 @@ export function renderComparativeTerminalReport(report) {
     "",
     "Quantiles use pooled raw, non-warmup samples from passed runs only (nearest rank). Runs are repeated observations, not independent hardware trials. p99 is shown only with at least 100 samples and is descriptive, not a tail-latency guarantee.",
     "",
-    "Run denominators below count recorded attempts, including failures. Interaction attempts/timeouts are not recorded individually by this schema; partial completed samples are not an attempted-interaction denominator. Missing targets have zero recorded attempts. This endpoint is separate from the 16.67ms client framebuffer-consumption budget.",
+    "Run denominators below count recorded attempts, including failures. Legacy interaction attempts/timeouts are not recorded individually; fixed typing scenarios retain every offered attempt in JSON; partial completed samples are not an attempted-interaction denominator. Missing targets have zero recorded attempts. This endpoint is separate from the 16.67ms client framebuffer-consumption budget.",
+    "",
+    ...targets
+      .filter((target) => target.inputDenominator)
+      .map(
+        (target) =>
+          `${target.target} measured input attempts / succeeded / failed: ${target.inputDenominator.attempted} / ${target.inputDenominator.succeeded} / ${target.inputDenominator.failed}. Missing/coalesced coherent witnesses remain failures.`,
+      ),
     "",
     "## Echo latency (ms)",
     "",

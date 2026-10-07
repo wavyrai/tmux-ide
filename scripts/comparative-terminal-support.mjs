@@ -3,6 +3,7 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createRequire } from "node:module";
 const require = createRequire(new URL("../packages/daemon/package.json", import.meta.url));
+import { typingScenario } from "./comparative-terminal-scenario.mjs";
 export const REPORT_VERSION = 2;
 export const nowMs = () => Number(process.hrtime.bigint()) / 1e6;
 export const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -41,10 +42,26 @@ export function canonicalMarker(lines) {
   });
   return markers.length === 1 ? markers[0] : null;
 }
-export function createScreen(cols, rows, reply, observe) {
+export function createScreen(cols, rows, reply, observe, fullCells = false) {
   const { Terminal } = require("@xterm/headless-stock");
   const terminal = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 0 });
   terminal.onData(reply);
+  // Supported parser hooks observe DECTCEM without intercepting normal processing.
+  let cursorVisible = true;
+  if (fullCells) {
+    for (const [final, visible] of [
+      ["h", true],
+      ["l", false],
+    ])
+      terminal.parser.registerCsiHandler({ prefix: "?", final }, (params) => {
+        if (params.includes(25)) cursorVisible = visible;
+        return false;
+      });
+    terminal.parser.registerEscHandler({ final: "c" }, () => {
+      cursorVisible = true;
+      return false;
+    });
+  }
   let pending = Promise.resolve();
   return {
     write(data) {
@@ -52,11 +69,42 @@ export function createScreen(cols, rows, reply, observe) {
         () =>
           new Promise((resolve) =>
             terminal.write(data, () => {
+              const consumedAtMs = nowMs();
               const lines = Array.from(
                 { length: terminal.rows },
                 (_, index) => terminal.buffer.active.getLine(index)?.translateToString(true) ?? "",
               );
-              observe(canonicalMarker(lines), nowMs());
+              const frame = fullCells
+                ? {
+                    cols: terminal.cols,
+                    rows: terminal.rows,
+                    cursor: {
+                      visible: cursorVisible,
+                      x: terminal.buffer.active.cursorX,
+                      y: terminal.buffer.active.cursorY,
+                    },
+                    cells: Array.from({ length: terminal.rows }, (_, y) =>
+                      Array.from({ length: terminal.cols }, (_, x) => {
+                        const cell = terminal.buffer.active.getLine(y)?.getCell(x);
+                        return {
+                          text: cell?.getChars() || " ",
+                          width: cell?.getWidth(),
+                          fg: cell?.isFgRGB() ? cell.getFgColor() : null,
+                          bg: cell?.isBgRGB() ? cell.getBgColor() : null,
+                          bold: Boolean(cell?.isBold()),
+                          italic: Boolean(cell?.isItalic()),
+                          underline: Boolean(cell?.isUnderline()),
+                          inverse: Boolean(cell?.isInverse()),
+                          dim: Boolean(cell?.isDim()),
+                          blink: Boolean(cell?.isBlink()),
+                          invisible: Boolean(cell?.isInvisible()),
+                          strikethrough: Boolean(cell?.isStrikethrough()),
+                        };
+                      }),
+                    ),
+                  }
+                : undefined;
+              observe(canonicalMarker(lines), consumedAtMs, frame);
               resolve();
             }),
           ),
@@ -75,6 +123,7 @@ export function createScreen(cols, rows, reply, observe) {
   };
 }
 export function validateOptions(options) {
+  typingScenario(options);
   tuiRendererConfiguration(options.tuiRenderer);
   if (options.inputMode !== undefined && !["key", "line"].includes(options.inputMode))
     throw new Error("Invalid inputMode: expected key or line");
