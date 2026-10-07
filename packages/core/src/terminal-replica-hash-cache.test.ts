@@ -1,3 +1,4 @@
+import { TERMINAL_REPLICA_DEFAULT_COLOR } from "./terminal-replica-owned-row.ts";
 import { describe, expect, it, vi } from "vitest";
 import * as bufferedHash from "./terminal-fnv64-wasm.ts";
 import type { TerminalReplicaRow, TerminalReplicaSnapshot } from "@tmux-ide/contracts";
@@ -548,4 +549,132 @@ it("preserves short ASCII value headers and long/Unicode fallback across acceler
   } finally {
     factory.mockRestore();
   }
+});
+
+describe("exact default-color canonical key layout", () => {
+  it("avoids key-array creation only for the exact immutable singleton", async () => {
+    const singleton = TERMINAL_REPLICA_DEFAULT_COLOR;
+    const foreign = Object.freeze({ kind: "default" });
+    const input = [singleton, singleton, foreign];
+    const expected = referenceHash(input);
+    const original = Object.keys;
+    let exactCalls = 0,
+      foreignCalls = 0;
+    const spy = vi.spyOn(Object, "keys").mockImplementation((value) => {
+      if (value === singleton) exactCalls++;
+      if (value === foreign) foreignCalls++;
+      return original(value);
+    });
+    try {
+      const sync = hashCanonicalTerminalValue(input);
+      const cooperative = await hashCanonicalTerminalValueCooperatively(input, async () => {}, 1);
+      expect(sync).toBe(expected);
+      expect(cooperative).toBe(expected);
+      expect(exactCalls).toBe(0);
+      expect(foreignCalls).toBe(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("preserves complete generic bytes and cooperative checkpoints beside foreign values", async () => {
+    const values = [
+      TERMINAL_REPLICA_DEFAULT_COLOR,
+      { kind: "default", extra: "界" },
+      { kind: "indexed", index: 0 },
+      { kind: "rgb", value: 0 },
+      { nested: TERMINAL_REPLICA_DEFAULT_COLOR, text: "\ud800" },
+      ...Array.from({ length: 400 }, () => TERMINAL_REPLICA_DEFAULT_COLOR),
+    ];
+    const foreign = structuredClone(values);
+    const expected = referenceHash(values);
+    expect(hashCanonicalTerminalValue(values)).toBe(expected);
+    expect(hashCanonicalTerminalValue(foreign)).toBe(expected);
+    for (const budget of [1, 31, 32768]) {
+      let singletonYields = 0,
+        foreignYields = 0;
+      expect(
+        await hashCanonicalTerminalValueCooperatively(
+          values,
+          async () => {
+            singletonYields++;
+          },
+          budget,
+        ),
+      ).toBe(expected);
+      expect(
+        await hashCanonicalTerminalValueCooperatively(
+          foreign,
+          async () => {
+            foreignYields++;
+          },
+          budget,
+        ),
+      ).toBe(expected);
+      expect(singletonYields).toBe(foreignYields);
+      const failure = new Error("cancel exact color");
+      for (const input of [values, foreign]) {
+        let yields = 0;
+        await expect(
+          hashCanonicalTerminalValueCooperatively(
+            input,
+            async () => {
+              yields++;
+              throw failure;
+            },
+            1,
+          ),
+        ).rejects.toBe(failure);
+        expect(yields).toBe(1);
+      }
+    }
+  });
+
+  it("keeps foreign key discovery, getter order and thrown values intact", async () => {
+    const transcripts: string[][] = [];
+    for (const color of [TERMINAL_REPLICA_DEFAULT_COLOR, Object.freeze({ kind: "default" })]) {
+      const trace: string[] = [];
+      const foreign = new Proxy(
+        {
+          get kind() {
+            trace.push("get-kind");
+            return "default";
+          },
+          extra: "kept",
+        },
+        {
+          ownKeys(target) {
+            trace.push("ownKeys");
+            return Reflect.ownKeys(target);
+          },
+        },
+      );
+      const expected = referenceHash([color, { kind: "default", extra: "kept" }]);
+      expect(
+        await hashCanonicalTerminalValueCooperatively(
+          [color, foreign],
+          async () => {
+            trace.push("yield");
+          },
+          1,
+        ),
+      ).toBe(expected);
+      transcripts.push(trace);
+    }
+    expect(transcripts[0]).toEqual(transcripts[1]);
+    expect(transcripts[0]!.filter((x) => x === "ownKeys")).toHaveLength(1);
+    const failure = { arbitrary: "getter failure" };
+    const foreign = {
+      get kind(): string {
+        throw failure;
+      },
+    };
+    expect(() => hashCanonicalTerminalValue([TERMINAL_REPLICA_DEFAULT_COLOR, foreign])).toThrow();
+    await expect(
+      hashCanonicalTerminalValueCooperatively(
+        [TERMINAL_REPLICA_DEFAULT_COLOR, foreign],
+        async () => {},
+      ),
+    ).rejects.toBe(failure);
+  });
 });

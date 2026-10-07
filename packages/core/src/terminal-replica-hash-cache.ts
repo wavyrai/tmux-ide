@@ -1,3 +1,4 @@
+import { TERMINAL_REPLICA_DEFAULT_COLOR } from "./terminal-replica-owned-row.ts";
 import type { TerminalReplicaColor, TerminalReplicaRow } from "@tmux-ide/contracts";
 import { createBufferedFnv64, type BufferedFnv64 } from "./terminal-fnv64-wasm.ts";
 
@@ -8,10 +9,19 @@ const UTF8_ENCODER = new TextEncoder();
 const SHORT_ASCII_HEADERS = Array.from({ length: 33 }, (_, length) => `s${length}:`);
 
 interface CanonicalKeyOrder {
-  readonly original: string[];
-  readonly sorted: string[];
+  readonly original: readonly string[];
+  readonly sorted: readonly string[];
   readonly tokens: readonly (string | null)[] | null;
 }
+
+// Only this exact internally constructed singleton proves the fixed layout.
+// Foreign defaults (including frozen lookalikes) retain generic key discovery.
+const DEFAULT_COLOR_KEYS = Object.freeze(["kind"]);
+const DEFAULT_COLOR_KEY_ORDER: CanonicalKeyOrder = Object.freeze({
+  original: DEFAULT_COLOR_KEYS,
+  sorted: DEFAULT_COLOR_KEYS,
+  tokens: Object.freeze(["s4:kind;"]),
+});
 
 /**
  * Streaming FNV-1a64 writer for the canonical terminal encoding.
@@ -45,6 +55,7 @@ class CanonicalFnv64 {
   #keyOrders: CanonicalKeyOrder[] | null = null;
 
   keyOrder(record: Record<string, unknown>): CanonicalKeyOrder {
+    if (record === TERMINAL_REPLICA_DEFAULT_COLOR) return DEFAULT_COLOR_KEY_ORDER;
     const keys = Object.keys(record);
     if (keys.length > 32) return { original: keys, sorted: keys.sort(), tokens: null };
     for (const order of this.#keyOrders ?? []) {
