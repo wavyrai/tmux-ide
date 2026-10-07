@@ -1,6 +1,16 @@
 /* @jsxImportSource @opentui/solid */
 /** Opt-in local real-SSH terminal/renderer composition; not remote installation or physical paint. */
 import { expect, it } from "bun:test";
+import { CliRenderEvents } from "@opentui/core";
+import {
+  literalStyledFrame,
+  styledBytes,
+  readCompletedFrame,
+  nativeVisualFrame,
+  compareVisual,
+  type CompletedFrame,
+} from "../testing/styled-frame-oracle.ts";
+import { readPhysicalFrame } from "../../../terminal/mirror/__tests__/native-physical-cell-oracle.ts";
 import { createSignal } from "solid-js";
 import { serve } from "@hono/node-server";
 import { execFileSync, spawn } from "node:child_process";
@@ -58,10 +68,12 @@ function checkFrame(
   cursor: { x: number; y: number; visible: boolean },
   marker: string,
 ) {
-  expect(lines.map((line) => line.trimEnd())).toEqual([marker, ...Array(7).fill("")]);
+  if (styledNative) expect(lines[0]!.trimEnd()).toBe(marker);
+  else expect(lines.map((line) => line.trimEnd())).toEqual([marker, ...Array(7).fill("")]);
   expect(cursor).toMatchObject({ x: 5, y: 3, visible: true });
 }
 
+const styledNative = process.env.TMUX_IDE_STYLED_NATIVE_RECONNECT === "1";
 const enabled = process.env.TMUX_IDE_OWNED_TERMINAL_SSH === "1" && process.platform === "darwin";
 const wait = async (predicate: () => boolean, label: string, ms = 10_000) => {
   const end = Date.now() + ms;
@@ -145,7 +157,7 @@ it.skipIf(!enabled)(
       writeFileSync(input, "");
       writeFileSync(
         producer,
-        `const fs=require('node:fs');process.stdin.setRawMode(true);process.stdin.resume();process.stdin.on('data',b=>fs.appendFileSync(${JSON.stringify(input)},b));let old='';setInterval(()=>{const s=fs.readFileSync(${JSON.stringify(control)},'utf8');if(s!==old){old=s;process.stdout.write('\\x1b[2J\\x1b[H'+s+'\\x1b[3;5H');}},10);`,
+        `const fs=require('node:fs');const paint=${styledNative ? styledBytes.toString() : `(s)=>'\\x1b[2J\\x1b[H'+s+'\\x1b[3;5H'`};process.stdin.setRawMode(true);process.stdin.resume();process.stdin.on('data',b=>fs.appendFileSync(${JSON.stringify(input)},b));let old='';setInterval(()=>{const s=fs.readFileSync(${JSON.stringify(control)},'utf8');if(s!==old){old=s;process.stdout.write(paint(s));}},10);`,
       );
       const identityFormat = "#{pid}|#{start_time}|#{session_id}|#{pane_id}|#{pane_pid}";
       const identity = native(
@@ -159,7 +171,7 @@ it.skipIf(!enabled)(
         "-x",
         "40",
         "-y",
-        "8",
+        styledNative ? "9" : "8",
         node,
         producer,
       );
@@ -188,6 +200,23 @@ it.skipIf(!enabled)(
         );
         report.nativeCleanup = { serverAbsent: true, producerAbsent: true };
       });
+      if (styledNative) {
+        native("set-option", "-t", "ssh-view", "status", "off");
+        native("resize-window", "-t", "ssh-view", "-x", "40", "-y", "9");
+        report.styledSetup = native(
+          "display-message",
+          "-p",
+          "-t",
+          nativePane!,
+          "#{pane_width}|#{pane_height}|#{window-size}|#{status}|#{pane-border-status}",
+        );
+        await wait(
+          () =>
+            native("display-message", "-p", "-t", nativePane!, "#{pane_width}|#{pane_height}") ===
+            "40|9",
+          "styled preadoption native geometry",
+        );
+      }
       native("set-option", "-p", "-t", nativePane!, "@tmux_ide_pane_id", paneId);
       const serverWitness = await kernel.identify(Number(serverPid));
       const producerWitness = await kernel.identify(Number(producerPid));
@@ -368,6 +397,26 @@ it.skipIf(!enabled)(
         () => snapshot().status === "live" && !!snapshot().adapter?.paneSelectionSnapshot(paneId),
         "terminal baseline",
       );
+      if (styledNative) {
+        await wait(
+          () =>
+            native(
+              "display-message",
+              "-p",
+              "-t",
+              nativePane!,
+              "#{pane_width}|#{pane_height}|#{pane-border-status}",
+            ) === "40|8|top",
+          "styled postadoption native geometry",
+        );
+        report.styledPostadoption = native(
+          "display-message",
+          "-p",
+          "-t",
+          nativePane!,
+          "#{pane_width}|#{pane_height}|#{window_width}|#{window_height}|#{window-size}|#{status}|#{pane-border-status}",
+        );
+      }
       const palette = createTerminalPaletteProjection(
         createSemanticThemeSnapshot({ mode: "dark" }),
       );
@@ -390,6 +439,28 @@ it.skipIf(!enabled)(
         { width: 40, height: 8, consoleMode: "disabled" },
       );
       cleanup.push(() => destroyTestRenderer(setup));
+      const completed: CompletedFrame[] = [];
+      const recordFrame = () => {
+        const b = setup.renderer.currentRenderBuffer,
+          v = b.buffers,
+          c = setup.renderer.getCursorState();
+        if (completed.length >= 256) throw Error("completed frame receipt bound");
+        completed.push({
+          cols: b.width,
+          rows: b.height,
+          char: [...v.char],
+          fg: [...v.fg],
+          bg: [...v.bg],
+          attributes: [...v.attributes],
+          text: setup.captureCharFrame(),
+          cursor: { x: c.x, y: c.y, visible: c.visible },
+        });
+      };
+      if (styledNative) setup.renderer.on(CliRenderEvents.FRAME, recordFrame);
+      cleanup.push(() => setup.renderer.off(CliRenderEvents.FRAME, recordFrame));
+      report.completedFrames = completed;
+      report.styledNative = styledNative;
+
       const checkpoint = async (marker: string) => {
         await wait(
           () =>
@@ -403,7 +474,47 @@ it.skipIf(!enabled)(
               ) ?? false,
           `canonical ${marker}`,
         );
-        await setup.renderOnce();
+        if (styledNative) {
+          await wait(
+            () => native("display-message", "-p", "-t", nativePane!, "#{pane_title}") === marker,
+            `native paint fence ${marker}`,
+          );
+          const raw = native("capture-pane", "-p", "-R", "-S", "0", "-t", nativePane!);
+          trace.push({ type: "raw-native-before-comparison", marker, raw });
+          compareVisual(
+            nativeVisualFrame(readPhysicalFrame(raw, "styled-reconnect")),
+            literalStyledFrame(marker),
+          );
+          const frameCount = completed.length;
+          await setup.renderOnce();
+          expect(completed.length).toBeGreaterThan(frameCount);
+          const actual = readCompletedFrame(completed.at(-1)!);
+          compareVisual(actual, literalStyledFrame(marker));
+          for (const field of ["text", "width", "fg", "bg", "bold"] as const) {
+            const wrong = structuredClone(actual),
+              cell = wrong.cells[1]![1]!;
+            if (field === "text") cell.text = "?";
+            else if (field === "width") cell.width = 9;
+            else if (field === "bold") cell.bold = !cell.bold;
+            else cell[field] = "fedcba";
+            expect(() => compareVisual(wrong, literalStyledFrame(marker))).toThrow(field);
+          }
+          const badTail = structuredClone(actual);
+          badTail.cells[3]![39]!.bg = "000000";
+          expect(() => compareVisual(badTail, literalStyledFrame(marker))).toThrow("bg");
+          const badCursor = structuredClone(actual);
+          badCursor.cursor.x++;
+          expect(() => compareVisual(badCursor, literalStyledFrame(marker))).toThrow("cursor");
+          if (marker !== "BEFORE_SSH")
+            expect(() => compareVisual(actual, literalStyledFrame("BEFORE_SSH"))).toThrow();
+          trace.push({
+            type: "styled-native-frame",
+            marker,
+            raw,
+            actual,
+            negativeControls: marker === "BEFORE_SSH" ? 7 : 8,
+          });
+        } else await setup.renderOnce();
         const frame = frameLines(setup.captureCharFrame());
         checkFrame(frame, setup.renderer.getCursorState(), marker);
         const corrupted = [...frame];
@@ -454,6 +565,10 @@ it.skipIf(!enabled)(
         () => native("capture-pane", "-p", "-t", nativePane!).includes("DURING_SSH_OUTAGE"),
         "outage output",
       );
+      if (styledNative) {
+        await setup.renderOnce();
+        compareVisual(readCompletedFrame(completed.at(-1)!), literalStyledFrame("BEFORE_SSH"));
+      }
       releaseReconnect!();
       reconnectGate = undefined;
       await wait(

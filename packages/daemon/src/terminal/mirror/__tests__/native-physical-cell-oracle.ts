@@ -40,7 +40,14 @@ function nativeColor(value: number): string {
     return `rgb:${(value - 0x02000000).toString(16).padStart(6, "0")}`;
   throw new Error(`oracle unsupported native color ${value}`);
 }
-export function readPhysicalFrame(raw: string): OracleFrame {
+export function readPhysicalFrame(
+  raw: string,
+  geometry: "tm04" | "styled-reconnect" = "tm04",
+): OracleFrame {
+  const cols = geometry === "tm04" ? 8 : 40;
+  const rows = geometry === "tm04" ? 4 : 8;
+  if (geometry !== "tm04" && geometry !== "styled-reconnect")
+    throw new Error("oracle unknown fixture");
   if (Buffer.byteLength(raw) > 32768) throw new Error("oracle fixture exceeds bound");
   const [header, ...records] = raw
     .trimEnd()
@@ -48,26 +55,27 @@ export function readPhysicalFrame(raw: string): OracleFrame {
     .map((line) => JSON.parse(line));
   if (
     header.version !== 2 ||
-    header.cols !== 8 ||
-    header.rows !== 4 ||
-    header.history !== 0 ||
-    records.length !== 4
+    header.cols !== cols ||
+    header.rows !== rows ||
+    (geometry === "tm04" && header.history !== 0) ||
+    records.length !== rows
   )
     throw new Error("oracle unexpected physical geometry/version/history");
+  integer(header.history, "history", 0, geometry === "tm04" ? 0 : 10000);
   if (!Array.isArray(header.cursor) || header.cursor.length !== 2)
     throw new Error("oracle invalid cursor");
-  integer(header.cursor[0], "cursor x", 0, 8);
-  integer(header.cursor[1], "cursor y", 0, 3);
+  integer(header.cursor[0], "cursor x", 0, cols);
+  integer(header.cursor[1], "cursor y", 0, rows - 1);
   integer(header.hscrolled, "hscrolled", 0, 0);
   integer(header.limit, "limit", 0, 10000);
   if (JSON.stringify(header.currentAttributes) !== "[0,8,8,8]")
     throw new Error("oracle unexpected fixture rendition");
   const cells = records.map((row, y): OracleCell[] => {
-    if (row.row !== y || !Array.isArray(row.cells) || row.cells.length > 8)
+    if (row.row !== y + header.history || !Array.isArray(row.cells) || row.cells.length > cols)
       throw new Error("oracle malformed row");
     integer(row.flags, "row flags", 0, 3);
     integer(row.used, "row used", 0, row.cells.length);
-    const result = Array.from({ length: 8 }, blank);
+    const result = Array.from({ length: cols }, blank);
     // Native v2 omits unallocated default suffix cells. Allocation length is
     // not logical content: reject used beyond allocation, then supply only
     // default suffix cells. Literal colored-tail expectations still catch loss.
@@ -97,7 +105,13 @@ export function readPhysicalFrame(raw: string): OracleFrame {
       if (flags & 128) {
         // Pinned grid_set_tab stores width spaces, not byte09. HT preserves
         // the pre-existing blank rendition, independently of current SGR.
-        if (x !== 1 || width !== 6 || hex !== "20".repeat(6) || (flags & ~(128 | 64)) !== 0)
+        if (
+          geometry !== "tm04" ||
+          x !== 1 ||
+          width !== 6 ||
+          hex !== "20".repeat(6) ||
+          (flags & ~(128 | 64)) !== 0
+        )
           throw new Error("oracle unsupported tab span");
         for (let offset = 1; offset < 6; offset++)
           if (JSON.stringify(row.cells[x + offset]) !== '[4,1,"21",0,8,8,8,0,4]')
@@ -111,7 +125,7 @@ export function readPhysicalFrame(raw: string): OracleFrame {
           throw new Error("oracle fixture has detached padding");
         result[x] = { ...result[x - 1]!, text: "", width: 0 };
       } else {
-        if (width === 2 && (x === 7 || !(row.cells[x + 1]?.[0] & 4)))
+        if (width === 2 && (x === cols - 1 || !(row.cells[x + 1]?.[0] & 4)))
           throw new Error("oracle wide owner lacks padding");
         result[x] = {
           ...style,
@@ -126,9 +140,9 @@ export function readPhysicalFrame(raw: string): OracleFrame {
     return result;
   });
   return {
-    cols: 8,
-    rows: 4,
-    history: 0,
+    cols,
+    rows,
+    history: header.history,
     cursor: header.cursor,
     // tmux marks the row that wraps onward; logical canonical rows mark
     // continuation from the previous row. Literal wrap fixtures check both.
