@@ -110,6 +110,13 @@ jobs:
       - name: Retain and strictly verify oracle receipts including failures
         if: ${{ always() && steps.oracle.outcome == 'success' }}
         run: node scripts/lib/native-oracle-qualification.mjs collect "$PROOF"
+      - name: Require styled SSH renderer qualification on Intel macOS
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          # Override the generic short /tmp lane with sshd-safe user ancestry.
+          export TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)"
+          pnpm qualify:styled-ssh --binary "$PROOF/bundle/tmux" --manifest "$PROOF/bundle/manifest.json" --bun "$(command -v bun)" --evidence-dir "$PROOF/styled-ssh"
       - name: Record cleanup independently of test success
         if: always()
         run: node scripts/lib/native-x64-qualification.mjs cleanup "$PROOF"

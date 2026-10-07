@@ -117,6 +117,10 @@ jobs:
           node scripts/build-bundled-tmux.mjs --source .native-tmux-source
           tar -C packages/daemon/dist/native -czf "$RUNNER_TEMP/tmux-ide-native-tmux-${{ matrix.platform }}.tar.gz" tmux
       - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
+        if: runner.os == 'macOS'
+        with:
+          bun-version-file: .bun-version
       - name: Install qualification dependencies
         run: pnpm install --frozen-lockfile
       - name: Qualify exact bundled tmux boundary
@@ -147,6 +151,26 @@ jobs:
         with:
           name: tmux-boundary-${{ matrix.platform }}-${{ github.sha }}
           path: ${{ steps.tmux_boundary.outputs.evidence }}
+          if-no-files-found: error
+          retention-days: 14
+      - name: Require styled SSH renderer qualification on macOS
+        if: runner.os == 'macOS'
+        id: styled_ssh
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/styled-ssh-evidence"
+          echo "evidence=$proof" >> "$GITHUB_OUTPUT"
+          # sshd StrictModes requires safe ancestry; /tmp is unsuitable.
+          export TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)"
+          bundle="$PWD/packages/daemon/dist/native/tmux/$(node -p 'process.platform + "-" + process.arch')"
+          pnpm qualify:styled-ssh --binary "$bundle/tmux" --manifest "$bundle/manifest.json" --bun "$(command -v bun)" --evidence-dir "$proof"
+      - name: Retain styled SSH evidence including failures
+        if: ${{ always() && runner.os == 'macOS' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: styled-ssh-${{ matrix.platform }}-${{ github.sha }}
+          path: ${{ runner.temp }}/styled-ssh-evidence
           if-no-files-found: error
           retention-days: 14
       - name: Qualify installer transactions on this platform
