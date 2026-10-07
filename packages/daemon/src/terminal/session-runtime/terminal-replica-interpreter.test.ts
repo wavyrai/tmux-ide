@@ -3,7 +3,7 @@ import { decodeNativeGridCapture } from "../mirror/native-grid-capture.ts";
 import { describe, expect, it, vi } from "vitest";
 import * as core from "@tmux-ide/core";
 import { widgetMarkerAnnouncement, type CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
-import type { CausalCellProbeV1 } from "@tmux-ide/contracts";
+import { CausalCellProbeV1SchemaZ, type CausalCellProbeV1 } from "@tmux-ide/contracts";
 import {
   applyTerminalReplicaUpdate,
   hashTerminalReplicaSnapshot,
@@ -786,8 +786,31 @@ describe("TerminalReplicaInterpreter", () => {
         before,
         after: { ...before, grapheme: text.at(-1)! },
       };
+      // Real wire admission schema-parses cells, changing property insertion
+      // order even though the shared projected blank is semantically identical.
+      expect(before).toBe(core.TERMINAL_REPLICA_SPACE_CELL);
+      const parsed = CausalCellProbeV1SchemaZ.parse(probe);
+      expect(parsed.before).toEqual(before);
+      expect(JSON.stringify(parsed.before)).not.toBe(JSON.stringify(before));
+      for (const changed of [
+        { before: { ...parsed.before, grapheme: "" } },
+        { before: { ...parsed.before, width: 2 as const } },
+        { before: { ...parsed.before, attributes: 1 } },
+        { before: { ...parsed.before, foreground: { kind: "indexed" as const, index: 1 } } },
+        { before: { ...parsed.before, background: { kind: "rgb" as const, value: 0x123456 } } },
+        { geometry: { ...parsed.geometry, cols: 133 } },
+        { geometry: { ...parsed.geometry, rows: 42 } },
+        { geometry: { ...parsed.geometry, row: 41 } },
+        { baselineRevision: parsed.baselineRevision + 1 },
+        { baselineStateHash: "0000000000000000" },
+        { incarnation: `${generation}:1` },
+      ]) {
+        expect(() => interpreter.armCausalCellProbe({ ...parsed, ...changed }, () => {})).toThrow(
+          "Causal-cell baseline drifted before admission",
+        );
+      }
       const results: unknown[] = [];
-      interpreter.armCausalCellProbe(probe, (result) => results.push(result));
+      interpreter.armCausalCellProbe(parsed, (result) => results.push(result));
       interpreter.noteCausalCellControlReply(probe.traceId, true);
       await interpreter.enqueue({
         type: "write",

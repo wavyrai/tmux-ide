@@ -41,6 +41,7 @@ import { createXtermTerminalInterpreterBackend } from "./xterm-terminal-interpre
 import {
   CAUSAL_CELL_OSC,
   CausalCellLedger,
+  cellsEqual,
   type CausalCellLedgerResult,
 } from "./causal-cell-ledger.ts";
 
@@ -291,8 +292,10 @@ export class TerminalReplicaInterpreter {
       seed.incarnation !== probe.incarnation ||
       this.#snapshot.cols !== probe.geometry.cols ||
       this.#snapshot.rows !== probe.geometry.rows ||
-      JSON.stringify(this.#snapshot.grid[probe.geometry.row]?.cells[probe.geometry.column]) !==
-        JSON.stringify(probe.before)
+      !cellsEqual(
+        this.#snapshot.grid[probe.geometry.row]?.cells[probe.geometry.column],
+        probe.before,
+      )
     )
       throw new Error("Causal-cell baseline drifted before admission");
     const ledger = new CausalCellLedger({

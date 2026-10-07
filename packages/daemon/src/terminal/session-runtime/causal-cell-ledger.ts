@@ -63,7 +63,7 @@ function colorsEqual(
   );
 }
 
-function cellsEqual(
+export function cellsEqual(
   left: TerminalReplicaSnapshot["grid"][number]["cells"][number] | undefined,
   right: TerminalReplicaSnapshot["grid"][number]["cells"][number] | undefined,
 ): boolean {
