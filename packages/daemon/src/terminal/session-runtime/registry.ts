@@ -354,30 +354,47 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       ...(this.#observability.enabled
         ? {
             nowMicros: () => this.#observability.nowMicros(),
-            onInputWrite: (_session, action, startedAtMicros, endedAtMicros, pendingBeforeSend) => {
-              for (const traceId of action.traceIds ?? []) {
-                const trace = this.#observability.beginTrace(
-                  "terminal-input-to-paint",
-                  { generation: this.generation, incarnation: null },
-                  traceId,
-                );
-                this.#observability.recordSpan(
-                  "tmux",
-                  "control-write",
-                  startedAtMicros,
-                  endedAtMicros,
-                  trace,
-                );
-                this.#observability.recordSpan(
-                  "tmux",
-                  pendingBeforeSend === 0
-                    ? "control-queue-empty-at-send"
-                    : "control-queue-nonempty-at-send",
-                  endedAtMicros,
-                  endedAtMicros,
-                  trace,
-                );
-              }
+            captureInputWrite: (session, action, semanticPaneId) => {
+              const runtime = this.#sessions.get(session);
+              const binding = runtime?.captureInputDispatch(semanticPaneId);
+              return (startedAtMicros, endedAtMicros, pendingBeforeSend, paneCurrent) => {
+                const incarnation =
+                  paneCurrent && this.#sessions.get(session) === runtime
+                    ? (binding?.() ?? null)
+                    : null;
+                for (const traceId of action.traceIds ?? []) {
+                  const trace = this.#observability.beginTrace(
+                    "terminal-input-to-paint",
+                    {
+                      generation: this.generation,
+                      incarnation,
+                      controlDispatch: Object.freeze({
+                        workspaceName: session,
+                        nativePaneId: action.pane,
+                        semanticPaneId: paneCurrent ? semanticPaneId : null,
+                        scope: "dispatch-time" as const,
+                      }),
+                    },
+                    traceId,
+                  );
+                  this.#observability.recordSpan(
+                    "tmux",
+                    "control-write",
+                    startedAtMicros,
+                    endedAtMicros,
+                    trace,
+                  );
+                  this.#observability.recordSpan(
+                    "tmux",
+                    pendingBeforeSend === 0
+                      ? "control-queue-empty-at-send"
+                      : "control-queue-nonempty-at-send",
+                    endedAtMicros,
+                    endedAtMicros,
+                    trace,
+                  );
+                }
+              };
             },
           }
         : {}),
@@ -1359,6 +1376,22 @@ class SessionRuntime {
       counts.deliveryConnections += handles.deliveryConnections;
     }
     return Object.freeze(counts);
+  }
+
+  captureInputDispatch(semanticPaneId: string | null): () => string | null {
+    const owner =
+      this.#disposed || semanticPaneId === null
+        ? undefined
+        : this.#terminalReplicas.get(semanticPaneId);
+    const incarnation = owner?.inputDispatchIncarnation() ?? null;
+    return () =>
+      !this.#disposed &&
+      semanticPaneId !== null &&
+      owner !== undefined &&
+      this.#terminalReplicas.get(semanticPaneId) === owner &&
+      owner.inputDispatchIncarnation() === incarnation
+        ? incarnation
+        : null;
   }
 
   qualificationSnapshot(): SessionRuntimeQualificationSnapshot["sessions"][number] {

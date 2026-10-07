@@ -9,6 +9,13 @@ import { z } from "zod";
 export interface SessionRuntimeTraceAuthority {
   readonly generation: SessionRuntimeGeneration;
   readonly incarnation: string | null;
+  /** Current dispatch target only; neither admission authority nor native acceptance. */
+  readonly controlDispatch?: Readonly<{
+    workspaceName: string;
+    nativePaneId: string;
+    semanticPaneId: string | null;
+    scope: "dispatch-time";
+  }>;
 }
 
 export interface SessionRuntimeTraceContext {

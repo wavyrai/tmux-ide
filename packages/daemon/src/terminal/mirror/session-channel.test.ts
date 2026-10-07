@@ -54,6 +54,7 @@ interface Rig {
 async function startedRig(
   options: {
     ownedViewer?: SessionChannelOptions["ownedViewer"];
+    captureInputWrite?: SessionChannelOptions["captureInputWrite"];
     nativeBirth?: string;
     executeWindowLinkGuard?: (args: string[]) => Promise<{ status: number | null; stdout: string }>;
     onNativeClientActivity?: () => void;
@@ -87,6 +88,7 @@ async function startedRig(
   let sim: SimulatedChannel | null = null;
   const channel = new SessionChannel({
     ownedViewer: options.ownedViewer,
+    captureInputWrite: options.captureInputWrite,
     session: FIXTURE.session,
     executeWindowLinkGuard: options.executeWindowLinkGuard,
     createIo: (handlers) => {
@@ -2818,6 +2820,47 @@ describe("input path", () => {
       expect(events.slice(-2)).toEqual(["send-keys -t %1 -H 78", "disposed"]);
     },
   );
+
+  it.each(["capture", "completion"] as const)(
+    "keeps accepted native input single-dispatch when diagnostic %s throws",
+    async (failure) => {
+      const adapter = { bindIo: vi.fn(), dispose: vi.fn(), tryDispatch: vi.fn(() => true) };
+      const capture = vi.fn(() => {
+        if (failure === "capture") throw new Error("diagnostic capture");
+        return () => {
+          throw new Error("diagnostic completion");
+        };
+      });
+      const rig = await startedRig({
+        ownedViewer: adapter,
+        nativeBirth: "11",
+        captureInputWrite: capture,
+      });
+      const before = rig.sim.written.length;
+      expect(() =>
+        rig.channel.sendKey("pane.alpha", "Enter", "00000000-0000-4000-8000-000000000001"),
+      ).not.toThrow();
+      expect(capture).toHaveBeenCalledOnce();
+      expect(adapter.tryDispatch).toHaveBeenCalledOnce();
+      expect(rig.sim.written.slice(before)).toEqual([]);
+      await rig.channel.dispose();
+    },
+  );
+
+  it("invalidates a dispatch binding when the channel retires during the write", async () => {
+    const completion = vi.fn();
+    const rig = await startedRig({ captureInputWrite: () => completion });
+    const send = rig.sim.send.bind(rig.sim);
+    let disposal: Promise<void> | undefined;
+    rig.sim.send = (command, reply) => {
+      send(command, reply);
+      if (command.startsWith("send-keys")) disposal = rig.channel.dispose();
+    };
+    rig.channel.sendKey("pane.alpha", "Enter", "00000000-0000-4000-8000-000000000001");
+    expect(completion).toHaveBeenCalledOnce();
+    expect(completion.mock.calls[0]![3]).toBe(false);
+    await disposal;
+  });
 
   it("keeps input on stock transport when physical birth is missing", async () => {
     const adapter = { bindIo: vi.fn(), tryDispatch: vi.fn(), dispose: vi.fn() };

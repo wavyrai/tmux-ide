@@ -104,6 +104,7 @@ export class SessionRuntimeTerminalReplicaOwner {
   #reseedRetryCount = 0;
   #reseed: ReseedCandidate | null = null;
   #bootstrapped = false;
+  #publishedIncarnation: string | null = null;
   #waitingForGeometryCapture = false;
   #historyTimer: SessionRuntimeTimer | null = null;
   #historyChecking = false;
@@ -150,6 +151,7 @@ export class SessionRuntimeTerminalReplicaOwner {
         );
       },
       onUpdate: (update, trace) => {
+        this.#publishedIncarnation = update.incarnation;
         if (update.type === "terminal.seed") {
           this.#bootstrapped = true;
           this.#reseedRetryCount = 0;
@@ -228,6 +230,11 @@ export class SessionRuntimeTerminalReplicaOwner {
 
   failCausalCell(reason: CausalCellFailureReasonV1, traceId?: string): void {
     this.#interpreter.failCausalCell(reason, traceId);
+  }
+
+  /** Scalar diagnostic only: no seed construction, hashing, or owner creation. */
+  inputDispatchIncarnation(): string | null {
+    return this.#disposed ? null : this.#publishedIncarnation;
   }
 
   qualificationSnapshot(): TerminalReplicaQualificationSnapshot {

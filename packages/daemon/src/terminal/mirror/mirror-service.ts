@@ -73,6 +73,10 @@ export interface MirrorServiceOptions {
   controlModeOwnershipRegistry?: ControlModeOwnershipRegistry;
   /** Emitted only after an event-triggered list-clients proof of a native client. */
   onNativeClientActivity?: (session: string) => void;
+  captureInputWrite?: (
+    session: string,
+    ...args: Parameters<NonNullable<SessionChannelOptions["captureInputWrite"]>>
+  ) => ReturnType<NonNullable<SessionChannelOptions["captureInputWrite"]>>;
   onInputWrite?: (
     session: string,
     action: InputAction,
@@ -666,6 +670,8 @@ export class MirrorService {
             }
           },
           onNativeClientActivity: () => this.opts.onNativeClientActivity?.(session),
+          captureInputWrite: (action, semanticPaneId) =>
+            this.opts.captureInputWrite?.(session, action, semanticPaneId),
           onInputWrite: (action, startedAtMicros, endedAtMicros, pendingBeforeSend) =>
             this.opts.onInputWrite?.(
               session,

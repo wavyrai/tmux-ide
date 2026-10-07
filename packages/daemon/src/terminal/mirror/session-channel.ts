@@ -267,6 +267,18 @@ export interface SessionChannelOptions {
   onExit?: () => void;
   /** Event-driven proof that a non-control tmux client is actively attached. */
   onNativeClientActivity?: () => void;
+  /** Optional diagnostic capture before dispatch; completion must not affect input. */
+  captureInputWrite?: (
+    action: InputAction,
+    semanticPaneId: string | null,
+  ) =>
+    | ((
+        startedAtMicros: number,
+        endedAtMicros: number,
+        pendingBeforeSend: number,
+        paneCurrent: boolean,
+      ) => void)
+    | undefined;
   onInputWrite?: (
     action: InputAction,
     startedAtMicros: number,
@@ -513,6 +525,18 @@ export class SessionChannel {
     (action) => {
       const startedAtMicros = action.traceIds?.length ? Math.floor(performance.now() * 1_000) : 0;
       const pendingBeforeSend = action.traceIds?.length ? (this.io.pendingCount ?? 0) : 0;
+      const pane = action.traceIds?.length ? this.panesByRuntime.get(action.pane) : undefined;
+      const semanticPaneId = !this.disposed && pane?.descriptor ? pane.semanticId : null;
+      const paneIncarnation = pane?.incarnation;
+      const paneActive = pane?.active;
+      const birth = pane?.descriptor?.nativePaneBirthId;
+      let complete: ReturnType<NonNullable<SessionChannelOptions["captureInputWrite"]>>;
+      try {
+        if (action.traceIds?.length)
+          complete = this.opts.captureInputWrite?.(action, semanticPaneId);
+      } catch {
+        // Optional diagnostics must never suppress a dispatch.
+      }
       const onReply = action.traceIds?.length
         ? (reply: { ok: boolean }) =>
             this.opts.onInputAccepted?.(action, Math.floor(performance.now() * 1_000), reply.ok)
@@ -532,6 +556,26 @@ export class SessionChannel {
         );
       } else {
         this.io.send(`send-keys -t ${action.pane} ${action.key}`, onReply);
+      }
+      try {
+        complete?.(
+          startedAtMicros,
+          Math.floor(performance.now() * 1_000),
+          pendingBeforeSend,
+          !this.disposed &&
+            pane !== undefined &&
+            semanticPaneId !== null &&
+            this.panesByRuntime.get(action.pane) === pane &&
+            this.panesBySemantic.get(semanticPaneId) === pane &&
+            pane.runtimeId === action.pane &&
+            pane.semanticId === semanticPaneId &&
+            pane.incarnation === paneIncarnation &&
+            pane.active === paneActive &&
+            pane.descriptor !== null &&
+            pane.descriptor.nativePaneBirthId === birth,
+        );
+      } catch {
+        // In particular, never replay an accepted owned-native dispatch.
       }
       if (action.traceIds?.length)
         this.opts.onInputWrite?.(
