@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   typingScenario,
   typingGeometryReady,
+  parseTypingPaneCreation,
   assertTypingFrame,
   typingAttempts,
   observeTypingAttempt,
@@ -208,4 +209,22 @@ test("v2 sentinel independently exceeds default automatic contrast threshold wit
   assert.ok(ratio(0xe6f5ff, 0x345678) > 6.8);
   assert.ok(ratio(0xd2dce6, 0x141e28) > 12);
   assert.ok(typingPaint(80, 30, 0, 0).includes("38;2;230;245;255"));
+});
+
+test("pane queries retain exact creation-owned pane target instead of session context", () => {
+  assert.deepEqual(parseTypingPaneCreation("41211|41212|%0\n"), {
+    serverPid: 41211,
+    producerPid: 41212,
+    paneTarget: "%0",
+  });
+  for (const bad of [
+    "41211|41212",
+    "41211||%0",
+    "0|12|%0",
+    "12|13|=query",
+    "12|13|%0;kill-server",
+    "12|13|%0|extra",
+    "9007199254740992|13|%0",
+  ])
+    assert.throws(() => parseTypingPaneCreation(bad));
 });

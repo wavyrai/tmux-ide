@@ -27,12 +27,14 @@ import {
   validateOptions,
   tuiRendererConfiguration,
   artifact,
+  assertTuiArtifactAdmission,
   retireOwnedProcess,
   retirePrivateTmux,
 } from "./comparative-terminal-support.mjs";
 import {
   typingScenario,
   typingGeometryReady,
+  parseTypingPaneCreation,
   assertTypingFrame,
   floodIdentity,
   typingAttempts,
@@ -93,7 +95,15 @@ export async function runTarget(target, options, directory) {
     loadBefore: loadavg(),
   };
   const owned = [];
-  let client, screen, tmuxPid, last, failure, producerPid, producerBirth, tmuxBirth;
+  let client,
+    screen,
+    tmuxPid,
+    last,
+    failure,
+    producerPid,
+    producerBirth,
+    tmuxBirth,
+    nativePaneTarget;
   let clientExited = false;
   let tmuxAttempted = false;
   let cols = scenario
@@ -284,7 +294,7 @@ export async function runTarget(target, options, directory) {
         "new-session",
         "-P",
         "-F",
-        scenario ? "#{pid}|#{pane_pid}" : "#{pid}",
+        scenario ? "#{pid}|#{pane_pid}|#{pane_id}" : "#{pid}",
         "-d",
         "-s",
         session,
@@ -297,14 +307,21 @@ export async function runTarget(target, options, directory) {
       const creation = launchedPid.trim().split("|");
       tmuxPid = Number(creation[0]);
       if (scenario) {
-        producerPid = Number(creation[1]);
+        const owned = parseTypingPaneCreation(launchedPid);
+        if (owned.serverPid !== tmuxPid) throw Error("Creation server identity mismatch");
+        producerPid = owned.producerPid;
+        nativePaneTarget = owned.paneTarget;
         if (!Number.isSafeInteger(producerPid) || producerPid <= 0)
           throw Error("Missing creation-owned pane PID");
         producerBirth = (
           await command("/bin/ps", ["-p", String(producerPid), "-o", "lstart="], env, root)
         ).trim();
         if (!producerBirth) throw Error("Missing creation-owned pane birth");
-        report.producerIdentity = { pid: producerPid, birth: producerBirth };
+        report.producerIdentity = {
+          pid: producerPid,
+          birth: producerBirth,
+          paneTarget: nativePaneTarget,
+        };
       }
       if (!Number.isSafeInteger(tmuxPid) || tmuxPid <= 0) throw new Error("No private tmux PID");
       if (scenario)
@@ -422,7 +439,11 @@ export async function runTarget(target, options, directory) {
       ).trim();
       if (readyBirth !== producerBirth) throw Error("Producer birth changed before readiness");
       if (!producerBirth) throw Error("Missing producer birth");
-      report.producerIdentity = { pid: producerPid, birth: producerBirth };
+      report.producerIdentity = {
+        pid: producerPid,
+        birth: producerBirth,
+        paneTarget: nativePaneTarget,
+      };
     }
     if (scenario)
       report.startupScope = "marker readiness; full-cell scene qualified separately before input";
@@ -435,7 +456,13 @@ export async function runTarget(target, options, directory) {
         async () => {
           healthy();
           const native = (
-            await tmux("display-message", "-p", "-t", `=${session}`, "#{pane_width}|#{pane_height}")
+            await tmux(
+              "display-message",
+              "-p",
+              "-t",
+              nativePaneTarget,
+              "#{pane_width}|#{pane_height}",
+            )
           ).trim();
           report.geometryAdmission = { native, marker: last, outer: { cols, rows } };
           return typingGeometryReady(native, last, lastFrame, scenario.contentRects[target]);
@@ -486,18 +513,27 @@ export async function runTarget(target, options, directory) {
       // Fixed declared crop, not a search for a region that happens to match.
       assertTypingFrame(lastFrame, rect, options.cols, options.rows, 0, 0);
       const nativeGeometry = (
-        await tmux("display-message", "-p", "-t", `=${session}`, "#{pane_width}|#{pane_height}")
+        await tmux("display-message", "-p", "-t", nativePaneTarget, "#{pane_width}|#{pane_height}")
       ).trim();
       if (nativeGeometry !== `${options.cols}|${options.rows}`)
         throw Error("Native content geometry mismatch");
       const nativeCheckpoint = async (name, sequence, flood) => {
-        const ansi = await tmux("capture-pane", "-p", "-e", "-N", "-S", "0", "-t", `=${session}`);
+        const ansi = await tmux(
+          "capture-pane",
+          "-p",
+          "-e",
+          "-N",
+          "-S",
+          "0",
+          "-t",
+          nativePaneTarget,
+        );
         const cursor = (
           await tmux(
             "display-message",
             "-p",
             "-t",
-            `=${session}`,
+            nativePaneTarget,
             "#{cursor_x}|#{cursor_y}|#{cursor_flag}",
           )
         )
@@ -740,6 +776,22 @@ export async function main(options, output) {
     entry.sourceProvenance =
       options.provenance?.[name] ??
       "unverified: binary hash identifies artifact; checkout equivalence unknown";
+    if (name === "tui" && options.requiredTuiNativeRenderer) {
+      const provenance = JSON.parse(
+        await command(
+          entry.resolved,
+          ["__release-provenance"],
+          process.env,
+          dirname(entry.resolved),
+        ),
+      );
+      entry.verifiedReleaseProvenance = assertTuiArtifactAdmission(
+        provenance,
+        options.provenance?.tui,
+        entry,
+      );
+      continue;
+    }
     if (name === "tui") {
       entry.versionUnavailable =
         "No automatic version probe: older renderer entries may start a client; supply provenance explicitly";

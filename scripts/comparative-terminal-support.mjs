@@ -125,6 +125,12 @@ export function createScreen(cols, rows, reply, observe, fullCells = false) {
 export function validateOptions(options) {
   typingScenario(options);
   tuiRendererConfiguration(options.tuiRenderer);
+  if (
+    options.requiredTuiNativeRenderer !== undefined &&
+    (options.requiredTuiNativeRenderer !== "qualified-native-scroll" ||
+      !options.targets?.includes("tmux-ide"))
+  )
+    throw new Error("requiredTuiNativeRenderer requires tmux-ide and qualified-native-scroll");
   if (options.inputMode !== undefined && !["key", "line"].includes(options.inputMode))
     throw new Error("Invalid inputMode: expected key or line");
   if (
@@ -209,4 +215,19 @@ export function comparativeTargetOrder(targets, round) {
   const offset = round % targets.length;
   const order = [...targets.slice(offset), ...targets.slice(0, offset)];
   return Math.floor(round / targets.length) % 2 ? order.reverse() : order;
+}
+
+/** Opt-in admission for a known release binary; legacy binaries are never probed implicitly. */
+export function assertTuiArtifactAdmission(provenance, expected, binary) {
+  if (!expected || expected.sha256 !== binary.sha256)
+    throw new Error("TUI provenance must bind the actual binary SHA256");
+  if (
+    !provenance ||
+    provenance.nativeRenderer !== "qualified-native-scroll" ||
+    provenance.sourceState !== "clean" ||
+    provenance.commit !== expected.head ||
+    !/^[0-9a-f]{40}$/.test(provenance.commit ?? "")
+  )
+    throw new Error("TUI requires clean, source-bound qualified-native-scroll provenance");
+  return provenance;
 }

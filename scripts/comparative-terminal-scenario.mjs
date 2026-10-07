@@ -216,3 +216,19 @@ export function typingGeometryReady(nativeGeometry, marker, frame, rect) {
     return false;
   }
 }
+
+export function parseTypingPaneCreation(reply) {
+  const fields = reply.trim().split("|");
+  if (
+    fields.length !== 3 ||
+    !/^[1-9]\d*$/.test(fields[0]) ||
+    !/^[1-9]\d*$/.test(fields[1]) ||
+    !/^%\d+$/.test(fields[2])
+  )
+    throw Error("Invalid creation-owned pane identity");
+  const serverPid = Number(fields[0]),
+    producerPid = Number(fields[1]);
+  if (!Number.isSafeInteger(serverPid) || !Number.isSafeInteger(producerPid))
+    throw Error("Invalid creation-owned PID");
+  return { serverPid, producerPid, paneTarget: fields[2] };
+}
