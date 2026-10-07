@@ -4,7 +4,7 @@ metaTitle: Install tmux-ide and run your first agent
 description: Install tmux-ide with one command, open your first agent-aware tmux session, and learn every key that moves between agents, sessions and panes.
 ---
 
-This guide installs tmux-ide 2.9.3, opens your first session in the app, and
+This guide installs tmux-ide 2.9.4, opens your first session in the app, and
 lists its keyboard shortcuts. Installing takes one command on macOS or glibc
 Linux, needs no sudo, and leaves any tmux sessions you already run untouched.
 
@@ -43,17 +43,17 @@ To choose a version or a different user-owned location:
 
 ```bash
 curl -fsSL https://tmux-ide.com/install.sh -o install.sh
-sh install.sh --version 2.9.3 --prefix "$HOME/.local"
+sh install.sh --version 2.9.4 --prefix "$HOME/.local"
 ```
 
 Claude Code [agent teams](/docs/claude-code-agent-teams) can
 open each teammate as a tmux split pane; that page shows the two settings to
-add. Needs a release newer than 2.9.3: the installer adds them for you when
+add. Since 2.9.4 the installer adds them for you when
 Claude Code is installed. It only adds missing keys, keeps a backup, and never
 overrides a value you set. To skip it, pass `--no-claude-agent-teams` to
 `install.sh` or set `TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`; to turn it off later,
 run `tmux-ide integration agent-teams disable`. If the step fails, the install
-still succeeds and prints a warning. Installing 2.9.3 skips it and says so.
+still succeeds and prints a warning.
 
 With Node.js 20+ already installed, `npm install -g tmux-ide` is also supported.
 The npm package does not change Claude Code settings.

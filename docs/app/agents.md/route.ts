@@ -98,7 +98,7 @@ Both waits exit 0 on match, 1 on timeout. Use \`send\`/\`wait\` for quick messag
 \`automation\` or \`mcp\` when you need exact pane identity, attribution and retry-safe handles (${SITE_URL}/docs/automation).
 
 Claude Code agent teams: set \`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1\` and \`teammateMode\`
-\`"tmux"\` (or \`"auto"\` inside tmux) in \`~/.claude/settings.json\`; releases after 2.9.3 set this up
+\`"tmux"\` (or \`"auto"\` inside tmux) in \`~/.claude/settings.json\`; 2.9.4 and later set this up
 in the installer; split-pane teammates then appear in tmux-ide grouped under their team, named as the
 lead named them, with normal agent status. tmux-ide reads
 \`~/.claude/teams/<team>/config.json\` read-only; Claude Code owns spawning, tasks and messaging.
