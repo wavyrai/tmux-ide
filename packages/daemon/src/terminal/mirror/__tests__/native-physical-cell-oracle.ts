@@ -42,11 +42,15 @@ function nativeColor(value: number): string {
 }
 export function readPhysicalFrame(
   raw: string,
-  geometry: "tm04" | "styled-reconnect" = "tm04",
+  geometry: "tm04" | "styled-reconnect" | "styled-reconnect-narrow" = "tm04",
 ): OracleFrame {
-  const cols = geometry === "tm04" ? 8 : 40;
+  const cols = geometry === "tm04" ? 8 : geometry === "styled-reconnect-narrow" ? 24 : 40;
   const rows = geometry === "tm04" ? 4 : 8;
-  if (geometry !== "tm04" && geometry !== "styled-reconnect")
+  if (
+    geometry !== "tm04" &&
+    geometry !== "styled-reconnect" &&
+    geometry !== "styled-reconnect-narrow"
+  )
     throw new Error("oracle unknown fixture");
   if (Buffer.byteLength(raw) > 32768) throw new Error("oracle fixture exceeds bound");
   const [header, ...records] = raw

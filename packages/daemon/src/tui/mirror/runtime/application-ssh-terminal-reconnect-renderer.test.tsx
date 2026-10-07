@@ -420,10 +420,11 @@ it.skipIf(!enabled)(
       const palette = createTerminalPaletteProjection(
         createSemanticThemeSnapshot({ mode: "dark" }),
       );
+      const [surfaceCols, setSurfaceCols] = createSignal<24 | 40>(40);
       const setup = await renderForTest(
         () => (
           <pane_surface
-            width={40}
+            width={surfaceCols()}
             height={8}
             mirror={snapshot().adapter!.renderSource}
             paneId={paneId}
@@ -461,7 +462,7 @@ it.skipIf(!enabled)(
       report.completedFrames = completed;
       report.styledNative = styledNative;
 
-      const checkpoint = async (marker: string) => {
+      const checkpoint = async (marker: string, cols: 24 | 40 = 40) => {
         await wait(
           () =>
             snapshot()
@@ -482,14 +483,16 @@ it.skipIf(!enabled)(
           const raw = native("capture-pane", "-p", "-R", "-S", "0", "-t", nativePane!);
           trace.push({ type: "raw-native-before-comparison", marker, raw });
           compareVisual(
-            nativeVisualFrame(readPhysicalFrame(raw, "styled-reconnect")),
-            literalStyledFrame(marker),
+            nativeVisualFrame(
+              readPhysicalFrame(raw, cols === 24 ? "styled-reconnect-narrow" : "styled-reconnect"),
+            ),
+            literalStyledFrame(marker, cols),
           );
           const frameCount = completed.length;
           await setup.renderOnce();
           expect(completed.length).toBeGreaterThan(frameCount);
           const actual = readCompletedFrame(completed.at(-1)!);
-          compareVisual(actual, literalStyledFrame(marker));
+          compareVisual(actual, literalStyledFrame(marker, cols));
           for (const field of ["text", "width", "fg", "bg", "bold"] as const) {
             const wrong = structuredClone(actual),
               cell = wrong.cells[1]![1]!;
@@ -497,14 +500,16 @@ it.skipIf(!enabled)(
             else if (field === "width") cell.width = 9;
             else if (field === "bold") cell.bold = !cell.bold;
             else cell[field] = "fedcba";
-            expect(() => compareVisual(wrong, literalStyledFrame(marker))).toThrow(field);
+            expect(() => compareVisual(wrong, literalStyledFrame(marker, cols))).toThrow(field);
           }
           const badTail = structuredClone(actual);
-          badTail.cells[3]![39]!.bg = "000000";
-          expect(() => compareVisual(badTail, literalStyledFrame(marker))).toThrow("bg");
+          badTail.cells[3]![cols - 1]!.bg = "000000";
+          expect(() => compareVisual(badTail, literalStyledFrame(marker, cols))).toThrow("bg");
           const badCursor = structuredClone(actual);
           badCursor.cursor.x++;
-          expect(() => compareVisual(badCursor, literalStyledFrame(marker))).toThrow("cursor");
+          expect(() => compareVisual(badCursor, literalStyledFrame(marker, cols))).toThrow(
+            "cursor",
+          );
           if (marker !== "BEFORE_SSH")
             expect(() => compareVisual(actual, literalStyledFrame("BEFORE_SSH"))).toThrow();
           trace.push({
@@ -540,6 +545,57 @@ it.skipIf(!enabled)(
         });
       };
       await checkpoint("BEFORE_SSH");
+      if (styledNative) {
+        const retained = snapshot();
+        retained.authorityClient!.setPresence("foreground");
+        expect(await retained.authorityClient!.requestAuthority("geometry")).not.toBeNull();
+        for (const cols of [40, 24, 40] as const) {
+          const previousFrame = structuredClone(completed.at(-1)!);
+          expect(await retained.client!.fitViewport(cols, 9)).toBe("ok");
+          await wait(
+            () =>
+              native(
+                "display-message",
+                "-p",
+                "-t",
+                nativePane!,
+                "#{pane_width}|#{pane_height}|#{window_width}|#{window_height}|#{window-size}|#{pane-border-status}",
+              ) === `${cols}|8|${cols}|9|latest|top`,
+            "public viewport native convergence",
+          );
+          await wait(() => {
+            const pane = snapshot().adapter?.paneSelectionSnapshot(paneId);
+            return pane?.cols === cols && pane?.rows === 8;
+          }, "public viewport adapter convergence");
+          expect(snapshot().client).toBe(retained.client);
+          expect(snapshot().adapter).toBe(retained.adapter);
+          expect(snapshot().rendererEpoch).toBe(retained.rendererEpoch);
+          expect(retained.client!.ownsRuntimeAuthority("geometry")).toBe(true);
+          setup.renderer.resize(cols, 8);
+          setSurfaceCols(cols);
+          const marker = cols === 24 ? "RESIZE_NARROW" : "BEFORE_SSH";
+          writeFileSync(control, marker);
+          await checkpoint(marker, cols);
+          if (previousFrame.cols !== cols)
+            expect(() =>
+              compareVisual(readCompletedFrame(previousFrame), literalStyledFrame(marker, cols)),
+            ).toThrow();
+          trace.push({
+            type: "public-viewport",
+            requested: { cols, rows: 9 },
+            geometryAuthorityClientId: retained.client!.runtimeAuthorityClientId("geometry"),
+            rendererEpoch: snapshot().rendererEpoch,
+            native: native(
+              "display-message",
+              "-p",
+              "-t",
+              nativePane!,
+              "#{pane_width}|#{pane_height}|#{window-size}|#{pane-border-status}",
+            ),
+            completed: { cols: completed.at(-1)!.cols, rows: completed.at(-1)!.rows },
+          });
+        }
+      }
       const before = snapshot();
       const oldTunnel = tunnels.at(-1)!;
       const oldEpoch = handle.endpoint().epoch;

@@ -18,8 +18,10 @@ function check(condition: unknown, message: string): asserts condition {
   if (!condition) throw Error(message);
 }
 const blank = (): VisualCell => ({ text: "", width: 1, fg: "ffffff", bg: "000000", bold: false });
-export function literalStyledFrame(marker: string): VisualFrame {
-  const cells = Array.from({ length: 8 }, () => Array.from({ length: 40 }, blank));
+export function literalStyledFrame(marker: string, cols: 24 | 40 = 40): VisualFrame {
+  check(cols === 24 || cols === 40, "literal geometry");
+  check(marker.length <= cols, "marker width");
+  const cells = Array.from({ length: 8 }, () => Array.from({ length: cols }, blank));
   [...marker].forEach((text, x) => (cells[0]![x] = { ...blank(), text }));
   const initial = marker === "BEFORE_SSH";
   const glyphs = initial ? ["X", "界", "", "é", "Z"] : ["Y", "q", "", "é", "R"];
@@ -33,7 +35,7 @@ export function literalStyledFrame(marker: string): VisualFrame {
         bold: !!text,
       }),
   );
-  for (let x = 0; x < 40; x++)
+  for (let x = 0; x < cols; x++)
     cells[3]![x] = { ...blank(), text: x < 2 ? String(x + 1) : "", bg: "445566" };
   return { cells, cursor: { x: 4, y: 2, visible: true } };
 }
@@ -41,7 +43,7 @@ export function styledBytes(marker: string): string {
   return `\x1b[0m\x1b[2J\x1b[H${marker}\x1b[2;1H\x1b[1;38;2;18;52;86;48;2;33;67;101m${marker === "BEFORE_SSH" ? "X界éZ" : "Yq éR"}\x1b[0m\x1b[4;1H\x1b[48;2;68;85;102m123456\x1b[4;3H\x1b[K\x1b[0m\x1b[3;5H\x1b]2;${marker}\x07`;
 }
 export function readCompletedFrame(raw: CompletedFrame): VisualFrame {
-  check(raw.cols === 40 && raw.rows === 8, "geometry");
+  check((raw.cols === 24 || raw.cols === 40) && raw.rows === 8, "geometry");
   const size = raw.cols * raw.rows;
   check(
     raw.char.length === size &&
@@ -68,8 +70,8 @@ export function readCompletedFrame(raw: CompletedFrame): VisualFrame {
   const cells = lines.map((line, y) => {
     const text = [...segmenter.segment(line)].map((s) => s.segment);
     let pos = 0;
-    const row = Array.from({ length: 40 }, (_, x) => {
-      const i = y * 40 + x,
+    const row = Array.from({ length: raw.cols }, (_, x) => {
+      const i = y * raw.cols + x,
         cp = raw.char[i]!;
       const cont =
         continuation(cp) && x > 0 && !continuation(raw.char[i - 1]!) && raw.char[i - 1] !== 32;
@@ -83,7 +85,7 @@ export function readCompletedFrame(raw: CompletedFrame): VisualFrame {
         glyph = text[pos++] ?? "";
         check(/^(?:[\x20-\x7e]|界|é)$/u.test(glyph), "unsupported grapheme");
       }
-      const width = cont ? 0 : x < 39 && continuation(raw.char[i + 1]!) ? 2 : 1;
+      const width = cont ? 0 : x < raw.cols - 1 && continuation(raw.char[i + 1]!) ? 2 : 1;
       const kind = cp >>> 30;
       if (cont) {
         const prev = raw.char[i - 1]!;
@@ -152,7 +154,7 @@ export function nativeVisualFrame(frame: {
     attributes: string[];
   }[][];
 }): VisualFrame {
-  check(frame.cols === 40 && frame.rows === 8, "native geometry");
+  check((frame.cols === 24 || frame.cols === 40) && frame.rows === 8, "native geometry");
   const color = (value: string, defaultValue: string) => {
     if (value === "default") return defaultValue;
     check(/^rgb:[0-9a-f]{6}$/u.test(value), "native color vocabulary");
