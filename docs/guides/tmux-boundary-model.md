@@ -880,3 +880,16 @@ well as its explicit socket setting: legacy launch commands still rely on that
 environment locator. Clearing it can route those commands to the default server.
 The first two-stream live attempt exposed this failure and produced no TUI timing
 evidence; its process-cleanup receipt did not establish complete isolation.
+
+For offline transport-clock inspection, import `assessTransportClockEvidence` from
+`scripts/lib/transport-clock-evidence.mjs` and supply `clientRecords`,
+`daemonRecords`, controller-mapped `traceIds`, and explicit `expected` client/daemon
+process IDs, clock IDs/kinds, generation and `perTrace` pane/incarnation identities.
+Both files must first pass their existing final integrity/owner-close admissions;
+this helper does not replace those gates. It admits only unique, calibrated
+socket-send-return→daemon-callback, daemon-ACK-send→client-callback and
+daemon-delivery-send→client-arrival intervals. These include instrumentation and
+scheduling effects, not pure network latency. Missing/repeated operations or
+unsupported clock/connection identities yield `incomplete`; even admitted edges
+leave six-boundary causality, terminal-output completion and native parity unmeasured.
+The existing product-first-input causal-cell gate is unchanged.

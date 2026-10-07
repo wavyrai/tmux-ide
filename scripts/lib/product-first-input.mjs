@@ -1,5 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 
+import { clockBounds } from "./transport-clock-bounds.mjs";
+
 import { causalInputSamples } from "../product-test-rig-lib.mjs";
 
 const REQUIRED_CLIENT_STAGES = Object.freeze([
@@ -65,28 +67,6 @@ const KNOWN_CLOCK_CALIBRATION_REASONS = new Set([
 
 function boundedTraceStage(value) {
   return typeof value === "string" && KNOWN_TRACE_STAGES.has(value) ? value : "invalid";
-}
-
-function clockBounds(clientStage, daemonMicros, direction = "client-to-daemon") {
-  if (
-    !Number.isSafeInteger(clientStage?.sharedMicros) ||
-    !Number.isSafeInteger(daemonMicros) ||
-    !Number.isSafeInteger(clientStage?.clockOffsetLowerMicros) ||
-    !Number.isSafeInteger(clientStage?.clockOffsetUpperMicros)
-  )
-    return null;
-  const rawLower =
-    direction === "client-to-daemon"
-      ? daemonMicros - clientStage.sharedMicros - clientStage.clockOffsetUpperMicros
-      : clientStage.sharedMicros - daemonMicros + clientStage.clockOffsetLowerMicros;
-  const upper =
-    direction === "client-to-daemon"
-      ? daemonMicros - clientStage.sharedMicros - clientStage.clockOffsetLowerMicros
-      : clientStage.sharedMicros - daemonMicros + clientStage.clockOffsetUpperMicros;
-  const lower = Math.max(0, rawLower);
-  return Number.isSafeInteger(lower) && Number.isSafeInteger(upper) && upper >= lower
-    ? Object.freeze({ lowerMicros: lower, upperMicros: upper })
-    : null;
 }
 
 function freezeAssessment(qualified, predicates, terminal = false) {
