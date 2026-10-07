@@ -53,13 +53,14 @@ if(process.env.MOCK_NATIVE_CORRUPT) fs.appendFileSync(native,'corrupt');
 `,
   );
   const node = process.execPath;
+  const npmCommand = `exec ${quote(node)} ${quote(npm)} "$@"`;
   script(
     "tar",
     `[ -z "\${MOCK_TAR_FAIL:-}" ] || exit 2
 while [ "$1" != '-C' ]; do shift; done; shift
 mkdir -p "$1/bin"
 ln -s ${quote(node)} "$1/bin/node"
-printf '%s\\n' '#!/bin/sh' 'exec ${node} ${quote(npm).replaceAll("'", "'\\''")} "$@"' > "$1/bin/npm"
+printf '%s\\n' '#!/bin/sh' ${quote(npmCommand)} > "$1/bin/npm"
 chmod +x "$1/bin/npm"\n`,
   );
   const env = {
