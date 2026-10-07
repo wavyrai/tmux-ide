@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.4
+
+- The installer enables Claude Code agent teams when Claude Code is installed: it adds `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` and `teammateMode: "auto"` to `~/.claude/settings.json` only when missing, keeps a one-time backup, never overrides an explicit opt-out, and never rewrites invalid JSON. Opt out with `--no-claude-agent-teams` or `TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`; a failure in this step never fails the install.
+- Add `tmux-ide integration agent-teams enable|disable|status [--json]` to check or change the setting later.
+- Correct CLI help for `restore --resume-agents` (Claude Code, Codex, opencode, Cursor and Copilot) and `sidebar-toggle` (the tmux chrome sidebar).
+- Refresh the package description, keywords and homepage (https://tmux-ide.com).
+
+Existing tmux sessions are preserved. npm installs do not change Claude Code settings.
+
 ## 2.9.3
 
 - Recover SSH connections after daemon replacement and apply saved-machine edits in the running app, with clearer connection errors and lifecycle logs.

@@ -94,14 +94,14 @@ doesn't see it. For attributed, retry-safe sends, use
 
 ## Set it up automatically
 
-Needs a release newer than 2.9.3. The tmux-ide installer adds the two
+Since 2.9.4, the tmux-ide installer adds the two
 `settings.json` keys for you when Claude Code is installed. It adds each key only
 if it is missing, keeps a backup, never rewrites a file that isn't valid JSON,
 and never overrides a value you already set, including an explicit `"0"`. To
 skip it, pass `--no-claude-agent-teams` to `install.sh` or set
 `TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`.
 
-The same release adds a command to check or change the setting:
+Version 2.9.4 also adds a command to check or change the setting:
 
 ```bash
 tmux-ide integration agent-teams status
