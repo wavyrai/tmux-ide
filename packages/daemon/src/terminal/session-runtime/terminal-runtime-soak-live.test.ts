@@ -33,6 +33,7 @@ import {
   type NativeTmuxServerOwner,
 } from "../../lib/tmux-server-owner.ts";
 import { attachPaneStreamWebSocket } from "../../server/pane-stream-upgrade.ts";
+import { runtimeSoakConfiguration } from "../../../test-support/terminal-runtime-soak-config.ts";
 
 // Opt-in runtime qualification, not daemon detection or physical renderer cost.
 // Run each pane count in a fresh worker. Smoke is explicitly not soak evidence.
@@ -40,23 +41,7 @@ const binary = process.env.TMUX_IDE_BOUNDARY_TEST_BINARY;
 const enabled = process.env.TMUX_IDE_RUNTIME_SOAK === "1" && !!binary;
 const workload =
   process.env.TMUX_IDE_RUNTIME_SOAK_WORKLOAD === "full-clear" ? "full-clear" : "row-overwrite";
-const smoke = process.env.TMUX_IDE_RUNTIME_SOAK_SMOKE === "1";
-const config = Object.freeze({
-  warmupMs: smoke ? 1000 : 60_000,
-  measuredMs: smoke ? 10_000 : 300_000,
-  trailingMs: smoke ? 1000 : 60_000,
-  sampleMs: smoke ? 1000 : 5000,
-  cycleMs: smoke ? 2000 : 10_000,
-  budgets: {
-    rssBytes: 1024 ** 3,
-    heapBytes: 512 * 1024 ** 2,
-    trailingRssGrowthBytes: 128 * 1024 ** 2,
-    trailingHeapGrowthBytes: 64 * 1024 ** 2,
-    maxCpuCorePercent: 200,
-    deliveryQueueBytes: 64 * 1024 ** 2,
-    operationMs: 10_000,
-  },
-});
+const { smoke, profile, config } = runtimeSoakConfiguration(process.env);
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
 async function until(predicate: () => boolean, label: string) {
@@ -401,6 +386,7 @@ for (const count of [1, 15])
               config,
               count,
               smoke,
+              profile,
               workload,
               root,
               binary: hash(binary!),
@@ -664,6 +650,7 @@ for (const count of [1, 15])
               config,
               count,
               smoke,
+              profile,
               workload,
               failure,
               cleanup,
@@ -683,7 +670,9 @@ for (const count of [1, 15])
               limitations: [
                 "Runtime plus test/client process costs; no detector or renderer attribution",
                 "Socket listener ledger is not internal owner/registry listener cardinality",
-                "Five-minute bounded soak is not long-session leak qualification",
+                profile === "long"
+                  ? "Thirty-minute measured soak is bounded evidence, not proof for arbitrary session durations"
+                  : "Five-minute bounded soak is not long-session leak qualification",
                 "Raw ps snapshots retain producer and process-tree attribution; RSS shared pages and exited child CPU are not resolved",
               ],
             },
