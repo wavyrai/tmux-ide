@@ -188,3 +188,45 @@ export function collectStyledSshReceipt(log, destination) {
     origin: { path: root, dev: stat.dev, ino: stat.ino, uid: stat.uid },
   };
 }
+
+/** Validate actual ancestry observations before sshd sees authorized_keys. */
+export function validateStyledSshTempRoot(root, ancestors, uid) {
+  requireFact(isAbsolute(root), "Absolute temporary root required");
+  let expected = root;
+  for (const entry of ancestors) {
+    requireFact(
+      entry.path === expected &&
+        entry.directory === true &&
+        (entry.uid === uid || entry.uid === 0) &&
+        (entry.mode & 0o022) === 0,
+      "Unsafe SSH temporary ancestry",
+    );
+    expected = dirname(expected);
+  }
+  requireFact(
+    ancestors.length > 0 && ancestors.at(-1).path === "/",
+    "Incomplete temporary ancestry",
+  );
+  const socket = join(root, "v-XXXXXX", "ssh-XXXXXX", "discovery.sock");
+  requireFact(Buffer.byteLength(socket) <= 103, "SSH fixture socket path too long");
+  return root;
+}
+
+export function inspectStyledSshTempRoot(path) {
+  const root = realpathSync(path);
+  const ancestors = [];
+  let current = root;
+  while (true) {
+    const info = lstatSync(current);
+    ancestors.push({
+      path: current,
+      directory: info.isDirectory() && !info.isSymbolicLink(),
+      uid: info.uid,
+      mode: info.mode,
+    });
+    if (current === "/") break;
+    current = dirname(current);
+  }
+  validateStyledSshTempRoot(root, ancestors, process.getuid());
+  return { root, ancestors };
+}

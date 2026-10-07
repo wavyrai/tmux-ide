@@ -9,13 +9,13 @@ import {
   realpathSync,
   writeFileSync,
   appendFileSync,
-  mkdtempSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { userInfo, release } from "node:os";
+import { userInfo, release, tmpdir } from "node:os";
 import {
   collectStyledSshReceipt,
+  inspectStyledSshTempRoot,
   STYLED_SSH_TEST,
   verifyStyledSshReceipt,
 } from "./lib/styled-ssh-qualification.mjs";
@@ -134,8 +134,8 @@ try {
   };
   save("identity.json", record.identity);
   save("bundle-manifest.json", manifest);
-  const tmp = mkdtempSync("/tmp/tssq-");
-  record.privateTmp = tmp; // Deliberately retained: wrapper never derives deletion or signal authority from receipts.
+  record.verifiedTemp = inspectStyledSshTempRoot(tmpdir());
+  const tmp = record.verifiedTemp.root; // Fixture creates and cleans its own private child.
   Object.assign(env, {
     TMPDIR: tmp,
     NO_COLOR: "1",

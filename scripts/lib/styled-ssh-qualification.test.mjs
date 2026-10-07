@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, symlinkSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { verifyStyledSshReceipt, collectStyledSshReceipt } from "./styled-ssh-qualification.mjs";
+import {
+  verifyStyledSshReceipt,
+  collectStyledSshReceipt,
+  validateStyledSshTempRoot,
+} from "./styled-ssh-qualification.mjs";
 const identity = {
   sourceSha256: "source",
   binarySha256: "binary",
@@ -201,4 +205,33 @@ test("collector copies raw failed receipts without granting cleanup authority", 
 test("collector rejects paths outside its fixed private receipt namespace", () => {
   for (const path of ["/etc", "/tmp/other", "relative", "/tmp/tmi-ssh-view-evidence-a/../other"])
     assert.throws(() => collectStyledSshReceipt(`SSH viewer receipt: ${path}\n`, "/unused"));
+});
+
+test("SSH temp ancestry rejects writable, foreign, incomplete and overlong paths", () => {
+  const entries = [
+    { path: "/safe", directory: true, uid: 501, mode: 0o700 },
+    { path: "/", directory: true, uid: 0, mode: 0o755 },
+  ];
+  assert.equal(validateStyledSshTempRoot("/safe", entries, 501), "/safe");
+  for (const change of [{ mode: 0o777 }, { mode: 0o770 }, { uid: 502 }, { directory: false }]) {
+    assert.throws(
+      () => validateStyledSshTempRoot("/safe", [{ ...entries[0], ...change }, entries[1]], 501),
+      /Unsafe/,
+    );
+  }
+  assert.throws(() => validateStyledSshTempRoot("/safe", entries.slice(0, 1), 501), /Incomplete/);
+  assert.throws(
+    () => validateStyledSshTempRoot("/safe", [entries[0], { ...entries[1], mode: 0o1777 }], 501),
+    /Unsafe/,
+  );
+  const suffix = Buffer.byteLength("/v-XXXXXX/ssh-XXXXXX/discovery.sock");
+  const root = "/" + "a".repeat(102 - suffix);
+  const chain = [{ ...entries[0], path: root }, entries[1]];
+  assert.equal(Buffer.byteLength(root) + suffix, 103);
+  assert.equal(validateStyledSshTempRoot(root, chain, 501), root);
+  assert.throws(
+    () =>
+      validateStyledSshTempRoot(root + "a", [{ ...chain[0], path: root + "a" }, entries[1]], 501),
+    /too long/,
+  );
 });
