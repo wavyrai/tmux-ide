@@ -149,6 +149,7 @@ test("private canonical and standalone children receive one complete runtime nam
           ...PRIVATE_RUNTIME,
         }),
         {
+          TMUX_IDE_CAUSAL_CELL_FIXTURE: "0",
           TMUX_IDE_RUNTIME_MODE: "testdrive",
           TMUX_IDE_HOME: "/private/state",
           TMUX_IDE_REGISTRY_DIR: canonicalDaemon ? "/private/canonical" : "/private/registry",
@@ -178,7 +179,7 @@ test("private canonical and standalone children receive one complete runtime nam
       environment: {},
       privateRoot: "/private",
     }),
-    {},
+    { TMUX_IDE_CAUSAL_CELL_FIXTURE: "0" },
   );
 });
 
@@ -291,4 +292,44 @@ test("targeted host launch preserves tmux injection while public clean env stays
     }).TMUX,
     "",
   );
+});
+
+test("both TUI launch paths forward only explicit causal fixture opt-in to the child", () => {
+  const root = mkdtempSync(join(tmpdir(), "tmux-ide-causal-env-"));
+  try {
+    for (const publicEntry of [false, true]) {
+      for (const supplied of [undefined, "0", "1", "true"]) {
+        const environment = resolveTestdriveCapabilityEnvironment({
+          publicEntry,
+          canonicalDaemon: !publicEntry,
+          environment: { TMUX_IDE_CAUSAL_CELL_FIXTURE: supplied },
+          privateRoot: "/private",
+          ...PRIVATE_RUNTIME,
+        });
+        const command = buildTestdriveExecCommand({
+          clean: publicEntry,
+          environment,
+          binary: process.execPath,
+          binaryArgs: ["-e", "process.stdout.write(process.env.TMUX_IDE_CAUSAL_CELL_FIXTURE)"],
+          stderrPath: join(root, "stderr.log"),
+        });
+        // Targeted launch uses shell exports; public launch uses env -i.
+        const exports = Object.entries(environment)
+          .map(([key, value]) => `${key}='${value}'`)
+          .join(" ");
+        const child = spawnSync(
+          "/bin/sh",
+          ["-c", publicEntry ? command : `export ${exports}; ${command}`],
+          {
+            encoding: "utf8",
+            env: { PATH: process.env.PATH, TMUX_IDE_CAUSAL_CELL_FIXTURE: "1" },
+          },
+        );
+        assert.equal(child.status, 0, child.stderr);
+        assert.equal(child.stdout, supplied === "1" ? "1" : "0");
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
