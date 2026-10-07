@@ -219,11 +219,36 @@ type CompactRow = readonly [0 | 1, readonly CompactCellRun[]];
 // with the strict contract before remembering it; ownership alone is not enough.
 // External rows still use the ordinary schema and detached parse result.
 const validatedOwnedEncodingRows = new WeakSet<TerminalReplicaRow>();
+// Only these exact deeply immutable constants may reuse strict cell validation.
+// Ownership alone never qualifies arbitrary cells, including frozen lookalikes.
+const CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
+let trustedBlankCellsValidated = false;
+function validateTrustedBlankCells(): void {
+  if (trustedBlankCellsValidated) return;
+  CompactCellSliceSchema.parse([TERMINAL_REPLICA_EMPTY_CELL, TERMINAL_REPLICA_SPACE_CELL]);
+  trustedBlankCellsValidated = true;
+}
+const CompactOwnedCellSchema = z.union([
+  z.custom<TerminalReplicaCell>((cell) => {
+    if (cell !== TERMINAL_REPLICA_EMPTY_CELL && cell !== TERMINAL_REPLICA_SPACE_CELL) return false;
+    validateTrustedBlankCells();
+    return true;
+  }),
+  TerminalReplicaCellSchemaZ,
+]);
+const CompactOwnedCellSliceSchema = CompactOwnedCellSchema.array();
+const CompactOwnedEncodingRowSchema = TerminalReplicaRowSchemaZ.extend({
+  cells: CompactOwnedCellSliceSchema,
+});
+
 const CompactEncodingRowSchema = z.union([
   z.custom<TerminalReplicaRow>((input) => {
     if (!isOwnedTerminalReplicaRow(input)) return false;
     if (validatedOwnedEncodingRows.has(input)) return true;
-    if (!TerminalReplicaRowSchemaZ.safeParse(input).success) return false;
+    const schema = prefersTrustedCellValidation(input.cells)
+      ? CompactOwnedEncodingRowSchema
+      : TerminalReplicaRowSchemaZ;
+    if (!schema.safeParse(input).success) return false;
     validatedOwnedEncodingRows.add(input);
     return true;
   }),
@@ -307,9 +332,6 @@ const CompactSeedMetadataSchema = /* @__PURE__ */ TerminalReplicaSnapshotSchemaZ
   placements: true,
 });
 const CompactRowHeaderSchema = /* @__PURE__ */ TerminalReplicaRowSchemaZ.omit({ cells: true });
-const CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
-let trustedBlankCellsValidated = false;
-
 function isValidatedTrustedBlankSlice(cells: readonly TerminalReplicaCell[]): boolean {
   if (
     !cells.every(
@@ -317,11 +339,30 @@ function isValidatedTrustedBlankSlice(cells: readonly TerminalReplicaCell[]): bo
     )
   )
     return false;
-  if (!trustedBlankCellsValidated) {
-    CompactCellSliceSchema.parse([TERMINAL_REPLICA_EMPTY_CELL, TERMINAL_REPLICA_SPACE_CELL]);
-    trustedBlankCellsValidated = true;
+  validateTrustedBlankCells();
+  return true;
+}
+
+// This is a conservative optimization choice, never a validation boundary.
+// Low-density owned rows keep the ordinary parser rather than paying a failed
+// union branch for each nontrusted cell. Foreign inputs never enter this scan.
+function prefersTrustedCellValidation(cells: readonly TerminalReplicaCell[]): boolean {
+  let nontrusted = 0;
+  const limit = Math.floor(cells.length / 4);
+  for (const cell of cells) {
+    if (cell !== TERMINAL_REPLICA_EMPTY_CELL && cell !== TERMINAL_REPLICA_SPACE_CELL) {
+      if (++nontrusted > limit) return false;
+    }
   }
   return true;
+}
+
+function validateOwnedCellSlice(cells: readonly TerminalReplicaCell[]): TerminalReplicaCell[] {
+  if (!prefersTrustedCellValidation(cells)) return CompactCellSliceSchema.parse(cells);
+  const parsed = CompactOwnedCellSliceSchema.safeParse(cells);
+  // Preserve the original strict parser's issues on invalid owned input.
+  // External cells never enter this path, so their getter/copy semantics stay unchanged.
+  return parsed.success ? parsed.data : CompactCellSliceSchema.parse(cells);
 }
 
 export function terminalSemanticUpdateNeedsCooperativeEncoding(
@@ -428,7 +469,9 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
         const validated =
           validatedRow || (owned && isValidatedTrustedBlankSlice(slice))
             ? slice
-            : CompactCellSliceSchema.parse(slice);
+            : owned
+              ? validateOwnedCellSlice(slice)
+              : CompactCellSliceSchema.parse(slice);
         for (const cell of validated) {
           const encoded = compactCell(cell);
           if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;

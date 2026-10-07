@@ -74,7 +74,7 @@ it("keeps foreign frozen lookalikes on the full strict path", async () => {
     calls.mockRestore();
   }
 });
-it("keeps mixed slices and owned extra fields on original strict validation", async () => {
+it("keeps nontrusted mixed cells and owned extra fields strictly validated", async () => {
   const a = blanks();
   const styled = { ...EMPTY, grapheme: "X", foreground: { kind: "indexed" as const, index: 17 } };
   a.grid[0] = freezeOwnedTerminalReplicaRow({
@@ -84,7 +84,7 @@ it("keeps mixed slices and owned extra fields on original strict validation", as
   const calls = vi.spyOn(TerminalReplicaCellSchemaZ._zod, "run");
   try {
     await encode(a);
-    expect(calls).toHaveBeenCalledTimes(128);
+    expect(calls).toHaveBeenCalledTimes(1);
   } finally {
     calls.mockRestore();
   }
