@@ -503,6 +503,7 @@ async function measureStartup() {
 }
 
 async function collectInputTrace(sampleCount = options.inputSamples) {
+  mkdirSync(reference.runtimeDir, { recursive: true });
   const tracePath = join(
     reference.runtimeDir,
     options.preflightOnly ? "diagnostic-input-trace.jsonl" : "input-trace.jsonl",
