@@ -51,6 +51,9 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
       "inspect-error",
       "output-error",
       "large-output",
+      "content-success",
+      "content-incomplete",
+      "content-copy-error",
     ]) {
       const root = join(parent, mode),
         output = join(root, "out"),
@@ -71,6 +74,7 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
         rendererManifest,
         output,
         source: { commit: "c", tree: "t", dirty: false },
+        outputContentRequired: mode.startsWith("content-"),
         prepare: async () => {
           order.push("build-tui");
           assert.equal(process.env.TMUX_IDE_HOSTILE, undefined);
@@ -110,6 +114,12 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
           };
         },
         run: async () => {
+          if (mode.startsWith("content-"))
+            await writeFile(
+              join(fleetRoot, "reference-tui/output-content.json"),
+              JSON.stringify({ status: mode === "content-incomplete" ? "failed" : "complete" }),
+            );
+          if (mode === "content-copy-error") await mkdir(join(output, "output-content.json"));
           await writeFile(join(fleetRoot, "reference-tui/input-trace.jsonl"), "trace\n");
           await writeFile(
             join(fleetRoot, "reference-tui/input-trace.jsonl.controller-attempts.json"),
@@ -137,16 +147,24 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
             reportPath,
             inputAdmission: { complete: mode !== "incomplete" },
             controllerMapping: { status: "matched" },
+            outputContent: {
+              status: mode === "content-incomplete" ? "failed" : "complete",
+              observed: 36,
+            },
           };
         },
         retire: async (_fleet, _pid, { retainRoot }) => {
           order.push("retire");
           if (mode === "retire-error") throw Error("retire failed");
-          assert.equal(retainRoot, mode === "copy-error" || mode === "inspect-error");
+          assert.equal(
+            retainRoot,
+            mode === "copy-error" || mode === "inspect-error" || mode === "content-copy-error",
+          );
           if (!retainRoot) await rm(fleetRoot, { recursive: true, force: true });
         },
       });
-      if (mode === "success" || mode === "large-output") await operation;
+      if (mode === "success" || mode === "large-output" || mode === "content-success")
+        await operation;
       else
         await assert.rejects(operation, (error) => {
           if (mode === "receipt-error") {
@@ -191,7 +209,9 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
       const receipt = JSON.parse(await readFile(join(output, "owner-result.json"), "utf8"));
       assert.equal(
         receipt.status,
-        mode === "success" || mode === "large-output" ? "captured" : "failed",
+        mode === "success" || mode === "large-output" || mode === "content-success"
+          ? "captured"
+          : "failed",
       );
       assert.equal(receipt.daemonOutput.length, 2);
       if (mode !== "output-error") {
@@ -199,6 +219,17 @@ test("owned lifecycle builds TUI before daemon, preserves final traces, and clea
         assert.ok(bytes.toString().endsWith("final daemon failure"));
         assert.ok(bytes.length <= 2 * 1024 * 1024);
         assert.equal(receipt.daemonOutput[1].truncated, mode === "large-output");
+      }
+      if (mode.startsWith("content-")) {
+        assert.equal(receipt.retainedSourceRoot, mode === "content-copy-error" ? fleetRoot : null);
+        if (mode !== "content-copy-error")
+          assert(receipt.retained.some((a) => a.name === "output-content.json"));
+        if (mode === "content-success")
+          assert.equal(
+            JSON.parse(await readFile(reportPath, "utf8")).measurements.inputToPaint.outputContent
+              .path,
+            join(output, "output-content.json"),
+          );
       }
       if (mode === "success")
         assert.equal(

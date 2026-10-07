@@ -893,3 +893,18 @@ scheduling effects, not pure network latency. Missing/repeated operations or
 unsupported clock/connection identities yield `incomplete`; even admitted edges
 leave six-boundary causality, terminal-output completion and native parity unmeasured.
 The existing product-first-input causal-cell gate is unchanged.
+
+Owned capture may add `--capture-output-content` with exactly 36 inputs for a
+separate instrumented correctness variant. It snapshots the independent native
+producer baseline (including startup text, cursor, modes and dimensions), then
+checks each declared x/y prefix against the full native text grid/cursor and the
+entire visible host pane text crop after its mapped paint, before offering the
+next input. Only supported non-wrapping, visible, single-cell text and stable
+identity/geometry/modes qualify; no screen clearing or substring acceptance is
+used. The existing private testdrive capture and layout projector are reused;
+the latter remains a product-mapping dependency. Observations have a shared
+6-second command deadline per checkpoint, 4 MiB command buffers and a 32 MiB
+retained sidecar cap. This changes the offer schedule and adds observer work;
+the original local input clock/budget is unchanged, while terminal-output timing,
+styles, physical display and native parity remain unmeasured. All 36 observation
+outcomes and failed evidence are retained separately from valid input mappings.

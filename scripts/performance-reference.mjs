@@ -63,6 +63,7 @@ if (options.ownedCapture) {
     root,
     output: `${reportPath}.capture`,
     source,
+    outputContentRequired: options.captureOutputContent,
     run: async (env, metadata) => {
       const original = { ...process.env };
       for (const key of Object.keys(process.env)) delete process.env[key];
@@ -74,6 +75,7 @@ if (options.ownedCapture) {
           reportPath,
           inputAdmission: measurements?.inputToPaint?.admission,
           controllerMapping: measurements?.inputToPaint?.controllerMapping,
+          outputContent: measurements?.inputToPaint?.outputContent,
         };
       } finally {
         if (referenceProjectDir) rmSync(referenceProjectDir, { recursive: true, force: true });
@@ -150,6 +152,9 @@ async function executeReference() {
         startup,
         inputToPaint: {
           ...measureInputToPaint(inputTrace),
+          ...(options.captureOutputContent
+            ? { outputContent: collected.outputContentArtifact }
+            : {}),
           controllerMapping: collected?.controllerMappingArtifact ?? {
             status: "not-collected",
             scope: "Imported trace: captured-input accounting only",
@@ -220,7 +225,15 @@ async function executeReference() {
       ...(options.ownedCapture
         ? {
             timingQualification: false,
-            purpose: "owned-input-two-stream-capture",
+            purpose: options.captureOutputContent
+              ? "instrumented-per-input-output-content-correctness"
+              : "owned-input-two-stream-capture",
+            ...(options.captureOutputContent
+              ? {
+                  observationSchedule:
+                    "Native/host viewport observations after every mapped paint before next input; original local clock budget unchanged, uninstrumented schedule not claimed",
+                }
+              : {}),
             ownedCapture: ownedMetadata,
           }
         : {}),
@@ -515,8 +528,11 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
     ordinal,
     payload: ordinal % 2 === 0 ? "x" : "y",
     status: "not-offered",
+    ...(options.captureOutputContent ? { outputObservation: "not-observed" } : {}),
   }));
   let finalVerification = { status: "pending" };
+  let outputWitness, outputContentArtifact, observeOutputAttempt, collectionError;
+  const collectionCleanupErrors = [];
   const saveAttempts = () =>
     writeFileSync(
       attemptsPath,
@@ -575,6 +591,31 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
       2_000,
     );
     await delay(50);
+    if (options.captureOutputContent) {
+      const { createReferenceOutputWitness, observeReferenceOutputAttempt } =
+        await import("./lib/performance-reference-output-content.mjs");
+      observeOutputAttempt = observeReferenceOutputAttempt;
+      const status = JSON.parse(
+        execFileSync(process.execPath, ["scripts/tui-testdrive.mjs", "status", "--json"], {
+          cwd: root,
+          env: process.env,
+          encoding: "utf8",
+          timeout: 2000,
+          maxBuffer: 4 * 1024 * 1024,
+        }),
+      );
+      if (status.running !== true || status.target !== target)
+        throw new Error("Owned output witness requires exact running target");
+      outputWitness = await createReferenceOutputWitness({
+        root,
+        reference,
+        target,
+        expectedHost: status.hostIdentity,
+        generation: ownedMetadata.daemon.instanceId,
+        records,
+        payloads: attempts.map((a) => a.payload),
+      });
+    }
     for (let ordinal = 0; ordinal < sampleCount; ordinal += 1) {
       const attempt = attempts[ordinal];
       attempt.baseline = records().length;
@@ -606,19 +647,34 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
         );
       Object.assign(attempt, match, { status: "matched" });
       saveAttempts();
+      if (outputWitness) observeOutputAttempt(outputWitness, attempt, match, saveAttempts);
     }
+    if (outputWitness) outputContentArtifact = outputWitness.finish();
   } catch (error) {
+    collectionError = error;
     const pending = attempts.find((a) => a.status === "offered");
     if (pending) Object.assign(pending, { status: "failed", error: String(error.message) });
     finalVerification = { status: "failed", error: String(error.message) };
-    throw error;
   } finally {
     try {
       saveAttempts();
-    } finally {
+    } catch (error) {
+      collectionCleanupErrors.push(error);
+    }
+    try {
       run("node", ["scripts/tui-testdrive.mjs", "stop"]);
+    } catch (error) {
+      collectionCleanupErrors.push(error);
     }
   }
+  if (collectionCleanupErrors.length)
+    throw new AggregateError(
+      [...(collectionError ? [collectionError] : []), ...collectionCleanupErrors],
+      "Input collection persistence/stop failed",
+      { cause: collectionError ?? collectionCleanupErrors[0] },
+    );
+  if (collectionError) throw collectionError;
+
   try {
     const finalRecords = completedReferenceRecords(readFileSync(tracePath), true);
     for (const attempt of attempts) {
@@ -642,6 +698,14 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
   }
   return {
     path: tracePath,
+    ...(outputContentArtifact
+      ? {
+          outputContentArtifact: {
+            ...outputContentArtifact,
+            sha256: sourceArtifactDigest(outputContentArtifact.path),
+          },
+        }
+      : {}),
     controllerMappingArtifact: {
       path: attemptsPath,
       sha256: sourceArtifactDigest(attemptsPath),
@@ -857,6 +921,7 @@ function parseOptions(args) {
   const parsed = {
     report: "artifacts/performance-reference.json",
     ownedCapture: false,
+    captureOutputContent: false,
     captureRendererManifest: null,
     startupSamples: 6,
     memorySamples: 24,
@@ -875,6 +940,7 @@ function parseOptions(args) {
     else if (arg === "--memory-samples") parsed.memorySamples = Number(args[++index]);
     else if (arg === "--input-samples") parsed.inputSamples = Number(args[++index]);
     else if (arg === "--input-trace") parsed.inputTrace = args[++index];
+    else if (arg === "--capture-output-content") parsed.captureOutputContent = true;
     else if (arg === "--owned-daemon-capture") parsed.ownedCapture = true;
     else if (arg === "--capture-renderer-manifest") parsed.captureRendererManifest = args[++index];
     else if (arg === "--preflight-only") parsed.preflightOnly = true;
@@ -885,6 +951,10 @@ function parseOptions(args) {
       parsed.startupDiagnosticRoot = resolve(args[++index]);
     else throw new Error(`Unknown option ${arg}`);
   }
+  if (parsed.captureOutputContent && (!parsed.ownedCapture || parsed.inputSamples !== 36))
+    throw new Error(
+      "Output-content correctness variant requires owned capture and exactly 36 inputs",
+    );
   if (!parsed.ownedCapture && parsed.captureRendererManifest)
     throw new Error("Renderer manifest requires owned capture");
   if (parsed.ownedCapture) {

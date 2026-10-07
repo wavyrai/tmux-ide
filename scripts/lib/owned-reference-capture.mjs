@@ -117,6 +117,7 @@ export async function withOwnedReferenceCapture({
   output,
   source,
   rendererManifest,
+  outputContentRequired = false,
   environment = process.env,
   prepare = prepareOwnedReferenceArtifact,
   inspectNative = nativeIdentity,
@@ -194,6 +195,11 @@ export async function withOwnedReferenceCapture({
       result?.controllerMapping?.status !== "matched"
     )
       throw new Error("TUI trace/controller admission incomplete");
+    if (
+      outputContentRequired &&
+      (result?.outputContent?.status !== "complete" || result.outputContent.observed !== 36)
+    )
+      throw new Error("Per-input output content witness incomplete");
   } catch (error) {
     errors.push(error);
   } finally {
@@ -216,7 +222,11 @@ export async function withOwnedReferenceCapture({
       }
     }
     if (fleet) {
-      for (const name of ["input-trace.jsonl", "input-trace.jsonl.controller-attempts.json"]) {
+      for (const name of [
+        "input-trace.jsonl",
+        "input-trace.jsonl.controller-attempts.json",
+        ...(outputContentRequired ? ["output-content.json"] : []),
+      ]) {
         const path = join(fleet.root, "reference-tui", name),
           destination = join(output, name);
         try {
@@ -239,6 +249,7 @@ export async function withOwnedReferenceCapture({
           for (const [field, name] of [
             ["sourceArtifact", "input-trace.jsonl"],
             ["controllerMapping", "input-trace.jsonl.controller-attempts.json"],
+            ...(outputContentRequired ? [["outputContent", "output-content.json"]] : []),
           ]) {
             const artifact = retained.find((item) => item.name === name);
             if (artifact)
