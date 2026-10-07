@@ -709,3 +709,30 @@ the wrapper does not infer authority to kill PIDs from a receipt. Receipt files
 are copied only from the fixture's owned `/tmp` namespace. This local lane does
 not establish WAN behavior, physical terminal paint or Linux SSH support, and
 its addition alone does not make a CI status mandatory.
+
+### Production viewer correctness
+
+The bundled-native (`TMUX_IDE_ORACLE_EXPECT_NATIVE=1`) boundary lane includes a
+separate one-pane production-viewer test. Two real WebSocket consumers use the
+public OpenTUI runtime port and terminal fast lane against an isolated native
+owner. It checks input while the observer is hidden, reveal, observer replacement,
+independent native text/geometry checkpoints, and cleanup. The stock-compatibility
+lane does not select this test; a skipped test is not counted as qualification.
+
+For a focused invocation from `packages/daemon`:
+
+```sh
+TMUX_IDE_PRODUCTION_VIEWER_CORRECTNESS=1 \
+TMUX_IDE_BOUNDARY_TEST_BINARY=/absolute/path/to/bundled/tmux \
+pnpm exec vitest run --config vitest.live.config.ts \
+  src/terminal/session-runtime/terminal-runtime-production-viewer-live.test.ts
+```
+
+This is a controlled issued route, not full HTTP discovery or inventory admission.
+Observer visibility uses the supported pane-stream client method; the public
+runtime port does not expose a visibility method. The oracle checks text and
+geometry, not rendered styles/cursor, performance, or resource limits. The original
+resource soak remains separate. The fixture has a 45-second test timeout and
+bounded cleanup operations; the boundary script uses its existing synchronous
+child execution and does not add the diagnostic runner's independent 90-second
+process-group watchdog. Reports include a separate production-viewer receipt.

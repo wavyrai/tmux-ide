@@ -53,6 +53,14 @@ for (const [config, test] of [
   ["vitest.live.config.ts", "src/terminal/mirror/native-physical-cell-oracle-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/mirror/canonical-resize-publication-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/session-runtime/terminal-hidden-viewer-live.test.ts"],
+  ...(expectedNative === "1"
+    ? [
+        [
+          "vitest.live.config.ts",
+          "src/terminal/session-runtime/terminal-runtime-production-viewer-live.test.ts",
+        ],
+      ]
+    : []),
   ["vitest.live.config.ts", "src/tui/mirror/runtime/terminal-input-ordering-live.test.ts"],
   ["vitest.live.config.ts", "src/tui/mirror/runtime/terminal-native-input-death-live.test.ts"],
   [
@@ -79,7 +87,16 @@ for (const [config, test] of [
     ],
     {
       cwd,
-      env: { ...process.env, TMUX_IDE_NATIVE_JOURNAL_TEST_BINARY: binary },
+      env: {
+        ...process.env,
+        TMUX_IDE_NATIVE_JOURNAL_TEST_BINARY: binary,
+        TMUX_IDE_PRODUCTION_VIEWER_CORRECTNESS: test.endsWith(
+          "terminal-runtime-production-viewer-live.test.ts",
+        )
+          ? "1"
+          : "0",
+        TMUX_IDE_PRODUCTION_VIEWER_RECEIPT: `${reportPath}.production-viewer.json`,
+      },
       stdio: "inherit",
     },
   );
