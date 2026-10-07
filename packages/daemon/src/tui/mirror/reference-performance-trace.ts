@@ -241,13 +241,13 @@ export function createReferenceTraceWriter(
       firstDroppedRecord ??= droppedRecordKind(value);
       return;
     }
-    const line = `${JSON.stringify(value)}\n`;
-    const bytes = Buffer.byteLength(line);
-    if (bytes > MAX_TRACE_RECORD_BYTES) {
-      oversizedRecords += 1;
-      return;
-    }
     try {
+      const line = `${JSON.stringify(value)}\n`;
+      const bytes = Buffer.byteLength(line);
+      if (bytes > MAX_TRACE_RECORD_BYTES) {
+        oversizedRecords += 1;
+        return;
+      }
       if (!saturated && pendingCount() === 0) {
         writeLine(line);
         return;
@@ -322,8 +322,14 @@ export function createReferenceTraceWriter(
 function droppedRecordKind(
   value: Readonly<Record<string, unknown>>,
 ): ReferenceTraceDroppedRecordKind {
-  const field = (key: "type" | "stage" | "operation") =>
-    typeof value[key] === "string" ? value[key].slice(0, 64) : null;
+  const field = (key: "type" | "stage" | "operation") => {
+    try {
+      const result = value[key];
+      return typeof result === "string" ? result.slice(0, 64) : null;
+    } catch {
+      return null;
+    }
+  };
   return Object.freeze({
     type: field("type"),
     stage: field("stage"),

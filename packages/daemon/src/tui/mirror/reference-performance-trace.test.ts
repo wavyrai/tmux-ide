@@ -8,6 +8,75 @@ import {
 import { emitTuiTerminalFrameFenceFailOpen } from "./performance-events.ts";
 
 describe("reference performance trace", () => {
+  it.each(
+    ["cycle", "bigint", "toJSON", "getter"].flatMap((kind) =>
+      [false, true].map((saturated) => ({ kind, saturated })),
+    ),
+  )(
+    "fails closed on $kind construction failure, saturated=$saturated",
+    async ({ kind, saturated }) => {
+      class TestWritable extends EventEmitter {
+        writableLength = 0;
+        destroyed = false;
+        readonly writes: string[] = [];
+        write(line: string): boolean {
+          this.writes.push(line);
+          return !saturated;
+        }
+        end(_line: string, callback: () => void): void {
+          callback();
+        }
+        destroy(): void {
+          this.destroyed = true;
+        }
+      }
+      const stream = new TestWritable();
+      const writer = createReferenceTraceWriter(stream);
+      writer.append({ type: "first" });
+      if (saturated) {
+        writer.append({ type: "queued" });
+        writer.appendCritical({ type: "queued-critical" });
+      }
+      const value: Record<string, unknown> = { type: "construction-failure" };
+      if (kind === "cycle") value.self = value;
+      if (kind === "bigint") value.value = 1n;
+      if (kind === "toJSON")
+        value.toJSON = () => {
+          throw new Error("toJSON failed");
+        };
+      if (kind === "getter")
+        Object.defineProperty(value, "type", {
+          enumerable: true,
+          get() {
+            throw new Error("type getter failed");
+          },
+        });
+      expect(() => writer.append(value)).not.toThrow();
+      expect(writer.snapshot()).toMatchObject({
+        failed: true,
+        acceptedRecords: 1,
+        droppedRecords: saturated ? 3 : 1,
+        firstDroppedRecord: {
+          type: kind === "getter" ? null : "construction-failure",
+          stage: null,
+          operation: null,
+        },
+        pendingRecords: 0,
+        pendingCriticalRecords: 0,
+        pendingBytes: 0,
+        pendingStorageSlots: 0,
+      });
+      expect(() => writer.appendCritical(value)).not.toThrow();
+      stream.emit("drain");
+      const report = await writer.close({ pendingInputs: 0, droppedInputs: 0 });
+      expect(report).toMatchObject({ failed: true, droppedRecords: saturated ? 4 : 2 });
+      expect(stream.writes).toHaveLength(1);
+      expect(stream.destroyed).toBe(true);
+      expect(stream.listenerCount("error")).toBe(0);
+      expect(stream.listenerCount("drain")).toBe(0);
+    },
+  );
+
   it("retains content-free terminal decode diagnostics", () => {
     const records: Readonly<Record<string, unknown>>[] = [];
     const sink = createReferencePerformanceTraceSink({
