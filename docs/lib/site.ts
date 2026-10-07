@@ -5,9 +5,9 @@ const configuredUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
 export const SITE_URL = (configuredUrl || "https://tmux-ide.com").replace(/\/+$/u, "");
 export const SITE_NAME = "tmux-ide";
 export const SITE_TAGLINE = "The open-source workspace for coding agents.";
-export const SITE_TITLE = "tmux-ide — the open-source workspace for coding agents";
+export const SITE_TITLE = "tmux-ide: open-source tmux for coding agents";
 export const SITE_DESCRIPTION =
-  "Run Claude Code, Codex and other coding agents in the tmux sessions you already use. See which agent is working or needs you, and jump to its pane.";
+  "tmux for coding agents. Run Claude Code, Codex and other agents in your tmux sessions, see live agent status, and jump to the pane that needs you.";
 export const SITE_IMAGE = "/og-image.png";
 export const SITE_REPOSITORY = "https://github.com/wavyrai/tmux-ide";
 export const SOFTWARE_DOWNLOAD_URL = "https://www.npmjs.com/package/tmux-ide";
