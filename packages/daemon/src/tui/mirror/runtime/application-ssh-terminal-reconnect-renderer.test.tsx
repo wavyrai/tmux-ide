@@ -2,8 +2,12 @@
 /** Opt-in local real-SSH terminal/renderer composition; not remote installation or physical paint. */
 import { expect, it } from "bun:test";
 import { CliRenderEvents } from "@opentui/core";
+import { MouseButtons } from "@opentui/core/testing";
+import { ApplicationTerminalWorkspace } from "./application-terminal-workspace.tsx";
+import { createApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
 import {
   literalStyledFrame,
+  cropWorkspaceCompletedFrame,
   styledBytes,
   readCompletedFrame,
   nativeVisualFrame,
@@ -11,7 +15,7 @@ import {
   type CompletedFrame,
 } from "../testing/styled-frame-oracle.ts";
 import { readPhysicalFrame } from "../../../terminal/mirror/__tests__/native-physical-cell-oracle.ts";
-import { createSignal } from "solid-js";
+import { createSignal, createMemo, Show } from "solid-js";
 import { serve } from "@hono/node-server";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -176,6 +180,17 @@ it.skipIf(!enabled)(
         producer,
       );
       const [serverPid, serverStart, , nativePane, producerPid] = identity.split("|");
+      const ownedNativePids = [serverPid, producerPid];
+      let second:
+        | {
+            pane: string;
+            identity: string;
+            input: string;
+            control: string;
+            pid: number;
+            birth: string | null;
+          }
+        | undefined;
       // Install cleanup before any asynchronous kernel lookup or assertion.
       cleanup.push(async () => {
         if (!/^\d+$/.test(serverPid ?? "") || !/^\d+$/.test(serverStart ?? ""))
@@ -186,7 +201,7 @@ it.skipIf(!enabled)(
         ).toBe("");
         await wait(
           () => {
-            return [serverPid, producerPid].every((pid) => {
+            return ownedNativePids.every((pid) => {
               try {
                 process.kill(Number(pid), 0);
                 return false;
@@ -198,7 +213,11 @@ it.skipIf(!enabled)(
           "native process exit",
           3_000,
         );
-        report.nativeCleanup = { serverAbsent: true, producerAbsent: true };
+        report.nativeCleanup = {
+          serverAbsent: true,
+          producerAbsent: true,
+          ownedPids: ownedNativePids.map((pid) => ({ pid, absent: true })),
+        };
       });
       if (styledNative) {
         native("set-option", "-t", "ssh-view", "status", "off");
@@ -218,6 +237,51 @@ it.skipIf(!enabled)(
         );
       }
       native("set-option", "-p", "-t", nativePane!, "@tmux_ide_pane_id", paneId);
+      if (styledNative) {
+        const secondControl = join(root, "paint-second"),
+          secondInput = join(root, "input-second"),
+          secondProducer = join(root, "producer-second.cjs");
+        writeFileSync(secondControl, "SECOND_WINDOW");
+        writeFileSync(secondInput, "");
+        writeFileSync(
+          secondProducer,
+          readFileSync(producer, "utf8")
+            .replace(JSON.stringify(control), JSON.stringify(secondControl))
+            .replace(JSON.stringify(input), JSON.stringify(secondInput)),
+        );
+        const secondIdentity = native(
+          "new-window",
+          "-d",
+          "-P",
+          "-F",
+          identityFormat,
+          "-t",
+          "ssh-view",
+          "-n",
+          "second",
+          node,
+          secondProducer,
+        );
+        const parts = secondIdentity.split("|");
+        ownedNativePids.push(parts[4]!);
+        expect(parts[0]).toBe(serverPid);
+        expect(parts[1]).toBe(serverStart);
+        expect(parts[3]).toMatch(/^%\d+$/);
+        expect(parts[4]).toMatch(/^\d+$/);
+        second = {
+          pane: parts[3]!,
+          identity: secondIdentity,
+          input: secondInput,
+          control: secondControl,
+          pid: Number(parts[4]),
+          birth: await kernel.identify(Number(parts[4])),
+        };
+        expect(second.birth).not.toBeNull();
+        report.secondCreation = secondIdentity;
+        native("set-option", "-p", "-t", second.pane, "@tmux_ide_pane_id", "pane.ssh-second");
+        native("resize-window", "-t", second.pane, "-x", "40", "-y", "9");
+      }
+
       const serverWitness = await kernel.identify(Number(serverPid));
       const producerWitness = await kernel.identify(Number(producerPid));
       expect(serverWitness).not.toBeNull();
@@ -372,6 +436,18 @@ it.skipIf(!enabled)(
         host.getSnapshot(),
       );
       const [version, setVersion] = createSignal(0);
+      const [workspaceLayout, setWorkspaceLayout] = createSignal(presentation.getWindowSnapshot());
+      const [focusedPane, setFocusedPane] = createSignal<string | null>(paneId);
+      let interaction:
+        | ReturnType<typeof createApplicationTerminalInteractionController>
+        | undefined;
+      cleanup.push(
+        presentation.subscribeWindows((value) => {
+          interaction?.adoptLayout(value);
+          setWorkspaceLayout(value);
+        }),
+      );
+      cleanup.push(() => interaction?.cancelPendingInput());
       let stopVersion = () => {};
       let subscribedAdapter: unknown;
       cleanup.push(
@@ -383,6 +459,7 @@ it.skipIf(!enabled)(
             daemonGeneration: value.daemonGeneration,
           });
           setSnapshot(value);
+          interaction?.adoptGeneration(value);
           if (value.adapter !== subscribedAdapter) {
             stopVersion();
             subscribedAdapter = value.adapter;
@@ -417,27 +494,77 @@ it.skipIf(!enabled)(
           "#{pane_width}|#{pane_height}|#{window_width}|#{window_height}|#{window-size}|#{status}|#{pane-border-status}",
         );
       }
-      const palette = createTerminalPaletteProjection(
-        createSemanticThemeSnapshot({ mode: "dark" }),
-      );
+      const theme = createSemanticThemeSnapshot({ mode: "dark" });
+      const palette = {
+        ...createTerminalPaletteProjection(theme),
+        foreground: 0xffffff,
+        background: 0,
+      };
+      if (styledNative) {
+        interaction = createApplicationTerminalInteractionController({
+          generation: snapshot,
+          layout: workspaceLayout,
+          focusedPane,
+          rendererFocused: () => true,
+          setFocusedPane,
+          diagnosticsEnabled: false,
+          diagnose: () => {},
+        });
+        interaction.adoptGeneration(snapshot());
+        interaction.adoptLayout(workspaceLayout());
+      }
+      let selection: Promise<void> | undefined;
+
       const [surfaceCols, setSurfaceCols] = createSignal<24 | 40>(40);
+      // Same generation ownership as ApplicationShellView: pane subscriptions are stable
+      // within a workspace and replaced only when its adapter/renderer epoch changes.
+      const rendererSource = createMemo(
+        () => ({ adapter: snapshot().adapter!, rendererEpoch: snapshot().rendererEpoch }),
+        undefined,
+        { equals: (a, b) => a?.adapter === b.adapter && a?.rendererEpoch === b.rendererEpoch },
+      );
       const setup = await renderForTest(
-        () => (
-          <pane_surface
-            width={surfaceCols()}
-            height={8}
-            mirror={snapshot().adapter!.renderSource}
-            paneId={paneId}
-            paneFocused={true}
-            contentVersion={version()}
-            defaultFg={0xffffff}
-            defaultBg={0}
-            terminalPalette={palette}
-            searchHl={palette.searchHighlight}
-            searchCur={palette.searchCurrent}
-          />
-        ),
-        { width: 40, height: 8, consoleMode: "disabled" },
+        () =>
+          styledNative ? (
+            <Show when={rendererSource()} keyed>
+              {(source) => (
+                <ApplicationTerminalWorkspace
+                  layout={workspaceLayout}
+                  adapter={source.adapter}
+                  rendererEpoch={source.rendererEpoch}
+                  width={surfaceCols()}
+                  height={9}
+                  topOffset={1}
+                  focusedPane={focusedPane()}
+                  rendererFocused={true}
+                  theme={theme}
+                  palette={palette}
+                  onSelectPane={(id) => interaction!.selectPane(id)}
+                  onSelectWindowLink={(target) => {
+                    selection = interaction!.selectWindowLink(target);
+                  }}
+                  onWindowPresented={(window, pane, name) =>
+                    interaction!.observeWindowPresentation(window, pane, name)
+                  }
+                />
+              )}
+            </Show>
+          ) : (
+            <pane_surface
+              width={surfaceCols()}
+              height={8}
+              mirror={snapshot().adapter!.renderSource}
+              paneId={paneId}
+              paneFocused={true}
+              contentVersion={version()}
+              defaultFg={0xffffff}
+              defaultBg={0}
+              terminalPalette={palette}
+              searchHl={palette.searchHighlight}
+              searchCur={palette.searchCurrent}
+            />
+          ),
+        { width: 40, height: styledNative ? 10 : 8, consoleMode: "disabled" },
       );
       cleanup.push(() => destroyTestRenderer(setup));
       const completed: CompletedFrame[] = [];
@@ -462,11 +589,17 @@ it.skipIf(!enabled)(
       report.completedFrames = completed;
       report.styledNative = styledNative;
 
-      const checkpoint = async (marker: string, cols: 24 | 40 = 40) => {
+      const contentFrame = (frame: CompletedFrame) =>
+        styledNative ? cropWorkspaceCompletedFrame(frame) : frame;
+      const checkpoint = async (
+        marker: string,
+        cols: 24 | 40 = 40,
+        target = { paneId, nativePane: nativePane!, identity },
+      ) => {
         await wait(
           () =>
             snapshot()
-              .adapter?.paneSelectionSnapshot(paneId)
+              .adapter?.paneSelectionSnapshot(target.paneId)
               ?.grid.some((row) =>
                 row.cells
                   .map((cell) => cell.grapheme)
@@ -477,10 +610,11 @@ it.skipIf(!enabled)(
         );
         if (styledNative) {
           await wait(
-            () => native("display-message", "-p", "-t", nativePane!, "#{pane_title}") === marker,
+            () =>
+              native("display-message", "-p", "-t", target.nativePane, "#{pane_title}") === marker,
             `native paint fence ${marker}`,
           );
-          const raw = native("capture-pane", "-p", "-R", "-S", "0", "-t", nativePane!);
+          const raw = native("capture-pane", "-p", "-R", "-S", "0", "-t", target.nativePane);
           trace.push({ type: "raw-native-before-comparison", marker, raw });
           compareVisual(
             nativeVisualFrame(
@@ -491,7 +625,7 @@ it.skipIf(!enabled)(
           const frameCount = completed.length;
           await setup.renderOnce();
           expect(completed.length).toBeGreaterThan(frameCount);
-          const actual = readCompletedFrame(completed.at(-1)!);
+          const actual = readCompletedFrame(contentFrame(completed.at(-1)!));
           compareVisual(actual, literalStyledFrame(marker, cols));
           for (const field of ["text", "width", "fg", "bg", "bold"] as const) {
             const wrong = structuredClone(actual),
@@ -520,18 +654,22 @@ it.skipIf(!enabled)(
             negativeControls: marker === "BEFORE_SSH" ? 7 : 8,
           });
         } else await setup.renderOnce();
-        const frame = frameLines(setup.captureCharFrame());
-        checkFrame(frame, setup.renderer.getCursorState(), marker);
+        const displayed = styledNative ? contentFrame(completed.at(-1)!) : null;
+        const frame = frameLines(displayed?.text ?? setup.captureCharFrame());
+        const displayedCursor = displayed?.cursor ?? setup.renderer.getCursorState();
+        checkFrame(frame, displayedCursor, marker);
         const corrupted = [...frame];
         corrupted[0] = "WRONG";
-        expect(() => checkFrame(corrupted, setup.renderer.getCursorState(), marker)).toThrow();
-        expect(native("capture-pane", "-p", "-t", nativePane!).split("\n")[0]).toBe(marker);
-        expect(native("display-message", "-p", "-t", nativePane!, identityFormat)).toBe(identity);
+        expect(() => checkFrame(corrupted, displayedCursor, marker)).toThrow();
+        expect(native("capture-pane", "-p", "-t", target.nativePane).split("\n")[0]).toBe(marker);
+        expect(native("display-message", "-p", "-t", target.nativePane, identityFormat)).toBe(
+          target.identity,
+        );
         const nativeGeometryCursor = native(
           "display-message",
           "-p",
           "-t",
-          nativePane!,
+          target.nativePane,
           "#{pane_width}|#{pane_height}|#{cursor_x}|#{cursor_y}",
         );
         expect(nativeGeometryCursor.split("|").slice(2)).toEqual(["4", "2"]);
@@ -541,7 +679,7 @@ it.skipIf(!enabled)(
           marker,
           frame,
           cursor: setup.renderer.getCursorState(),
-          canonical: snapshot().adapter!.paneCanonicalIdentity(paneId),
+          canonical: snapshot().adapter!.paneCanonicalIdentity(target.paneId),
         });
       };
       await checkpoint("BEFORE_SSH");
@@ -571,14 +709,17 @@ it.skipIf(!enabled)(
           expect(snapshot().adapter).toBe(retained.adapter);
           expect(snapshot().rendererEpoch).toBe(retained.rendererEpoch);
           expect(retained.client!.ownsRuntimeAuthority("geometry")).toBe(true);
-          setup.renderer.resize(cols, 8);
+          setup.renderer.resize(cols, 10);
           setSurfaceCols(cols);
           const marker = cols === 24 ? "RESIZE_NARROW" : "BEFORE_SSH";
           writeFileSync(control, marker);
           await checkpoint(marker, cols);
           if (previousFrame.cols !== cols)
             expect(() =>
-              compareVisual(readCompletedFrame(previousFrame), literalStyledFrame(marker, cols)),
+              compareVisual(
+                readCompletedFrame(contentFrame(previousFrame)),
+                literalStyledFrame(marker, cols),
+              ),
             ).toThrow();
           trace.push({
             type: "public-viewport",
@@ -595,6 +736,97 @@ it.skipIf(!enabled)(
             completed: { cols: completed.at(-1)!.cols, rows: completed.at(-1)!.rows },
           });
         }
+      }
+
+      if (styledNative) {
+        const retained = snapshot();
+        retained.authorityClient!.setPresence("foreground");
+        expect(await retained.authorityClient!.requestAuthority("input")).not.toBeNull();
+        for (const target of [
+          {
+            paneId: "pane.ssh-second",
+            nativePane: second!.pane,
+            identity: second!.identity,
+            marker: "SECOND_WINDOW",
+            input: second!.input,
+            token: "SECOND_INPUT",
+          },
+          {
+            paneId,
+            nativePane: nativePane!,
+            identity,
+            marker: "BEFORE_SSH",
+            input,
+            token: "FIRST_RETURN_INPUT",
+          },
+        ]) {
+          const windows = workspaceLayout();
+          const backing = windows.windows.find((w) =>
+            w.panes.some((p) => p.pane === target.paneId),
+          );
+          expect(backing).toBeDefined();
+          const link = windows.windowLinks?.links.find(
+            (l) => l.semanticWindowId === backing!.semanticWindowId,
+          );
+          expect(link).toBeDefined();
+          await setup.renderOnce();
+          const tab = setup.renderer.root.findDescendantById(`window-tab:${link!.linkId}`);
+          expect(tab).toBeDefined();
+          const oldFrame = contentFrame(completed.at(-1)!);
+          selection = undefined;
+          await setup.mockMouse.click(tab!.x + 2, tab!.y, MouseButtons.LEFT);
+          expect(selection).toBeDefined();
+          await selection;
+          await wait(
+            () =>
+              workspaceLayout().windowLinks?.activeLinkId === link!.linkId &&
+              workspaceLayout().current?.semanticWindowId === backing!.semanticWindowId &&
+              focusedPane() === target.paneId,
+            "public selection convergence",
+          );
+          expect(
+            native(
+              "display-message",
+              "-p",
+              "-t",
+              target.nativePane,
+              "#{window_active}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane-border-status}",
+            ),
+          ).toBe("1|1|40|8|top");
+          await checkpoint(target.marker, 40, target);
+          expect(() =>
+            compareVisual(readCompletedFrame(oldFrame), literalStyledFrame(target.marker)),
+          ).toThrow();
+          expect(snapshot().client).toBe(retained.client);
+          expect(snapshot().adapter).toBe(retained.adapter);
+          expect(snapshot().rendererEpoch).toBe(retained.rendererEpoch);
+          await interaction!.sendInput({ kind: "text", data: target.token });
+          await wait(
+            () => readFileSync(target.input, "utf8").includes(target.token),
+            "selected producer input",
+          );
+          trace.push({
+            type: "public-window-selection",
+            pane: target.paneId,
+            linkId: link!.linkId,
+            window: backing!.semanticWindowId,
+            identity: target.identity,
+            rendererEpoch: snapshot().rendererEpoch,
+          });
+        }
+        expect(readFileSync(second!.input, "utf8")).toBe("SECOND_INPUT");
+        expect(readFileSync(input, "utf8")).toBe("FIRST_RETURN_INPUT");
+        trace.push({
+          type: "selected-input-bytes",
+          first: readFileSync(input).toString("hex"),
+          second: readFileSync(second!.input).toString("hex"),
+        });
+        writeFileSync(input, ""); // Preserve the original later exact SSH input assertion.
+        expect(native("display-message", "-p", "-t", second!.pane, identityFormat)).toBe(
+          second!.identity,
+        );
+        expect(await kernel.identify(second!.pid)).toBe(second!.birth);
+        expect(await kernel.identify(Number(producerPid))).toBe(producerWitness);
       }
       const before = snapshot();
       const oldTunnel = tunnels.at(-1)!;
@@ -623,7 +855,10 @@ it.skipIf(!enabled)(
       );
       if (styledNative) {
         await setup.renderOnce();
-        compareVisual(readCompletedFrame(completed.at(-1)!), literalStyledFrame("BEFORE_SSH"));
+        compareVisual(
+          readCompletedFrame(contentFrame(completed.at(-1)!)),
+          literalStyledFrame("BEFORE_SSH"),
+        );
       }
       releaseReconnect!();
       reconnectGate = undefined;
@@ -656,6 +891,13 @@ it.skipIf(!enabled)(
         () => readFileSync(input).toString("hex") === Buffer.from("SSH_INPUT_42\r").toString("hex"),
         "exact recovered input",
       );
+      if (second) {
+        expect(native("display-message", "-p", "-t", second.pane, identityFormat)).toBe(
+          second.identity,
+        );
+        expect(await kernel.identify(second.pid)).toBe(second.birth);
+        expect(await kernel.identify(Number(producerPid))).toBe(producerWitness);
+      }
       report.result = {
         identity,
         oldTunnelPid: oldTunnel.pid,

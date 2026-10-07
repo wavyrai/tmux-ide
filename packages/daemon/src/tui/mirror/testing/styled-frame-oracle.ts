@@ -180,3 +180,30 @@ export function nativeVisualFrame(frame: {
     cursor: { x: frame.cursor[0]!, y: frame.cursor[1]!, visible: true },
   };
 }
+
+/** Declared workspace chrome: one tab row plus one title row, then eight native rows. */
+export function cropWorkspaceCompletedFrame(raw: CompletedFrame): CompletedFrame {
+  check((raw.cols === 24 || raw.cols === 40) && raw.rows === 10, "workspace geometry");
+  const size = raw.cols * raw.rows;
+  check(
+    raw.char.length === size &&
+      raw.attributes.length === size &&
+      raw.fg.length === size * 4 &&
+      raw.bg.length === size * 4,
+    "workspace buffer lengths",
+  );
+  const lines = raw.text.replace(/\n$/u, "").split("\n");
+  check(lines.length === 10, "workspace line count");
+  check(raw.cursor.y >= 3 && raw.cursor.y <= 10, "workspace cursor outside content");
+  const offset = 2 * raw.cols;
+  return {
+    cols: raw.cols,
+    rows: 8,
+    char: raw.char.slice(offset),
+    attributes: raw.attributes.slice(offset),
+    fg: raw.fg.slice(offset * 4),
+    bg: raw.bg.slice(offset * 4),
+    text: lines.slice(2).join("\n"),
+    cursor: { ...raw.cursor, y: raw.cursor.y - 2 },
+  };
+}
