@@ -2592,8 +2592,10 @@ try {
   let cliResolutionCleanup = { confirmed: cliResolutionExpected === null };
   if (cliResolutionExpected) {
     try {
-      if (cancellation.facts().uncertainCommand)
-        throw Error("Selected CLI runner retirement uncertain");
+      assert.ok(
+        !cancellation.facts().uncertainCommand,
+        new Error("Selected CLI runner retirement uncertain"),
+      );
       assert.equal(
         packedExecutableIdentity(cliResolutionExpected.cli).sha256,
         cliResolutionExpected.cliHash,
