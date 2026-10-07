@@ -496,6 +496,87 @@ export async function hashTerminalReplicaRowRunsCooperatively(
   return digest;
 }
 
+// Scalar colors: -1 default, -2 RGB negative zero, 0..255 indexed,
+// and 0x1000000 + value for other RGB values. No caller-owned color is adopted.
+const DECODED_DEFAULT_COLOR = Object.freeze({ kind: "default" } as const);
+function decodedScalarColor(value: number): TerminalReplicaColor {
+  if (value === -1) return DECODED_DEFAULT_COLOR;
+  if (value === -2) return Object.freeze({ kind: "rgb", value: -0 });
+  if (Number.isInteger(value) && value >= 0 && value <= 255)
+    return Object.freeze({ kind: "indexed", index: value });
+  if (Number.isInteger(value) && value >= 0x1000000 && value <= 0x1ffffff)
+    return Object.freeze({ kind: "rgb", value: value - 0x1000000 });
+  throw new TypeError("Invalid decoded scalar color");
+}
+
+/** Internal scalar construction only; no supplied graph, digest, or hash cache. */
+class DecodedTerminalReplicaRowBuilder {
+  readonly #cells: TerminalReplicaRow["cells"][number][] = [];
+  #finished = false;
+
+  appendRun(
+    count: number,
+    grapheme: string,
+    width: 0 | 1 | 2,
+    foreground: number,
+    background: number,
+    attributes: number,
+  ): void {
+    this.#assertOpen();
+    if (
+      !Number.isSafeInteger(count) ||
+      count < 1 ||
+      count > 16384 ||
+      typeof grapheme !== "string" ||
+      (width !== 0 && width !== 1 && width !== 2) ||
+      !Number.isInteger(attributes) ||
+      attributes < 0 ||
+      attributes > 255
+    )
+      throw new TypeError("Invalid decoded scalar run");
+    const cell = Object.freeze({
+      grapheme,
+      width,
+      foreground: decodedScalarColor(foreground),
+      background: decodedScalarColor(background),
+      attributes,
+    });
+    for (let index = 0; index < count; index += 1) this.#cells.push(cell);
+  }
+
+  finish(wrapped: boolean, cols: number | null): TerminalReplicaRow {
+    this.#assertOpen();
+    const cells = this.#cells;
+    // As in compact expansion, sum-width checks happen after every run parses.
+    if (cols !== null && cells.length !== cols) throw new TypeError("Compact row width mismatch");
+    if (cells.length < 1 || cells.length > 16384)
+      throw new TypeError("Compact row width is out of bounds");
+    for (let index = 0; index < cells.length; index += 1) {
+      if (cells[index]!.width === 2 && cells[index + 1]?.width !== 0)
+        throw new TypeError("Malformed compact wide cell");
+      if (cells[index]!.width === 0 && (index === 0 || cells[index - 1]?.width !== 2))
+        throw new TypeError("Malformed compact continuation cell");
+    }
+    if (typeof wrapped !== "boolean") throw new TypeError("Invalid decoded scalar wrapped");
+    this.#finished = true;
+    const row = Object.freeze({
+      cells: Object.freeze(cells),
+      wrapped,
+    }) as unknown as TerminalReplicaRow;
+    // Earn only deep immutability. Existing row hashing remains lazy and unchanged.
+    DEEPLY_FROZEN_ROWS.add(row);
+    return row;
+  }
+
+  #assertOpen(): void {
+    if (this.#finished) throw new Error("Decoded terminal row already finished");
+  }
+}
+
+export function createDecodedTerminalReplicaRowBuilder() {
+  return new DecodedTerminalReplicaRowBuilder();
+}
+
 /** Package-private verified-decoder seam; this module is not a package export. */
 export function primeTerminalReplicaRowHash(row: TerminalReplicaRow, digest: string): void {
   if (!/^[0-9a-f]{16}$/u.test(digest) || !isTerminalReplicaRowDeeplyFrozen(row))

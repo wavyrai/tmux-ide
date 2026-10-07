@@ -43,6 +43,7 @@ import {
 } from "./terminal-replica.ts";
 import { grantCompactReplicaCapability } from "./terminal-compact-capability.ts";
 import {
+  createDecodedTerminalReplicaRowBuilder,
   hashTerminalReplicaRowCooperatively,
   hashTerminalReplicaRowRunsCooperatively,
   isTerminalReplicaRowDeeplyFrozen,
@@ -943,6 +944,7 @@ function expandPatch(value: unknown, budget: CompactDecodeBudget): TerminalRepli
 }
 
 interface CompactDecodeBudget {
+  verifiedSyncRows?: boolean;
   rows: number;
   runs: number;
   cells: number;
@@ -1026,6 +1028,7 @@ function expandRow(
   }
   const runsBefore = budget.runs;
   const cellsBefore = budget.cells;
+  const builder = budget.verifiedSyncRows ? createDecodedTerminalReplicaRowBuilder() : null;
   const cells: TerminalReplicaCell[] = [];
   for (const valueRun of runs) {
     if (++budget.runs > COMPACT_MAX_RUNS)
@@ -1037,29 +1040,41 @@ function expandRow(
       throw new TypeError("Compact semantic expanded cell budget exceeded");
     const grapheme = compactString(run[1], "grapheme");
     const width = compactInteger(run[2], 0, 2, "cell width") as 0 | 1 | 2;
-    const cell = Object.freeze({
-      grapheme,
-      width,
-      foreground: expandColor(run[3]),
-      background: expandColor(run[4]),
-      attributes: compactInteger(run[5], 0, 0xff, "cell attributes"),
-    });
-    for (let index = 0; index < count; index += 1) cells.push(cell);
+    if (builder) {
+      const foreground = expandScalarColor(run[3]);
+      const background = expandScalarColor(run[4]);
+      const attributes = compactInteger(run[5], 0, 0xff, "cell attributes");
+      builder.appendRun(count, grapheme, width, foreground, background, attributes);
+    } else {
+      const cell = Object.freeze({
+        grapheme,
+        width,
+        foreground: expandColor(run[3]),
+        background: expandColor(run[4]),
+        attributes: compactInteger(run[5], 0, 0xff, "cell attributes"),
+      });
+      for (let index = 0; index < count; index += 1) cells.push(cell);
+    }
   }
-  if (cols !== null && cells.length !== cols) throw new TypeError("Compact row width mismatch");
-  if (cells.length < 1 || cells.length > COMPACT_MAX_DIMENSION)
-    throw new TypeError("Compact row width is out of bounds");
-  for (let index = 0; index < cells.length; index += 1) {
-    if (cells[index]!.width === 2 && cells[index + 1]?.width !== 0)
-      throw new TypeError("Malformed compact wide cell");
-    if (cells[index]!.width === 0 && (index === 0 || cells[index - 1]?.width !== 2))
-      throw new TypeError("Malformed compact continuation cell");
+  let row: TerminalReplicaRow;
+  if (builder) {
+    row = builder.finish(wrapped, cols);
+  } else {
+    if (cols !== null && cells.length !== cols) throw new TypeError("Compact row width mismatch");
+    if (cells.length < 1 || cells.length > COMPACT_MAX_DIMENSION)
+      throw new TypeError("Compact row width is out of bounds");
+    for (let index = 0; index < cells.length; index += 1) {
+      if (cells[index]!.width === 2 && cells[index + 1]?.width !== 0)
+        throw new TypeError("Malformed compact wide cell");
+      if (cells[index]!.width === 0 && (index === 0 || cells[index - 1]?.width !== 2))
+        throw new TypeError("Malformed compact continuation cell");
+    }
+    row = Object.freeze({
+      cells: Object.freeze(cells),
+      wrapped,
+    }) as unknown as TerminalReplicaRow;
   }
-  const row = Object.freeze({
-    cells: Object.freeze(cells),
-    wrapped,
-  }) as unknown as TerminalReplicaRow;
-  budget.allocatedCells += cells.length;
+  budget.allocatedCells += row.cells.length;
   if (cacheKey !== null)
     budget.rowCache?.set(
       cacheKey,
@@ -1070,6 +1085,17 @@ function expandRow(
       }),
     );
   return row;
+}
+
+function expandScalarColor(value: unknown): number {
+  if (value === 0) return -1;
+  const pair = compactArray(value, 2, "color");
+  if (pair[0] === 1) return compactInteger(pair[1], 0, 255, "indexed color");
+  if (pair[0] === 2) {
+    const value = compactInteger(pair[1], 0, 0xffffff, "rgb color");
+    return Object.is(value, -0) ? -2 : 0x1000000 + value;
+  }
+  throw new TypeError("Invalid compact color kind");
 }
 
 function expandColor(value: unknown): TerminalReplicaColor {
@@ -1386,7 +1412,8 @@ export function decodeVerifiedCompactSemanticTerminalUpdate(
   payload: TerminalSemanticDeliveryPayload;
   canonicalSnapshot: TerminalReplicaSnapshot | null;
 }> {
-  const decodeBudget = options?.onComplete ? compactDecodeBudget(bytes.byteLength) : undefined;
+  const decodeBudget = compactDecodeBudget(bytes.byteLength);
+  decodeBudget.verifiedSyncRows = true;
   const payload = decodeCompactSemanticTerminalUpdateInternal(bytes, decodeBudget);
   const snapshot =
     payload.frame === "seed"
