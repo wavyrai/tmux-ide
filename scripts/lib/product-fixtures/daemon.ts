@@ -10,6 +10,11 @@
  */
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import {
+  captureDaemonTraceStart,
+  stopOwnedDaemonWithTrace,
+  observeDaemonClose,
+} from "../daemon-trace-admission.mjs";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -96,12 +101,16 @@ export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
   delete environment.TMUX_PANE;
   delete environment.TMUX_TMPDIR;
 
+  const tracePath = environment.TMUX_IDE_SESSION_RUNTIME_TRACE_LOG;
+  const traceStart = tracePath ? await captureDaemonTraceStart(tracePath) : null;
   const harness: HarnessChild = spawnHarnessChild({
     command: process.execPath,
     args: [join(repoRoot, "bin", "cli.js"), "--headless"],
     cwd: repoRoot,
     env: environment,
   });
+
+  const observedClose = tracePath ? observeDaemonClose(harness.child) : null;
 
   let record = await pollUntil<CanonicalDaemonRecord>({
     probe: async () => {
@@ -190,6 +199,7 @@ export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
     return workspaceName;
   };
 
+  let stopResult: Promise<void> | null = null;
   return {
     get record() {
       return record;
@@ -221,15 +231,26 @@ export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
     promote,
     fleetLabels,
     output: harness.output,
-    stop: async () => {
-      await harness.stop();
-      if (Number.isInteger(record.pid) && processIsAlive(record.pid)) {
-        try {
-          process.kill(record.pid, "SIGKILL");
-        } catch {
-          // Already gone with its group, which is the outcome we wanted.
+    stop: () => {
+      const stop = async () => {
+        await harness.stop();
+        if (Number.isInteger(record.pid) && processIsAlive(record.pid)) {
+          try {
+            process.kill(record.pid, "SIGKILL");
+          } catch {
+            /* Already gone. */
+          }
         }
-      }
+      };
+      if (!tracePath || !traceStart || !observedClose) return stop();
+      return (stopResult ??= stopOwnedDaemonWithTrace({
+        stop,
+        child: harness.child,
+        expected: { pid: record.pid, daemonInstanceId: record.instanceId },
+        path: tracePath,
+        start: traceStart,
+        observedClose,
+      }).then(() => undefined));
     },
   };
 }

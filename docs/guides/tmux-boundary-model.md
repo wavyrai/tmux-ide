@@ -855,3 +855,11 @@ owner shutdown as well as the final summary: the summary is written before the
 end callback completes and is not an fsync durability guarantee. Ring-buffer
 overwrites are separate from file loss. Live positive-witness readers do not
 gain exhaustive coverage from this summary.
+
+The creation-owned headless daemon fixture now checks the final trace after
+shutdown and saves a per-generation admission receipt. Admission requires the
+owned child's zero-code, no-signal close, matching daemon identity, conserved
+record counts and zero loss. Reused append files retain their original file
+identity and prefix hash; replaced files, foreign records and multiple summaries
+fail admission. This checks file integrity and owner shutdown only. It does not
+establish causal stage coverage, latency acceptance or physical-terminal parity.
