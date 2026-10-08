@@ -78,6 +78,7 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
       );
       let channels = 0;
       let captures = 0;
+      const capturesByPane = new Map<string, number>();
       const recoveries: MirrorFlowRecoveryObservation[] = [];
       const registry = new SessionRuntimeRegistry({
         generation: randomUUID(),
@@ -94,10 +95,20 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
               socketName,
               configFile,
             });
-            const capture = io.commandListInline.bind(io);
-            io.commandListInline = (command, count, index, onReply) => {
-              if (command.includes("capture-pane -p -e -J")) captures++;
-              capture(command, count, index, onReply);
+            // Native bootstrap uses an atomic collector, not an ANSI command-list
+            // reply. Count accepted snapshot attempts regardless of wire encoding.
+            const arm = io.armAtomicPaneSnapshotCollector.bind(io);
+            io.armAtomicPaneSnapshotCollector = (spec, timeoutMs) => {
+              const accepted = arm(spec, timeoutMs);
+              if (accepted && spec.kind !== "pause") {
+                expect(panes).toContain(spec.runtimePaneId);
+                captures++;
+                capturesByPane.set(
+                  spec.runtimePaneId,
+                  (capturesByPane.get(spec.runtimePaneId) ?? 0) + 1,
+                );
+              }
+              return accepted;
             };
             return io;
           },
@@ -135,7 +146,14 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
           ),
         );
         const openingMs = performance.now() - started;
-        expect(captures).toBe(panes.length);
+        // A recovery may retry a fenced snapshot. Shared canonical ownership
+        // still converges once per pane, independently of its two subscribers.
+        const converged = recoveries.filter((observation) => observation.phase === "converged");
+        expect(converged.map((observation) => observation.semanticPaneId).sort()).toEqual(
+          panes.map((_pane, index) => `pane.opening.${index}`).sort(),
+        );
+        for (const pane of panes) expect(capturesByPane.get(pane)).toBeGreaterThanOrEqual(1);
+        const openingCaptures = captures;
         console.info(
           JSON.stringify({
             border,
@@ -210,7 +228,12 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
           { timeout: 3000 },
         );
         expect(incarnations[1]).toEqual(priorIncarnations);
-        expect(captures).toBe(panes.length);
+        // Reconnecting the second viewer reuses every already-open owner:
+        // it must not trigger even one additional snapshot attempt.
+        expect(captures).toBe(openingCaptures);
+        expect(recoveries.filter((observation) => observation.phase === "converged")).toEqual(
+          converged,
+        );
         stage = "resize";
         const resizeStarted = performance.now();
         tmux("resize-window", "-t", session, "-x", "93", "-y", "31");

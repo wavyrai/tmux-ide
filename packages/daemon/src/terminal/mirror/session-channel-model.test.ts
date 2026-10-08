@@ -638,9 +638,13 @@ describe("SessionChannel transcript model", () => {
     "preserves the SessionChannel transcript for recorded seed %i",
     verify,
   );
-  it("preserves the transcript in a bounded wider campaign of128seeds", async () => {
-    for (let seed = 33; seed <= 160; seed++) await verify(seed);
-  }, 20_000);
+  // Keep all 128 additional seeds independently observable and bounded. A
+  // single aggregate deadline conflates coverage instrumentation with failure.
+  it.each(Array.from({ length: 128 }, (_, index) => index + 33))(
+    "preserves the transcript in the wider campaign for recorded seed %i",
+    verify,
+    20_000,
+  );
   it("covers every operation and wire partition choice in the recorded campaign", () => {
     const rounds = Array.from({ length: 32 }, (_, index) => generate(index + 1)).flat();
     expect([...new Set(rounds.map((round) => round.operation))].sort()).toEqual([

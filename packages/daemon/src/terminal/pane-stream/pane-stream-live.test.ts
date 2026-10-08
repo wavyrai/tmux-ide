@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
+import type { Socket } from "node:net";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import {
@@ -235,12 +236,27 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
       .localPort;
     expect(receiverPort).toBeGreaterThan(0);
     let pausedOnWire = false;
+    let heldSocket: Socket | null = null;
+    let holdWrites = true;
+    const releaseWrites = () => {
+      holdWrites = false;
+      heldSocket?.uncork();
+      heldSocket = null;
+    };
     const flowTrace: Array<{ state: unknown; pane: unknown }> = [];
     const originalSend = WebSocket.prototype.send;
     vi.spyOn(WebSocket.prototype, "send").mockImplementation(function (
       this: WebSocket,
       ...args: Parameters<WebSocket["send"]>
     ) {
+      const socket = (this as unknown as { _socket: Socket })._socket;
+      if (holdWrites && socket.remotePort === receiverPort && heldSocket === null) {
+        // Client pause alone can still drain into the kernel receive buffer.
+        // Hold this real server socket's writes through the input checkpoint;
+        // bufferedAmount and the production flow ledger remain authoritative.
+        socket.cork();
+        heldSocket = socket;
+      }
       const raw = args[0];
       if (typeof raw === "string" && raw.includes('"flow"')) {
         const frame = JSON.parse(raw) as Record<string, unknown>;
@@ -254,154 +270,160 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
       return originalSend.apply(this, args);
     });
 
-    // ── Stall S, then flood ────────────────────────────────────────────────
-    clientS.ws.pause();
-    // Drive until the live socket itself proves backpressure, then interrupt
-    // immediately. A finite byte count is not portable here: Linux TCP receive
-    // autotuning can absorb several MiB while macOS parks much sooner, so the
-    // same count either misses the wire ledger or leaves a large recovery
-    // backlog. The finally block bounds the producer on every path.
-    runTmux(["send-keys", "-t", runtimePanes[0]!, "yes PANE_STREAM_FLOW_42", "Enter"]);
-    // The daemon parks ONLY S's flood-pane delivery: its ws-send-buffer
-    // tickets stay outstanding past the budget.
     try {
+      // ── Stall S, then flood ────────────────────────────────────────────────
+      clientS.ws.pause();
+      // Drive until the real corked socket proves backpressure, then interrupt
+      // immediately. Keep its outstanding writes held until the input proof;
+      // the producer and write hold are both released on failure.
+      runTmux(["send-keys", "-t", runtimePanes[0]!, "yes PANE_STREAM_FLOW_42", "Enter"]);
+      // The daemon parks ONLY S's flood-pane delivery: its ws-send-buffer
+      // tickets stay outstanding past the budget.
+      try {
+        await vi.waitFor(
+          () => {
+            expect(pausedOnWire).toBe(true);
+          },
+          { timeout: 30_000 },
+        );
+      } finally {
+        runTmux(["send-keys", "-t", runtimePanes[0]!, "C-c", ""]);
+      }
+
+      // The healthy client keeps receiving the flood AND the quiet panes.
+      const floodBytesBefore = textOf(clientH, floodPane).length;
+      runTmux(["send-keys", "-t", runtimePanes[1]!, "echo DURING_STALL_$((21*2))", "Enter"]);
       await vi.waitFor(
         () => {
-          expect(pausedOnWire).toBe(true);
+          expect(textOf(clientH, quietB)).toContain("DURING_STALL_42");
+          expect(textOf(clientH, floodPane).length).toBeGreaterThan(floodBytesBefore);
         },
-        { timeout: 30_000 },
+        { timeout: 20_000 },
+      );
+
+      // Prove input reaches the native pane while this exact observer socket's
+      // flood delivery is still parked; later input after resume cannot prove it.
+      expect(pausedOnWire).toBe(true);
+      expect(clientS.ws.isPaused).toBe(true);
+      const inputMarker = `LIVE_INPUT_${randomUUID().replaceAll("-", "")}_`;
+      const inputFlowStart = flowTrace.length;
+      clientH.ws.send(
+        JSON.stringify({
+          type: "input",
+          kind: "text",
+          pane: quietC,
+          seq: 1,
+          data: `echo ${inputMarker}$((6*7))`,
+        }),
+      );
+      clientH.ws.send(
+        JSON.stringify({ type: "input", kind: "key", pane: quietC, seq: 2, data: "Enter" }),
+      );
+      await vi.waitFor(
+        () => {
+          expect(framesOf(clientH, "input-ack", quietC).map((frame) => frame.seq)).toEqual([1, 2]);
+          expect(textOf(clientH, quietC)).toContain(`${inputMarker}42`);
+          expect(runTmux(["capture-pane", "-p", "-t", runtimePanes[2]!])).toContain(
+            `${inputMarker}42`,
+          );
+          expect(pausedOnWire).toBe(true);
+          expect(clientS.ws.isPaused).toBe(true);
+        },
+        { timeout: 20_000 },
+      );
+
+      expect(flowTrace.slice(inputFlowStart).some((frame) => frame.state !== "paused")).toBe(false);
+      expect(framesOf(clientS, "input-ack", quietC)).toHaveLength(0);
+      const stalledInputReceipt = {
+        receiverPort,
+        observerRequestId: issuedS.requestId,
+        inputRequestId: issuedH.requestId,
+        observerPane: floodPane,
+        inputPane: quietC,
+        nativeInputPane: runtimePanes[2],
+        marker: `${inputMarker}42`,
+        acknowledgments: framesOf(clientH, "input-ack", quietC).map((frame) => frame.seq),
+        observerStillPaused: pausedOnWire && clientS.ws.isPaused,
+        flowBeforeInput: flowTrace.slice(0, inputFlowStart),
+        flowDuringInput: flowTrace.slice(inputFlowStart),
+      };
+
+      // ── Resume S: its own flow events + a fresh atomic seed batch arrive ──
+      releaseWrites();
+      clientS.ws.resume();
+      await vi.waitFor(
+        () => {
+          const flow = framesOf(clientS, "flow", floodPane);
+          const pausedIndex = flow.findIndex((frame) => frame.state === "paused");
+          expect(pausedIndex).toBeGreaterThanOrEqual(0);
+          expect(flow.slice(pausedIndex).some((frame) => frame.state === "resumed")).toBe(true);
+          // The reseed lands strictly after the resume.
+          expect(framesOf(clientS, "seed-batch", floodPane).length).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 40_000 },
+      );
+      // S's quiet pane was never parked; its stall-era bytes arrive on resume.
+      await vi.waitFor(
+        () => {
+          expect(textOf(clientS, quietB)).toContain("DURING_STALL_42");
+        },
+        { timeout: 20_000 },
+      );
+
+      // ── Departure force-returns S's tickets within a tick ─────────────────
+      clientS.ws.close();
+      await clientS.closed;
+      await vi.waitFor(
+        () => {
+          const snapshot = coordinator.flowSnapshot();
+          expect(Object.values(snapshot).some((panes) => Object.keys(panes).length > 2)).toBe(
+            false,
+          );
+          expect(Object.keys(snapshot).length).toBeLessThanOrEqual(1);
+        },
+        { timeout: 10_000 },
+      );
+
+      // ── Wire transcript audit: every frame parses; no runtime ids ─────────
+      for (const client of [clientS, clientH]) {
+        expect(client.frames.length).toBeGreaterThan(0);
+        for (const frame of client.frames) {
+          const parsed = PaneStreamServerFrameSchemaZ.parse(frame);
+          const structural = { ...(parsed as Record<string, unknown>) };
+          delete structural.seed;
+          delete structural.held;
+          delete structural.data;
+          expect(JSON.stringify(structural)).not.toMatch(/[%@$][0-9]/u);
+        }
+      }
+
+      // ── Teardown hygiene: no clients left, server not wedged ──────────────
+      clientH.ws.close();
+      await clientH.closed;
+      await boundary.close();
+      await mirror.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await vi.waitFor(
+        () => {
+          expect(runTmux(["list-clients", "-t", session])).toBe("");
+        },
+        { timeout: 10_000 },
+      );
+      expect(runTmux(["list-sessions", "-F", "#{session_name}"])).toContain(session);
+      process.stdout.write(
+        `TM07 stalled observer input: ${JSON.stringify({
+          ...stalledInputReceipt,
+          observerRecovered: framesOf(clientS, "flow", floodPane).some(
+            (frame) => frame.state === "resumed",
+          ),
+          clientsClosed:
+            clientS.ws.readyState === WebSocket.CLOSED &&
+            clientH.ws.readyState === WebSocket.CLOSED,
+          nativeClientsAbsent: true,
+        })}\n`,
       );
     } finally {
-      runTmux(["send-keys", "-t", runtimePanes[0]!, "C-c", ""]);
+      releaseWrites();
     }
-
-    // The healthy client keeps receiving the flood AND the quiet panes.
-    const floodBytesBefore = textOf(clientH, floodPane).length;
-    runTmux(["send-keys", "-t", runtimePanes[1]!, "echo DURING_STALL_$((21*2))", "Enter"]);
-    await vi.waitFor(
-      () => {
-        expect(textOf(clientH, quietB)).toContain("DURING_STALL_42");
-        expect(textOf(clientH, floodPane).length).toBeGreaterThan(floodBytesBefore);
-      },
-      { timeout: 20_000 },
-    );
-
-    // Prove input reaches the native pane while this exact observer socket's
-    // flood delivery is still parked; later input after resume cannot prove it.
-    expect(pausedOnWire).toBe(true);
-    expect(clientS.ws.isPaused).toBe(true);
-    const inputMarker = `LIVE_INPUT_${randomUUID().replaceAll("-", "")}_`;
-    const inputFlowStart = flowTrace.length;
-    clientH.ws.send(
-      JSON.stringify({
-        type: "input",
-        kind: "text",
-        pane: quietC,
-        seq: 1,
-        data: `echo ${inputMarker}$((6*7))`,
-      }),
-    );
-    clientH.ws.send(
-      JSON.stringify({ type: "input", kind: "key", pane: quietC, seq: 2, data: "Enter" }),
-    );
-    await vi.waitFor(
-      () => {
-        expect(framesOf(clientH, "input-ack", quietC).map((frame) => frame.seq)).toEqual([1, 2]);
-        expect(textOf(clientH, quietC)).toContain(`${inputMarker}42`);
-        expect(runTmux(["capture-pane", "-p", "-t", runtimePanes[2]!])).toContain(
-          `${inputMarker}42`,
-        );
-        expect(pausedOnWire).toBe(true);
-        expect(clientS.ws.isPaused).toBe(true);
-      },
-      { timeout: 20_000 },
-    );
-
-    expect(flowTrace.slice(inputFlowStart).some((frame) => frame.state !== "paused")).toBe(false);
-    expect(framesOf(clientS, "input-ack", quietC)).toHaveLength(0);
-    const stalledInputReceipt = {
-      receiverPort,
-      observerRequestId: issuedS.requestId,
-      inputRequestId: issuedH.requestId,
-      observerPane: floodPane,
-      inputPane: quietC,
-      nativeInputPane: runtimePanes[2],
-      marker: `${inputMarker}42`,
-      acknowledgments: framesOf(clientH, "input-ack", quietC).map((frame) => frame.seq),
-      observerStillPaused: pausedOnWire && clientS.ws.isPaused,
-      flowBeforeInput: flowTrace.slice(0, inputFlowStart),
-      flowDuringInput: flowTrace.slice(inputFlowStart),
-    };
-
-    // ── Resume S: its own flow events + a fresh atomic seed batch arrive ──
-    clientS.ws.resume();
-    await vi.waitFor(
-      () => {
-        const flow = framesOf(clientS, "flow", floodPane);
-        const pausedIndex = flow.findIndex((frame) => frame.state === "paused");
-        expect(pausedIndex).toBeGreaterThanOrEqual(0);
-        expect(flow.slice(pausedIndex).some((frame) => frame.state === "resumed")).toBe(true);
-        // The reseed lands strictly after the resume.
-        expect(framesOf(clientS, "seed-batch", floodPane).length).toBeGreaterThanOrEqual(2);
-      },
-      { timeout: 40_000 },
-    );
-    // S's quiet pane was never parked; its stall-era bytes arrive on resume.
-    await vi.waitFor(
-      () => {
-        expect(textOf(clientS, quietB)).toContain("DURING_STALL_42");
-      },
-      { timeout: 20_000 },
-    );
-
-    // ── Departure force-returns S's tickets within a tick ─────────────────
-    clientS.ws.close();
-    await clientS.closed;
-    await vi.waitFor(
-      () => {
-        const snapshot = coordinator.flowSnapshot();
-        expect(Object.values(snapshot).some((panes) => Object.keys(panes).length > 2)).toBe(false);
-        expect(Object.keys(snapshot).length).toBeLessThanOrEqual(1);
-      },
-      { timeout: 10_000 },
-    );
-
-    // ── Wire transcript audit: every frame parses; no runtime ids ─────────
-    for (const client of [clientS, clientH]) {
-      expect(client.frames.length).toBeGreaterThan(0);
-      for (const frame of client.frames) {
-        const parsed = PaneStreamServerFrameSchemaZ.parse(frame);
-        const structural = { ...(parsed as Record<string, unknown>) };
-        delete structural.seed;
-        delete structural.held;
-        delete structural.data;
-        expect(JSON.stringify(structural)).not.toMatch(/[%@$][0-9]/u);
-      }
-    }
-
-    // ── Teardown hygiene: no clients left, server not wedged ──────────────
-    clientH.ws.close();
-    await clientH.closed;
-    await boundary.close();
-    await mirror.dispose();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    await vi.waitFor(
-      () => {
-        expect(runTmux(["list-clients", "-t", session])).toBe("");
-      },
-      { timeout: 10_000 },
-    );
-    expect(runTmux(["list-sessions", "-F", "#{session_name}"])).toContain(session);
-    process.stdout.write(
-      `TM07 stalled observer input: ${JSON.stringify({
-        ...stalledInputReceipt,
-        observerRecovered: framesOf(clientS, "flow", floodPane).some(
-          (frame) => frame.state === "resumed",
-        ),
-        clientsClosed:
-          clientS.ws.readyState === WebSocket.CLOSED && clientH.ws.readyState === WebSocket.CLOSED,
-        nativeClientsAbsent: true,
-      })}\n`,
-    );
   });
 });
