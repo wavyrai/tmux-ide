@@ -210,7 +210,16 @@ it.skipIf(!binary)(
       });
       const revealed = commits.filter((commit) => commit.viewer === 1).slice(beforeRevealCommits);
       expect(revealed).toHaveLength(1);
-      expect(revealed[0]!.envelope.frame).toBe("seed");
+      const reveal = revealed[0]!.envelope;
+      expect(reveal.canonicalRevision).toBe(currentRevision);
+      if (reveal.frame === "patch") {
+        // Visibility preserves the acknowledged baseline. The hub may coalesce
+        // skipped revisions into one exact patch from that baseline.
+        expect(reveal.baseRevision).toBe(initialRevision);
+      } else {
+        expect(reveal.frame).toBe("seed");
+        expect(reveal.baseRevision).toBeNull();
+      }
       expect(states[1]!.canonicalSnapshot).toEqual(states[0]!.canonicalSnapshot);
       // Independent literal cell oracle includes the entire erased region.
       // A shared stale row in A and B must not pass merely because they agree.
@@ -324,7 +333,7 @@ it.skipIf(!binary)(
               closedMetrics,
             },
             scope:
-              "Actual native producer, mirror owner and semantic delivery hub; no physical WebSocket or renderer. Hidden viewer has no deliveries while healthy viewer advances; reveal seed checked against literal content and native checkpoint.",
+              "Actual native producer, mirror owner and semantic delivery hub; no physical WebSocket or renderer. Hidden viewer has no deliveries while healthy viewer advances; one current reveal seed or acknowledged-baseline patch checked against literal content and native checkpoint.",
           },
           null,
           2,

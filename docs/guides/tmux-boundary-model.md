@@ -648,8 +648,9 @@ It does not qualify the separate `TMUX_IDE_TMUX_SOCKET_NAME` namespace policy.
 `terminal-hidden-viewer-live.test.ts` joins a real native producer and replica
 owner to two semantic delivery clients. After one client becomes hidden, the
 other advances through three native updates while the hidden client receives no
-new deliveries. Reveal must produce one current seed; both clients are checked
-against a literal complete 40×8 grid, including blank cells and a wide-character
+new deliveries. Reveal must produce one current transaction: a seed or an exact
+coalesced patch based on the hidden client’s acknowledged initial revision. Both
+clients are checked against a literal complete 40×8 grid, including blank cells and a wide-character
 continuation, plus native cursor and geometry. Visibility must not change native
 sizing policy. Closing both clients releases the hub's retained revisions and
 representation cache; the private server and producer must exit.
