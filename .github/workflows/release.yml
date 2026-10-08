@@ -162,7 +162,7 @@ jobs:
           import { execFileSync } from 'node:child_process';
           import { writeFileSync } from 'node:fs';
           import { join } from 'node:path';
-          const receipt = { before: userInfo(), after: null, success: false };
+          const receipt = { before: userInfo(), directoryShell: null, after: null, failure: null, success: false };
           try {
             if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_ENVIRONMENT !== 'github-hosted' ||
                 process.platform !== 'darwin' || process.getuid() === 0 ||
@@ -171,10 +171,27 @@ jobs:
             if (receipt.before.shell !== '/bin/zsh')
               execFileSync('/usr/bin/sudo', ['-n', '/usr/bin/dscl', '.', '-create',
                 `/Users/${receipt.before.username}`, 'UserShell', '/bin/zsh'], { timeout: 10000 });
-            receipt.after = userInfo();
+            receipt.directoryShell = execFileSync('/usr/bin/dscl', ['.', '-read',
+              `/Users/${receipt.before.username}`, 'UserShell'],
+              { encoding: 'utf8', timeout: 10000, maxBuffer: 65536 }).trim();
+            if (receipt.directoryShell !== 'UserShell: /bin/zsh')
+              throw new Error('Directory account shell verification failed');
+            // Verify through a fresh process after directory mutation. A hosted
+            // rerun must establish this result; same-process lookup is not proof.
+            receipt.after = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
+              "import { userInfo } from 'node:os'; process.stdout.write(JSON.stringify(userInfo()));"],
+              { encoding: 'utf8', timeout: 10000, maxBuffer: 65536 }));
             if (receipt.after.uid !== receipt.before.uid || receipt.after.username !== receipt.before.username ||
                 receipt.after.shell !== '/bin/zsh') throw new Error('SSH account shell verification failed');
             receipt.success = true;
+          } catch (error) {
+            receipt.failure = {
+              name: String(error?.name ?? 'Error').slice(0, 256),
+              message: String(error?.message ?? error).slice(0, 2048),
+              status: Number.isInteger(error?.status) ? error.status : null,
+              signal: typeof error?.signal === 'string' ? error.signal : null,
+            };
+            throw error;
           } finally {
             writeFileSync(join(process.env.RUNNER_TEMP, 'styled-ssh-account.json'), JSON.stringify(receipt, null, 2));
             console.log(JSON.stringify(receipt));
