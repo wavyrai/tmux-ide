@@ -160,9 +160,9 @@ jobs:
           node --input-type=module <<'NODE'
           import { userInfo } from 'node:os';
           import { execFileSync } from 'node:child_process';
-          import { writeFileSync } from 'node:fs';
+          import { appendFileSync, writeFileSync } from 'node:fs';
           import { join } from 'node:path';
-          const receipt = { before: userInfo(), directoryShell: null, after: null, failure: null, success: false };
+          const receipt = { before: userInfo(), directoryShell: null, after: null, exportedShell: null, failure: null, success: false };
           try {
             if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_ENVIRONMENT !== 'github-hosted' ||
                 process.platform !== 'darwin' || process.getuid() === 0 ||
@@ -183,6 +183,10 @@ jobs:
               { encoding: 'utf8', timeout: 10000, maxBuffer: 65536 }));
             if (receipt.after.uid !== receipt.before.uid || receipt.after.username !== receipt.before.username ||
                 receipt.after.shell !== '/bin/zsh') throw new Error('SSH account shell verification failed');
+            // Bun's userInfo shell follows SHELL. Propagate only the account
+            // value independently verified above to subsequent hosted steps.
+            appendFileSync(process.env.GITHUB_ENV, 'SHELL=/bin/zsh\n');
+            receipt.exportedShell = '/bin/zsh';
             receipt.success = true;
           } catch (error) {
             receipt.failure = {
