@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## 2.9.5
 
+- Preserve native tmux session names containing spaces by assigning separate internal workspace IDs, preventing one discovered session from blocking the terminal catalog.
+- Skip dependency lifecycle scripts during staged installation; activate and verify the installation before the supported postinstall step.
+
 - Preserve tmux control reply ordering across pane output and drain cancelled snapshot collectors before reusing a connection.
 - Preserve Unicode code points when splitting terminal paste input.
 - Rebuild retained terminal surfaces after interrupted drawing so consumed damage is repainted on retry.
