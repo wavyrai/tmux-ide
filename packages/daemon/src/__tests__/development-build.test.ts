@@ -237,7 +237,12 @@ it("keeps CI and release compiler selection on the same central Bun pin", () => 
   for (const name of ["ci", "release", "release-binaries"]) {
     const workflow = readFileSync(new URL(`.github/workflows/${name}.yml`, repository), "utf8");
     const count = workflow.match(/uses: oven-sh\/setup-bun@v2/gu)?.length;
-    expect(workflow.match(/bun-version-file: "\.bun-version"/gu)?.length).toBe(count);
+    // YAML permits the exact filename as a plain, single-quoted or double-quoted scalar.
+    expect(
+      workflow.match(
+        /^\s*bun-version-file: (?:"\.bun-version"|'\.bun-version'|\.bun-version)\s*$/gmu,
+      )?.length,
+    ).toBe(count);
   }
 });
 
