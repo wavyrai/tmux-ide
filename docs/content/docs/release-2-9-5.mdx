@@ -10,7 +10,7 @@ installer and Claude Code agent-team setup from [2.9.4](/docs/release-2-9-4).
 ## Terminal correctness fixes
 
 - Keep sessions with spaces in their names usable without renaming them, and prevent their discovery from blocking other sessions.
-
+- Keep generated pane-name metadata out of terminal identity proofs so it cannot reject an otherwise valid session.
 - Preserve tmux control reply ordering across pane output and drain cancelled snapshot collectors before reusing a connection.
 - Preserve Unicode code points when splitting terminal paste input.
 - Rebuild retained terminal surfaces after interrupted drawing so consumed damage is repainted on retry.
