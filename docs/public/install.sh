@@ -135,7 +135,11 @@ JS
   export PATH="$stage/node/bin:$PATH"
   # Prepare without touching a running daemon. Its supported upgrade runs only
   # after the verified installation has moved to its permanent location.
-  TMUX_IDE_RUNTIME_MODE=development npm install --global --prefix "$stage/npm" "tmux-ide@$version"
+  # Dependency lifecycle scripts are unnecessary here: native modules ship
+  # prebuilt binaries for every supported platform, and tmux-ide's own
+  # postinstall runs explicitly once the release is in place. Skipping them
+  # also avoids running third-party install scripts and npm's allowScripts warning.
+  TMUX_IDE_RUNTIME_MODE=development npm install --global --ignore-scripts --prefix "$stage/npm" "tmux-ide@$version"
   cli="$stage/npm/lib/node_modules/tmux-ide/bin/cli.js"
   installed=$(node --input-type=module -e 'import fs from "node:fs"; console.log(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).version)' "$stage/npm/lib/node_modules/tmux-ide/package.json")
   [ "$(node "$cli" --version)" = "tmux-ide v$installed" ] || fail 'Installed CLI version does not match its package'
