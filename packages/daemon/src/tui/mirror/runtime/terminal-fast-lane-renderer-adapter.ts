@@ -155,6 +155,10 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     this.#resourceSampler = resourceSampler;
   }
 
+  paneUnavailable(paneId: string): string | null {
+    return this.#lane.paneUnavailable(paneId);
+  }
+
   paneVersion(paneId: string): number {
     return this.#panes.get(paneId)?.version ?? 0;
   }
@@ -432,9 +436,33 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     const interest = this.#interest(paneId);
     interest.listeners.add(listener);
     if (!interest.release) {
-      interest.release = this.#lane.subscribePane(paneId, (publication) => {
-        this.#publish(interest, publication);
-      });
+      interest.release = this.#lane.subscribePane(
+        paneId,
+        (publication) => {
+          this.#publish(interest, publication);
+        },
+        () => {
+          interest.retainedView?.capture?.abort();
+          interest.retainedView = undefined;
+          interest.state = null;
+          interest.pendingTrace = null;
+          interest.pendingHostFrame = null;
+          interest.rowProjectionCache?.clear();
+          interest.version++;
+          for (const listener of [...interest.listeners]) {
+            try {
+              listener(
+                interest.version,
+                this.#sourceEpoch,
+                interest.presentationVersion,
+                "content",
+              );
+            } catch {
+              /* Availability observers cannot interrupt sibling delivery. */
+            }
+          }
+        },
+      );
     }
     // The lane owns a generation-scoped canonical replica even while a pane is
     // off-screen. A newly mounted surface must be invalidated synchronously

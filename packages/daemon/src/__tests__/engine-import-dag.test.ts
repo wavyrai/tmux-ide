@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
  * tmux-ide is one engine with heads over it: only the core touches tmux, and
  * the TUI (`src/tui`) and widget (`src/widgets`) surfaces are adapters that
  * render and express intent. Imports therefore flow adapter -> core and never
- * back. This test walks every source file under the engine roots and fails on
+ * back. This test walks production source files under the engine roots and fails on
  * any import that reaches into an adapter.
  *
  * `KNOWN_INVERSIONS` is an honest ledger of the inversions that predate the
@@ -41,28 +41,21 @@ const ADAPTER_ROOTS = ["tui", "widgets"] as const;
  */
 const KNOWN_INVERSIONS: readonly string[] = [
   "command-center/discovery.ts -> widgets/lib/pane-comms.ts",
-  "command-center/filesystem.test.ts -> widgets/lib/pane-comms.ts",
-  "command-center/projects.test.ts -> widgets/lib/pane-comms.ts",
-  "command-center/resources/application-shell.test.ts -> widgets/lib/pane-comms.ts",
   "command-center/resources/application-shell.ts -> tui/detect/agent-resolution.ts",
   "command-center/resources/application-shell.ts -> tui/detect/classify.ts",
   "command-center/server.ts -> widgets/lib/pane-comms.ts",
   "command-center/server.ts -> widgets/resolve.ts",
-  "lib/__tests__/manifest-pack.test.ts -> tui/detect/manifest-loader.ts",
   "lib/agent-discovery.ts -> tui/integrations/claude.ts",
   "lib/agent-discovery.ts -> tui/integrations/opencode.ts",
   "lib/app-config.ts -> tui/detect/classify.ts",
   "lib/manifest-pack.ts -> tui/detect/manifest-loader.ts",
   "lib/manifest-pack.ts -> tui/detect/manifest.ts",
-  "terminal/__tests__/agent-status-probe.test.ts -> tui/detect/manifest.ts",
-  "terminal/__tests__/agent-status-probe.test.ts -> tui/detect/process-tree.ts",
   "terminal/attachments/agent-status-probe.ts -> tui/detect/classify.ts",
   "terminal/attachments/agent-status-probe.ts -> tui/detect/manifest.ts",
   "terminal/attachments/agent-status-probe.ts -> tui/detect/process-tree.ts",
   "terminal/attachments/agent-status-probe.ts -> tui/detect/snapshot.ts",
   // Beta.48 Claude naming uses the same legacy process-tree engine as status probing.
   "terminal/attachments/claude-team-names.ts -> tui/detect/process-tree.ts",
-  // Temporary test-only differential oracle; production imports remain adapter -> engine.
 ];
 
 function sourceFiles(root: string): string[] {
@@ -74,7 +67,11 @@ function sourceFiles(root: string): string[] {
       const full = resolve(dir, entry.name);
       if (entry.isDirectory()) {
         if (entry.name !== "node_modules") pending.push(full);
-      } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
+      } else if (
+        (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) &&
+        // Integration tests intentionally join engine and adapters; they are not engine imports.
+        !/\.test\.tsx?$/u.test(entry.name)
+      ) {
         found.push(full);
       }
     }

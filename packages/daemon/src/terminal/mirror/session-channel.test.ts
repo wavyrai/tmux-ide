@@ -18,7 +18,6 @@ import type {
   MirrorLayoutEvent,
   MirrorPaneEvent,
 } from "./events.ts";
-import { PaneFeed } from "./pane-feed.ts";
 import { SessionRuntimeTerminalReplicaOwner } from "../session-runtime/terminal-replica-owner.ts";
 import { createSessionRuntimeObservability } from "../session-runtime/runtime-observability.ts";
 import type { MirrorSubscribeRequest } from "./mirror-service.ts";
@@ -47,14 +46,15 @@ interface Rig {
     dueAtMs: number;
     cancelled: boolean;
   }>;
-  manualContinueReply: boolean;
   atomicInvocationAuthorizations: boolean[];
   atomicHookValues: Map<string, string>;
+  armedAtomicCollectors: AtomicPaneSnapshotCollector[];
 }
 
 async function startedRig(
   options: {
     ownedViewer?: SessionChannelOptions["ownedViewer"];
+    captureInputWrite?: SessionChannelOptions["captureInputWrite"];
     nativeBirth?: string;
     executeWindowLinkGuard?: (args: string[]) => Promise<{ status: number | null; stdout: string }>;
     onNativeClientActivity?: () => void;
@@ -70,8 +70,10 @@ async function startedRig(
     historyLines?: number;
     atomicHook?: boolean;
     replaceAtomicHookBeforeInvoke?: boolean;
+    manualAfterPauseSetup?: boolean;
   } = {},
 ): Promise<Rig> {
+  options = { ...options, atomicHook: options.atomicHook ?? true };
   const state = fixtureState();
   if (options.nativeBirth)
     state.descriptorRows = state.descriptorRows.map((row) => row + options.nativeBirth);
@@ -79,22 +81,31 @@ async function startedRig(
   const recoveryClock = { nowMs: 0 };
   const pendingRecoveries: Rig["pendingRecoveries"] = [];
   let atomicNonceOrdinal = 0;
+  let pauseSetupWritten = false;
   const atomicInvocationAuthorizations: boolean[] = [];
   const atomicHookValues = new Map<string, string>();
+  const armedAtomicCollectors: AtomicPaneSnapshotCollector[] = [];
   let sim: SimulatedChannel | null = null;
   const channel = new SessionChannel({
     ownedViewer: options.ownedViewer,
+    captureInputWrite: options.captureInputWrite,
     session: FIXTURE.session,
     executeWindowLinkGuard: options.executeWindowLinkGuard,
     createIo: (handlers) => {
       const autoReply = fixtureAutoReply(state);
       sim = new SimulatedChannel(handlers, (command) => {
+        if (options.manualAfterPauseSetup) {
+          pauseSetupWritten ||= /^set-option -po -t %\d+ @tmux_ide_pause_/u.test(command);
+          if (pauseSetupWritten) return null;
+        }
+        if (command.startsWith("display-message -p -l tmux-ide-snapshot-admission:"))
+          return [command.slice("display-message -p -l ".length)];
         if (options.descriptorReply?.manual && command.includes("qa:@tmux_ide_pane_id"))
           return null;
         if (options.borderReply === "manual" && command.endsWith('"#{pane-border-status}"'))
           return null;
-        if (options.atomicHook && command.startsWith("set-option -po -t %1 @tmux_ide_atomic_")) {
-          const created = /^set-option -po -t %1 (@[^ ]+) (.+)$/u.exec(command);
+        if (options.atomicHook && /^set-option -po -t %[0-9]+ @tmux_ide_atomic_/u.test(command)) {
+          const created = /^set-option -po -t %[0-9]+ (@[^ ]+) (.+)$/u.exec(command);
           if (created) {
             const [, name, value] = created;
             atomicHookValues.set(
@@ -106,7 +117,7 @@ async function startedRig(
           }
           return [];
         }
-        if (options.atomicHook && command.includes("set-hook -Rp -t %1 @tmux_ide_atomic_")) {
+        if (options.atomicHook && /set-hook -Rp -t %[0-9]+ @tmux_ide_atomic_/u.test(command)) {
           const nonce = /@tmux_ide_atomic_([0-9a-f]{32,128})/u.exec(command)?.[1];
           const authorized =
             nonce !== undefined &&
@@ -121,12 +132,101 @@ async function startedRig(
           : autoReply(command);
       });
       if (options.atomicHook) {
+        // Native stdout cannot reenter its own read callback. Cleanup commands
+        // sent during collector settlement get their replies after that block
+        // finishes and the collector emits onDrained, just like the real pipe.
+        let settlingCollector = false;
+        let feedDepth = 0;
+        const deferredReplies: Array<() => void> = [];
+        const reply = sim.reply.bind(sim);
+        const feedLines = sim.feedLines.bind(sim);
+        sim.reply = (lines, ok = true) => {
+          if (settlingCollector) deferredReplies.push(() => reply(lines, ok));
+          else reply(lines, ok);
+        };
+        sim.feedLines = (...lines) => {
+          feedDepth += 1;
+          try {
+            feedLines(...lines);
+          } finally {
+            feedDepth -= 1;
+            if (feedDepth === 0) while (deferredReplies.length > 0) deferredReplies.shift()!();
+          }
+        };
         Object.assign(sim, {
-          armAtomicPaneSnapshotCollector: (spec: AtomicPaneSnapshotCollector) =>
-            sim!.core.armAtomicPaneSnapshotCollector(spec),
+          armAtomicPaneSnapshotCollector: (spec: AtomicPaneSnapshotCollector) => {
+            const accepted = sim!.core.armAtomicPaneSnapshotCollector({
+              ...spec,
+              onSettled: (result) => {
+                settlingCollector = true;
+                try {
+                  spec.onSettled(result);
+                } finally {
+                  settlingCollector = false;
+                }
+              },
+            });
+            if (accepted) armedAtomicCollectors.push(spec);
+            return accepted;
+          },
           retireAtomicPaneSnapshotCollector: (nonce: string) =>
             sim!.core.retireAtomicPaneSnapshotCollector(nonce),
         });
+      }
+      if (options.borderReply || options.descriptorReply) {
+        // Automatic replies cannot overtake an older manual metadata command.
+        // Reserve every command-list slot before dispatch, just like the core.
+        type Slot = { reply?: { lines: string[]; ok: boolean } };
+        const slots: Slot[] = [];
+        let operation: { slots: Slot[]; next: number } | null = null;
+        let flushing = false;
+        const emit = sim.reply.bind(sim);
+        const flush = () => {
+          if (flushing || operation) return;
+          flushing = true;
+          try {
+            while (slots[0]?.reply) {
+              const reply = slots.shift()!.reply!;
+              emit(reply.lines, reply.ok);
+            }
+          } finally {
+            flushing = false;
+          }
+        };
+        sim.reply = (lines, ok = true) => {
+          if (operation) operation.slots[operation.next++]!.reply = { lines, ok };
+          else if (slots.length) {
+            expect(slots[0]!.reply).toBeUndefined();
+            slots[0]!.reply = { lines, ok };
+          } else emit(lines, ok);
+          flush();
+        };
+        for (const method of [
+          "request",
+          "send",
+          "commandInline",
+          "commandListInline",
+          "commandListBoundedInline",
+        ] as const) {
+          const original = sim[method].bind(sim) as (...args: unknown[]) => unknown;
+          const wrapped = (...args: unknown[]) => {
+            const count =
+              method === "commandListInline" || method === "commandListBoundedInline"
+                ? (args[1] as number)
+                : 1;
+            const own = Array.from({ length: count }, () => ({}) as Slot);
+            slots.push(...own);
+            const previous = operation;
+            operation = { slots: own, next: 0 };
+            try {
+              return original(...args);
+            } finally {
+              operation = previous;
+              flush();
+            }
+          };
+          Object.assign(sim, { [method]: wrapped });
+        }
       }
       return sim;
     },
@@ -175,19 +275,10 @@ async function startedRig(
     pendingSyncs,
     recoveryClock,
     pendingRecoveries,
-    manualContinueReply: options.continueReply === "manual",
     atomicInvocationAuthorizations,
     atomicHookValues,
+    armedAtomicCollectors,
   };
-}
-
-function runRecoveryTimer(rig: Rig, delayMs = 40): void {
-  const task = rig.pendingRecoveries.find(
-    (candidate) => !candidate.cancelled && candidate.delayMs === delayMs,
-  );
-  expect(task, `pending recovery timer ${delayMs}ms`).toBeDefined();
-  task!.cancelled = true;
-  task!.callback();
 }
 
 function advanceRecoveryClock(rig: Rig, durationMs: number): void {
@@ -214,22 +305,27 @@ function completeAtomicRecoveryPhase(
     continueNotify?: boolean;
     errorOrdinal?: number;
     guardDelayMs?: number;
+    runtimePaneId?: string;
+    ansiCaptureLines?: readonly string[];
   } = {},
 ): string {
-  const install = [...rig.sim.written]
-    .reverse()
-    .find((command) => command.includes("@tmux_ide_atomic_owner_"));
-  expect(install).toBeDefined();
-  const nonce = /@tmux_ide_atomic_owner_([0-9a-f]{32,128})/u.exec(install!)?.[1];
-  expect(nonce).toBeDefined();
+  const runtimePaneId = options.runtimePaneId ?? "%1";
+  const collector = rig.armedAtomicCollectors.at(-1);
+  expect(collector?.kind).not.toBe("pause");
+  expect(collector?.runtimePaneId).toBe(runtimePaneId);
+  const nonce = collector!.nonce;
   const hookBody = [...rig.sim.written]
     .reverse()
     .find((command) =>
-      command.startsWith(`set-option -po -t %1 @tmux_ide_atomic_expected_${nonce}`),
+      command.startsWith(`set-option -po -t ${runtimePaneId} @tmux_ide_atomic_expected_${nonce}`),
     );
   const marker = /tmux-ide-internal-read-v2:[0-9a-f-]+/u.exec(hookBody ?? "")?.[0];
   expect(marker).toBeDefined();
-  expect(rig.sim.written.at(-1)).toContain(`set-hook -Rp -t %1 @tmux_ide_atomic_${nonce}`);
+  expect(
+    rig.sim.written.some((command) =>
+      command.includes(`set-hook -Rp -t ${runtimePaneId} @tmux_ide_atomic_${nonce}`),
+    ),
+  ).toBe(true);
   // An outer user after-set-hook may run before the seam. It cannot contribute
   // raw snapshot bytes or satisfy any nonce frame.
   rig.sim.feedLines("%begin 1 900 0", "blocking-user-after-set-hook-result", "%end 1 900 0");
@@ -242,9 +338,15 @@ function completeAtomicRecoveryPhase(
     ...guarded(`%tmux-ide-atomic-v1 ${nonce} start`),
     ...guarded(...captureLines),
     ...guarded(`%tmux-ide-atomic-v1 ${nonce} capture-end`),
+    ...(rig.armedAtomicCollectors.at(-1)?.dualCapture
+      ? [
+          ...guarded(...(options.ansiCaptureLines ?? [])),
+          ...guarded(`%tmux-ide-atomic-v1 ${nonce} ansi-capture-end`),
+        ]
+      : []),
     ...guarded(cursorLine),
     ...guarded(`%tmux-ide-atomic-v1 ${nonce} cursor-end`),
-    ...guarded(...(options.continueNotify ? ["%continue %1"] : [])),
+    ...guarded(...(options.continueNotify ? [`%continue ${runtimePaneId}`] : [])),
     ...guarded(),
     ...guarded(),
     ...guarded(),
@@ -280,41 +382,54 @@ function completeAtomicRecoveryPhase(
   return marker!;
 }
 
-function acknowledgeContinue(rig: Rig, runtime: string): void {
-  rig.sim.feedLines(`%continue ${runtime}`);
+/** Model the transport's separately queued ordinary fence, not an inline
+ * callback that would incorrectly release ownership before native guards drain. */
+function drainRetiredAtomicCollector(rig: Rig, nonce: string): void {
+  const fence = `tmux-ide-collector-drain-v1:${nonce}`;
+  const observed = vi.fn();
+  rig.sim.commandInline(`display-message -p -l ${fence}`, (reply) => {
+    expect(reply).toEqual({ ok: true, lines: [fence] });
+    expect(rig.sim.core.releaseRetiredCollector(nonce)).toBe(true);
+    observed();
+  });
+  // Late flags=0 hook output, even a row equal to the fence, does not
+  // consume the ordinary flags=1 reply or release the retired owner.
+  rig.sim.feedLines("%begin 1 1901 0", fence, "%end 1 1901 0");
+  expect(observed).not.toHaveBeenCalled();
+  rig.sim.output("%2", "BEFORE-DRAIN-FENCE");
+  rig.sim.reply([fence]);
+  expect(observed).toHaveBeenCalledOnce();
+  rig.sim.output("%2", "AFTER-DRAIN-FENCE");
 }
 
-/** Complete the final ordered continue fence, then its post-reply quiet seam. */
-function completeFinalContinueFence(rig: Rig): void {
-  if (rig.manualContinueReply) rig.sim.reply([]);
-  runRecoveryTimer(rig);
+/** Emit the actual three-command NOHOOKS pause transcript. The stock
+ * transaction must not start its snapshot until the terminal guard drains. */
+function completeStockPause(rig: Rig, runtimePaneId: string, observed = true): void {
+  const collector = rig.armedAtomicCollectors.at(-1);
+  expect(collector).toMatchObject({ kind: "pause", runtimePaneId });
+  const nonce = collector!.nonce;
+  rig.sim.feedLines(
+    "%begin 1 1801 0",
+    `%tmux-ide-atomic-v1 ${nonce} start`,
+    "%end 1 1801 0",
+    "%begin 1 1802 0",
+    ...(observed ? [`%pause ${runtimePaneId}`] : []),
+    "%end 1 1802 0",
+  );
+  expect(rig.armedAtomicCollectors.at(-1)).toBe(collector);
+  rig.sim.feedLines("%begin 1 1803 0", `%tmux-ide-atomic-v1 ${nonce} complete`, "%end 1 1803 0");
 }
 
-function completeRecovery(
-  rig: Rig,
-  runtime: string,
-  _provisionalSeed: string,
-  finalSeed: string,
-  cursor: string,
-): void {
-  acknowledgeContinue(rig, runtime);
-  rig.sim.reply([finalSeed]);
-  rig.sim.reply([cursor]);
-  runRecoveryTimer(rig);
-  rig.sim.reply([finalSeed]);
-  rig.sim.reply([cursor]);
-  runRecoveryTimer(rig);
-  rig.sim.reply([finalSeed]);
-  rig.sim.reply([cursor]);
-}
-
-function completeRecoveryConfirmations(rig: Rig, seed: string, cursor: string): void {
-  runRecoveryTimer(rig);
-  rig.sim.reply([seed]);
-  rig.sim.reply([cursor]);
-  runRecoveryTimer(rig);
-  rig.sim.reply([seed]);
-  rig.sim.reply([cursor]);
+/** Complete one requested snapshot through the actual stock pause and
+ * guarded capture transcript. Tests that interleave either boundary stay manual. */
+function completeSeed(rig: Rig, lines: readonly string[], cursor: string): void {
+  if (rig.sim.written.at(-1)?.includes("capture-pane -p -R -S -")) rig.sim.reply([...lines]);
+  const collector = rig.armedAtomicCollectors.at(-1);
+  if (collector?.kind === "pause") completeStockPause(rig, collector.runtimePaneId);
+  completeAtomicRecoveryPhase(rig, lines, cursor, {
+    continueNotify: true,
+    runtimePaneId: rig.armedAtomicCollectors.at(-1)!.runtimePaneId,
+  });
 }
 
 describe("native client activity", () => {
@@ -347,14 +462,6 @@ function bytesOf(events: readonly MirrorPaneEvent[]): string[] {
   return events
     .filter((event) => event.type === "seed" || event.type === "delta")
     .map((event) => dec.decode((event as { data: Uint8Array }).data));
-}
-
-function continueNotificationQueueSize(channel: SessionChannel): number {
-  return (
-    channel as unknown as {
-      continueNotificationQueues: ReadonlyMap<string, readonly unknown[]>;
-    }
-  ).continueNotificationQueues.size;
 }
 
 describe("identity join", () => {
@@ -445,7 +552,8 @@ describe("identity join", () => {
   });
 
   it("keeps full membership and hidden pane geometry through native zoom without a truth rebind", async () => {
-    const { channel, sim, state, pendingSyncs } = await startedRig();
+    const rig = await startedRig();
+    const { channel, sim, state, pendingSyncs } = rig;
     state.descriptorRows[2] = state.descriptorRows[2]!.replace(
       "%3\t\t",
       "%3\tpane.mirror.gen1\t",
@@ -468,6 +576,7 @@ describe("identity join", () => {
       (e) => hidden.push(e),
     );
     expect(hidden.at(-1)?.panes.find((p) => p.semanticPaneId === "pane.beta")?.width).toBe(99);
+    completeSeed(rig, ["hidden"], "0 0 99 50");
     const queued = pendingSyncs.length;
     sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${visible} *Z`);
     expect(pendingSyncs.length).toBe(queued);
@@ -747,43 +856,37 @@ describe("identity join", () => {
   });
 });
 
-describe("seed recipe (the FIFO seam)", () => {
-  it("discards pre-reply output, holds the probe window, and emits one atomic batch", async () => {
-    const { channel, sim } = await startedRig();
+describe("seed recipe (the observed-pause seam)", () => {
+  it("discards pre-pause output, holds overtaking output, and emits one atomic batch", async () => {
+    const rig = await startedRig();
+    const { channel, sim } = rig;
     const alpha = collect();
     channel.subscribePane("pane.alpha", alpha.onEvent);
-    // The two probes left back-to-back.
-    const capture = sim.written.filter((cmd) => cmd.includes("capture-pane"));
-    expect(capture).toHaveLength(1);
-    expect(capture[0]).toContain("-t %1");
-    expect(sim.written.some((cmd) => cmd.startsWith("display-message -p -t %1"))).toBe(true);
-
-    sim.output("%1", "PRE"); // produced before the capture instant → in the capture
-    expect(alpha.events).toHaveLength(0);
-    sim.reply(["CAPTURED:PRE"]); // the capture reply lands (FIFO seam)
-    sim.output("%1", "MID"); // strictly-after-capture, probe window → held
-    sim.reply(["4 9 100 50"]); // the cursor probe reply → atomic batch
-    expect(alpha.events.map((event) => event.type)).toEqual(["reset", "seed", "delta", "cursor"]);
-    expect(alpha.events[0]).toEqual({ type: "reset", cols: 100, rows: 50 });
-    expect(bytesOf(alpha.events)).toEqual(["CAPTURED:PRE", "MID"]);
-    expect(alpha.events[3]).toEqual({ type: "cursor", x: 4, y: 9 });
-
+    expect(sim.written.some((cmd) => cmd.includes("capture-pane"))).toBe(false);
+    sim.output("%1", "PRE");
+    expect(bytesOf(alpha.events)).toEqual([]);
+    completeStockPause(rig, "%1");
+    sim.output("%1", "MID");
+    completeAtomicRecoveryPhase(rig, ["CAPTURED:PRE"], "4 9 100 50", { continueNotify: true });
+    const content = alpha.events.filter((event) => event.type !== "flow");
+    expect(content.map((event) => event.type)).toEqual(["reset", "seed", "cursor", "delta"]);
+    expect(content[0]).toEqual({ type: "reset", cols: 100, rows: 50 });
+    expect(bytesOf(content)).toEqual(["CAPTURED:PRE", "MID"]);
+    expect(content[2]).toEqual({ type: "cursor", x: 4, y: 9 });
     sim.output("%1", "POST");
     expect(bytesOf(alpha.events).at(-1)).toBe("POST");
     await channel.dispose();
   });
 
   it("routes bytes only to the pane's own subscribers", async () => {
-    const { channel, sim } = await startedRig();
+    const rig = await startedRig();
+    const { channel, sim } = rig;
     const alpha = collect();
     const beta = collect();
     channel.subscribePane("pane.alpha", alpha.onEvent);
-    sim.reply(["seed-a"]);
-    sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["seed-a"], "0 0 100 50");
     channel.subscribePane("pane.beta", beta.onEvent);
-    sim.reply(["seed-b"]);
-    sim.reply(["0 0 99 50"]);
-
+    completeSeed(rig, ["seed-b"], "0 0 99 50");
     sim.output("%1", "FOR-ALPHA");
     sim.output("%2", "FOR-BETA");
     expect(bytesOf(alpha.events)).toEqual(["seed-a", "FOR-ALPHA"]);
@@ -792,1728 +895,767 @@ describe("seed recipe (the FIFO seam)", () => {
   });
 });
 
-describe("flow control", () => {
-  it("reports exhausted recovery to active subscribers without faulting frozen or sibling panes", async () => {
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => {
-        if (observation.phase === "nonconverged") throw new Error("diagnostic sink failed");
-      },
-    });
-    const alpha = collect(),
-      frozen = collect(),
-      beta = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["alpha"]);
-    rig.sim.reply(["0 0 100 50"]);
-    const parked = rig.channel.subscribePane("pane.alpha", frozen.onEvent);
-    rig.sim.reply(["frozen"]);
-    rig.sim.reply(["0 0 100 50"]);
-    parked.freeze();
-    rig.channel.subscribePane("pane.beta", beta.onEvent);
-    rig.sim.reply(["beta"]);
-    rig.sim.reply(["0 0 99 50"]);
-    alpha.events.length = frozen.events.length = beta.events.length = 0;
-    rig.sim.feedLines("%pause %1");
-    advanceRecoveryClock(rig, 500);
-    expect(alpha.events.filter((event) => event.type === "fault")).toEqual([
-      { type: "fault", reason: "native-recovery-failed" },
-    ]);
-    expect(frozen.events).toEqual([]);
-    expect(beta.events).toEqual([]);
-    rig.sim.output("%2", "LIVE");
-    expect(bytesOf(beta.events)).toEqual(["LIVE"]);
-    advanceRecoveryClock(rig, 10000);
-    expect(alpha.events.filter((event) => event.type === "fault")).toHaveLength(1);
-    await rig.channel.dispose();
+describe("stock observed-pause snapshot", () => {
+  it("seeds initial subscribers once and places captured cursor before overtaking output", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    const alpha = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+      rig.sim.output("%1", "BEFORE-PAUSE");
+      expect(bytesOf(alpha.events)).toEqual([]);
+      completeStockPause(rig, "%1");
+      // Real stock control mode can deliver these bytes before every snapshot
+      // guard. The observed pause, not the capture reply, is their lower fence.
+      rig.sim.output("%1", "AFTER-CAPTURE");
+      expect(bytesOf(alpha.events)).toEqual([]);
+      completeAtomicRecoveryPhase(rig, ["CAPTURE"], "3 2 100 50", {
+        continueNotify: true,
+      });
+      expect(bytesOf(alpha.events)).toEqual(["CAPTURE", "AFTER-CAPTURE"]);
+      const cursor = alpha.events.findIndex((event) => event.type === "cursor");
+      const delta = alpha.events.findIndex((event) => event.type === "delta");
+      expect(cursor).toBeGreaterThanOrEqual(0);
+      expect(delta).toBeGreaterThan(cursor);
+      expect(alpha.events.filter((event) => event.type === "seed")).toHaveLength(1);
+      rig.sim.output("%1", "LIVE");
+      expect(bytesOf(alpha.events)).toEqual(["CAPTURE", "AFTER-CAPTURE", "LIVE"]);
+    } finally {
+      await rig.channel.dispose();
+    }
   });
 
-  it("gives each queued pane a fresh active capture budget without publishing pre-capture output", async () => {
+  it.each(["pane-borders", "copy-keys"])(
+    "opens a pane despite unrelated-window %s hints during valid pause completion",
+    async (option) => {
+      const rig = await startedRig({ atomicHook: true });
+      const alpha = collect();
+      const descriptors = [...rig.state.descriptorRows];
+      const windows = [...rig.state.windowRows];
+      try {
+        rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+        // @2 is a different window from alpha's @1. Initial sampled option
+        // notifications are valid hints, not evidence that alpha changed.
+        // Exercise separate notification turns across the bounded retry budget.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          if (rig.armedAtomicCollectors.at(-1)?.kind !== "pause") break;
+          const value = option === "pane-borders" ? "off" : "emacs";
+          rig.sim.feedLines(`%subscription-changed tmux-ide-${option} $1 @2 0 - : ${value}`);
+          completeStockPause(rig, "%1", attempt === 0);
+        }
+        expect(rig.state.descriptorRows).toEqual(descriptors);
+        expect(rig.state.windowRows).toEqual(windows);
+        expect(alpha.events.filter((event) => event.type === "fault")).toEqual([]);
+        expect(rig.armedAtomicCollectors.at(-1)?.kind).not.toBe("pause");
+        completeAtomicRecoveryPhase(rig, ["VALID-ALPHA"], "3 2 100 50", {
+          continueNotify: true,
+        });
+        expect(bytesOf(alpha.events)).toEqual(["VALID-ALPHA"]);
+        expect(alpha.events.filter((event) => event.type === "seed")).toHaveLength(1);
+        rig.sim.output("%1", "LIVE");
+        expect(bytesOf(alpha.events)).toEqual(["VALID-ALPHA", "LIVE"]);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it.each(["pane-borders", "copy-keys"])(
+    "still rejects a pause crossed by its own window's %s hint",
+    async (option) => {
+      const rig = await startedRig({ atomicHook: true });
+      const alpha = collect();
+      try {
+        rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+        const oldNonce = rig.armedAtomicCollectors.at(-1)!.nonce;
+        rig.sim.feedLines(
+          `%subscription-changed tmux-ide-${option} $1 @1 0 - : ${option === "pane-borders" ? "off" : "emacs"}`,
+        );
+        completeStockPause(rig, "%1");
+        expect(bytesOf(alpha.events)).toEqual([]);
+        expect(rig.armedAtomicCollectors.at(-1)).toMatchObject({ kind: "pause" });
+        expect(rig.armedAtomicCollectors.at(-1)!.nonce).not.toBe(oldNonce);
+        completeStockPause(rig, "%1", false);
+        completeAtomicRecoveryPhase(rig, ["FRESH"], "0 0 100 50", { continueNotify: true });
+        expect(bytesOf(alpha.events)).toEqual(["FRESH"]);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it("reseeds every existing viewer when another viewer joins the same paused pane", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    const first = collect();
+    const second = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", first.onEvent);
+      completeStockPause(rig, "%1");
+      completeAtomicRecoveryPhase(rig, ["FIRST"], "5 0 100 50", { continueNotify: true });
+      first.events.length = 0;
+      rig.channel.subscribePane("pane.alpha", second.onEvent);
+      completeStockPause(rig, "%1");
+      rig.sim.output("%1", "SHARED-TAIL");
+      completeAtomicRecoveryPhase(rig, ["SHARED"], "6 0 100 50", { continueNotify: true });
+      expect(bytesOf(first.events)).toEqual(["SHARED", "SHARED-TAIL"]);
+      expect(bytesOf(second.events)).toEqual(["SHARED", "SHARED-TAIL"]);
+      rig.sim.output("%1", "LIVE");
+      expect(bytesOf(first.events).at(-1)).toBe("LIVE");
+      expect(bytesOf(second.events).at(-1)).toBe("LIVE");
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("fails within its deadline rather than publishing a truncated postpause tail", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    const alpha = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+      completeStockPause(rig, "%1");
+      const chunk = "X".repeat(16 * 1024);
+      for (let index = 0; index < 65; index++) rig.sim.output("%1", chunk);
+      expect(bytesOf(alpha.events)).toEqual([]);
+      advanceRecoveryClock(rig, 5_001);
+      expect(bytesOf(alpha.events)).toEqual([]);
+      expect(alpha.events.some((event) => event.type === "fault")).toBe(true);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("invalidates a buffered tail when tmux pauses again before snapshot completion", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    const alpha = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+      completeStockPause(rig, "%1");
+      rig.sim.output("%1", "TAIL-BEFORE-SECOND-GAP");
+      rig.sim.feedLines("%pause %1");
+      expect(bytesOf(alpha.events)).toEqual([]);
+      // No successful fresh snapshot arrives. The obsolete tail must never
+      // escape, and repeated recovery must not extend the original deadline.
+      advanceRecoveryClock(rig, 5_001);
+      expect(bytesOf(alpha.events)).toEqual([]);
+      expect(alpha.events.some((event) => event.type === "fault")).toBe(true);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("keeps a second pane queued until the first snapshot collector drains", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    const first = collect();
+    const second = collect();
+    const betaSnapshotInstalled = () =>
+      rig.sim.written.some((command) =>
+        command.startsWith("set-option -po -t %2 @tmux_ide_atomic_expected_"),
+      );
+    try {
+      rig.channel.subscribePane("pane.alpha", first.onEvent);
+      completeStockPause(rig, "%1");
+      rig.channel.subscribePane("pane.beta", second.onEvent);
+      expect(betaSnapshotInstalled()).toBe(false);
+      completeAtomicRecoveryPhase(rig, ["ALPHA"], "5 0 100 50", { continueNotify: true });
+      completeStockPause(rig, "%2");
+      expect(betaSnapshotInstalled()).toBe(true);
+      completeAtomicRecoveryPhase(rig, ["BETA"], "4 0 99 50", {
+        continueNotify: true,
+        runtimePaneId: "%2",
+      });
+      expect(bytesOf(first.events)).toEqual(["ALPHA"]);
+      expect(bytesOf(second.events)).toEqual(["BETA"]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("does not admit queued pane B until cancelled pane A's actual fence reply drains", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    const first = collect();
+    const second = collect();
+    const betaSnapshotInstalled = () =>
+      rig.sim.written.some((command) =>
+        command.startsWith("set-option -po -t %2 @tmux_ide_atomic_expected_"),
+      );
+    try {
+      const handle = rig.channel.subscribePane("pane.alpha", first.onEvent);
+      completeStockPause(rig, "%1");
+      const install = rig.sim.written.find((command) =>
+        command.includes("@tmux_ide_atomic_owner_"),
+      )!;
+      const nonce = /@tmux_ide_atomic_owner_([0-9a-f]{32,128})/u.exec(install)![1]!;
+      rig.channel.subscribePane("pane.beta", second.onEvent);
+      handle.close();
+      expect(betaSnapshotInstalled()).toBe(false);
+      drainRetiredAtomicCollector(rig, nonce);
+      completeStockPause(rig, "%2");
+      completeAtomicRecoveryPhase(rig, ["BETA"], "4 0 99 50", {
+        continueNotify: true,
+        runtimePaneId: "%2",
+      });
+      expect(bytesOf(first.events)).toEqual([]);
+      expect(bytesOf(second.events)).toEqual(["BETA"]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("keeps native -Q behind the same admission lease as a stock snapshot", async () => {
+    const adapter = {
+      bindIo: vi.fn(),
+      dispose: vi.fn(),
+      atomicSnapshotEpoch: vi.fn((_io: unknown, representation: string) =>
+        representation === "native" ? "11111111-1111-4111-8111-111111111111" : null,
+      ),
+      tryDispatch: vi.fn<NonNullable<SessionChannelOptions["ownedViewer"]>["tryDispatch"]>(
+        (_io, request) => request.commands[0]?.includes("-Q") ?? false,
+      ),
+    };
+    const rig = await startedRig({ atomicHook: true, ownedViewer: adapter, nativeBirth: "11" });
+    try {
+      rig.channel.subscribePane("pane.alpha", () => {});
+      completeStockPause(rig, "%1");
+      rig.channel.subscribePane("pane.beta", () => {}, undefined, true);
+      expect(
+        adapter.tryDispatch.mock.calls.filter(([, request]) => request.commands[0]?.includes("-Q")),
+      ).toHaveLength(0);
+      completeAtomicRecoveryPhase(rig, ["ALPHA"], "5 0 100 50", { continueNotify: true });
+      const native = adapter.tryDispatch.mock.calls.filter(([, request]) =>
+        request.commands[0]?.includes("-Q"),
+      );
+      expect(native).toHaveLength(1);
+      expect(native[0]![1]).toMatchObject({ paneId: "%2", paneBirthId: "11" });
+      expect(native[0]![1].commands[0]).not.toContain("-D");
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("restarts for a subscriber joining during capture without publishing the old batch", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    const first = collect();
+    const second = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", first.onEvent);
+      rig.sim.feedLines("%subscription-changed tmux-ide-copy-keys $1 @2 0 - : emacs");
+      completeStockPause(rig, "%1");
+      const collector = rig.armedAtomicCollectors.at(-1)!;
+      rig.sim.output("%1", "OLD-TAIL");
+      rig.channel.subscribePane("pane.alpha", second.onEvent);
+      expect(bytesOf(first.events)).toEqual([]);
+      expect(bytesOf(second.events)).toEqual([]);
+      drainRetiredAtomicCollector(rig, collector.nonce);
+      completeStockPause(rig, "%1", false);
+      rig.sim.output("%1", "NEW-TAIL");
+      completeAtomicRecoveryPhase(rig, ["NEW"], "3 0 100 50", { continueNotify: true });
+      expect(bytesOf(first.events)).toEqual(["NEW", "NEW-TAIL"]);
+      expect(bytesOf(second.events)).toEqual(["NEW", "NEW-TAIL"]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("does not arm or invoke a pause hook after cancellation during option setup", async () => {
+    const rig = await startedRig({ manualAfterPauseSetup: true });
+    const alpha = collect();
+    try {
+      const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+      expect(rig.sim.written.at(-1)).toContain("@tmux_ide_pause_");
+      expect(rig.armedAtomicCollectors).toEqual([]);
+      handle.close();
+      // The option command really finishes after cancellation. Its stale reply
+      // must not install a collector or invoke the hook on an unobserved pane.
+      rig.sim.reply([]);
+      expect(rig.armedAtomicCollectors).toEqual([]);
+      expect(rig.sim.written.some((command) => command.includes("set-hook -Rp"))).toBe(false);
+      expect(bytesOf(alpha.events)).toEqual([]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("does not dispatch queued recovery after the owning control channel exits", async () => {
     const rig = await startedRig();
     const alpha = collect();
     const beta = collect();
-    const secondAlpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    const betaHandle = rig.channel.subscribePane("pane.beta", beta.onEvent);
-    // Repeated queued requests coalesce instead of allocating more recipes.
-    betaHandle.reseed();
-    betaHandle.reseed();
-    rig.channel.subscribePane("pane.alpha", secondAlpha.onEvent);
-    const captures = () => rig.sim.written.filter((command) => command.includes("capture-pane"));
-    expect(captures()).toHaveLength(1);
-    rig.sim.output("%2", "included in future capture");
-    expect(beta.events).toEqual([]);
-    for (const [index, text] of ["alpha", "beta", "second alpha"].entries()) {
-      advanceRecoveryClock(rig, 4000);
-      rig.sim.reply([text]);
-      rig.sim.reply([`0 0 ${index === 1 ? 99 : 100} 50`]);
-      expect(captures()).toHaveLength(Math.min(index + 2, 3));
+    try {
+      rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+      completeStockPause(rig, "%1");
+      rig.channel.subscribePane("pane.beta", beta.onEvent);
+      const count = rig.armedAtomicCollectors.length;
+      rig.sim.feedLines("%exit test channel exit");
+      advanceRecoveryClock(rig, 10_000);
+      expect(rig.armedAtomicCollectors).toHaveLength(count);
+      expect(bytesOf(alpha.events)).toEqual([]);
+      expect(bytesOf(beta.events)).toEqual([]);
+      expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+    } finally {
+      await rig.channel.dispose();
     }
-    expect(rig.recoveryClock.nowMs).toBe(12000);
-    expect(bytesOf(alpha.events)).toEqual(["alpha"]);
-    expect(bytesOf(beta.events)).toEqual(["beta"]);
-    expect(bytesOf(secondAlpha.events)).toEqual(["second alpha"]);
-    expect(
-      [...alpha.events, ...beta.events, ...secondAlpha.events].some(
-        (event) => event.type === "fault",
-      ),
-    ).toBe(false);
-    await rig.channel.dispose();
+  });
+
+  it("never publishes a paused snapshot after its final subscriber closes", async () => {
+    const rig = await startedRig({ atomicHook: true });
+    const alpha = collect();
+    try {
+      const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+      completeStockPause(rig, "%1");
+      rig.sim.output("%1", "HELD");
+      const nonce = rig.armedAtomicCollectors.at(-1)!.nonce;
+      handle.close();
+      rig.sim.output("%1", "LATE");
+      expect(bytesOf(alpha.events)).toEqual([]);
+      expect(rig.sim.written.at(-1)).not.toBe("refresh-client -A '%1:continue'");
+      drainRetiredAtomicCollector(rig, nonce);
+      expect(rig.sim.written).toContain("refresh-client -A '%1:continue'");
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+});
+
+describe("flow control", () => {
+  // Recovery now has one authenticated pause/snapshot transaction. Tests below
+  // exercise its public guarantees instead of the removed quiet/confirm passes.
+  it("gives queued panes fresh budgets and coalesces same-pane viewers", async () => {
+    const rig = await startedRig();
+    const a = collect(),
+      b = collect(),
+      joined = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", a.onEvent);
+      completeStockPause(rig, "%1");
+      const old = rig.armedAtomicCollectors.at(-1)!;
+      rig.channel.subscribePane("pane.beta", b.onEvent);
+      rig.channel.subscribePane("pane.alpha", joined.onEvent);
+      rig.sim.output("%2", "included-in-seed");
+      expect(b.events).toEqual([]);
+      drainRetiredAtomicCollector(rig, old.nonce);
+      advanceRecoveryClock(rig, 400);
+      completeSeed(rig, ["beta"], "0 0 99 50");
+      advanceRecoveryClock(rig, 400);
+      completeSeed(rig, ["shared"], "0 0 100 50");
+      expect(bytesOf(a.events)).toEqual(["shared"]);
+      expect(bytesOf(joined.events)).toEqual(["shared"]);
+      expect(bytesOf(b.events)).toEqual(["beta"]);
+    } finally {
+      await rig.channel.dispose();
+    }
   });
 
   it.each(["freeze", "close"] as const)(
-    "cancels a queued recipe on %s without disturbing its active sibling",
+    "cancels queued %s without disturbing the admitted pane",
     async (operation) => {
-      const rig = await startedRig({ continueReply: "manual" });
-      const alpha = collect();
-      const beta = collect();
-      rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-      const queued = rig.channel.subscribePane("pane.beta", beta.onEvent);
-      queued[operation]();
-      beta.events.length = 0;
-      rig.sim.reply(["alpha"]);
-      rig.sim.reply(["0 0 100 50"]);
-      expect(bytesOf(alpha.events)).toEqual(["alpha"]);
-      expect(beta.events).toEqual([]);
-      expect(
-        (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue
-          .size,
-      ).toBe(0);
-      expect(rig.sim.written.filter((command) => command.includes("capture-pane"))).toHaveLength(1);
-      await rig.channel.dispose();
+      const rig = await startedRig();
+      const a = collect(),
+        b = collect();
+      try {
+        rig.channel.subscribePane("pane.alpha", a.onEvent);
+        const queued = rig.channel.subscribePane("pane.beta", b.onEvent);
+        queued[operation]();
+        b.events.length = 0;
+        completeSeed(rig, ["alpha"], "0 0 100 50");
+        expect(bytesOf(a.events)).toEqual(["alpha"]);
+        expect(b.events).toEqual([]);
+        expect(rig.armedAtomicCollectors.filter((c) => c.kind !== "pause")).toHaveLength(1);
+      } finally {
+        await rig.channel.dispose();
+      }
     },
   );
 
-  it("does not expire a third pane while two earlier captures use their own budgets", async () => {
+  it("does not expire a third pane while earlier panes consume their own command budgets", async () => {
     const rig = await startedRig();
-    // Model the real FIFO: each command-list acknowledgement arrives in wire
-    // order, not immediately when a later pane queues its command list.
-    rig.sim.commandListInline = (command, count, resultIndex, onReply) => {
-      rig.sim.core.pushCommandList(count, resultIndex, onReply);
-      rig.sim.written.push(command);
-    };
-    const panes = [collect(), collect(), collect()];
-    rig.channel.subscribePane("pane.alpha", panes[0]!.onEvent);
-    rig.channel.subscribePane("pane.beta", panes[1]!.onEvent);
-    rig.channel.subscribePane("pane.alpha", panes[2]!.onEvent);
-    for (let index = 0; index < panes.length; index += 1) {
-      advanceRecoveryClock(rig, 4000);
-      rig.sim.reply([]);
-      rig.sim.reply([`pane-${index}`]);
-      rig.sim.reply([`0 0 ${index === 1 ? 99 : 100} 50`]);
-      expect(bytesOf(panes[index]!.events)).toEqual([`pane-${index}`]);
+    const lanes = [collect(), collect(), collect()];
+    try {
+      ["pane.alpha", "pane.beta", "pane.mirror.gen1"].forEach((id, i) =>
+        rig.channel.subscribePane(id, lanes[i]!.onEvent),
+      );
+      for (let i = 0; i < 3; i++) {
+        advanceRecoveryClock(rig, 400);
+        completeSeed(rig, [`seed${i}`], `0 0 ${[100, 99, 200][i]} 50`);
+        expect(bytesOf(lanes[i]!.events)).toEqual([`seed${i}`]);
+      }
+      expect(lanes.flatMap((l) => l.events).some((e) => e.type === "fault")).toBe(false);
+    } finally {
+      await rig.channel.dispose();
     }
-    expect(rig.recoveryClock.nowMs).toBe(12000);
-    expect(panes.flatMap((pane) => pane.events).some((event) => event.type === "fault")).toBe(
-      false,
-    );
-    await rig.channel.dispose();
   });
 
-  it("retires queued recipes together when the active capture stalls", async () => {
-    const rig = await startedRig();
-    const alpha = collect();
-    const beta = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.channel.subscribePane("pane.beta", beta.onEvent);
-    advanceRecoveryClock(rig, 10000);
-    for (const events of [alpha.events, beta.events])
-      expect(events.filter((event) => event.type === "fault")).toEqual([
-        { type: "fault", reason: "native-recovery-failed" },
-      ]);
-    expect(
-      (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue.size,
-    ).toBe(0);
-    rig.sim.reply(["late alpha"]);
-    rig.sim.reply(["0 0 100 50"]);
-    expect(bytesOf(alpha.events)).toEqual([]);
-    expect(bytesOf(beta.events)).toEqual([]);
-    await rig.channel.dispose();
-  });
-
-  it("bounds queued subscribers and cancels all retained recipes on disposal", async () => {
+  it("coalesces queued viewers and cancels all leases and timers on disposal", async () => {
     const rig = await startedRig();
     rig.channel.subscribePane("pane.alpha", () => {});
-    for (let index = 0; index < 65; index += 1) {
-      rig.channel.subscribePane("pane.beta", () => {});
-      expect(
-        (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue
-          .size,
-      ).toBeLessThanOrEqual(64);
-    }
+    for (let i = 0; i < 65; i++) rig.channel.subscribePane("pane.beta", () => {});
+    expect(
+      (rig.channel as unknown as { snapshotQueue: Map<string, unknown> }).snapshotQueue.size,
+    ).toBe(1);
     await rig.channel.dispose();
     expect(
-      (rig.channel as unknown as { plainReseedQueue: Map<unknown, unknown> }).plainReseedQueue.size,
+      (rig.channel as unknown as { snapshotQueue: Map<string, unknown> }).snapshotQueue.size,
     ).toBe(0);
-    expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+    expect(rig.pendingRecoveries.filter((t) => !t.cancelled)).toEqual([]);
   });
 
-  it("bounds a silent initial capture and ignores its late replies after failure", async () => {
-    const rig = await startedRig();
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    advanceRecoveryClock(rig, 10000);
-    expect(alpha.events).toEqual([
-      { type: "flow", state: "paused", reason: "backpressure" },
-      { type: "fault", reason: "native-recovery-failed" },
-    ]);
-    rig.sim.reply(["late capture"]);
-    rig.sim.reply(["0 0 100 50"]);
-    expect(bytesOf(alpha.events)).toEqual([]);
-    expect(alpha.events.filter((event) => event.type === "fault")).toHaveLength(1);
-    await rig.channel.dispose();
+  it("fails a silent capture once without faulting frozen or sibling viewers", async () => {
+    const rig = await startedRig({
+      onFlowRecoveryObserved: (o) => {
+        if (o.phase === "nonconverged") throw new Error("sink");
+      },
+    });
+    const a = collect(),
+      frozen = collect(),
+      b = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", a.onEvent);
+      completeSeed(rig, ["a"], "0 0 100 50");
+      const parked = rig.channel.subscribePane("pane.alpha", frozen.onEvent);
+      completeSeed(rig, ["a"], "0 0 100 50");
+      parked.freeze();
+      rig.channel.subscribePane("pane.beta", b.onEvent);
+      completeSeed(rig, ["b"], "0 0 99 50");
+      a.events.length = frozen.events.length = b.events.length = 0;
+      rig.sim.feedLines("%pause %1");
+      completeStockPause(rig, "%1");
+      advanceRecoveryClock(rig, 3000);
+      expect(a.events.filter((e) => e.type === "fault")).toHaveLength(1);
+      expect(frozen.events).toEqual([]);
+      expect(b.events).toEqual([]);
+      rig.sim.output("%2", "LIVE");
+      expect(bytesOf(b.events)).toEqual(["LIVE"]);
+      advanceRecoveryClock(rig, 10000);
+      expect(a.events.filter((e) => e.type === "fault")).toHaveLength(1);
+      expect(bytesOf(a.events)).toEqual([]);
+    } finally {
+      await rig.channel.dispose();
+    }
   });
 
   it.each(["freeze", "close", "dispose"] as const)(
-    "cancels silent capture work on %s",
+    "cancels a silent raw capture on %s and rejects late publication",
     async (operation) => {
-      const observations: MirrorFlowRecoveryObservation[] = [];
-      const rig = await startedRig({
-        onFlowRecoveryObserved: (observation) => observations.push(observation),
-      });
-      const alpha = collect();
-      const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
+      const rig = await startedRig();
+      const a = collect();
+      const handle = rig.channel.subscribePane("pane.alpha", a.onEvent);
+      completeStockPause(rig, "%1");
+      const old = rig.armedAtomicCollectors.at(-1)!;
       if (operation === "dispose") await rig.channel.dispose();
       else handle[operation]();
-      alpha.events.length = 0;
-      advanceRecoveryClock(rig, 20000);
-      expect(observations).toEqual([]);
-      expect(alpha.events).toEqual([]);
-      expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+      const count = a.events.length;
+      rig.sim.feedLines(
+        "%begin 1 800 0",
+        `%tmux-ide-atomic-v1 ${old.nonce} start`,
+        "%end 1 800 0",
+        "%begin 1 801 0",
+        "LATE",
+        "%end 1 801 0",
+      );
+      expect(bytesOf(a.events)).toEqual([]);
+      expect(a.events).toHaveLength(count);
       await rig.channel.dispose();
+      expect(rig.pendingRecoveries.filter((t) => !t.cancelled)).toEqual([]);
     },
   );
 
-  it("ignores a superseded capture without consuming its replacement's FIFO replies", async () => {
+  it("keeps an unwatched paused pane parked and seeds it when a viewer joins", async () => {
     const rig = await startedRig();
-    const alpha = collect();
-    const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    handle.reseed();
-    rig.sim.reply(["old"]);
-    rig.sim.reply(["0 0 100 50"]);
-    expect(alpha.events).toEqual([]);
-    rig.sim.reply(["new"]);
-    rig.sim.reply(["0 0 100 50"]);
-    expect(bytesOf(alpha.events)).toEqual(["new"]);
-    advanceRecoveryClock(rig, 20000);
-    expect(alpha.events.filter((event) => event.type === "fault")).toEqual([]);
-    await rig.channel.dispose();
-  });
-
-  async function seededPair(rig: Rig): Promise<{
-    alpha: ReturnType<typeof collect>;
-    beta: ReturnType<typeof collect>;
-  }> {
-    const alpha = collect();
-    const beta = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed-a"]);
-    rig.sim.reply(["0 0 100 50"]);
-    rig.channel.subscribePane("pane.beta", beta.onEvent);
-    rig.sim.reply(["seed-b"]);
-    rig.sim.reply(["0 0 99 50"]);
-    alpha.events.length = 0;
-    beta.events.length = 0;
-    return { alpha, beta };
-  }
-
-  it("recovers EVERY backpressure-paused pane on any recovery (sticky %pause)", async () => {
-    const rig = await startedRig();
-    const { alpha, beta } = await seededPair(rig);
-
-    // The stall paused the flooding pane AND the quiet sibling (measured
-    // sticky behavior). Feed both pauses in one chunk, then answer the
-    // recovery reseeds in FIFO order.
-    rig.sim.feedLines("%pause %1");
-    expect(rig.sim.written.filter((cmd) => cmd === "refresh-client -A '%1:continue'")).toHaveLength(
-      1,
-    );
-    completeRecovery(rig, "%1", "provisional-a", "reseed-a", "0 0 100 50");
-    rig.sim.feedLines("%pause %2");
-    expect(rig.sim.written.filter((cmd) => cmd === "refresh-client -A '%2:continue'")).toHaveLength(
-      1,
-    );
-    completeRecovery(rig, "%2", "provisional-b", "reseed-b", "0 0 99 50");
-
-    expect(alpha.events.map((event) => event.type)).toEqual([
-      "flow",
-      "reset",
-      "seed",
-      "cursor",
-      "flow",
-    ]);
-    expect(alpha.events[0]).toEqual({ type: "flow", state: "paused", reason: "backpressure" });
-    expect(alpha.events.at(-1)).toEqual({
-      type: "flow",
-      state: "resumed",
-      reason: "backpressure",
-    });
-    expect(bytesOf(beta.events)).toEqual(["reseed-b"]);
-    expect(rig.channel.flowSnapshot()).toEqual({ backpressured: [], requested: [] });
-    await rig.channel.dispose();
-  });
-
-  it("leaves a pane paused when nobody unfrozen is watching, and recovers it on subscribe", async () => {
-    const rig = await startedRig();
-    rig.sim.feedLines("%pause %1"); // no subscribers at all
-    expect(rig.sim.written.some((cmd) => cmd.includes("%1:continue"))).toBe(false);
-
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    expect(rig.sim.written.some((cmd) => cmd === "refresh-client -A '%1:continue'")).toBe(true);
-    completeRecovery(rig, "%1", "late-provisional", "late-seed", "0 0 100 50");
-    expect(bytesOf(alpha.events)).toEqual(["late-seed"]);
-    await rig.channel.dispose();
-  });
-
-  it("freezes one pane without touching siblings, and thaws with continue+reseed", async () => {
-    const rig = await startedRig();
-    const alpha = collect();
-    const beta = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed-a"]);
-    rig.sim.reply(["0 0 100 50"]);
-    const betaHandle = rig.channel.subscribePane("pane.beta", beta.onEvent);
-    rig.sim.reply(["seed-b"]);
-    rig.sim.reply(["0 0 99 50"]);
-    alpha.events.length = 0;
-    beta.events.length = 0;
-
-    // beta briefly has TWO subscribers; freezing one must not park the pane.
-    const betaHandle2 = rig.channel.subscribePane("pane.beta", () => {});
-    rig.sim.reply(["z"]);
-    rig.sim.reply(["0 0 99 50"]);
-    betaHandle2.freeze();
-    expect(rig.sim.written.some((cmd) => cmd.includes("%2:pause"))).toBe(false);
-    betaHandle2.close();
-
-    betaHandle.freeze();
-    expect(rig.sim.written.some((cmd) => cmd === "refresh-client -A '%2:pause'")).toBe(true);
-    expect(rig.channel.flowSnapshot().requested).toEqual(["pane.beta"]);
-    rig.sim.output("%2", "WHILE-FROZEN");
-    expect(bytesOf(beta.events)).toEqual([]); // frozen: nothing delivered
-
-    // Sibling alpha keeps flowing the whole time.
-    rig.sim.output("%1", "SIBLING");
-    expect(bytesOf(alpha.events)).toEqual(["SIBLING"]);
-
-    betaHandle.thaw();
-    expect(rig.sim.written.some((cmd) => cmd === "refresh-client -A '%2:continue'")).toBe(true);
-    completeRecovery(rig, "%2", "thawed-provisional", "thawed-seed", "0 0 99 50");
-    const flows = beta.events.filter((event) => event.type === "flow");
-    expect(flows).toEqual([
-      { type: "flow", state: "paused", reason: "requested" },
-      { type: "flow", state: "resumed", reason: "requested" },
-    ]);
-    expect(bytesOf(beta.events)).toEqual(["thawed-seed"]);
-    await rig.channel.dispose();
-  });
-
-  it("resumes a locally frozen subscriber after its private reseed", async () => {
-    const rig = await startedRig();
-    const first = collect();
-    const second = collect();
-    const firstHandle = rig.channel.subscribePane("pane.beta", first.onEvent);
-    rig.sim.reply(["first-seed"]);
-    rig.sim.reply(["0 0 99 50"]);
-    rig.channel.subscribePane("pane.beta", second.onEvent);
-    rig.sim.reply(["second-seed"]);
-    rig.sim.reply(["0 0 99 50"]);
-    first.events.length = 0;
-    second.events.length = 0;
-
-    firstHandle.freeze();
-    expect(rig.sim.written.some((cmd) => cmd === "refresh-client -A '%2:pause'")).toBe(false);
-    rig.sim.output("%2", "SIBLING-ONLY");
-    expect(bytesOf(first.events)).toEqual([]);
-    expect(bytesOf(second.events)).toEqual(["SIBLING-ONLY"]);
-
-    firstHandle.thaw();
-    rig.sim.reply(["private-reseed"]);
-    rig.sim.reply(["0 0 99 50"]);
-    expect(first.events.filter((event) => event.type === "flow")).toEqual([
-      { type: "flow", state: "paused", reason: "requested" },
-      { type: "flow", state: "resumed", reason: "requested" },
-    ]);
-    expect(bytesOf(first.events)).toEqual(["private-reseed"]);
-    await rig.channel.dispose();
-  });
-
-  it("returns the pause ticket when a frozen pane's last subscriber departs", async () => {
-    const rig = await startedRig();
-    const alpha = collect();
-    const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["s"]);
-    rig.sim.reply(["0 0 100 50"]);
-    handle.freeze();
-    expect(rig.sim.written.some((cmd) => cmd === "refresh-client -A '%1:pause'")).toBe(true);
-    handle.close();
-    expect(rig.sim.written.some((cmd) => cmd === "refresh-client -A '%1:continue'")).toBe(true);
-    expect(rig.channel.flowSnapshot()).toEqual({ backpressured: [], requested: [] });
-    await rig.channel.dispose();
-  });
-
-  it("repaints once after resumed output becomes quiet without another output notification", async () => {
-    const phases: string[] = [];
-    const rig = await startedRig({
-      onFlowRecoveryObserved: (observation) => phases.push(observation.phase),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1", "%continue %1");
-    rig.sim.reply(["INTERMEDIATE"]);
-    rig.sim.reply(["0 40 100 50"]);
-    rig.sim.output("%1", "FINAL-BYTES");
-    runRecoveryTimer(rig);
-    rig.sim.reply(["FINAL-CAPTURE"]);
-    rig.sim.reply(["0 39 100 50"]);
-    completeRecoveryConfirmations(rig, "FINAL-CAPTURE", "0 39 100 50");
-
-    expect(bytesOf(alpha.events)).toEqual(["FINAL-CAPTURE"]);
-    expect(alpha.events.filter((event) => event.type === "flow")).toEqual([
-      { type: "flow", state: "paused", reason: "backpressure" },
-      { type: "flow", state: "resumed", reason: "backpressure" },
-    ]);
-    expect(phases).toEqual([
-      "pause",
-      "continue-request",
-      "continue-notify",
-      "continue-reply",
-      "final-reseed",
-      "final-reseed",
-      "confirmation-reseed",
-      "confirmation-reseed",
-      "converged",
-    ]);
-    await rig.channel.dispose();
-  });
-
-  it("converges from a successful continue reply when tmux emits no continue notification", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]); // successful ordered refresh-client reply; no %continue follows
-    rig.sim.reply(["INTERMEDIATE"]);
-    rig.sim.reply(["0 40 100 50"]);
-    for (let ordinal = 0; ordinal < 64; ordinal += 1) rig.sim.output("%1", `load-${ordinal}\n`);
-    rig.sim.output("%1", "WORKLOAD-MARKER\n");
-    completeFinalContinueFence(rig);
-    rig.sim.reply([`${"F".repeat(876_400)}WORKLOAD-MARKER`]);
-    rig.sim.reply(["38 39 100 50"]);
-    completeRecoveryConfirmations(rig, `${"F".repeat(876_400)}WORKLOAD-MARKER`, "38 39 100 50");
-
-    expect(observations.map(({ phase }) => phase)).toEqual([
-      "pause",
-      "continue-request",
-      "continue-reply",
-      "final-reseed",
-      "final-reseed",
-      "confirmation-reseed",
-      "confirmation-reseed",
-      "converged",
-    ]);
-    expect(bytesOf(alpha.events).join("").split("WORKLOAD-MARKER")).toHaveLength(2);
-    expect(alpha.events.filter((event) => event.type === "flow")).toEqual([
-      { type: "flow", state: "paused", reason: "backpressure" },
-      { type: "flow", state: "resumed", reason: "backpressure" },
-    ]);
-    expect(rig.channel.flowSnapshot()).toEqual({ backpressured: [], requested: [] });
-    await rig.channel.dispose();
-  });
-
-  it("uses one NOHOOKS raw pane seam per private phase and publishes only confirm2", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      atomicHook: true,
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    completeAtomicRecoveryPhase(rig, ["POST-SEAM-AUTHORITY"], "38 39 100 50 0 1 0 0 0 0 0 0 0 1");
-    expect(bytesOf(alpha.events)).toEqual([]);
-    runRecoveryTimer(rig);
-    completeAtomicRecoveryPhase(rig, ["POST-SEAM-AUTHORITY"], "38 39 100 50 0 1 0 0 0 0 0 0 0 1");
-    expect(bytesOf(alpha.events)).toEqual([]);
-    runRecoveryTimer(rig);
-    completeAtomicRecoveryPhase(rig, ["POST-SEAM-AUTHORITY"], "38 39 100 50 0 1 0 0 0 0 0 0 0 1");
-
-    expect(bytesOf(alpha.events)).toEqual(["POST-SEAM-AUTHORITY"]);
-    expect(observations.at(-1)?.phase).toBe("converged");
-    const hookBodies = rig.sim.written.filter((command) =>
-      command.startsWith("set-option -po -t %1 @tmux_ide_atomic_expected_"),
-    );
-    expect(hookBodies).toHaveLength(3);
-    for (const command of hookBodies) {
-      expect(command).toContain("capture-pane -p -e -J");
-      expect(command).toContain("display-message -p -t %1");
-      expect(command).toContain("refresh-client -A " + "'\\''" + "%1:continue" + "'\\''");
-      expect(command).toContain("set-option -gF ");
-      expect(command).toContain("@owned-buffer");
-      expect(command).toContain("wait-for -S owned-ready");
-      expect(command).not.toContain("run-shell");
-    }
-    const invocations = rig.sim.written.filter(
-      (command) => command.startsWith("if-shell -t %1 -F") && command.includes("set-hook -Rp"),
-    );
-    expect(invocations).toHaveLength(3);
-    expect(rig.atomicInvocationAuthorizations).toEqual([true, true, true]);
-    for (const command of invocations) {
-      expect(command).toMatch(
-        /#\{&&:#\{==:#\{@tmux_ide_atomic_owner_[0-9a-f]+\},[0-9a-f]+\},#\{==:#\{@tmux_ide_atomic_[0-9a-f]+\},#\{@tmux_ide_atomic_expected_[0-9a-f]+\}\}\}/u,
-      );
-    }
-    await rig.channel.dispose();
-  });
-
-  it("keeps a >3s 5k-row atomic candidate alive through authenticated collector progress", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      atomicHook: true,
-      historyLines: 5_000,
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-    const authority = Array.from(
-      { length: 5_000 },
-      (_, index) => `${index.toString().padStart(4, "0")}:${"A".repeat(150)}`,
-    );
-
-    rig.sim.feedLines("%pause %1");
-    completeAtomicRecoveryPhase(rig, authority, "38 39 100 50 0 1 0 0 0 0 0 0 0 1", {
-      guardDelayMs: 260,
-    });
-    expect(rig.recoveryClock.nowMs).toBeGreaterThan(3_000);
-    expect(observations.some(({ phase }) => phase === "nonconverged")).toBe(false);
-    runRecoveryTimer(rig);
-    completeAtomicRecoveryPhase(rig, authority, "38 39 100 50 0 1 0 0 0 0 0 0 0 1");
-    runRecoveryTimer(rig);
-    completeAtomicRecoveryPhase(rig, authority, "38 39 100 50 0 1 0 0 0 0 0 0 0 1");
-
-    expect(observations.at(-1)).toMatchObject({
-      phase: "converged",
-      collectorStarted: true,
-      collectorLastCompletedOrdinal: 12,
-      collectorCaptureLineCount: 5_000,
-      collectorStatusObserved: true,
-      collectorObserverEmissionObserved: true,
-      collectorFailureReason: null,
-    });
-    expect(bytesOf(alpha.events)).toHaveLength(1);
-    expect(rig.recoveryClock.nowMs).toBeLessThan(5_000);
-    await rig.channel.dispose();
-  });
-
-  it("retires an armed atomic collector immediately when all participants freeze", async () => {
-    const rig = await startedRig({ atomicHook: true });
-    const alpha = collect();
-    const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    handle.freeze();
-    const settled = vi.fn();
-    expect(
-      rig.sim.core.armAtomicPaneSnapshotCollector({
-        nonce: "f".repeat(32),
-        runtimePaneId: "%1",
-        maxCaptureBytes: 1024,
-        maxCaptureLines: 16,
-        maxCursorBytes: 256,
-        observerCommandCount: 2,
-        onSettled: settled,
-      }),
-    ).toBe(true);
-    rig.sim.core.retireAtomicPaneSnapshotCollector("f".repeat(32));
-    expect(settled).toHaveBeenCalledOnce();
-    expect(bytesOf(alpha.events)).toEqual([]);
-    await rig.channel.dispose();
-  });
-
-  it("retires the exact collector on a silent 3s gap and does not rearm for foreign framing", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      atomicHook: true,
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    const install = [...rig.sim.written]
-      .reverse()
-      .find((command) => command.includes("@tmux_ide_atomic_owner_"))!;
-    const nonceMatch = /@tmux_ide_atomic_owner_([0-9a-f]{32,128})/u.exec(install);
-    expect(nonceMatch).not.toBeNull();
-    const nonce = nonceMatch![1]!;
-    rig.sim.feedLines("%begin 1 901 0", `%tmux-ide-atomic-v1 ${nonce} start`, "%end 1 901 0");
-    advanceRecoveryClock(rig, 2_999);
-    rig.sim.feedLines(`%tmux-ide-atomic-v1 ${"f".repeat(32)} capture-end`);
-    advanceRecoveryClock(rig, 1);
-
-    expect(observations.at(-1)).toMatchObject({
-      phase: "nonconverged",
-      failureReason: "no-progress",
-      collectorStarted: true,
-      collectorLastCompletedOrdinal: 0,
-      collectorFailureReason: "foreign-sentinel",
-    });
-    expect(bytesOf(alpha.events)).toEqual([]);
-    const replacement = vi.fn();
-    expect(
-      rig.sim.core.armAtomicPaneSnapshotCollector({
-        nonce: "e".repeat(32),
-        runtimePaneId: "%1",
-        maxCaptureBytes: 1024,
-        maxCaptureLines: 16,
-        maxCursorBytes: 256,
-        observerCommandCount: 2,
-        onSettled: replacement,
-      }),
-    ).toBe(true);
-    rig.sim.core.retireAtomicPaneSnapshotCollector("e".repeat(32));
-    await rig.channel.dispose();
-  });
-
-  it("seals only the current stalled collector after an earlier candidate succeeded", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      atomicHook: true,
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    completeAtomicRecoveryPhase(rig, ["PRIVATE-CANDIDATE"], "38 39 100 50 0 1 0 0 0 0 0 0 0 1");
-    expect(observations.at(-1)).toMatchObject({
-      phase: "final-reseed",
-      collectorLastCompletedOrdinal: 12,
-      collectorStatusObserved: true,
-      collectorObserverEmissionObserved: true,
-    });
-    runRecoveryTimer(rig);
-    const install = [...rig.sim.written]
-      .reverse()
-      .find((command) => command.includes("@tmux_ide_atomic_owner_"))!;
-    const nonceMatch = /@tmux_ide_atomic_owner_([0-9a-f]{32,128})/u.exec(install);
-    expect(nonceMatch).not.toBeNull();
-    const nonce = nonceMatch![1]!;
-    rig.sim.feedLines("%begin 1 901 0", `%tmux-ide-atomic-v1 ${nonce} start`, "%end 1 901 0");
-    advanceRecoveryClock(rig, 3_000);
-
-    expect(observations.at(-1)).toMatchObject({
-      phase: "nonconverged",
-      failureReason: "no-progress",
-      collectorStarted: true,
-      collectorLastCompletedOrdinal: 0,
-      collectorCaptureLineCount: 0,
-      collectorCaptureByteCount: 0,
-      collectorContinueObserved: false,
-      collectorStatusObserved: false,
-      collectorObserverEmissionObserved: false,
-      collectorFailureReason: "retired",
-    });
-    expect(bytesOf(alpha.events)).toEqual([]);
-    await rig.channel.dispose();
-  });
-
-  it("does not execute or unset a hook body replaced after create and before invoke", async () => {
-    const rig = await startedRig({ atomicHook: true, replaceAtomicHookBeforeInvoke: true });
-    const alpha = collect();
-    const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    expect(rig.atomicInvocationAuthorizations).toEqual([false]);
-    const replacement = [...rig.atomicHookValues.entries()].find(([name]) =>
-      /^@tmux_ide_atomic_[0-9a-f]+$/u.test(name),
-    );
-    expect(replacement?.[1]).toBe("replacement-B");
-    expect(bytesOf(alpha.events)).toEqual([]);
-
-    handle.freeze();
-    expect(replacement?.[1]).toBe("replacement-B");
-    expect(bytesOf(alpha.events)).toEqual([]);
-    await rig.channel.dispose();
-  });
-
-  it("retires markers before observer emission but preserves a signaled record for one redemption", async () => {
-    for (const [errorOrdinal, redeemable] of [
-      [7, false],
-      [8, true],
-      [9, true],
-      [10, true],
-      [11, true],
-      [12, true],
-    ] as const) {
-      const rig = await startedRig({ atomicHook: true });
-      const alpha = collect();
-      rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-      rig.sim.reply(["initial"]);
-      rig.sim.reply(["0 0 100 50"]);
-      alpha.events.length = 0;
+    const a = collect();
+    try {
       rig.sim.feedLines("%pause %1");
-      const marker = completeAtomicRecoveryPhase(rig, ["private"], "0 0 100 50", {
-        errorOrdinal,
-      });
-      expect(consumeInternalReadOperation(marker, "%1", "workspace.pane.read")).toBe(redeemable);
-      expect(consumeInternalReadOperation(marker, "%1", "workspace.pane.read")).toBe(false);
-      expect(bytesOf(alpha.events)).toEqual([]);
+      expect(rig.armedAtomicCollectors).toEqual([]);
+      rig.channel.subscribePane("pane.alpha", a.onEvent);
+      completeSeed(rig, ["current"], "0 0 100 50");
+      expect(bytesOf(a.events)).toEqual(["current"]);
+      expect(rig.channel.flowSnapshot().backpressured).toEqual([]);
+    } finally {
       await rig.channel.dispose();
     }
   });
 
-  it("publishes only a confirmed snapshot after the initial ordered continue reply", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]); // initial liveness continue; no notification
-    rig.sim.reply(["PRIVATE-CANDIDATE"]);
-    rig.sim.reply(["0 40 100 50"]);
-    expect(
-      rig.sim.written.filter((command) => command === "refresh-client -A '%1:continue'"),
-    ).toHaveLength(1);
-    expect(bytesOf(alpha.events)).toEqual([]);
-
-    // Output after the private candidate cannot authorize it or escape quarantine.
-    rig.sim.output("%1", "BETWEEN-CANDIDATE-AND-CONFIRM");
-    rig.sim.feedLines("%continue %1");
-    expect(bytesOf(alpha.events)).toEqual([]);
-    runRecoveryTimer(rig);
-    rig.sim.reply(["POST-OUTPUT-AUTHORITY"]);
-    rig.sim.reply(["38 39 100 50"]);
-    completeRecoveryConfirmations(rig, "POST-OUTPUT-AUTHORITY", "38 39 100 50");
-
-    expect(bytesOf(alpha.events)).toEqual(["POST-OUTPUT-AUTHORITY"]);
-    expect(observations.filter(({ phase }) => phase === "final-continue-request")).toHaveLength(0);
-    expect(observations.filter(({ phase }) => phase === "final-continue-reply")).toHaveLength(0);
-    expect(observations.at(-1)?.phase).toBe("converged");
-    await rig.channel.dispose();
-  });
-
-  it("keeps a failed initial continue command quarantined", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([], false);
-    rig.sim.output("%1", "MUST-NOT-LEAK");
-
-    expect(observations.at(-1)).toMatchObject({
-      phase: "nonconverged",
-      failureReason: "command-error",
-    });
-    expect(bytesOf(alpha.events)).toEqual([]);
-    expect(alpha.events.some((event) => event.type === "flow" && event.state === "resumed")).toBe(
-      false,
-    );
-    expect(continueNotificationQueueSize(rig.channel)).toBe(0);
-    await rig.channel.dispose();
-  });
-
-  it("applies the exact 500ms hang bound to the initial continue command", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    advanceRecoveryClock(rig, 499);
-    expect(observations.some(({ phase }) => phase === "nonconverged")).toBe(false);
-    advanceRecoveryClock(rig, 1);
-    expect(observations.at(-1)).toMatchObject({
-      phase: "nonconverged",
-      failureReason: "command-timeout",
-      elapsedMicros: 500_000,
-    });
-    expect(bytesOf(alpha.events)).toEqual([]);
-    await rig.channel.dispose();
-  });
-
-  it("does not let a late final-fence reply authorize a newer recovery", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]);
-    rig.sim.reply(["OLD-PRIVATE"]);
-    rig.sim.reply(["0 40 100 50"]); // old final fence is now in flight
-    const oldOrdinal = observations.at(-1)!.recoveryOrdinal;
-    rig.sim.feedLines("%pause %1"); // retire old and start a new initial continue
-    const newOrdinal = observations.at(-1)!.recoveryOrdinal;
-    expect(newOrdinal).not.toBe(oldOrdinal);
-
-    rig.sim.reply([]); // late success for the retired old final fence
-    expect(
-      observations.some(
-        ({ recoveryOrdinal, phase }) =>
-          recoveryOrdinal === oldOrdinal && phase === "final-continue-reply",
-      ),
-    ).toBe(false);
-    rig.sim.reply([]); // new initial continue success
-    rig.sim.reply(["NEW-PRIVATE"]);
-    rig.sim.reply(["0 40 100 50"]);
-    completeFinalContinueFence(rig);
-    rig.sim.reply(["NEW-AUTHORITY"]);
-    rig.sim.reply(["38 39 100 50"]);
-    completeRecoveryConfirmations(rig, "NEW-AUTHORITY", "38 39 100 50");
-
-    expect(bytesOf(alpha.events)).toEqual(["NEW-AUTHORITY"]);
-    expect(observations.at(-1)).toMatchObject({
-      recoveryOrdinal: newOrdinal,
-      phase: "converged",
-    });
-    await rig.channel.dispose();
-  });
-
-  it("requires a fresh candidate when exact subscriber membership changes", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    const sibling = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["alpha-initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    const siblingHandle = rig.channel.subscribePane("pane.alpha", sibling.onEvent);
-    rig.sim.reply(["sibling-initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-    sibling.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]);
-    rig.sim.reply(["PRIVATE-BOTH"]);
-    siblingHandle.close();
-    rig.sim.reply(["0 40 100 50"]); // stale membership cannot complete this candidate
-    expect(bytesOf(alpha.events)).toEqual([]);
-
-    runRecoveryTimer(rig);
-    rig.sim.reply(["ALPHA-AUTHORITY"]);
-    rig.sim.reply(["38 39 100 50"]);
-    completeRecoveryConfirmations(rig, "ALPHA-AUTHORITY", "38 39 100 50");
-    expect(bytesOf(alpha.events)).toEqual(["ALPHA-AUTHORITY"]);
-    expect(observations.filter(({ phase }) => phase === "final-continue-reply")).toHaveLength(0);
-    expect(observations.at(-1)?.phase).toBe("converged");
-    await rig.channel.dispose();
-  });
-
-  it("lets a source-shaped slow private candidate converge inside the absolute lease", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]); // ordered continue success starts convergence and cancels 500ms hang timer
-    // The private 876KB candidate is delayed by the source-shaped projection
-    // interval, but remains inside the unchanged 3s no-progress envelope.
-    advanceRecoveryClock(rig, 777);
-    advanceRecoveryClock(rig, 1_430);
-    expect(observations.at(-1)?.phase).toBe("continue-reply");
-    expect(observations.some(({ phase }) => phase === "nonconverged")).toBe(false);
-
-    rig.sim.reply(["WORKLOAD-MARKER"]);
-    rig.sim.reply(["38 39 100 50"]);
-    advanceRecoveryClock(rig, 40);
-    rig.sim.reply(["WORKLOAD-MARKER"]);
-    rig.sim.reply(["38 39 100 50"]);
-    advanceRecoveryClock(rig, 40);
-    rig.sim.reply(["WORKLOAD-MARKER"]);
-    rig.sim.reply(["38 39 100 50"]);
-
-    expect(observations.map(({ phase }) => phase)).toEqual([
-      "pause",
-      "continue-request",
-      "continue-reply",
-      "final-reseed",
-      "confirmation-reseed",
-      "confirmation-reseed",
-      "converged",
-    ]);
-    expect(observations.every(({ failureReason }) => failureReason === null)).toBe(true);
-    expect(new Set(observations.map(({ outputOrdinal }) => outputOrdinal)).size).toBe(1);
-    expect(alpha.events.filter((event) => event.type === "flow")).toEqual([
-      { type: "flow", state: "paused", reason: "backpressure" },
-      { type: "flow", state: "resumed", reason: "backpressure" },
-    ]);
-    await rig.channel.dispose();
-  });
-
-  it("publishes only the second-confirmed snapshot before costly three-lane fanout", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const downstream = [collect(), collect(), collect()];
-    let publicationCount = 0;
-    let recoveryPublicationArmed = false;
-    let rig!: Rig;
-    rig = await startedRig({
-      continueReply: "manual",
-      historyLines: 5_000,
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const upstream = (event: MirrorPaneEvent): void => {
-      for (const lane of downstream) lane.onEvent(event);
-      if (recoveryPublicationArmed && event.type === "seed") {
-        // The real owner fans the seed into three independently settled lanes.
-        // Model synchronous publication work whose cost exceeds the remaining
-        // recovery lease without allowing the fake scheduler to interrupt the
-        // current JavaScript stack. Convergence must retire its queued timers
-        // immediately after this one callback returns.
-        publicationCount += 1;
-        rig.recoveryClock.nowMs += 5_001;
-      }
-    };
-    rig.channel.subscribePane("pane.alpha", upstream); // one physical upstream feed
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    for (const lane of downstream) lane.events.length = 0;
-    recoveryPublicationArmed = true;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]);
-    rig.sim.reply(["P".repeat(830_985)]);
-    rig.sim.reply(["0 40 100 50"]);
-    expect(publicationCount).toBe(0);
-    rig.sim.reply([]); // final ordered continue fence
-    advanceRecoveryClock(rig, 40);
-
-    // Raw output that lands in the final capture epoch is quarantined. The
-    // authoritative capture contains it, so no unconfirmed seed or delta may
-    // reach any downstream lane.
-    rig.sim.output("%1", "HELD-RAW-DELTA");
-    rig.sim.reply(["CONFIRMED-WITH-HELD"]);
-    rig.sim.reply(["38 39 100 50"]);
-    for (const lane of downstream) expect(bytesOf(lane.events)).toEqual([]);
-
-    advanceRecoveryClock(rig, 40);
-    rig.sim.reply(["CONFIRMED-WITH-HELD"]);
-    rig.sim.reply(["38 39 100 50"]);
-    for (const lane of downstream) expect(bytesOf(lane.events)).toEqual([]);
-
-    advanceRecoveryClock(rig, 40);
-    rig.sim.reply(["CONFIRMED-WITH-HELD"]);
-    rig.sim.reply(["38 39 100 50"]);
-
-    for (const lane of downstream) {
-      expect(bytesOf(lane.events)).toEqual(["CONFIRMED-WITH-HELD"]);
-      expect(lane.events.filter((event) => event.type === "flow").at(-1)).toEqual({
-        type: "flow",
-        state: "resumed",
-        reason: "backpressure",
-      });
+  it("freezes one pane while its sibling flows and thaws through a new shared snapshot", async () => {
+    const rig = await startedRig();
+    const a = collect(),
+      b = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", a.onEvent);
+      completeSeed(rig, ["a"], "0 0 100 50");
+      const handle = rig.channel.subscribePane("pane.beta", b.onEvent);
+      completeSeed(rig, ["b"], "0 0 99 50");
+      a.events.length = b.events.length = 0;
+      handle.freeze();
+      rig.sim.output("%2", "FROZEN");
+      rig.sim.output("%1", "LIVE");
+      expect(bytesOf(b.events)).toEqual([]);
+      expect(bytesOf(a.events)).toEqual(["LIVE"]);
+      handle.thaw();
+      completeSeed(rig, ["fresh"], "0 0 99 50");
+      expect(bytesOf(b.events)).toEqual(["fresh"]);
+      expect(b.events.filter((e) => e.type === "flow")).toEqual([
+        { type: "flow", state: "paused", reason: "requested" },
+        { type: "flow", state: "resumed", reason: "requested" },
+      ]);
+    } finally {
+      await rig.channel.dispose();
     }
-    expect(publicationCount).toBe(1);
-    expect(observations.at(-1)?.phase).toBe("converged");
-
-    advanceRecoveryClock(rig, 0);
-    expect(observations.some(({ phase }) => phase === "nonconverged")).toBe(false);
-    rig.sim.output("%1", "FIFO-AFTER-CONFIRMED");
-    for (const lane of downstream) {
-      expect(bytesOf(lane.events)).toEqual(["CONFIRMED-WITH-HELD", "FIFO-AFTER-CONFIRMED"]);
-    }
-    await rig.channel.dispose();
   });
 
-  it("captures one 5k-history authority per recovery phase and fans it to three feeds", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      historyLines: 5_000,
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const subscribers = [collect(), collect(), collect()];
-    for (const subscriber of subscribers) {
-      rig.channel.subscribePane("pane.alpha", subscriber.onEvent);
-      rig.sim.reply(["initial"]);
-      rig.sim.reply(["0 0 100 50"]);
-      subscriber.events.length = 0;
-    }
-    const writtenAtRecovery = rig.sim.written.length;
-    const candidateLines = Array.from(
-      { length: 5_000 },
-      (_, index) => `${index.toString().padStart(4, "0")}:${"P".repeat(165)}`,
-    );
-    const finalLines = candidateLines.with(4_999, `${"F".repeat(160)}WORKLOAD-MARKER`);
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]);
-    advanceRecoveryClock(rig, 777 + 1_430);
-    rig.sim.reply(finalLines);
-    rig.sim.reply(["38 39 100 50"]);
-    advanceRecoveryClock(rig, 40);
-    rig.sim.reply(finalLines);
-    rig.sim.reply(["38 39 100 50"]);
-    advanceRecoveryClock(rig, 40);
-    rig.sim.reply(finalLines);
-    rig.sim.reply(["38 39 100 50"]);
-
-    const recoveryCommands = rig.sim.written.slice(writtenAtRecovery);
-    expect(recoveryCommands.filter((command) => command.includes("capture-pane"))).toHaveLength(3);
-    expect(
-      recoveryCommands.filter((command) => command.includes("display-message -p")),
-    ).toHaveLength(3);
-    expect(recoveryCommands.filter((command) => command.includes("capture-pane"))).toEqual(
-      expect.arrayContaining([expect.stringContaining("-S -5000")]),
-    );
-    for (const subscriber of subscribers) {
-      const seeds = subscriber.events.filter((event) => event.type === "seed");
-      expect(seeds).toHaveLength(1);
-      expect(Buffer.from(seeds[0]!.data).includes(Buffer.from("WORKLOAD-MARKER"))).toBe(true);
-      expect(subscriber.events.filter((event) => event.type === "flow").at(-1)).toEqual({
-        type: "flow",
-        state: "resumed",
-        reason: "backpressure",
-      });
-    }
-    expect(observations.at(-1)).toMatchObject({
-      phase: "converged",
-      elapsedMicros: 2_287_000,
-      fingerprintExact: true,
-    });
-    expect(observations.filter(({ phase }) => phase === "confirmation-reseed")).toHaveLength(2);
-    await rig.channel.dispose();
-  });
-
-  it("aborts a shared recovery phase when its exact subscriber membership changes", async () => {
-    const rig = await startedRig({ continueReply: "manual" });
-    const subscribers = [collect(), collect(), collect()];
-    const handles = subscribers.map((subscriber) => {
-      const handle = rig.channel.subscribePane("pane.alpha", subscriber.onEvent);
-      rig.sim.reply(["initial"]);
-      rig.sim.reply(["0 0 100 50"]);
-      subscriber.events.length = 0;
-      return handle;
-    });
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]);
-    const staleCapture = rig.sim.written.findLast((command) => command.includes("capture-pane"))!;
-    const staleMarker = staleCapture.match(/tmux-ide-internal-read-v2:[0-9a-f-]+/u)?.[0];
-    expect(staleMarker).toBeDefined();
-    handles[2]!.close();
-    const siblingMarker = registerInternalReadOperation("%1");
-    rig.sim.reply(["must-not-publish"]);
-    rig.sim.reply(["0 40 100 50"]);
-    for (const subscriber of subscribers)
-      expect(subscriber.events.filter((event) => event.type === "seed")).toHaveLength(0);
-    expect(consumeInternalReadOperation(staleMarker!, "%1", "workspace.pane.read")).toBe(true);
-    expect(consumeInternalReadOperation(staleMarker!, "%1", "workspace.pane.read")).toBe(false);
-    expect(consumeInternalReadOperation(siblingMarker, "%1", "workspace.pane.read")).toBe(true);
-
-    completeFinalContinueFence(rig);
-    const replacementCapture = rig.sim.written.findLast((command) =>
-      command.includes("capture-pane"),
-    )!;
-    const replacementMarker = replacementCapture.match(
-      /tmux-ide-internal-read-v2:[0-9a-f-]+/u,
-    )?.[0];
-    expect(replacementMarker).toBeDefined();
-    expect(replacementMarker).not.toBe(staleMarker);
-    expect(
-      rig.sim.written.some(
-        (command) => command.startsWith("if-shell -t %1 -F") && command.includes(staleMarker!),
-      ),
-    ).toBe(false);
-    expect(
-      rig.sim.written.some((command) =>
-        command.startsWith(`set-option -pu -t %1 @tmux_ide_read_operation`),
-      ),
-    ).toBe(false);
-    rig.sim.reply(["authoritative"]);
-    rig.sim.reply(["0 39 100 50"]);
-    completeRecoveryConfirmations(rig, "authoritative", "0 39 100 50");
-    for (const subscriber of subscribers.slice(0, 2)) {
-      expect(bytesOf(subscriber.events)).toEqual(["authoritative"]);
-      expect(subscriber.events.filter((event) => event.type === "flow").at(-1)).toEqual({
-        type: "flow",
-        state: "resumed",
-        reason: "backpressure",
-      });
-    }
-    expect(bytesOf(subscribers[2]!.events)).toEqual([]);
-    await rig.channel.dispose();
-  });
-
-  it("retires a failed shared capture without clearing a newer read owner", async () => {
-    const rig = await startedRig({ continueReply: "manual" });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["initial"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]);
-    const failedCapture = rig.sim.written.findLast((command) => command.includes("capture-pane"))!;
-    const failedMarker = failedCapture.match(/tmux-ide-internal-read-v2:[0-9a-f-]+/u)?.[0];
-    expect(failedMarker).toBeDefined();
-    const newerMarker = registerInternalReadOperation("%1");
-    const foreignMarker = registerInternalReadOperation("%2");
-    rig.sim.reply([], false);
-    rig.sim.reply([], false);
-
-    expect(consumeInternalReadOperation(failedMarker!, "%1", "workspace.pane.read")).toBe(false);
-    expect(consumeInternalReadOperation(newerMarker, "%1", "workspace.pane.read")).toBe(true);
-    expect(consumeInternalReadOperation(foreignMarker, "%2", "workspace.pane.read")).toBe(true);
-    const cleanup = rig.sim.written.find(
-      (command) => command.startsWith("if-shell -t %1 -F") && command.includes(failedMarker!),
-    );
-    expect(cleanup).toBe(
-      `if-shell -t %1 -F "#{==:#{@tmux_ide_read_operation},${failedMarker}}" ` +
-        `"set-option -pu -t %1 @tmux_ide_read_operation" "display-message -p -t %1 ''"`,
-    );
-    expect(
-      rig.sim.written.some(
-        (command) => command.startsWith("if-shell -t %1 -F") && command.includes(failedMarker!),
-      ),
-    ).toBe(true);
-    expect(
-      rig.sim.written.some((command) =>
-        command.startsWith(`set-option -pu -t %1 @tmux_ide_read_operation`),
-      ),
-    ).toBe(false);
-    await rig.channel.dispose();
-  });
-
-  it("recaptures a late native tail after two stale authoritative snapshots", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    const interimProbe = "0 40 100 50 0 0 0 0 0 0 0 0 0 1";
-    const finalProbe = "38 39 100 50 0 1 0 0 0 0 0 0 0 1";
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]);
-    // The pane emits no `%output` while the first private candidate is delayed.
-    advanceRecoveryClock(rig, 777 + 1_430);
-    rig.sim.reply(["INTERIM-Y40-HIDDEN"]);
-    rig.sim.reply([interimProbe]);
-    advanceRecoveryClock(rig, 40);
-    rig.sim.reply(["INTERIM-Y40-HIDDEN"]); // first confirmation is still stale
-    rig.sim.reply([interimProbe]);
-    expect(alpha.events.some((event) => event.type === "flow" && event.state === "resumed")).toBe(
-      false,
-    );
-
-    advanceRecoveryClock(rig, 40);
-    rig.sim.reply(["WORKLOAD-MARKER"]); // second confirmation observes native truth
-    rig.sim.reply([finalProbe]);
-    expect(alpha.events.some((event) => event.type === "flow" && event.state === "resumed")).toBe(
-      false,
-    );
-    advanceRecoveryClock(rig, 40);
-    rig.sim.reply(["WORKLOAD-MARKER"]);
-    rig.sim.reply([finalProbe]);
-    advanceRecoveryClock(rig, 40);
-    rig.sim.reply(["WORKLOAD-MARKER"]);
-    rig.sim.reply([finalProbe]);
-
-    expect(bytesOf(alpha.events)).toEqual(["WORKLOAD-MARKER"]);
-    expect(observations.filter(({ phase }) => phase === "confirmation-reseed")).toEqual([
-      expect.objectContaining({ fingerprintExact: false, confirmationOrdinal: 1 }),
-      expect.objectContaining({ fingerprintExact: false, confirmationOrdinal: 2 }),
-      expect.objectContaining({ fingerprintExact: false, confirmationOrdinal: 3 }),
-      expect.objectContaining({ fingerprintExact: true, confirmationOrdinal: 4 }),
-    ]);
-    expect(observations.at(-1)).toMatchObject({
-      phase: "converged",
-      fingerprintExact: true,
-      elapsedMicros: 2_367_000,
-    });
-    expect(alpha.events.filter((event) => event.type === "flow").at(-1)).toEqual({
-      type: "flow",
-      state: "resumed",
-      reason: "backpressure",
-    });
-    await rig.channel.dispose();
-  });
-
-  it("keeps a failed confirmation capture quarantined and retries authoritatively", async () => {
-    const phases: string[] = [];
-    const rig = await startedRig({
-      onFlowRecoveryObserved: (observation) => phases.push(observation.phase),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1", "%continue %1");
-    rig.sim.reply(["provisional"]);
-    rig.sim.reply(["0 40 100 50"]);
-    completeFinalContinueFence(rig);
-    rig.sim.reply(["candidate"]);
-    rig.sim.reply(["0 39 100 50"]);
-    completeFinalContinueFence(rig);
-    rig.sim.reply([], false);
-    rig.sim.reply([], false);
-    rig.sim.output("%1", "MUST-NOT-LEAK");
-    expect(bytesOf(alpha.events)).toEqual([]);
-    expect(phases).not.toContain("converged");
-
-    runRecoveryTimer(rig);
-    rig.sim.reply(["authoritative"]);
-    rig.sim.reply(["0 39 100 50"]);
-    completeRecoveryConfirmations(rig, "authoritative", "0 39 100 50");
-    expect(bytesOf(alpha.events)).toEqual(["authoritative"]);
-    expect(phases.filter((phase) => phase === "final-reseed")).toHaveLength(2);
-    expect(phases.at(-1)).toBe("converged");
-    expect(
-      rig.sim.written.some(
-        (command) =>
-          command.includes("#{alternate_on}") &&
-          command.includes("#{cursor_flag}") &&
-          command.includes("#{wrap_flag}"),
-      ),
-    ).toBe(true);
-    await rig.channel.dispose();
-  });
-
-  it("bounds authenticated-output progress by the absolute convergence deadline", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]);
-    for (let ordinal = 0; ordinal < 5; ordinal += 1) {
-      advanceRecoveryClock(rig, 900);
-      rig.sim.output("%1", `still-writing-${ordinal}`);
-    }
-    advanceRecoveryClock(rig, 500);
-
-    expect(observations.at(-1)).toMatchObject({
-      phase: "nonconverged",
-      failureReason: "absolute-deadline",
-    });
-    expect(bytesOf(alpha.events)).toEqual([]);
-    expect(rig.channel.flowSnapshot()).toEqual({
-      backpressured: ["pane.alpha"],
-      requested: [],
-    });
-    await rig.channel.dispose();
-  });
-
-  it("fails closed after the bounded number of final reseed attempts", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1", "%continue %1");
-    rig.sim.reply(["provisional"]);
-    rig.sim.reply(["0 40 100 50"]);
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      runRecoveryTimer(rig);
-      rig.sim.reply([], false);
-      rig.sim.reply([], false);
-    }
-    runRecoveryTimer(rig);
-
-    expect(observations.at(-1)).toMatchObject({
-      phase: "nonconverged",
-      failureReason: "attempts-exhausted",
-    });
-    expect(bytesOf(alpha.events)).toEqual([]);
-    expect(alpha.events.some((event) => event.type === "flow" && event.state === "resumed")).toBe(
-      false,
-    );
-    await rig.channel.dispose();
-  });
-
-  it("waits for command success when continue notification arrives first", async () => {
-    const phases: string[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => phases.push(observation.phase),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1", "%continue %1");
-    expect(phases).toEqual(["pause", "continue-request", "continue-notify"]);
-    expect(bytesOf(alpha.events)).toEqual([]);
-    rig.sim.reply([], false);
-    expect(phases.at(-1)).toBe("nonconverged");
-    expect(rig.channel.flowSnapshot()).toEqual({
-      backpressured: ["pane.alpha"],
-      requested: [],
-    });
-    expect(alpha.events.some((event) => event.type === "flow" && event.state === "resumed")).toBe(
-      false,
-    );
-    await rig.channel.dispose();
-  });
-
-  it("consumes a late old notification without touching a newer recovery", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([]);
-    rig.sim.reply(["first-provisional"]);
-    rig.sim.reply(["0 40 100 50"]);
-    completeFinalContinueFence(rig);
-    rig.sim.reply(["first-final"]);
-    rig.sim.reply(["0 39 100 50"]);
-    completeRecoveryConfirmations(rig, "first-final", "0 39 100 50");
-
-    rig.sim.feedLines("%pause %1");
-    const secondOrdinal = observations.at(-1)!.recoveryOrdinal;
-    rig.sim.feedLines("%continue %1"); // late notification owed by the first recovery
-    expect(
-      observations.some(
-        (observation) =>
-          observation.recoveryOrdinal === secondOrdinal && observation.phase === "continue-notify",
-      ),
-    ).toBe(false);
-    expect(
-      observations.some(
-        (observation) =>
-          observation.recoveryOrdinal === secondOrdinal &&
-          observation.phase === "provisional-reseed",
-      ),
-    ).toBe(false);
-    rig.sim.reply([]);
-    rig.sim.reply(["second-provisional"]);
-    rig.sim.reply(["0 40 100 50"]);
-    completeFinalContinueFence(rig);
-    rig.sim.reply(["second-final"]);
-    rig.sim.reply(["0 39 100 50"]);
-    completeRecoveryConfirmations(rig, "second-final", "0 39 100 50");
-    expect(observations.at(-1)).toMatchObject({
-      recoveryOrdinal: secondOrdinal,
-      phase: "converged",
-    });
-    await rig.channel.dispose();
-  });
-
-  it("keeps repeated missing continue notifications bounded and convergent", async () => {
-    const phases: string[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => phases.push(observation.phase),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-
-    for (let ordinal = 0; ordinal < 40; ordinal += 1) {
-      rig.sim.feedLines("%pause %1");
-      rig.sim.reply([]);
-      rig.sim.reply([`provisional-${ordinal}`]);
-      rig.sim.reply(["0 40 100 50"]);
-      completeFinalContinueFence(rig);
-      rig.sim.reply([`final-${ordinal}`]);
-      rig.sim.reply(["0 39 100 50"]);
-      completeRecoveryConfirmations(rig, `final-${ordinal}`, "0 39 100 50");
-    }
-
-    expect(phases.filter((phase) => phase === "converged")).toHaveLength(40);
-    expect(phases).not.toContain("continue-notify");
-    expect(phases).not.toContain("nonconverged");
+  it("returns the requested pause when the last frozen subscriber departs", async () => {
+    const rig = await startedRig();
+    const h = rig.channel.subscribePane("pane.alpha", () => {});
+    completeSeed(rig, ["a"], "0 0 100 50");
+    h.freeze();
+    h.close();
+    expect(rig.sim.written).toContain("refresh-client -A '%1:continue'");
     expect(rig.channel.flowSnapshot()).toEqual({ backpressured: [], requested: [] });
     await rig.channel.dispose();
   });
 
-  it("keeps a hung continue command quarantined until the fixed deadline", async () => {
+  it.each([true, false])(
+    "publishes one authenticated snapshot with inline continue=%s and replays held bytes once",
+    async (continueNotify) => {
+      const rig = await startedRig();
+      const a = collect();
+      try {
+        rig.channel.subscribePane("pane.alpha", a.onEvent);
+        completeSeed(rig, ["old"], "0 0 100 50");
+        a.events.length = 0;
+        rig.sim.feedLines("%pause %1", "%continue %1");
+        expect(bytesOf(a.events)).toEqual([]);
+        completeStockPause(rig, "%1");
+        rig.sim.output("%1", "TAIL");
+        completeAtomicRecoveryPhase(rig, ["SNAPSHOT"], "0 0 100 50", { continueNotify });
+        expect(bytesOf(a.events)).toEqual(["SNAPSHOT", "TAIL"]);
+        expect(
+          a.events
+            .map((e) => e.type)
+            .filter((t) => ["reset", "seed", "cursor", "delta"].includes(t)),
+        ).toEqual(["reset", "seed", "cursor", "delta"]);
+        const count = rig.armedAtomicCollectors.length;
+        advanceRecoveryClock(rig, 10000);
+        expect(rig.armedAtomicCollectors).toHaveLength(count);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it("keeps a 5k-row capture alive through >3s authenticated progress without confirmation passes", async () => {
     const observations: MirrorFlowRecoveryObservation[] = [];
     const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
+      historyLines: 5000,
+      onFlowRecoveryObserved: (o) => observations.push(o),
     });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.output("%1", "must-remain-quarantined");
-    runRecoveryTimer(rig, 500);
-    expect(observations.map(({ phase }) => phase)).toEqual([
-      "pause",
-      "continue-request",
-      "nonconverged",
-    ]);
-    expect(observations.at(-1)?.failureReason).toBe("command-timeout");
-    expect(bytesOf(alpha.events)).toEqual([]);
-    expect(rig.channel.flowSnapshot()).toEqual({
-      backpressured: ["pane.alpha"],
-      requested: [],
-    });
-    await rig.channel.dispose();
+    const a = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", a.onEvent);
+      completeStockPause(rig, "%1");
+      const rows = Array.from({ length: 5000 }, (_, i) => `${i}:${"A".repeat(150)}`);
+      completeAtomicRecoveryPhase(rig, rows, "38 39 100 50", { guardDelayMs: 260 });
+      expect(rig.recoveryClock.nowMs).toBeGreaterThan(3000);
+      expect(rig.recoveryClock.nowMs).toBeLessThan(5000);
+      expect(bytesOf(a.events)).toHaveLength(1);
+      expect(observations.at(-1)).toMatchObject({
+        phase: "converged",
+        collectorCaptureLineCount: 5000,
+        collectorLastCompletedOrdinal: 12,
+        fingerprintExact: null,
+      });
+      expect(rig.armedAtomicCollectors.filter((c) => c.kind !== "pause")).toHaveLength(1);
+    } finally {
+      await rig.channel.dispose();
+    }
   });
 
-  it("cannot recreate notification debt after disposal retires an in-flight command", async () => {
-    const phases: string[] = [];
-    const rig = await startedRig({
-      continueReply: "manual",
-      onFlowRecoveryObserved: (observation) => phases.push(observation.phase),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    await rig.channel.dispose();
-    const eventCount = alpha.events.length;
-    rig.sim.reply([]); // successful reply for the now-retired runtime
-    rig.sim.feedLines("%continue %1");
-    expect(continueNotificationQueueSize(rig.channel)).toBe(0);
-    expect(alpha.events).toHaveLength(eventCount);
-    expect(phases).toEqual(["pause", "continue-request"]);
-  });
-
-  it("retires overlapping recovery probes and cancels every timer on dispose", async () => {
+  it("holds admission after a foreign sentinel until a separate ordinary drain fence", async () => {
     const rig = await startedRig();
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.feedLines("%pause %1", "%continue %1");
-    rig.sim.reply([]);
-    rig.sim.reply([]);
-    expect(bytesOf(alpha.events)).toEqual([]);
-    rig.sim.feedLines("%continue %1");
-    rig.sim.reply(["CURRENT"]);
-    rig.sim.reply(["0 39 100 50"]);
-    runRecoveryTimer(rig);
-    await rig.channel.dispose();
-    for (const task of rig.pendingRecoveries) expect(task.cancelled).toBe(true);
-    const count = alpha.events.length;
-    for (const task of rig.pendingRecoveries) task.callback();
-    expect(alpha.events).toHaveLength(count);
-    expect(alpha.events.at(-1)).toEqual({ type: "closed" });
+    const a = collect(),
+      b = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", a.onEvent);
+      completeStockPause(rig, "%1");
+      const old = rig.armedAtomicCollectors.at(-1)!;
+      rig.channel.subscribePane("pane.beta", b.onEvent);
+      rig.sim.feedLines(
+        "%begin 1 901 0",
+        `%tmux-ide-atomic-v1 ${old.nonce} start`,
+        "%end 1 901 0",
+        "%begin 1 902 0",
+        `%tmux-ide-atomic-v1 ${"f".repeat(32)} capture-end`,
+        "%end 1 902 0",
+      );
+      // Timer callbacks cannot receive native stdout synchronously. Preserve
+      // queued cleanup replies until retirement has installed its tombstone.
+      const reply = rig.sim.reply.bind(rig.sim);
+      const pending: Array<() => void> = [];
+      rig.sim.reply = (lines, ok = true) => {
+        pending.push(() => reply(lines, ok));
+      };
+      advanceRecoveryClock(rig, 3000);
+      rig.sim.reply = reply;
+      for (const flush of pending) flush();
+      expect(a.events.filter((e) => e.type === "fault")).toHaveLength(1);
+      expect(b.events).toEqual([]);
+      expect(rig.armedAtomicCollectors.at(-1)).toBe(old);
+      drainRetiredAtomicCollector(rig, old.nonce);
+      completeSeed(rig, ["beta"], "0 0 99 50");
+      expect(bytesOf(b.events)).toEqual(["beta"]);
+    } finally {
+      await rig.channel.dispose();
+    }
   });
 
-  it("retries when output lands after the final cursor and converges only after a quiet seed", async () => {
-    const phases: string[] = [];
-    const rig = await startedRig({
-      onFlowRecoveryObserved: (observation) => phases.push(observation.phase),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1", "%continue %1");
-    rig.sim.reply(["provisional"]);
-    rig.sim.reply(["0 40 100 50"]);
-    completeFinalContinueFence(rig);
-    rig.sim.reply(["stale-final"]);
-    rig.sim.reply(["0 40 100 50"]);
-    rig.sim.output("%1", "LATE");
-    runRecoveryTimer(rig);
-    rig.sim.reply(["quiet-final"]);
-    rig.sim.reply(["0 39 100 50"]);
-    completeRecoveryConfirmations(rig, "quiet-final", "0 39 100 50");
-
-    expect(bytesOf(alpha.events)).toEqual(["quiet-final"]);
-    expect(phases.filter((phase) => phase === "final-reseed")).toHaveLength(2);
-    expect(phases.at(-1)).toBe("converged");
-    expect(alpha.events.filter((event) => event.type === "flow")).toEqual([
-      { type: "flow", state: "paused", reason: "backpressure" },
-      { type: "flow", state: "resumed", reason: "backpressure" },
-    ]);
-    await rig.channel.dispose();
-  });
-
-  it("fails a stalled recovery once at its bounded no-progress deadline without a late seed", async () => {
-    const observations: MirrorFlowRecoveryObservation[] = [];
-    const rig = await startedRig({
-      onFlowRecoveryObserved: (observation) => observations.push(observation),
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1", "%continue %1");
-    rig.sim.reply(["incomplete-capture"]);
-    rig.sim.output("%1", "quarantined-output");
-    advanceRecoveryClock(rig, 2_999);
-    expect(observations.some(({ phase }) => phase === "nonconverged")).toBe(false);
-    advanceRecoveryClock(rig, 1);
-    expect(observations.at(-1)).toMatchObject({
-      phase: "nonconverged",
-      failureReason: "no-progress",
-    });
-    const observationCount = observations.length;
-    advanceRecoveryClock(rig, 1);
-    expect(observations).toHaveLength(observationCount);
-    expect(bytesOf(alpha.events)).toEqual([]);
-    const count = alpha.events.length;
-    rig.sim.reply(["0 39 100 50"]);
-    rig.sim.feedLines("%continue %1");
-    expect(rig.channel.flowSnapshot()).toEqual({
-      backpressured: ["pane.alpha"],
-      requested: [],
-    });
-    for (const task of rig.pendingRecoveries) task.callback();
-    expect(alpha.events).toHaveLength(count);
-    expect(alpha.events.some((event) => event.type === "flow" && event.state === "resumed")).toBe(
-      false,
-    );
-    await rig.channel.dispose();
-  });
-
-  it("turns a plain reseed overflow into a fresh bounded authoritative recovery", async () => {
-    const rig = await startedRig();
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["stale-capture"]);
-    for (let index = 0; index < PaneFeed.MAX_HELD_CHUNKS; index += 1) rig.sim.output("%1", "x");
-    rig.sim.output("%1", "z");
-    expect(rig.sim.written.some((command) => command === "refresh-client -A '%1:continue'")).toBe(
-      false,
-    );
-    expect(bytesOf(alpha.events)).toEqual([]);
-    rig.sim.reply(["0 40 100 50"]);
-    rig.sim.reply(["provisional"]);
-    rig.sim.reply(["0 40 100 50"]);
-    completeFinalContinueFence(rig);
-    rig.sim.reply(["authoritative"]);
-    rig.sim.reply(["0 39 100 50"]);
-    completeRecoveryConfirmations(rig, "authoritative", "0 39 100 50");
-    expect(bytesOf(alpha.events).at(-1)).toBe("authoritative");
-    expect(alpha.events.filter((event) => event.type === "flow")).toEqual([
-      { type: "flow", state: "paused", reason: "backpressure" },
-      { type: "flow", state: "resumed", reason: "backpressure" },
-    ]);
-    await rig.channel.dispose();
-  });
-
-  it("cancels in-flight recovery for an all-frozen pane and thaws through a fresh epoch", async () => {
-    const rig = await startedRig();
-    const alpha = collect();
-    const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1", "%continue %1");
-    handle.freeze();
-    rig.sim.reply([]);
-    const frozenCount = alpha.events.length;
-    rig.sim.reply(["late-seed"]);
-    rig.sim.reply(["0 39 100 50"]);
-    expect(alpha.events).toHaveLength(frozenCount);
-
-    handle.thaw();
-    completeRecovery(rig, "%1", "fresh-provisional", "fresh-final", "0 39 100 50");
-    expect(bytesOf(alpha.events)).toEqual(["fresh-final"]);
-    expect(alpha.events.filter((event) => event.type === "flow").at(-1)).toEqual({
-      type: "flow",
-      state: "resumed",
-      reason: "requested",
-    });
-    await rig.channel.dispose();
-  });
-
-  it("does not reserve a continue notification for a command that failed", async () => {
-    const phases: string[] = [];
-    const rig = await startedRig({
-      onFlowRecoveryObserved: (observation) => phases.push(observation.phase),
-      continueReply: "manual",
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    alpha.events.length = 0;
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply([], false);
-    rig.sim.feedLines("%pause %1", "%continue %1");
-    rig.sim.reply([]);
-    rig.sim.reply(["authoritative"]);
-    rig.sim.reply(["0 39 100 50"]);
-    completeRecoveryConfirmations(rig, "authoritative", "0 39 100 50");
-    expect(bytesOf(alpha.events)).toEqual(["authoritative"]);
-    await rig.channel.dispose();
-  });
-
-  it("keeps the continue handshake intact when output floods an older cursor probe", async () => {
-    const phases: string[] = [];
-    const rig = await startedRig({
-      onFlowRecoveryObserved: (observation) => phases.push(observation.phase),
-      continueReply: "manual",
-    });
-    const alpha = collect();
-    rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["old-capture"]);
-    for (let index = 0; index < PaneFeed.MAX_HELD_CHUNKS; index += 1) rig.sim.output("%1", "old");
-
-    rig.sim.feedLines("%pause %1");
-    rig.sim.output("%1", "while-continuing");
-    expect(bytesOf(alpha.events)).toEqual([]);
-    rig.sim.reply(["0 40 100 50"]);
-    rig.sim.feedLines("%continue %1");
-    rig.sim.reply([]);
-    rig.sim.reply(["authoritative"]);
-    rig.sim.reply(["0 39 100 50"]);
-    completeRecoveryConfirmations(rig, "authoritative", "0 39 100 50");
-    expect(phases).toEqual([
-      "pause",
-      "continue-request",
-      "continue-notify",
-      "continue-reply",
-      "final-reseed",
-      "confirmation-reseed",
-      "confirmation-reseed",
-      "converged",
-    ]);
-    expect(bytesOf(alpha.events)).toEqual(["authoritative"]);
-    await rig.channel.dispose();
-  });
-
-  it("closes old-semantic subscribers when one runtime is restamped during recovery", async () => {
-    const rig = await startedRig();
-    const oldSemantic = collect();
-    rig.channel.subscribePane("pane.alpha", oldSemantic.onEvent);
-    rig.sim.reply(["old-seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    oldSemantic.events.length = 0;
-    rig.sim.feedLines("%pause %1");
-    rig.sim.reply(["provisional-old-authority"]);
-    rig.sim.reply(["0 40 100 50"]);
-
-    rig.state.descriptorRows[0] = rig.state.descriptorRows[0]!.replace(
-      "%1\tpane.alpha\t",
-      "%1\tpane.replacement\t",
-    );
-    rig.sim.feedLines("%layout-change @1 aaaa,200x50,0,0,2 aaaa,200x50,0,0,2 0");
-    expect(rig.pendingSyncs).toHaveLength(1);
-    rig.pendingSyncs.shift()!();
-    await vi.waitFor(() => expect(oldSemantic.events.at(-1)).toEqual({ type: "closed" }));
-    await vi.waitFor(() =>
+  it("rejects a hook replaced between create and invoke without deleting that replacement", async () => {
+    const rig = await startedRig({ replaceAtomicHookBeforeInvoke: true });
+    const a = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", a.onEvent);
+      completeStockPause(rig, "%1");
+      expect(rig.atomicInvocationAuthorizations).toEqual([false]);
+      const replacement = [...rig.atomicHookValues.entries()].find(([n]) =>
+        /^@tmux_ide_atomic_[0-9a-f]+$/u.test(n),
+      );
+      expect(replacement?.[1]).toBe("replacement-B");
+      expect(bytesOf(a.events)).toEqual([]);
       expect(
-        rig.channel.describe().panes.some((pane) => pane.semanticPaneId === "pane.replacement"),
-      ).toBe(true),
-    );
-    expect(continueNotificationQueueSize(rig.channel)).toBe(0);
-    const oldCount = oldSemantic.events.length;
-    rig.sim.feedLines("%continue %1");
-    rig.sim.output("%1", "new-authority-output");
-    expect(oldSemantic.events).toHaveLength(oldCount);
+        rig.sim.written
+          .filter((c) => c.includes("set-option -pu") && c.includes(replacement![0]))
+          .every((c) => c.includes("if-shell")),
+      ).toBe(true);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
 
-    const replacement = collect();
-    rig.channel.subscribePane("pane.replacement", replacement.onEvent);
-    rig.sim.reply(["replacement-seed"]);
-    rig.sim.reply(["0 0 100 50"]);
-    expect(bytesOf(replacement.events)).toEqual(["replacement-seed"]);
+  it.each([
+    [7, false],
+    [8, true],
+    [9, true],
+    [10, true],
+    [11, true],
+    [12, true],
+  ] as const)(
+    "owns marker redemption when raw command %s fails",
+    async (errorOrdinal, redeemable) => {
+      const rig = await startedRig();
+      const a = collect();
+      try {
+        rig.channel.subscribePane("pane.alpha", a.onEvent);
+        completeStockPause(rig, "%1");
+        const marker = completeAtomicRecoveryPhase(rig, ["private"], "0 0 100 50", {
+          errorOrdinal,
+        });
+        expect(consumeInternalReadOperation(marker, "%1", "workspace.pane.read")).toBe(redeemable);
+        expect(consumeInternalReadOperation(marker, "%1", "workspace.pane.read")).toBe(false);
+        expect(bytesOf(a.events)).toEqual([]);
+      } finally {
+        await rig.channel.dispose();
+      }
+    },
+  );
+
+  it("bounds repeated invalid cursor snapshots to four attempts and retains a single deadline", async () => {
+    const rig = await startedRig();
+    const a = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", a.onEvent);
+      for (let i = 0; i < 4; i++) {
+        completeSeed(rig, ["invalid"], "not-a-cursor");
+      }
+      expect(a.events.filter((e) => e.type === "fault")).toHaveLength(1);
+      expect(bytesOf(a.events)).toEqual([]);
+      expect(rig.armedAtomicCollectors.filter((c) => c.kind !== "pause")).toHaveLength(4);
+      advanceRecoveryClock(rig, 10000);
+      expect(a.events.filter((e) => e.type === "fault")).toHaveLength(1);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("absolute deadline wins despite continuing authenticated progress", async () => {
+    const rig = await startedRig();
+    const a = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", a.onEvent);
+      completeStockPause(rig, "%1");
+      completeAtomicRecoveryPhase(rig, ["private"], "0 0 100 50", { guardDelayMs: 450 });
+      expect(a.events.filter((e) => e.type === "fault")).toHaveLength(1);
+      expect(bytesOf(a.events)).toEqual([]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("retries a bounded held-output overflow only after the old collector drains", async () => {
+    const rig = await startedRig();
+    const a = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", a.onEvent);
+      completeStockPause(rig, "%1");
+      const old = rig.armedAtomicCollectors.at(-1)!;
+      for (let i = 0; i < 65; i++) rig.sim.output("%1", "X".repeat(16384));
+      expect(bytesOf(a.events)).toEqual([]);
+      expect(rig.armedAtomicCollectors.at(-1)).toBe(old);
+      drainRetiredAtomicCollector(rig, old.nonce);
+      completeSeed(rig, ["fresh"], "0 0 100 50");
+      expect(bytesOf(a.events)).toEqual(["fresh"]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("channel exit closes active and queued viewers and cancels every deadline", async () => {
+    const rig = await startedRig();
+    const a = collect(),
+      b = collect();
+    rig.channel.subscribePane("pane.alpha", a.onEvent);
+    completeStockPause(rig, "%1");
+    rig.channel.subscribePane("pane.beta", b.onEvent);
+    rig.sim.feedLines("%exit fixture-end");
+    expect(a.events.at(-1)).toEqual({ type: "closed" });
+    expect(b.events.at(-1)).toEqual({ type: "closed" });
+    expect(rig.pendingRecoveries.filter((t) => !t.cancelled)).toEqual([]);
+    expect(
+      (rig.channel as unknown as { snapshotQueue: Map<string, unknown> }).snapshotQueue.size,
+    ).toBe(0);
     await rig.channel.dispose();
+  });
+  it("closes restamped subscribers during active raw recovery and seeds only the replacement", async () => {
+    const rig = await startedRig();
+    const oldEvents = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", oldEvents.onEvent);
+      completeSeed(rig, ["old seed"], "0 0 100 50");
+      oldEvents.events.length = 0;
+      rig.sim.feedLines("%pause %1");
+      completeStockPause(rig, "%1");
+      const old = rig.armedAtomicCollectors.at(-1)!;
+      rig.state.descriptorRows[0] = rig.state.descriptorRows[0]!.replace(
+        "%1\tpane.alpha\t",
+        "%1\tpane.replacement\t",
+      );
+      rig.sim.feedLines("%window-renamed @1 restamped");
+      rig.pendingSyncs.shift()!();
+      await vi.waitFor(() => expect(oldEvents.events.at(-1)).toEqual({ type: "closed" }));
+      await vi.waitFor(() =>
+        expect(
+          rig.channel.describe().panes.some((p) => p.semanticPaneId === "pane.replacement"),
+        ).toBe(true),
+      );
+      const count = oldEvents.events.length;
+      completeAtomicRecoveryPhase(rig, ["late old snapshot"], "0 0 100 50");
+      rig.sim.feedLines("%continue %1");
+      rig.sim.output("%1", "replacement output");
+      expect(oldEvents.events).toHaveLength(count);
+      expect(bytesOf(oldEvents.events)).toEqual([]);
+      const fresh = collect();
+      rig.channel.subscribePane("pane.replacement", fresh.onEvent);
+      expect(fresh.events.some((e) => e.type === "seed")).toBe(false);
+      drainRetiredAtomicCollector(rig, old.nonce);
+      completeSeed(rig, ["replacement seed"], "0 0 100 50");
+      expect(bytesOf(fresh.events)).toEqual(["replacement seed"]);
+      expect(oldEvents.events).toHaveLength(count);
+    } finally {
+      await rig.channel.dispose();
+    }
   });
 });
 
@@ -2556,6 +1698,10 @@ describe("layout push", () => {
       void ready.catch(() => {});
       try {
         await Promise.resolve();
+        if (nativeBootstrap) rig.sim.reply(nativeBootstrapLines());
+        rig.sim.feedLines("%subscription-changed tmux-ide-pane-borders $1 @2 0 - : off");
+        completeStockPause(rig, "%1");
+        const retiredNonce = rig.armedAtomicCollectors.at(-1)!.nonce;
         rig.sim.feedLines(
           `%layout-change @1 ${FIXTURE.layoutW1} aaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2} 0`,
         );
@@ -2575,16 +1721,27 @@ describe("layout push", () => {
           return lines;
         };
         const native = nativeWithText("BEFORE");
-        rig.sim.reply(nativeBootstrap ? native : ["BEFORE"]);
-        rig.sim.reply(["0 0 150 50"]);
+        completeAtomicRecoveryPhase(rig, nativeBootstrap ? native : ["BEFORE"], "0 0 150 50", {
+          continueNotify: true,
+        });
         expect(events).toEqual([]);
         expect(observability.snapshot().spans.filter((span) => span.terminalReseed)).toEqual([]);
         rig.sim.output("%1", "DURING");
         rig.sim.reply(["off"]);
-        rig.sim.reply(nativeBootstrap ? nativeWithText("BEFOREDURING") : ["BEFOREDURING"]);
-        rig.sim.reply(["11 0 150 50"]);
+        drainRetiredAtomicCollector(rig, retiredNonce);
+        rig.state.windowRows = FIXTURE.windowRows(
+          "aaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2}",
+          FIXTURE.layoutW2,
+        );
+        rig.pendingSyncs.shift()!();
+        await vi.waitFor(() => expect(rig.armedAtomicCollectors.at(-1)?.kind).toBe("pause"));
+        completeSeed(
+          rig,
+          nativeBootstrap ? nativeWithText("BEFOREDURING") : ["BEFOREDURING"],
+          "11 0 150 50",
+        );
         await ready;
-        expect(events.map((event) => event.type)).toEqual(["reset", "seed", "cursor"]);
+        expect(events.map((event) => event.type)).toEqual(["reset", "seed", "cursor", "flow"]);
         expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 150, rows: 50 });
         const first = updates[0]!;
         expect(
@@ -2642,13 +1799,12 @@ describe("layout push", () => {
       const native = nativeBootstrapLines();
       native[0] = JSON.stringify({ ...JSON.parse(native[0]!), cols: 150 });
       const captures = () =>
-        rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+        rig.armedAtomicCollectors.filter((collector) => collector.kind === "pause").length;
       const before = captures();
-      rig.sim.reply(native);
-      rig.sim.reply(["0 0 150 50"]);
+      completeSeed(rig, native, "0 0 150 50");
       await Promise.resolve();
       expect(events).toEqual([]);
-      expect(captures()).toBe(before);
+      expect(captures()).toBe(before + 1);
       expect(rig.pendingSyncs).toHaveLength(1);
       // No layout notification: an authoritative list-windows response alone
       // provides the missing geometry, under the original capture deadline.
@@ -2656,14 +1812,11 @@ describe("layout push", () => {
         "aaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2}",
         FIXTURE.layoutW2,
       );
-      descriptorReply.manual = true;
       rig.pendingSyncs.shift()!();
-      await vi.waitFor(() => expect(captures()).toBe(before + 1));
-      rig.sim.reply(native);
-      rig.sim.reply(["0 0 150 50"]);
-      rig.sim.reply(rig.state.descriptorRows);
+      await vi.waitFor(() => expect(captures()).toBe(before + 2));
+      completeSeed(rig, native, "0 0 150 50");
       await ready;
-      expect(events.map((event) => event.type)).toEqual(["reset", "seed", "cursor"]);
+      expect(events.map((event) => event.type)).toEqual(["reset", "seed", "cursor", "flow"]);
       expect(faults).toEqual([]);
       expect(observability.snapshot().spans.filter((span) => span.terminalReseed)).toEqual([]);
     } finally {
@@ -2678,17 +1831,14 @@ describe("layout push", () => {
     const events = collect();
     try {
       rig.channel.subscribePane("pane.alpha", events.onEvent);
-      rig.sim.reply(["stale enlarged capture"]);
-      rig.sim.reply(["0 0 150 50"]);
+      completeSeed(rig, ["stale enlarged capture"], "0 0 150 50");
       const captures = () =>
-        rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+        rig.armedAtomicCollectors.filter((collector) => collector.kind === "pause").length;
       expect(captures()).toBe(1);
       expect(events.events).toEqual([]);
-      descriptorReply.manual = true;
       rig.pendingSyncs.shift()!();
       await vi.waitFor(() => expect(captures()).toBe(2));
-      rig.sim.reply(["stable original size"]);
-      rig.sim.reply(["0 0 100 50"]);
+      completeSeed(rig, ["stable original size"], "0 0 100 50");
       expect(bytesOf(events.events)).toEqual(["stable original size"]);
       expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
     } finally {
@@ -2711,10 +1861,9 @@ describe("layout push", () => {
       rig.sim.feedLines("%window-renamed @1 main");
       rig.pendingSyncs.shift()!();
       rig.channel.subscribePane("pane.alpha", events.onEvent);
-      rig.sim.reply(["ahead"]);
-      rig.sim.reply(["0 0 150 50"]);
+      completeSeed(rig, ["ahead"], "0 0 150 50");
       const captures = () =>
-        rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+        rig.armedAtomicCollectors.filter((collector) => collector.kind === "pause").length;
       expect(rig.pendingSyncs).toHaveLength(1);
       const before = rig.sim.written.length;
       release(rig.state.truthRows);
@@ -2722,11 +1871,9 @@ describe("layout push", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(captures()).toBe(1);
       expect(events.events).toEqual([]);
-      descriptorReply.manual = true;
       rig.pendingSyncs.shift()!();
       await vi.waitFor(() => expect(captures()).toBe(2));
-      rig.sim.reply(["after fresh barrier"]);
-      rig.sim.reply(["0 0 100 50"]);
+      completeSeed(rig, ["after fresh barrier"], "0 0 100 50");
       expect(bytesOf(events.events)).toEqual(["after fresh barrier"]);
     } finally {
       await rig.channel.dispose();
@@ -2739,27 +1886,23 @@ describe("layout push", () => {
     const events = collect();
     try {
       const handle = rig.channel.subscribePane("pane.alpha", events.onEvent);
-      rig.sim.reply(["ahead"]);
-      rig.sim.reply(["0 0 150 50"]);
-      descriptorReply.manual = true;
+      completeSeed(rig, ["ahead"], "0 0 150 50");
       const captures = () =>
-        rig.sim.written.filter((command) => command.includes("capture-pane")).length;
-      for (let cycle = 0; cycle < 3; cycle++) {
+        rig.armedAtomicCollectors.filter((collector) => collector.kind === "pause").length;
+      for (let cycle = 0; cycle < 2; cycle++) {
         for (let request = 0; request < 100; request++) handle.reseed();
         expect(rig.pendingSyncs).toHaveLength(1);
         expect(captures()).toBe(cycle + 1);
         advanceRecoveryClock(rig, 1000);
         rig.pendingSyncs.shift()!();
         await vi.waitFor(() => expect(captures()).toBe(cycle + 2));
-        rig.sim.reply(["still ahead"]);
-        rig.sim.reply(["0 0 150 50"]);
-        rig.sim.reply(rig.state.descriptorRows);
+        completeSeed(rig, ["still ahead"], "0 0 150 50");
         expect(events.events).toEqual([]);
         expect(
           rig.pendingRecoveries.filter((task) => !task.cancelled).map((task) => task.dueAtMs),
         ).toEqual([5000]);
       }
-      advanceRecoveryClock(rig, 2000);
+      advanceRecoveryClock(rig, 3000);
       const before = captures();
       rig.pendingSyncs.shift()!();
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2775,12 +1918,13 @@ describe("layout push", () => {
     const events = collect();
     try {
       rig.channel.subscribePane("pane.alpha", events.onEvent);
-      rig.sim.reply(["ahead"]);
-      rig.sim.reply(["0 0 150 50"]);
+      completeSeed(rig, ["ahead"], "0 0 150 50");
       vi.spyOn(rig.sim, "request").mockRejectedValueOnce(new Error("truth unavailable"));
       rig.pendingSyncs.shift()!();
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(rig.sim.written.filter((command) => command.includes("capture-pane"))).toHaveLength(1);
+      expect(
+        rig.armedAtomicCollectors.filter((collector) => collector.kind === "pause"),
+      ).toHaveLength(1);
       expect(events.events).toEqual([]);
       expect(
         rig.pendingRecoveries.filter((task) => !task.cancelled).map((task) => task.dueAtMs),
@@ -2799,14 +1943,19 @@ describe("layout push", () => {
       const visible = "aaaa,200x50,0,0,2";
       rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${visible} *Z`);
       rig.channel.subscribePane("pane.alpha", events.onEvent);
-      rig.sim.reply(["ahead"]);
-      rig.sim.reply(["0 0 150 50"]);
+      completeSeed(rig, ["ahead"], "0 0 150 50");
       expect(events.events).toEqual([]);
       rig.sim.feedLines(
         `%layout-change @1 aaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2} ${visible} *Z`,
       );
-      rig.sim.reply(["saved current"]);
-      rig.sim.reply(["0 0 150 50"]);
+      rig.state.windowRows = FIXTURE.windowRows(visible, FIXTURE.layoutW2);
+      rig.state.windowRows[0] = rig.state.windowRows[0]!.replace(
+        "\t0\toff",
+        "\t1\toff\taaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2}",
+      );
+      rig.pendingSyncs.shift()!();
+      await vi.waitFor(() => expect(rig.armedAtomicCollectors.at(-1)?.kind).toBe("pause"));
+      completeSeed(rig, ["saved current"], "0 0 150 50");
       expect(bytesOf(events.events)).toEqual(["saved current"]);
     } finally {
       await rig.channel.dispose();
@@ -2822,15 +1971,20 @@ describe("layout push", () => {
         rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
         rig.sim.reply([border]);
         rig.channel.subscribePane("pane.alpha", events.onEvent);
-        rig.sim.reply(["ahead"]);
-        rig.sim.reply(["0 0 100 50"]); // Current pane has only49 content rows.
+        completeSeed(rig, ["ahead"], "0 0 100 50"); // Current pane has only49 content rows.
         expect(events.events).toEqual([]);
         rig.sim.feedLines(
           `%layout-change @1 ${FIXTURE.layoutW1} aaaa,200x51,0,0{100x51,0,0,1,99x51,101,0,2} 0`,
         );
         rig.sim.reply([border]);
-        rig.sim.reply(["current"]);
-        rig.sim.reply(["0 0 100 50"]);
+        rig.state.windowRows = FIXTURE.windowRows(
+          "aaaa,200x51,0,0{100x51,0,0,1,99x51,101,0,2}",
+          FIXTURE.layoutW2,
+        );
+        rig.state.windowRows[0] = rig.state.windowRows[0]!.replace("\toff", `\t${border}`);
+        rig.pendingSyncs.shift()!();
+        await vi.waitFor(() => expect(rig.armedAtomicCollectors.at(-1)?.kind).toBe("pause"));
+        completeSeed(rig, ["current"], "0 0 100 50");
         expect(bytesOf(events.events)).toEqual(["current"]);
       } finally {
         await rig.channel.dispose();
@@ -2869,12 +2023,11 @@ describe("layout push", () => {
     void ready.catch(() => {});
     try {
       await Promise.resolve();
-      for (let i = 0; i < 2; i++) {
-        rig.sim.reply(nativeBootstrapLines()); // Native100x50, probe150x50.
-        rig.sim.reply(["0 0 150 50"]);
+      for (let i = 0; i < 4; i++) {
+        completeSeed(rig, nativeBootstrapLines(), "0 0 150 50");
         await Promise.resolve();
       }
-      await expect(ready).rejects.toThrow(/terminal reseed/);
+      await expect(ready).rejects.toThrow(/native-recovery-failed|upstream|terminal/);
       expect(rig.pendingSyncs).toEqual([]);
       expect(faults).toHaveLength(1);
       expect(
@@ -2882,196 +2035,172 @@ describe("layout push", () => {
           .snapshot()
           .spans.filter((span) => span.terminalReseed)
           .map((span) => span.terminalReseed!.reason),
-      ).toEqual(["native-size-mismatch", "native-size-mismatch"]);
+      ).toEqual([]);
     } finally {
       await owner.dispose();
       await rig.channel.dispose();
     }
   });
 
+  async function beginPendingLayout(
+    rig: Rig,
+    events: ReturnType<typeof collect>,
+    onLayout?: () => void,
+  ) {
+    const handle = rig.channel.subscribePane("pane.alpha", events.onEvent, onLayout, true);
+    rig.sim.reply(nativeBootstrapLines());
+    completeStockPause(rig, "%1");
+    const old = rig.armedAtomicCollectors.at(-1)!;
+    rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
+    completeAtomicRecoveryPhase(rig, nativeBootstrapLines(), "0 0 100 50");
+    expect(events.events.some((e) => e.type === "seed")).toBe(false);
+    return { handle, old };
+  }
+
   it("coalesces superseded layout replies and reentrant reseed requests under the original deadline", async () => {
     const rig = await startedRig({ borderReply: "manual" });
     const events = collect();
     let handle: ReturnType<SessionChannel["subscribePane"]> | undefined;
+    let reseedOnLayout = true;
     try {
-      handle = rig.channel.subscribePane(
-        "pane.alpha",
-        events.onEvent,
-        () => handle?.reseed(),
-        true,
-      );
-      const captures = () =>
-        rig.sim.written.filter((command) => command.includes("capture-pane")).length;
-      const before = captures();
-      rig.sim.feedLines(
-        `%layout-change @1 ${FIXTURE.layoutW1} aaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2} 0`,
-      );
-      rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
+      const pending = await beginPendingLayout(rig, events, () => {
+        if (reseedOnLayout) handle?.reseed();
+      });
+      handle = pending.handle;
       for (let i = 0; i < 100; i++) handle.reseed();
-      expect(captures()).toBe(before);
       advanceRecoveryClock(rig, 4000);
       rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
-      rig.sim.reply(["off"]); // Superseded reply must not release the wait.
-      expect(captures()).toBe(before);
+      rig.sim.reply(["off"]); // stale metadata cannot release this attempt
+      expect(rig.armedAtomicCollectors.at(-1)).toBe(pending.old);
       rig.sim.reply(["off"]);
-      expect(captures()).toBe(before + 1);
-      expect(
-        rig.pendingRecoveries.filter((task) => !task.cancelled).map((task) => task.dueAtMs),
-      ).toEqual([5000]);
-      rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
-      expect(events.events.map((event) => event.type)).toEqual(["reset", "seed", "cursor"]);
-      expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+      drainRetiredAtomicCollector(rig, pending.old.nonce);
+      expect(rig.pendingRecoveries.filter((t) => !t.cancelled).map((t) => t.dueAtMs)).toEqual([
+        5000,
+      ]);
+      reseedOnLayout = false;
+      rig.pendingSyncs.shift()!();
+      await vi.waitFor(() => expect(rig.armedAtomicCollectors.at(-1)?.kind).toBe("pause"));
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+      expect(events.events.filter((e) => e.type === "seed")).toHaveLength(1);
+      expect(rig.pendingRecoveries.filter((t) => !t.cancelled)).toEqual([]);
     } finally {
       await rig.channel.dispose();
     }
   });
 
-  it("does not extend the deadline across another layout crossing during the replacement capture", async () => {
-    const rig = await startedRig({ borderReply: "manual", continueReply: "manual" });
+  it("does not extend the deadline across another layout crossing during replacement capture", async () => {
+    const rig = await startedRig({ borderReply: "manual" });
     const events = collect();
     try {
-      rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
-      rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
-      rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
+      const { old } = await beginPendingLayout(rig, events);
       advanceRecoveryClock(rig, 4000);
-      rig.sim.reply(["off"]); // Starts a replacement with only one second remaining.
-      rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
-      rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
-      expect(events.events).toEqual([]);
-      expect(
-        rig.pendingRecoveries.filter((task) => !task.cancelled).map((task) => task.dueAtMs),
-      ).toEqual([5000]);
-      advanceRecoveryClock(rig, 1000);
-      const before = rig.sim.written.filter((command) => command.includes("capture-pane")).length;
       rig.sim.reply(["off"]);
-      expect(rig.sim.written.filter((command) => command.includes("capture-pane"))).toHaveLength(
-        before,
-      );
-      expect(events.events.some((event) => event.type === "seed")).toBe(false);
+      drainRetiredAtomicCollector(rig, old.nonce);
+      rig.pendingSyncs.shift()!();
+      await vi.waitFor(() => expect(rig.armedAtomicCollectors.at(-1)?.kind).toBe("pause"));
+      completeStockPause(rig, "%1");
+      const replacement = rig.armedAtomicCollectors.at(-1)!;
+      rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
+      completeAtomicRecoveryPhase(rig, nativeBootstrapLines(), "0 0 100 50");
+      expect(rig.pendingRecoveries.filter((t) => !t.cancelled).map((t) => t.dueAtMs)).toEqual([
+        5000,
+      ]);
+      advanceRecoveryClock(rig, 1000);
+      rig.sim.reply(["off"]);
+      drainRetiredAtomicCollector(rig, replacement.nonce);
+      expect(events.events.some((e) => e.type === "seed")).toBe(false);
+      expect(events.events.filter((e) => e.type === "fault")).toHaveLength(1);
     } finally {
       await rig.channel.dispose();
     }
   });
 
-  it("honors reentrant closure during layout admission before resuming the held capture", async () => {
+  it("honors reentrant closure during layout admission before resuming capture", async () => {
     const rig = await startedRig({ borderReply: "manual" });
     const events = collect();
     let handle: ReturnType<SessionChannel["subscribePane"]> | undefined;
     try {
-      handle = rig.channel.subscribePane("pane.alpha", events.onEvent, () => handle?.close(), true);
-      rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
-      rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
-      const before = rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+      const pending = await beginPendingLayout(rig, events, () => handle?.close());
+      handle = pending.handle;
+      const count = rig.armedAtomicCollectors.length;
       rig.sim.reply(["off"]);
-      expect(rig.sim.written.filter((command) => command.includes("capture-pane"))).toHaveLength(
-        before,
-      );
-      expect(events.events.some((event) => event.type === "seed")).toBe(false);
-      expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+      drainRetiredAtomicCollector(rig, pending.old.nonce);
+      for (const sync of rig.pendingSyncs.splice(0)) sync();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(rig.armedAtomicCollectors).toHaveLength(count);
+      expect(events.events.some((e) => e.type === "seed")).toBe(false);
+      expect(rig.pendingRecoveries.filter((t) => !t.cancelled)).toEqual([]);
     } finally {
       await rig.channel.dispose();
     }
   });
 
-  it("retires the layout-blocked replacement when quarantined output overflow requires recovery", async () => {
-    const rig = await startedRig({ borderReply: "manual", continueReply: "manual" });
+  it("discards obsolete output while layout admission is blocked and replaces it with one snapshot", async () => {
+    const rig = await startedRig({ borderReply: "manual" });
     const events = collect();
     try {
-      rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
-      rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
-      rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
-      for (let i = 0; i < 1025; i++) rig.sim.output("%1", "x");
-      expect(events.events).toEqual([]);
-      rig.sim.commandListInline = (command, count, resultIndex, onReply) => {
-        rig.sim.core.pushCommandList(count, resultIndex, onReply);
-        rig.sim.written.push(command);
-      };
-      rig.sim.reply(["off"]);
-      expect(events.events).toContainEqual({
-        type: "flow",
-        state: "paused",
-        reason: "backpressure",
-      });
-      rig.sim.reply([]); // Retired replacement marker, capture and cursor slots.
-      rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
+      const { old } = await beginPendingLayout(rig, events);
+      for (let i = 0; i < 1025; i++) rig.sim.output("%1", "X".repeat(2048));
       expect(bytesOf(events.events)).toEqual([]);
-      expect(events.events.some((event) => event.type === "reset" || event.type === "cursor")).toBe(
-        false,
-      );
+      rig.sim.reply(["off"]);
+      drainRetiredAtomicCollector(rig, old.nonce);
+      rig.pendingSyncs.shift()!();
+      await vi.waitFor(() => expect(rig.armedAtomicCollectors.at(-1)?.kind).toBe("pause"));
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+      expect(events.events.filter((e) => e.type === "seed")).toHaveLength(1);
+      expect(events.events.filter((e) => e.type === "delta")).toEqual([]);
     } finally {
       await rig.channel.dispose();
     }
   });
 
-  it("expires a layout-blocked capture at its original deadline without publishing or late restart", async () => {
-    const rig = await startedRig({ borderReply: "manual", continueReply: "manual" });
+  it("expires a layout-blocked capture at its original deadline without late restart", async () => {
+    const rig = await startedRig({ borderReply: "manual" });
     const events = collect();
     try {
-      const handle = rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
-      rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
-      rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
+      const { old, handle } = await beginPendingLayout(rig, events);
       advanceRecoveryClock(rig, 4999);
       for (let i = 0; i < 100; i++) handle.reseed();
-      expect(events.events).toEqual([]);
-      expect(
-        rig.pendingRecoveries.filter((task) => !task.cancelled).map((task) => task.dueAtMs),
-      ).toEqual([5000]);
+      expect(rig.pendingRecoveries.filter((t) => !t.cancelled).map((t) => t.dueAtMs)).toEqual([
+        5000,
+      ]);
       advanceRecoveryClock(rig, 1);
-      expect(events.events.some((event) => event.type === "seed")).toBe(false);
-      const captures = rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+      const count = rig.armedAtomicCollectors.length;
       rig.sim.reply(["off"]);
-      expect(rig.sim.written.filter((command) => command.includes("capture-pane"))).toHaveLength(
-        captures,
-      );
-      expect(events.events.some((event) => event.type === "seed")).toBe(false);
+      drainRetiredAtomicCollector(rig, old.nonce);
+      for (const sync of rig.pendingSyncs.splice(0)) sync();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(rig.armedAtomicCollectors).toHaveLength(count);
+      expect(events.events.some((e) => e.type === "seed")).toBe(false);
+      expect(events.events.filter((e) => e.type === "fault")).toHaveLength(1);
     } finally {
       await rig.channel.dispose();
     }
   });
 
   it.each(["close", "freeze", "dispose", "replace-subscription"] as const)(
-    "retires a pending layout capture on %s before a late border reply",
+    "retires a pending layout capture on %s before late metadata",
     async (operation) => {
       const rig = await startedRig({ borderReply: "manual" });
-      const events = collect();
+      const events = collect(),
+        fresh = collect();
       try {
-        const handle = rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
-        rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
-        rig.sim.reply(nativeBootstrapLines());
-        rig.sim.reply(["0 0 100 50"]);
-        const fresh = collect();
-        if (operation === "replace-subscription") {
-          // Preserve the real FIFO when a new recipe queues behind the held
-          // border reply; the default simulator auto-acks marker installation.
-          rig.sim.commandListInline = (command, count, resultIndex, onReply) => {
-            rig.sim.core.pushCommandList(count, resultIndex, onReply);
-            rig.sim.written.push(command);
-          };
+        const { old, handle } = await beginPendingLayout(rig, events);
+        if (operation === "replace-subscription")
           rig.channel.subscribePane("pane.alpha", fresh.onEvent, undefined, true);
-        }
         if (operation === "dispose") await rig.channel.dispose();
         else if (operation === "freeze") handle.freeze();
         else handle.close();
-        const before = rig.sim.written.filter((command) => command.includes("capture-pane")).length;
         rig.sim.reply(["off"]);
-        expect(rig.sim.written.filter((command) => command.includes("capture-pane"))).toHaveLength(
-          before,
-        );
-        expect(events.events.some((event) => event.type === "seed")).toBe(false);
+        if (operation !== "dispose") drainRetiredAtomicCollector(rig, old.nonce);
+        for (const sync of rig.pendingSyncs.splice(0)) sync();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(events.events.some((e) => e.type === "seed")).toBe(false);
         if (operation === "replace-subscription") {
-          rig.sim.reply([]); // New capture marker installation.
-          rig.sim.reply(nativeBootstrapLines());
-          rig.sim.reply(["0 0 100 50"]);
-          expect(fresh.events.map((event) => event.type)).toEqual(["reset", "seed", "cursor"]);
-        }
+          await vi.waitFor(() => expect(rig.armedAtomicCollectors.at(-1)?.kind).toBe("pause"));
+          completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+          expect(fresh.events.filter((e) => e.type === "seed")).toHaveLength(1);
+        } else expect(rig.pendingRecoveries.filter((t) => !t.cancelled)).toEqual([]);
       } finally {
         await rig.channel.dispose();
       }
@@ -3112,8 +2241,7 @@ describe("layout push", () => {
         events.push("layout");
       },
     );
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["seed"], "0 0 100 50");
     events.length = 0;
     rig.sim.feedLines(
       `%layout-change @1 ${FIXTURE.layoutW1} aaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2} 0`,
@@ -3140,19 +2268,16 @@ describe("layout push", () => {
     const rig = await startedRig({ borderReply: "manual" });
     const collected = collect();
     rig.channel.subscribePane("pane.alpha", collected.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["seed"], "0 0 100 50");
     collected.events.length = 0;
     rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
     for (let index = 0; index < 1025; index++) rig.sim.output("%1", "x");
     expect(collected.events).toEqual([]);
     rig.sim.reply(["off"]);
-    expect(collected.events).toContainEqual({
-      type: "flow",
-      state: "paused",
-      reason: "backpressure",
-    });
     expect(bytesOf(collected.events)).toEqual([]);
+    expect(rig.armedAtomicCollectors.at(-1)).toMatchObject({ kind: "pause", runtimePaneId: "%1" });
+    completeSeed(rig, ["complete replacement"], "0 0 100 50");
+    expect(bytesOf(collected.events)).toEqual(["complete replacement"]);
     await rig.channel.dispose();
   });
 
@@ -3160,8 +2285,7 @@ describe("layout push", () => {
     const rig = await startedRig({ borderReply: "manual" });
     const collected = collect();
     rig.channel.subscribePane("pane.alpha", collected.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["seed"], "0 0 100 50");
     collected.events.length = 0;
     rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
     rig.sim.output("%1", "held");
@@ -3173,28 +2297,33 @@ describe("layout push", () => {
     await rig.channel.dispose();
   });
 
-  it.each(["awaiting-capture", "awaiting-cursor"] as const)(
-    "keeps the opening capture alive when policy is observed while %s",
+  it.each(["awaiting-pause", "awaiting-capture"] as const)(
+    "keeps the opening snapshot alive when policy is observed while %s",
     async (phase) => {
       const rig = await startedRig();
       const collected = collect();
       try {
         rig.channel.subscribePane("pane.alpha", collected.onEvent);
         const captures = () =>
-          rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+          rig.armedAtomicCollectors.filter((collector) => collector.kind === "pause").length;
         const before = captures();
-        if (phase === "awaiting-cursor") rig.sim.reply(["opening history"]);
-        rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 1");
-        // Even a policy change during the capture must be read by its pending
-        // authoritative cursor probe, not cancel the ordered capture recipe.
-        rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 0");
+        if (phase === "awaiting-capture") completeStockPause(rig, "%1");
+        rig.sim.feedLines(
+          "%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 1",
+          "%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 0",
+        );
         expect(captures()).toBe(before);
-        if (phase === "awaiting-capture") rig.sim.reply(["opening history"]);
+        if (phase === "awaiting-pause") completeStockPause(rig, "%1");
         rig.sim.output("%1", "held-output");
-        rig.sim.reply(["0 0 100 50 0 1 0 0 0 0 0 0 0 1 12 2000 0 0 0 0 0 49 0"]);
+        completeAtomicRecoveryPhase(
+          rig,
+          ["opening history"],
+          "0 0 100 50 0 1 0 0 0 0 0 0 0 1 12 2000 0 0 0 0 0 49 0",
+          { continueNotify: true },
+        );
         expect(collected.events.filter((event) => event.type === "seed")).toHaveLength(1);
-        expect(bytesOf(collected.events)).toContain("held-output");
-        const cursor = collected.events.at(-1);
+        expect(bytesOf(collected.events)).toEqual(["opening history", "held-output"]);
+        const cursor = collected.events.findLast((event) => event.type === "cursor");
         expect(cursor?.type === "cursor" && cursor.observedModes?.scrollOnClear).toBe(false);
         rig.sim.output("%1", "live-output");
         expect(bytesOf(collected.events)).toContain("live-output");
@@ -3210,13 +2339,18 @@ describe("layout push", () => {
     const collected = collect();
     try {
       rig.channel.subscribePane("pane.alpha", collected.onEvent);
-      rig.sim.reply(["screen"]);
+      completeStockPause(rig, "%1");
       const command = rig.sim.written.find((value) => value.includes("#{cursor_x}"));
       expect(command).toContain("#{?#{==:#{bracket_paste_flag},},unknown,#{bracket_paste_flag}}");
       expect(command).toContain("#{?#{==:#{scroll-on-clear},},unknown,#{scroll-on-clear}}");
       // Exact 3.4 observation with its unsupported bracket-paste field retained.
-      rig.sim.reply(["0 0 100 50 0 1 0 0 0 0 0 0 0 1 0 2000 unknown 0 0 0 0 49 1"]);
-      const cursor = collected.events.at(-1);
+      completeAtomicRecoveryPhase(
+        rig,
+        ["screen"],
+        "0 0 100 50 0 1 0 0 0 0 0 0 0 1 0 2000 unknown 0 0 0 0 49 1",
+        { continueNotify: true },
+      );
+      const cursor = collected.events.findLast((event) => event.type === "cursor");
       expect(cursor?.type).toBe("cursor");
       if (cursor?.type === "cursor") {
         expect(cursor.observedModes).not.toHaveProperty("bracketedPaste");
@@ -3232,12 +2366,11 @@ describe("layout push", () => {
     const rig = await startedRig();
     const collected = collect();
     rig.channel.subscribePane("pane.alpha", collected.onEvent);
-    rig.sim.reply(["old history"]);
     const probe = (policy: string) =>
       `0 0 100 50 0 1 0 0 0 0 0 0 0 1 12 2000 0 0 0 0 0 49 ${policy}`;
-    rig.sim.reply([probe("1")]);
+    completeSeed(rig, ["old history"], probe("1"));
     const captures = () =>
-      rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+      rig.armedAtomicCollectors.filter((collector) => collector.kind === "pause").length;
     const before = captures();
     rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 1");
     rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : unknown");
@@ -3247,14 +2380,12 @@ describe("layout push", () => {
     expect(captures()).toBe(before + 1);
     rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 0");
     expect(captures()).toBe(before + 1);
-    rig.sim.reply(["updated history"]);
-    rig.sim.reply([probe("0")]);
-    const cursor = collected.events.at(-1);
+    completeSeed(rig, ["updated history"], probe("0"));
+    const cursor = collected.events.findLast((event) => event.type === "cursor");
     expect(cursor?.type === "cursor" && cursor.observedModes?.scrollOnClear).toBe(false);
     rig.sim.feedLines("%subscription-changed tmux-ide-scroll-on-clear $1 @1 0 %1 : 1");
     expect(captures()).toBe(before + 2);
-    rig.sim.reply(["restored history"]);
-    rig.sim.reply([probe("1")]);
+    completeSeed(rig, ["restored history"], probe("1"));
     await rig.channel.dispose();
   });
 
@@ -3262,19 +2393,17 @@ describe("layout push", () => {
     const rig = await startedRig();
     const collected = collect();
     rig.channel.subscribePane("pane.alpha", collected.onEvent);
-    rig.sim.reply(["old history"]);
-    rig.sim.reply(["0 0 100 50 0 1 0 0 0 0 0 0 0 1 12"]);
+    completeSeed(rig, ["old history"], "0 0 100 50 0 1 0 0 0 0 0 0 0 1 12");
     collected.events.length = 0;
     const captures = () =>
-      rig.sim.written.filter((command) => command.includes("capture-pane")).length;
+      rig.armedAtomicCollectors.filter((collector) => collector.kind === "pause").length;
     const before = captures();
     rig.sim.feedLines("%subscription-changed tmux-ide-pane-history $1 @1 0 %1 : 0");
     expect(captures()).toBe(before + 1);
     rig.sim.feedLines("%subscription-changed tmux-ide-pane-history $1 @1 0 %1 : 0");
     rig.sim.feedLines("%subscription-changed tmux-ide-pane-history $1 @1 0 %999 : 0");
     expect(captures()).toBe(before + 1);
-    rig.sim.reply(["live grid"]);
-    rig.sim.reply(["0 0 100 50 0 1 0 0 0 0 0 0 0 1 0"]);
+    completeSeed(rig, ["live grid"], "0 0 100 50 0 1 0 0 0 0 0 0 0 1 0");
     expect(bytesOf(collected.events)).toContain("live grid");
     rig.sim.feedLines("%subscription-changed tmux-ide-pane-history $1 @1 0 %1 : 5");
     expect(captures()).toBe(before + 1);
@@ -3335,8 +2464,7 @@ describe("layout push", () => {
         order.push("layout");
       },
     );
-    rig.sim.reply(["s"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["s"], "0 0 100 50");
     order.length = 0;
 
     // One chunk: the layout notification, then output at the new size — the
@@ -3386,15 +2514,13 @@ describe("layout push", () => {
       () => {},
       (event) => alphaLayouts.push(event),
     );
-    rig.sim.reply(["a"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["a"], "0 0 100 50");
     rig.channel.subscribePane(
       "pane.mirror.gen1",
       () => {},
       (event) => gammaLayouts.push(event),
     );
-    rig.sim.reply(["g"]);
-    rig.sim.reply(["0 0 200 50"]);
+    completeSeed(rig, ["g"], "0 0 200 50");
     expect(alphaLayouts.map((event) => event.semanticWindowId)).toEqual(["window.test.one"]);
     expect(gammaLayouts.map((event) => event.semanticWindowId)).toEqual(["window.test.two"]);
     alphaLayouts.length = 0;
@@ -3418,8 +2544,7 @@ describe("layout push", () => {
       () => {},
       (event) => layouts.push(event),
     );
-    rig.sim.reply(["a"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["a"], "0 0 100 50");
     layouts.length = 0;
 
     const oldWithoutAlpha = "cccc,200x50,0,0,2";
@@ -3463,8 +2588,7 @@ describe("layout push", () => {
       () => {},
       (event) => layouts.push(event),
     );
-    rig.sim.reply(["s"]);
-    rig.sim.reply(["0 0 99 50"]);
+    completeSeed(rig, ["s"], "0 0 99 50");
     rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
     rig.sim.feedLines("%window-pane-changed @1 %2");
     const layout = layouts.at(-1)!;
@@ -3488,8 +2612,7 @@ describe("layout push", () => {
       (event) => paneLayouts.push(event),
     );
     const global = rig.channel.subscribeLayout((event) => globalLayouts.push(event));
-    rig.sim.reply(["s"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["s"], "0 0 100 50");
     // Seed a layout for both windows so each has geometry to re-emit.
     rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
     rig.sim.feedLines(`%layout-change @2 ${FIXTURE.layoutW2} ${FIXTURE.layoutW2} 0`);
@@ -3530,18 +2653,12 @@ describe("closure (truth-driven, never probe-failure)", () => {
     const rig = await startedRig();
     const gamma = collect();
     rig.channel.subscribePane("pane.mirror.gen1", gamma.onEvent);
-    rig.sim.reply(["g"]);
-    rig.sim.reply(["0 0 200 50"]);
+    completeSeed(rig, ["g"], "0 0 200 50");
     gamma.events.length = 0;
 
     rig.sim.feedLines("%pause %3");
-    rig.sim.reply(["provisional"]);
-    rig.sim.reply(["0 40 200 50"]);
-    runRecoveryTimer(rig);
-    rig.sim.reply(["final"]);
-    rig.sim.reply(["0 39 200 50"]);
-    completeRecoveryConfirmations(rig, "final", "0 39 200 50");
-    expect(continueNotificationQueueSize(rig.channel)).toBe(1);
+    completeSeed(rig, ["final"], "0 39 200 50");
+    expect(bytesOf(gamma.events)).toEqual(["final"]);
     gamma.events.length = 0;
 
     rig.state.truthRows.splice(2, 1); // %3 is gone from tmux truth
@@ -3558,7 +2675,8 @@ describe("closure (truth-driven, never probe-failure)", () => {
         .panes.map((pane) => pane.semanticPaneId)
         .sort(),
     ).toEqual(["pane.alpha", "pane.beta"]);
-    expect(continueNotificationQueueSize(rig.channel)).toBe(0);
+    rig.sim.output("%3", "after-close");
+    expect(gamma.events).toEqual([{ type: "closed" }]);
     await rig.channel.dispose();
   });
 
@@ -3566,8 +2684,7 @@ describe("closure (truth-driven, never probe-failure)", () => {
     const rig = await startedRig();
     const beta = collect();
     rig.channel.subscribePane("pane.beta", beta.onEvent);
-    rig.sim.reply(["b"]);
-    rig.sim.reply(["0 0 99 50"]);
+    completeSeed(rig, ["b"], "0 0 99 50");
     beta.events.length = 0;
 
     // kill-pane on %2: window @1 survives, so tmux emits ONLY %layout-change
@@ -3649,14 +2766,11 @@ describe("input path", () => {
       ),
     };
     const rig = await startedRig({ ownedViewer: adapter, nativeBirth: "11" });
-    const before = rig.sim.written.length;
     const handle = rig.channel.subscribePane("pane.alpha", () => {});
-    rig.sim.reply(["0 0 100 50"]);
-    expect(adapter.tryDispatch.mock.calls[0]![1].commands).toEqual([
-      ["capture-pane", "-p", "-e", "-J", "-S", "-", "-t", "%1"],
-    ]);
+    completeSeed(rig, ["initial"], "0 0 100 50");
+    const before = rig.sim.written.length;
     await handle.captureNativeBacking();
-    expect(adapter.tryDispatch.mock.calls[1]![1].commands).toEqual([
+    expect(adapter.tryDispatch.mock.calls[0]![1].commands).toEqual([
       ["capture-pane", "-p", "-R", "-S", "-", "-t", "%1"],
     ]);
     expect(
@@ -3690,8 +2804,7 @@ describe("input path", () => {
       const rig = await startedRig({ ownedViewer: adapter, nativeBirth: "11" });
       expect(adapter.bindIo).toHaveBeenCalledExactlyOnceWith(rig.sim);
       const handle = rig.channel.subscribePane("pane.alpha", () => {});
-      rig.sim.reply(["s"]);
-      rig.sim.reply(["0 0 100 50"]);
+      completeSeed(rig, ["s"], "0 0 100 50");
       const before = rig.sim.written.length;
       handle.sendText("hi");
       handle.sendText("!");
@@ -3708,6 +2821,47 @@ describe("input path", () => {
     },
   );
 
+  it.each(["capture", "completion"] as const)(
+    "keeps accepted native input single-dispatch when diagnostic %s throws",
+    async (failure) => {
+      const adapter = { bindIo: vi.fn(), dispose: vi.fn(), tryDispatch: vi.fn(() => true) };
+      const capture = vi.fn(() => {
+        if (failure === "capture") throw new Error("diagnostic capture");
+        return () => {
+          throw new Error("diagnostic completion");
+        };
+      });
+      const rig = await startedRig({
+        ownedViewer: adapter,
+        nativeBirth: "11",
+        captureInputWrite: capture,
+      });
+      const before = rig.sim.written.length;
+      expect(() =>
+        rig.channel.sendKey("pane.alpha", "Enter", "00000000-0000-4000-8000-000000000001"),
+      ).not.toThrow();
+      expect(capture).toHaveBeenCalledOnce();
+      expect(adapter.tryDispatch).toHaveBeenCalledOnce();
+      expect(rig.sim.written.slice(before)).toEqual([]);
+      await rig.channel.dispose();
+    },
+  );
+
+  it("invalidates a dispatch binding when the channel retires during the write", async () => {
+    const completion = vi.fn();
+    const rig = await startedRig({ captureInputWrite: () => completion });
+    const send = rig.sim.send.bind(rig.sim);
+    let disposal: Promise<void> | undefined;
+    rig.sim.send = (command, reply) => {
+      send(command, reply);
+      if (command.startsWith("send-keys")) disposal = rig.channel.dispose();
+    };
+    rig.channel.sendKey("pane.alpha", "Enter", "00000000-0000-4000-8000-000000000001");
+    expect(completion).toHaveBeenCalledOnce();
+    expect(completion.mock.calls[0]![3]).toBe(false);
+    await disposal;
+  });
+
   it("keeps input on stock transport when physical birth is missing", async () => {
     const adapter = { bindIo: vi.fn(), tryDispatch: vi.fn(), dispose: vi.fn() };
     const rig = await startedRig({ ownedViewer: adapter });
@@ -3720,8 +2874,7 @@ describe("input path", () => {
   it("coalesces literals per pane and sends named keys after pending literals", async () => {
     const rig = await startedRig();
     const handle = rig.channel.subscribePane("pane.alpha", () => {});
-    rig.sim.reply(["s"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["s"], "0 0 100 50");
     const before = rig.sim.written.length;
     handle.sendText("hi");
     handle.sendText("!");
@@ -3757,8 +2910,7 @@ describe("age telemetry", () => {
     const rig = await startedRig({ onOutputObserved });
     const alpha = collect();
     rig.channel.subscribePane("pane.alpha", alpha.onEvent);
-    rig.sim.reply(["s"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["s"], "0 0 100 50");
     rig.sim.feedLines("%extended-output %1 750 : flooded");
     expect(bytesOf(alpha.events)).toEqual(["s", "flooded"]);
     expect(rig.channel.ageTelemetry()).toEqual({
@@ -3785,6 +2937,32 @@ describe("native capture semantic ownership", () => {
       JSON.stringify({ row, flags: 0, used: 0, cells: [] }),
     ),
   ];
+  it("clears successful backing metadata without retiring delayed observer proof", async () => {
+    const rig = await startedRig();
+    try {
+      const capture = rig.channel.captureNativeBacking("pane.alpha");
+      const command = rig.sim.written.findLast((line) => line.includes("capture-pane -p -R"))!;
+      const marker = /@tmux_ide_read_operation ([^ ;]+)/u.exec(command)![1]!;
+      const beforeReply = rig.sim.written.length;
+      rig.sim.reply(raw());
+      expect((await capture).status).toBe("captured");
+      const cleanup = rig.sim.written
+        .slice(beforeReply)
+        .filter((line) => line.includes(INTERNAL_READ_OPERATION_OPTION));
+      // A newer pane marker must not be deleted by this older read's cleanup.
+      expect(cleanup).toEqual([
+        `if-shell -t %1 -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" ` +
+          `"set-option -pu -t %1 ${INTERNAL_READ_OPERATION_OPTION}" ` +
+          `"display-message -p -t %1 ''"`,
+      ]);
+      // The asynchronous observer may redeem after the server option is gone.
+      expect(consumeInternalReadOperation(marker, "%1", "workspace.pane.read")).toBe(true);
+      expect(consumeInternalReadOperation(marker, "%1", "workspace.pane.read")).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
   it("rejects raw backing crossed by pane output but permits sibling output and retry", async () => {
     const rig = await startedRig();
     try {
@@ -3838,12 +3016,10 @@ describe("native capture semantic ownership", () => {
   it("rejects capture after its subscription closes while a peer remains live", async () => {
     const rig = await startedRig();
     const first = rig.channel.subscribePane("pane.alpha", () => {});
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["seed"], "0 0 100 50");
     const peerEvents = collect();
     const peer = rig.channel.subscribePane("pane.alpha", peerEvents.onEvent);
-    rig.sim.reply(["seed"]);
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, ["seed"], "0 0 100 50");
     try {
       const pending = first.captureNativeBacking();
       first.close();
@@ -3911,6 +3087,33 @@ describe("native capture semantic ownership", () => {
 });
 
 describe("native bootstrap capability fallback", () => {
+  it("negotiates complete native grids including retained history before initial seed and reseed", async () => {
+    const rig = await startedRig();
+    const events = collect();
+    const native = nativeBootstrapLines();
+    native[0] = JSON.stringify({ ...JSON.parse(native[0]!), history: 1 });
+    native.push(JSON.stringify({ row: 50, flags: 0, used: 0, cells: [] }));
+    try {
+      const handle = rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
+      expect(rig.sim.written.at(-1)).toContain("capture-pane -p -R -S -");
+      completeSeed(rig, native, "0 0 100 50");
+      expect(events.events.find((event) => event.type === "seed")).toHaveProperty(
+        "native.history",
+        1,
+      );
+      events.events.length = 0;
+      handle.reseed();
+      completeSeed(rig, native, "0 0 100 50");
+      expect(events.events.find((event) => event.type === "seed")).toHaveProperty(
+        "native.history",
+        1,
+      );
+      expect(events.events.some((event) => event.type === "fault")).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
   it.each(
     (["unsupported", "transient"] as const).flatMap((capability) =>
       (["reseed", "close", "freeze", "dispose"] as const).map((operation) => ({
@@ -3919,32 +3122,14 @@ describe("native bootstrap capability fallback", () => {
       })),
     ),
   )(
-    "releases a $capability replacement capture on $operation without losing FIFO replies",
+    "retires a $capability replacement on $operation before admitting its queued sibling",
     async ({ capability, operation }) => {
-      const rig = await startedRig({ continueReply: "manual" });
-      // Keep every list acknowledgement in wire order, including marker cleanup.
-      rig.sim.commandListInline = (command, count, resultIndex, onReply) => {
-        rig.sim.core.pushCommandList(count, resultIndex, onReply);
-        rig.sim.written.push(command);
-      };
-      const captureCommands = () =>
-        rig.sim.written.filter((command) => command.includes("capture-pane"));
+      const rig = await startedRig();
       const alpha = collect();
       const beta = collect();
-      const replyCapture = (lines: string[], ok = true, cols = 100) => {
-        rig.sim.reply([]);
-        rig.sim.reply(lines, ok);
-        rig.sim.reply([`0 0 ${cols} 50`]);
-      };
-      const replyCleanup = () => {
-        rig.sim.reply([]);
-        rig.sim.reply([]);
-      };
       try {
         const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent, undefined, true);
-        rig.channel.subscribePane("pane.beta", beta.onEvent);
-        advanceRecoveryClock(rig, 4000);
-        replyCapture(
+        rig.sim.reply(
           [
             capability === "unsupported"
               ? "command capture-pane: unknown flag -R"
@@ -3952,48 +3137,32 @@ describe("native bootstrap capability fallback", () => {
           ],
           false,
         );
-        replyCleanup();
-        expect(captureCommands()).toHaveLength(2);
-        expect(captureCommands()[1]).toContain("-t %1");
-        expect(
-          rig.pendingRecoveries.filter((task) => !task.cancelled).map((task) => task.dueAtMs),
-        ).toEqual([5000]);
+        if (capability === "transient") rig.sim.reply(nativeBootstrapLines());
+        completeStockPause(rig, "%1");
+        const collector = rig.armedAtomicCollectors.at(-1)!;
+        rig.channel.subscribePane("pane.beta", beta.onEvent);
         if (operation === "dispose") await rig.channel.dispose();
         else handle[operation]();
-        expect(captureCommands()).toHaveLength(operation === "dispose" ? 2 : 3);
-        if (operation !== "dispose") expect(captureCommands()[2]).toContain("-t %2");
-        // The retired replacement still owns its FIFO slots, but cannot publish.
-        replyCapture(capability === "unsupported" ? ["stale alpha"] : nativeBootstrapLines());
-        replyCleanup();
         expect(bytesOf(alpha.events)).toEqual([]);
         expect(bytesOf(beta.events)).toEqual([]);
+        expect(rig.armedAtomicCollectors.at(-1)).toBe(collector);
+        // The actual raw owner remains until an ordinary transport fence drains.
+        rig.sim.feedLines("%begin 1 888 0", "retired-capture", "%end 1 888 0");
+        expect(bytesOf(alpha.events)).toEqual([]);
         if (operation !== "dispose") {
-          // The sibling receives a fresh full budget from admission, not from enqueue.
-          expect(
-            rig.pendingRecoveries.filter((task) => !task.cancelled).map((task) => task.dueAtMs),
-          ).toEqual([9000]);
-          replyCapture(["quiet sibling"], true, 99);
-          expect(bytesOf(beta.events)).toEqual(["quiet sibling"]);
-        }
-        if (operation === "reseed") {
-          expect(captureCommands()).toHaveLength(4);
-          replyCapture(capability === "unsupported" ? ["fresh alpha"] : nativeBootstrapLines());
-          expect(alpha.events.filter((event) => event.type === "seed")).toHaveLength(1);
-          if (capability === "unsupported") expect(bytesOf(alpha.events)).toEqual(["fresh alpha"]);
-          else
-            expect(alpha.events.find((event) => event.type === "seed")).toHaveProperty(
-              "native.version",
-              2,
+          drainRetiredAtomicCollector(rig, collector.nonce);
+          completeSeed(rig, ["sibling"], "0 0 99 50");
+          expect(bytesOf(beta.events)).toEqual(["sibling"]);
+          if (operation === "reseed") {
+            completeSeed(
+              rig,
+              capability === "unsupported" ? ["fresh alpha"] : nativeBootstrapLines(),
+              "0 0 100 50",
             );
-        } else if (operation === "freeze") {
-          rig.sim.reply([]); // requested pause, ordered after the sibling recipe
+            expect(alpha.events.filter((event) => event.type === "seed")).toHaveLength(1);
+          }
         }
-        expect(rig.sim.core.pendingCount).toBe(0);
-        advanceRecoveryClock(rig, 20000);
-        expect([...alpha.events, ...beta.events].filter((event) => event.type === "fault")).toEqual(
-          [],
-        );
-        expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+        expect(alpha.events.some((event) => event.type === "fault")).toBe(false);
       } finally {
         await rig.channel.dispose();
       }
@@ -4001,26 +3170,13 @@ describe("native bootstrap capability fallback", () => {
   );
 
   it.each(["unsupported", "transient"] as const)(
-    "keeps the newest same-pane capture when repeatedly cancelling a %s replacement",
+    "keeps the newest same-pane request after cancelling a %s replacement",
     async (capability) => {
       const rig = await startedRig();
-      rig.sim.commandListInline = (command, count, resultIndex, onReply) => {
-        rig.sim.core.pushCommandList(count, resultIndex, onReply);
-        rig.sim.written.push(command);
-      };
       const alpha = collect();
-      const replyCapture = (lines: string[], ok = true) => {
-        rig.sim.reply([]);
-        rig.sim.reply(lines, ok);
-        rig.sim.reply(["0 0 100 50"]);
-      };
-      const replyCleanup = () => {
-        rig.sim.reply([]);
-        rig.sim.reply([]);
-      };
       try {
         const handle = rig.channel.subscribePane("pane.alpha", alpha.onEvent, undefined, true);
-        replyCapture(
+        rig.sim.reply(
           [
             capability === "unsupported"
               ? "command capture-pane: unknown flag -R"
@@ -4028,32 +3184,24 @@ describe("native bootstrap capability fallback", () => {
           ],
           false,
         );
-        replyCleanup();
+        if (capability === "transient") rig.sim.reply(nativeBootstrapLines());
+        completeStockPause(rig, "%1");
+        const collector = rig.armedAtomicCollectors.at(-1)!;
         handle.reseed();
         handle.reseed();
-        expect(rig.sim.written.filter((command) => command.includes("capture-pane"))).toHaveLength(
-          4,
-        );
-        // Simulate callbacks already queued when their timers were cancelled.
         for (const timer of rig.pendingRecoveries.filter((task) => task.cancelled))
           timer.callback();
-        for (let retired = 0; retired < 2; retired++) {
-          replyCapture(capability === "unsupported" ? ["retired"] : nativeBootstrapLines());
-          replyCleanup();
-          expect(alpha.events).toEqual([]);
-        }
-        replyCapture(capability === "unsupported" ? ["newest"] : nativeBootstrapLines());
-        expect(alpha.events.filter((event) => event.type === "seed")).toHaveLength(1);
-        if (capability === "unsupported") expect(bytesOf(alpha.events)).toEqual(["newest"]);
-        else
-          expect(alpha.events.find((event) => event.type === "seed")).toHaveProperty(
-            "native.version",
-            2,
-          );
-        expect(rig.sim.written.filter((command) => command.startsWith("if-shell -t"))).toHaveLength(
-          3,
+        expect(bytesOf(alpha.events)).toEqual([]);
+        drainRetiredAtomicCollector(rig, collector.nonce);
+        completeStockPause(rig, "%1", false);
+        completeAtomicRecoveryPhase(
+          rig,
+          capability === "unsupported" ? ["newest"] : nativeBootstrapLines(),
+          "0 0 100 50",
+          { continueNotify: true },
         );
-        expect(rig.sim.core.pendingCount).toBe(0);
+        expect(alpha.events.filter((event) => event.type === "seed")).toHaveLength(1);
+        expect(alpha.events.some((event) => event.type === "fault")).toBe(false);
         expect(rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
       } finally {
         await rig.channel.dispose();
@@ -4079,8 +3227,7 @@ describe("native bootstrap capability fallback", () => {
       );
       const first = collect();
       rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
-      rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
       expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
         "native.version",
         2,
@@ -4091,72 +3238,62 @@ describe("native bootstrap capability fallback", () => {
     }
   });
 
-  it("keeps a confirmed native server on atomic recovery after a later failed capture", async () => {
-    const rig = await startedRig({ atomicHook: true });
+  it("keeps a confirmed native server on native recovery after a failed capture", async () => {
+    const rig = await startedRig();
+    const first = collect();
     try {
-      const first = collect();
-      const subscription = rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
-      rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
+      const handle = rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
       first.events.length = 0;
-      subscription.reseed();
-      rig.sim.reply([], false);
-      rig.sim.reply(["0 0 100 50"]);
-      const plainAttempts = () =>
-        rig.sim.written.filter(
-          (command) =>
-            command.startsWith("set-option -p -t") && command.includes("capture-pane -p -R"),
-        ).length;
-      expect(plainAttempts()).toBe(2);
-      for (let phase = 0; phase < 3; phase++) {
-        if (phase) runRecoveryTimer(rig);
-        completeAtomicRecoveryPhase(rig, nativeBootstrapLines(), "0 0 100 50");
-      }
-      expect(plainAttempts()).toBe(2);
+      handle.reseed();
+      completeStockPause(rig, "%1");
+      const collector = rig.armedAtomicCollectors.at(-1)!;
+      completeAtomicRecoveryPhase(rig, [], "0 0 100 50", { errorOrdinal: 1 });
+      expect(bytesOf(first.events)).toEqual([]);
+      drainRetiredAtomicCollector(rig, collector.nonce);
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
       expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
         "native.version",
         2,
+      );
+      expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
+        false,
       );
     } finally {
       await rig.channel.dispose();
     }
   });
 
-  it("retries unknown native capability once within the original deadline", async () => {
+  it("retries unknown native capability within the original deadline and cancels a late probe", async () => {
     const rig = await startedRig();
+    const first = collect();
     try {
-      const first = collect();
-      const subscription = rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
-      advanceRecoveryClock(rig, 4000);
-      rig.sim.reply([], false);
-      rig.sim.reply(["0 0 100 50"]);
+      const handle = rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      advanceRecoveryClock(rig, 400);
+      rig.sim.reply(["temporary failure"], false);
       expect(
         rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
       ).toHaveLength(2);
       const deadlines = rig.pendingRecoveries.filter((task) => !task.cancelled);
       expect(deadlines.some((task) => task.dueAtMs === 5000)).toBe(true);
       expect(deadlines.some((task) => task.dueAtMs > 5000)).toBe(false);
-      subscription.close();
-      advanceRecoveryClock(rig, 10000);
+      handle.close();
       rig.sim.reply(nativeBootstrapLines());
-      rig.sim.reply(["0 0 100 50"]);
-      expect(first.events.filter((event) => event.type === "seed")).toHaveLength(0);
+      advanceRecoveryClock(rig, 10000);
+      expect(first.events.some((event) => event.type === "seed")).toBe(false);
     } finally {
       await rig.channel.dispose();
     }
   });
 
-  it("recovers unknown stock capability after one transient initial probe failure", async () => {
-    const rig = await startedRig({ atomicHook: true });
+  it("recovers stock capability after a transient initial probe failure", async () => {
+    const rig = await startedRig();
+    const first = collect();
     try {
-      const first = collect();
       rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
-      rig.sim.reply([], false);
-      rig.sim.reply(["0 0 100 50"]);
+      rig.sim.reply(["temporary failure"], false);
       rig.sim.reply(["parse error: command capture-pane: unknown flag -R"], false);
-      rig.sim.reply(["0 0 100 50"]);
-      rig.sim.reply(["portable recovered"]);
-      rig.sim.reply(["0 0 100 50"]);
+      completeSeed(rig, ["portable recovered"], "0 0 100 50");
       expect(bytesOf(first.events)).toEqual(["portable recovered"]);
       expect(
         rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
@@ -4166,23 +3303,16 @@ describe("native bootstrap capability fallback", () => {
     }
   });
 
-  it("bounds persistent malformed captures without publishing portable content", async () => {
+  it("bounds persistent malformed native probes without publishing portable content", async () => {
     const rig = await startedRig();
+    const first = collect();
     try {
-      const first = collect();
       rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
       rig.sim.reply(["malformed native capture"]);
-      rig.sim.reply(["0 0 100 50"]);
       rig.sim.reply(["second malformed capability probe"]);
-      rig.sim.reply(["0 0 100 50"]);
-      for (let attempt = 0; attempt < 3; attempt++) {
-        rig.sim.reply(["still malformed"]);
-        rig.sim.reply(["0 0 100 50"]);
-        if (attempt < 2) runRecoveryTimer(rig);
-      }
       advanceRecoveryClock(rig, 10000);
       expect(first.events.filter((event) => event.type === "fault")).toHaveLength(1);
-      expect(first.events.filter((event) => event.type === "seed")).toHaveLength(0);
+      expect(first.events.some((event) => event.type === "seed")).toBe(false);
       expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
         false,
       );
@@ -4191,43 +3321,42 @@ describe("native bootstrap capability fallback", () => {
     }
   });
 
-  it.each([false, true])(
-    "recovers native after malformed shared capture (atomic=%s)",
-    async (atomicHook) => {
-      const rig = await startedRig({ atomicHook });
-      const native = nativeBootstrapLines();
-      try {
-        const first = collect();
-        rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
-        rig.sim.reply(native);
-        rig.sim.reply(["0 0 100 50"]);
-        first.events.length = 0;
-        rig.sim.feedLines("%pause %1");
-        if (atomicHook) completeAtomicRecoveryPhase(rig, ["malformed"], "0 0 100 50");
-        else {
-          rig.sim.reply(["malformed"]);
-          rig.sim.reply(["0 0 100 50"]);
-        }
-        for (let phase = 0; phase < 3; phase++) {
-          runRecoveryTimer(rig);
-          if (atomicHook) completeAtomicRecoveryPhase(rig, native, "0 0 100 50");
-          else {
-            rig.sim.reply(native);
-            rig.sim.reply(["0 0 100 50"]);
-          }
-        }
-        expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
-          "native.version",
-          2,
-        );
-        expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
-          false,
-        );
-      } finally {
-        await rig.channel.dispose();
-      }
-    },
-  );
+  it("recovers a malformed shared native capture at a new authenticated seam", async () => {
+    const rig = await startedRig();
+    const first = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+      first.events.length = 0;
+      rig.sim.feedLines("%pause %1");
+      completeSeed(rig, ["malformed"], "0 0 100 50");
+      expect(bytesOf(first.events)).toEqual([]);
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+      expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
+        "native.version",
+        2,
+      );
+      expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
+        false,
+      );
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("fails closed when a transport cannot own the stock collector", async () => {
+    const rig = await startedRig({ atomicHook: false });
+    const first = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      advanceRecoveryClock(rig, 5001);
+      expect(first.events.some((event) => event.type === "seed")).toBe(false);
+      expect(first.events.filter((event) => event.type === "fault")).toHaveLength(1);
+      expect(rig.sim.written.some((command) => command.includes("capture-pane"))).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
 
   it.each(["failed", "malformed"])(
     "recovers native capability after a transient %s capture",
@@ -4241,9 +3370,7 @@ describe("native bootstrap capability fallback", () => {
           [kind === "failed" ? "temporary capture failure" : "truncated native JSON"],
           kind !== "failed",
         );
-        rig.sim.reply(["0 0 100 50"]); // retired native cursor probe
-        rig.sim.reply(native); // one fresh ordinary capability probe
-        rig.sim.reply(["0 0 100 50"]);
+        completeSeed(rig, native, "0 0 100 50");
         expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
           "native.version",
           2,
@@ -4258,9 +3385,8 @@ describe("native bootstrap capability fallback", () => {
         rig.channel.subscribePane("pane.alpha", peer.onEvent, undefined, true);
         expect(
           rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
-        ).toHaveLength(before + 1);
-        rig.sim.reply(native);
-        rig.sim.reply(["0 0 100 50"]);
+        ).toHaveLength(before);
+        completeSeed(rig, native, "0 0 100 50");
         expect(peer.events.find((event) => event.type === "seed")).toHaveProperty(
           "native.version",
           2,
@@ -4290,11 +3416,10 @@ describe("native bootstrap capability fallback", () => {
           lines[0] = JSON.stringify(header);
           rig.sim.reply(lines);
         }
-        rig.sim.reply(["0 0 100 50"]); // retired native cursor reply
         rig.sim.feedLines("%output %1 discarded-before-fallback");
-        rig.sim.reply(["portable"]);
+        completeStockPause(rig, "%1");
         rig.sim.feedLines("%output %1 held-after-fallback");
-        rig.sim.reply(["0 0 100 50"]);
+        completeAtomicRecoveryPhase(rig, ["portable"], "0 0 100 50", { continueNotify: true });
         expect(bytesOf(first.events)).toEqual(["portable", "held-after-fallback"]);
         expect(first.events.filter((event) => event.type === "seed")).toHaveLength(1);
         const count = rig.sim.written.filter((command) =>
@@ -4305,8 +3430,7 @@ describe("native bootstrap capability fallback", () => {
         expect(
           rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
         ).toHaveLength(count);
-        rig.sim.reply(["peer"]);
-        rig.sim.reply(["0 0 100 50"]);
+        completeSeed(rig, ["peer"], "0 0 100 50");
         expect(bytesOf(peer.events)).toEqual(["peer"]);
       } finally {
         await rig.channel.dispose();
@@ -4317,64 +3441,40 @@ describe("native bootstrap capability fallback", () => {
 
 describe("native recovery formats", () => {
   it.each([false, true])(
-    "keeps native and mixed subscriber gates distinct (atomic=%s)",
-    async (atomicHook) => {
-      for (const mixed of [false, true]) {
-        const rig = await startedRig({ atomicHook });
-        const nativeLines = [
-          JSON.stringify({
-            version: 2,
-            currentAttributes: [0, 8, 8, 8],
-            cols: 100,
-            rows: 50,
-            history: 0,
-            hscrolled: 0,
-            limit: 2000,
-            cursor: [0, 0],
-          }),
-          ...Array.from({ length: 50 }, (_, row) =>
-            JSON.stringify({ row, flags: 0, used: 0, cells: [] }),
-          ),
-        ];
-        try {
-          const canonical = collect();
-          rig.channel.subscribePane("pane.alpha", canonical.onEvent, undefined, true);
-          rig.sim.reply(nativeLines);
-          rig.sim.reply(["0 0 100 50"]);
-          const legacy = collect();
-          if (mixed) {
-            rig.channel.subscribePane("pane.alpha", legacy.onEvent);
-            rig.sim.reply(["legacy initial"]);
-            rig.sim.reply(["0 0 100 50"]);
-          }
-          canonical.events.length = 0;
-          legacy.events.length = 0;
-          const capture = mixed ? ["legacy recovered"] : nativeLines;
-          rig.sim.feedLines("%pause %1");
-          for (let phase = 0; phase < 3; phase++) {
-            if (phase) runRecoveryTimer(rig);
-            if (atomicHook) completeAtomicRecoveryPhase(rig, capture, "0 0 100 50");
-            else {
-              rig.sim.reply(capture);
-              rig.sim.reply(["0 0 100 50"]);
-            }
-          }
-          const seed = canonical.events.find((event) => event.type === "seed");
-          expect(seed).toBeDefined();
-          if (mixed) {
-            expect(seed).toMatchObject({ requiresNativeRecapture: true });
-            expect(seed).not.toHaveProperty("native");
-            expect(bytesOf(legacy.events)).toEqual(["legacy recovered"]);
-            expect(legacy.events.find((event) => event.type === "seed")).not.toHaveProperty(
-              "requiresNativeRecapture",
-            );
-          } else {
-            expect(seed).toHaveProperty("native.version", 2);
-            expect(seed).not.toHaveProperty("requiresNativeRecapture");
-          }
-        } finally {
-          await rig.channel.dispose();
+    "publishes complete native seeds alongside optional ANSI viewers (mixed=%s)",
+    async (mixed) => {
+      const rig = await startedRig();
+      const canonical = collect();
+      const legacy = collect();
+      try {
+        rig.channel.subscribePane("pane.alpha", canonical.onEvent, undefined, true);
+        completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+        if (mixed) {
+          rig.channel.subscribePane("pane.alpha", legacy.onEvent);
+          completeStockPause(rig, "%1");
+          completeAtomicRecoveryPhase(rig, nativeBootstrapLines(), "0 0 100 50", {
+            continueNotify: true,
+            ansiCaptureLines: ["legacy initial"],
+          });
         }
+        canonical.events.length = legacy.events.length = 0;
+        rig.sim.feedLines("%pause %1");
+        completeStockPause(rig, "%1", false);
+        rig.sim.output("%1", "SHARED-TAIL");
+        completeAtomicRecoveryPhase(rig, nativeBootstrapLines(), "0 0 100 50", {
+          continueNotify: true,
+          ansiCaptureLines: ["legacy recovered"],
+        });
+        const seed = canonical.events.find((event) => event.type === "seed");
+        expect(seed).toHaveProperty("native.version", 2);
+        expect(seed).not.toHaveProperty("requiresNativeRecapture");
+        expect(bytesOf(canonical.events)).toEqual(["", "SHARED-TAIL"]);
+        if (mixed) {
+          expect(bytesOf(legacy.events)).toEqual(["legacy recovered", "SHARED-TAIL"]);
+          expect(legacy.events.find((event) => event.type === "seed")).not.toHaveProperty("native");
+        }
+      } finally {
+        await rig.channel.dispose();
       }
     },
   );
@@ -4524,12 +3624,12 @@ describe("native capture-resume recovery", () => {
           paneId: "%1",
           paneBirthId: "11",
           resumed: true,
-          cursor: "1 0 2 1 0 1 0 0 0 0 0 0 0 1 0 2000 0 0 0 0 0 0 1",
+          cursor: "1 0 100 50 0 1 0 0 0 0 0 0 0 1 0 2000 0 0 0 0 0 0 1",
         }),
         JSON.stringify({
           version: 2,
-          cols: 2,
-          rows: 1,
+          cols: 100,
+          rows: 50,
           history: 0,
           hscrolled: 0,
           limit: 2000,
@@ -4537,17 +3637,23 @@ describe("native capture-resume recovery", () => {
           currentAttributes: [0, 8, 8, 8],
         }),
         JSON.stringify({ row: 0, flags: 0, used: 1, cells: [[0, 1, "41", 0, 8, 8, 8, 0, 0]] }),
+        ...Array.from({ length: 49 }, (_, index) =>
+          JSON.stringify({ row: index + 1, flags: 0, used: 0, cells: [] }),
+        ),
         "%continue %1",
       ],
     };
   }
   async function setup(plain = false, manualPause = false, dual = false) {
+    let nativeCapabilityReady = false;
     const callbacks: Array<(reply: { ok: boolean; lines: string[] }) => void> = [];
     const adapter = {
       bindIo: vi.fn(),
       dispose: vi.fn(),
       atomicSnapshotEpoch: vi.fn((_io, representation = "native") =>
-        representation === "dual" && !dual ? null : (epoch as string | null),
+        !nativeCapabilityReady || (representation === "dual" && !dual)
+          ? null
+          : (epoch as string | null),
       ),
       tryDispatch: vi.fn<NonNullable<SessionChannelOptions["ownedViewer"]>["tryDispatch"]>(
         (_io, request, reply) => {
@@ -4564,8 +3670,8 @@ describe("native capture-resume recovery", () => {
     });
     const events = collect();
     const handle = rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, !plain);
-    rig.sim.reply(plain ? ["plain"] : nativeBootstrapLines());
-    rig.sim.reply(["0 0 100 50"]);
+    completeSeed(rig, plain ? ["plain"] : nativeBootstrapLines(), "0 0 100 50");
+    nativeCapabilityReady = true;
     events.events.length = 0;
     return { rig, adapter, callbacks, events, handle };
   }
@@ -4577,9 +3683,21 @@ describe("native capture-resume recovery", () => {
       try {
         if (mixed) {
           s.rig.channel.subscribePane("pane.alpha", nativeEvents.onEvent, undefined, true);
-          s.rig.sim.reply(nativeBootstrapLines());
-          s.rig.sim.reply(["0 0 100 50"]);
+          const initial = snapshot();
+          initial.lines[0] = JSON.stringify({
+            ...JSON.parse(initial.lines[0]!),
+            snapshotVersion: 2,
+            representation: "dual",
+          });
+          initial.lines.splice(
+            -1,
+            0,
+            JSON.stringify({ ansiHex: "410a" }),
+            JSON.stringify({ ansiEnd: true, bytes: 2, chunks: 1 }),
+          );
+          s.callbacks.shift()!(initial);
           nativeEvents.events.length = 0;
+          s.events.events.length = 0;
         }
         s.rig.sim.feedLines("%pause %1");
         expect(s.adapter.tryDispatch.mock.calls.at(-1)?.[1].commands[0]).toContain("-D");
@@ -4628,7 +3746,8 @@ describe("native capture-resume recovery", () => {
         state: "resumed",
         reason: "backpressure",
       });
-      expect(continueNotificationQueueSize(s.rig.channel)).toBe(0);
+      s.rig.sim.feedLines("%continue %1", "%output %1 still-live");
+      expect(bytesOf(s.events.events)).toEqual(["", "after", "still-live"]);
       expect(s.rig.pendingRecoveries.filter((t) => !t.cancelled)).toEqual([]);
     } finally {
       await s.rig.channel.dispose();
@@ -4660,7 +3779,7 @@ describe("native capture-resume recovery", () => {
         s.callbacks[0]!({ ok: true, lines: ["malformed", "%continue %1"] });
         s.rig.sim.feedLines("%output %1 discarded");
         expect(s.events.events.some((e) => e.type === "seed")).toBe(false);
-        runRecoveryTimer(s.rig);
+        expect(s.callbacks).toHaveLength(2);
         expect(s.rig.sim.written.filter((c) => c === "refresh-client -A '%1:pause'")).toHaveLength(
           2,
         );
@@ -4696,12 +3815,21 @@ describe("native capture-resume recovery", () => {
       await s.rig.channel.dispose();
     }
   });
-  it("keeps mixed native/plain participants on the existing shared collector", async () => {
+  it("publishes native and ANSI seeds together for mixed stock participants", async () => {
     const s = await setup();
+    const plain = collect();
     try {
-      s.rig.channel.subscribePane("pane.alpha", () => {});
-      s.rig.sim.reply(["plain"]);
-      s.rig.sim.reply(["0 0 100 50"]);
+      s.rig.channel.subscribePane("pane.alpha", plain.onEvent);
+      completeStockPause(s.rig, "%1");
+      completeAtomicRecoveryPhase(s.rig, nativeBootstrapLines(), "0 0 100 50", {
+        ansiCaptureLines: ["plain"],
+        continueNotify: true,
+      });
+      expect(s.events.events.find((event) => event.type === "seed")).toHaveProperty(
+        "native.version",
+        2,
+      );
+      expect(bytesOf(plain.events)).toEqual(["plain"]);
       s.rig.sim.feedLines("%pause %1");
       expect(s.callbacks).toHaveLength(0);
     } finally {
@@ -4714,7 +3842,7 @@ describe("native capture-resume recovery", () => {
       s.rig.sim.feedLines("%pause %1");
       s.adapter.atomicSnapshotEpoch.mockReturnValue("00000000-0000-4000-8000-000000000002");
       s.callbacks[0]!(snapshot());
-      runRecoveryTimer(s.rig);
+      advanceRecoveryClock(s.rig, 40);
       expect(s.callbacks).toHaveLength(1);
       expect(s.rig.sim.written.filter((c) => c === "refresh-client -A '%1:pause'")).toHaveLength(1);
       expect(s.events.events).toContainEqual({ type: "fault", reason: "native-recovery-failed" });
@@ -4782,6 +3910,80 @@ describe("native capture-resume recovery", () => {
       await s.rig.channel.dispose();
     }
   });
+  it("rejects a native snapshot spanning resize-back even when final geometry matches", async () => {
+    const s = await setup();
+    try {
+      s.rig.sim.feedLines("%pause %1");
+      s.rig.sim.feedLines(
+        `%layout-change @1 ${FIXTURE.layoutW1} aaaa,200x50,0,0{150x50,0,0,1,49x50,151,0,2} 0`,
+        `%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`,
+      );
+      s.callbacks[0]!(snapshot());
+      expect(bytesOf(s.events.events)).toEqual([]);
+      expect(s.rig.pendingSyncs).toHaveLength(1);
+      s.rig.pendingSyncs.shift()!();
+      await vi.waitFor(() => expect(s.callbacks).toHaveLength(2));
+      s.callbacks[1]!(snapshot());
+      expect(s.events.events.filter((event) => event.type === "seed")).toHaveLength(1);
+    } finally {
+      await s.rig.channel.dispose();
+    }
+  });
+  it("cancels a converged native lease fence timer on disposal without admitting its sibling", async () => {
+    const s = await setup();
+    const beta = collect();
+    const inline = s.rig.sim.commandInline.bind(s.rig.sim);
+    let fence: string | null = null;
+    s.rig.sim.commandInline = (command, onReply) => {
+      if (command.startsWith("display-message -p -l tmux-ide-snapshot-admission:")) {
+        fence = command.slice("display-message -p -l ".length);
+        s.rig.sim.core.push({ kind: "inline", onReply, lines: [] });
+        s.rig.sim.written.push(command);
+      } else inline(command, onReply);
+    };
+    try {
+      s.rig.sim.feedLines("%pause %1");
+      s.rig.channel.subscribePane("pane.beta", beta.onEvent);
+      const collectors = s.rig.armedAtomicCollectors.length;
+      s.callbacks[0]!(snapshot());
+      expect(s.events.events.filter((event) => event.type === "seed")).toHaveLength(1);
+      expect(fence).not.toBeNull();
+      expect(s.rig.armedAtomicCollectors).toHaveLength(collectors);
+      await s.rig.channel.dispose();
+      expect(s.rig.pendingRecoveries.filter((task) => !task.cancelled)).toEqual([]);
+      s.rig.sim.reply([fence!]);
+      advanceRecoveryClock(s.rig, 10_000);
+      expect(s.rig.armedAtomicCollectors).toHaveLength(collectors);
+      expect(bytesOf(beta.events)).toEqual([]);
+    } finally {
+      await s.rig.channel.dispose();
+    }
+  });
+  it("releases shared admission when a native subscriber throws during resumed delivery", async () => {
+    const s = await setup();
+    const beta = collect();
+    const append = s.events.events.push.bind(s.events.events);
+    const spy = vi.spyOn(s.events.events, "push").mockImplementation((...events) => {
+      if (events.some((event) => event.type === "flow" && event.state === "resumed")) {
+        throw new Error("consumer callback failed");
+      }
+      return append(...events);
+    });
+    try {
+      s.rig.sim.feedLines("%pause %1");
+      s.rig.channel.subscribePane("pane.beta", beta.onEvent);
+      expect(() => s.callbacks[0]!(snapshot())).not.toThrow();
+      expect(s.rig.armedAtomicCollectors.at(-1)).toMatchObject({
+        kind: "pause",
+        runtimePaneId: "%2",
+      });
+      completeSeed(s.rig, ["BETA"], "4 0 99 50");
+      expect(bytesOf(beta.events)).toEqual(["BETA"]);
+    } finally {
+      spy.mockRestore();
+      await s.rig.channel.dispose();
+    }
+  });
   it("degrades throwing optional capability lookup to ordinary recovery before dispatch", async () => {
     const s = await setup();
     try {
@@ -4790,7 +3992,12 @@ describe("native capture-resume recovery", () => {
       });
       expect(() => s.rig.sim.feedLines("%pause %1")).not.toThrow();
       expect(s.callbacks).toHaveLength(0);
-      expect(s.rig.sim.written).toContain("refresh-client -A '%1:continue'");
+      completeStockPause(s.rig, "%1", false);
+      completeAtomicRecoveryPhase(s.rig, nativeBootstrapLines(), "0 0 100 50", {
+        continueNotify: true,
+      });
+      expect(s.events.events.filter((event) => event.type === "seed")).toHaveLength(1);
+      expect(s.events.events.find((event) => event.type === "seed")).toHaveProperty("native");
     } finally {
       await s.rig.channel.dispose();
     }

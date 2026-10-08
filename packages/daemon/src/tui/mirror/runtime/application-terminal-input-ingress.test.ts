@@ -58,7 +58,7 @@ describe("application terminal input ingress", () => {
         () => snapshot,
         () => owner,
         () => "pane.alpha",
-        (note) => notes.push(note),
+        (note) => notes.push(typeof note === "function" ? note(notes.at(-1) ?? null) : note),
       );
       try {
         if (scenario === "bytes") ingress.routePaste(Buffer.alloc(1024 * 1024 + 1, 97));
@@ -117,7 +117,7 @@ describe("application terminal input ingress", () => {
         () => snapshot,
         () => owner,
         () => pane,
-        (note) => notes.push(note),
+        (note) => notes.push(typeof note === "function" ? note(notes.at(-1) ?? null) : note),
       );
       try {
         ingress.routeKey({ name: "a", ctrl: false, meta: false, shift: false });
@@ -217,7 +217,7 @@ describe("application terminal input ingress", () => {
       () => snapshot,
       () => owner,
       () => "pane.alpha",
-      (note) => notes.push(note),
+      (note) => notes.push(typeof note === "function" ? note(notes.at(-1) ?? null) : note),
     );
     try {
       ingress.routeKey({ name: "a", ctrl: false, meta: false, shift: false });
@@ -267,7 +267,7 @@ describe("application terminal input ingress", () => {
       () => snapshot,
       () => owner,
       () => focusedPane,
-      (note) => notes.push(note),
+      (note) => notes.push(typeof note === "function" ? note(notes.at(-1) ?? null) : note),
     );
     const started = deferred<ApplicationGenerationStartResult>();
     const start = ingress.wrapStarter(async () => started.promise);
@@ -322,4 +322,137 @@ describe("application terminal input ingress", () => {
     expect(setNote).toHaveBeenNthCalledWith(1, "terminal unavailable · input was not sent");
     expect(setNote).toHaveBeenNthCalledWith(2, "terminal unavailable · paste was not sent");
   });
+});
+
+describe("recovery input rejected outcome", () => {
+  function harness() {
+    let snapshot = {
+      status: "rebinding",
+      daemonGeneration: "daemon-a",
+      rendererEpoch: 1,
+      connection: {},
+      client: { getSnapshot: () => ({ generation: 1 }) },
+      fastLane: null,
+    } as unknown as OpenTuiGenerationHostSnapshot;
+    let pane = "pane.alpha";
+    const owner = {
+      sessionName: () => "alpha",
+      snapshot: () => snapshot,
+    } as unknown as OpenTuiSessionOwner;
+    const notes: Array<string | null> = [];
+    const sendInputToPane = vi.fn(async () => true);
+    const ingress = createApplicationTerminalInputIngress(
+      {
+        sendInputToPane,
+        cancelPendingInput: vi.fn(),
+      } as unknown as ApplicationTerminalInteractionController,
+      () => snapshot,
+      () => owner,
+      () => pane,
+      (note) => notes.push(typeof note === "function" ? note(notes.at(-1) ?? null) : note),
+    );
+    return {
+      ingress,
+      notes,
+      sendInputToPane,
+      key: () => ingress.routeKey({ name: "a", ctrl: false, meta: false, shift: false }),
+      live: () => {
+        snapshot = { ...snapshot, status: "live", fastLane: {} } as OpenTuiGenerationHostSnapshot;
+        ingress.adopt();
+      },
+      navigate: () => {
+        pane = "pane.other";
+        ingress.adopt();
+      },
+    };
+  }
+  it("retains reject65 after all64 admitted keys drain", async () => {
+    const h = harness();
+    const gate = deferred<boolean>();
+    h.sendInputToPane.mockImplementationOnce(() => gate.promise);
+    try {
+      for (let i = 0; i < 65; i++) h.key();
+      h.live();
+      expect(h.sendInputToPane).toHaveBeenCalledTimes(1);
+      gate.resolve(true);
+      await vi.waitFor(() => expect(h.sendInputToPane).toHaveBeenCalledTimes(64));
+      expect(h.notes.at(-1)).toContain("some terminal input was not sent");
+      expect(h.notes.at(-1)).not.toContain("wait");
+      h.navigate();
+      expect(h.notes.at(-1)).toBeNull();
+    } finally {
+      h.ingress.dispose();
+    }
+  });
+  it("retains an oversized rejected paste after an empty recovery drain", async () => {
+    const h = harness();
+    try {
+      h.ingress.routePaste(Buffer.alloc(1024 * 1024 + 1, 97));
+      h.live();
+      await Promise.resolve();
+      expect(h.sendInputToPane).not.toHaveBeenCalled();
+      expect(h.notes.at(-1)).toContain("some terminal input was not sent");
+      h.ingress.adopt(false);
+      expect(h.notes.at(-1)).toBeNull();
+    } finally {
+      h.ingress.dispose();
+    }
+  });
+  it("does not erase byte overflow when a later smaller input is admitted", async () => {
+    const h = harness();
+    try {
+      h.ingress.routePaste(Buffer.alloc(1024 * 1024 + 1, 97));
+      h.key();
+      expect(h.notes.at(-1)).toContain("some terminal input was not sent");
+      h.live();
+      await vi.waitFor(() => expect(h.sendInputToPane).toHaveBeenCalledTimes(1));
+      expect(h.notes.at(-1)).toContain("some terminal input was not sent");
+      h.ingress.dispose();
+      expect(h.notes.at(-1)).toBeNull();
+    } finally {
+      h.ingress.dispose();
+    }
+  });
+  it.each(["navigation", "dispose"])("preserves a newer shared note on %s", async (action) => {
+    const h = harness();
+    try {
+      h.ingress.routePaste(Buffer.alloc(1024 * 1024 + 1, 97));
+      h.notes.push("rename failed · please retry");
+      h.live();
+      await Promise.resolve();
+      expect(h.notes.at(-1)).toBe("rename failed · please retry");
+      if (action === "navigation") h.navigate();
+      else h.ingress.dispose();
+      expect(h.notes.at(-1)).toBe("rename failed · please retry");
+    } finally {
+      h.ingress.dispose();
+    }
+  });
+
+  it.each(["timeout", "refusal"])(
+    "preserves the newer %s outcome after navigation",
+    async (outcome) => {
+      vi.useFakeTimers();
+      const h = harness();
+      try {
+        h.ingress.routePaste(Buffer.alloc(1024 * 1024 + 1, 97));
+        h.key();
+        if (outcome === "timeout") await vi.advanceTimersByTimeAsync(5000);
+        else {
+          h.sendInputToPane.mockResolvedValue(false);
+          h.live();
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        const message = h.notes.at(-1);
+        expect(message).toContain(outcome === "timeout" ? "timed out" : "unavailable");
+        h.navigate();
+        expect(h.notes.at(-1)).toBe(message);
+        h.ingress.dispose();
+        expect(h.notes.at(-1)).toBe(message);
+      } finally {
+        h.ingress.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
 });

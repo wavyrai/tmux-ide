@@ -78,6 +78,7 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
       );
       let channels = 0;
       let captures = 0;
+      const capturesByPane = new Map<string, number>();
       const recoveries: MirrorFlowRecoveryObservation[] = [];
       const registry = new SessionRuntimeRegistry({
         generation: randomUUID(),
@@ -94,10 +95,20 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
               socketName,
               configFile,
             });
-            const capture = io.commandListInline.bind(io);
-            io.commandListInline = (command, count, index, onReply) => {
-              if (command.includes("capture-pane -p -e -J")) captures++;
-              capture(command, count, index, onReply);
+            // Native bootstrap uses an atomic collector, not an ANSI command-list
+            // reply. Count accepted snapshot attempts regardless of wire encoding.
+            const arm = io.armAtomicPaneSnapshotCollector.bind(io);
+            io.armAtomicPaneSnapshotCollector = (spec, timeoutMs) => {
+              const accepted = arm(spec, timeoutMs);
+              if (accepted && spec.kind !== "pause") {
+                expect(panes).toContain(spec.runtimePaneId);
+                captures++;
+                capturesByPane.set(
+                  spec.runtimePaneId,
+                  (capturesByPane.get(spec.runtimePaneId) ?? 0) + 1,
+                );
+              }
+              return accepted;
             };
             return io;
           },
@@ -135,7 +146,14 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
           ),
         );
         const openingMs = performance.now() - started;
-        expect(captures).toBe(panes.length);
+        // A recovery may retry a fenced snapshot. Shared canonical ownership
+        // still converges once per pane, independently of its two subscribers.
+        const converged = recoveries.filter((observation) => observation.phase === "converged");
+        expect(converged.map((observation) => observation.semanticPaneId).sort()).toEqual(
+          panes.map((_pane, index) => `pane.opening.${index}`).sort(),
+        );
+        for (const pane of panes) expect(capturesByPane.get(pane)).toBeGreaterThanOrEqual(1);
+        const openingCaptures = captures;
         console.info(
           JSON.stringify({
             border,
@@ -210,7 +228,12 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
           { timeout: 3000 },
         );
         expect(incarnations[1]).toEqual(priorIncarnations);
-        expect(captures).toBe(panes.length);
+        // Reconnecting the second viewer reuses every already-open owner:
+        // it must not trigger even one additional snapshot attempt.
+        expect(captures).toBe(openingCaptures);
+        expect(recoveries.filter((observation) => observation.phase === "converged")).toEqual(
+          converged,
+        );
         stage = "resize";
         const resizeStarted = performance.now();
         tmux("resize-window", "-t", session, "-x", "93", "-y", "31");
@@ -277,7 +300,9 @@ describe.skipIf(!available)("native pane replacement during opening", () => {
     tmux("set-option", "-p", "-t", siblingPane, "@tmux_ide_pane_id", "pane.race.sibling");
     tmux("set-option", "-p", "-t", oldPane, "@tmux_ide_pane_id", "pane.race.replaced");
     await vi.waitFor(() => expect(tmux("capture-pane", "-p", "-t", oldPane)).toBe("OLD"));
+    const oldPid = Number(tmux("display-message", "-p", "-t", oldPane, "#{pane_pid}"));
     const lateReplies: Array<() => void> = [];
+    const heldNonces: string[] = [];
     let channels = 0;
     const registry = new SessionRuntimeRegistry({
       generation: randomUUID(),
@@ -290,12 +315,22 @@ describe.skipIf(!available)("native pane replacement during opening", () => {
             socketName,
             configFile,
           });
-          const capture = io.commandListInline.bind(io);
-          io.commandListInline = (command, count, index, onReply) => {
-            if (command.includes("capture-pane -p -e -J") && command.endsWith(`-t ${oldPane}`))
-              capture(command, count, index, (reply) => lateReplies.push(() => onReply(reply)));
-            else capture(command, count, index, onReply);
-          };
+          const arm = io.armAtomicPaneSnapshotCollector.bind(io);
+          io.armAtomicPaneSnapshotCollector = (spec, timeout) =>
+            arm(
+              {
+                ...spec,
+                onSettled: (result) => {
+                  if (spec.kind !== "pause" && spec.runtimePaneId === oldPane && result.ok) {
+                    // Delay only application delivery of a genuinely completed snapshot.
+                    // Real framing/drain completes normally; this is not raw-wire reordering.
+                    heldNonces.push(spec.nonce);
+                    lateReplies.push(() => spec.onSettled(result));
+                  } else spec.onSettled(result);
+                },
+              },
+              timeout,
+            );
           return io;
         },
       },
@@ -322,6 +357,18 @@ describe.skipIf(!available)("native pane replacement during opening", () => {
       });
       await vi.waitFor(() => expect(lateReplies.length).toBeGreaterThan(0));
       tmux("kill-pane", "-t", oldPane);
+      await vi.waitFor(() => {
+        expect(tmux("list-panes", "-t", session, "-F", "#{pane_id}").split("\n")).not.toContain(
+          oldPane,
+        );
+        let code: string | undefined;
+        try {
+          process.kill(oldPid, 0);
+        } catch (error) {
+          code = (error as NodeJS.ErrnoException).code;
+        }
+        expect(code).toBe("ESRCH");
+      });
       await vi.waitFor(
         () => expect(failures?.map((result) => result.status)).toEqual(["rejected", "rejected"]),
         { timeout: 3000 },
@@ -336,6 +383,11 @@ describe.skipIf(!available)("native pane replacement during opening", () => {
         session,
         `${process.execPath} ${script} NEW`,
       );
+      expect(replacement).not.toBe(oldPane);
+      const replacementPid = Number(
+        tmux("display-message", "-p", "-t", replacement, "#{pane_pid}"),
+      );
+      expect(replacementPid).not.toBe(oldPid);
       tmux("set-option", "-p", "-t", replacement, "@tmux_ide_pane_id", "pane.race.replaced");
       await vi.waitFor(async () => {
         expect(tmux("capture-pane", "-p", "-t", replacement)).toBe("NEW");
@@ -372,6 +424,26 @@ describe.skipIf(!available)("native pane replacement during opening", () => {
       ).toBe(true);
       expect(siblingIncarnation).toBe(originalSiblingIncarnation);
       expect(channels).toBe(1);
+      process.stdout.write(
+        "TM06 opening replacement: " +
+          JSON.stringify({
+            mechanism:
+              "delayed application result after real collector completion; framing/drain unchanged",
+            oldPane,
+            oldPid,
+            oldProcessAbsent: true,
+            replacement,
+            replacementPid,
+            heldNonces,
+            releasedResults: lateReplies.length,
+            pendingResults: failures?.map((result) => result.status),
+            replacementPublications,
+            siblingIncarnation,
+            originalSiblingIncarnation,
+            channels,
+          }) +
+          "\n",
+      );
     } finally {
       await Promise.all(clients.map((client) => client.close()));
       await registry.dispose();

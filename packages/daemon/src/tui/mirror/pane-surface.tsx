@@ -709,7 +709,15 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     }
     if (this._needsWalk) {
       this._needsWalk = false;
-      this.walk();
+      try {
+        this.walk();
+      } catch (error) {
+        // The source may have consumed its dirty rows before a grapheme or
+        // presentation pass fails. Rebuild the retained surface on retry.
+        this._needsWalk = true;
+        this._forceFull = true;
+        throw error;
+      }
     } else if (this._needsCursorPresentation) {
       this.applyCursorOnlyPresentation();
     }

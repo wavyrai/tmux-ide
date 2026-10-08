@@ -1,6 +1,14 @@
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -53,9 +61,12 @@ globalThis.fetch=async(input,options)=>{
 `,
   );
   const tui = join(tools, "fake-tui");
+  // A shebang cannot contain an interpreter path with spaces. Resolve the exact
+  // test runtime through this fixture's private PATH instead.
+  symlinkSync(process.execPath, join(tools, "node"));
   writeFileSync(
     tui,
-    `#!${process.execPath}\nrequire('node:fs').writeFileSync(process.env.TEST_LAUNCHED,JSON.stringify(process.argv.slice(2)));\n`,
+    `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(process.env.TEST_LAUNCHED,JSON.stringify(process.argv.slice(2)));\n`,
     { mode: 0o700 },
   );
   const config = join(directory, "config.json");

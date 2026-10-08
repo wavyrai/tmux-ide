@@ -1,3 +1,18 @@
+import {
+  packedRendererSelection,
+  assertPackedRendererSelectionUnchanged,
+  packedRendererBuildArgs,
+} from "./lib/packed-renderer-selection.mjs";
+import assert from "node:assert/strict";
+import { verifyBoundaryResults } from "./lib/boundary-results.mjs";
+import {
+  privateRootWitness,
+  retirePackedCliResolution,
+  readBoundedCliResolutionReceipt,
+  packedExecutableIdentity,
+  packedNativeMode,
+  packedNativeIdentity,
+} from "./lib/packed-cli-resolution.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { runPackedAutomationJourney } from "./lib/packed-automation-journey.mjs";
 import { assertNoPackagedContributorTests } from "./lib/packaged-runtime-files.mjs";
@@ -14,6 +29,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   writeFileSync,
@@ -54,6 +70,10 @@ function boundedSpawnSync(file, args, options = {}) {
 }
 
 // Read only intentional top-level selectors before dropping all ambient child overrides.
+const rendererSelection = packedRendererSelection(
+  process.env.TMUX_IDE_PACK_RELEASE_SCROLL_MANIFEST,
+);
+const nativeMode = packedNativeMode(process.env.TMUX_IDE_PACK_NATIVE_MODE);
 const gateEvidenceDir = process.env.TMUX_IDE_PACK_EVIDENCE_DIR;
 const runtimeTraceEnabled = process.env.TMUX_IDE_PACK_RUNTIME_TRACE === "1";
 const topologyInputReproEnabled = process.env.TMUX_IDE_PACK_TOPOLOGY_INPUT === "1";
@@ -274,6 +294,10 @@ const childExits = new Map();
 let cleanupError = null;
 let rootTarball = null;
 let installedCliPath = null;
+let cliResolution = null;
+let cliResolutionExpected = null;
+let cliResolutionReceiptPath = null;
+let cliResolutionReportPath = null;
 let installedVersion = null;
 let runtimeEvidence = null;
 let journeyObservations = null;
@@ -403,9 +427,11 @@ async function runInstalledTuiGate(installedCli) {
       maxBuffer: 1024 * 1024,
     }),
   );
-  await runAsync("bun", ["scripts/build-tui.mjs", "--outfile", mockReleaseBinaryPath], {
+  assertPackedRendererSelectionUnchanged(rendererSelection);
+  await runAsync("bun", packedRendererBuildArgs(rendererSelection, mockReleaseBinaryPath), {
     stdio: "inherit",
   });
+  assertPackedRendererSelectionUnchanged(rendererSelection);
   const runtimeProvenanceResult = boundedSpawnSync(
     mockReleaseBinaryPath,
     ["__release-provenance"],
@@ -426,7 +452,7 @@ async function runInstalledTuiGate(installedCli) {
     commit: releaseCommit,
     platform: platformTag,
     sourceState: compiledSourceState,
-    nativeRenderer: "stock",
+    nativeRenderer: rendererSelection.nativeRenderer,
   };
   if (JSON.stringify(runtimeProvenance) !== JSON.stringify(expectedProvenance)) {
     throw new Error(
@@ -2251,6 +2277,86 @@ try {
       `Installed package version ${installedRootVersion} disagrees with ${packageVersion}`,
     );
   }
+  const selectedCli = packedExecutableIdentity(
+    join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js"),
+  );
+  assert.equal(
+    realpathSync(installedCli),
+    selectedCli.realpath,
+    "Installed launcher target mismatch",
+  );
+  assert.equal(
+    selectedCli.sha256,
+    generatedSource.packagedSha256,
+    "Installed CLI differs from tarball",
+  );
+  const selectedNative = packedNativeIdentity(
+    nativeMode,
+    join(
+      projectDir,
+      "node_modules",
+      "tmux-ide",
+      "packages",
+      "daemon",
+      "dist",
+      "native",
+      "tmux",
+      platformTag,
+      "tmux",
+    ),
+    nativeMode === "system-fallback"
+      ? run("sh", ["-c", "command -v tmux"]).stdout.trim()
+      : undefined,
+  );
+  const resolutionRoot = realpathSync(mkdtempSync("/tmp/tcr-"));
+  cliResolutionExpected = {
+    root: resolutionRoot,
+    rootWitness: privateRootWitness(resolutionRoot),
+    cli: selectedCli.realpath,
+    cliHash: selectedCli.sha256,
+    binary: selectedNative.realpath,
+    binaryHash: selectedNative.sha256,
+  };
+  cliResolutionReceiptPath = join(tmpRoot, "cli-resolution-case.json");
+  cliResolutionReportPath = join(tmpRoot, "cli-resolution-vitest.json");
+  const resolutionSuite = "src/lib/__tests__/cli-tmux-resolution-live.test.ts";
+  await runAsync(
+    "pnpm",
+    [
+      "exec",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.live.config.ts",
+      resolutionSuite,
+      "--reporter=default",
+      "--reporter=json",
+      `--outputFile.json=${cliResolutionReportPath}`,
+    ],
+    {
+      cwd: join(root, "packages", "daemon"),
+      stdio: "inherit",
+      env: {
+        TMPDIR: resolutionRoot,
+        TMUX_IDE_TEST_CLI_EXECUTABLE: selectedCli.realpath,
+        ...(nativeMode === "bundled"
+          ? { TMUX_IDE_TEST_BUNDLED_CLI_ANCHOR: selectedCli.realpath }
+          : { TMUX_IDE_TEST_SYSTEM_TMUX: selectedNative.realpath }),
+        TMUX_IDE_TEST_CLI_RECEIPT: cliResolutionReceiptPath,
+      },
+    },
+  );
+  const passed = verifyBoundaryResults(JSON.parse(readFileSync(cliResolutionReportPath, "utf8")), [
+    resolutionSuite,
+  ]);
+  assert.equal(passed, 1);
+  cliResolution = {
+    nativeMode,
+    passed,
+    selectedCli,
+    selectedNative,
+    case: readBoundedCliResolutionReceipt(cliResolutionReceiptPath),
+  };
   const daemonInfo = join(homeDir, ".tmux-ide", "daemon.json");
   const installedCommand = (args, fetchMode = "success", timeout = 10_000) =>
     boundedSpawnSync(installedCli, args, {
@@ -2503,6 +2609,35 @@ try {
 } finally {
   cancellation.beginCleanup();
   const cleanupStarted = Date.now();
+  let cliResolutionCleanup = { confirmed: cliResolutionExpected === null };
+  if (cliResolutionExpected) {
+    try {
+      assert.ok(
+        !cancellation.facts().uncertainCommand,
+        new Error("Selected CLI runner retirement uncertain"),
+      );
+      assert.equal(
+        packedExecutableIdentity(cliResolutionExpected.cli).sha256,
+        cliResolutionExpected.cliHash,
+      );
+      assert.equal(
+        packedExecutableIdentity(cliResolutionExpected.binary).sha256,
+        cliResolutionExpected.binaryHash,
+      );
+      cliResolutionCleanup = await retirePackedCliResolution(
+        cliResolutionExpected,
+        readBoundedCliResolutionReceipt(cliResolutionReceiptPath),
+      );
+      rmSync(cliResolutionExpected.root, { recursive: true });
+    } catch (error) {
+      cliResolutionCleanup = {
+        confirmed: false,
+        error: String(error),
+        retainedRoot: cliResolutionExpected.root,
+      };
+    }
+  }
+
   const cleanup = { runtime: false, tmuxSocketRemoved: false, children: null, failures: [] };
   try {
     await createInstalledRuntimeCleanup(
@@ -2539,7 +2674,11 @@ try {
     installationScenarios === null || installationScenarios.cleanupConfirmed === true;
   if (!cleanup.installationScenarios)
     cleanup.failures.push("installed-scenarios-retirement-unconfirmed");
+  if (!cliResolutionCleanup.confirmed)
+    cleanup.failures.push("cli-resolution-retirement-unconfirmed");
+  cleanup.cliResolution = cliResolutionCleanup;
   const cleanupConfirmed =
+    cliResolutionCleanup.confirmed &&
     !cancellation.facts().uncertainCommand &&
     cleanup.runtime &&
     cleanup.tmuxSocketRemoved &&
@@ -2556,6 +2695,8 @@ try {
     const copied = [];
     const diagnosticArtifacts = [];
     for (const source of [
+      cliResolutionReceiptPath,
+      cliResolutionReportPath,
       rootTarball,
       automationObservations?.sdkTarballPath ?? null,
       mockReleaseBinaryPath,
@@ -2614,6 +2755,7 @@ try {
       generatedSource,
       installedVersion,
       runtime: runtimeEvidence,
+      rendererSelection,
       artifacts: copied,
       diagnosticArtifacts,
       journey: journeyObservations,
@@ -2621,6 +2763,7 @@ try {
       homeDiagnostics,
       emptyDiagnostics,
       installationScenarios,
+      cliResolution,
       tmuxWitness,
       tmuxGenerations,
       tmuxObservations,
@@ -2670,7 +2813,11 @@ try {
     proof.interruption = cancellation.facts();
     proof.cleanup.elapsedMs = Date.now() - cleanupStarted;
     proof.completed = completed;
-    proof.retainedRoots = [tmpRoot, tmuxTmpDir].filter((path) => existsSync(path));
+    proof.retainedRoots = [
+      tmpRoot,
+      tmuxTmpDir,
+      ...(cliResolutionExpected ? [cliResolutionExpected.root] : []),
+    ].filter((path) => existsSync(path));
     proof.platformMatrix[platformTag] = completed ? "passed-local" : "failed-local";
     writeFileSync(join(evidenceDir, "proof.json"), JSON.stringify(proof, null, 2) + "\n", {
       mode: 0o600,

@@ -205,6 +205,8 @@ describe.skipIf(!available)("native transient capture recovery", () => {
     tmux("set-option", "-t", session, "status", "off");
     await vi.waitFor(() => expect(tmux("capture-pane", "-p", "-t", session)).toBe("TRUTH"));
     let injected = 0;
+    let rejectedNonce: string | undefined;
+    let recoveredNonce: string | undefined;
     let channels = 0;
     const faults: unknown[] = [];
     const mirror = new MirrorService({
@@ -221,13 +223,33 @@ describe.skipIf(!available)("native transient capture recovery", () => {
           socketName: socket,
           configFile: "/dev/null",
         });
-        const send = io.commandListInline.bind(io);
-        io.commandListInline = (command, count, index, onReply) => {
-          if (injected === 0 && /capture-pane -p -(?:R|e -J)(?: |$)/u.test(command)) {
-            injected++;
-            onReply({ ok: false, lines: [] });
-          } else send(command, count, index, onReply);
-        };
+        const armCollector = io.armAtomicPaneSnapshotCollector.bind(io);
+        io.armAtomicPaneSnapshotCollector = (spec, timeout) =>
+          armCollector(
+            {
+              ...spec,
+              onSettled: (result) => {
+                // Reject one parsed snapshot result, preserving actual wire
+                // consumption and drain. This is not a server command error.
+                if (spec.kind !== "pause" && result.ok && injected === 0) {
+                  injected++;
+                  rejectedNonce = spec.nonce;
+                  spec.onSettled({
+                    ...result,
+                    ok: false,
+                    captureLines: [],
+                    cursorLine: null,
+                    failureReason: "retired",
+                  });
+                } else {
+                  if (spec.kind !== "pause" && result.ok && rejectedNonce)
+                    recoveredNonce = spec.nonce;
+                  spec.onSettled(result);
+                }
+              },
+            },
+            timeout,
+          );
         return io;
       },
     });
@@ -249,6 +271,8 @@ describe.skipIf(!available)("native transient capture recovery", () => {
           snapshot = applyTerminalReplicaPatch(snapshot, update.patch);
       });
       expect(injected).toBe(1);
+      expect(recoveredNonce).toBeDefined();
+      expect(recoveredNonce).not.toBe(rejectedNonce);
       expect(channels).toBe(1);
       expect(faults).toEqual([]);
       expect(snapshot?.grid[0]?.cells.map((cell) => cell.grapheme).join("")).toBe("TRUTH");
@@ -977,6 +1001,8 @@ describe.skipIf(!available)("native normal-screen bottom row and cursor", () => 
       tmux("split-window", "-v", "-t", session, `${process.execPath} ${normal}`);
       tmux("split-window", "-h", "-t", session, `${process.execPath} ${normal}`);
       let injectedCaptureFailures = 0;
+      let rejectedNonce: string | undefined;
+      let recoveredNonce: string | undefined;
       const mirror = new MirrorService({
         // Match the daemon's observer wiring so transient capture failures can
         // complete the atomic resize recovery instead of stalling the fixture.
@@ -992,20 +1018,44 @@ describe.skipIf(!available)("native normal-screen bottom row and cursor", () => 
             socketName: socket,
             configFile: "/dev/null",
           });
-          const commandList = io.commandListInline.bind(io);
-          io.commandListInline = (command, count, index, onReply) =>
-            commandList(command, count, index, (reply) => {
-              if (
-                injectFailure &&
-                injectedCaptureFailures === 0 &&
-                reply.ok &&
-                command.includes("capture-pane -p -R") &&
-                decodeNativeGridCapture(reply.lines.join("\n"))?.cols === 95
-              ) {
-                injectedCaptureFailures++;
-                onReply({ ok: false, lines: [] });
-              } else onReply(reply);
-            });
+          const armCollector = io.armAtomicPaneSnapshotCollector.bind(io);
+          io.armAtomicPaneSnapshotCollector = (spec, timeout) =>
+            armCollector(
+              {
+                ...spec,
+                onSettled: (result) => {
+                  if (
+                    spec.kind !== "pause" &&
+                    injectFailure &&
+                    injectedCaptureFailures === 0 &&
+                    result.ok &&
+                    decodeNativeGridCapture(result.captureLines.join("\n"))?.cols === 95
+                  ) {
+                    // Application-result rejection after actual raw parsing;
+                    // leave the real collector drain lifecycle untouched.
+                    injectedCaptureFailures++;
+                    rejectedNonce = spec.nonce;
+                    spec.onSettled({
+                      ...result,
+                      ok: false,
+                      captureLines: [],
+                      cursorLine: null,
+                      failureReason: "retired",
+                    });
+                  } else {
+                    if (
+                      spec.kind !== "pause" &&
+                      result.ok &&
+                      rejectedNonce &&
+                      decodeNativeGridCapture(result.captureLines.join("\n"))?.cols === 95
+                    )
+                      recoveredNonce = spec.nonce;
+                    spec.onSettled(result);
+                  }
+                },
+              },
+              timeout,
+            );
           return io;
         },
       });
@@ -1118,7 +1168,11 @@ describe.skipIf(!available)("native normal-screen bottom row and cursor", () => 
             );
           }
         }
-        if (injectFailure) expect(injectedCaptureFailures).toBe(1);
+        if (injectFailure) {
+          expect(injectedCaptureFailures).toBe(1);
+          expect(recoveredNonce).toBeDefined();
+          expect(recoveredNonce).not.toBe(rejectedNonce);
+        }
       } finally {
         for (const owner of owners) await owner.dispose();
         await mirror.dispose();
@@ -1562,53 +1616,74 @@ describe.skipIf(!available)("native history reader continuity", () => {
             socketName: socket,
             configFile: "/dev/null",
           });
-          const commandList = io.commandListInline.bind(io);
-          io.commandListInline = (command, count, index, onReply) =>
-            commandList(command, count, index, (reply) => {
-              if (command.includes("capture-pane -p ")) {
-                const native = command.includes("capture-pane -p -R");
-                let header: Record<string, unknown> | null = null;
-                if (native && reply.ok) {
-                  try {
-                    header = JSON.parse(reply.lines[0] ?? "null");
-                  } catch {
-                    // A malformed header is itself useful fallback evidence.
+          const armCollector = io.armAtomicPaneSnapshotCollector.bind(io);
+          io.armAtomicPaneSnapshotCollector = (spec, timeout) =>
+            armCollector(
+              {
+                ...spec,
+                onSettled: (result) => {
+                  if (spec.kind === "pause") {
+                    spec.onSettled(result);
+                    return;
                   }
-                }
-                if (
-                  injectTransientCaptureFailure &&
-                  injectedCaptureFailures === 0 &&
-                  native &&
-                  reply.ok &&
-                  header?.cols === 8
-                ) {
-                  // A one-off native command failure must not poison future
-                  // captures into the lossy ANSI fallback for this connection.
-                  injectedCaptureFailures++;
-                  reply = { ok: false, lines: [] };
-                }
-                captureAttempts.push({
-                  native,
-                  ok: reply.ok,
-                  records: reply.lines.length,
-                  ...(native && reply.ok
-                    ? { decodable: decodeNativeGridCapture(reply.lines.join("\n")) !== null }
-                    : {}),
-                  ...(header
+                  let header: Record<string, unknown> | null = null;
+                  if (result.ok) {
+                    try {
+                      header = JSON.parse(result.captureLines[0] ?? "null");
+                    } catch {
+                      /* Plain ANSI capture has no native JSON header. */
+                    }
+                  }
+                  const native = header?.version === 1 || header?.version === 2;
+                  const injected =
+                    injectTransientCaptureFailure &&
+                    injectedCaptureFailures === 0 &&
+                    native &&
+                    result.ok &&
+                    header?.cols === 8;
+                  if (injected) injectedCaptureFailures++;
+                  // Reject one parsed application result at the current owned
+                  // collector seam. Real wire consumption and onDrained remain
+                  // untouched: this models transient result rejection, not a
+                  // fabricated server command error or synthetic raw transcript.
+                  const delivered = injected
                     ? {
-                        version: header.version,
-                        cols: header.cols,
-                        rows: header.rows,
-                        history: header.history,
-                        cursor: header.cursor,
-                        hasCurrentAttributes: Array.isArray(header.currentAttributes),
+                        ...result,
+                        ok: false,
+                        captureLines: [],
+                        cursorLine: null,
+                        failureReason: "retired" as const,
                       }
-                    : {}),
-                });
-                if (captureAttempts.length > 16) captureAttempts.shift();
-              }
-              onReply(reply);
-            });
+                    : result;
+                  captureAttempts.push({
+                    nonce: spec.nonce,
+                    native,
+                    ok: delivered.ok,
+                    injected,
+                    records: result.captureLines.length,
+                    ...(native && result.ok
+                      ? {
+                          decodable:
+                            decodeNativeGridCapture(result.captureLines.join("\n")) !== null,
+                        }
+                      : {}),
+                    ...(header
+                      ? {
+                          version: header.version,
+                          cols: header.cols,
+                          rows: header.rows,
+                          history: header.history,
+                          cursor: header.cursor,
+                          hasCurrentAttributes: Array.isArray(header.currentAttributes),
+                        }
+                      : {}),
+                  });
+                  if (captureAttempts.length > 16) captureAttempts.shift();
+                  spec.onSettled(delivered);
+                },
+              },
+              timeout,
+            );
           return io;
         },
       });
@@ -1783,6 +1858,26 @@ describe.skipIf(!available)("native history reader continuity", () => {
                 ).toBe(width);
                 if (scenario.startsWith("active-"))
                   expect(text()).toContain(`DONE-${145 + step * 5}`);
+                if (injectTransientCaptureFailure && width === 8) {
+                  const rejected = captureAttempts.findIndex(
+                    (attempt) => attempt.injected === true,
+                  );
+                  expect(rejected, JSON.stringify(captureAttempts)).toBeGreaterThanOrEqual(0);
+                  const failedNonce = captureAttempts[rejected]!.nonce;
+                  expect(
+                    captureAttempts
+                      .slice(rejected + 1)
+                      .some(
+                        (attempt) =>
+                          attempt.native === true &&
+                          attempt.ok === true &&
+                          attempt.decodable === true &&
+                          attempt.cols === 8 &&
+                          attempt.nonce !== failedNonce,
+                      ),
+                    JSON.stringify(captureAttempts),
+                  ).toBe(true);
+                }
                 let physical: string | null = null;
                 if (width === 8) {
                   try {
@@ -1833,8 +1928,12 @@ describe.skipIf(!available)("native history reader continuity", () => {
               },
               { timeout: 3000 },
             );
-            if (injectTransientCaptureFailure && width === 8)
+            if (injectTransientCaptureFailure && width === 8) {
               expect(injectedCaptureFailures).toBe(1);
+              process.stdout.write(
+                `History transient collector attempts: ${JSON.stringify(captureAttempts)}\n`,
+              );
+            }
             if (scenario !== "reflow-content") {
               expect(tmux("capture-pane", "-p", "-J", "-S", "-", "-t", target)).toContain(held[1]);
               expect(logicalReadingText()).toBe(held[1]);

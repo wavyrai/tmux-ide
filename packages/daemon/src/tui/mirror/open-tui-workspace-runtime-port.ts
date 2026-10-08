@@ -1,3 +1,4 @@
+import { STOCK_CAPTURE_TAB_UNAVAILABLE } from "@tmux-ide/contracts";
 import { randomUUID } from "node:crypto";
 import type {
   WindowLinkTopology,
@@ -357,7 +358,12 @@ function updateFromDelivery(
     stateHash: envelope.canonicalStateHash,
     hashAlgorithm: "fnv1a64-v1" as const,
   };
-  if (payload.frame === "seed") {
+  // Wire patches may span skipped revisions; ordinary canonical patches may not.
+  // Publish the fully verified resulting state at its actual revision.
+  if (
+    payload.frame === "seed" ||
+    (payload.frame === "patch" && payload.revision > payload.baseRevision + 1)
+  ) {
     return Object.freeze({
       ...common,
       type: "terminal.seed" as const,
@@ -410,6 +416,7 @@ class WireTerminalEndpoint {
   #resolveReady!: (ready: boolean) => void;
   #readySettled = false;
   #hasCanonicalSeed = false;
+  #unavailable: string | null = null;
 
   constructor(options: {
     workspaceName: string;
@@ -450,8 +457,14 @@ class WireTerminalEndpoint {
     this.#resolveReady(true);
   }
 
+  get settled(): boolean {
+    return this.#unavailable !== null || this.inputReady;
+  }
+
   get inputReady(): boolean {
-    return !this.#closed && this.#hasCanonicalSeed && !this.#reseedRequired;
+    return (
+      !this.#closed && this.#unavailable === null && this.#hasCanonicalSeed && !this.#reseedRequired
+    );
   }
 
   async subscription(): Promise<
@@ -477,6 +490,7 @@ class WireTerminalEndpoint {
       },
     );
     this.#subscription = subscription;
+    if (this.#unavailable) subscription.unavailable(this.#unavailable);
     return subscription;
   }
 
@@ -489,6 +503,24 @@ class WireTerminalEndpoint {
       return;
     }
     if (message.type === "terminal.delivery.fault") {
+      if (message.deliveryNonce !== this.#negotiated.deliveryNonce) {
+        this.#failConnection(new Error("Terminal fault nonce does not match negotiation"));
+        return;
+      }
+      // The exact shared diagnostic is currently the compatibility-preserving discriminator.
+      if (message.reason === "source-closed" && message.message === STOCK_CAPTURE_TAB_UNAVAILABLE) {
+        this.#unavailable = message.message;
+        this.#decodeToken = null;
+        this.#assembler = null;
+        this.#assemblyStorage = null;
+        this.#envelope = null;
+        this.#pending = null;
+        this.#canonicalSnapshot = null;
+        this.#hasCanonicalSeed = false;
+        this.#subscription?.unavailable(message.message);
+        this.#canonicalSeedReady();
+        return;
+      }
       const detail = message.message.trim();
       this.#failConnection(
         new Error(
@@ -497,6 +529,7 @@ class WireTerminalEndpoint {
       );
       return;
     }
+    if (this.#unavailable) return;
     if (message.type === "terminal.delivery") {
       this.#acceptEnvelope(message);
       return;
@@ -859,6 +892,31 @@ class WireTerminalSubscription implements SessionRuntimeTerminalSubscription<
   readonly #didClose: () => void;
   frozen = false;
   closed = false;
+  #unavailable: string | null = null;
+  readonly #unavailableListeners = new Set<(message: string) => void>();
+  onUnavailable(listener: (message: string) => void): () => void {
+    if (this.closed) return () => {};
+    this.#unavailableListeners.add(listener);
+    if (this.#unavailable) {
+      try {
+        listener(this.#unavailable);
+      } catch {
+        /* Availability observers cannot interrupt sibling delivery. */
+      }
+    }
+    return () => this.#unavailableListeners.delete(listener);
+  }
+  unavailable(message: string): void {
+    if (this.closed) return;
+    this.#unavailable = message;
+    for (const listener of [...this.#unavailableListeners]) {
+      try {
+        listener(message);
+      } catch {
+        /* Availability observers cannot interrupt sibling delivery. */
+      }
+    }
+  }
 
   constructor(generation: string, flush: () => void, didClose: () => void) {
     this.generation = generation;
@@ -901,6 +959,7 @@ class WireTerminalSubscription implements SessionRuntimeTerminalSubscription<
     if (this.closed) return;
     this.closed = true;
     this.#listeners.clear();
+    this.#unavailableListeners.clear();
     this.#didClose();
   }
 }
@@ -1472,7 +1531,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       });
       return request.result;
     }
-    if ([...endpoints.values()].some((endpoint) => !endpoint.inputReady))
+    if ([...endpoints.values()].some((endpoint) => !endpoint.settled))
       return Promise.resolve("geometry-authority-conflict");
     return (
       semanticWindowId === undefined
@@ -1525,7 +1584,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       if (
         closed ||
         !latestLayoutSnapshot.windowLinks ||
-        [...endpoints.values()].some((endpoint) => !endpoint.inputReady)
+        [...endpoints.values()].some((endpoint) => !endpoint.settled)
       )
         throw new Error("Terminal inventory is still receiving canonical state");
       return (await opened.submitIntent(operationId, intent)) ?? undefined;

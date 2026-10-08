@@ -43,6 +43,8 @@ export default defineConfig({
       // OpenTUI renderer suites require Bun plus the Solid/OpenTUI preloads.
       // The root `test:tui-renderer` gate owns every file with this suffix.
       "src/tui/**/*-renderer.test.tsx",
+      // This explicitly registered Bun renderer oracle predates the suffix convention.
+      "src/tui/mirror/testing/styled-frame-oracle.test.tsx",
       "src/command-center/actions/handlers/app-set-remote-access.test.ts",
       "src/command-center/actions/handlers/config-actions.test.ts",
       "src/command-center/actions/handlers/daemon-shutdown.test.ts",

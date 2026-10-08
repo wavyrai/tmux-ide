@@ -198,6 +198,147 @@ describe("ControlChannelCore atomic pane snapshot collector", () => {
     ...block(12, `%tmux-ide-atomic-v1 ${nonce} complete`),
   ];
 
+  const dualSnapshot = (native: string[], ansi: string[]): string[] => {
+    const wire = guardedSnapshot(native, "0 0 80 24");
+    const cursor = wire.indexOf("%begin 1 103 0");
+    return [
+      ...wire.slice(0, cursor),
+      ...block(3, ...ansi),
+      ...block(4, `%tmux-ide-atomic-v1 ${nonce} ansi-capture-end`),
+      ...wire
+        .slice(cursor)
+        .map((line) =>
+          line.replace(
+            /^(%begin|%end) 1 (\d+) 0$/u,
+            (_, guard: string, num: string) => `${guard} 1 ${Number(num) + 2} 0`,
+          ),
+        ),
+    ];
+  };
+
+  it("separates dual representations and preserves notification-shaped ANSI rows", () => {
+    const settled = vi.fn(),
+      onNotify = vi.fn(),
+      drained = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify, onExit: vi.fn() });
+    expect(
+      core.armAtomicPaneSnapshotCollector({
+        nonce,
+        runtimePaneId: "%7",
+        dualCapture: true,
+        maxCaptureBytes: 4096,
+        maxCaptureLines: 16,
+        maxCursorBytes: 256,
+        observerCommandCount: 2,
+        onSettled: settled,
+        onDrained: drained,
+      }),
+    ).toBe(true);
+    const wire = dualSnapshot(["native-grid"], ["%pause %7", "%continue %7", "ansi"]);
+    // Split input across every byte to exercise framing independently of chunks.
+    for (const byte of wire.join("\n") + "\n") core.feed(byte);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(settled.mock.calls[0][0]).toMatchObject({
+      ok: true,
+      captureLines: ["native-grid"],
+      ansiCaptureLines: ["%pause %7", "%continue %7", "ansi"],
+      cursorLine: "0 0 80 24",
+      continueObserved: true,
+      observerEmissionObserved: true,
+      captureLineCount: 4,
+    });
+    expect(onNotify).not.toHaveBeenCalled();
+    expect(drained).toHaveBeenCalledWith("complete");
+  });
+
+  it.each(["byte", "line", "sentinel"])(
+    "rejects dual %s violations without retaining either capture",
+    (kind) => {
+      const settled = vi.fn();
+      const core = new ControlChannelCore({
+        onOutput: vi.fn(),
+        onNotify: vi.fn(),
+        onExit: vi.fn(),
+      });
+      const spec = {
+        nonce,
+        runtimePaneId: "%7",
+        dualCapture: true,
+        maxCaptureBytes: kind === "byte" ? 7 : 4096,
+        maxCaptureLines: kind === "line" ? 1 : 16,
+        maxCursorBytes: 256,
+        observerCommandCount: 2,
+        onSettled: settled,
+      };
+      core.armAtomicPaneSnapshotCollector(spec);
+      const wire = dualSnapshot(["native"], ["ansi"]).map((line) =>
+        kind === "sentinel" ? line.replace("ansi-capture-end", "capture-end") : line,
+      );
+      core.feed(wire.join("\n") + "\n");
+      expect(settled).toHaveBeenCalledOnce();
+      expect(settled.mock.calls[0][0]).toMatchObject({
+        ok: false,
+        captureLines: [],
+        ansiCaptureLines: [],
+        failureReason:
+          kind === "byte"
+            ? "capture-byte-cap"
+            : kind === "line"
+              ? "capture-line-cap"
+              : "sentinel-order",
+      });
+      expect(core.armAtomicPaneSnapshotCollector(spec)).toBe(false);
+      expect(core.releaseRetiredCollector(nonce)).toBe(true);
+      expect(core.armAtomicPaneSnapshotCollector(spec)).toBe(true);
+    },
+  );
+
+  it("retires dual capture between representations without publishing partial payload", () => {
+    const settled = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() });
+    core.armAtomicPaneSnapshotCollector({
+      nonce,
+      runtimePaneId: "%7",
+      dualCapture: true,
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: settled,
+    });
+    const wire = dualSnapshot(["native"], ["ansi"]);
+    const split = wire.indexOf("%begin 1 103 0");
+    core.feed(wire.slice(0, split).join("\n") + "\n");
+    core.retireAtomicPaneSnapshotCollector(nonce);
+    core.feed(wire.slice(split).join("\n") + "\n");
+    expect(settled).toHaveBeenCalledOnce();
+    expect(settled.mock.calls[0][0]).toMatchObject({
+      ok: false,
+      captureLines: [],
+      ansiCaptureLines: [],
+    });
+    expect(core.releaseRetiredCollector(nonce)).toBe(true);
+  });
+
+  it("keeps pause-shaped capture text as snapshot data", () => {
+    const onNotify = vi.fn(),
+      settled = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify, onExit: vi.fn() });
+    core.armAtomicPaneSnapshotCollector({
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: settled,
+    });
+    core.feed([...guardedSnapshot(["%pause %7"], "0 0 80 24"), ""].join("\n"));
+    expect(settled.mock.calls[0]?.[0]).toMatchObject({ ok: true, captureLines: ["%pause %7"] });
+    expect(settled.mock.calls[0]?.[0].pauseObserved).toBeUndefined();
+    expect(onNotify).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       maxCaptureBytes: 4096,
@@ -331,6 +472,447 @@ describe("ControlChannelCore atomic pane snapshot collector", () => {
     });
     expect(progress).toHaveBeenCalledTimes(2);
     expect(progress.mock.calls.at(-1)?.[0]).toMatchObject({ lastCompletedOrdinal: 0 });
+  });
+
+  it("keeps cancelled hook ownership until a separate ordinary fence drains", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const core = new ControlChannelCore({
+      onOutput: vi.fn(),
+      onNotify: vi.fn(),
+      onExit: vi.fn(),
+    });
+    const spec = {
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: first,
+    };
+    const nextNonce = "a".repeat(32);
+    expect(core.armAtomicPaneSnapshotCollector(spec)).toBe(true);
+    core.retireAtomicPaneSnapshotCollector(nonce);
+    expect(first).toHaveBeenCalledOnce();
+    expect(
+      core.armAtomicPaneSnapshotCollector({ ...spec, nonce: nextNonce, onSettled: second }),
+    ).toBe(false);
+    // Cancellation occurred before the hook start reached the reader. Its
+    // complete real framing still belongs to the first protocol owner.
+    core.feed([...guardedSnapshot(["cancelled"], "0 0 80 24"), ""].join("\n"));
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).not.toHaveBeenCalled();
+    expect(
+      core.armAtomicPaneSnapshotCollector({ ...spec, nonce: nextNonce, onSettled: second }),
+    ).toBe(false);
+    expect(core.releaseRetiredCollector("f".repeat(32))).toBe(false);
+    core.push({
+      kind: "inline",
+      lines: [],
+      onReply: (reply) => {
+        expect(reply).toEqual({ ok: true, lines: ["unique-fence"] });
+        expect(core.releaseRetiredCollector(nonce)).toBe(true);
+      },
+    });
+    core.feed("%begin 1 200 1\nunique-fence\n%end 1 200 1\n");
+    expect(
+      core.armAtomicPaneSnapshotCollector({ ...spec, nonce: nextNonce, onSettled: second }),
+    ).toBe(true);
+    core.feed(
+      [...guardedSnapshot(["current"], "1 0 80 24"), ""].join("\n").replaceAll(nonce, nextNonce),
+    );
+    expect(second).toHaveBeenCalledOnce();
+    expect(second.mock.calls[0]?.[0]).toMatchObject({ ok: true, captureLines: ["current"] });
+  });
+
+  it("does not let fence-shaped raw capture rows consume ordinary slots", () => {
+    const settled = vi.fn(),
+      drained = vi.fn(),
+      ordinary = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() });
+    core.armAtomicPaneSnapshotCollector({
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: settled,
+      onDrained: drained,
+    });
+    core.retireAtomicPaneSnapshotCollector(nonce);
+    core.push({ kind: "inline", onReply: ordinary, lines: [] });
+    core.feed(
+      "%begin 1 100 0\n%begin 1 999 1\nunique-fence\n%tmux-ide-atomic-v1 " +
+        nonce +
+        " complete\n%end 1 100 0\n",
+    );
+    expect(ordinary).not.toHaveBeenCalled();
+    expect(drained).not.toHaveBeenCalled();
+    core.feed("%begin 1 200 1\nordinary-result\n%end 1 200 1\n");
+    expect(ordinary).toHaveBeenCalledWith({ ok: true, lines: ["ordinary-result"] });
+    expect(core.releaseRetiredCollector(nonce)).toBe(true);
+    expect(core.releaseRetiredCollector(nonce)).toBe(false);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(drained).toHaveBeenCalledExactlyOnceWith("fence");
+  });
+
+  it("retains an in-flight raw block when cancellation occurs mid-capture", () => {
+    const settled = vi.fn(),
+      drained = vi.fn(),
+      reply = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() });
+    core.armAtomicPaneSnapshotCollector({
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: settled,
+      onDrained: drained,
+    });
+    core.feed(
+      [...block(0, `%tmux-ide-atomic-v1 ${nonce} start`), "%begin 1 101 0", "partial", ""].join(
+        "\n",
+      ),
+    );
+    core.retireAtomicPaneSnapshotCollector(nonce);
+    core.push({ kind: "inline", onReply: reply, lines: [] });
+    core.feed("more-raw\n%end 1 101 0\n%begin 1 200 1\nfence\n%end 1 200 1\n");
+    expect(reply).toHaveBeenCalledWith({ ok: true, lines: ["fence"] });
+    expect(drained).not.toHaveBeenCalled();
+    core.fail("connection closed");
+    core.fail("duplicate");
+    expect(settled).toHaveBeenCalledOnce();
+    expect(drained).toHaveBeenCalledExactlyOnceWith("channel-exit");
+  });
+
+  it("fails the connection on malformed retired raw framing", () => {
+    const drained = vi.fn(),
+      exit = vi.fn(),
+      pending = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: exit });
+    core.armAtomicPaneSnapshotCollector({
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: vi.fn(),
+      onDrained: drained,
+    });
+    core.retireAtomicPaneSnapshotCollector(nonce);
+    core.push({ kind: "inline", onReply: pending, lines: [] });
+    core.feed("%begin 1 100 0\nraw\n%end 1 999 0\n");
+    expect(exit).toHaveBeenCalledOnce();
+    expect(drained).toHaveBeenCalledExactlyOnceWith("channel-exit");
+    expect(pending).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+    expect(
+      core.armAtomicPaneSnapshotCollector({
+        nonce,
+        runtimePaneId: "%7",
+        maxCaptureBytes: 4096,
+        maxCaptureLines: 16,
+        maxCursorBytes: 256,
+        observerCommandCount: 2,
+        onSettled: vi.fn(),
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps tombstone ownership when settlement reenters or throws", () => {
+    const drained = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() });
+    const spec = {
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onDrained: drained,
+      onSettled: vi.fn(() => {
+        expect(core.retireAtomicPaneSnapshotCollector(nonce)).toBe(false);
+        expect(core.armAtomicPaneSnapshotCollector({ ...spec, nonce: "a".repeat(32) })).toBe(false);
+        throw new Error("consumer failed");
+      }),
+    };
+    core.armAtomicPaneSnapshotCollector(spec);
+    expect(() => core.retireAtomicPaneSnapshotCollector(nonce)).toThrow("consumer failed");
+    expect(core.releaseRetiredCollector(nonce)).toBe(true);
+    expect(spec.onSettled).toHaveBeenCalledOnce();
+    expect(drained).toHaveBeenCalledExactlyOnceWith("fence");
+  });
+
+  it("does not arm a collector without a live control process", async () => {
+    const channel = new MirrorControlChannel({
+      session: "unused",
+      handlers: {
+        onOutput: vi.fn(),
+        onNotify: vi.fn(),
+        onExit: vi.fn(),
+      },
+    });
+    expect(
+      channel.armAtomicPaneSnapshotCollector(
+        {
+          nonce,
+          runtimePaneId: "%7",
+          maxCaptureBytes: 4096,
+          maxCaptureLines: 16,
+          maxCursorBytes: 256,
+          observerCommandCount: 2,
+          onSettled: vi.fn(),
+        },
+        100,
+      ),
+    ).toBe(false);
+    await channel.dispose();
+  });
+
+  it("retains failed completion until a fence rather than trusting the final ordinal", () => {
+    const drained = vi.fn(),
+      settled = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: vi.fn() });
+    const spec = {
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: settled,
+      onDrained: drained,
+    };
+    core.armAtomicPaneSnapshotCollector(spec);
+    core.feed(
+      [
+        ...guardedSnapshot(["row"], "0 0 80 24", {
+          statusLines: ["invalid-status"],
+        }),
+        "",
+      ].join("\n"),
+    );
+    expect(settled).toHaveBeenCalledOnce();
+    expect(settled.mock.calls[0]?.[0]).toMatchObject({ ok: false });
+    expect(drained).not.toHaveBeenCalled();
+    expect(core.armAtomicPaneSnapshotCollector({ ...spec, nonce: "a".repeat(32) })).toBe(false);
+    expect(core.releaseRetiredCollector(nonce)).toBe(true);
+    expect(drained).toHaveBeenCalledExactlyOnceWith("fence");
+  });
+
+  it("closes instead of releasing healthy admission when successful settlement throws", () => {
+    const drained = vi.fn(),
+      exit = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: exit });
+    const spec = {
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: vi.fn(() => {
+        throw new Error("owner cleanup failed");
+      }),
+      onDrained: drained,
+    };
+    core.armAtomicPaneSnapshotCollector(spec);
+    core.feed([...guardedSnapshot(["row"], "0 0 80 24"), ""].join("\n"));
+    expect(spec.onSettled).toHaveBeenCalledOnce();
+    expect(drained).toHaveBeenCalledExactlyOnceWith("channel-exit");
+    expect(exit).toHaveBeenCalledOnce();
+    expect(core.armAtomicPaneSnapshotCollector({ ...spec, nonce: "a".repeat(32) })).toBe(false);
+  });
+
+  it.each(["timeout", "invalid-fence", "settlement-throw"] as const)(
+    "closes the wrapper on failed retired drain: %s",
+    async (scenario) => {
+      vi.useFakeTimers();
+      const onExit = vi.fn(),
+        drained = vi.fn(),
+        write = vi.fn();
+      const channel = new MirrorControlChannel({
+        session: "unused",
+        handlers: {
+          onOutput: vi.fn(),
+          onNotify: vi.fn(),
+          onExit,
+        },
+      });
+      const dispose = vi.spyOn(channel, "dispose").mockResolvedValue();
+      const core = Reflect.get(channel, "core") as ControlChannelCore;
+      Reflect.set(channel, "proc", { stdin: { writable: true, write } });
+      core.feed("%begin 1 1 0\n%end 1 1 0\n");
+      const settled = vi.fn(() => {
+        if (scenario === "settlement-throw") throw new Error("owner failed");
+      });
+      const spec = {
+        nonce,
+        runtimePaneId: "%7",
+        maxCaptureBytes: 4096,
+        maxCaptureLines: 16,
+        maxCursorBytes: 256,
+        observerCommandCount: 2,
+        onSettled: settled,
+        onDrained: drained,
+      };
+      try {
+        expect(channel.armAtomicPaneSnapshotCollector(spec, 100)).toBe(true);
+        channel.retireAtomicPaneSnapshotCollector(nonce);
+        expect(settled).toHaveBeenCalledOnce();
+        if (scenario === "timeout") await vi.advanceTimersByTimeAsync(5000);
+        if (scenario === "invalid-fence") core.feed("%begin 1 2 1\nwrong-fence\n%end 1 2 1\n");
+        expect(drained).toHaveBeenCalledExactlyOnceWith("channel-exit");
+        expect(onExit).toHaveBeenCalledOnce();
+        expect(dispose).toHaveBeenCalled();
+        expect(
+          channel.armAtomicPaneSnapshotCollector({ ...spec, nonce: "a".repeat(32) }, 100),
+        ).toBe(false);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(drained).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+        dispose.mockRestore();
+      }
+    },
+  );
+
+  it("does not clear a new collector timer from an old drain callback", async () => {
+    vi.useFakeTimers();
+    const write = vi.fn(),
+      nextSettled = vi.fn(),
+      drained = vi.fn();
+    const channel = new MirrorControlChannel({
+      session: "unused",
+      handlers: {
+        onOutput: vi.fn(),
+        onNotify: vi.fn(),
+        onExit: vi.fn(),
+      },
+    });
+    const dispose = vi.spyOn(channel, "dispose").mockResolvedValue();
+    const core = Reflect.get(channel, "core") as ControlChannelCore;
+    Reflect.set(channel, "proc", { stdin: { writable: true, write } });
+    core.feed("%begin 1 1 0\n%end 1 1 0\n");
+    const spec = {
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: vi.fn(),
+    };
+    try {
+      channel.armAtomicPaneSnapshotCollector(
+        {
+          ...spec,
+          onDrained: (reason) => {
+            drained(reason);
+            if (reason === "fence")
+              expect(
+                channel.armAtomicPaneSnapshotCollector(
+                  {
+                    ...spec,
+                    nonce: "a".repeat(32),
+                    onSettled: nextSettled,
+                  },
+                  100,
+                ),
+              ).toBe(true);
+          },
+        },
+        1000,
+      );
+      channel.retireAtomicPaneSnapshotCollector(nonce);
+      const fence = String(write.mock.calls[0]?.[0]).trim().split(" ").at(-1)!;
+      core.feed(`%begin 1 2 1\n${fence}\n%end 1 2 1\n`);
+      expect(drained).toHaveBeenCalledExactlyOnceWith("fence");
+      await vi.advanceTimersByTimeAsync(99);
+      expect(nextSettled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(nextSettled).toHaveBeenCalledOnce();
+      expect(nextSettled.mock.calls[0]?.[0]).toMatchObject({ failureReason: "timeout" });
+      core.fail("test cleanup");
+    } finally {
+      vi.useRealTimers();
+      dispose.mockRestore();
+    }
+  });
+
+  it("fails closed if the drained callback throws before the next same-chunk reply", () => {
+    const next = vi.fn(),
+      exit = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify: vi.fn(), onExit: exit });
+    core.armAtomicPaneSnapshotCollector({
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: vi.fn(),
+      onDrained: () => {
+        throw new Error("admission failed");
+      },
+    });
+    core.retireAtomicPaneSnapshotCollector(nonce);
+    core.push({
+      kind: "inline",
+      lines: [],
+      onReply: () => {
+        core.releaseRetiredCollector(nonce);
+      },
+    });
+    core.push({ kind: "inline", lines: [], onReply: next });
+    core.feed("%begin 1 200 1\nfence\n%end 1 200 1\n%begin 1 201 1\nnot-delivered\n%end 1 201 1\n");
+    expect(exit).toHaveBeenCalledOnce();
+    expect(next).toHaveBeenCalledOnce();
+    expect(next.mock.calls[0]?.[0]).toMatchObject({ ok: false });
+  });
+
+  it("settles all pending requests even when collector exit callbacks throw", () => {
+    const settled = vi.fn(() => {
+      throw new Error("settled failed");
+    });
+    const drained = vi.fn(() => {
+      throw new Error("drained failed");
+    });
+    const pending = vi.fn();
+    const core = new ControlChannelCore({
+      onOutput: vi.fn(),
+      onNotify: vi.fn(),
+      onExit: () => {
+        throw new Error("exit failed");
+      },
+    });
+    core.armAtomicPaneSnapshotCollector({
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 2,
+      onSettled: settled,
+      onDrained: drained,
+    });
+    core.push({
+      kind: "inline",
+      lines: [],
+      onReply: () => {
+        throw new Error("first request failed");
+      },
+    });
+    core.push({ kind: "inline", lines: [], onReply: pending });
+    expect(() => core.fail("connection exited")).not.toThrow();
+    expect(settled).toHaveBeenCalledOnce();
+    expect(drained).toHaveBeenCalledExactlyOnceWith("channel-exit");
+    expect(pending).toHaveBeenCalledWith({ ok: false, lines: ["connection exited"] });
+    expect(core.pendingCount).toBe(0);
   });
 
   it("retires a missing completion once and ignores a stale nonce", () => {
@@ -791,5 +1373,96 @@ describe("inline command-list parse diagnostics", () => {
     core.pushCommandList(2, 1, capture);
     core.feed("%begin 1 1 1\nprefix\n%end 1 1 1\n%begin 1 2 1\nselected\n%end 1 2 1\n");
     expect(capture).toHaveBeenCalledExactlyOnceWith({ ok: true, lines: ["selected"] });
+  });
+});
+
+describe("owned pause hook on the shared collector", () => {
+  const nonce = "abcdef0123456789abcdef0123456789";
+  const block = (ordinal: number, lines: string[], flags = 0) => [
+    `%begin 1 ${100 + ordinal} ${flags}`,
+    ...lines,
+    `%end 1 ${100 + ordinal} ${flags}`,
+  ];
+  const hook = (pause: string[], completeNonce = nonce, flags = 0) =>
+    [
+      ...block(0, [`%tmux-ide-atomic-v1 ${nonce} start`]),
+      ...block(1, pause, flags),
+      ...block(2, [`%tmux-ide-atomic-v1 ${completeNonce} complete`]),
+      "",
+    ].join("\n");
+  const fixture = () => {
+    const onNotify = vi.fn(),
+      onSettled = vi.fn(),
+      onDrained = vi.fn();
+    const core = new ControlChannelCore({ onOutput: vi.fn(), onNotify, onExit: vi.fn() });
+    const spec = {
+      kind: "pause" as const,
+      nonce,
+      runtimePaneId: "%7",
+      maxCaptureBytes: 4096,
+      maxCaptureLines: 16,
+      maxCursorBytes: 256,
+      observerCommandCount: 0,
+      onSettled,
+      onDrained,
+    };
+    expect(core.armAtomicPaneSnapshotCollector(spec)).toBe(true);
+    return { core, spec, onNotify, onSettled, onDrained };
+  };
+  it.each([true, false])("authenticates a pause hook with pauseObserved=%s", (observed) => {
+    const f = fixture();
+    f.core.feed(hook(observed ? ["%pause %7"] : []));
+    expect(f.onSettled).toHaveBeenCalledOnce();
+    expect(f.onSettled.mock.calls[0]?.[0]).toMatchObject({
+      ok: true,
+      pauseObserved: observed,
+      captureLines: [],
+      cursorLine: null,
+    });
+    expect(f.onDrained).toHaveBeenCalledExactlyOnceWith("complete");
+    expect(f.onNotify).not.toHaveBeenCalled();
+    expect(f.core.armAtomicPaneSnapshotCollector({ ...f.spec, kind: "snapshot" })).toBe(true);
+  });
+  it.each([
+    { name: "wrong pane", pause: ["%pause %8"] },
+    { name: "duplicate pause", pause: ["%pause %7", "%pause %7"] },
+    { name: "foreign completion", pause: ["%pause %7"], complete: "f".repeat(32) },
+    { name: "ordinary reply flags", pause: ["%pause %7"], flags: 1 },
+    { name: "unexpected command content", pause: ["not-a-pause"] },
+  ])("rejects $name without releasing admission", ({ pause, complete, flags }) => {
+    const f = fixture();
+    f.core.feed(hook(pause, complete, flags));
+    expect(f.onSettled).toHaveBeenCalledOnce();
+    expect(f.onSettled.mock.calls[0]?.[0].ok).toBe(false);
+    expect(f.onDrained).not.toHaveBeenCalled();
+    expect(f.core.armAtomicPaneSnapshotCollector({ ...f.spec, nonce: "e".repeat(32) })).toBe(false);
+    expect(f.onNotify).not.toHaveBeenCalled();
+  });
+  it("retains cancelled pause-hook wire until the ordinary retirement fence", () => {
+    const f = fixture();
+    f.core.feed(block(0, [`%tmux-ide-atomic-v1 ${nonce} start`]).join("\n") + "\n");
+    f.core.retireAtomicPaneSnapshotCollector(nonce);
+    f.core.feed(
+      [...block(1, ["%pause %7"]), ...block(2, [`%tmux-ide-atomic-v1 ${nonce} complete`]), ""].join(
+        "\n",
+      ),
+    );
+    expect(f.onSettled).toHaveBeenCalledOnce();
+    expect(f.onSettled.mock.calls[0]?.[0].ok).toBe(false);
+    expect(f.onDrained).not.toHaveBeenCalled();
+    expect(f.core.armAtomicPaneSnapshotCollector({ ...f.spec, nonce: "e".repeat(32) })).toBe(false);
+    const fence = vi.fn();
+    f.core.push({
+      kind: "inline",
+      lines: [],
+      onReply: (reply) => {
+        fence(reply);
+        if (reply.ok && reply.lines.join() === "fence") f.core.releaseRetiredCollector(nonce);
+      },
+    });
+    f.core.feed("%begin 1 999 1\nfence\n%end 1 999 1\n");
+    expect(fence).toHaveBeenCalledWith({ ok: true, lines: ["fence"] });
+    expect(f.onDrained).toHaveBeenCalledExactlyOnceWith("fence");
+    expect(f.onNotify).not.toHaveBeenCalled();
   });
 });

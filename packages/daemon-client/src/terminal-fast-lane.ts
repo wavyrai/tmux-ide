@@ -29,6 +29,7 @@ export interface TerminalFastLaneSourcePort {
       update: CanonicalTerminalReplicaUpdate,
       metadata?: TerminalReplicaDeliveryMetadata,
     ) => void,
+    onUnavailable?: (message: string) => void,
   ): () => void;
 }
 
@@ -40,6 +41,7 @@ export interface CanonicalTerminalSubscriptionPort {
       update: CanonicalTerminalReplicaUpdate,
       metadata?: TerminalReplicaDeliveryMetadata,
     ) => void,
+    onUnavailable?: (message: string) => void,
   ) => () => void;
 }
 
@@ -173,7 +175,9 @@ export interface TerminalFastLane {
   subscribePane(
     semanticPaneId: string,
     listener: (publication: TerminalFastLanePublication) => void,
+    onUnavailable?: (message: string) => void,
   ): () => void;
+  paneUnavailable(semanticPaneId: string): string | null;
   paneState(semanticPaneId: string): TerminalReplicaState | null;
   paneLastAcceptedUpdateType(semanticPaneId: string): CanonicalTerminalReplicaUpdate["type"] | null;
   /** Request one coalesced generation repair for a pane whose retained state vanished. */
@@ -193,6 +197,8 @@ interface PaneInterest {
   readonly semanticPaneId: string;
   readonly listeners: Set<(publication: TerminalFastLanePublication) => void>;
   state: TerminalReplicaState | null;
+  unavailable: string | null;
+  readonly unavailableListeners: Set<(message: string) => void>;
   lastAcceptedUpdateType: CanonicalTerminalReplicaUpdate["type"] | null;
   repairPending: boolean;
   release: (() => void) | null;
@@ -384,7 +390,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     update: CanonicalTerminalReplicaUpdate,
     metadata?: TerminalReplicaDeliveryMetadata,
   ): void => {
-    if (disposed) return;
+    if (disposed || interest.unavailable) return;
     const traceEnabled = Boolean(metadata?.performanceTraceId && options.onTraceStage);
     const identity = traceEnabled
       ? {
@@ -480,6 +486,25 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
       (update, metadata) => {
         if (!disposed && epoch === generationEpoch) accept(interest, update, metadata);
       },
+      (message) => {
+        if (
+          disposed ||
+          epoch !== generationEpoch ||
+          panes.get(interest.semanticPaneId) !== interest
+        )
+          return;
+        interest.unavailable = message;
+        interest.state = null;
+        interest.repairPending = false;
+        for (const listener of [...interest.unavailableListeners]) {
+          try {
+            listener(message);
+          } catch {
+            /* Availability observers cannot interrupt sibling delivery. */
+          }
+        }
+        drainInput();
+      },
     );
   };
 
@@ -506,6 +531,8 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
         semanticPaneId,
         listeners: new Set(),
         state: null,
+        unavailable: null,
+        unavailableListeners: new Set<(message: string) => void>(),
         lastAcceptedUpdateType: null,
         repairPending: false,
         release: null,
@@ -587,6 +614,10 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
           rejectInput(input, "retired");
           continue;
         }
+        if (panes.get(input.semanticPaneId)?.unavailable) {
+          rejectInput(input, "authority-lost");
+          continue;
+        }
         dispatchInput(input, epoch);
       }
       return;
@@ -635,6 +666,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
         interest.release?.();
         interest.release = null;
         interest.state = null;
+        interest.unavailable = null;
         interest.lastAcceptedUpdateType = null;
         interest.repairPending = false;
         open(interest);
@@ -669,7 +701,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
         }
       };
     },
-    subscribePane(semanticPaneId, listener) {
+    subscribePane(semanticPaneId, listener, onUnavailable) {
       if (disposed) return () => undefined;
       if (retainedPaneIds !== null && !retainedPaneIds.has(semanticPaneId)) return () => undefined;
       const interest =
@@ -678,18 +710,31 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
           semanticPaneId,
           listeners: new Set(),
           state: null,
+          unavailable: null,
+          unavailableListeners: new Set<(message: string) => void>(),
           lastAcceptedUpdateType: null,
           repairPending: false,
           release: null,
         } satisfies PaneInterest);
       panes.set(semanticPaneId, interest);
       interest.listeners.add(listener);
+      if (onUnavailable) {
+        interest.unavailableListeners.add(onUnavailable);
+        if (interest.unavailable) {
+          try {
+            onUnavailable(interest.unavailable);
+          } catch {
+            /* Availability observers cannot interrupt sibling delivery. */
+          }
+        }
+      }
       open(interest);
       let active = true;
       return () => {
         if (!active) return;
         active = false;
         interest.listeners.delete(listener);
+        if (onUnavailable) interest.unavailableListeners.delete(onUnavailable);
         // Renderer visibility is not terminal-replica lifetime. A pane surface
         // unmounts when its tmux window is not selected, but output can keep
         // arriving while hidden. Retain the one canonical pane replica and its
@@ -699,19 +744,22 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
         // bounded by the runtime inventory.
       };
     },
+    paneUnavailable: (semanticPaneId) => panes.get(semanticPaneId)?.unavailable ?? null,
     paneState: (semanticPaneId) => panes.get(semanticPaneId)?.state ?? null,
     paneLastAcceptedUpdateType: (semanticPaneId) =>
       panes.get(semanticPaneId)?.lastAcceptedUpdateType ?? null,
     requestRepair(semanticPaneId, reason) {
       if (disposed) return false;
       const interest = panes.get(semanticPaneId);
-      if (!interest || !isRetainedOrStaged(semanticPaneId)) return false;
+      if (!interest || interest.unavailable || !isRetainedOrStaged(semanticPaneId)) return false;
       const revision = interest.state?.revision ?? 0;
       queueRepair(interest, reason, revision, revision);
       return interest.repairPending;
     },
     sendInput(semanticPaneId, rawInput, performanceTraceId, causalProbe) {
       if (disposed) return Promise.resolve({ status: "rejected", reason: "disposed" });
+      if (panes.get(semanticPaneId)?.unavailable)
+        return Promise.resolve({ status: "rejected", reason: "authority-lost" });
       const parsed = SessionRuntimeTerminalInputSchemaZ.safeParse(rawInput);
       if (!parsed.success) {
         mutableCounters.inputRejected += 1;
@@ -809,13 +857,14 @@ export function createWorkspaceClientTerminalSource(
   client: CanonicalTerminalSubscriptionPort,
 ): TerminalFastLaneSourcePort {
   return {
-    subscribe(address, listener) {
+    subscribe(address, listener, onUnavailable) {
       return client.subscribeTerminal(
         {
           workspaceName: address.workspaceName,
           semanticPaneId: address.semanticPaneId,
         },
         listener,
+        onUnavailable,
       );
     },
   };

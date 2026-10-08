@@ -1,0 +1,6 @@
+{
+  "sourceWireSha256": "aea1e1c81430cf71ecf085750d1d79e66f5cc60fd8b329329aafb55b4eef2768",
+  "sourceByteRange": [5538, 5647],
+  "scope": "Exact last native redraw row0 excerpt from failed v1 quiet pilot; excludes terminal chrome/host identifiers",
+  "ansi": "\u001b[38;2;210;220;230m\u001b[48;2;20;30;40m\u001b[HCBENCH:000000:80x30:END\u001b[K\u001b[39m\u001b[49m\u001b[38;2;210;220;230m\u001b[48;2;20;30;40m"
+}

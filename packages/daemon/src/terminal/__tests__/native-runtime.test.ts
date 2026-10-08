@@ -1492,6 +1492,35 @@ describe("async terminal inventory reads", () => {
     }
   });
 
+  it.each([undefined, "generated"])(
+    "accepts display nameSource %s without leaking it into strict semantic proof",
+    async (nameSource) => {
+      const inventory = trustedInventory();
+      const f = coldHandoffFixture({
+        candidate: async () => ({
+          inventory: {
+            ...inventory,
+            panes: inventory.panes.map((pane) => ({
+              ...pane,
+              ...(nameSource ? { nameSource } : {}),
+            })),
+          },
+          token: {},
+        }),
+      });
+      await f.runtime.whenReady();
+      try {
+        const first = await f.runtime.discoverTerminalRuntimeSession("runtime:session");
+        expect(first).toMatchObject({ runtimeSessionId: "$7", catalogIssue: null });
+        const second = await f.runtime.discoverTerminalRuntimeSession("runtime:session");
+        expect(second).toMatchObject({ catalogIssue: null });
+        if (nameSource) expect(second?.panes[0]).toMatchObject({ nameSource });
+      } finally {
+        f.runtime.dispose();
+      }
+    },
+  );
+
   it("uses only proof-qualified retained inventory while preserving agent enrichment", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
     const readCommandExecutor = vi.fn(async () => {

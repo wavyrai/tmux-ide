@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   artifact,
+  assertTuiArtifactAdmission,
   canonicalMarker,
   createScreen,
   isolatedEnv,
@@ -213,4 +214,24 @@ test("resource and resize options must be bounded", () => {
   assert.throws(() => validateOptions({ ...base, resizeSamples: 101 }), /resizeSamples/);
   assert.throws(() => validateOptions({ ...base, resources: "yes" }), /resources/);
   assert.ok(validateOptions({ ...base, resizeSamples: 10, resources: true }));
+});
+
+test("qualified renderer admission rejects stock, dirty, wrong source and unbound artifacts", () => {
+  const expected = { head: "a".repeat(40), sha256: "b".repeat(64) };
+  const binary = { sha256: expected.sha256 };
+  const good = {
+    commit: expected.head,
+    sourceState: "clean",
+    nativeRenderer: "qualified-native-scroll",
+  };
+  assert.equal(assertTuiArtifactAdmission(good, expected, binary), good);
+  for (const delta of [
+    { nativeRenderer: "stock" },
+    { nativeRenderer: "experimental-native-scroll" },
+    { sourceState: "dirty" },
+    { commit: "c".repeat(40) },
+  ])
+    assert.throws(() => assertTuiArtifactAdmission({ ...good, ...delta }, expected, binary));
+  assert.throws(() => assertTuiArtifactAdmission(good, undefined, binary));
+  assert.throws(() => assertTuiArtifactAdmission(good, expected, { sha256: "d".repeat(64) }));
 });

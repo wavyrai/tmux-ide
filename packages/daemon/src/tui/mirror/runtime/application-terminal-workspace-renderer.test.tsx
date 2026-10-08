@@ -2,6 +2,7 @@ import { interactionPaneEndpointKey, type PaneInteractionProjection } from "@tmu
 /* @jsxImportSource @opentui/solid */
 import { describe, expect, it } from "bun:test";
 import { MouseButtons } from "@opentui/core/testing";
+import { CliRenderEvents } from "@opentui/core";
 import { createSignal, type Accessor, type Setter } from "solid-js";
 
 import { registerPaneSurface, type TerminalPaneRenderSource } from "../pane-surface.tsx";
@@ -10,6 +11,7 @@ import {
   createSemanticThemeSnapshot,
   createTerminalPaletteProjection,
 } from "../theme.ts";
+import { blitSemanticRow } from "../semantic-pane-render-source.ts";
 import { renderForTest } from "../testing/renderer-harness.test.ts";
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
 import {
@@ -1367,6 +1369,8 @@ describe("ApplicationTerminalWorkspace", () => {
         placements: [],
         bootstrap: { kind: "authoritative-stream", hiddenState: "observed-from-start" },
       };
+      replica.grid[1]!.cells[2] = { ...replica.grid[1]!.cells[2]!, grapheme: "界", width: 2 };
+      replica.grid[1]!.cells[3] = { ...replica.grid[1]!.cells[3]!, grapheme: "", width: 0 };
       const [workspaceHeight, setWorkspaceHeight] = createSignal(9);
       const forwarded: string[] = [];
       const wireEncodings: Array<string | undefined> = [];
@@ -1409,6 +1413,34 @@ describe("ApplicationTerminalWorkspace", () => {
               historyTrim: 0,
             }
           : null;
+      const fallbackBlit = liveAdapter.renderSource.blitPane;
+      liveAdapter.renderSource.blitPane = (
+        paneId,
+        buffers,
+        width,
+        height,
+        scroll,
+        fg,
+        bg,
+        options,
+      ) => {
+        if (paneId !== "pane.a")
+          return fallbackBlit(paneId, buffers, width, height, scroll, fg, bg, options);
+        for (let row = 0; row < height; row++) {
+          blitSemanticRow(
+            replica.grid[row],
+            buffers,
+            row,
+            width,
+            fg,
+            bg,
+            options.graphemes,
+            palette,
+          );
+          options.dirtyRows.push(row);
+        }
+        return null;
+      };
       let connection = {};
       let client = {};
       const setup = await renderForTest(
@@ -1454,6 +1486,55 @@ describe("ApplicationTerminalWorkspace", () => {
         { width: 30, height: 11 },
       );
       await setup.renderOnce();
+
+      expect(setup.captureCharFrame()).toContain("界");
+      // Application mouse uses physical hit cells, unlike semantic selection:
+      // leading and continuation halves of a wide glyph must stay distinct.
+      await setup.mockMouse.click(2, 4, MouseButtons.LEFT);
+      await setup.mockMouse.click(3, 4, MouseButtons.LEFT);
+      expect(forwarded).toEqual(
+        encoding === "sgr"
+          ? ["\x1b[<0;3;2M", "\x1b[<0;3;2m", "\x1b[<0;4;2M", "\x1b[<0;4;2m"]
+          : ["1b5b4d202322", "1b5b4d232322", "1b5b4d202422", "1b5b4d232422"],
+      );
+      forwarded.length = 0;
+      await setup.mockMouse.click(3, 4, MouseButtons.LEFT, {
+        modifiers: { ctrl: true, alt: true },
+      });
+      expect(forwarded).toEqual(
+        encoding === "sgr" ? ["\x1b[<24;4;2M", "\x1b[<24;4;2m"] : ["1b5b4d382422", "1b5b4d3b2422"],
+      );
+      forwarded.length = 0;
+      Object.assign(replica.modes, { mouseProtocol: "x10" });
+      canonicalRevision++;
+      await setup.mockMouse.click(3, 4, MouseButtons.LEFT);
+      expect(forwarded).toEqual(encoding === "sgr" ? ["\x1b[<0;4;2M"] : ["1b5b4d202422"]);
+      forwarded.length = 0;
+      Object.assign(replica.modes, { mouseProtocol: "vt200" });
+      canonicalRevision++;
+      await setup.mockMouse.pressDown(3, 4, MouseButtons.LEFT);
+      await setup.mockMouse.moveTo(4, 4);
+      await setup.mockMouse.release(4, 4, MouseButtons.LEFT);
+      expect(forwarded).toEqual(
+        encoding === "sgr" ? ["\x1b[<0;4;2M", "\x1b[<0;5;2m"] : ["1b5b4d202422", "1b5b4d232522"],
+      );
+      forwarded.length = 0;
+      Object.assign(replica.modes, { mouseProtocol: "any" });
+      canonicalRevision++;
+      await setup.mockMouse.moveTo(5, 4);
+      expect(forwarded).toEqual(encoding === "sgr" ? ["\x1b[<35;6;2M"] : ["1b5b4d432622"]);
+      forwarded.length = 0;
+      Object.assign(replica.modes, { mouseProtocol: "drag" });
+      canonicalRevision++;
+      await setup.mockMouse.pressDown(3, 4, MouseButtons.LEFT);
+      Object.assign(replica.modes, { mouseProtocol: "x10" });
+      canonicalRevision++;
+      await setup.mockMouse.release(3, 4, MouseButtons.LEFT);
+      expect(forwarded).toEqual(encoding === "sgr" ? ["\x1b[<0;4;2M"] : ["1b5b4d202422"]);
+      Object.assign(replica.modes, { mouseProtocol: "drag" });
+      canonicalRevision++;
+      forwarded.length = 0;
+      wireEncodings.length = 0;
 
       // The header overflow and keyboard accelerators share the exact pane-scoped
       // action model; close remains deliberately two-step.
@@ -2349,4 +2430,166 @@ it("interaction details own terminal keys and retire with the renderer generatio
   await setup.renderOnce();
   expect(setup.captureCharFrame()).not.toContain("Input delivered");
   expect(owns?.()).toBe(false);
+});
+
+it("restores completed cell styles after selection moves and clears, and retires overwritten links", async () => {
+  registerPaneSurface();
+  const theme = createSemanticThemeSnapshot({ mode: "dark" });
+  const palette = createTerminalPaletteProjection(theme);
+  const { blankTerminalReplicaSnapshot } = await import("@tmux-ide/core");
+  const blank = blankTerminalReplicaSnapshot(30, 4);
+  const makeSnapshot = (text: string): TerminalReplicaSnapshot => ({
+    ...blank,
+    grid: blank.grid.map((row, y) => ({
+      ...row,
+      cells: row.cells.map((cell, x) => ({
+        ...cell,
+        grapheme: (y === 0 ? text : y === 1 ? "second" : "").padEnd(30)[x]!,
+        foreground: { kind: "rgb", value: 0xd2dce6 },
+        background: { kind: "rgb", value: 0x141e28 },
+      })),
+    })),
+  });
+  let snapshot = makeSnapshot("https://a.test abc");
+  let revision = 1;
+  const listeners = new Set<Parameters<PaneScopedTerminalAdapter["subscribePaneVersion"]>[1]>();
+  const live: PaneScopedTerminalAdapter = {
+    ...adapter({ "pane.a": "unused" }, []),
+    paneVersion: () => revision,
+    subscribePaneVersion: (_pane, listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    paneSelectionSnapshot: () => snapshot,
+  };
+  live.renderSource.paneCanonicalIdentity = () => ({
+    generation: "gen",
+    incarnation: "gen:0",
+    revision,
+    stateHash: `hash-${revision}`,
+    cols: 30,
+    rows: 4,
+    sourceEpoch: 1,
+    historyTrim: 0,
+  });
+  live.renderSource.blitPane = (_pane, buffers, width, height, _scroll, fg, bg, options) => {
+    expect([width, height]).toEqual([30, 4]);
+    for (let y = 0; y < height; y++) {
+      blitSemanticRow(snapshot.grid[y], buffers, y, width, fg, bg, options.graphemes, palette);
+      options.dirtyRows.push(y);
+    }
+    return null;
+  };
+  // Border-off projection adds one title row: native4 + title1 + topOffset1 = renderer6.
+  const current = {
+    ...layout().current!,
+    rows: 4,
+    panes: [{ pane: "pane.a", left: 0, top: 0, width: 30, height: 4, active: true }],
+  };
+  const connection = {},
+    client = {};
+  const opened: string[] = [];
+  let prepareInput: (() => void) | undefined;
+  const setup = await renderForTest(
+    () => (
+      <ApplicationTerminalWorkspace
+        layout={() => ({ current, windows: [current] })}
+        adapter={live}
+        rendererEpoch={1}
+        width={30}
+        height={5}
+        topOffset={1}
+        focusedPane="pane.a"
+        theme={theme}
+        palette={palette}
+        terminalGestureRuntime={() => ({
+          daemonGeneration: "daemon",
+          clientGeneration: 1,
+          connection,
+          client,
+          adapter: live,
+          rendererEpoch: 1,
+        })}
+        onSelectPane={() => undefined}
+        onOpenLink={(url) => {
+          opened.push(url);
+        }}
+        onSelectionKeyOwner={(_handler, _owns, prepare) => {
+          prepareInput = prepare;
+        }}
+      />
+    ),
+    { width: 30, height: 6 },
+  );
+  type Frame = { char: number[]; fg: number[]; bg: number[]; attributes: number[] };
+  const frames: Frame[] = [];
+  const record = () => {
+    const b = setup.renderer.currentRenderBuffer;
+    expect([b.width, b.height]).toEqual([30, 6]);
+    const v = b.buffers;
+    frames.push({ char: [...v.char], fg: [...v.fg], bg: [...v.bg], attributes: [...v.attributes] });
+    if (frames.length > 128) throw Error("completed frame bound");
+  };
+  const check = (frame: Frame, text: string, selected: readonly number[] = []) => {
+    for (let y = 0; y < 4; y++)
+      for (let x = 0; x < 30; x++) {
+        const i = (y + 2) * 30 + x;
+        const highlighted = y === 0 && selected.includes(x);
+        expect(frame.char[i]).toBe(
+          (y === 0 ? text : y === 1 ? "second" : "").padEnd(30).charCodeAt(x),
+        );
+        expect(frame.attributes[i]).toBe(0);
+        expect(frame.fg.slice(i * 4, i * 4 + 4)).toEqual(
+          highlighted ? [20, 30, 40, 255] : [210, 220, 230, 255],
+        );
+        expect(frame.bg.slice(i * 4, i * 4 + 4)).toEqual(
+          highlighted ? [210, 220, 230, 255] : [20, 30, 40, 255],
+        );
+      }
+  };
+  const paint = async () => {
+    const before = frames.length;
+    await setup.renderOnce();
+    expect(frames.length).toBeGreaterThan(before);
+    return frames.at(-1)!;
+  };
+  setup.renderer.on(CliRenderEvents.FRAME, record);
+  try {
+    check(await paint(), "https://a.test abc");
+    expect(listeners.size).toBeGreaterThan(0);
+    await setup.mockMouse.click(5, 2, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toEqual(["https://a.test/"]);
+    await setup.mockMouse.pressDown(1, 2, MouseButtons.LEFT, { modifiers: { shift: true } });
+    await setup.mockMouse.moveTo(5, 2, { modifiers: { shift: true } });
+    await setup.mockMouse.release(5, 2, MouseButtons.LEFT, { modifiers: { shift: true } });
+    check(await paint(), "https://a.test abc", [1, 2, 3, 4, 5]);
+    await setup.mockMouse.pressDown(14, 2, MouseButtons.LEFT, { modifiers: { shift: true } });
+    await setup.mockMouse.moveTo(17, 2, { modifiers: { shift: true } });
+    await setup.mockMouse.release(17, 2, MouseButtons.LEFT, { modifiers: { shift: true } });
+    check(await paint(), "https://a.test abc", [14, 15, 16, 17]);
+    expect(prepareInput).toBeDefined();
+    prepareInput!(); // Production hook immediately before terminal input delivery.
+    const cleared = await paint();
+    check(cleared, "https://a.test abc");
+    const badStyle = structuredClone(cleared);
+    badStyle.bg[61 * 4] = 210;
+    expect(() => check(badStyle, "https://a.test abc")).toThrow();
+    snapshot = makeSnapshot("OK");
+    revision++;
+    for (const listener of listeners) listener(revision, 1, revision, "content");
+    const replaced = await paint();
+    check(replaced, "OK");
+    const staleTail = structuredClone(replaced);
+    staleTail.char[65] = "h".charCodeAt(0);
+    expect(() => check(staleTail, "OK")).toThrow();
+    await setup.mockMouse.click(5, 2, MouseButtons.LEFT, { modifiers: { ctrl: true } });
+    expect(opened).toEqual(["https://a.test/"]);
+    check(await paint(), "OK");
+  } finally {
+    setup.renderer.off(CliRenderEvents.FRAME, record);
+    setup.renderer.destroy();
+    expect(listeners.size).toBe(0);
+  }
 });

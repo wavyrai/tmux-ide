@@ -1,3 +1,4 @@
+import { assertStockCaptureRepresentable } from "./stock-capture-fidelity.ts";
 import { rememberNativeSeedBacking } from "./native-seed-backing.ts";
 import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
@@ -40,6 +41,7 @@ import { createXtermTerminalInterpreterBackend } from "./xterm-terminal-interpre
 import {
   CAUSAL_CELL_OSC,
   CausalCellLedger,
+  cellsEqual,
   type CausalCellLedgerResult,
 } from "./causal-cell-ledger.ts";
 
@@ -72,6 +74,8 @@ export type TerminalReplicaInterpreterOperation =
       readonly cols: number;
       readonly rows: number;
       readonly chunks: readonly Uint8Array[];
+      /** Explicit capture provenance; excludes post-capture live data. Legacy callers capture all chunks. */
+      readonly captureChunks?: readonly Uint8Array[];
       readonly cursor: { readonly x: number; readonly y: number };
       readonly wraparound?: boolean;
       readonly observedModes?: MirrorObservedTerminalModes;
@@ -101,6 +105,8 @@ export interface TerminalReplicaInterpreterOptions {
     readonly baseRevision: number;
     readonly revision: number;
     readonly chunks: readonly Uint8Array[];
+    /** Explicit capture provenance; excludes post-capture live data. Legacy callers capture all chunks. */
+    readonly captureChunks?: readonly Uint8Array[];
     readonly contiguous: boolean;
   }) => void;
   /** Request native truth without publishing an unknown saved-buffer projection. */
@@ -243,7 +249,13 @@ export class TerminalReplicaInterpreter {
     this.#flushWrites();
     const admitted =
       operation.type === "reseed"
-        ? { ...operation, chunks: operation.chunks.map((chunk) => chunk.slice()) }
+        ? {
+            ...operation,
+            chunks: operation.chunks.map((chunk) => Uint8Array.from(chunk)),
+            ...(operation.captureChunks
+              ? { captureChunks: operation.captureChunks.map((chunk) => Uint8Array.from(chunk)) }
+              : {}),
+          }
         : operation;
     return this.#append(admitted);
   }
@@ -280,8 +292,10 @@ export class TerminalReplicaInterpreter {
       seed.incarnation !== probe.incarnation ||
       this.#snapshot.cols !== probe.geometry.cols ||
       this.#snapshot.rows !== probe.geometry.rows ||
-      JSON.stringify(this.#snapshot.grid[probe.geometry.row]?.cells[probe.geometry.column]) !==
-        JSON.stringify(probe.before)
+      !cellsEqual(
+        this.#snapshot.grid[probe.geometry.row]?.cells[probe.geometry.column],
+        probe.before,
+      )
     )
       throw new Error("Causal-cell baseline drifted before admission");
     const ledger = new CausalCellLedger({
@@ -343,6 +357,8 @@ export class TerminalReplicaInterpreter {
   ): Promise<void> {
     if (this.#closed) return;
     if (operation.type === "reseed") {
+      if (operation.bootstrap === "painted-capture" && !operation.native)
+        assertStockCaptureRepresentable(operation.captureChunks ?? operation.chunks);
       this.#causalCell?.fail("reseeded");
       const nativeCols = operation.nativeCols ?? operation.cols;
       const nativeRows = operation.nativeRows ?? operation.rows;
@@ -394,6 +410,13 @@ export class TerminalReplicaInterpreter {
       this.#nativeSeedBackingCandidate = operation.native;
       try {
         this.#commit(true, undefined, operation.trace ?? null);
+      } catch (error) {
+        try {
+          previous.dispose();
+        } catch {
+          // Preserve the commit failure; replacement remains owned until close.
+        }
+        throw error;
       } finally {
         this.#nativeSeedBackingCandidate = undefined;
       }

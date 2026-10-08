@@ -1,7 +1,8 @@
+import { OwnedSnapshotChannel } from "../mirror/__tests__/owned-snapshot-channel.ts";
 import { testInteractionContext } from "../../../test-support/interaction-evidence.ts";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionRuntimeSemanticIntent } from "@tmux-ide/contracts";
-import type { MirrorServiceOptions } from "../mirror/mirror-service.ts";
+import { MirrorService, type MirrorServiceOptions } from "../mirror/mirror-service.ts";
 import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
 import {
   FIXTURE,
@@ -100,7 +101,10 @@ function controllerRig(generation = GENERATION_A) {
   return { registry, executed, sims: base.sims };
 }
 
-function rig(generation = GENERATION_A): {
+function rig(
+  generation = GENERATION_A,
+  stock = false,
+): {
   registry: SessionRuntimeRegistry;
   sims: SimulatedChannel[];
   mirror: MirrorServiceOptions;
@@ -108,13 +112,25 @@ function rig(generation = GENERATION_A): {
   const sims: SimulatedChannel[] = [];
   const mirror: MirrorServiceOptions = {
     createIo: (_session, handlers) => {
-      const sim = new SimulatedChannel(handlers, (command) => {
-        const reply = fixtureAutoReply(fixtureState())(command);
-        if (reply) return reply;
-        if (command.includes("capture-pane")) return ["seed"];
-        if (command.startsWith("display-message")) return ["0 0 100 50"];
-        return [];
-      });
+      const sim = new OwnedSnapshotChannel(
+        handlers,
+        (command) => {
+          const reply = fixtureAutoReply(fixtureState())(command);
+          if (reply) return reply;
+          if (stock && command.includes("capture-pane") && command.includes("-R -S"))
+            return ["command capture-pane: unknown flag -R"];
+          if (command.includes("capture-pane")) return ["seed"];
+          if (command.startsWith("display-message")) return ["0 0 100 50"];
+          return [];
+        },
+        () => ["seed"],
+        () => "0 0 100 50",
+      );
+      if (stock) {
+        const reply = sim.reply.bind(sim);
+        sim.reply = (lines, ok = true) =>
+          reply(lines, lines[0] === "command capture-pane: unknown flag -R" ? false : ok);
+      }
       sims.push(sim);
       return sim;
     },
@@ -152,7 +168,11 @@ function delayedStartRig(): {
   return { registry, sims, releaseStart };
 }
 
-function finishSeed(sim: SimulatedChannel): void {
+async function finishSeed(sim: SimulatedChannel): Promise<void> {
+  if (sim instanceof OwnedSnapshotChannel) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return;
+  }
   sim.reply(["seed"]);
   sim.reply(["0 0 100 50"]);
 }
@@ -302,7 +322,7 @@ describe("SessionRuntimeRegistry", () => {
     const { registry, sims } = rig();
     const warming = registry.prewarmSession(FIXTURE.session);
     await vi.waitFor(() => expect(sims).toHaveLength(1));
-    finishSeed(sims[0]!);
+    await finishSeed(sims[0]!);
     await warming;
 
     await expect(registry.describeSession(FIXTURE.session)).resolves.toMatchObject({
@@ -437,7 +457,7 @@ describe("SessionRuntimeRegistry", () => {
     const warming = registry.prewarmSession(FIXTURE.session);
     await vi.waitFor(() => expect(sims).toHaveLength(1));
     const retirement = registry.retireSession(FIXTURE.session);
-    finishSeed(sims[0]!);
+    await finishSeed(sims[0]!);
 
     await Promise.allSettled([warming, retirement]);
     expect(registry.sessionCount()).toBe(0);
@@ -557,7 +577,7 @@ describe("SessionRuntimeRegistry", () => {
     const editor = registry.connect("alpha-session", "terminal-attachment", "client:editor");
     const subscribing = editor.subscribe("pane.alpha", () => {});
     await vi.waitFor(() => expect(base.sims).toHaveLength(1));
-    finishSeed(base.sims[0]!);
+    await finishSeed(base.sims[0]!);
     const subscription = await subscribing;
     let releaseSubscriptionClose!: () => void;
     const subscriptionCloseGate = new Promise<void>((resolve) => {
@@ -825,6 +845,104 @@ describe("SessionRuntimeRegistry", () => {
     expect(sims[0]!.disposed).toBe(true);
   });
 
+  it.each(["replica", "mirror"] as const)(
+    "retains %s close failure evidence after the session map is cleared",
+    async (kind) => {
+      const original = MirrorService.prototype.subscribe;
+      const spy = vi
+        .spyOn(MirrorService.prototype, "subscribe")
+        .mockImplementation(async function (options) {
+          const subscription = await original.call(this, options);
+          return {
+            ...subscription,
+            close: async () => {
+              await subscription.close();
+              throw new Error("injected upstream close rejection");
+            },
+          };
+        });
+      const { registry } = rig(GENERATION_A, true);
+      try {
+        const consumer = registry.connect(FIXTURE.session, "opentui", "failed-close");
+        if (kind === "replica") await consumer.subscribeReplica("pane.alpha", () => {});
+        else await consumer.subscribe("pane.alpha", () => {});
+        await registry.dispose();
+        const snapshot = registry.qualificationSnapshot();
+        expect(snapshot.sessions).toEqual([]);
+        expect(snapshot.listenerDisposal).toMatchObject({
+          owners: kind === "replica" ? 1 : 0,
+          failures: 1,
+          upstream: kind === "replica" ? 1 : 0,
+        });
+      } finally {
+        spy.mockRestore();
+        await registry.dispose();
+      }
+    },
+  );
+
+  it("counts internal listener churn and retains scalar disposal proof after sessions disappear", async () => {
+    const { registry } = rig(GENERATION_A, true);
+    const first = registry.connect(FIXTURE.session, "opentui", "count:first");
+    const unsubscribe = first.onAuthoritySnapshot(() => {});
+    const replica = await first.subscribe("pane.alpha", () => {});
+    const sample = () => registry.qualificationSnapshot();
+    expect(sample().sessions[0]?.listeners).toEqual({
+      authority: 1,
+      mirrorSubscriptions: 1,
+      replicaSubscriptions: 0,
+      deliveryConnections: 0,
+    });
+    const baseline = sample().mirrorListeners.active;
+    for (let index = 0; index < 3; index++) {
+      const observer = registry.connect(FIXTURE.session, "web", `count:${index}`);
+      const off = observer.onAuthoritySnapshot(() => {});
+      await observer.subscribe("pane.alpha", () => {});
+
+      off();
+      await observer.close();
+      expect(sample().sessions[0]?.listeners.authority).toBe(1);
+
+      expect(sample().mirrorListeners.active).toEqual(baseline);
+    }
+    // Keep an actual canonical owner and consumer alive into registry disposal.
+    await first.subscribeReplica("pane.alpha", () => {});
+    expect(sample().sessions[0]?.replicas["pane.alpha"]?.listeners).toEqual({
+      canonical: 1,
+      raw: 0,
+      upstream: 1,
+    });
+    await registry.dispose();
+    unsubscribe();
+    await replica.close();
+    await first.close();
+    const disposed = sample();
+    expect(disposed.sessions).toEqual([]);
+    expect(disposed.listenerDisposal).toEqual({
+      sessions: 1,
+      owners: 1,
+      failures: 0,
+      canonical: 0,
+      raw: 0,
+      upstream: 0,
+      authority: 0,
+      consumerHandles: 0,
+      deliveryConnections: 0,
+      deliverySources: 0,
+      pendingDeliverySources: 0,
+      pendingSourceCloses: 0,
+      pendingDeliveryClients: 0,
+    });
+    expect(disposed.mirrorListeners).toMatchObject({
+      active: { pane: 0, layout: 0, layoutAuthority: 0 },
+      retired: { channels: 1, failures: 0, pane: 0, layout: 0, layoutAuthority: 0 },
+      pendingDisposals: 0,
+      sessionExit: 0,
+    });
+    await registry.dispose();
+    expect(sample().listenerDisposal).toEqual(disposed.listenerDisposal);
+  });
+
   it("isolates a frozen or disconnected consumer from live ingestion", async () => {
     const { registry, sims } = rig();
     const slow = registry.connect(FIXTURE.session, "web:slow", "client:web:slow");
@@ -834,9 +952,9 @@ describe("SessionRuntimeRegistry", () => {
     const slowSubscription = await slow.subscribe("pane.alpha", (event) => {
       slowEvents.push(event.type);
     });
-    finishSeed(sims[0]!);
+    await finishSeed(sims[0]!);
     await live.subscribe("pane.alpha", (event) => liveEvents.push(event.type));
-    finishSeed(sims[0]!);
+    await finishSeed(sims[0]!);
 
     slowEvents.length = 0;
     liveEvents.length = 0;
@@ -1171,7 +1289,7 @@ describe("SessionRuntimeRegistry", () => {
     const slow = registry.connect("alpha-session", "web", "client:slow");
     const controller = registry.connect("alpha-session", "opentui", "client:controller");
     const subscription = await slow.subscribe("pane.alpha", () => {});
-    finishSeed(sims[0]!);
+    await finishSeed(sims[0]!);
     subscription.freeze();
 
     const lease = controller.acquireController();

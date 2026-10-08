@@ -287,6 +287,36 @@ jobs:
             throw new Error('Qualified renderer runtime provenance mismatch');
           NODE
 
+      - name: Bind the qualified native library for evidence retention
+        if: always()
+        id: native-library-evidence
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { existsSync, readFileSync, realpathSync, lstatSync, appendFileSync } from 'node:fs';
+          import { resolve, relative, isAbsolute } from 'node:path';
+          import { createHash } from 'node:crypto';
+          const root = resolve(process.env.RUNNER_TEMP, 'opentui-qualified');
+          const manifestPath = resolve(root, 'release-manifest.json');
+          // Failed qualification still uploads its existing logs and provenance below.
+          if (!existsSync(manifestPath)) process.exit(0);
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+          const record = manifest.library;
+          if (manifest.status !== 'passed' || typeof record?.path !== 'string' ||
+              isAbsolute(record.path) || /[\r\n]/.test(record.path) || !/^[a-f0-9]{64}$/.test(record.sha256 ?? ''))
+            throw new Error('Invalid qualified library evidence identity');
+          const path = resolve(root, record.path);
+          const rel = relative(realpathSync(root), realpathSync(path));
+          const stat = lstatSync(path);
+          if (rel.startsWith('../') || isAbsolute(rel) || !rel || !stat.isFile() || stat.isSymbolicLink() ||
+              !/^opentui\/packages\/core\/src\/zig\/lib\/[^/]+\/libopentui\.(dylib|so)$/.test(rel) ||
+              stat.size <= 0 || stat.size > 128 * 1024 * 1024)
+            throw new Error('Qualified library evidence path or size rejected');
+          if (createHash('sha256').update(readFileSync(path)).digest('hex') !== record.sha256)
+            throw new Error('Qualified library evidence hash mismatch');
+          appendFileSync(process.env.GITHUB_OUTPUT, `path=${path}\n`);
+          NODE
+
       - name: Preserve native qualification evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -296,6 +326,7 @@ jobs:
             ${{ runner.temp }}/opentui-qualified/*.json
             ${{ runner.temp }}/opentui-qualified/*.log
             ${{ runner.temp }}/runtime-provenance.json
+            ${{ steps.native-library-evidence.outputs.path }}
           if-no-files-found: warn
 
       - name: Compress and write integrity manifest

@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CanonicalDaemonInfo } from "../canonical-daemon.ts";
 import {
@@ -24,9 +24,14 @@ import {
 } from "@tmux-ide/contracts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../");
-const cliPath = join(repoRoot, "bin/cli.js");
+const installedCli = process.env.TMUX_IDE_HEADLESS_TEST_CLI;
+if (installedCli && !isAbsolute(installedCli))
+  throw new Error("TMUX_IDE_HEADLESS_TEST_CLI must be absolute");
+const cliPath = installedCli ?? join(repoRoot, "bin/cli.js");
 const packageVersion = (
-  JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")) as { version: string }
+  JSON.parse(readFileSync(resolve(dirname(cliPath), "../package.json"), "utf-8")) as {
+    version: string;
+  }
 ).version;
 const INSTANCE_ID = "9bcf33b0-c837-4a94-b5e8-c0977f54464f";
 const STARTED_AT = "2026-07-21T00:00:00.000Z";
@@ -373,16 +378,19 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     const incompatibleProtocol = DAEMON_WIRE_PROTOCOL_VERSION + 1;
     const port = await listenWithProtocol(incompatibleProtocol);
     writeLiveDaemonInfo(port, incompatibleProtocol);
+    const originalRecord = readFileSync(daemonInfoPath(), "utf-8");
 
-    const result = await waitForExit(spawnCli(["--headless", "--json"]));
-
-    expect(result.code).toBe(2);
-    expect(JSON.parse(result.stderr)).toMatchObject({ code: "DAEMON_PROTOCOL_MISMATCH" });
-    expect(JSON.parse(readFileSync(daemonInfoPath(), "utf-8"))).toMatchObject({
-      pid: process.pid,
-      port,
-      protocolVersion: incompatibleProtocol,
-    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await waitForExit(spawnCli(["--headless", "--json"]));
+      expect(result.code).toBe(2);
+      expect(JSON.parse(result.stderr)).toMatchObject({ code: "DAEMON_PROTOCOL_MISMATCH" });
+      expect(readFileSync(daemonInfoPath(), "utf-8")).toBe(originalRecord);
+      expect(await (await fetch(`http://127.0.0.1:${port}/identity`)).json()).toMatchObject({
+        pid: process.pid,
+        instanceId: INSTANCE_ID,
+        protocolVersion: incompatibleProtocol,
+      });
+    }
   });
 
   it("refuses takeover of a live owner whose identity endpoint is unavailable", async () => {

@@ -1,3 +1,4 @@
+import { OwnedSnapshotChannel } from "./owned-snapshot-channel.ts";
 import type { MirrorChannelHandlers } from "../control-channel.ts";
 import {
   FIXTURE,
@@ -36,16 +37,27 @@ export class ScriptedChannelDriver {
     this.#cursorLinesByPane = options.cursorLinesByPane ?? {};
     this.#maxTurns = options.maxTurns ?? 100;
     const basic = fixtureAutoReply(state);
-    this.channel = new SimulatedChannel(handlers, (command) => {
-      if (command.startsWith('display-message -p "#{qa:session_name}')) {
+    this.channel = new OwnedSnapshotChannel(
+      handlers,
+      (command) => {
+        if (command.startsWith('display-message -p "#{qa:session_name}')) {
+          return basic(command) ?? [];
+        }
+        if (
+          (command.startsWith("set-option") && !isCaptureProbe(command)) ||
+          (command.startsWith("if-shell") && command.includes("set-hook -Rp"))
+        )
+          return [];
+        if (command.startsWith("if-shell") && !command.includes("capture-pane -p")) return [];
+        // This scalar observation is not a deferred cursor probe. Answer it
+        // before an automatic inventory reply can consume its pending FIFO slot.
+        if (isHistorySizeProbe(command)) return ["0"];
+        if (isCaptureProbe(command) || command.startsWith("display-message")) return null;
         return basic(command) ?? [];
-      }
-      // This scalar observation is not a deferred cursor probe. Answer it
-      // before an automatic inventory reply can consume its pending FIFO slot.
-      if (isHistorySizeProbe(command)) return ["0"];
-      if (command.includes("capture-pane") || command.startsWith("display-message")) return null;
-      return basic(command) ?? [];
-    });
+      },
+      () => this.#seedLines,
+      (pane) => this.#cursorLinesByPane[pane] ?? this.#cursorLine,
+    );
   }
 
   /** Complete every scripted probe written since the prior turn. */
@@ -53,11 +65,15 @@ export class ScriptedChannelDriver {
     for (let index = this.#handledWrites; index < this.channel.written.length; index += 1) {
       const command = this.channel.written[index]!;
       if (
+        (command.startsWith("set-option") && !isCaptureProbe(command)) ||
+        (command.startsWith("if-shell") && !command.includes("capture-pane -p")) ||
+        (command.startsWith("if-shell") && command.includes("set-hook -Rp")) ||
         command.startsWith('display-message -p "#{qa:session_name}') ||
-        isHistorySizeProbe(command)
+        isHistorySizeProbe(command) ||
+        command.startsWith("display-message -p -l tmux-ide-snapshot-admission:")
       )
         continue;
-      if (command.includes("capture-pane") || command.startsWith("display-message")) {
+      if (isCaptureProbe(command) || command.startsWith("display-message")) {
         this.deferredCommands.push(command);
       }
     }
@@ -121,4 +137,11 @@ export function standardScriptedChannel(
 
 function isHistorySizeProbe(command: string): boolean {
   return /^display-message -p -t %\d+ "#\{history_size\}"$/u.test(command);
+}
+
+function isCaptureProbe(command: string): boolean {
+  return (
+    command.startsWith("capture-pane") ||
+    (command.startsWith("set-option -p -t") && command.includes(" ; capture-pane"))
+  );
 }

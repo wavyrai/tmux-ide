@@ -60,6 +60,7 @@ export function resolveTestdriveCapabilityEnvironment({
       });
   return Object.freeze({
     ...privateNamespace,
+    TMUX_IDE_CAUSAL_CELL_FIXTURE: environment.TMUX_IDE_CAUSAL_CELL_FIXTURE === "1" ? "1" : "0",
     ...resolveCard5HostFocusControlEnvironment(environment, privateRoot),
   });
 }

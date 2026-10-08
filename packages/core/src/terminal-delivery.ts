@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { isOwnedTerminalReplicaRow } from "./terminal-replica-owned-row.ts";
+import {
+  isOwnedTerminalReplicaRow,
+  isSchemaValidProjectedTerminalReplicaRow,
+  TERMINAL_REPLICA_EMPTY_CELL,
+  TERMINAL_REPLICA_SPACE_CELL,
+} from "./terminal-replica-owned-row.ts";
 import {
   TERMINAL_DELIVERY_CHUNK_BYTES,
   TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
@@ -11,6 +16,7 @@ import {
   TerminalSemanticDeliveryPayloadSchemaZ,
   TerminalReplicaSnapshotSchemaZ,
   TerminalReplicaRowSchemaZ,
+  TerminalReplicaPatchPayloadSchemaZ,
   TerminalReplicaCellSchemaZ,
   TerminalReplicaPlacementSchemaZ,
   type TerminalDeliveryAck,
@@ -38,6 +44,7 @@ import {
 } from "./terminal-replica.ts";
 import { grantCompactReplicaCapability } from "./terminal-compact-capability.ts";
 import {
+  createDecodedTerminalReplicaRowBuilder,
   hashTerminalReplicaRowCooperatively,
   hashTerminalReplicaRowRunsCooperatively,
   isTerminalReplicaRowDeeplyFrozen,
@@ -215,16 +222,124 @@ type CompactRow = readonly [0 | 1, readonly CompactCellRun[]];
 // with the strict contract before remembering it; ownership alone is not enough.
 // External rows still use the ordinary schema and detached parse result.
 const validatedOwnedEncodingRows = new WeakSet<TerminalReplicaRow>();
+// Only these exact deeply immutable constants may reuse strict cell validation.
+// Ownership alone never qualifies arbitrary cells, including frozen lookalikes.
+const CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
+let trustedBlankCellsValidated = false;
+function validateTrustedBlankCells(): void {
+  if (trustedBlankCellsValidated) return;
+  CompactCellSliceSchema.parse([TERMINAL_REPLICA_EMPTY_CELL, TERMINAL_REPLICA_SPACE_CELL]);
+  trustedBlankCellsValidated = true;
+}
+const CompactOwnedCellSchema = z.union([
+  z.custom<TerminalReplicaCell>((cell) => {
+    if (cell !== TERMINAL_REPLICA_EMPTY_CELL && cell !== TERMINAL_REPLICA_SPACE_CELL) return false;
+    validateTrustedBlankCells();
+    return true;
+  }),
+  TerminalReplicaCellSchemaZ,
+]);
+const CompactOwnedCellSliceSchema = CompactOwnedCellSchema.array();
+const CompactOwnedEncodingRowSchema = TerminalReplicaRowSchemaZ.extend({
+  cells: CompactOwnedCellSliceSchema,
+});
+
 const CompactEncodingRowSchema = z.union([
   z.custom<TerminalReplicaRow>((input) => {
     if (!isOwnedTerminalReplicaRow(input)) return false;
-    if (validatedOwnedEncodingRows.has(input)) return true;
-    if (!TerminalReplicaRowSchemaZ.safeParse(input).success) return false;
+    if (validatedOwnedEncodingRows.has(input) || isSchemaValidProjectedTerminalReplicaRow(input))
+      return true;
+    const schema = prefersTrustedCellValidation(input.cells)
+      ? CompactOwnedEncodingRowSchema
+      : TerminalReplicaRowSchemaZ;
+    if (!schema.safeParse(input).success) return false;
     validatedOwnedEncodingRows.add(input);
     return true;
   }),
   TerminalReplicaRowSchemaZ,
 ]);
+// Patch rows keep original strict issues, including their abort/continue state.
+// Catch exposes those issues before Zod formats away that state. The tagged
+// failure is local to this parser; arbitrary foreign getter errors still escape.
+class CompactPatchRowFailure {
+  readonly issues: z.RefinementCtx["issues"];
+  readonly value: TerminalReplicaRow;
+
+  constructor(issues: z.RefinementCtx["issues"], value: TerminalReplicaRow) {
+    this.issues = issues;
+    this.value = value;
+  }
+}
+const StrictCompactPatchRowSchema = TerminalReplicaRowSchemaZ.catch((context) => {
+  throw new CompactPatchRowFailure(context.issues, context.value as TerminalReplicaRow);
+});
+const CompactPatchEncodingRowSchema = z
+  .custom<TerminalReplicaRow>(() => true)
+  .transform((input, context) => {
+    const owned = isOwnedTerminalReplicaRow(input);
+    if (
+      owned &&
+      (validatedOwnedEncodingRows.has(input) || isSchemaValidProjectedTerminalReplicaRow(input))
+    )
+      return input;
+    if (owned && prefersTrustedCellValidation(input.cells)) {
+      const optimized = CompactOwnedEncodingRowSchema.safeParse(input);
+      if (optimized.success) {
+        validatedOwnedEncodingRows.add(input);
+        return input;
+      }
+      // Only immutable owned data can be read again to recover strict issues.
+    }
+    try {
+      const parsed = StrictCompactPatchRowSchema.parse(input);
+      if (!owned) return parsed;
+      validatedOwnedEncodingRows.add(input);
+      return input;
+    } catch (error) {
+      if (!(error instanceof CompactPatchRowFailure)) throw error;
+      for (const issue of error.issues) context.issues.push(issue);
+      return error.value;
+    }
+  });
+const CompactPatchEncodingPayloadSchema =
+  TerminalSemanticDeliveryPayloadSchemaZ.options[1].safeExtend({
+    patch: TerminalReplicaPatchPayloadSchemaZ.extend({
+      rows: z.array(
+        TerminalReplicaPatchPayloadSchemaZ.shape.rows.element.extend({
+          row: CompactPatchEncodingRowSchema,
+        }),
+      ),
+      history: z.array(CompactPatchEncodingRowSchema).optional(),
+      historyDelta: TerminalReplicaPatchPayloadSchemaZ.shape.historyDelta
+        .unwrap()
+        .extend({ append: z.array(CompactPatchEncodingRowSchema) })
+        .optional(),
+    }),
+  });
+
+function hasOwnedPatchRow(input: TerminalSemanticDeliveryPayload): boolean {
+  if (Object.getOwnPropertyDescriptor(input, "frame")?.value !== "patch") return false;
+  const patch = Object.getOwnPropertyDescriptor(input, "patch")?.value;
+  if (typeof patch !== "object" || patch === null) return false;
+  const first = (array: unknown): unknown =>
+    Array.isArray(array) ? Object.getOwnPropertyDescriptor(array, "0")?.value : undefined;
+  const entry = first(Object.getOwnPropertyDescriptor(patch, "rows")?.value);
+  if (
+    typeof entry === "object" &&
+    entry !== null &&
+    isOwnedTerminalReplicaRow(Object.getOwnPropertyDescriptor(entry, "row")?.value)
+  )
+    return true;
+  if (isOwnedTerminalReplicaRow(first(Object.getOwnPropertyDescriptor(patch, "history")?.value)))
+    return true;
+  const delta = Object.getOwnPropertyDescriptor(patch, "historyDelta")?.value;
+  return (
+    typeof delta === "object" &&
+    delta !== null &&
+    isOwnedTerminalReplicaRow(first(Object.getOwnPropertyDescriptor(delta, "append")?.value))
+  );
+}
+
 const CompactEncodingPayloadSchema = z.discriminatedUnion("frame", [
   TerminalSemanticDeliveryPayloadSchemaZ.options[0].extend({
     snapshot: TerminalReplicaSnapshotSchemaZ.extend({
@@ -256,7 +371,11 @@ export function encodeCompactSemanticTerminalUpdate(
   input: TerminalSemanticDeliveryPayload,
 ): Uint8Array {
   const update = (
-    hasOwnedSeedRow(input) ? CompactEncodingPayloadSchema : TerminalSemanticDeliveryPayloadSchemaZ
+    hasOwnedPatchRow(input)
+      ? CompactPatchEncodingPayloadSchema
+      : hasOwnedSeedRow(input)
+        ? CompactEncodingPayloadSchema
+        : TerminalSemanticDeliveryPayloadSchemaZ
   ).parse(input);
   // Compact payloads contain only arrays and primitives below this object.
   // Insert root keys in canonical order so the native serializer emits exactly
@@ -303,7 +422,38 @@ const CompactSeedMetadataSchema = /* @__PURE__ */ TerminalReplicaSnapshotSchemaZ
   placements: true,
 });
 const CompactRowHeaderSchema = /* @__PURE__ */ TerminalReplicaRowSchemaZ.omit({ cells: true });
-const CompactCellSliceSchema = /* @__PURE__ */ TerminalReplicaCellSchemaZ.array();
+function isValidatedTrustedBlankSlice(cells: readonly TerminalReplicaCell[]): boolean {
+  if (
+    !cells.every(
+      (cell) => cell === TERMINAL_REPLICA_EMPTY_CELL || cell === TERMINAL_REPLICA_SPACE_CELL,
+    )
+  )
+    return false;
+  validateTrustedBlankCells();
+  return true;
+}
+
+// This is a conservative optimization choice, never a validation boundary.
+// Low-density owned rows keep the ordinary parser rather than paying a failed
+// union branch for each nontrusted cell. Foreign inputs never enter this scan.
+function prefersTrustedCellValidation(cells: readonly TerminalReplicaCell[]): boolean {
+  let nontrusted = 0;
+  const limit = Math.floor(cells.length / 4);
+  for (const cell of cells) {
+    if (cell !== TERMINAL_REPLICA_EMPTY_CELL && cell !== TERMINAL_REPLICA_SPACE_CELL) {
+      if (++nontrusted > limit) return false;
+    }
+  }
+  return true;
+}
+
+function validateOwnedCellSlice(cells: readonly TerminalReplicaCell[]): TerminalReplicaCell[] {
+  if (!prefersTrustedCellValidation(cells)) return CompactCellSliceSchema.parse(cells);
+  const parsed = CompactOwnedCellSliceSchema.safeParse(cells);
+  // Preserve the original strict parser's issues on invalid owned input.
+  // External cells never enter this path, so their getter/copy semantics stay unchanged.
+  return parsed.success ? parsed.data : CompactCellSliceSchema.parse(cells);
+}
 
 export function terminalSemanticUpdateNeedsCooperativeEncoding(
   input: TerminalSemanticDeliveryPayload,
@@ -387,7 +537,9 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
     for (let index = 0; index < rows.length; index++) {
       const row = rows[index]!;
       const owned = isOwnedTerminalReplicaRow(row);
-      const validatedRow = owned && validatedOwnedEncodingRows.has(row);
+      const validatedRow =
+        owned &&
+        (validatedOwnedEncodingRows.has(row) || isSchemaValidProjectedTerminalReplicaRow(row));
       const { cells, ...rowHeaderInput } = row;
       const rowHeader = CompactRowHeaderSchema.parse(rowHeaderInput);
       if (++rowCount > COMPACT_MAX_ROWS || !Array.isArray(cells) || cells.length !== metadata.cols)
@@ -406,7 +558,12 @@ export async function encodeCompactSemanticTerminalUpdateCooperatively(
       };
       for (let offset = 0; offset < cells.length; offset += 256) {
         const slice = cells.slice(offset, offset + 256);
-        const validated = validatedRow ? slice : CompactCellSliceSchema.parse(slice);
+        const validated =
+          validatedRow || (owned && isValidatedTrustedBlankSlice(slice))
+            ? slice
+            : owned
+              ? validateOwnedCellSlice(slice)
+              : CompactCellSliceSchema.parse(slice);
         for (const cell of validated) {
           const encoded = compactCell(cell);
           if (prior && compactRunCellEqual(prior, encoded)) prior[0]++;
@@ -795,6 +952,7 @@ function expandPatch(value: unknown, budget: CompactDecodeBudget): TerminalRepli
 }
 
 interface CompactDecodeBudget {
+  verifiedSyncRows?: boolean;
   rows: number;
   runs: number;
   cells: number;
@@ -878,6 +1036,7 @@ function expandRow(
   }
   const runsBefore = budget.runs;
   const cellsBefore = budget.cells;
+  const builder = budget.verifiedSyncRows ? createDecodedTerminalReplicaRowBuilder() : null;
   const cells: TerminalReplicaCell[] = [];
   for (const valueRun of runs) {
     if (++budget.runs > COMPACT_MAX_RUNS)
@@ -889,29 +1048,41 @@ function expandRow(
       throw new TypeError("Compact semantic expanded cell budget exceeded");
     const grapheme = compactString(run[1], "grapheme");
     const width = compactInteger(run[2], 0, 2, "cell width") as 0 | 1 | 2;
-    const cell = Object.freeze({
-      grapheme,
-      width,
-      foreground: expandColor(run[3]),
-      background: expandColor(run[4]),
-      attributes: compactInteger(run[5], 0, 0xff, "cell attributes"),
-    });
-    for (let index = 0; index < count; index += 1) cells.push(cell);
+    if (builder) {
+      const foreground = expandScalarColor(run[3]);
+      const background = expandScalarColor(run[4]);
+      const attributes = compactInteger(run[5], 0, 0xff, "cell attributes");
+      builder.appendRun(count, grapheme, width, foreground, background, attributes);
+    } else {
+      const cell = Object.freeze({
+        grapheme,
+        width,
+        foreground: expandColor(run[3]),
+        background: expandColor(run[4]),
+        attributes: compactInteger(run[5], 0, 0xff, "cell attributes"),
+      });
+      for (let index = 0; index < count; index += 1) cells.push(cell);
+    }
   }
-  if (cols !== null && cells.length !== cols) throw new TypeError("Compact row width mismatch");
-  if (cells.length < 1 || cells.length > COMPACT_MAX_DIMENSION)
-    throw new TypeError("Compact row width is out of bounds");
-  for (let index = 0; index < cells.length; index += 1) {
-    if (cells[index]!.width === 2 && cells[index + 1]?.width !== 0)
-      throw new TypeError("Malformed compact wide cell");
-    if (cells[index]!.width === 0 && (index === 0 || cells[index - 1]?.width !== 2))
-      throw new TypeError("Malformed compact continuation cell");
+  let row: TerminalReplicaRow;
+  if (builder) {
+    row = builder.finish(wrapped, cols);
+  } else {
+    if (cols !== null && cells.length !== cols) throw new TypeError("Compact row width mismatch");
+    if (cells.length < 1 || cells.length > COMPACT_MAX_DIMENSION)
+      throw new TypeError("Compact row width is out of bounds");
+    for (let index = 0; index < cells.length; index += 1) {
+      if (cells[index]!.width === 2 && cells[index + 1]?.width !== 0)
+        throw new TypeError("Malformed compact wide cell");
+      if (cells[index]!.width === 0 && (index === 0 || cells[index - 1]?.width !== 2))
+        throw new TypeError("Malformed compact continuation cell");
+    }
+    row = Object.freeze({
+      cells: Object.freeze(cells),
+      wrapped,
+    }) as unknown as TerminalReplicaRow;
   }
-  const row = Object.freeze({
-    cells: Object.freeze(cells),
-    wrapped,
-  }) as unknown as TerminalReplicaRow;
-  budget.allocatedCells += cells.length;
+  budget.allocatedCells += row.cells.length;
   if (cacheKey !== null)
     budget.rowCache?.set(
       cacheKey,
@@ -922,6 +1093,17 @@ function expandRow(
       }),
     );
   return row;
+}
+
+function expandScalarColor(value: unknown): number {
+  if (value === 0) return -1;
+  const pair = compactArray(value, 2, "color");
+  if (pair[0] === 1) return compactInteger(pair[1], 0, 255, "indexed color");
+  if (pair[0] === 2) {
+    const value = compactInteger(pair[1], 0, 0xffffff, "rgb color");
+    return Object.is(value, -0) ? -2 : 0x1000000 + value;
+  }
+  throw new TypeError("Invalid compact color kind");
 }
 
 function expandColor(value: unknown): TerminalReplicaColor {
@@ -1238,7 +1420,8 @@ export function decodeVerifiedCompactSemanticTerminalUpdate(
   payload: TerminalSemanticDeliveryPayload;
   canonicalSnapshot: TerminalReplicaSnapshot | null;
 }> {
-  const decodeBudget = options?.onComplete ? compactDecodeBudget(bytes.byteLength) : undefined;
+  const decodeBudget = compactDecodeBudget(bytes.byteLength);
+  decodeBudget.verifiedSyncRows = true;
   const payload = decodeCompactSemanticTerminalUpdateInternal(bytes, decodeBudget);
   const snapshot =
     payload.frame === "seed"
@@ -1257,7 +1440,7 @@ export function decodeVerifiedCompactSemanticTerminalUpdate(
       );
   if (hash !== expectedHash) throw new TypeError("Canonical state hash mismatch");
   compactCommitCapabilities.set(payload, Object.freeze({ snapshot, hash }));
-  if (options?.grantReducerAdoption)
+  if (options?.grantReducerAdoption) {
     grantCompactReplicaCapability(
       payload.frame === "seed"
         ? payload.snapshot
@@ -1267,7 +1450,13 @@ export function decodeVerifiedCompactSemanticTerminalUpdate(
       baseline,
       snapshot,
       hash,
+      payload.frame === "tombstone"
+        ? { baseRevision: payload.baseRevision, revision: payload.revision }
+        : undefined,
     );
+    if (payload.frame === "patch" && payload.revision > payload.baseRevision + 1 && snapshot)
+      grantCompactReplicaCapability(snapshot, baseline, snapshot, hash);
+  }
   if (options?.onComplete && decodeBudget) {
     try {
       options.onComplete(
@@ -1430,7 +1619,7 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
         payload.frame === "tombstone" ? payload.tombstone.reason : "protocol",
       );
   if (hash !== expectedHash) throw new TypeError("Canonical state hash mismatch");
-  if (options.grantReducerAdoption)
+  if (options.grantReducerAdoption) {
     grantCompactReplicaCapability(
       payload.frame === "seed"
         ? payload.snapshot
@@ -1440,7 +1629,13 @@ export async function decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
       baseline,
       snapshot,
       hash,
+      payload.frame === "tombstone"
+        ? { baseRevision: payload.baseRevision, revision: payload.revision }
+        : undefined,
     );
+    if (payload.frame === "patch" && payload.revision > payload.baseRevision + 1 && snapshot)
+      grantCompactReplicaCapability(snapshot, baseline, snapshot, hash);
+  }
   if (options.onComplete) {
     try {
       options.onComplete(
@@ -1498,6 +1693,7 @@ interface CompactParsedRowsSlice {
 
 class CooperativeJsonSource {
   readonly #bytes: Uint8Array;
+  readonly #decoder = new TextDecoder("utf-8", { fatal: true });
   readonly length: number;
 
   constructor(bytes: Uint8Array) {
@@ -1516,7 +1712,8 @@ class CooperativeJsonSource {
   }
 
   slice(start: number, end: number): string {
-    return new TextDecoder("utf-8", { fatal: true }).decode(this.#bytes.subarray(start, end));
+    // Non-streaming decode resets UTF-8/BOM state for every independent slice.
+    return this.#decoder.decode(this.#bytes.subarray(start, end));
   }
 
   bytes(start: number, end: number): Uint8Array {
@@ -2434,7 +2631,12 @@ export function decodeVerifiedLegacySemanticTerminalUpdate(
     baseline,
     snapshot,
     hash,
+    payload.frame === "tombstone"
+      ? { baseRevision: payload.baseRevision, revision: payload.revision }
+      : undefined,
   );
+  if (payload.frame === "patch" && payload.revision > payload.baseRevision + 1 && snapshot)
+    grantCompactReplicaCapability(snapshot, baseline, snapshot, hash);
   return Object.freeze({ payload, canonicalSnapshot: snapshot });
 }
 

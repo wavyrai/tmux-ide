@@ -9,8 +9,22 @@ import type {
   TerminalReplicaSnapshot,
   TerminalReplicaTombstonePayload,
 } from "@tmux-ide/contracts";
-import { consumeCompactReplicaCapability } from "./terminal-compact-capability.ts";
-import { freezeOwnedTerminalReplicaRow as freezeRow } from "./terminal-replica-owned-row.ts";
+import {
+  consumeCompactReplicaCapability,
+  consumeVerifiedTombstoneInterval,
+} from "./terminal-compact-capability.ts";
+import {
+  freezeOwnedTerminalReplicaRow as freezeRow,
+  createOwnedTerminalReplicaRowBuilder,
+  isOwnedTerminalReplicaRow,
+  TERMINAL_REPLICA_DEFAULT_COLOR,
+} from "./terminal-replica-owned-row.ts";
+export {
+  createProjectedTerminalReplicaRowBuilder,
+  TERMINAL_REPLICA_DEFAULT_COLOR,
+  TERMINAL_REPLICA_EMPTY_CELL,
+  TERMINAL_REPLICA_SPACE_CELL,
+} from "./terminal-replica-owned-row.ts";
 import {
   hashCanonicalTerminalValue,
   hashCanonicalTerminalValueCooperatively,
@@ -24,7 +38,6 @@ import {
 // External Object.freeze calls do not establish this provenance.
 const VALIDATED_PATCH_ROWS = new WeakSet<TerminalReplicaRow>();
 
-const DEFAULT_COLOR = Object.freeze({ kind: "default" } as const);
 const ROW_ARRAY_HASH_CACHE = new WeakMap<
   object,
   { readonly hash: bigint; readonly length: number }
@@ -128,6 +141,10 @@ export function blankTerminalReplicaSnapshot(cols: number, rows: number): Termin
   });
 }
 
+// Only accepted verified coalesced tombstones need their original interval for replay.
+// Weak state keys preserve exact-duplicate idempotency without retaining retired replicas.
+const verifiedTombstoneBases = new WeakMap<TerminalReplicaState, number>();
+
 export function applyTerminalReplicaUpdate(
   current: TerminalReplicaState | null,
   update: CanonicalTerminalReplicaUpdate,
@@ -208,7 +225,8 @@ export function applyTerminalReplicaUpdate(
     if (update.type === "terminal.tombstone") {
       return complete(
         update.revision === current.revision &&
-          update.baseRevision === current.revision - 1 &&
+          (update.baseRevision === current.revision - 1 ||
+            verifiedTombstoneBases.get(current) === update.baseRevision) &&
           update.stateHash === current.hash &&
           current.tombstone?.reason === update.tombstone.reason &&
           current.frameHash === receivedFrameHash
@@ -231,7 +249,20 @@ export function applyTerminalReplicaUpdate(
           : { status: "stale", state: current },
     );
   }
-  if (update.baseRevision !== current.revision || update.revision !== current.revision + 1) {
+  const verifiedTombstoneJump =
+    update.type === "terminal.tombstone" &&
+    update.revision > current.revision + 1 &&
+    consumeVerifiedTombstoneInterval(
+      update.tombstone,
+      current.snapshot,
+      update.stateHash,
+      update.baseRevision,
+      update.revision,
+    );
+  if (
+    update.baseRevision !== current.revision ||
+    (update.revision !== current.revision + 1 && !verifiedTombstoneJump)
+  ) {
     return complete({
       status: "gap",
       state: current,
@@ -263,6 +294,7 @@ export function applyTerminalReplicaUpdate(
       hash,
       frameHash: receivedFrameHash,
     });
+    if (verifiedTombstoneJump) verifiedTombstoneBases.set(state, update.baseRevision);
     return complete({ status: "applied", state });
   }
   if (current.snapshot === null) {
@@ -498,33 +530,23 @@ export async function applyTerminalReplicaUpdateCooperatively(
     ] as const) {
       for (const row of sources) {
         if (row.cells.length !== cols) return complete(conflict());
-        const cells: TerminalReplicaRow["cells"] = [];
+        const owned = isOwnedTerminalReplicaRow(row);
+        const builder = owned ? null : createOwnedTerminalReplicaRowBuilder();
         let priorWidth = -1;
         const wrapped = row.wrapped;
         for (let index = 0; index < cols; index++) {
           const sourceCell = row.cells[index]!;
-          const cell = Object.freeze({
-            ...sourceCell,
-            foreground: Object.freeze({ ...sourceCell.foreground }),
-            background: Object.freeze({ ...sourceCell.background }),
-          });
+          const cell = owned ? sourceCell : builder!.append(sourceCell);
           if ((priorWidth === 2 && cell.width !== 0) || (cell.width === 0 && priorWidth !== 2))
             return complete(conflict());
           priorWidth = cell.width;
-          cells.push(cell);
           if (++work >= 256) {
             work = 0;
             await yieldControl();
           }
         }
         if (priorWidth === 2) return complete(conflict());
-        target.push(
-          Object.freeze({
-            ...row,
-            wrapped,
-            cells: Object.freeze(cells),
-          }) as unknown as TerminalReplicaRow,
-        );
+        target.push(owned ? row : builder!.finish(row, wrapped));
       }
     }
     const placements: TerminalReplicaSnapshot["placements"] = [];
@@ -827,8 +849,8 @@ function blankRow(cols: number): TerminalReplicaRow {
         Object.freeze({
           grapheme: " ",
           width: 1 as const,
-          foreground: DEFAULT_COLOR,
-          background: DEFAULT_COLOR,
+          foreground: TERMINAL_REPLICA_DEFAULT_COLOR,
+          background: TERMINAL_REPLICA_DEFAULT_COLOR,
           attributes: 0,
         }),
       ),

@@ -1,15 +1,30 @@
+import {
+  isSchemaValidProjectedTerminalReplicaRow,
+  TERMINAL_REPLICA_DEFAULT_COLOR,
+} from "./terminal-replica-owned-row.ts";
 import type { TerminalReplicaColor, TerminalReplicaRow } from "@tmux-ide/contracts";
 import { createBufferedFnv64, type BufferedFnv64 } from "./terminal-fnv64-wasm.ts";
 
 const ROW_HASH_CACHE = new WeakMap<object, string>();
 const DEEPLY_FROZEN_ROWS = new WeakSet<object>();
 const UTF8_ENCODER = new TextEncoder();
+// Fixed ASCII headers cover common terminal strings without retaining values.
+const SHORT_ASCII_HEADERS = Array.from({ length: 33 }, (_, length) => `s${length}:`);
 
 interface CanonicalKeyOrder {
-  readonly original: string[];
-  readonly sorted: string[];
+  readonly original: readonly string[];
+  readonly sorted: readonly string[];
   readonly tokens: readonly (string | null)[] | null;
 }
+
+// Only this exact internally constructed singleton proves the fixed layout.
+// Foreign defaults (including frozen lookalikes) retain generic key discovery.
+const DEFAULT_COLOR_KEYS = Object.freeze(["kind"]);
+const DEFAULT_COLOR_KEY_ORDER: CanonicalKeyOrder = Object.freeze({
+  original: DEFAULT_COLOR_KEYS,
+  sorted: DEFAULT_COLOR_KEYS,
+  tokens: Object.freeze(["s4:kind;"]),
+});
 
 /**
  * Streaming FNV-1a64 writer for the canonical terminal encoding.
@@ -43,6 +58,7 @@ class CanonicalFnv64 {
   #keyOrders: CanonicalKeyOrder[] | null = null;
 
   keyOrder(record: Record<string, unknown>): CanonicalKeyOrder {
+    if (record === TERMINAL_REPLICA_DEFAULT_COLOR) return DEFAULT_COLOR_KEY_ORDER;
     const keys = Object.keys(record);
     if (keys.length > 32) return { original: keys, sorted: keys.sort(), tokens: null };
     for (const order of this.#keyOrders ?? []) {
@@ -116,7 +132,7 @@ class CanonicalFnv64 {
       }
     }
     if (ascii) {
-      this.ascii(`s${value.length}:`);
+      this.ascii(SHORT_ASCII_HEADERS[value.length] ?? `s${value.length}:`);
       this.ascii(value);
       this.ascii(";");
       return value.length;
@@ -129,12 +145,48 @@ class CanonicalFnv64 {
   }
 
   number(value: number): void {
+    // Common terminal widths and default attributes share exact canonical bytes.
+    // Equality intentionally preserves String(-0) === "0"; all other numbers
+    // retain the original formatting path.
+    if (value === 0) return void this.ascii("d1:0;");
+    if (value === 1) return void this.ascii("d1:1;");
+    if (value === 2) return void this.ascii("d1:2;");
     const text = String(value);
     this.ascii(`d${text.length}:${text};`);
   }
 
   boolean(value: boolean): void {
     this.ascii(value ? "b1;" : "b0;");
+  }
+
+  #projectedRow(row: TerminalReplicaRow): void {
+    this.ascii("o2:s5:cells;");
+    const cells = row.cells;
+    this.ascii(`a${cells.length}:`);
+    let index = 0;
+    // Preserve dynamic array iteration. A replaced inherited iterator can yield
+    // foreign values; only the exact immutable cell at this slot earns the path.
+    for (const cell of cells) {
+      if (index < cells.length && cell === cells[index]) {
+        this.ascii("o5:s10:attributes;");
+        this.number(cell.attributes);
+        this.ascii("s10:background;");
+        writeColor(this, cell.background);
+        this.ascii("s10:foreground;");
+        writeColor(this, cell.foreground);
+        this.ascii("s8:grapheme;");
+        this.string(cell.grapheme);
+        this.ascii("s5:width;");
+        this.number(cell.width);
+        this.ascii(";");
+      } else {
+        this.value(cell);
+      }
+      index++;
+    }
+    this.ascii(";s7:wrapped;");
+    this.boolean(row.wrapped);
+    this.ascii(";");
   }
 
   value(value: unknown): void {
@@ -158,6 +210,10 @@ class CanonicalFnv64 {
       this.ascii(`a${value.length}:`);
       for (const entry of value) this.value(entry);
       this.ascii(";");
+      return;
+    }
+    if (isSchemaValidProjectedTerminalReplicaRow(value)) {
+      this.#projectedRow(value as TerminalReplicaRow);
       return;
     }
     const record = value as Record<string, unknown>;
@@ -198,22 +254,22 @@ export async function hashCanonicalTerminalValueCooperatively(
     work = 0;
     return true;
   };
-  type WorkItem =
-    | { readonly kind: "value"; readonly value: unknown }
-    | { readonly kind: "ascii"; readonly value: string }
-    | { readonly kind: "string"; readonly value: string };
-  const stack: WorkItem[] = [{ kind: "value", value }];
-  while (stack.length > 0) {
-    const item = stack.pop()!;
-    if (item.kind === "ascii") {
-      if (checkpoint(hash.ascii(item.value))) await yieldControl();
+  // Parallel stacks preserve the traversal and yield order without allocating
+  // a wrapper object for every value/key/token. pop() drops consumed references.
+  const kinds: ("value" | "ascii" | "string")[] = ["value"];
+  const values: unknown[] = [value];
+  while (values.length > 0) {
+    const kind = kinds.pop()!;
+    const value = values.pop();
+    if (kind === "ascii") {
+      if (checkpoint(hash.ascii(value as string))) await yieldControl();
       continue;
     }
-    if (item.kind === "string") {
-      if (checkpoint(hash.string(item.value) + 8)) await yieldControl();
+    if (kind === "string") {
+      if (checkpoint(hash.string(value as string) + 8)) await yieldControl();
       continue;
     }
-    const entry = item.value;
+    const entry = value;
     if (entry === null) {
       hash.ascii("n;");
       if (checkpoint(2)) await yieldControl();
@@ -235,19 +291,23 @@ export async function hashCanonicalTerminalValueCooperatively(
     }
     if (Array.isArray(entry)) {
       if (checkpoint(hash.ascii(`a${entry.length}:`) + 1)) await yieldControl();
-      stack.push({ kind: "ascii", value: ";" });
-      for (let index = entry.length - 1; index >= 0; index -= 1)
-        stack.push({ kind: "value", value: entry[index] });
+      kinds.push("ascii");
+      values.push(";");
+      for (let index = entry.length - 1; index >= 0; index -= 1) {
+        kinds.push("value");
+        values.push(entry[index]);
+      }
       continue;
     }
     const record = entry as Record<string, unknown>;
     const keys = hash.keyOrder(record).sorted;
     if (checkpoint(hash.ascii(`o${keys.length}:`) + keys.length)) await yieldControl();
-    stack.push({ kind: "ascii", value: ";" });
+    kinds.push("ascii");
+    values.push(";");
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key = keys[index]!;
-      stack.push({ kind: "value", value: record[key] });
-      stack.push({ kind: "string", value: key });
+      kinds.push("value", "string");
+      values.push(record[key], key);
     }
   }
   return hash.digest();
@@ -471,6 +531,87 @@ export async function hashTerminalReplicaRowRunsCooperatively(
   const digest = hash.digest();
   encodingCache.recordCanonicalBytes(canonicalBytes);
   return digest;
+}
+
+// Scalar colors: -1 default, -2 RGB negative zero, 0..255 indexed,
+// and 0x1000000 + value for other RGB values. No caller-owned color is adopted.
+const DECODED_DEFAULT_COLOR = Object.freeze({ kind: "default" } as const);
+function decodedScalarColor(value: number): TerminalReplicaColor {
+  if (value === -1) return DECODED_DEFAULT_COLOR;
+  if (value === -2) return Object.freeze({ kind: "rgb", value: -0 });
+  if (Number.isInteger(value) && value >= 0 && value <= 255)
+    return Object.freeze({ kind: "indexed", index: value });
+  if (Number.isInteger(value) && value >= 0x1000000 && value <= 0x1ffffff)
+    return Object.freeze({ kind: "rgb", value: value - 0x1000000 });
+  throw new TypeError("Invalid decoded scalar color");
+}
+
+/** Internal scalar construction only; no supplied graph, digest, or hash cache. */
+class DecodedTerminalReplicaRowBuilder {
+  readonly #cells: TerminalReplicaRow["cells"][number][] = [];
+  #finished = false;
+
+  appendRun(
+    count: number,
+    grapheme: string,
+    width: 0 | 1 | 2,
+    foreground: number,
+    background: number,
+    attributes: number,
+  ): void {
+    this.#assertOpen();
+    if (
+      !Number.isSafeInteger(count) ||
+      count < 1 ||
+      count > 16384 ||
+      typeof grapheme !== "string" ||
+      (width !== 0 && width !== 1 && width !== 2) ||
+      !Number.isInteger(attributes) ||
+      attributes < 0 ||
+      attributes > 255
+    )
+      throw new TypeError("Invalid decoded scalar run");
+    const cell = Object.freeze({
+      grapheme,
+      width,
+      foreground: decodedScalarColor(foreground),
+      background: decodedScalarColor(background),
+      attributes,
+    });
+    for (let index = 0; index < count; index += 1) this.#cells.push(cell);
+  }
+
+  finish(wrapped: boolean, cols: number | null): TerminalReplicaRow {
+    this.#assertOpen();
+    const cells = this.#cells;
+    // As in compact expansion, sum-width checks happen after every run parses.
+    if (cols !== null && cells.length !== cols) throw new TypeError("Compact row width mismatch");
+    if (cells.length < 1 || cells.length > 16384)
+      throw new TypeError("Compact row width is out of bounds");
+    for (let index = 0; index < cells.length; index += 1) {
+      if (cells[index]!.width === 2 && cells[index + 1]?.width !== 0)
+        throw new TypeError("Malformed compact wide cell");
+      if (cells[index]!.width === 0 && (index === 0 || cells[index - 1]?.width !== 2))
+        throw new TypeError("Malformed compact continuation cell");
+    }
+    if (typeof wrapped !== "boolean") throw new TypeError("Invalid decoded scalar wrapped");
+    this.#finished = true;
+    const row = Object.freeze({
+      cells: Object.freeze(cells),
+      wrapped,
+    }) as unknown as TerminalReplicaRow;
+    // Earn only deep immutability. Existing row hashing remains lazy and unchanged.
+    DEEPLY_FROZEN_ROWS.add(row);
+    return row;
+  }
+
+  #assertOpen(): void {
+    if (this.#finished) throw new Error("Decoded terminal row already finished");
+  }
+}
+
+export function createDecodedTerminalReplicaRowBuilder() {
+  return new DecodedTerminalReplicaRowBuilder();
 }
 
 /** Package-private verified-decoder seam; this module is not a package export. */

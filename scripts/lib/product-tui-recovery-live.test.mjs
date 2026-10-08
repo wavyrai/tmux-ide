@@ -40,7 +40,9 @@ test(
       "repeated cycles require automatic tmux recovery",
     );
     assert.ok(
-      ["graceful", "kill", "tmux", "tmux-auto", "socket", "settings"].includes(termination),
+      ["graceful", "kill", "tmux", "tmux-auto", "socket", "settings", "control"].includes(
+        termination,
+      ),
       "unknown recovery termination mode",
     );
     const root = mkdtempSync("/tmp/tmi-tui-recovery-");
@@ -89,11 +91,54 @@ test(
         encoding: "utf8",
         timeout: 2_000,
       }).trimEnd();
+    const nativeIdentity = () =>
+      native(
+        "list-panes",
+        "-a",
+        "-F",
+        "#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{pane_pid}|#{@tmux_ide_pane_id}",
+      );
+    const controlClients = () =>
+      native(
+        "list-clients",
+        "-F",
+        "#{client_name}|#{client_pid}|#{client_control_mode}|#{session_id}",
+      )
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          const [name, pid, control, sessionId] = line.split("|");
+          return { name, pid: Number(pid), control: control === "1", sessionId };
+        })
+        .filter((client) => client.control);
+    function nativeObservation() {
+      const panes = native(
+        "list-panes",
+        "-a",
+        "-F",
+        "#{pane_id}|#{pane_width}|#{pane_height}|#{cursor_x}|#{cursor_y}|#{window_width}|#{window_height}|#{window-size}",
+      );
+      return {
+        panes,
+        clients: native(
+          "list-clients",
+          "-F",
+          "#{client_pid}|#{client_control_mode}|#{client_width}|#{client_height}|#{client_flags}",
+        ),
+        captures: Object.fromEntries(
+          panes.split("\n").map((row) => {
+            const id = row.split("|")[0];
+            return [id, native("capture-pane", "-p", "-t", id)];
+          }),
+        ),
+      };
+    }
     async function coherent(stage, marker, acknowledged) {
       const deadline = Date.now() + 30_000;
       for (const [client, identity] of clients) {
         let envelope;
         let lines;
+        let sampled = false;
         while (true) {
           const status = JSON.parse(command(client, "status", "--json"));
           assert.equal(status.processId, identity.processId);
@@ -107,6 +152,19 @@ test(
             envelope = JSON.parse(command(client, "capture", "--ansi", "--json"));
             assert.equal(envelope.hostIdentity.processId, identity.processId);
             lines = decodeFocusFramebufferCapture(envelope).plain.split("\n");
+            if (!sampled) {
+              sampled = true;
+              report.observations ??= [];
+              report.observations.push({
+                stage,
+                client,
+                native: nativeObservation(),
+                frameRows: lines.length,
+                markerRows: lines.flatMap((line, row) =>
+                  line.includes(marker) ? [{ row, line }] : [],
+                ),
+              });
+            }
             if (
               lines.at(-2).includes(`${marker}-A`) &&
               lines.at(-2).includes(`${marker}-B`) &&
@@ -118,7 +176,7 @@ test(
           if (Date.now() >= deadline) {
             writeFileSync(
               join(root, `${stage}-${client}-failure.json`),
-              JSON.stringify({ status, envelope }),
+              JSON.stringify({ status, envelope, native: nativeObservation() }),
               { mode: 0o600 },
             );
             throw new Error(`${stage}/${client} did not recover coherent content`);
@@ -207,7 +265,7 @@ process.stdout.write('\\x1b[?1049h');process.on('SIGWINCH',()=>{previous='';draw
           "-F",
           "#{pane_width} #{pane_height} #{pane_left} #{pane_top}",
         );
-      const initialGeometry = geometry();
+      report.preViewerGeometry = geometry();
       for (let index = 0; index < 8; index++) {
         const client = `client-${index}`;
         createIsolatedTargetedTuiCwd(join(root, client));
@@ -236,6 +294,101 @@ process.stdout.write('\\x1b[?1049h');process.on('SIGWINCH',()=>{previous='';draw
         );
         assert.ok(Number.isSafeInteger(hostPid) && hostPid > 0);
       }
+      // Host processes start before their terminal input loop is ready. Do not
+      // send the ownership gesture until every retained app has joined this generation.
+      const startupDeadline = Date.now() + 30_000;
+      for (const client of clients.keys()) {
+        while (true) {
+          const status = JSON.parse(command(client, "status", "--json"));
+          if (
+            status.readiness?.activeGeneration === daemon.record.instanceId &&
+            status.readiness?.generationStatus === "live" &&
+            Number.isFinite(status.readiness?.rendererTerminalFrameMs)
+          )
+            break;
+          assert.ok(
+            Date.now() < startupDeadline,
+            `${client} did not initialize before ownership setup`,
+          );
+          await delay(50);
+        }
+      }
+      // Startup clients may all initially report foreground. Establish one
+      // deliberate geometry owner through supported host-focus input before
+      // measuring the baseline; fitting intentionally replaces manual sizing.
+      const geometryClient = [...clients.keys()].at(-1);
+      for (const client of clients.keys())
+        command(client, "input", JSON.stringify({ version: 1, kind: "focus", state: "blur" }));
+      command(
+        geometryClient,
+        "input",
+        JSON.stringify({ version: 1, kind: "focus", state: "focus" }),
+      );
+      const geometryDeadline = Date.now() + 5_000;
+      const geometryPrincipal = `opentui:${clients.get(geometryClient).processId}`;
+      const readAuthority = () => {
+        const file = join(root, geometryClient, "performance.jsonl");
+        if (!existsSync(file)) return null;
+        return (
+          readFileSync(file, "utf8")
+            .split("\n")
+            .filter(Boolean)
+            .flatMap((line) => {
+              try {
+                return [JSON.parse(line)];
+              } catch {
+                return [];
+              }
+            })
+            .filter(
+              (record) =>
+                record.phase === "generation-workspace-client-state" &&
+                record.processId === geometryPrincipal &&
+                record.daemonGeneration === daemon.record.instanceId,
+            )
+            .at(-1)?.workspaceClient?.committed?.authority ?? null
+        );
+      };
+      let previousGeometry;
+      let stableSamples = 0;
+      let initialGeometry;
+      while (Date.now() < geometryDeadline) {
+        const observed = nativeObservation();
+        const candidate = geometry();
+        const authority = readAuthority();
+        const bottomReady = observed.panes.split("\n").every((row) => {
+          const [id, , height, , cursorY] = row.split("|");
+          const lines = observed.captures[id].split("\n");
+          return (
+            Number(cursorY) === Number(height) - 1 &&
+            lines.at(-1).includes(`BEFORE-${panes.indexOf(id) === 0 ? "A" : "B"}`)
+          );
+        });
+        stableSamples =
+          bottomReady &&
+          authority?.owners.geometry === geometryPrincipal &&
+          candidate === previousGeometry
+            ? stableSamples + 1
+            : 0;
+        previousGeometry = candidate;
+        if (stableSamples >= 3) {
+          initialGeometry = candidate;
+          report.geometryBaseline = {
+            client: geometryClient,
+            geometryPrincipal,
+            authority,
+            ...observed,
+          };
+          break;
+        }
+        await delay(50);
+      }
+      report.geometrySetupFinal = {
+        native: nativeObservation(),
+        authority: readAuthority(),
+        geometryPrincipal,
+      };
+      assert.ok(initialGeometry, "geometry owner and native bottom marker did not settle");
       await coherent("before", "BEFORE");
       assert.equal(geometry(), initialGeometry);
       let expectedInput = "";
@@ -366,6 +519,30 @@ process.stdout.write('\\x1b[?1049h');process.on('SIGWINCH',()=>{previous='';draw
           assert.ok(panes.every((id) => !previousRuntimeIds.includes(id)));
           report.tmuxReplacements ??= [];
           report.tmuxReplacements.push(report.tmuxReplacement);
+        } else if (cycleTermination === "control") {
+          const controls = controlClients();
+          assert.equal(controls.length, 1, "expected one owned session control client");
+          const target = controls[0];
+          assert.equal(
+            target.sessionId,
+            native("display-message", "-p", "-t", session, "#{session_id}"),
+          );
+          assert.ok(target.name && Number.isSafeInteger(target.pid) && target.pid > 0);
+          assert.notEqual(target.pid, old.record.pid);
+          report.controlLoss = {
+            before: target,
+            nativeIdentity: nativeIdentity(),
+            daemon: { pid: old.record.pid, generation: old.record.instanceId },
+          };
+          // Exact live client name from this private server. No session-wide
+          // detach, daemon refresh, client restart or replacement subscriber.
+          native("detach-client", "-t", target.name);
+          const deadline = Date.now() + 5_000;
+          while (alive(target.pid) && Date.now() < deadline) await delay(25);
+          assert.ok(!alive(target.pid), "detached control process did not exit");
+          assert.ok(alive(old.record.pid), "control loss killed the daemon");
+          assert.equal(nativeIdentity(), report.controlLoss.nativeIdentity);
+          writeFileSync(stageFile, afterMarker, { mode: 0o600 });
         } else {
           if (cycleTermination === "kill") {
             // The PID comes from this test's own startDaemon child receipt.
@@ -384,6 +561,27 @@ process.stdout.write('\\x1b[?1049h');process.on('SIGWINCH',()=>{previous='';draw
         }
         await waitForReadinessLadder(daemon);
         await coherent(`${cycle}-after`, afterMarker);
+        if (cycleTermination === "control") {
+          const controls = controlClients();
+          assert.equal(controls.length, 1, "control loss did not recover one authority");
+          assert.notEqual(controls[0].pid, report.controlLoss.before.pid);
+          assert.equal(controls[0].sessionId, report.controlLoss.before.sessionId);
+          assert.ok(!alive(report.controlLoss.before.pid));
+          assert.ok(alive(report.controlLoss.daemon.pid));
+          assert.equal(daemon.record.pid, report.controlLoss.daemon.pid);
+          assert.equal(daemon.record.instanceId, report.controlLoss.daemon.generation);
+          const identityResponse = await fetch(`${daemon.baseUrl}/identity`, {
+            signal: AbortSignal.timeout(2000),
+          });
+          assert.equal(identityResponse.status, 200);
+          const actualDaemon = await identityResponse.json();
+          assert.equal(actualDaemon.ok, true);
+          assert.equal(actualDaemon.pid, report.controlLoss.daemon.pid);
+          assert.equal(actualDaemon.instanceId, report.controlLoss.daemon.generation);
+          report.controlLoss.actualDaemonAfter = actualDaemon;
+          assert.equal(nativeIdentity(), report.controlLoss.nativeIdentity);
+          report.controlLoss.after = controls[0];
+        }
         if (report.socketRecreation) {
           const nextPaneIds = native(
             "list-panes",
@@ -487,7 +685,14 @@ process.stdout.write('\\x1b[?1049h');process.on('SIGWINCH',()=>{previous='';draw
           clients: controls,
         });
       }
-      assert.equal(new Set(report.generations.map((g) => g.generation)).size, cycles + 1);
+      assert.equal(
+        new Set(report.generations.map((g) => g.generation)).size,
+        termination === "control" ? 1 : cycles + 1,
+      );
+      if (termination === "control") {
+        assert.equal(nativeIdentity(), report.controlLoss.nativeIdentity);
+        assert.ok(alive(report.controlLoss.daemon.pid));
+      }
       report.passed = true;
     } catch (error) {
       failure = error;

@@ -58,11 +58,35 @@ export function _getSpawner(): Spawner {
   return _spawner;
 }
 
+type TmuxClientResolver = (
+  environment: NodeJS.ProcessEnv,
+  cwd?: string | URL,
+) => {
+  executable: string;
+  environment: NodeJS.ProcessEnv;
+};
+
+let clientResolver: TmuxClientResolver | undefined;
+
+/** Configure ordinary clients at the host composition root; pinned runners are unaffected. */
+export function configureTmuxClientResolver(resolver: TmuxClientResolver): () => void {
+  const previous = clientResolver;
+  clientResolver = resolver;
+  return () => {
+    clientResolver = previous;
+  };
+}
+
 export function runTmux(args: string[], options: ExecFileSyncOptions = {}): string | Buffer {
   if ((options.env ?? process.env).TMUX_IDE_RUNTIME_MODE === "development") {
     throw new Error("Development tmux operations require an explicitly pinned namespace runner");
   }
-  return runTmuxBinary("tmux", args, options);
+  const resolved = clientResolver?.(options.env ?? process.env, options.cwd);
+  return runTmuxBinary(
+    resolved?.executable ?? "tmux",
+    args,
+    resolved ? { ...options, env: resolved.environment } : options,
+  );
 }
 
 /**

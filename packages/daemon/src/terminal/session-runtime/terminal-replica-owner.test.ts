@@ -9,6 +9,61 @@ import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
 const generation = "00000000-0000-4000-8000-000000000001";
 
 describe("SessionRuntimeTerminalReplicaOwner", () => {
+  it("reports canonical and raw listener retirement independently of retained upstream", async () => {
+    const close = vi.fn(async () => {});
+    const mirror = {
+      subscribe: async (candidate: MirrorSubscribeRequest) => {
+        queueMicrotask(() => {
+          candidate.onLayout?.(layout(4, 1));
+          candidate.onEvent({ type: "reset", cols: 4, rows: 1 });
+          candidate.onEvent({ type: "seed", data: new TextEncoder().encode("BOOT") });
+          candidate.onEvent({ type: "cursor", x: 0, y: 0 });
+        });
+        return { ...subscription(candidate), close };
+      },
+    };
+    const owner = new SessionRuntimeTerminalReplicaOwner(
+      generation,
+      "workspace",
+      "pane-a",
+      mirror as never,
+      { incarnation: `${generation}:0`, initialRevision: 0 },
+    );
+    try {
+      for (let index = 0; index < 3; index++) {
+        const source = await owner.subscribeSource(
+          () => {},
+          () => {},
+        );
+        expect(owner.qualificationSnapshot().listeners).toEqual({
+          canonical: 1,
+          raw: 1,
+          upstream: 1,
+        });
+        await source.close();
+        await source.close();
+        expect(owner.qualificationSnapshot().listeners).toEqual({
+          canonical: 0,
+          raw: 0,
+          upstream: 1,
+        });
+      }
+      await owner.subscribeSource(
+        () => {},
+        () => {},
+      );
+      await owner.dispose();
+      expect(owner.qualificationSnapshot().listeners).toEqual({
+        canonical: 0,
+        raw: 0,
+        upstream: 0,
+      });
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      await owner.dispose();
+    }
+  });
+
   it.each(["stable", "output", "layout", "content", "dimensions", "disposal"])(
     "admits native backing only for matching canonical state: %s",
     async (change) => {
@@ -1155,3 +1210,50 @@ it("suppresses mixed-format recovery and ignores deltas until a fresh native own
     await owner.dispose();
   }
 });
+
+it.each(["seed", "delta"] as const)(
+  "keeps %s HT provenance through owner reseed admission",
+  async (kind) => {
+    const faults: unknown[] = [];
+    let reseeds = 0;
+    const mirror = {
+      subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+        queueMicrotask(() => {
+          candidate.onLayout?.(layout(8, 1));
+          candidate.onEvent({ type: "reset", cols: 8, rows: 1 });
+          candidate.onEvent({ type: "seed", data: Buffer.from("A") });
+          candidate.onEvent({ type: kind, data: Buffer.from("\tB") });
+          candidate.onEvent({ type: "cursor", x: 8, y: 0 });
+        });
+        return {
+          ...subscription(candidate),
+          reseed: () => {
+            reseeds++;
+          },
+        };
+      },
+    };
+    const owner = new SessionRuntimeTerminalReplicaOwner(
+      generation,
+      "workspace",
+      "pane-a",
+      mirror as never,
+      { incarnation: generation + ":tabs", initialRevision: 0, onFault: (e) => faults.push(e) },
+    );
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    try {
+      if (kind === "seed") {
+        await expect(owner.subscribe((u) => updates.push(u))).rejects.toThrow("saved tab cells");
+        expect(updates).toHaveLength(0);
+        expect(faults).toHaveLength(1);
+        expect(reseeds).toBe(0);
+      } else {
+        await owner.subscribe((u) => updates.push(u));
+        expect(updates).toHaveLength(1);
+        expect(faults).toHaveLength(0);
+      }
+    } finally {
+      await owner.dispose();
+    }
+  },
+);

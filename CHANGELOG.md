@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.5
+
+- Preserve native tmux session names containing spaces by assigning separate internal workspace IDs, preventing one discovered session from blocking the terminal catalog.
+- Skip dependency lifecycle scripts during staged installation; activate and verify the installation before the supported postinstall step.
+
+- Keep generated pane-name metadata out of terminal identity proofs so it cannot reject an otherwise valid session.
+- Preserve tmux control reply ordering across pane output and drain cancelled snapshot collectors before reusing a connection.
+- Preserve Unicode code points when splitting terminal paste input.
+- Rebuild retained terminal surfaces after interrupted drawing so consumed damage is repainted on retry.
+- Resolve bundled tmux for ordinary CLI commands when system tmux is absent from PATH.
+- Retire predecessor resources after failed terminal reseeding and preserve rejected recovery-input warnings.
+
 ## 2.9.4
 
 - The installer enables Claude Code agent teams when Claude Code is installed: it adds `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` and `teammateMode: "auto"` to `~/.claude/settings.json` only when missing, keeps a one-time backup, never overrides an explicit opt-out, and never rewrites invalid JSON. Opt out with `--no-claude-agent-teams` or `TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`; a failure in this step never fails the install.

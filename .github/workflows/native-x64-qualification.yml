@@ -85,13 +85,38 @@ jobs:
       - name: Execute every selected native daemon test without skips
         run: |
           export TMUX_IDE_NATIVE_JOURNAL_TEST_BINARY="$PROOF/bundle/tmux"
+          export TMUX_IDE_REQUIRE_NATIVE_CAPABILITIES=1
           export PATH="$PROOF/bundle:$PATH"
           unset TMUX TMUX_PANE
           suites=()
           while IFS= read -r suite; do suites+=("$suite"); done < <(node scripts/lib/native-x64-qualification.mjs suites "$PROOF")
-          test "${#suites[@]}" -eq 8
+          test "${#suites[@]}" -eq 10
           pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts "${suites[@]}" --reporter=default --reporter=json --outputFile.json="$PROOF/vitest.json" 2>&1 | tee "$PROOF/daemon.log"
           node scripts/lib/native-x64-qualification.mjs verify "$PROOF"
+      - name: Prepare independent physical-cell oracle evidence
+        id: oracle
+        run: |
+          node --test scripts/lib/native-oracle-qualification.test.mjs
+          root="$(node scripts/lib/native-oracle-qualification.mjs prepare "$PROOF")"
+          echo "root=$root" >> "$GITHUB_OUTPUT"
+      - name: Execute independent physical-cell oracle
+        run: |
+          export TMPDIR="${{ steps.oracle.outputs.root }}"
+          export TMUX_IDE_BOUNDARY_TEST_BINARY="$PROOF/bundle/tmux"
+          export TMUX_IDE_ORACLE_EXPECT_NATIVE=1
+          export TMUX_IDE_ORACLE_SOURCE_RECEIPT="$PROOF/bundle/manifest.json"
+          unset TMUX TMUX_PANE
+          pnpm --filter @tmux-ide/daemon exec vitest run --config vitest.live.config.ts src/terminal/mirror/native-physical-cell-oracle-live.test.ts --reporter=default --reporter=json --outputFile.json="$PROOF/oracle/vitest.json" 2>&1 | tee "$PROOF/oracle/test.log"
+      - name: Retain and strictly verify oracle receipts including failures
+        if: ${{ always() && steps.oracle.outcome == 'success' }}
+        run: node scripts/lib/native-oracle-qualification.mjs collect "$PROOF"
+      - name: Require styled SSH renderer qualification on Intel macOS
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          # Override the generic short /tmp lane with sshd-safe user ancestry.
+          export TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)"
+          pnpm qualify:styled-ssh --binary "$PROOF/bundle/tmux" --manifest "$PROOF/bundle/manifest.json" --bun "$(command -v bun)" --evidence-dir "$PROOF/styled-ssh"
       - name: Record cleanup independently of test success
         if: always()
         run: node scripts/lib/native-x64-qualification.mjs cleanup "$PROOF"

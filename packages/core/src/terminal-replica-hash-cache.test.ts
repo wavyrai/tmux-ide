@@ -1,3 +1,9 @@
+import {
+  createProjectedTerminalReplicaRowBuilder,
+  freezeOwnedTerminalReplicaRow,
+  isSchemaValidProjectedTerminalReplicaRow,
+  TERMINAL_REPLICA_DEFAULT_COLOR,
+} from "./terminal-replica-owned-row.ts";
 import { describe, expect, it, vi } from "vitest";
 import * as bufferedHash from "./terminal-fnv64-wasm.ts";
 import type { TerminalReplicaRow, TerminalReplicaSnapshot } from "@tmux-ide/contracts";
@@ -37,6 +43,56 @@ const referenceHash = (value: unknown): string => {
 };
 
 describe("terminal canonical hash cache", () => {
+  it("preserves numeric canonical tokens including signed zero and general-number fallback", async () => {
+    const numbers = [
+      0,
+      -0,
+      1,
+      2,
+      3,
+      -1,
+      -17,
+      NaN,
+      Infinity,
+      -Infinity,
+      0.5,
+      -0.5,
+      Number.MIN_VALUE,
+      Number.MAX_VALUE,
+      Number.MAX_SAFE_INTEGER,
+      Number.MAX_SAFE_INTEGER + 1,
+      1e-7,
+      1e-6,
+      1e20,
+      1e21,
+      255,
+      0xffffff,
+    ];
+    const corpus: unknown[] = [
+      ...numbers,
+      { values: numbers, widths: [0, 1, 2], attributes: 0 },
+      { a: "x".repeat(65540), z: numbers },
+    ];
+    const expected = corpus.map(referenceHash);
+    const accelerator = vi.spyOn(bufferedHash, "createBufferedFnv64");
+    try {
+      for (const fallback of [false, true]) {
+        if (fallback) accelerator.mockReturnValue(null);
+        expect(corpus.map(hashCanonicalTerminalValue)).toEqual(expected);
+        expect(
+          await Promise.all(
+            corpus.map((value) =>
+              hashCanonicalTerminalValueCooperatively(value, async () => {}, 7),
+            ),
+          ),
+        ).toEqual(expected);
+      }
+    } finally {
+      accelerator.mockRestore();
+    }
+    expect(hashCanonicalTerminalValue(-0)).toBe(hashCanonicalTerminalValue(0));
+  });
+
   it("preserves large mixed frame hashes through acceleration, yields and JS fallback", async () => {
     const values = Array.from({ length: 3 }, (_, frame) => ({
       prefix: "x".repeat(65520 + frame),
@@ -129,6 +185,54 @@ describe("terminal canonical hash cache", () => {
     expect(yields).toBeGreaterThan(0);
     values[0] = { kind: "next call" };
     expect(hashCanonicalTerminalValue(values)).toBe(referenceHash(values));
+  });
+
+  it("preserves eager reverse property reads across cooperative yields and cancellation", async () => {
+    const reads: string[] = [];
+    const record = Object.fromEntries(["a", "b", "c"].map((key) => [key, 0]));
+    for (const [index, key] of ["a", "b", "c"].entries()) {
+      Object.defineProperty(record, key, {
+        enumerable: true,
+        get() {
+          reads.push(key);
+          return index;
+        },
+      });
+    }
+    let yields = 0;
+    const digest = await hashCanonicalTerminalValueCooperatively(
+      record,
+      async () => {
+        reads.push(`yield${++yields}`);
+      },
+      1,
+    );
+    expect(digest).toBe(referenceHash({ a: 0, b: 1, c: 2 }));
+    expect(reads).toEqual([
+      "yield1",
+      "c",
+      "b",
+      "a",
+      "yield2",
+      "yield3",
+      "yield4",
+      "yield5",
+      "yield6",
+      "yield7",
+      "yield8",
+    ]);
+    reads.length = 0;
+    const failure = new Error("cancel hash slice");
+    await expect(
+      hashCanonicalTerminalValueCooperatively(
+        record,
+        async () => {
+          throw failure;
+        },
+        1,
+      ),
+    ).rejects.toBe(failure);
+    expect(reads).toEqual([]);
   });
 
   it("keeps batch row hashes canonical with bounded encoding reuse and a JS fallback", () => {
@@ -410,5 +514,250 @@ describe("terminal canonical hash cache", () => {
     const rowInitial = hashTerminalReplicaSnapshot(mutableRowSnapshot);
     mutableRow.wrapped = true;
     expect(hashTerminalReplicaSnapshot(mutableRowSnapshot)).not.toBe(rowInitial);
+  });
+});
+
+it("preserves short ASCII value headers and long/Unicode fallback across accelerated slices", async () => {
+  const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
+  const values = [
+    ...Array.from({ length: 34 }, (_, length) => "v".repeat(length)),
+    "\0;:\n",
+    "界",
+    "😀",
+    "e\u0301",
+    "\ud800",
+    "\udc00",
+    "x".repeat(4097),
+  ];
+  const input = Array.from({ length: 64 }, (_, index) => ({ index, values }));
+  const expected = referenceHash(input);
+  const yieldsByPath: number[] = [];
+  try {
+    for (const fallback of [false, true]) {
+      if (fallback) factory.mockReturnValue(null);
+      expect(hashCanonicalTerminalValue(input)).toBe(expected);
+      let yields = 0;
+      expect(
+        await hashCanonicalTerminalValueCooperatively(
+          input,
+          async () => {
+            yields++;
+          },
+          127,
+        ),
+      ).toBe(expected);
+      yieldsByPath.push(yields);
+    }
+    expect(yieldsByPath[1]).toBe(yieldsByPath[0]);
+    expect(yieldsByPath[0]).toBeGreaterThan(0);
+    expect(factory).toHaveBeenCalled();
+  } finally {
+    factory.mockRestore();
+  }
+});
+
+describe("exact default-color canonical key layout", () => {
+  it("avoids key-array creation only for the exact immutable singleton", async () => {
+    const singleton = TERMINAL_REPLICA_DEFAULT_COLOR;
+    const foreign = Object.freeze({ kind: "default" });
+    const input = [singleton, singleton, foreign];
+    const expected = referenceHash(input);
+    const original = Object.keys;
+    let exactCalls = 0,
+      foreignCalls = 0;
+    const spy = vi.spyOn(Object, "keys").mockImplementation((value) => {
+      if (value === singleton) exactCalls++;
+      if (value === foreign) foreignCalls++;
+      return original(value);
+    });
+    try {
+      const sync = hashCanonicalTerminalValue(input);
+      const cooperative = await hashCanonicalTerminalValueCooperatively(input, async () => {}, 1);
+      expect(sync).toBe(expected);
+      expect(cooperative).toBe(expected);
+      expect(exactCalls).toBe(0);
+      expect(foreignCalls).toBe(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("preserves complete generic bytes and cooperative checkpoints beside foreign values", async () => {
+    const values = [
+      TERMINAL_REPLICA_DEFAULT_COLOR,
+      { kind: "default", extra: "界" },
+      { kind: "indexed", index: 0 },
+      { kind: "rgb", value: 0 },
+      { nested: TERMINAL_REPLICA_DEFAULT_COLOR, text: "\ud800" },
+      ...Array.from({ length: 400 }, () => TERMINAL_REPLICA_DEFAULT_COLOR),
+    ];
+    const foreign = structuredClone(values);
+    const expected = referenceHash(values);
+    expect(hashCanonicalTerminalValue(values)).toBe(expected);
+    expect(hashCanonicalTerminalValue(foreign)).toBe(expected);
+    for (const budget of [1, 31, 32768]) {
+      let singletonYields = 0,
+        foreignYields = 0;
+      expect(
+        await hashCanonicalTerminalValueCooperatively(
+          values,
+          async () => {
+            singletonYields++;
+          },
+          budget,
+        ),
+      ).toBe(expected);
+      expect(
+        await hashCanonicalTerminalValueCooperatively(
+          foreign,
+          async () => {
+            foreignYields++;
+          },
+          budget,
+        ),
+      ).toBe(expected);
+      expect(singletonYields).toBe(foreignYields);
+      const failure = new Error("cancel exact color");
+      for (const input of [values, foreign]) {
+        let yields = 0;
+        await expect(
+          hashCanonicalTerminalValueCooperatively(
+            input,
+            async () => {
+              yields++;
+              throw failure;
+            },
+            1,
+          ),
+        ).rejects.toBe(failure);
+        expect(yields).toBe(1);
+      }
+    }
+  });
+
+  it("keeps foreign key discovery, getter order and thrown values intact", async () => {
+    const transcripts: string[][] = [];
+    for (const color of [TERMINAL_REPLICA_DEFAULT_COLOR, Object.freeze({ kind: "default" })]) {
+      const trace: string[] = [];
+      const foreign = new Proxy(
+        {
+          get kind() {
+            trace.push("get-kind");
+            return "default";
+          },
+          extra: "kept",
+        },
+        {
+          ownKeys(target) {
+            trace.push("ownKeys");
+            return Reflect.ownKeys(target);
+          },
+        },
+      );
+      const expected = referenceHash([color, { kind: "default", extra: "kept" }]);
+      expect(
+        await hashCanonicalTerminalValueCooperatively(
+          [color, foreign],
+          async () => {
+            trace.push("yield");
+          },
+          1,
+        ),
+      ).toBe(expected);
+      transcripts.push(trace);
+    }
+    expect(transcripts[0]).toEqual(transcripts[1]);
+    expect(transcripts[0]!.filter((x) => x === "ownKeys")).toHaveLength(1);
+    const failure = { arbitrary: "getter failure" };
+    const foreign = {
+      get kind(): string {
+        throw failure;
+      },
+    };
+    expect(() => hashCanonicalTerminalValue([TERMINAL_REPLICA_DEFAULT_COLOR, foreign])).toThrow();
+    await expect(
+      hashCanonicalTerminalValueCooperatively(
+        [TERMINAL_REPLICA_DEFAULT_COLOR, foreign],
+        async () => {},
+      ),
+    ).rejects.toBe(failure);
+  });
+});
+
+describe("schema-proven projected rows in generic synchronous frame hashes", () => {
+  const projected = (size: number) => {
+    const builder = createProjectedTerminalReplicaRowBuilder();
+    for (let index = 0; index < size; index++) {
+      builder.append(
+        index % 3 === 0 ? "界e\u0301\ud800" : index % 3 === 1 ? " " : "",
+        index % 3 === 0 ? 2 : index % 3 === 1 ? 0 : 1,
+        index % 256,
+        index % 2 ? "indexed" : "default",
+        index % 2 ? -0 : NaN,
+        "rgb",
+        index % 2 ? 0xffffff : -0,
+      );
+    }
+    return builder.finish(true);
+  };
+
+  it("matches the independent canonical byte oracle across acceleration and fallback", () => {
+    const row = projected(1600);
+    expect(isSchemaValidProjectedTerminalReplicaRow(row)).toBe(true);
+    const input = { rows: [row], revision: 3, metadata: { label: "seed" } };
+    const expected = referenceHash(input);
+    const factory = vi.spyOn(bufferedHash, "createBufferedFnv64");
+    try {
+      expect(hashCanonicalTerminalValue(input)).toBe(expected);
+      expect(factory).toHaveBeenCalled();
+      factory.mockReturnValue(null);
+      expect(hashCanonicalTerminalValue(input)).toBe(expected);
+    } finally {
+      factory.mockRestore();
+    }
+  });
+
+  it("preserves generic extra fields for unproven copies and invalid constructed rows", () => {
+    const builder = createProjectedTerminalReplicaRowBuilder();
+    builder.append("x", 1, 256, "indexed", 256, "rgb", 0x1000000);
+    const invalid = builder.finish(false);
+    const foreign = freezeOwnedTerminalReplicaRow(structuredClone(projected(3)));
+    for (const row of [invalid, foreign]) {
+      expect(isSchemaValidProjectedTerminalReplicaRow(row)).toBe(false);
+      expect(hashCanonicalTerminalValue(row)).toBe(referenceHash(row));
+    }
+    const value = { ...foreign, extra: "retained" };
+    expect(hashCanonicalTerminalValue(value)).toBe(referenceHash(value));
+    expect(hashCanonicalTerminalValue(value)).not.toBe(hashCanonicalTerminalValue(foreign));
+  });
+
+  it("preserves inherited array iteration and foreign yielded value reads", () => {
+    const row = projected(3);
+    const original = Array.prototype[Symbol.iterator];
+    const trace: string[] = [];
+    const foreign = {
+      get value() {
+        trace.push("value");
+        return "foreign";
+      },
+    };
+    const expected = referenceHash({ cells: [row.cells[0], foreign, row.cells[0]], wrapped: true });
+    Array.prototype[Symbol.iterator] = function* (this: readonly unknown[]) {
+      if (this !== row.cells) {
+        yield* Reflect.apply(original, this, []);
+        return;
+      }
+      yield row.cells[0];
+      yield foreign;
+      yield row.cells[0];
+    } as typeof original;
+    let actual: string;
+    try {
+      actual = hashCanonicalTerminalValue(row);
+    } finally {
+      Array.prototype[Symbol.iterator] = original;
+    }
+    expect(actual).toBe(expected);
+    expect(trace).toEqual(["value", "value"]);
   });
 });

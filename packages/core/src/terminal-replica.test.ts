@@ -12,6 +12,9 @@ import {
   freezeTerminalReplicaRow,
   hashTerminalReplicaSnapshot,
   hashTerminalWidgetContent,
+  TERMINAL_REPLICA_DEFAULT_COLOR,
+  TERMINAL_REPLICA_EMPTY_CELL,
+  TERMINAL_REPLICA_SPACE_CELL,
 } from "./terminal-replica.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
@@ -73,6 +76,7 @@ describe("terminal replica reducer", () => {
     expect(seeded.status).toBe("applied");
     const applied = applyTerminalReplicaUpdate(seeded.state, patch(initial, payload));
     expect(applied.status).toBe("applied");
+    if (applied.status !== "applied") throw Error("not applied");
     if (!applied.state) throw new Error("expected applied state");
     expect(applied.state.snapshot).toEqual(expected);
     expect(applied.state.hash).toBe(hashTerminalReplicaSnapshot(expected));
@@ -143,6 +147,7 @@ describe("terminal replica reducer", () => {
       },
     });
     expect(applied.status).toBe("applied");
+    if (applied.status !== "applied") throw Error("not applied");
     expect(applied.state?.snapshot?.grid[0]).toBe(next.grid[0]);
     expect(applied.state?.hash).toBe(hashTerminalReplicaSnapshot(next));
     expect(profile).toMatchObject({
@@ -196,6 +201,7 @@ describe("terminal replica reducer", () => {
     const update = seed(snapshot);
     const applied = applyTerminalReplicaUpdate(null, update);
     expect(applied.status).toBe("applied");
+    if (applied.status !== "applied") throw Error("not applied");
     expect(applied.state?.snapshot?.grid[0]).toBe(row);
     expect(applied.state?.snapshot?.history[0]).toBe(row);
     expect(applied.state?.hash).toBe(update.stateHash);
@@ -220,6 +226,100 @@ describe("terminal replica reducer", () => {
     expect(owned.cells[0]!.foreground).toEqual({ kind: "indexed", index: 42 });
     expect(Object.isFrozen(owned.cells[0]!.foreground)).toBe(true);
     expect(freezeTerminalReplicaRow(owned)).toBe(owned);
+  });
+
+  it("shares immutable default colors while detaching foreign cells and preserving semantics", () => {
+    const initial = blankTerminalReplicaSnapshot(2, 1);
+    const external = structuredClone(initial.grid[0]!);
+    const before = hashTerminalReplicaSnapshot({ ...initial, history: [external] });
+    const owned = freezeTerminalReplicaRow(external);
+    const other = freezeTerminalReplicaRow(structuredClone(external));
+    expect(owned).not.toBe(external);
+    expect(owned.cells[0]).not.toBe(external.cells[0]);
+    expect(owned.cells[0]).not.toBe(owned.cells[1]);
+    expect(owned.cells[0]!.foreground).toBe(owned.cells[1]!.background);
+    expect(owned.cells[0]!.foreground).toBe(other.cells[0]!.foreground);
+    expect(Object.isFrozen(owned.cells[0]!.foreground)).toBe(true);
+    expect(Reflect.set(owned.cells[0]!.foreground, "kind", "rgb")).toBe(false);
+    Reflect.set(external.cells[0]!.foreground, "kind", "rgb");
+    Reflect.set(external.cells[0]!.foreground, "value", 0xff00ff);
+    external.cells[0]!.grapheme = "changed";
+    expect(owned.cells[0]!.foreground).toEqual({ kind: "default" });
+    expect(owned.cells[0]!.grapheme).toBe(" ");
+    expect(hashTerminalReplicaSnapshot({ ...initial, history: [owned] })).toBe(before);
+    expect(freezeTerminalReplicaRow(owned)).toBe(owned);
+  });
+
+  it("shares the core-owned default through blank and admitted rows without trusting foreign getters", () => {
+    const initial = blankTerminalReplicaSnapshot(2, 1);
+    expect(initial.grid[0]!.cells[0]!.foreground).toBe(TERMINAL_REPLICA_DEFAULT_COLOR);
+    expect(initial.grid[0]!.cells[0]!.background).toBe(TERMINAL_REPLICA_DEFAULT_COLOR);
+    let reads = 0;
+    const foreign = Object.freeze({
+      get kind() {
+        reads += 1;
+        return "default" as const;
+      },
+    });
+    const external = {
+      wrapped: false,
+      cells: initial.grid[0]!.cells.map((cell) => ({ ...cell, foreground: foreign })),
+    };
+    const admitted = freezeTerminalReplicaRow(external);
+    expect(reads).toBe(2);
+    expect(admitted.cells[0]).not.toBe(external.cells[0]);
+    expect(admitted.cells[0]!.foreground).not.toBe(foreign);
+    expect(admitted.cells[0]!.foreground).toBe(TERMINAL_REPLICA_DEFAULT_COLOR);
+    expect(admitted.cells[0]!.background).toBe(TERMINAL_REPLICA_DEFAULT_COLOR);
+    expect(Object.isFrozen(TERMINAL_REPLICA_DEFAULT_COLOR)).toBe(true);
+    expect(hashTerminalReplicaSnapshot({ ...initial, grid: [admitted] })).toBe(
+      hashTerminalReplicaSnapshot(initial),
+    );
+  });
+
+  it("reuses only trusted blank cells while preserving foreign detachment and empty-space distinction", () => {
+    const cells = [TERMINAL_REPLICA_EMPTY_CELL, TERMINAL_REPLICA_SPACE_CELL];
+    const owned = freezeTerminalReplicaRow({ wrapped: false, cells });
+    expect(owned.cells).not.toBe(cells);
+    expect(Object.isFrozen(owned.cells)).toBe(true);
+    expect(owned.cells[0]).toBe(TERMINAL_REPLICA_EMPTY_CELL);
+    expect(owned.cells[1]).toBe(TERMINAL_REPLICA_SPACE_CELL);
+    expect(Reflect.set(owned.cells[0]!, "grapheme", "changed")).toBe(false);
+    const foreign = cells.map((cell) => ({ ...cell }));
+    const detached = freezeTerminalReplicaRow({ wrapped: false, cells: foreign });
+    expect(detached.cells[0]).not.toBe(cells[0]);
+    foreign[0]!.grapheme = "changed";
+    expect(detached).toEqual(owned);
+    const blank = blankTerminalReplicaSnapshot(2, 1);
+    const edited = structuredClone(blank);
+    edited.grid[0]!.cells[0]!.grapheme = "X";
+    expect(edited.grid[0]!.cells[1]!.grapheme).toBe(" ");
+    expect(hashTerminalReplicaSnapshot({ ...blank, grid: [owned] })).toBe(
+      hashTerminalReplicaSnapshot({ ...blank, grid: [detached] }),
+    );
+    expect(hashTerminalReplicaSnapshot({ ...blank, grid: [owned] })).not.toBe(
+      hashTerminalReplicaSnapshot(blank),
+    );
+  });
+
+  it("keeps RGB colors detached and does not discard extra foreign default-color fields", () => {
+    const initial = blankTerminalReplicaSnapshot(2, 1);
+    const rgb = { kind: "rgb" as const, value: 0x123456 };
+    const extraDefault = { kind: "default" as const, annotation: "preserved" };
+    const external = {
+      wrapped: false,
+      cells: initial.grid[0]!.cells.map((cell) => ({
+        ...cell,
+        foreground: rgb,
+        background: extraDefault,
+      })),
+    };
+    const owned = freezeTerminalReplicaRow(external);
+    rgb.value = 0;
+    extraDefault.annotation = "mutated";
+    expect(owned.cells[0]!.foreground).toEqual({ kind: "rgb", value: 0x123456 });
+    expect(Object.isFrozen(owned.cells[0]!.foreground)).toBe(true);
+    expect(owned.cells[0]!.background).toEqual({ kind: "default", annotation: "preserved" });
   });
 
   it("does not trust external frozen rows, including malformed wide cells", () => {
@@ -258,6 +358,7 @@ describe("terminal replica reducer", () => {
       },
     });
     expect(applied.status).toBe("applied");
+    if (applied.status !== "applied") throw Error("not applied");
   });
 
   it("pins opaque daemon generations so delayed seeds cannot roll state backward", () => {
@@ -398,5 +499,209 @@ describe("terminal replica reducer", () => {
     expect(hashTerminalWidgetContent("markdown", { text: "# Plan" })).not.toBe(
       hashTerminalWidgetContent("markdown", { text: "# Other" }),
     );
+  });
+});
+
+import {
+  decodeVerifiedCompactSemanticTerminalUpdate,
+  decodeVerifiedCompactSemanticTerminalUpdateCooperatively,
+  decodeVerifiedLegacySemanticTerminalUpdate,
+  encodeCompactSemanticTerminalUpdate,
+  encodeSemanticTerminalUpdate,
+} from "./terminal-delivery.ts";
+import { hashTerminalReplicaTombstone } from "./terminal-replica.ts";
+describe("verified tombstone interval boundaries", () => {
+  for (const route of ["compact", "cooperative", "legacy"] as const) {
+    async function decoded(current: ReturnType<typeof initial>) {
+      const payload = {
+        frame: "tombstone" as const,
+        baseRevision: 0,
+        revision: 3,
+        tombstone: { reason: "pane-closed" as const },
+      };
+      const hash = hashTerminalReplicaTombstone("pane-closed");
+      const result =
+        route === "legacy"
+          ? decodeVerifiedLegacySemanticTerminalUpdate(
+              encodeSemanticTerminalUpdate(payload),
+              current.snapshot,
+              hash,
+            )
+          : route === "compact"
+            ? decodeVerifiedCompactSemanticTerminalUpdate(
+                encodeCompactSemanticTerminalUpdate(payload),
+                current.snapshot,
+                hash,
+                { grantReducerAdoption: true },
+              )
+            : await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+                encodeCompactSemanticTerminalUpdate(payload),
+                current.snapshot,
+                hash,
+                { grantReducerAdoption: true, yieldControl: async () => {} },
+              );
+      if (result.payload.frame !== "tombstone") throw Error("wrong frame");
+      return {
+        ...address,
+        generation,
+        incarnation: "incarnation-a",
+        type: "terminal.tombstone" as const,
+        baseRevision: 0,
+        revision: 3,
+        cols: 4,
+        rows: 2,
+        stateHash: hash,
+        hashAlgorithm: "fnv1a64-v1" as const,
+        tombstone: result.payload.tombstone,
+      };
+    }
+    it(`preserves verified snapshot identity through skipped and adjacent patches (${route})`, async () => {
+      let current = initial();
+      const decode = async (
+        payload: Parameters<typeof encodeSemanticTerminalUpdate>[0],
+        hash: string,
+      ) =>
+        route === "legacy"
+          ? decodeVerifiedLegacySemanticTerminalUpdate(
+              encodeSemanticTerminalUpdate(payload),
+              current.snapshot,
+              hash,
+            )
+          : route === "compact"
+            ? decodeVerifiedCompactSemanticTerminalUpdate(
+                encodeCompactSemanticTerminalUpdate(payload),
+                current.snapshot,
+                hash,
+                { grantReducerAdoption: true },
+              )
+            : decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+                encodeCompactSemanticTerminalUpdate(payload),
+                current.snapshot,
+                hash,
+                { grantReducerAdoption: true, yieldControl: async () => {} },
+              );
+      for (const [baseRevision, revision] of [
+        [0, 3],
+        [3, 4],
+      ] as const) {
+        const payload = {
+          frame: "patch" as const,
+          baseRevision,
+          revision,
+          patch: { rows: [], cursor: { ...current.snapshot!.cursor, x: revision === 3 ? 1 : 2 } },
+        };
+        const hash = hashTerminalReplicaSnapshot(
+          applyTerminalReplicaPatch(current.snapshot!, payload.patch),
+        );
+        const result = await decode(payload, hash);
+        const update: import("@tmux-ide/contracts").CanonicalTerminalReplicaUpdate =
+          revision === 3
+            ? seed(result.canonicalSnapshot!, revision)
+            : {
+                ...seed(result.canonicalSnapshot!, revision),
+                type: "terminal.patch",
+                baseRevision,
+                patch:
+                  result.payload.frame === "patch"
+                    ? result.payload.patch
+                    : (() => {
+                        throw Error("patch");
+                      })(),
+              };
+        const applied = applyTerminalReplicaUpdate(current, update);
+        expect(applied.status).toBe("applied");
+        if (applied.status !== "applied") throw Error("not applied");
+        expect(applied.state.snapshot).toBe(result.canonicalSnapshot);
+        current = applied.state;
+      }
+      const hash = hashTerminalReplicaTombstone("pane-closed");
+      const result = await decode(
+        { frame: "tombstone", baseRevision: 4, revision: 7, tombstone: { reason: "pane-closed" } },
+        hash,
+      );
+      const update: import("@tmux-ide/contracts").CanonicalTerminalReplicaUpdate = {
+        ...address,
+        generation,
+        incarnation: "incarnation-a",
+        type: "terminal.tombstone",
+        baseRevision: 4,
+        revision: 7,
+        cols: 4,
+        rows: 2,
+        stateHash: hash,
+        hashAlgorithm: "fnv1a64-v1",
+        tombstone:
+          result.payload.frame === "tombstone"
+            ? result.payload.tombstone
+            : (() => {
+                throw Error("tombstone");
+              })(),
+      };
+      expect(applyTerminalReplicaUpdate(current, update).status).toBe("applied");
+    });
+    function initial() {
+      const r = applyTerminalReplicaUpdate(null, seed(blankTerminalReplicaSnapshot(4, 2)));
+      if (r.status !== "applied") throw Error("seed");
+      return r.state;
+    }
+    it(`accepts exact interval and idempotent replay (${route})`, async () => {
+      const current = initial();
+      const update = await decoded(current);
+      const applied = applyTerminalReplicaUpdate(current, update);
+      expect(applied.status).toBe("applied");
+      if (applied.status !== "applied") throw Error("not applied");
+      expect(applyTerminalReplicaUpdate(applied.state, update).status).toBe("idempotent");
+      expect(
+        applyTerminalReplicaUpdate(applied.state, { ...update, baseRevision: 1 }).status,
+      ).not.toBe("idempotent");
+      expect(
+        applyTerminalReplicaUpdate(applied.state, {
+          ...update,
+          tombstone: { reason: "runtime-disposed" },
+        }).status,
+      ).not.toBe("idempotent");
+      expect(
+        applyTerminalReplicaUpdate(
+          applied.state,
+          patch(blankTerminalReplicaSnapshot(4, 2), { rows: [] }, 4),
+        ).status,
+      ).not.toBe("applied");
+    });
+    for (const change of [
+      "base",
+      "revision",
+      "baseline",
+      "hash",
+      "cols",
+      "address",
+      "generation",
+      "incarnation",
+      "forged",
+    ]) {
+      it(`rejects ${change} (${route})`, async () => {
+        let current = initial();
+        let update: import("@tmux-ide/contracts").CanonicalTerminalReplicaTombstone =
+          await decoded(current);
+        if (change === "base") update = { ...update, baseRevision: 1 };
+        if (change === "revision") update = { ...update, revision: 4 };
+        if (change === "baseline") current = initial();
+        if (change === "hash") update = { ...update, stateHash: "0000000000000000" };
+        if (change === "cols") update = { ...update, cols: 5 };
+        if (change === "address") update = { ...update, semanticPaneId: "other" };
+        if (change === "generation")
+          update = { ...update, generation: "00000000-0000-4000-8000-000000000009" };
+        if (change === "incarnation") update = { ...update, incarnation: "other" };
+        if (change === "forged") update = { ...update, tombstone: { ...update.tombstone } };
+        expect(applyTerminalReplicaUpdate(current, update).status).not.toBe("applied");
+      });
+    }
+  }
+  it("keeps ordinary canonical patch gaps strict", () => {
+    const initial = blankTerminalReplicaSnapshot(4, 2);
+    const current = applyTerminalReplicaUpdate(null, seed(initial)).state;
+    expect(
+      applyTerminalReplicaUpdate(current, { ...patch(initial, { rows: [] }, 3), baseRevision: 0 })
+        .status,
+    ).toBe("gap");
   });
 });

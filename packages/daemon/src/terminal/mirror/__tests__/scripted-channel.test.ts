@@ -41,7 +41,7 @@ describe("ScriptedChannelDriver", () => {
     driver.channel.commandInline('list-panes -s -t "zz-sim" -F "#{pane_id}"', (reply) =>
       replies.push(reply.lines),
     );
-    driver.pump();
+    await driver.settleUntil(() => replies.length === 2, "history and inventory replies");
     expect(replies).toEqual([["0"], FIXTURE.truthRows]);
     expect(driver.channel.core.pendingCount).toBe(0);
     expect(driver.deferredCommands).toHaveLength(0);

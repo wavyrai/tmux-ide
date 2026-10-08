@@ -117,8 +117,113 @@ jobs:
           node scripts/build-bundled-tmux.mjs --source .native-tmux-source
           tar -C packages/daemon/dist/native -czf "$RUNNER_TEMP/tmux-ide-native-tmux-${{ matrix.platform }}.tar.gz" tmux
       - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
+        if: runner.os == 'macOS'
+        with:
+          bun-version-file: .bun-version
       - name: Install qualification dependencies
         run: pnpm install --frozen-lockfile
+      - name: Qualify exact bundled tmux boundary
+        id: tmux_boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Short private path keeps macOS AF_UNIX fixture sockets representable.
+          proof="$(mktemp -d /tmp/tmb.XXXXXX)"
+          echo "evidence=$proof" >> "$GITHUB_OUTPUT"
+          mkdir "$proof/tmp"
+          export TMPDIR="$proof/tmp"
+          git rev-parse HEAD > "$proof/commit.txt"
+          node --version > "$proof/node-version.txt"
+          cp native/tmux/provenance.json "$proof/provenance.json"
+          bundle="$PWD/packages/daemon/dist/native/tmux/$(node -p 'process.platform + "-" + process.arch')"
+          cp "$bundle/manifest.json" "$proof/bundle-manifest.json"
+          test -x "$bundle/tmux"
+          unset TMUX TMUX_PANE
+          export TMUX_IDE_BOUNDARY_TEST_BINARY="$bundle/tmux"
+          export TMUX_IDE_ORACLE_EXPECT_NATIVE=1
+          export TMUX_IDE_REQUIRE_NATIVE_CAPABILITIES=1
+          export PATH="$bundle:$PATH"
+          pnpm test:tmux-boundary 2>&1 | tee "$proof/boundary.log"
+      - name: Retain bundled boundary reports including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-boundary-${{ matrix.platform }}-${{ github.sha }}
+          path: ${{ steps.tmux_boundary.outputs.evidence }}
+          if-no-files-found: error
+          retention-days: 14
+      - name: Prepare disposable macOS SSH account
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { userInfo } from 'node:os';
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const receipt = { before: userInfo(), directoryShell: null, after: null, exportedShell: null, failure: null, success: false };
+          try {
+            if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_ENVIRONMENT !== 'github-hosted' ||
+                process.platform !== 'darwin' || process.getuid() === 0 ||
+                !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(receipt.before.username))
+              throw new Error('Requires a disposable hosted macOS non-root account');
+            if (receipt.before.shell !== '/bin/zsh')
+              execFileSync('/usr/bin/sudo', ['-n', '/usr/bin/dscl', '.', '-create',
+                `/Users/${receipt.before.username}`, 'UserShell', '/bin/zsh'], { timeout: 10000 });
+            receipt.directoryShell = execFileSync('/usr/bin/dscl', ['.', '-read',
+              `/Users/${receipt.before.username}`, 'UserShell'],
+              { encoding: 'utf8', timeout: 10000, maxBuffer: 65536 }).trim();
+            if (receipt.directoryShell !== 'UserShell: /bin/zsh')
+              throw new Error('Directory account shell verification failed');
+            // Verify through a fresh process after directory mutation. A hosted
+            // rerun must establish this result; same-process lookup is not proof.
+            receipt.after = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
+              "import { userInfo } from 'node:os'; process.stdout.write(JSON.stringify(userInfo()));"],
+              { encoding: 'utf8', timeout: 10000, maxBuffer: 65536 }));
+            if (receipt.after.uid !== receipt.before.uid || receipt.after.username !== receipt.before.username ||
+                receipt.after.shell !== '/bin/zsh') throw new Error('SSH account shell verification failed');
+            // Bun's userInfo shell follows SHELL. Propagate only the account
+            // value independently verified above to subsequent hosted steps.
+            appendFileSync(process.env.GITHUB_ENV, 'SHELL=/bin/zsh\n');
+            receipt.exportedShell = '/bin/zsh';
+            receipt.success = true;
+          } catch (error) {
+            receipt.failure = {
+              name: String(error?.name ?? 'Error').slice(0, 256),
+              message: String(error?.message ?? error).slice(0, 2048),
+              status: Number.isInteger(error?.status) ? error.status : null,
+              signal: typeof error?.signal === 'string' ? error.signal : null,
+            };
+            throw error;
+          } finally {
+            writeFileSync(join(process.env.RUNNER_TEMP, 'styled-ssh-account.json'), JSON.stringify(receipt, null, 2));
+            console.log(JSON.stringify(receipt));
+          }
+          NODE
+
+      - name: Require styled SSH renderer qualification on macOS
+        if: runner.os == 'macOS'
+        id: styled_ssh
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/styled-ssh-evidence"
+          echo "evidence=$proof" >> "$GITHUB_OUTPUT"
+          # sshd StrictModes requires safe ancestry; /tmp is unsuitable.
+          export TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)"
+          bundle="$PWD/packages/daemon/dist/native/tmux/$(node -p 'process.platform + "-" + process.arch')"
+          pnpm qualify:styled-ssh --binary "$bundle/tmux" --manifest "$bundle/manifest.json" --bun "$(command -v bun)" --evidence-dir "$proof"
+      - name: Retain styled SSH evidence including failures
+        if: ${{ always() && runner.os == 'macOS' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: styled-ssh-${{ matrix.platform }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/styled-ssh-evidence
+            ${{ runner.temp }}/styled-ssh-account.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Qualify installer transactions on this platform
         run: pnpm test:installer
       - name: Prepare Linux user service manager

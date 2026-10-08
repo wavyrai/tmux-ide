@@ -833,3 +833,64 @@ describe("terminal fast-lane shared conformance", () => {
     expect(new Set(traces.map(({ surface }) => surface)).size).toBe(4);
   });
 });
+
+it("keeps unavailable panes isolated, rejects stale resurrection and recovers with a new generation", async () => {
+  const callbacks = new Map<
+    string,
+    { update: (u: CanonicalTerminalReplicaUpdate) => void; unavailable: (m: string) => void }
+  >();
+  let writes = 0;
+  const lane = createTerminalFastLane({
+    address: address(),
+    source: {
+      subscribe: (a, update, onUnavailable) => {
+        callbacks.set(a.semanticPaneId, { update, unavailable: onUnavailable! });
+        return () => {};
+      },
+    },
+    repair: {
+      request: () => {
+        throw Error("must not reconnect");
+      },
+    },
+    control: {
+      owns: () => true,
+      request: async () => true,
+      write: async () => {
+        writes++;
+        return "ok";
+      },
+      resize: async () => "ok",
+    },
+  });
+  const errors: string[] = [];
+  lane.subscribePane(
+    "pane-a",
+    () => {},
+    (m) => errors.push(m),
+  );
+  lane.subscribePane("pane-b", () => {});
+  const old = callbacks.get("pane-a")!;
+  old.update(seed(blankTerminalReplicaSnapshot(4, 2)));
+  callbacks
+    .get("pane-b")!
+    .update(seed(blankTerminalReplicaSnapshot(4, 2), 0, GENERATION_A, "pane-b"));
+  old.unavailable("unsupported capture");
+  expect(lane.paneState("pane-a")).toBeNull();
+  old.update(seed(blankTerminalReplicaSnapshot(4, 2), 1));
+  expect(lane.paneState("pane-a")).toBeNull();
+  expect(lane.requestRepair("pane-a", "missing-state")).toBe(false);
+  expect(await lane.sendInput("pane-a", { kind: "text", data: "bad" })).toEqual({
+    status: "rejected",
+    reason: "authority-lost",
+  });
+  expect(await lane.sendInput("pane-b", { kind: "text", data: "ok" })).toEqual({ status: "sent" });
+  expect(writes).toBe(1);
+  lane.replaceGeneration(address(GENERATION_B));
+  callbacks.get("pane-a")!.update(seed(blankTerminalReplicaSnapshot(4, 2), 0, GENERATION_B));
+  old.unavailable("stale");
+  expect(lane.paneUnavailable("pane-a")).toBeNull();
+  expect(lane.paneState("pane-a")?.generation).toBe(GENERATION_B);
+  expect(errors).toEqual(["unsupported capture"]);
+  lane.dispose();
+});

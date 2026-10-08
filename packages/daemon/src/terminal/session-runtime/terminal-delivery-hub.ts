@@ -1,3 +1,4 @@
+import { StockCaptureTabUnavailableError } from "./stock-capture-fidelity.ts";
 import {
   MAX_RETAINED_NATIVE_BACKING_BYTES,
   takeNativeSeedBacking,
@@ -27,6 +28,8 @@ import {
 } from "@tmux-ide/contracts";
 import {
   TerminalDeliveryStateTooLargeError,
+  terminalReplicaRowsEqual,
+  TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS,
   applyTerminalReplicaUpdate,
   applyTerminalReplicaUpdateCooperatively,
   terminalReplicaUpdateNeedsCooperativeReduction,
@@ -71,6 +74,11 @@ export interface TerminalDeliveryMetrics {
   /** Unique delivery subscribers, independent of their pane count. */
   readonly clients: number;
   readonly connections: number;
+  readonly sourceSubscriptions: number;
+  readonly sourceCloseFailures: number;
+  readonly pendingSourceCloses: number;
+  readonly pendingSourceSubscriptions: number;
+  readonly pendingClients: number;
   readonly inFlight: number;
   readonly latestPointers: number;
   readonly coalesced: number;
@@ -196,6 +204,8 @@ interface ClientState {
   readonly outgoing: Array<() => TerminalDeliveryServerMessage>;
   sending: boolean;
   retireAfterDrain: boolean;
+  /** A capture capability failure is terminal before the fault sink drains. */
+  captureUnavailable: boolean;
   lastAck: TerminalDeliveryAck | null;
   /** Delivery displaced by authoritative source close; its racing ACK is benign. */
   sourceClosedFlight: TerminalDeliveryEnvelope | null;
@@ -312,6 +322,8 @@ export class SessionRuntimeTerminalDeliveryHub {
   readonly #observability: SessionRuntimeObservability;
   readonly #panes = new Map<string, PaneState>();
   readonly #clients = new Map<string, ClientState>();
+  #sourceCloseFailures = 0;
+  #pendingSourceCloses = 0;
   /** Synchronous reservations held while an async pane source is starting. */
   readonly #pendingClients = new Map<string, string>();
   readonly #cache = new Map<string, CachedRepresentation>();
@@ -409,6 +421,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         outgoing: [],
         sending: false,
         retireAfterDrain: false,
+        captureUnavailable: false,
         lastAck: null,
         sourceClosedFlight: null,
         backgroundTimer: null,
@@ -433,9 +446,35 @@ export class SessionRuntimeTerminalDeliveryHub {
         },
         close: async () => this.#closeClient(client),
       };
+    } catch (error) {
+      if (!(error instanceof StockCaptureTabUnavailableError)) throw error;
+      // Negotiation still settles this pane; no invented canonical seed is published.
+      await accept({
+        type: "terminal.delivery.fault",
+        reason: "source-closed",
+        message: error.message,
+        deliveryNonce: negotiation.negotiated.deliveryNonce,
+      });
+      return {
+        negotiation,
+        closed: Promise.resolve("closed" as const),
+        ack: () => {},
+        nack: () => {},
+        setVisibility: () => {},
+        close: async () => {},
+      };
     } finally {
       this.#pendingClients.delete(key);
     }
+  }
+
+  /** Retire only this pane's delivery owners before its canonical owner is disposed. */
+  failPaneCapture(semanticPaneId: string, error: StockCaptureTabUnavailableError): void {
+    for (const client of this.#clients.values())
+      if (client.paneId === semanticPaneId && !client.closed && !client.captureUnavailable) {
+        client.captureUnavailable = true;
+        this.#fault(client, "source-closed", error.message);
+      }
   }
 
   retainedNativeBacking(
@@ -506,6 +545,12 @@ export class SessionRuntimeTerminalDeliveryHub {
     return Object.freeze({
       clients: new Set([...this.#clients.values()].map((client) => client.clientId)).size,
       connections: this.#clients.size,
+      sourceSubscriptions: [...this.#panes.values()].filter((pane) => pane.source !== null).length,
+      pendingSourceSubscriptions: [...this.#panes.values()].filter((pane) => pane.source === null)
+        .length,
+      pendingClients: this.#pendingClients.size,
+      sourceCloseFailures: this.#sourceCloseFailures,
+      pendingSourceCloses: this.#pendingSourceCloses,
       inFlight: [...this.#clients.values()].filter((client) => client.inFlight).length,
       latestPointers: [...this.#clients.values()].filter((client) => client.latestRevision !== null)
         .length,
@@ -588,8 +633,20 @@ export class SessionRuntimeTerminalDeliveryHub {
       pane.pendingCanonicalCells = 0;
       pane.canonicalScheduled = false;
     }
-    await Promise.allSettled(panes.map((pane) => pane.source?.close()));
+    await Promise.allSettled(panes.map((pane) => pane.source && this.#closeSource(pane.source)));
     this.#clearCache();
+  }
+
+  async #closeSource(source: TerminalReplicaSourceSubscription): Promise<void> {
+    this.#pendingSourceCloses += 1;
+    try {
+      await source.close();
+    } catch (error) {
+      this.#sourceCloseFailures += 1;
+      throw error;
+    } finally {
+      this.#pendingSourceCloses -= 1;
+    }
   }
 
   async close(): Promise<void> {
@@ -646,7 +703,7 @@ export class SessionRuntimeTerminalDeliveryHub {
           this.#panes.get(semanticPaneId) !== pane ||
           pane?.canonicalAbort.signal.aborted
         ) {
-          await source.close();
+          await this.#closeSource(source);
           throw new Error("Terminal delivery source retired during startup");
         }
         pane!.source = source;
@@ -850,7 +907,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     pane.revisions.set(update.revision, record);
     this.#pruneCanonicalRevisions(semanticPaneId);
     for (const client of this.#clients.values()) {
-      if (client.paneId !== semanticPaneId || client.closed) continue;
+      if (client.paneId !== semanticPaneId || client.closed || client.captureUnavailable) continue;
       if (!client.lifecycleOpenRecorded)
         client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
       if (
@@ -880,7 +937,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         pane.pendingCanonical.length = 0;
         pane.pendingCanonicalCells = 0;
         pane.canonicalScheduled = false;
-        void pane.source?.close().catch(() => undefined);
+        void (pane.source && this.#closeSource(pane.source).catch(() => undefined));
         this.#clearCache();
       }, 0);
     }
@@ -923,6 +980,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   #schedule(client: ClientState): void {
     if (
       client.closed ||
+      client.captureUnavailable ||
       client.inFlight ||
       client.encoding ||
       client.latestRevision === null ||
@@ -963,6 +1021,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       !pane ||
       !target ||
       client.closed ||
+      client.captureUnavailable ||
       client.inFlight ||
       client.encoding ||
       client.visibility === "hidden" ||
@@ -1330,7 +1389,12 @@ export class SessionRuntimeTerminalDeliveryHub {
         };
         this.#reseeds += 1;
       } else {
-        const patchPayload = semanticPayload(client.baselineRevision, baseline, target);
+        const patchPayload = semanticPayload(
+          client.baselineRevision,
+          baseline,
+          target,
+          pane.revisions.get(client.baselineRevision)?.update.incarnation,
+        );
         const seedPayload = patchPayload.frame === "tombstone" ? null : semanticSeed(target);
         const legacyAttempts = null;
         if (patchPayload.frame !== "patch") {
@@ -1663,6 +1727,22 @@ export class SessionRuntimeTerminalDeliveryHub {
 
   #nack(client: ClientState, input: TerminalDeliveryNack): void {
     const nack = TerminalDeliveryNackSchemaZ.parse(input);
+    const closed = client.sourceClosedFlight;
+    // A decoder may have sent this NACK before observing the pane-local fault.
+    // Only the exact displaced transaction is inert; unrelated feedback still
+    // follows the normal protocol-violation path below.
+    if (
+      client.captureUnavailable &&
+      !client.inFlight &&
+      closed &&
+      nack.workspaceName === closed.workspaceName &&
+      nack.semanticPaneId === closed.semanticPaneId &&
+      nack.generation === closed.generation &&
+      nack.incarnation === closed.incarnation &&
+      nack.deliveryNonce === closed.deliveryNonce &&
+      nack.transactionId === closed.transactionId
+    )
+      return;
     const envelope = client.inFlight?.envelope;
     if (
       !envelope ||
@@ -1825,7 +1905,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       pane.pendingCanonicalCells = 0;
       pane.canonicalScheduled = false;
     }
-    await pane?.source?.close().catch(() => undefined);
+    if (pane?.source) await this.#closeSource(pane.source).catch(() => undefined);
     this.#clearCache();
   }
 
@@ -2233,6 +2313,7 @@ function semanticPayload(
   baselineRevision: number,
   baseline: TerminalReplicaSnapshot | null,
   target: RevisionRecord,
+  baselineIncarnation?: string,
 ): TerminalSemanticDeliveryPayload {
   const update = target.update;
   if (!target.state.snapshot) {
@@ -2244,8 +2325,8 @@ function semanticPayload(
       tombstone: update.tombstone,
     };
   }
-  // Adjacent canonical patches are already the cheapest exact diff. A skipped
-  // revision uses an atomic seed; the m56.2 adjacent reducer is never weakened.
+  // Adjacent canonical patches are already the cheapest exact diff. Preserve
+  // this direct path before considering an exact coalesced snapshot patch.
   if (baseline && update.type === "terminal.patch" && update.baseRevision === baselineRevision)
     return {
       frame: "patch",
@@ -2253,6 +2334,59 @@ function semanticPayload(
       revision: update.revision,
       patch: update.patch,
     };
+  // A skipped revision may still have an exact small representation. Only
+  // append-only history is proved here; trim/reflow and changed dimensions
+  // retain the full seed boundary. Equality includes wrapped and all cells.
+  const snapshot = target.state.snapshot;
+  if (
+    baseline &&
+    baselineIncarnation === update.incarnation &&
+    baseline.cols === snapshot.cols &&
+    baseline.rows === snapshot.rows &&
+    baseline.history.length <= snapshot.history.length
+  ) {
+    // Identity reuse is cheap, but detached equal histories must not turn a
+    // cooperative seed into an unbounded synchronous cell comparison.
+    let comparisonCells = 0;
+    const equal = (
+      left: TerminalReplicaSnapshot["grid"][number],
+      right: TerminalReplicaSnapshot["grid"][number],
+    ) => {
+      if (left === right) return true;
+      comparisonCells += right.cells.length;
+      return comparisonCells <= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS
+        ? terminalReplicaRowsEqual(left, right)
+        : null;
+    };
+    for (let index = 0; index < baseline.history.length; index++)
+      if (equal(baseline.history[index]!, snapshot.history[index]!) !== true)
+        return semanticSeed(target);
+    const rows: { index: number; row: TerminalReplicaSnapshot["grid"][number] }[] = [];
+    for (let index = 0; index < snapshot.grid.length; index++) {
+      const same = equal(baseline.grid[index]!, snapshot.grid[index]!);
+      if (same === null) return semanticSeed(target);
+      if (!same) rows.push({ index, row: snapshot.grid[index]! });
+    }
+    const appendedRows = snapshot.history.length - baseline.history.length;
+    // Compact patches serialize synchronously. Do not move a large appended
+    // suffix or repaint across the seed-only cooperative encoding boundary.
+    if ((rows.length + appendedRows) * snapshot.cols >= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS)
+      return semanticSeed(target);
+    const append = snapshot.history.slice(baseline.history.length);
+    return {
+      frame: "patch",
+      baseRevision: baselineRevision,
+      revision: update.revision,
+      patch: {
+        rows,
+        ...(append.length ? { historyDelta: { trim: 0, append } } : {}),
+        cursor: snapshot.cursor,
+        modes: snapshot.modes,
+        placements: snapshot.placements,
+        bootstrap: snapshot.bootstrap,
+      },
+    };
+  }
   return semanticSeed(target);
 }
 

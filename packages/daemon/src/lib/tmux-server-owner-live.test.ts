@@ -7,6 +7,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createNativeTmuxServerOwner, type NativeTmuxServerOwner } from "./tmux-server-owner.ts";
 
@@ -23,7 +24,7 @@ import { createTmuxServerProbe } from "./tmux-server-registration.ts";
 
 const hasTmux = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 describe.skipIf(!hasTmux).sequential("independent native tmux server owners", () => {
-  const root = mkdtempSync("/tmp/tmux-owner-");
+  const root = mkdtempSync(join(tmpdir(), "tmux-owner-"));
   const executablePath = realpathSync(execFileSync("which", ["tmux"], { encoding: "utf8" }).trim());
   const sockets = [join(root, "a.sock"), join(root, "b.sock")];
   const owners: NativeTmuxServerOwner[] = [];
@@ -419,4 +420,51 @@ describe.skipIf(!hasTmux).sequential("independent native tmux server owners", ()
       }
     }
   }, 45_000);
+  it("keeps spaced and healthy native sessions attachable in one owner", async () => {
+    const socket = join(root, "spaced.sock");
+    sockets.push(socket);
+    const names = ["prototyper mgt", "sfora"];
+    const sessionIds = names.map((name, index) => {
+      const id = run(socket, [
+        "new-session",
+        "-d",
+        "-P",
+        "-F",
+        "#{session_id}",
+        "-s",
+        name,
+        "-n",
+        "original",
+        "exec sleep 300",
+      ]);
+      run(socket, ["set-option", "-p", "-t", id, "@tmux_ide_pane_id", `pane.${index}`]);
+      run(socket, ["set-option", "-w", "-t", id, "@tmux_ide_window_id", `window.${index}`]);
+      return id;
+    });
+    const owner = await createNativeTmuxServerOwner({
+      environmentId: "00000000-0000-4000-8000-000000000001",
+      serverId: `tmux-server.${"3".repeat(32)}`,
+      generation: randomUUID(),
+      tmuxAuthority: { executablePath, socketSelector: { kind: "path", path: socket } },
+      stateDirectory: join(root, "spaced-state"),
+      webSocketUrl: "ws://127.0.0.1:45678/v2/terminal/pane-streams/redeem",
+    });
+    owners.push(owner);
+    expect((await owner.catalog()).map((row) => row.sessionName).sort()).toEqual([...names].sort());
+    for (const [index, name] of names.entries()) {
+      const workspace = owner.workspaceRegistry.list().find((row) => row.sessionName === name)!;
+      await expect(
+        owner.terminalInventoryRuntime.discoverTerminalRuntimeSession(name),
+      ).resolves.toMatchObject({ runtimeSessionId: sessionIds[index], catalogIssue: null });
+      await expect(
+        owner.terminalInventoryRuntime.semanticPaneCatalog.resolve({
+          workspaceName: workspace.name,
+          semanticPaneId: `pane.${index}`,
+        }),
+      ).resolves.toMatchObject({ source: { sessionId: sessionIds[index] } });
+    }
+    expect(run(socket, ["list-sessions", "-F", "#{session_name}"]).split("\n").sort()).toEqual(
+      [...names].sort(),
+    );
+  }, 30_000);
 });

@@ -107,3 +107,107 @@ test("resource summaries retain missing-process caveats and exclude failed-run s
   assert.match(markdown, /tmux resource collector: missing root/);
   assert.doesNotMatch(markdown, /CPU p50/);
 });
+
+test("keeps run denominators and per-run spread including failed partial observations", () => {
+  const report = {
+    options: { targets: ["tmux", "tmux-ide"] },
+    runs: [
+      { target: "tmux", status: "passed", samples: samples(1, 3, 9) },
+      { target: "tmux", status: "failed", samples: samples(20, 40) },
+    ],
+  };
+  const [a, b] = summarizeComparativeTerminalReport(report);
+  assert.deepEqual([a.attempted, a.succeeded, a.failed], [2, 1, 1]);
+  assert.deepEqual([b.attempted, b.succeeded, b.failed], [0, 0, 0]);
+  assert.deepEqual(
+    [a.runs[0].echo.p50, a.runs[0].echo.min, a.runs[0].echo.max, a.runs[0].echo.range],
+    [3, 1, 9, 8],
+  );
+  assert.equal(a.runs[1].echo.range, 20);
+  assert.equal(a.echo.count, 3);
+  assert.match(renderComparativeTerminalReport(report), /2 \/ 1 \/ 1/);
+  assert.match(renderComparativeTerminalReport(report), /not an attempted-interaction denominator/);
+});
+
+const phase = (name, entries, extra = {}) => ({
+  phase: name,
+  processes: entries.map(([pid, cpuSeconds]) => ({ pid, cpuSeconds })),
+  ...extra,
+});
+
+test("phase CPU uses matched process deltas and exposes churn and missing roots", () => {
+  const report = {
+    runs: [
+      {
+        target: "tmux",
+        status: "failed",
+        resources: [
+          phase("before-input", [
+            [1, 2],
+            [2, 5],
+          ]),
+          phase(
+            "after-input",
+            [
+              [1, 2.5],
+              [3, 10],
+            ],
+            { missingRootPids: [2] },
+          ),
+          phase("after-resize", [
+            [1, 3],
+            [3, 11],
+          ]),
+        ],
+      },
+    ],
+  };
+  const [input, resize] = summarizeComparativeTerminalReport(report)[0].runs[0].phaseCpu;
+  assert.equal(input.matchedCpuSeconds, 0.5);
+  assert.deepEqual(input.missingPids, [2]);
+  assert.deepEqual(input.addedPids, [3]);
+  assert.match(input.limitations.join(" "), /owned root is missing/);
+  assert.match(input.limitations.join(" "), /partial, not total/);
+  assert.equal(resize.matchedCpuSeconds, 1.5);
+  assert.match(renderComparativeTerminalReport(report), /0.50 \| 1.50/);
+});
+
+test("CPU missing, duplicate or decreasing counters never fabricate zero work", () => {
+  for (const resources of [
+    [],
+    [phase("before-input", [[1, 2]])],
+    [phase("before-input", [[1, 2]]), phase("after-input", [[1, 1]])],
+    [phase("before-input", [[1, 2]]), phase("after-input", [[1, NaN]])],
+    [
+      phase("before-input", [[1, 2]]),
+      phase("after-input", [
+        [1, 3],
+        [1, 3],
+      ]),
+    ],
+  ]) {
+    assert.equal(
+      summarizeComparativeTerminalReport({ runs: [{ target: "tmux", resources }] })[0].runs[0]
+        .phaseCpu[0].matchedCpuSeconds,
+      null,
+    );
+  }
+});
+
+test("renders shared CPU caveats once while preserving per-phase summary limitations", () => {
+  const run = {
+    target: "tmux",
+    status: "passed",
+    resources: [
+      phase("before-input", [[1, 1]]),
+      phase("after-input", [[1, 2]]),
+      phase("after-resize", [[1, 3]]),
+    ],
+  };
+  const report = { runs: [run, run] };
+  const markdown = renderComparativeTerminalReport(report);
+  assert.equal(markdown.split("PID reuse cannot be detected.").length - 1, 1);
+  assert.doesNotMatch(markdown, /missing PIDs/);
+  for (const entry of summarizeComparativeTerminalReport(report)[0].runs)
+    for (const cpu of entry.phaseCpu) assert.match(cpu.limitations.join(" "), /PID reuse/);
+});

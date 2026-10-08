@@ -21,6 +21,7 @@ import { withBundledTmuxResources } from "../../lib/bundled-tmux.ts";
  * chance to detach us — killing the reader first can wedge the server.
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { shellEscape } from "../../lib/shell.ts";
 import type { NativeTmuxServerIdentity } from "../../lib/tmux-server-generation-runner.ts";
 import {
@@ -116,8 +117,13 @@ export type AtomicPaneSnapshotFailureReason =
   | "retired";
 
 export interface AtomicPaneSnapshotResult {
+  /** Present only for an owned pause hook; an already-paused target emits no new notification.
+   * The caller must authenticate the live target and exact nonwaiting hook body. */
+  readonly pauseObserved?: boolean;
   readonly ok: boolean;
   readonly captureLines: readonly string[];
+  /** Optional second representation; bounded together with captureLines. */
+  readonly ansiCaptureLines?: readonly string[];
   readonly cursorLine: string | null;
   readonly continueObserved: boolean;
   readonly statusObserved: boolean;
@@ -140,6 +146,10 @@ export interface AtomicPaneSnapshotProgress {
 }
 
 export interface AtomicPaneSnapshotCollector {
+  /** Pause uses start / refresh-client :pause / complete, sharing this sole wire owner. */
+  readonly kind?: "snapshot" | "pause";
+  /** Adds ANSI capture / ansi-capture-end after capture-end, before cursor. */
+  readonly dualCapture?: boolean;
   readonly nonce: string;
   readonly runtimePaneId: string;
   readonly maxCaptureBytes: number;
@@ -151,6 +161,8 @@ export interface AtomicPaneSnapshotCollector {
   /** Authenticated, bounded forward progress for the currently armed owner. */
   readonly onProgress?: (progress: AtomicPaneSnapshotProgress) => void;
   readonly onSettled: (result: AtomicPaneSnapshotResult) => void;
+  /** Sole wire-ownership release signal; failed/retired work requires a FIFO fence or exit. */
+  readonly onDrained?: (reason: "complete" | "fence" | "channel-exit") => void;
 }
 
 const ATOMIC_CAPTURE_BYTE_HARD_CAP = 16 * 1024 * 1024;
@@ -288,15 +300,19 @@ export class ControlChannelCore {
   private failed = false;
   private atomicCollector: {
     spec: AtomicPaneSnapshotCollector;
+    retired: boolean;
+    settled: boolean;
     started: boolean;
     blockOrdinal: number;
     blockContentCount: number;
     captureLines: string[];
+    ansiCaptureLines: string[];
     captureBytes: number;
     totalLines: number;
     totalBytes: number;
     cursorLine: string | null;
     continueObserved: boolean;
+    pauseObserved: boolean;
     statusObserved: boolean;
     observerEmissionObserved: boolean;
     lastCompletedOrdinal: number;
@@ -437,6 +453,10 @@ export class ControlChannelCore {
 
   armAtomicPaneSnapshotCollector(spec: AtomicPaneSnapshotCollector): boolean {
     if (this.failed || this.atomicCollector) return false;
+    if (spec.kind !== undefined && spec.kind !== "snapshot" && spec.kind !== "pause") return false;
+    if (spec.kind === "pause" && (spec.observerCommandCount !== 0 || spec.dualCapture))
+      return false;
+    if (spec.dualCapture !== undefined && typeof spec.dualCapture !== "boolean") return false;
     if (!/^[0-9a-f]{32,128}$/.test(spec.nonce) || !/^%\d+$/.test(spec.runtimePaneId)) return false;
     if (
       !Number.isSafeInteger(spec.maxCaptureBytes) ||
@@ -455,15 +475,19 @@ export class ControlChannelCore {
       return false;
     this.atomicCollector = {
       spec,
+      retired: false,
+      settled: false,
       started: false,
       blockOrdinal: -1,
       blockContentCount: 0,
       captureLines: [],
+      ansiCaptureLines: [],
       captureBytes: 0,
       totalLines: 0,
       totalBytes: 0,
       cursorLine: null,
       continueObserved: false,
+      pauseObserved: false,
       statusObserved: false,
       observerEmissionObserved: false,
       lastCompletedOrdinal: -1,
@@ -477,27 +501,120 @@ export class ControlChannelCore {
     reason: AtomicPaneSnapshotFailureReason = "retired",
   ): boolean {
     const collector = this.atomicCollector;
-    if (!collector || collector.spec.nonce !== nonce) return false;
-    this.atomicCollector = null;
-    collector.spec.onSettled(
-      Object.freeze({
-        ok: false,
-        captureLines: Object.freeze([]),
-        cursorLine: null,
-        continueObserved: collector.continueObserved,
-        statusObserved: collector.statusObserved,
-        observerEmissionObserved: collector.observerEmissionObserved,
-        started: collector.started,
-        lastCompletedOrdinal: collector.lastCompletedOrdinal,
-        captureLineCount: collector.captureLines.length,
-        captureByteCount: collector.captureBytes,
-        failureReason: collector.failureReason ?? reason,
-      }),
-    );
+    if (!collector || collector.spec.nonce !== nonce || collector.settled) return false;
+    collector.retired = true;
+    collector.settled = true;
+    const result: AtomicPaneSnapshotResult = Object.freeze({
+      ok: false,
+      captureLines: Object.freeze([]),
+      ...(collector.spec.dualCapture ? { ansiCaptureLines: Object.freeze([]) } : {}),
+      cursorLine: null,
+      continueObserved: collector.continueObserved,
+      statusObserved: collector.statusObserved,
+      observerEmissionObserved: collector.observerEmissionObserved,
+      started: collector.started,
+      lastCompletedOrdinal: collector.lastCompletedOrdinal,
+      captureLineCount: collector.captureLines.length + collector.ansiCaptureLines.length,
+      captureByteCount: collector.captureBytes,
+      failureReason: collector.failureReason ?? reason,
+      ...(collector.spec.kind === "pause" ? { pauseObserved: collector.pauseObserved } : {}),
+    });
+    // Release payload memory before callbacks can throw or reenter retirement.
+    collector.captureLines.length = 0;
+    collector.ansiCaptureLines.length = 0;
+    collector.cursorLine = null;
+    collector.totalBytes = 0;
+    collector.totalLines = 0;
+    collector.spec.onSettled(result);
     return true;
   }
 
+  /** Caller has validated the separate ordinary command's exact fence reply. */
+  releaseRetiredCollector(nonce: string): boolean {
+    const collector = this.atomicCollector;
+    if (!collector?.retired || collector.spec.nonce !== nonce) return false;
+    this.atomicCollector = null;
+    this.notifyAtomicDrained(collector, "fence");
+    return true;
+  }
+
+  private notifyAtomicDrained(
+    collector: NonNullable<ControlChannelCore["atomicCollector"]>,
+    reason: "complete" | "fence" | "channel-exit",
+  ): void {
+    try {
+      collector.spec.onDrained?.(reason);
+    } catch {
+      this.failRetiredDrain("snapshot drain callback failed");
+    }
+  }
+
+  private failRetiredDrain(reason: string): void {
+    try {
+      this.fail(reason);
+    } finally {
+      this.handlers.onExit(reason);
+    }
+  }
+
+  private consumeRetiredSnapshotLine(line: string): boolean {
+    const collector = this.atomicCollector;
+    if (!collector?.retired) return false;
+    const event = parseControlLine(line, this.inReply);
+    if (this.inReply && this.currentReplyFlags === 0) {
+      collector.totalBytes += Buffer.byteLength(line, "latin1") + 1;
+      collector.totalLines += 1;
+      if (
+        collector.totalBytes > collector.spec.maxCaptureBytes + 64 * 1024 ||
+        collector.totalLines > collector.spec.maxCaptureLines + 64
+      ) {
+        this.failRetiredDrain("retired snapshot drain exceeded bounds");
+        return true;
+      }
+      // Raw rows may look like %begin, a sentinel, or the fence payload. Only
+      // the matching raw terminator changes framing; none can redeem a FIFO slot.
+      if (event.kind === "end" || event.kind === "error") {
+        if (event.flags !== 0 || event.num !== this.currentReplyNum) {
+          this.failRetiredDrain("invalid retired snapshot framing");
+          return true;
+        }
+        this.inReply = false;
+        this.currentReplyNum = null;
+        this.currentReplyFlags = null;
+        this.currentReplyConsumesPending = false;
+      }
+      return true;
+    }
+    if (
+      event.kind === "begin" &&
+      (!Number.isSafeInteger(event.num) || event.num < 0 || ![0, 1].includes(event.flags))
+    ) {
+      this.failRetiredDrain("invalid retired snapshot opening frame");
+      return true;
+    }
+    if (event.kind === "begin" && event.flags === 0) {
+      this.inReply = true;
+      this.currentReplyNum = event.num;
+      this.currentReplyFlags = 0;
+      this.currentReplyConsumesPending = false;
+      return true;
+    }
+    if (event.kind === "end" || event.kind === "error") {
+      if (
+        !this.inReply ||
+        event.num !== this.currentReplyNum ||
+        event.flags !== this.currentReplyFlags
+      ) {
+        this.failRetiredDrain("invalid retired snapshot fence framing");
+        return true;
+      }
+    }
+    // Ordinary flags=1 responses still own their existing pending FIFO slots.
+    return false;
+  }
+
   feed(chunk: string, receivedAtMicros?: number): void {
+    if (this.failed) return;
     if (this.droppingOversizedReplyLine) {
       const newline = chunk.indexOf("\n");
       if (newline < 0) return;
@@ -515,6 +632,18 @@ export class ControlChannelCore {
       const lineReceivedAtMicros = this.bufferReceivedAtMicros;
       this.bufferReceivedAtMicros = this.buffer.length > 0 ? (receivedAtMicros ?? null) : null;
       this.handleLine(line, lineReceivedAtMicros);
+      if (this.failed) {
+        this.buffer = "";
+        return;
+      }
+    }
+    if (
+      this.atomicCollector?.retired &&
+      this.buffer.length > this.atomicCollector.spec.maxCaptureBytes + 64 * 1024
+    ) {
+      this.buffer = "";
+      this.failRetiredDrain("retired snapshot partial line exceeded bounds");
+      return;
     }
     const head = this.currentBudget();
     // Protocol terminators may themselves exceed a tiny payload budget and
@@ -535,23 +664,39 @@ export class ControlChannelCore {
   fail(reason: string): void {
     if (this.failed) return;
     this.failed = true;
-    if (this.atomicCollector)
-      this.retireAtomicPaneSnapshotCollector(this.atomicCollector.spec.nonce, "channel-exit");
+    if (this.atomicCollector) {
+      const collector = this.atomicCollector;
+      try {
+        this.retireAtomicPaneSnapshotCollector(collector.spec.nonce, "channel-exit");
+      } catch {
+        // A failed owner cannot prevent sibling requests from settling on exit.
+      }
+      this.atomicCollector = null;
+      try {
+        this.notifyAtomicDrained(collector, "channel-exit");
+      } catch {
+        // Exit notification callbacks may also fail; the pending FIFO still drains.
+      }
+    }
     for (const sink of this.pending.splice(0)) {
-      if (sink.kind === "promise") sink.reject(new Error(reason));
-      else if (sink.kind === "inline" || sink.kind === "bounded")
-        sink.onReply({ ok: false, lines: [reason] });
-      else if (sink.kind === "native-wrapper" && !sink.state.settled) {
-        sink.state.settled = true;
-        notifyNativeWrapper(sink.state, {
-          ok: false,
-          lines: [],
-          metadataStatus: sink.state.metadataStatus,
-          acknowledgement: sink.state.acknowledgement,
-        });
-      } else if (sink.kind === "command-list" && !sink.state.settled) {
-        sink.state.settled = true;
-        sink.state.onReply({ ok: false, lines: [reason] });
+      try {
+        if (sink.kind === "promise") sink.reject(new Error(reason));
+        else if (sink.kind === "inline" || sink.kind === "bounded")
+          sink.onReply({ ok: false, lines: [reason] });
+        else if (sink.kind === "native-wrapper" && !sink.state.settled) {
+          sink.state.settled = true;
+          notifyNativeWrapper(sink.state, {
+            ok: false,
+            lines: [],
+            metadataStatus: sink.state.metadataStatus,
+            acknowledgement: sink.state.acknowledgement,
+          });
+        } else if (sink.kind === "command-list" && !sink.state.settled) {
+          sink.state.settled = true;
+          sink.state.onReply({ ok: false, lines: [reason] });
+        }
+      } catch {
+        // Keep failure fan-out independent of any one request callback.
       }
     }
   }
@@ -709,6 +854,7 @@ export class ControlChannelCore {
         this.handlers.onOutput(event.pane, event.data, event.ageMs, timing);
         break;
       case "exit":
+        this.fail(event.reason ?? "control channel exited");
         this.handlers.onExit(event.reason);
         break;
       case "notify":
@@ -720,6 +866,7 @@ export class ControlChannelCore {
   private consumeAtomicPaneSnapshotLine(line: string): boolean {
     const collector = this.atomicCollector;
     if (!collector) return false;
+    if (collector.retired) return this.consumeRetiredSnapshotLine(line);
     const prefix = "%tmux-ide-atomic-v1 ";
     const ownPrefix = `${prefix}${collector.spec.nonce} `;
     if (line.startsWith(prefix) && !line.startsWith(ownPrefix)) {
@@ -733,7 +880,9 @@ export class ControlChannelCore {
         token !== "start" ||
         !this.inReply ||
         this.currentReplyFlags !== 0 ||
-        this.currentReplyNum === null
+        this.currentReplyNum === null ||
+        (collector.spec.kind === "pause" &&
+          (!Number.isSafeInteger(this.currentReplyNum) || this.currentReplyNum < 0))
       ) {
         collector.failureReason ??= "sentinel-order";
         return true;
@@ -751,6 +900,9 @@ export class ControlChannelCore {
     if (collector.totalBytes > collector.spec.maxCaptureBytes + 64 * 1024)
       collector.failureReason ??= "capture-byte-cap";
 
+    if (collector.spec.kind === "pause") return this.consumeOwnedPauseLine(line, token);
+
+    const shift = collector.spec.dualCapture ? 2 : 0;
     const guard = parseControlLine(line, this.inReply);
     if (guard.kind === "begin") {
       if (guard.flags !== 0 || this.inReply) collector.failureReason ??= "sentinel-order";
@@ -772,12 +924,21 @@ export class ControlChannelCore {
       // The ownership compare-and-unset is an if-shell command plus exactly
       // one selected branch command. Both commands retain the control client
       // and therefore each has its own flags=0 guard block.
-      const markerBranchOrdinal = 7 + collector.spec.observerCommandCount;
-      const statusOrdinal = 8 + collector.spec.observerCommandCount;
-      const completeOrdinal = 10 + collector.spec.observerCommandCount;
-      const contentRequired = new Set([0, 2, 3, 4, statusOrdinal, completeOrdinal]);
+      const markerBranchOrdinal = 7 + shift + collector.spec.observerCommandCount;
+      const statusOrdinal = 8 + shift + collector.spec.observerCommandCount;
+      const completeOrdinal = 10 + shift + collector.spec.observerCommandCount;
+      const contentRequired = new Set([
+        0,
+        2,
+        3 + shift,
+        4 + shift,
+        ...(shift ? [4] : []),
+        statusOrdinal,
+        completeOrdinal,
+      ]);
       const contentSilent =
         collector.blockOrdinal !== 1 &&
+        !(shift && collector.blockOrdinal === 3) &&
         collector.blockOrdinal !== markerBranchOrdinal &&
         !contentRequired.has(collector.blockOrdinal);
       const markerBranchValid =
@@ -792,7 +953,7 @@ export class ControlChannelCore {
         guard.kind === "end" &&
         !guardInvalid &&
         collector.spec.observerCommandCount > 0 &&
-        collector.blockOrdinal === 5 + collector.spec.observerCommandCount
+        collector.blockOrdinal === 5 + shift + collector.spec.observerCommandCount
       )
         collector.observerEmissionObserved = true;
       if (!guardInvalid && guard.kind === "end") {
@@ -803,31 +964,19 @@ export class ControlChannelCore {
       this.currentReplyNum = null;
       this.currentReplyFlags = null;
       if (collector.blockOrdinal === completeOrdinal) {
-        this.atomicCollector = null;
         const ok =
           collector.failureReason === null &&
           collector.cursorLine !== null &&
           collector.statusObserved;
-        collector.spec.onSettled(
-          Object.freeze({
-            ok,
-            captureLines: Object.freeze(ok ? [...collector.captureLines] : []),
-            cursorLine: ok ? collector.cursorLine : null,
-            continueObserved: collector.continueObserved,
-            statusObserved: collector.statusObserved,
-            observerEmissionObserved: collector.observerEmissionObserved,
-            started: collector.started,
-            lastCompletedOrdinal: collector.lastCompletedOrdinal,
-            captureLineCount: collector.captureLines.length,
-            captureByteCount: collector.captureBytes,
-            failureReason: ok ? null : (collector.failureReason ?? "sentinel-order"),
-          }),
-        );
+        this.completeAtomicCollector(collector, ok);
       }
       return true;
     }
 
-    if (line === `%continue ${collector.spec.runtimePaneId}` && collector.blockOrdinal === 5) {
+    if (
+      line === `%continue ${collector.spec.runtimePaneId}` &&
+      collector.blockOrdinal === 5 + shift
+    ) {
       if (collector.continueObserved) collector.failureReason ??= "duplicate-sentinel";
       collector.continueObserved = true;
       return true;
@@ -842,21 +991,27 @@ export class ControlChannelCore {
       return true;
     }
 
-    const markerBranchOrdinal = 7 + collector.spec.observerCommandCount;
-    const statusOrdinal = 8 + collector.spec.observerCommandCount;
-    const completeOrdinal = 10 + collector.spec.observerCommandCount;
+    const markerBranchOrdinal = 7 + shift + collector.spec.observerCommandCount;
+    const statusOrdinal = 8 + shift + collector.spec.observerCommandCount;
+    const completeOrdinal = 10 + shift + collector.spec.observerCommandCount;
     collector.blockContentCount += 1;
-    if (collector.blockOrdinal === 1) {
+    if (collector.blockOrdinal === 1 || (shift && collector.blockOrdinal === 3)) {
       collector.captureBytes += Buffer.byteLength(line, "latin1") + 1;
       if (collector.captureBytes > collector.spec.maxCaptureBytes)
         collector.failureReason ??= "capture-byte-cap";
-      if (collector.captureLines.length >= collector.spec.maxCaptureLines)
+      if (
+        collector.captureLines.length + collector.ansiCaptureLines.length >=
+        collector.spec.maxCaptureLines
+      )
         collector.failureReason ??= "capture-line-cap";
-      else collector.captureLines.push(line);
+      else
+        (collector.blockOrdinal === 1 ? collector.captureLines : collector.ansiCaptureLines).push(
+          line,
+        );
       this.reportAtomicPaneSnapshotProgress(collector);
       return true;
     }
-    if (collector.blockOrdinal === 3) {
+    if (collector.blockOrdinal === 3 + shift) {
       if (collector.cursorLine !== null) collector.failureReason ??= "cursor-cardinality";
       else if (Buffer.byteLength(line, "latin1") > collector.spec.maxCursorBytes)
         collector.failureReason ??= "cursor-byte-cap";
@@ -871,19 +1026,121 @@ export class ControlChannelCore {
     const expectedToken =
       collector.blockOrdinal === 2
         ? "capture-end"
-        : collector.blockOrdinal === 4
-          ? "cursor-end"
-          : collector.blockOrdinal === statusOrdinal
-            ? "status-ok"
-            : collector.blockOrdinal === completeOrdinal
-              ? "complete"
-              : null;
+        : shift && collector.blockOrdinal === 4
+          ? "ansi-capture-end"
+          : collector.blockOrdinal === 4 + shift
+            ? "cursor-end"
+            : collector.blockOrdinal === statusOrdinal
+              ? "status-ok"
+              : collector.blockOrdinal === completeOrdinal
+                ? "complete"
+                : null;
     if (expectedToken === null || token !== expectedToken)
       collector.failureReason ??= token === "start" ? "duplicate-sentinel" : "sentinel-order";
     if (collector.blockOrdinal === statusOrdinal && token === "status-ok") {
       if (collector.statusObserved) collector.failureReason ??= "duplicate-sentinel";
       collector.statusObserved = true;
     }
+    return true;
+  }
+
+  private completeAtomicCollector(
+    collector: NonNullable<ControlChannelCore["atomicCollector"]>,
+    ok: boolean,
+  ): void {
+    if (!ok) {
+      this.retireAtomicPaneSnapshotCollector(
+        collector.spec.nonce,
+        collector.failureReason ?? "sentinel-order",
+      );
+      return;
+    }
+    const result: AtomicPaneSnapshotResult = Object.freeze({
+      ok: true,
+      captureLines: Object.freeze([...collector.captureLines]),
+      ...(collector.spec.dualCapture
+        ? { ansiCaptureLines: Object.freeze([...collector.ansiCaptureLines]) }
+        : {}),
+      cursorLine: collector.cursorLine,
+      continueObserved: collector.continueObserved,
+      statusObserved: collector.statusObserved,
+      observerEmissionObserved: collector.observerEmissionObserved,
+      started: collector.started,
+      lastCompletedOrdinal: collector.lastCompletedOrdinal,
+      captureLineCount: collector.captureLines.length + collector.ansiCaptureLines.length,
+      captureByteCount: collector.captureBytes,
+      failureReason: null,
+      ...(collector.spec.kind === "pause" ? { pauseObserved: collector.pauseObserved } : {}),
+    });
+    // Settlement cannot admit another collector before terminal framing drains.
+    collector.settled = true;
+    try {
+      collector.spec.onSettled(result);
+    } catch {
+      this.failRetiredDrain("snapshot settlement callback failed");
+      return;
+    }
+    if (this.atomicCollector === collector) {
+      this.atomicCollector = null;
+      this.notifyAtomicDrained(collector, "complete");
+    }
+  }
+
+  private consumeOwnedPauseLine(line: string, token: string | null): boolean {
+    const collector = this.atomicCollector!;
+    const guard = parseControlLine(line, this.inReply);
+    if (guard.kind === "begin") {
+      if (guard.flags !== 0 || this.inReply || !Number.isSafeInteger(guard.num) || guard.num < 0)
+        collector.failureReason ??= "sentinel-order";
+      this.inReply = true;
+      this.currentReplyNum = guard.num;
+      this.currentReplyFlags = guard.flags;
+      collector.blockOrdinal += 1;
+      collector.blockContentCount = 0;
+      return true;
+    }
+    if (guard.kind === "end" || guard.kind === "error") {
+      const valid =
+        this.inReply &&
+        guard.kind === "end" &&
+        guard.flags === 0 &&
+        this.currentReplyFlags === 0 &&
+        guard.num === this.currentReplyNum;
+      if (
+        !valid ||
+        (collector.blockOrdinal === 1
+          ? collector.blockContentCount > 1
+          : collector.blockContentCount !== 1)
+      )
+        collector.failureReason ??= "sentinel-order";
+      if (valid) collector.lastCompletedOrdinal = collector.blockOrdinal;
+      this.inReply = false;
+      this.currentReplyNum = null;
+      this.currentReplyFlags = null;
+      this.currentReplyConsumesPending = false;
+      if (collector.blockOrdinal === 2)
+        this.completeAtomicCollector(
+          collector,
+          collector.failureReason === null && collector.statusObserved,
+        );
+      return true;
+    }
+    if (!this.inReply && (line === "%exit" || line.startsWith("%exit "))) {
+      this.retireAtomicPaneSnapshotCollector(collector.spec.nonce, "channel-exit");
+      return false;
+    }
+    if (!this.inReply) {
+      collector.failureReason ??= "unexpected-post-line";
+      return true;
+    }
+    collector.blockContentCount += 1;
+    if (collector.blockOrdinal === 1 && line === `%pause ${collector.spec.runtimePaneId}`) {
+      if (collector.pauseObserved) collector.failureReason ??= "duplicate-sentinel";
+      collector.pauseObserved = true;
+    } else if (collector.blockOrdinal === 2 && token === "complete") {
+      if (collector.statusObserved) collector.failureReason ??= "duplicate-sentinel";
+      collector.statusObserved = true;
+    } else collector.failureReason ??= "sentinel-order";
     return true;
   }
 
@@ -895,7 +1152,10 @@ export class ControlChannelCore {
       Object.freeze({
         started: collector.started,
         lastCompletedOrdinal: collector.lastCompletedOrdinal,
-        captureLineCount: Math.min(collector.captureLines.length, ATOMIC_CAPTURE_LINE_HARD_CAP),
+        captureLineCount: Math.min(
+          collector.captureLines.length + collector.ansiCaptureLines.length,
+          ATOMIC_CAPTURE_LINE_HARD_CAP,
+        ),
         captureByteCount: Math.min(collector.captureBytes, ATOMIC_CAPTURE_BYTE_HARD_CAP),
         continueObserved: collector.continueObserved,
         statusObserved: collector.statusObserved,
@@ -985,7 +1245,13 @@ export class MirrorControlChannel implements MirrorChannelIo {
   private viewerPending = 0;
   private verifiedAttach = false;
   private guardedStart: { resolve: () => void; reject: (error: Error) => void } | null = null;
-  private atomicCollectorTimer: ReturnType<typeof setTimeout> | null = null;
+  private atomicCollectorOwner: {
+    nonce: string;
+    timer: ReturnType<typeof setTimeout> | null;
+    drainTimer: ReturnType<typeof setTimeout> | null;
+    retiring: boolean;
+    completed: boolean;
+  } | null = null;
 
   constructor(opts: MirrorControlChannelOptions) {
     this.opts = opts;
@@ -1002,7 +1268,13 @@ export class MirrorControlChannel implements MirrorChannelIo {
           }
           if (!opts.nativeServerIdentity || this.verifiedAttach) opts.handlers.onNotify(name, rest);
         },
-        onExit: (reason) => this.noteExit(reason),
+        onExit: (reason) => {
+          try {
+            this.noteExit(reason);
+          } finally {
+            void this.dispose();
+          }
+        },
       },
       opts.nowMicros,
     );
@@ -1303,21 +1575,47 @@ export class MirrorControlChannel implements MirrorChannelIo {
   }
 
   armAtomicPaneSnapshotCollector(spec: AtomicPaneSnapshotCollector, timeoutMs: number): boolean {
+    if (this.exited || !this.proc?.stdin?.writable) return false;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5_000) return false;
+    const owner = {
+      nonce: spec.nonce,
+      timer: null as ReturnType<typeof setTimeout> | null,
+      drainTimer: null as ReturnType<typeof setTimeout> | null,
+      retiring: false,
+      completed: false,
+    };
+    const clear = () => {
+      if (owner.timer) clearTimeout(owner.timer);
+      if (owner.drainTimer) clearTimeout(owner.drainTimer);
+      owner.timer = owner.drainTimer = null;
+      if (this.atomicCollectorOwner === owner) this.atomicCollectorOwner = null;
+    };
     const wrapped = {
       ...spec,
       onSettled: (result: AtomicPaneSnapshotResult): void => {
-        if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
-        this.atomicCollectorTimer = null;
+        if (owner.timer) clearTimeout(owner.timer);
+        owner.timer = null;
+        owner.completed = result.ok;
+        if (!result.ok && result.failureReason !== "channel-exit" && !owner.retiring) {
+          this.beginCollectorDrain(spec.nonce, result.failureReason ?? "retired", () =>
+            spec.onSettled(result),
+          );
+          return;
+        }
         spec.onSettled(result);
+      },
+      onDrained: (reason: "complete" | "fence" | "channel-exit"): void => {
+        clear();
+        spec.onDrained?.(reason);
       },
     };
     if (!this.core.armAtomicPaneSnapshotCollector(wrapped)) return false;
-    this.atomicCollectorTimer = setTimeout(() => {
-      this.atomicCollectorTimer = null;
-      this.core.retireAtomicPaneSnapshotCollector(spec.nonce, "timeout");
-    }, timeoutMs);
-    this.atomicCollectorTimer.unref?.();
+    this.atomicCollectorOwner = owner;
+    owner.timer = setTimeout(
+      () => this.retireAtomicPaneSnapshotCollector(spec.nonce, "timeout"),
+      timeoutMs,
+    );
+    owner.timer.unref?.();
     return true;
   }
 
@@ -1325,9 +1623,54 @@ export class MirrorControlChannel implements MirrorChannelIo {
     nonce: string,
     reason: AtomicPaneSnapshotFailureReason = "retired",
   ): void {
-    if (!this.core.retireAtomicPaneSnapshotCollector(nonce, reason)) return;
-    if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
-    this.atomicCollectorTimer = null;
+    this.beginCollectorDrain(nonce, reason);
+  }
+
+  private beginCollectorDrain(
+    nonce: string,
+    reason: AtomicPaneSnapshotFailureReason,
+    settle?: () => void,
+  ): void {
+    const owner = this.atomicCollectorOwner;
+    if (!owner || owner.nonce !== nonce || owner.retiring || owner.completed) return;
+    owner.retiring = true;
+    if (owner.timer) clearTimeout(owner.timer);
+    owner.timer = null;
+    const abort = (message: string) => {
+      if (this.atomicCollectorOwner !== owner) return;
+      try {
+        this.core.fail(message);
+        this.noteExit(message);
+      } finally {
+        void this.dispose();
+      }
+    };
+    // Establish drain ownership before onSettled can reenter and try another arm.
+    owner.drainTimer = setTimeout(() => abort("retired snapshot drain timed out"), 5_000);
+    owner.drainTimer.unref?.();
+    try {
+      this.core.retireAtomicPaneSnapshotCollector(nonce, reason);
+      // Natural failed completion already settled the core tombstone. Retire
+      // application ownership before queuing a fence behind dispatched work.
+      settle?.();
+    } catch {
+      abort("retired snapshot settlement callback failed");
+      return;
+    }
+    if (this.atomicCollectorOwner !== owner) return;
+    const fence = `tmux-ide-collector-drain-v1:${randomBytes(24).toString("hex")}`;
+    this.commandBoundedInline(
+      `display-message -p -l ${fence}`,
+      { maxBytes: 256, maxLines: 1 },
+      (reply) => {
+        if (this.atomicCollectorOwner !== owner) return;
+        if (!reply.ok || reply.lines.length !== 1 || reply.lines[0] !== fence) {
+          abort("invalid retired snapshot drain fence");
+          return;
+        }
+        if (!this.core.releaseRetiredCollector(nonce)) abort("retired snapshot owner changed");
+      },
+    );
   }
 
   send(cmd: string, onReply?: (reply: ControlReply) => void): void {
@@ -1352,8 +1695,9 @@ export class MirrorControlChannel implements MirrorChannelIo {
    */
   async dispose(): Promise<void> {
     this.retireNativeViewer();
-    if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
-    this.atomicCollectorTimer = null;
+    const collectorOwner = this.atomicCollectorOwner;
+    if (collectorOwner?.timer) clearTimeout(collectorOwner.timer);
+    if (collectorOwner?.drainTimer) clearTimeout(collectorOwner.drainTimer);
     const proc = this.proc;
     this.proc = null;
     if (!proc) return;

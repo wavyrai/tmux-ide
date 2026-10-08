@@ -47,6 +47,11 @@ export interface TerminalReplicaQualificationSnapshot {
   readonly revision: number | null;
   readonly stateHash: string | null;
   readonly stats: TerminalReplicaInterpreterStats;
+  readonly listeners: {
+    readonly canonical: number;
+    readonly raw: number;
+    readonly upstream: number;
+  };
 }
 
 /** Daemon-private backing admission; this is not a client transport schema. */
@@ -72,6 +77,7 @@ interface ReseedCandidate {
   readonly layoutLease: LayoutLease | null;
   readonly subscriptionEpoch: number;
   readonly chunks: Uint8Array[];
+  readonly captureChunks: Uint8Array[];
   readonly trace: SessionRuntimeTraceContext | null;
 }
 
@@ -98,6 +104,7 @@ export class SessionRuntimeTerminalReplicaOwner {
   #reseedRetryCount = 0;
   #reseed: ReseedCandidate | null = null;
   #bootstrapped = false;
+  #publishedIncarnation: string | null = null;
   #waitingForGeometryCapture = false;
   #historyTimer: SessionRuntimeTimer | null = null;
   #historyChecking = false;
@@ -144,6 +151,7 @@ export class SessionRuntimeTerminalReplicaOwner {
         );
       },
       onUpdate: (update, trace) => {
+        this.#publishedIncarnation = update.incarnation;
         if (update.type === "terminal.seed") {
           this.#bootstrapped = true;
           this.#reseedRetryCount = 0;
@@ -224,6 +232,11 @@ export class SessionRuntimeTerminalReplicaOwner {
     this.#interpreter.failCausalCell(reason, traceId);
   }
 
+  /** Scalar diagnostic only: no seed construction, hashing, or owner creation. */
+  inputDispatchIncarnation(): string | null {
+    return this.#disposed ? null : this.#publishedIncarnation;
+  }
+
   qualificationSnapshot(): TerminalReplicaQualificationSnapshot {
     const seed = this.#interpreter.currentSeed();
     return Object.freeze({
@@ -231,6 +244,11 @@ export class SessionRuntimeTerminalReplicaOwner {
       revision: seed?.revision ?? null,
       stateHash: seed?.stateHash ?? null,
       stats: this.#interpreter.stats(),
+      listeners: Object.freeze({
+        canonical: this.#listeners.size,
+        raw: this.#rawListeners.size,
+        upstream: this.#upstream ? 1 : 0,
+      }),
     });
   }
 
@@ -425,6 +443,7 @@ export class SessionRuntimeTerminalReplicaOwner {
         layoutLease: this.#layoutLease,
         subscriptionEpoch: this.#subscriptionEpoch,
         chunks: [],
+        captureChunks: [],
         trace: this.#consumeOutputTrace(),
       };
     } else if (event.type === "seed" || event.type === "delta") {
@@ -433,7 +452,11 @@ export class SessionRuntimeTerminalReplicaOwner {
         if (event.type === "seed" && event.requiresNativeRecapture)
           this.#reseed.requiresNativeRecapture = true;
         if (event.type === "seed" && event.native) this.#reseed.native = event.native;
-        else this.#reseed.chunks.push(event.data.slice());
+        else {
+          const bytes = Uint8Array.from(event.data);
+          this.#reseed.chunks.push(bytes);
+          if (event.type === "seed") this.#reseed.captureChunks.push(bytes);
+        }
       } else
         this.#supervise(
           this.#interpreter.enqueue({
@@ -456,6 +479,7 @@ export class SessionRuntimeTerminalReplicaOwner {
               cols: reseed.nativeCols,
               rows: reseed.nativeRows,
               chunks: reseed.chunks,
+              captureChunks: reseed.captureChunks,
               native: reseed.native,
               historyLimit: event.historyLimit,
               historySize: event.historySize,

@@ -2,6 +2,7 @@
 // Real published-version installer transactions, controlled by the packed
 // candidate's public service CLI. Never targets the user's normal namespace.
 import assert from "node:assert/strict";
+import { serviceCommandFailure } from "./lib/service-command-diagnostics.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -149,8 +150,11 @@ function managerAbsent() {
   );
 }
 function service(action, ...args) {
-  const result = raw(process.execPath, [cli, "daemon", "service", action, ...args, "--json"]);
+  const command = [cli, "daemon", "service", action, ...args, "--json"];
+  const result = raw(process.execPath, command);
   const step = { service: action, exitCode: result.status, signal: result.signal };
+  if (result.status !== 0)
+    step.diagnostic = serviceCommandFailure([process.execPath, ...command], result);
   receipt.steps.push(step);
   assert.equal(
     result.status,

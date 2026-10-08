@@ -1,3 +1,4 @@
+import { StockCaptureTabUnavailableError } from "./stock-capture-fidelity.ts";
 import { projectNativeGridRow } from "../mirror/native-grid-projection.ts";
 import { decodeNativeGridCapture } from "../mirror/native-grid-capture.ts";
 import * as nativeSeeds from "./native-seed-backing.ts";
@@ -242,12 +243,12 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     expect(hub.metrics().canonicalRevisions).toBe(3);
     clients[1]!.ack(ack(latest(1)));
     await settle();
-    expect(latest(1)).toMatchObject({ frame: "seed", canonicalRevision: 160 });
+    expect(latest(1)).toMatchObject({ frame: "patch", canonicalRevision: 160 });
     clients[1]!.ack(ack(latest(1)));
     expect(hub.metrics().canonicalRevisions).toBe(2);
     clients[2]!.setVisibility("visible");
     await settle();
-    expect(latest(2)).toMatchObject({ frame: "seed", canonicalRevision: 160 });
+    expect(latest(2)).toMatchObject({ frame: "patch", canonicalRevision: 160 });
     clients[2]!.ack(ack(latest(2)));
     expect(hub.metrics().canonicalRevisions).toBe(1);
     await Promise.all(clients.map((client) => client.close()));
@@ -608,6 +609,87 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     expect(lateClose).toHaveBeenCalledOnce();
   });
 
+  it("counts a detached source close until its asynchronous rejection settles", async () => {
+    const owner = new FakeOwner();
+    let rejectClose!: (error: Error) => void;
+    const deferred = new Promise<void>((_resolve, reject) => {
+      rejectClose = reject;
+    });
+    owner.subscribeSource = async (...args) => {
+      const source = await FakeOwner.prototype.subscribeSource.apply(owner, args);
+      return { ...source, close: () => deferred };
+    };
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    try {
+      await hub.open(
+        "reader",
+        "pane-a",
+        {
+          protocolVersions: [1],
+          encodings: ["semantic-v1"],
+          richPlacements: false,
+        },
+        () => {},
+      );
+      owner.emit(seed());
+      await settle();
+      owner.emit(tombstone(1));
+      await settle();
+      expect(hub.metrics()).toMatchObject({
+        sourceSubscriptions: 0,
+        pendingSourceCloses: 1,
+        sourceCloseFailures: 0,
+      });
+      // close() retains its existing non-waiting behavior for the detached source.
+      await hub.close();
+      expect(hub.metrics().pendingSourceCloses).toBe(1);
+      rejectClose(new Error("deferred source close failure"));
+      await settle();
+      expect(hub.metrics()).toMatchObject({
+        sourceSubscriptions: 0,
+        pendingSourceCloses: 0,
+        sourceCloseFailures: 1,
+      });
+    } finally {
+      rejectClose(new Error("test cleanup"));
+      await hub.close();
+    }
+  });
+
+  it.each(["last-client", "hub"] as const)(
+    "retains failed source-close evidence after %s removal",
+    async (path) => {
+      const owner = new FakeOwner();
+      owner.subscribeSource = async (...args) => {
+        const source = await FakeOwner.prototype.subscribeSource.apply(owner, args);
+        return {
+          ...source,
+          close: async () => {
+            throw new Error("injected source close failure");
+          },
+        };
+      };
+      const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+      try {
+        const connection = await hub.open(
+          "reader",
+          "pane-a",
+          {
+            protocolVersions: [1],
+            encodings: ["semantic-v1"],
+            richPlacements: false,
+          },
+          () => {},
+        );
+        if (path === "last-client") await connection.close();
+        else await hub.close();
+        expect(hub.metrics()).toMatchObject({ sourceSubscriptions: 0, sourceCloseFailures: 1 });
+      } finally {
+        await hub.close();
+      }
+    },
+  );
+
   it("reserves concurrent opens before awaiting pane startup so capacity cannot oversubscribe", async () => {
     let release!: () => void;
     const startGate = new Promise<void>((resolve) => {
@@ -631,10 +713,32 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     await expect(hub.open("client-64", "pane-a", offer, () => undefined)).rejects.toThrow(
       "Terminal delivery client limit reached",
     );
+    expect(hub.metrics()).toMatchObject({
+      sourceSubscriptions: 0,
+      pendingSourceSubscriptions: 1,
+      pendingClients: 64,
+    });
     release();
     const connections = await Promise.all(admitted);
-    expect(hub.metrics()).toMatchObject({ clients: 64, connections: 64 });
-    await Promise.all(connections.map((connection) => connection.close()));
+    expect(hub.metrics()).toMatchObject({
+      clients: 64,
+      connections: 64,
+      sourceSubscriptions: 1,
+      pendingSourceSubscriptions: 0,
+      pendingClients: 0,
+    });
+    expect(owner.subscriptions).toBe(1);
+    await Promise.all(connections.slice(1).map((connection) => connection.close()));
+    expect(hub.metrics().sourceSubscriptions).toBe(1);
+    expect(owner.closes).toBe(0);
+    await connections[0]!.close();
+    expect(hub.metrics()).toMatchObject({
+      connections: 0,
+      sourceSubscriptions: 0,
+      pendingSourceSubscriptions: 0,
+      pendingClients: 0,
+    });
+    expect(owner.closes).toBe(1);
     await hub.close();
   });
 
@@ -819,7 +923,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
         (message) => message.type === "terminal.delivery",
       ) as TerminalDeliveryEnvelope;
       expect(resumed.canonicalRevision).toBe(20);
-      expect(resumed.frame).toBe("seed");
+      expect(resumed.frame).toBe("patch");
       expect(resumed.encoding).toBe(encoding);
       expect(resumed.canonicalStateHash).toBe(latest.canonicalStateHash);
       slow.ack(ack(resumed));
@@ -1094,7 +1198,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     await hub.close();
   });
 
-  it("coalesces a frozen revision flood into one latest seed on thaw", async () => {
+  it("coalesces a frozen revision flood into one exact latest patch on thaw", async () => {
     const owner = new FakeOwner();
     const spans: SessionRuntimeStageSpan[] = [];
     const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
@@ -1120,7 +1224,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     const resumed = messages.findLast(
       (message) => message.type === "terminal.delivery",
     ) as TerminalDeliveryEnvelope;
-    expect(resumed).toMatchObject({ frame: "seed", canonicalRevision: 20 });
+    expect(resumed).toMatchObject({ frame: "patch", canonicalRevision: 20 });
     expect(
       spans.findLast(
         (span) =>
@@ -1128,11 +1232,11 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
           span.terminalDelivery?.canonicalRevision === 20,
       )?.terminalDelivery,
     ).toMatchObject({
-      representation: "seed",
+      representation: "patch",
       representationBytes: resumed.representationBytes,
-      attemptedPatchBytes: null,
-      attemptedSeedBytes: resumed.representationBytes,
-      selectionStatus: "direct-seed",
+      attemptedPatchBytes: resumed.representationBytes,
+      attemptedSeedBytes: null,
+      selectionStatus: "patch-preferred",
     });
     expect(hub.metrics().latestPointers).toBe(1);
     await connection.close();
@@ -1574,14 +1678,15 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     const coalesced = messages.findLast(
       (message) => message.type === "terminal.delivery",
     ) as TerminalDeliveryEnvelope;
-    expect(coalesced).toMatchObject({ frame: "seed", canonicalRevision: 2 });
+    expect(coalesced).toMatchObject({ frame: "patch", canonicalRevision: 2, baseRevision: 0 });
     expect(decodeCompactSemanticTerminalUpdate(assembledBytes(coalesced, messages))).toMatchObject({
-      frame: "seed",
+      frame: "patch",
       revision: 2,
-      snapshot: snapshots[2],
+      baseRevision: 0,
     });
     const coalescedCommit = commitMessages(clientState, coalesced, messages);
     clientState = coalescedCommit.state;
+    expect(clientState.canonicalSnapshot).toEqual(snapshots[2]);
     connection.ack(coalescedCommit.ack);
 
     const next = { ...snapshots[2]!, cursor: { ...snapshots[2]!.cursor, x: 3 } };
@@ -2543,3 +2648,219 @@ function blankNative(): NativeGridCapture {
     ],
   };
 }
+
+it("negotiates a failed stock pane without poisoning healthy source ownership", async () => {
+  const healthy = new FakeOwner();
+  const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", (pane) =>
+    pane === "bad"
+      ? {
+          subscribeSource: async () => {
+            throw new StockCaptureTabUnavailableError();
+          },
+        }
+      : healthy,
+  );
+  const offer = {
+    protocolVersions: [1],
+    encodings: ["semantic-v1"],
+    richPlacements: false,
+  } as const;
+  const bad: TerminalDeliveryServerMessage[] = [];
+  const good: TerminalDeliveryServerMessage[] = [];
+  const a = await hub.open("reader", "bad", offer, (m) => {
+    bad.push(m);
+  });
+  const b = await hub.open("reader", "pane-a", offer, (m) => {
+    good.push(m);
+  });
+  expect(a.negotiation.accepted).toBe(true);
+  expect(bad).toEqual([
+    expect.objectContaining({
+      type: "terminal.delivery.fault",
+      reason: "source-closed",
+      message: new StockCaptureTabUnavailableError().message,
+    }),
+  ]);
+  healthy.emit(seed());
+  await settle();
+  expect(good.some((m) => m.type === "terminal.delivery")).toBe(true);
+  hub.failPaneCapture("pane-a", new StockCaptureTabUnavailableError());
+  await settle();
+  expect(good.at(-1)).toMatchObject({
+    type: "terminal.delivery.fault",
+    message: new StockCaptureTabUnavailableError().message,
+  });
+  await a.close();
+  await b.close();
+  await hub.close();
+});
+
+it.each([
+  ["scheduled", false],
+  ["sending", false],
+  ["scheduled", true],
+  ["sending", true],
+] as const)(
+  "retires capability-fault delivery synchronously while its sink is blocked (%s, tombstone=%s)",
+  async (mode, withTombstone) => {
+    const owner = new FakeOwner();
+    const sibling = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", (pane) =>
+      pane === "pane-a" ? owner : sibling,
+    );
+    const siblingMessages: TerminalDeliveryServerMessage[] = [];
+    const siblingConnection = await hub.open(
+      "reader",
+      "pane-b",
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+      (message) => {
+        siblingMessages.push(message);
+      },
+    );
+    const messages: TerminalDeliveryServerMessage[] = [];
+    let releaseFault!: () => void;
+    let releaseRepresentation!: () => void;
+    const faultBlocked = new Promise<void>((resolve) => {
+      releaseFault = resolve;
+    });
+    const representationBlocked = new Promise<void>((resolve) => {
+      releaseRepresentation = resolve;
+    });
+    const connection = await hub.open(
+      "reader",
+      "pane-a",
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+      (message) => {
+        messages.push(message);
+        if (message.type === "terminal.delivery.fault") return faultBlocked;
+        if (mode === "sending" && message.type === "terminal.delivery")
+          return representationBlocked;
+      },
+    );
+    let retired = false;
+    void connection.closed?.then(() => {
+      retired = true;
+    });
+    try {
+      owner.emit(seed());
+      await settle();
+      if (mode === "scheduled") connection.ack(ack(messages[0] as TerminalDeliveryEnvelope));
+      owner.emit(patch(1, 1));
+      hub.failPaneCapture("pane-a", new StockCaptureTabUnavailableError());
+      await settle();
+      const faultIndex = messages.findIndex(
+        (message) => message.type === "terminal.delivery.fault",
+      );
+      expect(faultIndex).toBeGreaterThan(-1);
+      // The actionable fault is still blocked: unrelated delivery must progress.
+      sibling.emit({ ...seed(), semanticPaneId: "pane-b" });
+      await settle();
+      siblingConnection.ack(ack(siblingMessages[0] as TerminalDeliveryEnvelope));
+      sibling.emit({ ...patch(1, 1), semanticPaneId: "pane-b" });
+      await settle();
+      expect(
+        siblingMessages
+          .filter((message) => message.type === "terminal.delivery")
+          .map((message) => message.canonicalRevision),
+      ).toEqual([0, 1]);
+      // Owner disposal can publish its terminal tombstone before transport drains.
+      if (withTombstone) owner.emit(tombstone(2));
+      releaseRepresentation();
+      await settle();
+      expect(retired).toBe(false);
+      releaseFault();
+      await settle();
+      expect(retired).toBe(true);
+      expect(
+        messages.slice(faultIndex + 1).filter((message) => message.type === "terminal.delivery"),
+      ).toEqual([]);
+      expect(messages.filter((message) => message.type === "terminal.delivery.fault")).toHaveLength(
+        1,
+      );
+    } finally {
+      releaseFault();
+      releaseRepresentation();
+      await connection.close();
+      await siblingConnection.close();
+      await hub.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "handles pre-capability-fault NACK identity without broadening unrelated feedback (mismatch=%s)",
+  async (mismatch) => {
+    const owner = new FakeOwner();
+    const sibling = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", (pane) =>
+      pane === "pane-a" ? owner : sibling,
+    );
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const healthy: TerminalDeliveryServerMessage[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const offer = {
+      protocolVersions: [1],
+      encodings: ["semantic-v1"],
+      richPlacements: false,
+    } as const;
+    const connection = await hub.open("reader", "pane-a", offer, (message) => {
+      messages.push(message);
+      if (message.type === "terminal.delivery.fault" && message.reason === "source-closed")
+        return blocked;
+    });
+    const other = await hub.open("reader", "pane-b", offer, (message) => {
+      healthy.push(message);
+    });
+    try {
+      owner.emit(seed());
+      await settle();
+      const envelope = messages[0] as TerminalDeliveryEnvelope;
+      expect(envelope.type).toBe("terminal.delivery");
+      hub.failPaneCapture("pane-a", new StockCaptureTabUnavailableError());
+      await settle();
+      const nack = {
+        type: "terminal.delivery.nack" as const,
+        workspaceName: envelope.workspaceName,
+        semanticPaneId: envelope.semanticPaneId,
+        generation: envelope.generation,
+        incarnation: envelope.incarnation,
+        deliveryNonce: envelope.deliveryNonce,
+        transactionId: mismatch ? "00000000-0000-4000-8000-000000000099" : envelope.transactionId,
+        reason: "decode-failed" as const,
+        appliedRevision: -1,
+      };
+      expect(() => connection.nack({ ...nack, reason: "invalid" } as never)).toThrow();
+      connection.nack(nack);
+      // Matched displaced ACK already follows the same race-safe contract.
+      if (!mismatch) connection.ack(ack(envelope));
+      sibling.emit({ ...seed(), semanticPaneId: "pane-b" });
+      await settle();
+      other.ack(ack(healthy[0] as TerminalDeliveryEnvelope));
+      sibling.emit({ ...patch(1, 1), semanticPaneId: "pane-b" });
+      await settle();
+      expect(
+        healthy
+          .filter((message) => message.type === "terminal.delivery")
+          .map((message) => message.canonicalRevision),
+      ).toEqual([0, 1]);
+      expect(hub.metrics().nacks).toBe(0);
+      release();
+      await settle();
+      expect(
+        messages
+          .filter((message) => message.type === "terminal.delivery.fault")
+          .map((message) => message.reason),
+      ).toEqual(mismatch ? ["source-closed", "protocol-violation"] : ["source-closed"]);
+
+      expect(messages.filter((message) => message.type === "terminal.delivery")).toHaveLength(1);
+    } finally {
+      release();
+      await connection.close();
+      await other.close();
+      await hub.close();
+    }
+  },
+);

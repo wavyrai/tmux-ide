@@ -45,6 +45,7 @@ import { startOwnedEmbeddedDaemon } from "./embedded-daemon-lifecycle.ts";
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
+import { createRuntimeTraceWriter } from "./runtime-trace-writer.ts";
 import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import type { Socket } from "node:net";
@@ -1404,14 +1405,11 @@ async function startEmbeddedDaemonGeneration(
         if (serverOwners?.defaultRetired) throw new Error("Default tmux owner is retired");
       },
     });
-    let runtimeTraceStream: ReturnType<typeof createWriteStream> | null = null;
-    const closeRuntimeTraceStream = async (): Promise<void> => {
+    let runtimeTraceWriter: ReturnType<typeof createRuntimeTraceWriter> | null = null;
+    const closeRuntimeTraceStream = async (incomplete = false): Promise<void> => {
       externalInteractionObserver.setDiagnostics(null);
       setFleetFactsObserverDiagnostics(null);
-      const stream = runtimeTraceStream;
-      runtimeTraceStream = null;
-      if (!stream || stream.closed || stream.destroyed) return;
-      await new Promise<void>((resolve) => stream.end(resolve));
+      await runtimeTraceWriter?.close(incomplete);
     };
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
@@ -1455,16 +1453,12 @@ async function startEmbeddedDaemonGeneration(
         );
       };
       const runtimeTracePath = process.env.TMUX_IDE_SESSION_RUNTIME_TRACE_LOG;
-      runtimeTraceStream = runtimeTracePath
-        ? createWriteStream(runtimeTracePath, { flags: "a", highWaterMark: 64 * 1_024 })
+      runtimeTraceWriter = runtimeTracePath
+        ? createRuntimeTraceWriter(
+            createWriteStream(runtimeTracePath, { flags: "a", highWaterMark: 64 * 1024 }),
+            { processId: `daemon:${process.pid}`, daemonInstanceId: instanceId },
+          )
         : null;
-      let runtimeTraceSaturated = false;
-      runtimeTraceStream?.on("error", () => {
-        runtimeTraceSaturated = true;
-      });
-      runtimeTraceStream?.on("drain", () => {
-        runtimeTraceSaturated = false;
-      });
       const runtimeObservability = runtimeTracePath
         ? createSessionRuntimeObservability({
             // The JSONL stream is the qualifying record. Keep only a small
@@ -1473,28 +1467,22 @@ async function startEmbeddedDaemonGeneration(
             // pauses on the daemon's input/output event loop.
             capacity: 1_024,
             onSpan: (span) => {
-              if (!runtimeTraceStream || runtimeTraceSaturated) return;
-              runtimeTraceSaturated = !runtimeTraceStream.write(
-                `${JSON.stringify({ version: 1, type: "performance.stage", ...span })}\n`,
-              );
+              runtimeTraceWriter?.append(() => ({
+                version: 1,
+                type: "performance.stage",
+                ...span,
+              }));
             },
           })
         : undefined;
       if (runtimeTracePath) {
         const publishObserverDiagnostic = (event: object): void => {
-          try {
-            if (!runtimeTraceStream || runtimeTraceSaturated) return;
-            runtimeTraceSaturated = !runtimeTraceStream.write(
-              `${JSON.stringify({
-                version: 1,
-                type: "performance.daemon-observer",
-                ...event,
-                generation: instanceId,
-              })}\n`,
-            );
-          } catch {
-            // Qualification diagnostics never alter daemon observation.
-          }
+          runtimeTraceWriter?.append(() => ({
+            version: 1,
+            type: "performance.daemon-observer",
+            ...event,
+            generation: instanceId,
+          }));
         };
         const diagnostics = {
           nowMicros: () => Math.floor(performance.now() * 1_000),
@@ -1975,7 +1963,7 @@ async function startEmbeddedDaemonGeneration(
         appWindowMutation.dispose(),
         workspaceMultiplexer.dispose(),
         disposeInteractionObservation(),
-        closeRuntimeTraceStream(),
+        closeRuntimeTraceStream(true),
       ]);
       // The pane-stream coordinator may still hold runtime consumers while it
       // drains. Preserve the normal shutdown order on startup rollback too:
@@ -2044,7 +2032,7 @@ async function startEmbeddedDaemonGeneration(
         appWindowMutationDisposal,
         workspaceMultiplexerDisposal,
         externalInteractionDisposal,
-        closeRuntimeTraceStream(),
+        closeRuntimeTraceStream(true),
         Promise.resolve().then(() => closeClients()),
         ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
         Promise.race([closePromise, delay(100)]),

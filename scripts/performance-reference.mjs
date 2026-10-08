@@ -1,5 +1,15 @@
 #!/usr/bin/env node
 
+import {
+  assertOwnedReferenceWorktree,
+  withOwnedReferenceCapture,
+} from "./lib/owned-reference-capture.mjs";
+import { randomBytes } from "node:crypto";
+import {
+  completedReferenceRecords,
+  matchReferenceControllerInput,
+  reconcileReferenceControllerInputs,
+} from "./lib/performance-reference-input-mapping.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, arch, cpus, platform, release, tmpdir, version as osVersion } from "node:os";
@@ -15,6 +25,8 @@ import {
 } from "./lib/startup-launch-diagnostic.mjs";
 
 import {
+  admitReferenceInputTrace,
+  referenceStageCoverage,
   PERFORMANCE_STAGES,
   REFERENCE_REPORT_VERSION,
   gitSourceIdentity,
@@ -31,88 +43,222 @@ const budgets = JSON.parse(
 );
 const options = parseOptions(process.argv.slice(2));
 const reportPath = resolve(root, options.report);
-const reference = referenceTarget(root);
-const lifecyclePath = join(reference.runtimeDir, "performance.jsonl");
-const testdriveStatePath = join(reference.runtimeDir, "home/app-state.json");
-const target = `tmux-ide-reference-${process.pid}`;
-const referenceProjectDir = mkdtempSync(join(tmpdir(), `${target}-`));
 const source = gitSourceIdentity(root);
+let reference,
+  lifecyclePath,
+  testdriveStatePath,
+  target,
+  referenceProjectDir,
+  provenance,
+  measurements,
+  ownedMetadata,
+  finalizeCausalCapture;
+if (options.ownedCapture) {
+  assertOwnedReferenceWorktree(root, options.captureRendererManifest);
+  const { createScratchFleet } = await import("./lib/product-fixtures/scratch-fleet.ts");
+  const { startDaemon } = await import("./lib/product-fixtures/daemon.ts");
+  await withOwnedReferenceCapture({
+    rendererManifest: options.captureRendererManifest,
+    createFleet: createScratchFleet,
+    startDaemon,
+    root,
+    output: `${reportPath}.capture`,
+    source,
+    outputContentRequired: options.captureOutputContent,
+    causalCellRequired: options.captureCausalCell,
+    validateClosed: (context) => {
+      if (!finalizeCausalCapture) throw new Error("Missing causal capture finalizer");
+      return finalizeCausalCapture(context);
+    },
+    run: async (env, metadata) => {
+      const original = { ...process.env };
+      for (const key of Object.keys(process.env)) delete process.env[key];
+      Object.assign(process.env, env);
+      ownedMetadata = metadata;
+      try {
+        await executeReference();
+        return {
+          reportPath,
+          inputAdmission: measurements?.inputToPaint?.admission,
+          controllerMapping: measurements?.inputToPaint?.controllerMapping,
+          outputContent: measurements?.inputToPaint?.outputContent,
+        };
+      } finally {
+        if (referenceProjectDir) rmSync(referenceProjectDir, { recursive: true, force: true });
+        for (const key of Object.keys(process.env)) delete process.env[key];
+        Object.assign(process.env, original);
+      }
+    },
+  });
+} else await executeReference();
 
-if (source.dirty)
-  throw new Error(
-    "Reference measurements require a clean worktree so commit/tree provenance is reproducible",
-  );
-if (platform() !== budgets.referenceHost.platform || arch() !== budgets.referenceHost.arch)
-  throw new Error(
-    `Reference measurements require ${budgets.referenceHost.platform}/${budgets.referenceHost.arch}; got ${platform()}/${arch()}`,
-  );
-preflightCanonicalDaemon();
+async function executeReference() {
+  reference = referenceTarget(root);
+  lifecyclePath = join(reference.runtimeDir, "performance.jsonl");
+  testdriveStatePath = join(reference.runtimeDir, "home/app-state.json");
+  target = `tmux-ide-reference-${process.pid}`;
+  referenceProjectDir = mkdtempSync(join(tmpdir(), `${target}-`));
 
-if (options.build) run("pnpm", ["build:tui"]);
-process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON = "1";
-rmSync(testdriveStatePath, { force: true });
-const provenance = {
-  host: hostname(),
-  cpuModel: cpus()[0]?.model ?? "unknown",
-  arch: arch(),
-  platform: platform(),
-  osRelease: release(),
-  osVersion: osVersion(),
-  nodeVersion: process.version,
-  bunVersion: commandVersion("bun", ["--version"]),
-  tmuxVersion: commandVersion("tmux", ["-V"]),
-  commit: source.commit,
-  tree: source.tree,
-  dirty: source.dirty,
-};
-
-let measurements;
-let succeeded = false;
-try {
-  mkdirSync(join(referenceProjectDir, ".tmux-ide"), { recursive: true });
-  writeFileSync(
-    join(referenceProjectDir, ".tmux-ide/workspace.yml"),
-    [
-      "version: 1",
-      `name: ${target}`,
-      "terminal:",
-      "  rows:",
-      "    - panes:",
-      "        - title: Echo",
-      "          focus: true",
-      `          command: ${JSON.stringify(`/bin/zsh -f -c 'stty raw -echo; while read -rk 1 ch; do print -rn -- "$ch"; done'`)}`,
-      "",
-    ].join("\n"),
-  );
-  await registerReferenceProject();
-  const readiness = await launchReferenceWorkspace();
-  qualifyBunPaneStream(readiness);
-  if (options.preflightOnly) await collectInputTrace(1);
-  if (!options.preflightOnly) {
-    const startup = await measureStartup();
-    const inputTrace = options.inputTrace ?? (await collectInputTrace());
-    measurements = {
-      startup,
-      inputToPaint: measureInputToPaint(inputTrace),
-      memory: measureMemory(),
-    };
-  }
-  succeeded = true;
-} finally {
-  if (!options.keepOnFailure || succeeded) {
-    spawnSync("node", ["scripts/tui-testdrive.mjs", "stop"], { cwd: root, stdio: "ignore" });
-    spawnSync("tmux", [...reference.socketArgs, "kill-session", "-t", `=${target}`], {
-      stdio: "ignore",
-    });
-    await unregisterReferenceProject().catch(() => undefined);
-    rmSync(referenceProjectDir, { recursive: true, force: true });
-  } else {
-    process.stderr.write(
-      `Reference fixture retained after failure:\n` +
-        `  project: ${referenceProjectDir}\n` +
-        `  session: ${target}\n` +
-        `  TUI: tmux attach -t _tmux-ide-testdrive\n`,
+  if (source.dirty)
+    throw new Error(
+      "Reference measurements require a clean worktree so commit/tree provenance is reproducible",
     );
+  if (platform() !== budgets.referenceHost.platform || arch() !== budgets.referenceHost.arch)
+    throw new Error(
+      `Reference measurements require ${budgets.referenceHost.platform}/${budgets.referenceHost.arch}; got ${platform()}/${arch()}`,
+    );
+  preflightCanonicalDaemon();
+
+  if (options.build) run("pnpm", ["build:tui"]);
+  process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON = "1";
+  rmSync(testdriveStatePath, { force: true });
+  provenance = {
+    host: hostname(),
+    cpuModel: cpus()[0]?.model ?? "unknown",
+    arch: arch(),
+    platform: platform(),
+    osRelease: release(),
+    osVersion: osVersion(),
+    nodeVersion: process.version,
+    bunVersion: commandVersion("bun", ["--version"]),
+    tmuxVersion: commandVersion("tmux", ["-V"]),
+    commit: source.commit,
+    tree: source.tree,
+    dirty: source.dirty,
+  };
+
+  let succeeded = false;
+  try {
+    mkdirSync(join(referenceProjectDir, ".tmux-ide"), { recursive: true });
+    writeFileSync(
+      join(referenceProjectDir, ".tmux-ide/workspace.yml"),
+      [
+        "version: 1",
+        `name: ${target}`,
+        "terminal:",
+        "  rows:",
+        "    - panes:",
+        "        - title: Echo",
+        "          focus: true",
+        `          command: ${JSON.stringify(
+          options.captureCausalCell
+            ? `${shellQuote(process.execPath)} ${shellQuote(join(root, "scripts/lib/product-rig-causal-cell-fixture.mjs"))}`
+            : `/bin/zsh -f -c 'stty raw -echo; while read -rk 1 ch; do print -rn -- "$ch"; done'`,
+        )}`,
+        "",
+      ].join("\n"),
+    );
+    await registerReferenceProject();
+    const readiness = await launchReferenceWorkspace();
+    qualifyBunPaneStream(readiness);
+    if (options.preflightOnly) await collectInputTrace(1);
+    if (!options.preflightOnly) {
+      const startup = options.ownedCapture
+        ? { status: "not-measured", reason: "Owned input capture only", budgets: budgets.startup }
+        : await measureStartup();
+      const collected = options.inputTrace ? null : await collectInputTrace();
+      const inputTrace = options.inputTrace ?? collected.path;
+      measurements = {
+        startup,
+        inputToPaint: {
+          ...measureInputToPaint(inputTrace),
+          ...(options.captureOutputContent
+            ? { outputContent: collected.outputContentArtifact }
+            : {}),
+          controllerMapping: collected?.controllerMappingArtifact ?? {
+            status: "not-collected",
+            scope: "Imported trace: captured-input accounting only",
+          },
+        },
+        memory: options.ownedCapture
+          ? { status: "not-measured", reason: "Owned input capture only", budgets: budgets.memory }
+          : measureMemory(),
+      };
+    }
+    succeeded = true;
+  } finally {
+    if (!options.keepOnFailure || succeeded) {
+      const tuiStop = spawnSync("node", ["scripts/tui-testdrive.mjs", "stop"], {
+        cwd: root,
+        stdio: "ignore",
+        ...(options.ownedCapture ? { timeout: 10000 } : {}),
+      });
+      if (options.ownedCapture && tuiStop.status !== 0)
+        ownedMetadata.cleanupErrors.push("Reference TUI stop did not complete successfully");
+      spawnSync("tmux", [...reference.socketArgs, "kill-session", "-t", `=${target}`], {
+        stdio: "ignore",
+      });
+      await unregisterReferenceProject().catch((error) => {
+        if (options.ownedCapture)
+          ownedMetadata.cleanupErrors.push(`Reference unregister failed: ${error.message}`);
+      });
+      rmSync(referenceProjectDir, { recursive: true, force: true });
+    } else {
+      process.stderr.write(
+        `Reference fixture retained after failure:\n` +
+          `  project: ${referenceProjectDir}\n` +
+          `  session: ${target}\n` +
+          `  TUI: tmux attach -t _tmux-ide-testdrive\n`,
+      );
+    }
+  }
+
+  if (options.preflightOnly) {
+    mkdirSync(dirname(reportPath), { recursive: true });
+    writeFileSync(
+      reportPath,
+      JSON.stringify(
+        {
+          version: 1,
+          kind: "reference-preflight",
+          passed: true,
+          provenance,
+          timingQualification: false,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    const report = {
+      version: REFERENCE_REPORT_VERSION,
+      statusScope:
+        "Configured startup, local input-to-consumed-paint and memory budgets only; not six-stage pipeline acceptance",
+      measuredAt: new Date().toISOString(),
+      status: Object.values(measurements).some(({ status }) => status === "failed")
+        ? "failed"
+        : Object.values(measurements).every(({ status }) => status === "passed")
+          ? "passed"
+          : "incomplete",
+      provenance,
+      measurements,
+      ...(options.ownedCapture
+        ? {
+            timingQualification: false,
+            purpose: options.captureCausalCell
+              ? "instrumented-causal-cell-correctness"
+              : options.captureOutputContent
+                ? "instrumented-per-input-output-content-correctness"
+                : "owned-input-two-stream-capture",
+            ...(options.captureOutputContent
+              ? {
+                  observationSchedule:
+                    "Native/host viewport observations after every mapped paint before next input; original local clock budget unchanged, uninstrumented schedule not claimed",
+                }
+              : {}),
+            ownedCapture: ownedMetadata,
+          }
+        : {}),
+      ...(options.startupDiagnosticRoot
+        ? { timingQualification: false, purpose: "startup-launch-diagnostic" }
+        : {}),
+    };
+    validateReferenceReport(report, source);
+    mkdirSync(dirname(reportPath), { recursive: true });
+    writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    process.stdout.write(`Reference qualification: ${report.status}\nReport: ${reportPath}\n`);
+    if (report.status === "failed" || (options.requireComplete && report.status !== "passed"))
+      process.exitCode = 1;
   }
 }
 
@@ -290,44 +436,6 @@ function preflightCanonicalDaemon() {
       "Canonical daemon predates the measured commit. Rebuild/restart the daemon from this clean checkout before running reference qualification.",
     );
 }
-if (options.preflightOnly) {
-  mkdirSync(dirname(reportPath), { recursive: true });
-  writeFileSync(
-    reportPath,
-    JSON.stringify(
-      {
-        version: 1,
-        kind: "reference-preflight",
-        passed: true,
-        provenance,
-        timingQualification: false,
-      },
-      null,
-      2,
-    ),
-  );
-} else {
-  const report = {
-    version: REFERENCE_REPORT_VERSION,
-    measuredAt: new Date().toISOString(),
-    status: Object.values(measurements).some(({ status }) => status === "failed")
-      ? "failed"
-      : Object.values(measurements).every(({ status }) => status === "passed")
-        ? "passed"
-        : "incomplete",
-    provenance,
-    measurements,
-    ...(options.startupDiagnosticRoot
-      ? { timingQualification: false, purpose: "startup-launch-diagnostic" }
-      : {}),
-  };
-  validateReferenceReport(report, source);
-  mkdirSync(dirname(reportPath), { recursive: true });
-  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-  process.stdout.write(`Reference qualification: ${report.status}\nReport: ${reportPath}\n`);
-  if (report.status === "failed" || (options.requireComplete && report.status !== "passed"))
-    process.exitCode = 1;
-}
 
 async function measureStartup() {
   const rawSamples = [];
@@ -420,16 +528,70 @@ async function measureStartup() {
 }
 
 async function collectInputTrace(sampleCount = options.inputSamples) {
+  mkdirSync(reference.runtimeDir, { recursive: true });
   const tracePath = join(
     reference.runtimeDir,
     options.preflightOnly ? "diagnostic-input-trace.jsonl" : "input-trace.jsonl",
   );
   rmSync(tracePath, { force: true });
+  const key = randomBytes(32).toString("hex");
+  const attemptsPath = `${tracePath}.controller-attempts.json`;
+  const attempts = Array.from({ length: sampleCount }, (_, ordinal) => ({
+    ordinal,
+    payload: ordinal % 2 === 0 ? "x" : "y",
+    status: "not-offered",
+    ...(options.captureOutputContent ? { outputObservation: "not-observed" } : {}),
+  }));
+  let finalVerification = { status: "pending" };
+  let outputWitness, outputContentArtifact, observeOutputAttempt, collectionError, causalExpected;
+  const causalPath = join(reference.runtimeDir, "causal-cell.json");
+  const causalEvidence = {
+    status: "pending",
+    workload:
+      "creation-owned clear/history-clear, wrap-disabled fixed last column; no reset during offers",
+    attempts: attempts.map((a) => ({ ordinal: a.ordinal, status: "not-observed" })),
+  };
+  const saveCausal = () => {
+    const text = JSON.stringify(causalEvidence, null, 2);
+    if (Buffer.byteLength(text) > 8 * 1024 * 1024) throw new Error("Causal evidence exceeds 8 MiB");
+    writeFileSync(causalPath, text, { mode: 0o600 });
+  };
+  if (options.captureCausalCell) saveCausal();
+  const readDaemonRecords = () =>
+    existsSync(process.env.TMUX_IDE_SESSION_RUNTIME_TRACE_LOG)
+      ? completedReferenceRecords(readFileSync(process.env.TMUX_IDE_SESSION_RUNTIME_TRACE_LOG))
+      : [];
+
+  const collectionCleanupErrors = [];
+  const saveAttempts = () =>
+    writeFileSync(
+      attemptsPath,
+      JSON.stringify(
+        {
+          scope:
+            "Sequential isolated controller only; HMAC does not encode ordinal; secret not retained",
+          instrumentation: "Input-origin HMAC/event collection enabled inside original input clock",
+          finalVerification,
+          attempts,
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+  const records = () =>
+    existsSync(tracePath) ? completedReferenceRecords(readFileSync(tracePath)) : [];
+  saveAttempts();
   const traceEnvironment = {
     ...process.env,
     TMUX_IDE_PERFORMANCE_TRACE_LOG: tracePath,
     TMUX_IDE_PERFORMANCE_TRACE_COMMIT: source.commit,
     TMUX_IDE_PERFORMANCE_TRACE_TREE: source.tree,
+    TMUX_IDE_PERFORMANCE_TRACE_INPUT_ORIGIN: "1",
+    TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY: key,
+    ...(options.captureCausalCell
+      ? { TMUX_IDE_CAUSAL_CELL_FIXTURE: "1", TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL: "1" }
+      : {}),
   };
   run(
     "node",
@@ -462,32 +624,282 @@ async function collectInputTrace(sampleCount = options.inputSamples) {
       2_000,
     );
     await delay(50);
+    if (options.captureCausalCell) {
+      const deadline = Date.now() + 5000;
+      let ready = false;
+      do {
+        const fixture = execFileSync(
+          "tmux",
+          [
+            ...reference.socketArgs,
+            "list-panes",
+            "-t",
+            `=${target}`,
+            "-F",
+            "#{@tmux_ide_causal_fixture}\t#{pane_width}\t#{cursor_x}\t#{cursor_y}\t#{wrap_flag}",
+          ],
+          {
+            encoding: "utf8",
+            timeout: Math.max(1, Math.min(1000, deadline - Date.now())),
+            maxBuffer: 4096,
+          },
+        ).trim();
+        const canonical = records().findLast(
+          (r) => r.type === "performance.terminal-canonical-mode",
+        );
+        const fields = fixture.split("\t");
+        ready =
+          fields.length === 5 &&
+          fields[0] === "ready-v1" &&
+          fields.slice(1).every((v) => /^\d+$/u.test(v)) &&
+          Number(fields[1]) > 1 &&
+          Number(fields[2]) === Number(fields[1]) - 1 &&
+          fields[3] === "0" &&
+          fields[4] === "0" &&
+          canonical?.generation === ownedMetadata.daemon.instanceId &&
+          canonical.wraparound === false &&
+          canonical.cursor?.x === Number(fields[2]) &&
+          canonical.cursor?.y === 0;
+        if (ready) break;
+        await delay(20);
+      } while (Date.now() < deadline);
+      if (!ready) throw new Error("Causal fixture readiness/geometry did not settle");
+    }
+    if (options.captureOutputContent) {
+      const { createReferenceOutputWitness, observeReferenceOutputAttempt } =
+        await import("./lib/performance-reference-output-content.mjs");
+      observeOutputAttempt = observeReferenceOutputAttempt;
+      const status = JSON.parse(
+        execFileSync(process.execPath, ["scripts/tui-testdrive.mjs", "status", "--json"], {
+          cwd: root,
+          env: process.env,
+          encoding: "utf8",
+          timeout: 2000,
+          maxBuffer: 4 * 1024 * 1024,
+        }),
+      );
+      if (status.running !== true || status.target !== target)
+        throw new Error("Owned output witness requires exact running target");
+      outputWitness = await createReferenceOutputWitness({
+        root,
+        reference,
+        target,
+        expectedHost: status.hostIdentity,
+        generation: ownedMetadata.daemon.instanceId,
+        records,
+        payloads: attempts.map((a) => a.payload),
+        mode: options.captureCausalCell ? "causal-cell" : "append",
+      });
+    }
+    if (options.captureCausalCell) {
+      causalExpected = {
+        ...outputWitness.causalBaseline(),
+        inputFingerprintKey: key,
+        daemonProcessId: `daemon:${ownedMetadata.daemon.pid}`,
+        daemonClockId: "node-performance-now",
+      };
+      const { assessReferenceCausalCells } =
+        await import("./lib/performance-reference-causal-cell.mjs");
+      finalizeCausalCapture = async ({ tracePath: daemonPath, daemon }) => {
+        const errors = [];
+        let result;
+        try {
+          const { admitDaemonTrace } = await import("./lib/daemon-trace-admission.mjs");
+          const daemonBytes = readFileSync(daemonPath);
+          const receipt = JSON.parse(
+            readFileSync(`${daemonPath}.${daemon.instanceId}.admission.json`, "utf8"),
+          );
+          const admission = admitDaemonTrace(
+            daemonBytes,
+            { pid: daemon.pid, daemonInstanceId: daemon.instanceId },
+            receipt.ownerClose,
+          );
+          if (
+            receipt.status !== "complete" ||
+            admission.status !== "complete" ||
+            receipt.sha256 !== sourceArtifactDigest(daemonPath)
+          )
+            throw new Error("Final daemon trace admission failed");
+          const tuiRecords = completedReferenceRecords(readFileSync(tracePath), true);
+          const clientAdmission = admitReferenceInputTrace(tuiRecords, source);
+          const header = tuiRecords.find((r) => r.type === "performance.trace.header");
+          if (
+            !clientAdmission.complete ||
+            header?.processId !== causalExpected.processId ||
+            header.clockId !== causalExpected.clockId
+          )
+            throw new Error("Final TUI identity/admission failed");
+          const daemonRecords = completedReferenceRecords(daemonBytes, true);
+          const clocks = new Set(
+            daemonRecords.filter((r) => r.type === "performance.stage").map((r) => r.clockId),
+          );
+          if (clocks.size !== 1 || !clocks.has(causalExpected.daemonClockId))
+            throw new Error("Ambiguous admitted daemon clock");
+          const assessment = assessReferenceCausalCells(
+            tuiRecords,
+            daemonRecords,
+            attempts,
+            causalExpected,
+          );
+          Object.assign(causalEvidence, assessment, {
+            traceHashes: { tui: sourceArtifactDigest(tracePath), daemon: receipt.sha256 },
+          });
+          if (assessment.status !== "complete")
+            throw new Error(`Final causal admission: ${assessment.reason}`);
+          result = { status: "complete", observed: 36, path: causalPath, scope: assessment.scope };
+        } catch (error) {
+          errors.push(error);
+          causalEvidence.status = "failed";
+          causalEvidence.error = error.message;
+        }
+        try {
+          saveCausal();
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length)
+          throw new AggregateError(errors, "Final causal validation failed", { cause: errors[0] });
+        return result;
+      };
+    }
     for (let ordinal = 0; ordinal < sampleCount; ordinal += 1) {
-      const prior = countCompletedLocalTraces(tracePath);
+      const attempt = attempts[ordinal];
+      attempt.baseline = records().length;
+      attempt.status = "offered";
+      saveAttempts();
       // Keep the measured host free of a second Node startup/teardown per
       // keystroke. The trace clock begins inside OpenTUI, but that short-lived
       // wrapper still competes with the render process after injecting input.
-      tmux([
-        "send-keys",
-        "-t",
-        `=${reference.hostSession}:0.0`,
-        "-l",
-        ordinal % 2 === 0 ? "x" : "y",
-      ]);
+      tmux(["send-keys", "-t", `=${reference.hostSession}:0.0`, "-l", attempt.payload]);
+      attempt.sent = true;
       const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline && countCompletedLocalTraces(tracePath) <= prior) await delay(5);
-      if (countCompletedLocalTraces(tracePath) <= prior)
+      let match;
+      while (Date.now() < deadline) {
+        match = matchReferenceControllerInput(records(), {
+          baseline: attempt.baseline,
+          payload: attempt.payload,
+          key,
+          usedTraceIds: attempts.slice(0, ordinal).map((a) => a.traceId),
+        });
+        if (match) break;
+        await delay(5);
+      }
+      if (!match)
         throw new Error(
           `Timed out waiting for input-to-paint sample ${ordinal + 1}\n\n` +
             `--- initial canvas ---\n${canvasFrame}\n\n` +
             `--- current frame ---\n${captureTestdrive()}\n\n` +
             `--- stderr ---\n${readFileSync(join(reference.runtimeDir, "stderr.log"), "utf8")}`,
         );
+      Object.assign(attempt, match, { status: "matched" });
+      if (options.captureCausalCell) {
+        const { assessReferenceCausalCells } =
+          await import("./lib/performance-reference-causal-cell.mjs");
+        const deadline = Date.now() + 2000;
+        let assessment;
+        do {
+          assessment = assessReferenceCausalCells(
+            records(),
+            readDaemonRecords(),
+            attempts,
+            causalExpected,
+            ordinal + 1,
+          );
+          if (["complete", "prefix-complete"].includes(assessment.status)) break;
+          await delay(10);
+        } while (Date.now() < deadline);
+        causalEvidence.attempts[ordinal] = { ordinal, status: assessment.status, assessment };
+        const errors = [];
+        if (!["complete", "prefix-complete"].includes(assessment.status)) {
+          causalEvidence.status = "failed";
+          errors.push(new Error(`Causal prefix failed: ${assessment.reason}`));
+        }
+        try {
+          saveCausal();
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length)
+          throw new AggregateError(errors, "Causal prefix validation failed", { cause: errors[0] });
+      }
+      saveAttempts();
+      if (outputWitness) observeOutputAttempt(outputWitness, attempt, match, saveAttempts);
     }
+    if (outputWitness) outputContentArtifact = outputWitness.finish();
+  } catch (error) {
+    collectionError = error;
+    if (options.captureCausalCell) {
+      causalEvidence.status = "failed";
+      causalEvidence.error = error.message;
+      try {
+        saveCausal();
+      } catch (persistError) {
+        collectionCleanupErrors.push(persistError);
+      }
+    }
+    const pending = attempts.find((a) => a.status === "offered");
+    if (pending) Object.assign(pending, { status: "failed", error: String(error.message) });
+    finalVerification = { status: "failed", error: String(error.message) };
   } finally {
-    run("node", ["scripts/tui-testdrive.mjs", "stop"]);
+    try {
+      saveAttempts();
+    } catch (error) {
+      collectionCleanupErrors.push(error);
+    }
+    try {
+      run("node", ["scripts/tui-testdrive.mjs", "stop"]);
+    } catch (error) {
+      collectionCleanupErrors.push(error);
+    }
   }
-  return tracePath;
+  if (collectionCleanupErrors.length)
+    throw new AggregateError(
+      [...(collectionError ? [collectionError] : []), ...collectionCleanupErrors],
+      "Input collection persistence/stop failed",
+      { cause: collectionError ?? collectionCleanupErrors[0] },
+    );
+  if (collectionError) throw collectionError;
+
+  try {
+    const finalRecords = completedReferenceRecords(readFileSync(tracePath), true);
+    for (const attempt of attempts) {
+      const end = attempts[attempt.ordinal + 1]?.baseline ?? finalRecords.length;
+      const match = matchReferenceControllerInput(finalRecords, {
+        baseline: attempt.baseline,
+        originEnd: end,
+        payload: attempt.payload,
+        key,
+        usedTraceIds: attempts.slice(0, attempt.ordinal).map((a) => a.traceId),
+      });
+      if (match?.traceId !== attempt.traceId) throw new Error("Final controller mapping changed");
+    }
+    reconcileReferenceControllerInputs(finalRecords, attempts);
+    finalVerification = { status: "matched" };
+  } catch (error) {
+    finalVerification = { status: "failed", error: String(error.message) };
+    throw error;
+  } finally {
+    saveAttempts();
+  }
+  return {
+    path: tracePath,
+    ...(outputContentArtifact
+      ? {
+          outputContentArtifact: {
+            ...outputContentArtifact,
+            sha256: sourceArtifactDigest(outputContentArtifact.path),
+          },
+        }
+      : {}),
+    controllerMappingArtifact: {
+      path: attemptsPath,
+      sha256: sourceArtifactDigest(attemptsPath),
+      status: "matched",
+      scope:
+        "Sequential isolated producer; origin HMAC binds payload and trace identity, not ordinal",
+      instrumentation: "Input-origin HMAC/event collection enabled",
+    },
+  };
 }
 
 async function waitForCapturedFrame(predicate, timeoutMs) {
@@ -510,13 +922,6 @@ function captureTestdrive() {
   return result.status === 0 ? result.stdout : `(capture unavailable: ${result.stderr.trim()})`;
 }
 
-function countCompletedLocalTraces(path) {
-  if (!existsSync(path)) return 0;
-  return readJsonLines(path).filter(
-    ({ type, stage }) => type === "performance.stage" && stage === "paint",
-  ).length;
-}
-
 function measureInputToPaint(inputPath) {
   if (!inputPath)
     return {
@@ -526,10 +931,27 @@ function measureInputToPaint(inputPath) {
       budgets: budgets.inputToPaint,
     };
   const absolutePath = resolve(root, inputPath);
-  const events = readJsonLines(absolutePath);
-  const header = events.find(({ type }) => type === "performance.trace.header");
-  if (!header || header.commit !== source.commit || header.tree !== source.tree)
-    throw new Error("Input trace header does not match the measured source commit/tree");
+  let events = [],
+    admission;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(absolutePath));
+    if (!text.endsWith("\n")) throw new Error("Input trace is truncated");
+    events = text.slice(0, -1).split("\n").map(JSON.parse);
+    admission = admitReferenceInputTrace(events, source);
+  } catch (error) {
+    admission = { complete: false, reason: `Input trace unreadable: ${error.message}` };
+  }
+  if (!admission.complete)
+    return {
+      status: "not-measured",
+      reason: admission.reason,
+      admission,
+      budgets: budgets.inputToPaint,
+      sourceArtifact: {
+        path: absolutePath,
+        sha256: existsSync(absolutePath) ? sourceArtifactDigest(absolutePath) : null,
+      },
+    };
   const groups = new Map();
   for (const event of events) {
     if (event.type !== "performance.stage") continue;
@@ -558,7 +980,8 @@ function measureInputToPaint(inputPath) {
       localInputToConsumedPaintMs: (paint.endedAtMicros - input.startedAtMicros) / 1_000,
       stages: Object.fromEntries(
         PERFORMANCE_STAGES.flatMap((stage) => {
-          const span = spans.find((candidate) => candidate.stage === stage);
+          const matches = spans.filter((candidate) => candidate.stage === stage);
+          const span = matches.length === 1 ? matches[0] : null;
           return span ? [[stage, (span.endedAtMicros - span.startedAtMicros) / 1_000]] : [];
         }),
       ),
@@ -567,12 +990,11 @@ function measureInputToPaint(inputPath) {
   const summary = summarize(
     rawSamples.map(({ localInputToConsumedPaintMs }) => localInputToConsumedPaintMs),
   );
+  const stageCoverage = referenceStageCoverage(events);
   const stageSummaries = Object.fromEntries(
     PERFORMANCE_STAGES.map((stage) => {
-      const values = rawSamples.flatMap(({ stages }) =>
-        typeof stages[stage] === "number" ? [stages[stage]] : [],
-      );
-      return [stage, values.length > 0 ? summarize(values) : null];
+      const domains = stageCoverage.stages[stage].domains;
+      return [stage, domains.length === 1 ? domains[0].summaryMs : null];
     }),
   );
   const passed =
@@ -584,6 +1006,10 @@ function measureInputToPaint(inputPath) {
     sampleCount: rawSamples.length,
     rawSamples,
     summary: { localInputToConsumedPaintMs: summary, stages: stageSummaries },
+    stageCoverage,
+    statusScope:
+      "Local input-to-consumed-paint budget only; six-stage coverage and calibration are separate",
+    admission,
     budgets: budgets.inputToPaint,
     sourceArtifact: { path: absolutePath, sha256: sourceArtifactDigest(absolutePath) },
   };
@@ -679,6 +1105,10 @@ function readJsonLines(path) {
 function parseOptions(args) {
   const parsed = {
     report: "artifacts/performance-reference.json",
+    ownedCapture: false,
+    captureOutputContent: false,
+    captureCausalCell: false,
+    captureRendererManifest: null,
     startupSamples: 6,
     memorySamples: 24,
     inputSamples: 36,
@@ -696,6 +1126,10 @@ function parseOptions(args) {
     else if (arg === "--memory-samples") parsed.memorySamples = Number(args[++index]);
     else if (arg === "--input-samples") parsed.inputSamples = Number(args[++index]);
     else if (arg === "--input-trace") parsed.inputTrace = args[++index];
+    else if (arg === "--capture-causal-cell") parsed.captureCausalCell = true;
+    else if (arg === "--capture-output-content") parsed.captureOutputContent = true;
+    else if (arg === "--owned-daemon-capture") parsed.ownedCapture = true;
+    else if (arg === "--capture-renderer-manifest") parsed.captureRendererManifest = args[++index];
     else if (arg === "--preflight-only") parsed.preflightOnly = true;
     else if (arg === "--no-build") parsed.build = false;
     else if (arg === "--require-complete") parsed.requireComplete = true;
@@ -703,6 +1137,31 @@ function parseOptions(args) {
     else if (arg === "--startup-diagnostic-root")
       parsed.startupDiagnosticRoot = resolve(args[++index]);
     else throw new Error(`Unknown option ${arg}`);
+  }
+  if (parsed.captureCausalCell) {
+    if (!parsed.ownedCapture || parsed.inputSamples !== 36)
+      throw new Error("Causal-cell variant requires owned capture and exactly 36 inputs");
+    parsed.captureOutputContent = true;
+  }
+  if (parsed.captureOutputContent && (!parsed.ownedCapture || parsed.inputSamples !== 36))
+    throw new Error(
+      "Output-content correctness variant requires owned capture and exactly 36 inputs",
+    );
+  if (!parsed.ownedCapture && parsed.captureRendererManifest)
+    throw new Error("Renderer manifest requires owned capture");
+  if (parsed.ownedCapture) {
+    if (
+      parsed.preflightOnly ||
+      parsed.requireComplete ||
+      parsed.inputTrace ||
+      parsed.keepOnFailure ||
+      parsed.startupDiagnosticRoot ||
+      parsed.inputSamples < 30
+    )
+      throw new Error(
+        "Owned capture requires fresh >=30 inputs and cannot be a full reference gate",
+      );
+    parsed.build = false;
   }
   if (parsed.startupDiagnosticRoot && (parsed.startupSamples !== 6 || parsed.preflightOnly))
     throw new Error("Startup diagnostics require exactly one cold and five warm samples");
@@ -737,4 +1196,8 @@ function commandOutput(command, args) {
   const result = spawnSync(command, args, { cwd: root, encoding: "utf8", stdio: "pipe" });
   if (result.status !== 0) throw new Error(`Unable to run ${command} ${args.join(" ")}`);
   return result.stdout.trim();
+}
+
+function shellQuote(value) {
+  return "'" + value.replaceAll("'", "'\\''") + "'";
 }

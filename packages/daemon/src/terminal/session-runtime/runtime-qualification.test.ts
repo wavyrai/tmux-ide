@@ -185,6 +185,99 @@ describe("real SessionRuntime qualification", () => {
     await registry.dispose();
   });
 
+  it("binds different panes and coalesced chunks to their current dispatch owner", async () => {
+    const { registry, drivers } = rig();
+    const client = registry.connect("zz-sim", "opentui", "client:dispatch");
+    const sinks = [[], []] as TerminalDeliveryServerMessage[][];
+    try {
+      const openings = ["pane.alpha", "pane.beta"].map((pane, i) =>
+        client.openTerminalDelivery(
+          `delivery:dispatch:${i}`,
+          `request:dispatch:${i}`,
+          pane,
+          OFFER,
+          (message) => sinks[i]!.push(message),
+        ),
+      );
+      await waitForDriver(drivers);
+      await drivers[0]!.settleUntil(() => sinks.every((s) => s.length > 0), "dispatch seeds");
+      const connections = await Promise.all(openings);
+      const lease = client.acquireController();
+      const ids = [1, 2, 3].map((i) => `00000000-0000-4000-8000-00000000000${i}`);
+      client.sendInput(lease, "pane.alpha", { kind: "text", data: "a".repeat(200) }, ids[0]);
+      client.sendInput(lease, "pane.alpha", { kind: "text", data: "b".repeat(100) }, ids[1]);
+      client.sendInput(lease, "pane.beta", { kind: "key", data: "Enter" }, ids[2]);
+      const spans = registry
+        .qualificationSnapshot()
+        .observability.spans.filter((s) => s.operation === "control-write");
+      expect(spans.map((s) => s.traceId)).toEqual([ids[0], ids[1], ids[0], ids[1], ids[2]]);
+      for (const span of spans) {
+        const i = span.traceId === ids[2] ? 1 : 0;
+        expect(span.authority).toEqual({
+          generation: GENERATION,
+          incarnation: latest(sinks[i]!).incarnation,
+          controlDispatch: {
+            workspaceName: "zz-sim",
+            nativePaneId: i ? "%2" : "%1",
+            semanticPaneId: i ? "pane.beta" : "pane.alpha",
+            scope: "dispatch-time",
+          },
+        });
+      }
+      await Promise.all(connections.map((c) => c.close()));
+    } finally {
+      await client.close();
+      await registry.dispose();
+    }
+  });
+
+  it("keeps a disposed owner unknown when it retires inside dispatch", async () => {
+    const { registry, drivers } = rig();
+    const client = registry.connect("zz-sim", "opentui", "client:dispatch-retire");
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const owners: SessionRuntimeTerminalReplicaOwner[] = [];
+    const original = SessionRuntimeTerminalReplicaOwner.prototype.inputDispatchIncarnation;
+    const capture = vi
+      .spyOn(SessionRuntimeTerminalReplicaOwner.prototype, "inputDispatchIncarnation")
+      .mockImplementation(function (this: SessionRuntimeTerminalReplicaOwner) {
+        owners.push(this);
+        return original.call(this);
+      });
+    let disposal: Promise<void> | undefined;
+    try {
+      const opening = client.openTerminalDelivery(
+        "delivery:retire",
+        "request:retire",
+        "pane.alpha",
+        OFFER,
+        (m) => messages.push(m),
+      );
+      await waitForDriver(drivers);
+      await drivers[0]!.settleUntil(() => messages.length > 0, "retire seed");
+      await opening;
+      const send = drivers[0]!.channel.send.bind(drivers[0]!.channel);
+      drivers[0]!.channel.send = (command, reply) => {
+        send(command, reply);
+        if (command.startsWith("send-keys")) disposal = owners.at(-1)!.dispose("pane-closed");
+      };
+      client.sendInput(
+        client.acquireController(),
+        "pane.alpha",
+        { kind: "key", data: "Enter" },
+        "00000000-0000-4000-8000-000000000001",
+      );
+      const span = registry
+        .qualificationSnapshot()
+        .observability.spans.find((s) => s.operation === "control-write");
+      expect(span?.authority?.incarnation).toBeNull();
+      await disposal;
+    } finally {
+      capture.mockRestore();
+      await client.close();
+      await registry.dispose();
+    }
+  });
+
   it("correlates real parse, reduce and transport boundaries on one daemon clock", async () => {
     const { registry, drivers } = rig();
     const client = registry.connect("zz-sim", "opentui", "client:trace");
@@ -603,15 +696,17 @@ describe("real SessionRuntime qualification", () => {
       const siblingBefore = latest(siblingSink);
       connections.forEach((connection, index) => connection.ack(ack(before[index]!)));
       sibling.ack(ack(siblingBefore));
-      // Reject one recovery command, exercising the real channel failure,
-      // owner fault, and registry retirement path with healthy sibling output.
-      const send = driver.channel.send.bind(driver.channel);
+      // Reject each owned pause setup through the real FIFO until the bounded
+      // recovery budget faults this pane. Healthy sibling ingestion stays live.
+      const commandInline = driver.channel.commandInline.bind(driver.channel);
       let rejected = false;
-      driver.channel.send = (command, onReply) => {
-        if (!rejected && command === "refresh-client -A '%1:continue'") {
+      driver.channel.commandInline = (command, onReply) => {
+        if (/^set-option -po -t %1 @tmux_ide_pause_/u.test(command)) {
           rejected = true;
-          onReply?.({ ok: false, lines: ["injected continue failure"] });
-        } else send(command, onReply);
+          driver.channel.core.push({ kind: "inline", onReply, lines: [] });
+          driver.channel.written.push(command);
+          driver.channel.reply(["injected pause setup failure"], false);
+        } else commandInline(command, onReply);
       };
       driver.channel.feedLines("%pause %1");
       await vi.waitFor(
@@ -622,6 +717,7 @@ describe("real SessionRuntime qualification", () => {
         { timeout: 6000 },
       );
       expect(rejected).toBe(true);
+      driver.channel.commandInline = commandInline;
       expect(latest(siblingSink)).toBe(siblingBefore);
       await Promise.all(connections.map((connection) => connection.close()));
       const nextSinks = clients.map(() => [] as TerminalDeliveryServerMessage[]);
@@ -645,6 +741,17 @@ describe("real SessionRuntime qualification", () => {
       expect(next[0]!.canonicalRevision).toBeGreaterThan(before[0]!.canonicalRevision);
       expect(next[1]!.incarnation).toBe(next[0]!.incarnation);
       expect(next[1]!.canonicalStateHash).toBe(next[0]!.canonicalStateHash);
+      clients[0]!.sendInput(
+        clients[0]!.acquireController(),
+        "pane.alpha",
+        { kind: "key", data: "Enter" },
+        "00000000-0000-4000-8000-000000000098",
+      );
+      const dispatch = registry
+        .qualificationSnapshot()
+        .observability.spans.findLast((span) => span.operation === "control-write");
+      expect(dispatch?.authority?.incarnation).toBe(next[0]!.incarnation);
+      expect(dispatch?.authority?.incarnation).not.toBe(before[0]!.incarnation);
       replacements.forEach((connection, index) => connection.ack(ack(next[index]!)));
       driver.output("%2", "SIBLING");
       await driver.settleUntil(

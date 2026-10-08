@@ -14,6 +14,8 @@ export const nativeX64Suites = [
   "src/terminal/mirror/native-atomic-snapshot-live.test.ts",
   "src/terminal/mirror/native-atomic-dual-snapshot-live.test.ts",
   "src/terminal/mirror/native-atomic-recovery-live.test.ts",
+  "src/tui/mirror/runtime/terminal-native-content-live.test.ts",
+  "src/terminal/session-runtime/tmux-clear-history-live.test.ts",
 ];
 export function verifyNativeResults(report) {
   assert.equal(report.success, true);

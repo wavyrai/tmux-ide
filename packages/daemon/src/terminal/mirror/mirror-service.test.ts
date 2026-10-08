@@ -1,6 +1,7 @@
 /**
  * MirrorService refcount/dispose tests over simulated channels.
  */
+import { OwnedSnapshotChannel } from "./__tests__/owned-snapshot-channel.ts";
 import { describe, expect, it, vi } from "vitest";
 import {
   SimulatedChannel,
@@ -20,17 +21,22 @@ function rig(options: MirrorServiceOptions = {}): {
     createIo: (session, handlers) => {
       if (!windowOffsets.has(session)) windowOffsets.set(session, windowOffsets.size * 100);
       const offset = windowOffsets.get(session)!;
-      const sim = new SimulatedChannel(handlers, (cmd) => {
-        const auto = fixtureAutoReply(fixtureState())(cmd);
-        // Independent sessions may reuse semantic IDs, but their physical
-        // window IDs must differ on the same tmux server.
-        if (auto)
-          return auto.map((row) => row.replace(/@(\d+)/g, (_, id) => `@${Number(id) + offset}`));
-        // Service tests never interleave: answer probes inline too.
-        if (cmd.startsWith("capture-pane")) return ["seed"];
-        if (cmd.startsWith("display-message")) return ["0 0 100 50"];
-        return [];
-      });
+      const sim = new OwnedSnapshotChannel(
+        handlers,
+        (cmd) => {
+          const auto = fixtureAutoReply(fixtureState())(cmd);
+          // Independent sessions may reuse semantic IDs, but their physical
+          // window IDs must differ on the same tmux server.
+          if (auto)
+            return auto.map((row) => row.replace(/@(\d+)/g, (_, id) => `@${Number(id) + offset}`));
+          // Service tests use fixed probe data; the owned-hook fixture queues replies.
+          if (cmd.startsWith("capture-pane")) return ["seed"];
+          if (cmd.startsWith("display-message")) return ["0 0 100 50"];
+          return [];
+        },
+        () => ["seed"],
+        () => "0 0 100 50",
+      );
       const list = sims.get(session) ?? [];
       list.push(sim);
       sims.set(session, list);

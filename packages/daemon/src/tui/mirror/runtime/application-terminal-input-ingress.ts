@@ -25,7 +25,7 @@ export function createApplicationTerminalInputIngress(
   generation: () => OpenTuiGenerationHostSnapshot | null,
   sessionOwner: () => OpenTuiSessionOwner | null,
   focusedPane: () => string | null,
-  setNote: (note: string | null) => void,
+  setNote: (note: string | null | ((current: string | null) => string | null)) => void,
 ) {
   const pending = createApplicationPendingTerminalInputOwner();
   let ownsNote = false;
@@ -87,6 +87,20 @@ export function createApplicationTerminalInputIngress(
     left.clientGeneration === right.clientGeneration &&
     left.session === right.session &&
     left.pane === right.pane;
+  // Rejection is an outcome for this exact terminal scope, not queue occupancy.
+  // Successful delivery of the admitted prefix must not hide lost input.
+  let rejectedRecoveryScope: RecoveryScope | null = null;
+  const rejectedRecoveryNote = "some terminal input was not sent during recovery";
+  const rejectedRecoveryAdmissionNote = `terminal input queue full · ${rejectedRecoveryNote}`;
+  const clearRejectedRecovery = () => {
+    if (!rejectedRecoveryScope) return;
+    rejectedRecoveryScope = null;
+    setNote((current) =>
+      current === rejectedRecoveryNote || current === rejectedRecoveryAdmissionNote
+        ? null
+        : current,
+    );
+  };
   let recoveryVersion = 0;
   const cancelRecovery = () => {
     recoveryVersion++;
@@ -105,6 +119,7 @@ export function createApplicationTerminalInputIngress(
       return false;
     const target = scope();
     if (!target) return false;
+    if (rejectedRecoveryScope && !sameScope(rejectedRecoveryScope, target)) clearRejectedRecovery();
     if (recovery && !sameScope(recovery.scope, target)) cancelRecovery();
     if (!recovery) {
       const timer = setTimeout(() => {
@@ -116,7 +131,8 @@ export function createApplicationTerminalInputIngress(
     }
     const weight = bytes.byteLength;
     if (recovery.admitted >= 64 || recovery.weight + weight > 1024 * 1024) {
-      setNote("terminal input queue full · wait for the session to connect");
+      rejectedRecoveryScope = target;
+      setNote(rejectedRecoveryAdmissionNote);
       return true;
     }
     recovery.weight += weight;
@@ -144,7 +160,7 @@ export function createApplicationTerminalInputIngress(
       }
       return true;
     });
-    setNote(`${target.session} · terminal ${kind} queued`);
+    if (!rejectedRecoveryScope) setNote(`${target.session} · terminal ${kind} queued`);
     return true;
   };
   const flushRecovery = () => {
@@ -173,7 +189,11 @@ export function createApplicationTerminalInputIngress(
       }
       if (version === recoveryVersion) {
         cancelRecovery();
-        setNote(null);
+        if (rejectedRecoveryScope) {
+          setNote((current) =>
+            current === rejectedRecoveryAdmissionNote ? rejectedRecoveryNote : current,
+          );
+        } else setNote(null);
       }
     })();
   };
@@ -210,6 +230,7 @@ export function createApplicationTerminalInputIngress(
 
   const cancelInteractionInput = () => {
     cancelRecovery();
+    clearRejectedRecovery();
     interaction.cancelPendingInput();
   };
   return {
@@ -236,6 +257,8 @@ export function createApplicationTerminalInputIngress(
       });
     },
     adopt(terminalsActive = true): void {
+      if (rejectedRecoveryScope && !sameScope(rejectedRecoveryScope, scope()))
+        clearRejectedRecovery();
       if (!terminalsActive) cancelInteractionInput();
       flush();
       flushRecovery();

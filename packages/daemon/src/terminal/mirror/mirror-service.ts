@@ -73,6 +73,10 @@ export interface MirrorServiceOptions {
   controlModeOwnershipRegistry?: ControlModeOwnershipRegistry;
   /** Emitted only after an event-triggered list-clients proof of a native client. */
   onNativeClientActivity?: (session: string) => void;
+  captureInputWrite?: (
+    session: string,
+    ...args: Parameters<NonNullable<SessionChannelOptions["captureInputWrite"]>>
+  ) => ReturnType<NonNullable<SessionChannelOptions["captureInputWrite"]>>;
   onInputWrite?: (
     session: string,
     action: InputAction,
@@ -496,6 +500,47 @@ export class MirrorService {
     return this.channels.get(session)?.channel.flowSnapshot() ?? null;
   }
 
+  // Cumulative scalar totals sampled after each retired channel finishes disposal.
+  // Keep evidence of residual listeners without retaining retired channel objects.
+  private readonly retiredListenerCounts = {
+    channels: 0,
+    failures: 0,
+    pane: 0,
+    layout: 0,
+    layoutAuthority: 0,
+  };
+
+  qualificationListeners() {
+    const active = { pane: 0, layout: 0, layoutAuthority: 0 };
+    for (const entry of this.channels.values()) {
+      const counts = entry.channel.qualificationListeners();
+      active.pane += counts.pane;
+      active.layout += counts.layout;
+      active.layoutAuthority += counts.layoutAuthority;
+    }
+    return Object.freeze({
+      active: Object.freeze(active),
+      retired: Object.freeze({ ...this.retiredListenerCounts }),
+      pendingDisposals: this.pendingDisposals.size,
+      sessionExit: this.sessionExitListeners.size,
+    });
+  }
+
+  private async disposeObservedChannel(channel: SessionChannel): Promise<void> {
+    try {
+      await channel.dispose();
+    } catch (error) {
+      this.retiredListenerCounts.failures += 1;
+      throw error;
+    } finally {
+      const counts = channel.qualificationListeners();
+      this.retiredListenerCounts.channels += 1;
+      this.retiredListenerCounts.pane += counts.pane;
+      this.retiredListenerCounts.layout += counts.layout;
+      this.retiredListenerCounts.layoutAuthority += counts.layoutAuthority;
+    }
+  }
+
   activeChannelCount(): number {
     return this.channels.size;
   }
@@ -512,7 +557,7 @@ export class MirrorService {
         this.updateWindowMembership(entry.channel, []);
         this.channelSessions.delete(entry.channel);
         try {
-          await entry.channel.dispose();
+          await this.disposeObservedChannel(entry.channel);
         } finally {
           entry.releaseAuthority();
         }
@@ -625,6 +670,8 @@ export class MirrorService {
             }
           },
           onNativeClientActivity: () => this.opts.onNativeClientActivity?.(session),
+          captureInputWrite: (action, semanticPaneId) =>
+            this.opts.captureInputWrite?.(session, action, semanticPaneId),
           onInputWrite: (action, startedAtMicros, endedAtMicros, pendingBeforeSend) =>
             this.opts.onInputWrite?.(
               session,
@@ -686,8 +733,7 @@ export class MirrorService {
     this.updateWindowMembership(entry.channel, []);
     this.channelSessions.delete(entry.channel);
     if (this.channels.get(session) === entry) this.channels.delete(session);
-    const disposal = entry.channel
-      .dispose()
+    const disposal = this.disposeObservedChannel(entry.channel)
       .catch(() => {})
       .finally(() => entry.releaseAuthority());
     this.drainingChannels.set(session, disposal);
