@@ -153,6 +153,34 @@ jobs:
           path: ${{ steps.tmux_boundary.outputs.evidence }}
           if-no-files-found: error
           retention-days: 14
+      - name: Prepare disposable macOS SSH account
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { userInfo } from 'node:os';
+          import { execFileSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const receipt = { before: userInfo(), after: null, success: false };
+          try {
+            if (process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_ENVIRONMENT !== 'github-hosted' ||
+                process.platform !== 'darwin' || process.getuid() === 0 ||
+                !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(receipt.before.username))
+              throw new Error('Requires a disposable hosted macOS non-root account');
+            if (receipt.before.shell !== '/bin/zsh')
+              execFileSync('/usr/bin/sudo', ['-n', '/usr/bin/dscl', '.', '-create',
+                `/Users/${receipt.before.username}`, 'UserShell', '/bin/zsh'], { timeout: 10000 });
+            receipt.after = userInfo();
+            if (receipt.after.uid !== receipt.before.uid || receipt.after.username !== receipt.before.username ||
+                receipt.after.shell !== '/bin/zsh') throw new Error('SSH account shell verification failed');
+            receipt.success = true;
+          } finally {
+            writeFileSync(join(process.env.RUNNER_TEMP, 'styled-ssh-account.json'), JSON.stringify(receipt, null, 2));
+            console.log(JSON.stringify(receipt));
+          }
+          NODE
+
       - name: Require styled SSH renderer qualification on macOS
         if: runner.os == 'macOS'
         id: styled_ssh
@@ -170,7 +198,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: styled-ssh-${{ matrix.platform }}-${{ github.sha }}
-          path: ${{ runner.temp }}/styled-ssh-evidence
+          path: |
+            ${{ runner.temp }}/styled-ssh-evidence
+            ${{ runner.temp }}/styled-ssh-account.json
           if-no-files-found: error
           retention-days: 14
       - name: Qualify installer transactions on this platform
