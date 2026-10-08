@@ -1,0 +1,428 @@
+/* The reader's "You" cursor over the rendered app (tui-cursor.tsx): CSS-only movement,
+   transform and opacity only. Figure cursors play in their figure's 4 s slot of
+   the page's motion queue (3, 6 or 9 figures; --mockup-delay offsets the slot):
+   enter, reach the target just before the frame changes (about 27% into the
+   slot), press, then settle on the result or carry a drag to its release.
+   The hero cursor runs on Fig. 01's 12 s loop. */
+.tui-cursor-track {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+.tui-cursor {
+  --cursor-fill: #2563eb;
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  transform-origin: 0 0;
+  translate: -3.3px -2.1px;
+}
+.tui-cursor-arrow {
+  color: var(--cursor-fill);
+  width: 20px;
+  height: 20px;
+  flex: none;
+  overflow: visible;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0/0.35));
+}
+.tui-cursor-label {
+  position: absolute;
+  top: 15px;
+  left: 17px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--cursor-fill);
+  color: #fff;
+  font:
+    500 11px/16px var(--font-geist-mono),
+    ui-monospace,
+    monospace;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgb(0 0 0/0.25);
+}
+/* Near the right edge the pill sits left of the arrow so it is never clipped. */
+.tui-cursor-flip .tui-cursor-label {
+  left: auto;
+  right: calc(100% - 6px);
+}
+.tui-figure-cursors {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  animation: tui-cursor-show-9 36s linear var(--mockup-delay) infinite both;
+}
+.tui-figure-cursors .tui-cursor-track {
+  animation: tui-cursor-path-9 36s cubic-bezier(0.45, 0, 0.25, 1) var(--mockup-delay) infinite both;
+}
+.tui-figure-cursors[data-kind="click"] .tui-cursor {
+  animation: tui-cursor-click-9 36s linear var(--mockup-delay) infinite both;
+}
+.tui-figure-cursors[data-kind="drag"] .tui-cursor {
+  animation: tui-cursor-drag-9 36s linear var(--mockup-delay) infinite both;
+}
+[data-motion-count="3"] .tui-figure-cursors {
+  animation-name: tui-cursor-show-3;
+  animation-duration: 12s;
+}
+[data-motion-count="3"] .tui-figure-cursors .tui-cursor-track {
+  animation-name: tui-cursor-path-3;
+  animation-duration: 12s;
+}
+[data-motion-count="3"] .tui-figure-cursors[data-kind="click"] .tui-cursor {
+  animation-name: tui-cursor-click-3;
+  animation-duration: 12s;
+}
+[data-motion-count="3"] .tui-figure-cursors[data-kind="drag"] .tui-cursor {
+  animation-name: tui-cursor-drag-3;
+  animation-duration: 12s;
+}
+[data-motion-count="6"] .tui-figure-cursors {
+  animation-name: tui-cursor-show-6;
+  animation-duration: 24s;
+}
+[data-motion-count="6"] .tui-figure-cursors .tui-cursor-track {
+  animation-name: tui-cursor-path-6;
+  animation-duration: 24s;
+}
+[data-motion-count="6"] .tui-figure-cursors[data-kind="click"] .tui-cursor {
+  animation-name: tui-cursor-click-6;
+  animation-duration: 24s;
+}
+[data-motion-count="6"] .tui-figure-cursors[data-kind="drag"] .tui-cursor {
+  animation-name: tui-cursor-drag-6;
+  animation-duration: 24s;
+}
+.tui-figure-cursors[data-kind="drag"] .tui-cursor-track {
+  animation-name: tui-cursor-dragpath-9;
+}
+[data-motion-count="3"] .tui-figure-cursors[data-kind="drag"] .tui-cursor-track {
+  animation-name: tui-cursor-dragpath-3;
+}
+[data-motion-count="6"] .tui-figure-cursors[data-kind="drag"] .tui-cursor-track {
+  animation-name: tui-cursor-dragpath-6;
+}
+@keyframes tui-cursor-show-3 {
+  0%,
+  2% {
+    opacity: 0;
+  }
+  3.667%,
+  30% {
+    opacity: 1;
+  }
+  32%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes tui-cursor-path-3 {
+  0%,
+  2.667% {
+    transform: translate(var(--fx), var(--fy));
+  }
+  8%,
+  11% {
+    transform: translate(var(--ax), var(--ay));
+  }
+  20%,
+  33.333% {
+    transform: translate(var(--tx), var(--ty));
+  }
+  33.343%,
+  100% {
+    transform: translate(var(--fx), var(--fy));
+  }
+}
+@keyframes tui-cursor-click-3 {
+  0%,
+  8.167% {
+    transform: scale(1);
+  }
+  9% {
+    transform: scale(0.82);
+  }
+  10.333%,
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes tui-cursor-drag-3 {
+  0%,
+  8.167% {
+    transform: scale(1);
+  }
+  9%,
+  12.667% {
+    transform: scale(0.88);
+  }
+  14%,
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes tui-cursor-show-6 {
+  0%,
+  1% {
+    opacity: 0;
+  }
+  1.833%,
+  15% {
+    opacity: 1;
+  }
+  16%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes tui-cursor-path-6 {
+  0%,
+  1.333% {
+    transform: translate(var(--fx), var(--fy));
+  }
+  4%,
+  5.5% {
+    transform: translate(var(--ax), var(--ay));
+  }
+  10%,
+  16.667% {
+    transform: translate(var(--tx), var(--ty));
+  }
+  16.677%,
+  100% {
+    transform: translate(var(--fx), var(--fy));
+  }
+}
+@keyframes tui-cursor-click-6 {
+  0%,
+  4.083% {
+    transform: scale(1);
+  }
+  4.5% {
+    transform: scale(0.82);
+  }
+  5.167%,
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes tui-cursor-drag-6 {
+  0%,
+  4.083% {
+    transform: scale(1);
+  }
+  4.5%,
+  6.333% {
+    transform: scale(0.88);
+  }
+  7%,
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes tui-cursor-show-9 {
+  0%,
+  0.667% {
+    opacity: 0;
+  }
+  1.222%,
+  10% {
+    opacity: 1;
+  }
+  10.667%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes tui-cursor-path-9 {
+  0%,
+  0.889% {
+    transform: translate(var(--fx), var(--fy));
+  }
+  2.667%,
+  3.667% {
+    transform: translate(var(--ax), var(--ay));
+  }
+  6.667%,
+  11.111% {
+    transform: translate(var(--tx), var(--ty));
+  }
+  11.121%,
+  100% {
+    transform: translate(var(--fx), var(--fy));
+  }
+}
+@keyframes tui-cursor-click-9 {
+  0%,
+  2.722% {
+    transform: scale(1);
+  }
+  3% {
+    transform: scale(0.82);
+  }
+  3.444%,
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes tui-cursor-drag-9 {
+  0%,
+  2.722% {
+    transform: scale(1);
+  }
+  3%,
+  4.222% {
+    transform: scale(0.88);
+  }
+  4.667%,
+  100% {
+    transform: scale(1);
+  }
+}
+.tui-hero-cursors {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+/* Full shorthands with the name: a name-less shorthand is normalized away by
+   the CSS minifier. */
+.tui-hero-you {
+  animation: tui-hero-you 12s cubic-bezier(0.45, 0, 0.25, 1) infinite both;
+}
+.tui-hero-you .tui-cursor {
+  animation: tui-hero-press 12s linear infinite both;
+}
+@keyframes tui-hero-you {
+  0% {
+    transform: translate(55%, 62%);
+    opacity: 0;
+  }
+  5% {
+    opacity: 1;
+  }
+  22%,
+  28% {
+    transform: translate(26.6%, 23.9%);
+  }
+  35% {
+    transform: translate(30%, 30%);
+  }
+  52%,
+  59% {
+    transform: translate(92.5%, 98.9%);
+  }
+  68% {
+    transform: translate(70%, 60%);
+  }
+  82%,
+  92% {
+    transform: translate(31.9%, 23.9%);
+    opacity: 1;
+  }
+  97%,
+  100% {
+    transform: translate(31.9%, 23.9%);
+    opacity: 0;
+  }
+}
+@keyframes tui-hero-press {
+  0%,
+  23.5% {
+    transform: scale(1);
+  }
+  25% {
+    transform: scale(0.82);
+  }
+  27.5%,
+  54.5% {
+    transform: scale(1);
+  }
+  56% {
+    transform: scale(0.82);
+  }
+  58.5%,
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes tui-cursor-dragpath-3 {
+  0%,
+  2.667% {
+    transform: translate(var(--fx), var(--fy));
+  }
+  8%,
+  9% {
+    transform: translate(var(--ax), var(--ay));
+  }
+  12.667%,
+  33.333% {
+    transform: translate(var(--tx), var(--ty));
+  }
+  33.343%,
+  100% {
+    transform: translate(var(--fx), var(--fy));
+  }
+}
+@keyframes tui-cursor-dragpath-6 {
+  0%,
+  1.333% {
+    transform: translate(var(--fx), var(--fy));
+  }
+  4%,
+  4.5% {
+    transform: translate(var(--ax), var(--ay));
+  }
+  6.333%,
+  16.667% {
+    transform: translate(var(--tx), var(--ty));
+  }
+  16.677%,
+  100% {
+    transform: translate(var(--fx), var(--fy));
+  }
+}
+@keyframes tui-cursor-dragpath-9 {
+  0%,
+  0.889% {
+    transform: translate(var(--fx), var(--fy));
+  }
+  2.667%,
+  3% {
+    transform: translate(var(--ax), var(--ay));
+  }
+  4.222%,
+  11.111% {
+    transform: translate(var(--tx), var(--ty));
+  }
+  11.121%,
+  100% {
+    transform: translate(var(--fx), var(--fy));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tui-figure-cursors,
+  .tui-figure-cursors .tui-cursor-track,
+  .tui-figure-cursors .tui-cursor,
+  .tui-hero-cursors .tui-cursor-track,
+  .tui-hero-cursors .tui-cursor {
+    animation: none !important;
+  }
+  .tui-figure-cursors {
+    opacity: 1;
+  }
+  .tui-figure-cursors .tui-cursor-track {
+    transform: translate(var(--tx), var(--ty));
+  }
+  .tui-hero-you {
+    transform: translate(92.5%, 98.9%);
+  }
+}
+/* On narrow screens the hero image is scaled down; keep the cursor in proportion. */
+@media (max-width: 640px) {
+  .tui-hero-cursors .tui-cursor {
+    scale: 0.7;
+  }
+}

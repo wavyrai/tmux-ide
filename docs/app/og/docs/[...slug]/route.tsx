@@ -1,5 +1,6 @@
 import { getPageImage, source } from "@/lib/source";
 import { SocialCard } from "@/components/social-card";
+import { OG_FONTS } from "@/lib/og-fonts";
 import { SITE_DESCRIPTION } from "@/lib/site";
 import { notFound } from "next/navigation";
 import { ImageResponse } from "@takumi-rs/image-response";
@@ -21,6 +22,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug: s
       width: 1200,
       height: 630,
       format: "webp",
+      fonts: OG_FONTS,
+      loadDefaultFonts: true,
     },
   );
 }

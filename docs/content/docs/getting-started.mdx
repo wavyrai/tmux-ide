@@ -1,21 +1,25 @@
 ---
 title: Getting started
-description: Install tmux-ide 2.9 and open your first tmux session
+metaTitle: Install tmux-ide and run your first agent
+description: Install tmux-ide with one command, open your first agent-aware tmux session, and learn every key that moves between agents, sessions and panes.
 ---
 
-## Requirements
+This guide installs tmux-ide 2.9.4, opens your first session in the app, and
+lists its keyboard shortcuts. Installing takes one command on macOS or glibc
+Linux, needs no sudo, and leaves any tmux sessions you already run untouched.
 
-Existing tmux servers must run tmux 3.7 or newer. The installer includes 3.7c;
-it never kills or replaces an older running server automatically.
+## Requirements
 
 - macOS 26+ on ARM64, macOS 15+ on x64, or glibc Linux (Ubuntu 24.04 or newer baseline) arm64/x64
 - curl, tar, gzip, and a SHA-256 utility (normally included with your OS)
 
-The installer supplies a private Node.js runtime and bundled tmux. No sudo,
-Homebrew, or system Node installation is needed. Alpine/musl and native Windows
-are not supported; use a supported Linux distribution inside WSL.
+The installer supplies a private Node.js runtime and bundled tmux 3.7c, so no
+sudo, Homebrew, or system Node installation is needed. If you already run a tmux
+server, it must be tmux 3.7 or newer; the installer never kills or replaces a
+running server. Alpine/musl and native Windows are not supported; use a
+supported Linux distribution inside WSL.
 
-Installed releases use a compiled OpenTUI runtime and do not require Bun.
+Installed releases include a compiled app runtime and do not require Bun.
 Development checkouts use Bun to build the runtime and can opt into live source
 with `TMUX_IDE_TUI_SOURCE=1`.
 
@@ -26,25 +30,153 @@ curl -fsSL https://tmux-ide.com/install.sh | sh
 tmux-ide app
 ```
 
+You don't need to install tmux first: both the installer and the npm package
+bundle tmux 3.7c.
+
+<CopyAgentPrompt />
+
 The installer prints a PATH instruction if your shell needs one. It installs
-under `~/.local`, verifies Node and TUI downloads, and preserves existing tmux
+under `~/.local`, verifies the Node.js and app runtime downloads, and preserves existing tmux
 sessions. To inspect it before running, download `install.sh` and read it first.
 
 To choose a version or a different user-owned location:
 
 ```bash
 curl -fsSL https://tmux-ide.com/install.sh -o install.sh
-sh install.sh --version 2.9.3 --prefix "$HOME/.local"
+sh install.sh --version 2.9.4 --prefix "$HOME/.local"
 ```
 
+Claude Code [agent teams](/docs/claude-code-agent-teams) can
+open each teammate as a tmux split pane; that page shows the two settings to
+add. Since 2.9.4 the installer adds them for you when
+Claude Code is installed. It only adds missing keys, keeps a backup, and never
+overrides a value you set. To skip it, pass `--no-claude-agent-teams` to
+`install.sh` or set `TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`; to turn it off later,
+run `tmux-ide integration agent-teams disable`. If the step fails, the install
+still succeeds and prints a warning.
+
 With Node.js 20+ already installed, `npm install -g tmux-ide` is also supported.
+The npm package does not change Claude Code settings.
+
+For npm installations, the first app launch downloads the exact-version
+runtime if it is missing. It verifies the release metadata and SHA-256 digest,
+then caches the runtime under `~/.tmux-ide/bin`. tmux-ide starts its daemon (the background
+process that discovers sessions and tracks agent state) only after the app
+runtime is in place.
+
+If the download was interrupted:
+
+```bash
+tmux-ide update --tui-binary
+tmux-ide app
+```
+
+## Open your first session
+
+Home lists the agents and tmux sessions you already have. Select one with the
+mouse or keyboard, or name a session directly:
+
+```bash
+tmux-ide app work
+```
+
+If there are no sessions, press `n` on Home to create one. You do not need a
+system `tmux` command: tmux-ide uses its private bundled copy for new servers.
+If you already use tmux, its existing sessions are discovered too. Closing
+tmux-ide does not kill the tmux session.
+
+New to the app? Choose **Learn tmux-ide** on Home for a guided walkthrough in a
+practice session.
+
+## Get exact agent status from Claude Code
+
+tmux-ide detects agents from their process and screen. For exact working,
+blocked and done states from Claude Code, install its lifecycle hooks once:
+
+```bash
+tmux-ide integration install claude
+```
+
+New Claude Code sessions report their state from then on. See
+[how agent detection works](/docs/agent-detection).
+
+## Keyboard shortcuts
+
+Function keys work everywhere in the app. Press `Ctrl+K` inside Commands to
+search the full shortcut list, or `Ctrl+B` for what's new.
+
+### Anywhere
+
+| Key               | Action                                                      |
+| ----------------- | ----------------------------------------------------------- |
+| `F1`              | Home                                                        |
+| `F2`              | Terminals                                                   |
+| `F5`              | Commands                                                    |
+| `F6`              | Sessions — switch sessions across machines                  |
+| `F7`              | Attention — sessions with agents that need you              |
+| `F8` / `Shift+F8` | Back / forward through recently opened sessions             |
+| `F9` / `Shift+F9` | Next / previous open session tab (`Ctrl+F9` closes the tab) |
+| `F10`             | Show or hide the sidebar                                    |
+| `Ctrl+G`          | Focus the sidebar (opens Sessions on Home or when hidden)   |
+| `Ctrl+Q`          | Quit, or detach a detachable app                            |
+
+### Terminals
+
+| Key                | Action                                             |
+| ------------------ | -------------------------------------------------- |
+| `Ctrl+O`           | Next pane                                          |
+| `Ctrl+T`           | Next window                                        |
+| `Alt+Arrow`        | Resize the focused pane                            |
+| Right-click a pane | Pane menu: select text, rename, split, zoom, close |
+| `Shift+drag`       | Select text inside a mouse-enabled application     |
+| `Shift+click`      | Open a link (`Ctrl+click` or `⌘+click` also works) |
+
+All other keys go to the focused pane. Pane headers and window tabs expose the
+same actions to the mouse.
+
+### Home
+
+| Key     | Action                   |
+| ------- | ------------------------ |
+| `/`     | Search agents            |
+| `f`     | Cycle the machine filter |
+| `0`     | All agents               |
+| `w`     | Working agents           |
+| `a`     | Needs attention          |
+| `Enter` | Open the selected agent  |
+
+### Sidebar (when focused)
+
+| Key                | Action                               |
+| ------------------ | ------------------------------------ |
+| `↑` `↓` or `j` `k` | Move                                 |
+| `Enter`            | Open                                 |
+| `←` `→` or `h` `l` | Collapse / expand a machine          |
+| `Tab`              | Switch between sessions and machines |
+| `/`                | Search sessions                      |
+| `f`                | Toggle a session favorite            |
+| `?`                | Using tmux-ide (help)                |
+| `A` / `R` / `D`    | Add / retry / disconnect a machine   |
+| `Esc`              | Return to the terminal               |
+
+### Commands and Sessions menus
+
+Type to search, `↑` `↓` to choose, `Enter` to activate, `Esc` to go back.
+`Ctrl+Space` switches to navigation mode (`j` `k` move, `g` `G` first/last,
+`i` returns to search). In Sessions, `Ctrl+H` toggles local/all hosts, `Ctrl+F`
+favorites, and `Ctrl+P` toggles the preview, which `Ctrl+E` expands. `Ctrl+N`
+creates a session, `Ctrl+X` closes one after confirmation, `Ctrl+R` retries a
+host, and `Ctrl+←` / `Ctrl+→` browse windows without switching.
+
+## Update, roll back or uninstall
+
 To update an installer-owned copy, run `tmux-ide update`. It remembers your
 installation prefix and keeps stable installs on `latest` and beta installs on
 `beta`. Use `tmux-ide update --dry-run` to preview the operation. The command
 downloads and runs the same installer used for first-time setup. It verifies the new
 release before switching the launcher, and retains the previous release for rollback.
 It does not restart a daemon or replace a tmux server during installation.
-After installing, reopen the TUI. To explicitly refresh a running daemon:
+After installing, reopen the app. To explicitly refresh a running daemon:
 
 ```bash
 tmux-ide update --daemon --if-running
@@ -54,7 +186,7 @@ Package-manager installations can use `tmux-ide update` to update their package.
 
 If you installed a daemon supervisor service, remove it before uninstalling the
 launcher: `tmux-ide daemon service remove --yes --json`. Service removal preserves
-your tmux sessions. See [daemon supervision](/docs/app-surfaces) for service status
+your tmux sessions. See [daemon supervision](/docs/remote-machines#run-the-daemon-as-a-service) for service status
 and restart commands.
 
 For an installer-owned copy, use the same prefix with these recovery commands:
@@ -82,53 +214,7 @@ or detect them for you. Cleanup preserves the current and previous rollback
 releases, settings, and unrecognized files. Releases installed by an older script
 without a release marker are left for manual review.
 
-For package-manager installations, if the exact-version runtime is not already installed, the first explicit app
-launch downloads it, verifies its release metadata and SHA-256 digest, and
-caches it under `~/.tmux-ide/bin`. The daemon starts only after a runnable TUI
-has been selected.
-
-If the download was interrupted:
-
-```bash
-tmux-ide update --tui-binary
-tmux-ide app
-```
-
-## Open a session
-
-Home lists the tmux sessions you already own. Select one with the mouse or
-keyboard, or name it directly:
-
-```bash
-tmux-ide app work
-```
-
-If there are no sessions, press `N` on Home to create one. You do not need a
-system `tmux` command: tmux-ide uses its private bundled copy for new servers.
-If you already use tmux, its existing sessions are discovered too. Closing
-tmux-ide does not kill the tmux session.
-
-## Controls
-
-| Key              | Action                                                |
-| ---------------- | ----------------------------------------------------- |
-| `F1`             | Home                                                  |
-| `F2`             | Terminals                                             |
-| `F3`, `F4`, `F6` | Files, Diff, Missions when those views are configured |
-| `F5`, `Ctrl+P`   | Commands                                              |
-| `F8`, `Ctrl+Tab` | Cycle focus inside a composite view                   |
-| `F12`            | Performance HUD                                       |
-| `Ctrl+O`         | Cycle panes                                           |
-| `Ctrl+T`         | Cycle windows                                         |
-| `Ctrl+G`         | Return to Home                                        |
-| `Ctrl+E`         | Toggle the Files editor                               |
-| `Meta+Arrow`     | Resize the focused pane                               |
-| `Ctrl+Q`         | Quit, or detach a detachable viewer                   |
-
-Pane headers and window tabs also expose mouse controls for the supported
-actions.
-
-## Diagnose an install
+## Troubleshooting
 
 ```bash
 tmux-ide doctor --json
@@ -136,4 +222,13 @@ tmux-ide inspect --json
 ```
 
 When reporting an issue, include the output plus the shortest sequence that
-reproduces it.
+reproduces it. For specific symptoms, see [Troubleshooting](/docs/troubleshooting).
+
+## Next steps
+
+- [Tour Home, Terminals and Commands](/docs/app-surfaces)
+- [Run agents on remote machines over SSH](/docs/remote-machines)
+- [Run a team of Claude Code and Codex agents](/docs/multi-agent-teams)
+- [Restore sessions after a tmux crash](/docs/restore-resume)
+- [Change the theme](/docs/theming)
+- [Every CLI command](/docs/commands)

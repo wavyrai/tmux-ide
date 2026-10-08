@@ -1,49 +1,81 @@
 ---
-title: tmux-ide
-description: Build and coordinate coding agents in one agent-aware workspace on top of durable tmux sessions
+title: Overview
+metaTitle: "What is tmux-ide? Docs overview"
+description: tmux-ide is an open-source terminal app for running Claude Code, Codex and other coding agents in tmux, locally and over SSH. See what ships in 2.9.3.
 ---
 
-tmux-ide is a mouse-friendly OpenTUI application around ordinary tmux sessions.
-It adds Home, clickable window and pane chrome, agent indicators, memorable
-names, and direct controls. tmux remains the authority for processes, PTYs,
-topology, persistence, and SSH.
+tmux-ide is an open-source terminal app for running coding agents such as
+Claude Code and Codex in ordinary tmux sessions. Home shows every agent across
+your local and SSH machines and which ones are working or need you. Terminals
+lets you drive the live session with the mouse and keyboard. tmux stays the
+authority for processes, PTYs, layout, persistence and SSH.
 
 ```bash
 curl -fsSL https://tmux-ide.com/install.sh | sh
 tmux-ide app
 ```
 
-## The current app
+It runs on macOS and glibc Linux (use WSL on Windows). The installer bundles
+tmux 3.7c and a private Node.js runtime and needs no sudo. Full requirements are
+in [Getting started](/docs/getting-started#requirements).
 
-The default app starts with two core views and adds project-defined views when
-they are present in `.tmux-ide/workspace.yml`:
+## What ships in 2.9
 
-- **Home** discovers live sessions and provides a clean first-run state.
-- **Terminals** renders the selected tmux session with window tabs, pane
-  headers, agent awareness, and terminal content.
-- Optional **Files**, **Diff**, and **Missions** panels can appear through
-  `app.views`; mission profiles are validated but not dispatched by the CLI yet.
-- **Commands** exposes contextual actions and settings.
-- Mouse and keyboard control pane focus, windows, splitting, resizing,
-  renaming, creation, and confirmed closing.
-- `tmux-ide web` is intentionally unavailable in this release; the canonical
-  daemon API remains renderer-neutral.
+The app has two main views:
 
-## Why tmux stays underneath
+| View                 | What it does                                                                                         |
+| -------------------- | ---------------------------------------------------------------------------------------------------- |
+| **Home** (`F1`)      | Agents across your machines with search, a machine filter, and All / Working / Needs attention views |
+| **Terminals** (`F2`) | The selected tmux session, mirrored live with window tabs, pane headers and agent state              |
+
+Around them:
+
+- **Commands** (`F5`) — new windows and agents, splits, zoom, appearance, help.
+- **Sessions** (`F6`) and **Attention** (`F7`) — switch sessions across machines.
+- **Sidebar** (`F10`) — machines, sessions and agents; add SSH machines.
+- Mouse and keyboard control for focus, splitting, resizing, renaming and
+  confirmed closing — all real tmux operations, not a parallel layout model.
+
+See [App tour](/docs/app-surfaces) for the full tour and
+[Getting started](/docs/getting-started) for every key.
+
+## Why tmux-ide is built on tmux
 
 tmux has years of coverage for shells, terminal modes, resizes, detach/attach,
-disconnects, and SSH. tmux-ide does not duplicate that multiplexer. If the app
-or daemon stops, your sessions remain ordinary tmux sessions.
+disconnects and SSH. tmux-ide does not replace it:
 
-```mermaid
-flowchart LR
-  T[tmux\nPTYs · processes · topology · persistence]
-  D[daemon\ndiscovery · lifecycle · agent state · pane streams]
-  U[OpenTUI\nHome · Terminals · chrome · input]
-  T <--> D
-  D <--> U
-```
+| Layer  | Owns                                              |
+| ------ | ------------------------------------------------- |
+| tmux   | PTYs, processes, windows and panes, persistence   |
+| daemon | Discovery, lifecycle, agent state, pane streams   |
+| app    | Home, Terminals, chrome, mouse and keyboard input |
 
-Continue with [Getting started](/docs/getting-started) or read the
-[2.9 release cut](/docs/release-2-9-0). The
-[OpenTUI demo](/docs/demo) is generated from the production component tree.
+If the app or daemon stops, your sessions remain ordinary tmux sessions.
+
+## What else tmux-ide does
+
+- [Agent detection](/docs/agent-detection) — ground-truth status from Claude
+  Code hooks or any agent's self-report, with a transparent fallback.
+- [Agent automation](/docs/automation) and [multi-agent teams](/docs/multi-agent-teams)
+  — send, wait and read from the CLI, with scoped reads and sends over MCP and
+  the SDK.
+- [tmux chrome](/docs/the-dock) — `tmux-ide adopt` adds a status bar, keys and
+  notifications to sessions you use from a plain tmux client.
+- [Restore after a tmux crash](/docs/restore-resume) and
+  [run agents on parallel git worktrees](/docs/worktrees).
+- [Remote machines over SSH](/docs/remote-machines) — run agents on other
+  machines and drive them from your app.
+- [CLI reference](/docs/commands) — every command, most with `--json` output.
+- [Workspace layouts and config](/docs/configuration) — the optional
+  `.tmux-ide/workspace.yml` and global settings.
+- [Themes](/docs/theming) — 22 presets and automatic contrast.
+
+## Not in this release
+
+Files, Diff, Missions and Activity views exist in the source tree but are not
+part of the 2.9 app. Mission profiles in `workspace.yml` are validated but not
+run, and `tmux-ide web` is unavailable.
+
+Continue with [Getting started](/docs/getting-started), read the
+[2.9.5 candidate release notes](/docs/release-2-9-5), or watch the
+[app demo](/docs/demo).

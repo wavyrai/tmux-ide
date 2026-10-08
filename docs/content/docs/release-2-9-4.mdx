@@ -1,0 +1,47 @@
+---
+title: tmux-ide 2.9.4
+metaTitle: "What's new in 2.9.4"
+description: "tmux-ide 2.9.4, the current release: the installer sets up Claude Code agent teams, a new agent-teams command, and corrected CLI help."
+---
+
+Version `2.9.4` was released on October 7, 2026. The installer now sets up
+Claude Code agent teams for you, so teammates open as tmux split panes that
+tmux-ide names, groups and tracks. Existing tmux sessions keep running when you
+update or close the app. Upgrade with `tmux-ide update`, or rerun the installer
+below.
+
+## Claude Code agent teams, set up by the installer
+
+```bash
+curl -fsSL https://tmux-ide.com/install.sh | sh
+```
+
+When Claude Code is installed, the installer adds
+`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` and `teammateMode: "auto"` to
+`~/.claude/settings.json`. It adds each key only if it is missing, keeps a
+one-time backup, never rewrites a file that isn't valid JSON, and never
+overrides a value you set, including an explicit opt-out. If the step fails,
+the install still succeeds and prints a warning.
+
+To skip it, pass `--no-claude-agent-teams` to `install.sh` or set
+`TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`. npm installs don't change Claude Code
+settings. See [Claude Code agent teams](/docs/claude-code-agent-teams) for what
+tmux-ide shows for teammates.
+
+## New command
+
+`tmux-ide integration agent-teams enable|disable|status [--json]` checks or
+changes the setting later. `disable` writes an explicit opt-out that later
+installs respect; running `enable` yourself turns it back on.
+
+## Fixes
+
+- `restore --resume-agents` help now lists every agent it resumes: Claude Code,
+  Codex, opencode, Cursor and Copilot.
+- `sidebar-toggle` help now describes the tmux chrome sidebar.
+- The package description, keywords and homepage point to
+  [tmux-ide.com](https://tmux-ide.com).
+
+Supported platforms are unchanged since [2.9.3](/docs/release-2-9-3). Full list
+of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).

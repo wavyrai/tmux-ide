@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.5
+
+- Preserve tmux control reply ordering across pane output and drain cancelled snapshot collectors before reusing a connection.
+- Preserve Unicode code points when splitting terminal paste input.
+- Rebuild retained terminal surfaces after interrupted drawing so consumed damage is repainted on retry.
+- Resolve bundled tmux for ordinary CLI commands when system tmux is absent from PATH.
+- Retire predecessor resources after failed terminal reseeding and preserve rejected recovery-input warnings.
+
+## 2.9.4
+
+- The installer enables Claude Code agent teams when Claude Code is installed: it adds `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` and `teammateMode: "auto"` to `~/.claude/settings.json` only when missing, keeps a one-time backup, never overrides an explicit opt-out, and never rewrites invalid JSON. Opt out with `--no-claude-agent-teams` or `TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1`; a failure in this step never fails the install.
+- Add `tmux-ide integration agent-teams enable|disable|status [--json]` to check or change the setting later.
+- Correct CLI help for `restore --resume-agents` (Claude Code, Codex, opencode, Cursor and Copilot) and `sidebar-toggle` (the tmux chrome sidebar).
+- Refresh the package description, keywords and homepage (https://tmux-ide.com).
+
+Existing tmux sessions are preserved. npm installs do not change Claude Code settings.
+
 ## 2.9.3
 
 - Recover SSH connections after daemon replacement and apply saved-machine edits in the running app, with clearer connection errors and lifecycle logs.

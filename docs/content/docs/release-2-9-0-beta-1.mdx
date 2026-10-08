@@ -1,15 +1,17 @@
 ---
-title: OpenTUI 2.9 beta
-description: The current 2.9.0-beta.49 package and earlier OpenTUI beta highlights
+title: 2.9 beta archive
+description: Archived highlights from the tmux-ide 2.9.0 beta series, kept for reference. The betas are superseded by the stable 2.9 releases.
+noindex: true
 ---
 
-The current package is `2.9.0-beta.49`. It ships an OpenTUI client around ordinary tmux
-sessions. tmux owns PTYs, processes, topology, and persistence. Each machine has
-its own daemon, which publishes workspace state and pane streams. The local TUI
-connects through SSH tunnels and owns presentation and input.
+<Callout type="warn">
+  The 2.9.0 betas are superseded. The current release is [2.9.3](/docs/release-2-9-3); install it
+  with the [standard installer](/docs/getting-started#install) rather than the `beta` channel.
+</Callout>
 
-The highlights below retain the beta versions in which they were introduced;
-they are not a complete changelog for the current package.
+This page keeps the highlights of the 2.9.0 beta series in the beta where each
+first appeared. It is not a complete changelog, and some details changed before
+the stable release — the rest of the docs describe current behavior.
 
 ## Introduced in beta.47
 
@@ -45,19 +47,6 @@ and previews matching themes while searching. Enter applies the choice; Escape
 restores the original theme and automatic-contrast setting. Contrast remains on
 by default with an off switch.
 
-## Install
-
-```bash
-npm install -g tmux-ide@beta
-tmux-ide app
-```
-
-Pass a session name to bypass Home:
-
-```bash
-tmux-ide app work
-```
-
 ## Scroll improvements from beta.15
 
 Native scroll optimization now activates correctly on normal TUI launches. The
@@ -65,9 +54,6 @@ resolved setting is passed directly to the native renderer before startup, so
 Bun's JavaScript environment cannot leave the native default disabled. Explicit
 opt-outs remain available. Ordinary and Shift-scroll preserve independent client
 history positions and canonical pane geometry.
-
-The new web/Electron workbench is still in development. This npm beta distributes
-the terminal CLI and daemon, not a packaged Electron desktop application.
 
 ## Introduced in beta.11
 
@@ -85,7 +71,7 @@ the terminal CLI and daemon, not a packaged Electron desktop application.
 - Ctrl+G focuses the machine sidebar. Use arrows to navigate and Enter to open a
   session. Agent rows still open the exact pane in the selected workspace.
 
-See [SSH setup and limitations](/docs/app-surfaces#connect-to-another-machine-over-ssh).
+See [SSH setup and limitations](/docs/remote-machines).
 Saved SSH profiles can be listed, exported and imported with `tmux-ide machines`.
 Remote packages must already be installed. `tmux-ide machines start <alias> --write`
 explicitly starts the installed remote daemon; it does not provision a host or
@@ -96,7 +82,7 @@ install packages.
 - Pane headers show recent input and pane reads, with external tmux activity
   distinguished from attributed agent activity. Failed and disconnected states
   have explicit labels.
-- Appearance offers 22 Gloomberb themes alongside System, Dark, and Light.
+- Appearance offers 22 theme presets alongside System, Dark, and Light.
   Open Appearance, type to filter, and use the arrow keys to preview. Enter
   saves the selection; Escape restores the previous theme. Theme changes leave
   terminal truecolor output intact.
@@ -104,36 +90,12 @@ install packages.
   and finer mouse scrolling. The TUI keeps wheel momentum in scrollback when
   returning to live output.
 
-## Included
+## Bounded during the beta
 
-- Home, Terminals, and contextual Commands.
-- Configless discovery and creation of ordinary tmux sessions.
-- Agent state in the sidebar, window tabs, and pane chrome.
-- Agent-row navigation to the correct pane.
-- Mouse and keyboard pane/window selection and control.
-- Pane splitting, resizing, renaming, creation, and confirmed closing.
-- Memorable names for newly created panes and windows.
-- Indexed and truecolor terminal cells.
-- Retained content through quiet panes, resize, theme changes, daemon
-  replacement, and viewer reattachment.
-- A downloadable, checksummed runtime for macOS and Linux on arm64 and x64.
-- Detachable app hosting with `tmux-ide app --detachable`.
-- Optional workspace-defined Files, Diff, Missions, split, and tab views.
-- Rich Markdown, raster image, and structured card rendering in panes.
-
-## Deliberately bounded
-
-`tmux-ide web` fails with an explicit message instead of starting an unsupported
-web client. The native desktop client is still under development. Mission
-profiles and the Missions panel exist, but public CLI mission dispatch from
-workspace defaults is not wired in this beta.
-
-The npm package includes a patched tmux server for compatible Apple Silicon
-macOS hosts. Its native grid extension preserves hidden terminal backing during
-frozen scrollback reflow. Existing system-tmux servers remain in compatibility
-mode; installing the package does not restart them or migrate running sessions.
-Other hosts use system tmux. Terminal mouse events are row based, so this TUI
-does not provide pixel-level macOS scrolling.
+Workspace-defined Files, Diff and Missions views were part of the beta builds.
+They are not part of the stable 2.9 app, which shows Home and Terminals only.
+`tmux-ide web` fails with an explicit message, and mission profiles are
+validated but not dispatched.
 
 ## Reporting issues
 

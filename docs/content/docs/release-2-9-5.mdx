@@ -1,0 +1,30 @@
+---
+title: tmux-ide 2.9.5
+metaTitle: "What's new in 2.9.5"
+description: "tmux-ide 2.9.5 release candidate: terminal ordering, Unicode paste, redraw recovery and bundled tmux discovery fixes."
+---
+
+Version `2.9.5` is a correctness release candidate. Release qualification and
+publication are pending. It includes the installer and Claude Code agent-team
+setup from [2.9.4](/docs/release-2-9-4).
+
+## Terminal correctness fixes
+
+- Preserve tmux control reply ordering across pane output and drain cancelled snapshot collectors before reusing a connection.
+- Preserve Unicode code points when splitting terminal paste input.
+- Rebuild retained terminal surfaces after interrupted drawing so consumed damage is repainted on retry.
+- Resolve bundled tmux for ordinary CLI commands when system tmux is absent from PATH.
+- Retire predecessor resources after failed terminal reseeding and preserve rejected recovery-input warnings.
+
+## Scope
+
+These changes target terminal correctness and recovery. They do not claim full
+tmux parity, zero bugs or native performance parity. Experimental native-output
+completion and consumed-frame instrumentation are not part of this candidate.
+
+See [2.9.4](/docs/release-2-9-4) for installer opt-out behavior and the
+`tmux-ide integration agent-teams` command. The existing 2.9.4 release notes
+remain unchanged.
+
+Full change list:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).

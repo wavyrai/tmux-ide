@@ -1,20 +1,29 @@
 ---
-title: Agent Detection
-description: Two layers of agent-status detection — authoritative hooks and an evidence-tuned fallback — plus the self-report contract and overrides
+title: Agent status detection
+metaTitle: tmux agent status for Claude Code and Codex
+description: "tmux agent status: see if Claude Code, Codex or any agent in a pane is working, blocked, done or idle, from hooks, a self-report or a screen fallback."
 ---
 
-The glyphs on the dock and the border chips on each pane come from a
-**two-layer** detector. The whole point is trust: when an agent can tell you the
-truth, tmux-ide believes it; when it can't, tmux-ide reasons transparently and
-lets you correct it.
+Agent detection gives every tmux pane an agent status: tmux-ide knows whether
+each agent is working, blocked, done or idle. It has two layers. tmux-ide trusts an agent's own report first.
+When there is none, it reads the pane's process and screen, and shows you
+exactly how it decided.
+
+The same states appear on Home, in the sidebar and pane headers, and in the
+[tmux chrome](/docs/the-dock).
+
+## How detection works
 
 The four states are **blocked**, **working**, **done**, and **idle** (plus
-**unknown** when there's no signal at all).
+**unknown** when there's no signal at all). A fresh self-report decides the
+state; without one, tmux-ide infers it from the pane's process and screen.
 
-## Layer 1 — authoritative
+<AgentDetectionFigure />
 
-The authority layer is ground truth: an agent stamps its own pane with a tmux
-option and the detector trusts it.
+## How agents report their own state
+
+The first layer is the agent's own report. An agent stamps its pane with a tmux
+option, and tmux-ide trusts it while it is fresh.
 
 ### The Claude Code integration
 
@@ -22,9 +31,9 @@ option and the detector trusts it.
 tmux-ide integration install claude
 ```
 
-Claude Code has a first-class hooks system. This command writes a small POSIX
-hook script and registers it in `~/.claude/settings.json` for the lifecycle
-events that map to agent states:
+This command writes a small POSIX hook script and registers it in
+`~/.claude/settings.json` for the Claude Code lifecycle events that map to
+agent states:
 
 | Claude event                     | Reported state |
 | -------------------------------- | -------------- |
@@ -37,39 +46,71 @@ Each hook invocation stamps the current pane:
 
 ```
 @agent_state       "<working|blocked|done|idle>:<unix epoch>"
-@agent_session_id  the Claude session id (used by restore --resume-agents)
+@agent_session_id  the Claude session id
 ```
 
-The merge is surgical and reversible: entries are tagged by the hook-script
-path, a one-time backup is written next to `settings.json`, and uninstall
-removes exactly the tmux-ide entries. Hooks are read at session start, so the
+The session id lets [`tmux-ide restore --resume-agents`](/docs/restore-resume)
+bring the conversation back after a crash.
+
+Install and uninstall touch only tmux-ide's entries: they are tagged by the
+hook-script path, and a one-time backup is written next to `settings.json`. Hooks are read at session start, so the
 integration takes effect for **new** Claude Code sessions.
 
 ### The self-report contract
 
-You don't need the integration to join the authority layer. **Any** agent — or
-any script — can report status by writing the same pane option:
+You don't need the integration to report state. **Any** agent or script can
+write the same pane option:
 
 ```bash
-tmux set-option -p @agent_state "working:$(date +%s)"
+tmux set-option -p @agent_state "working:$(date +%s)"   # working | blocked | done | idle
 ```
 
 The value is `<state>:<unix epoch>`. A `working` or `blocked` report older than
-10 minutes is treated as stale and the detector falls back to Layer 2, so keep
-long-running agents stamping periodically.
+10 minutes is treated as stale, and detection falls back to reading the screen,
+so long-running agents should re-stamp periodically.
 
-## Layer 2 — the evidence-tuned fallback
+Two optional options add context while the state report is fresh:
 
-When there's no fresh authority option, the detector resolves the agent from the
-**process tree** (which command is actually running in the pane) and then reads
-the pane's visible screen against **evidence-tuned manifests** — per-agent rule
-sets that recognize the tells of working, blocked, and done from the last lines
-of output.
+```bash
+tmux set-option -p @agent_display_name "reviewer"         # name shown for the agent
+tmux set-option -p @agent_status_text "refactoring auth"  # one-line status
+```
 
-This layer is deterministic and inspectable, not a black box — and you can
+Both are cleaned of control characters and cut to 32 characters. The display
+name labels the agent in the app, and both appear in `tmux-ide team --json`.
+
+## Detection without a self-report
+
+Without a fresh self-report, the detector works in two steps. First it finds
+the agent from the pane's **process tree**, the command actually running in the
+pane. Then it matches the last lines of the screen against that agent's
+**manifest**, a rule set for recognizing working, blocked and done.
+
+This layer is deterministic, you can inspect it, and you can
 override it.
 
-## Debug it: `agent explain`
+## Which agents are detected?
+
+tmux-ide ships a manifest for each of these agent commands. **Tuned** manifests
+were built from real captured screens or the agent's own source strings.
+**Conservative** manifests report a state only on strong evidence, such as an
+explicit prompt or a spinner; anything they miss shows as unknown.
+
+| Manifest id                                                                                                                | Agent            | Fallback     |
+| -------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------ |
+| `claude`                                                                                                                   | Claude Code      | tuned        |
+| `codex`                                                                                                                    | Codex            | tuned        |
+| `aider`                                                                                                                    | Aider            | tuned        |
+| `opencode`, `gemini`, `copilot`, `cursor`, `goose`, `amp`, `devin`, `kimi`, `pi`, `grok`, `kiro`, `cline`, `droid`, `kilo` | Other agent CLIs | conservative |
+
+Any agent, listed or not, can [report its own state](#the-self-report-contract),
+and you can [add or replace a manifest](#override-detection-for-a-tool).
+Claude Code also has the hooks integration above.
+`tmux-ide integration install opencode` captures opencode session ids so
+[restore](/docs/restore-resume) can resume those conversations; it does not
+report state.
+
+## Debug a wrong state with `agent explain`
 
 To see exactly how a pane was classified, ask:
 
@@ -89,15 +130,38 @@ everything the detector reasoned over:
 - the winning classification;
 - the bottom screen lines it judged.
 
-## Overrides
+## Override detection for a tool
 
 If the fallback ever guesses wrong for a particular tool, pin the manifest with
 the `@agent_hint` pane option — `agent explain` reports whether a hint is
-applied and which manifest it forced. For authoritative control, prefer the
+applied and which manifest it forced:
+
+```bash
+tmux set-option -p @agent_hint claude
+```
+
+To tune detection for a tool, drop a manifest into
+`~/.tmux-ide/agent-detection/` — one JSON file per agent:
+
+```json
+{
+  "id": "my-agent",
+  "commands": ["my-agent", "my-agent-cli"],
+  "states": {
+    "working": { "any": [{ "contains": "esc to interrupt", "caseInsensitive": true }] },
+    "blocked": { "any": [{ "contains": "(y/n)", "caseInsensitive": true }] }
+  }
+}
+```
+
+A file whose `id` matches a bundled manifest replaces it; a new `id` adds one.
+Invalid files are skipped with a warning. Your files always win over the
+bundled set and over the optional manifest pack fetched by
+`tmux-ide update --manifests`. For authoritative control, prefer the
 [self-report contract](#the-self-report-contract) above: a fresh `@agent_state`
 always wins.
 
-## Per-pane agents in `team --json`
+## Read agent states as JSON
 
 Whatever the detector resolves is exposed programmatically. `tmux-ide team --json`
 carries a per-pane `agents[]` array on each session — one entry per pane that
@@ -116,11 +180,32 @@ classified to a real agent, flat across the session's windows:
 | `command`     | `pane_current_command` — the immediate process (often node/bun/sh)  |
 | `dir`         | `pane_current_path` — the pane's working directory                  |
 
-This is the same data the unified app reads: the sidebar's agents section and the
-Terminal surface's per-pane chips both render from it. See
-[Home, sidebar & panels](/docs/app-surfaces#the-terminal-surface).
+The app's Home roster, sidebar and pane headers show the same agent states. See
+[App tour](/docs/app-surfaces#terminals).
+
+## Common questions
+
+### Do I need the Claude Code integration?
+
+No. Without it, tmux-ide still detects Claude Code from its process and screen.
+The integration makes the state exact and records the session id for restore.
+
+### Why does an agent still show working after it stopped?
+
+A `working` or `blocked` report expires after 10 minutes; until then tmux-ide
+trusts it. If a hook did not fire, run `tmux-ide agent explain <pane>` to see
+the stamp and its age, and `tmux-ide integration status` to check the hooks.
+
+### Does detection send keys to my panes?
+
+No. Detection only reads pane options, the process tree and the visible screen.
+`agent explain` is read-only too.
 
 ## See also
 
-- [The dock & keys](/docs/the-dock) — where the glyphs and chips appear
-- [Notifications & events](/docs/notifications-events) — reacting to state transitions
+- [App tour](/docs/app-surfaces) — where agent states appear in the app
+- [tmux chrome](/docs/the-dock) — status-bar glyphs and pane chips in plain tmux
+- [Notifications and events](/docs/notifications-events) — reacting to state transitions
+- [Multi-agent teams](/docs/multi-agent-teams) — message and wait on other agents
+- [Claude Code agent teams](/docs/claude-code-agent-teams) — teammate panes and their status
+- [Restore and resume](/docs/restore-resume) — resume conversations after a crash

@@ -58,7 +58,8 @@ for (const [name, html] of [
 const figureCount = homepage.match(/<figure\b/gu)?.length ?? 0;
 const captionCount = homepage.match(/<figcaption\b/gu)?.length ?? 0;
 const labelledFigureCount = homepage.match(/<figure\b[^>]*aria-labelledby=/gu)?.length ?? 0;
-if (figureCount !== 10 || captionCount !== figureCount || labelledFigureCount !== figureCount) {
+// Hero demo + 3 agent cards + agent-teams figure + architecture figure + 3 capability cards.
+if (figureCount !== 9 || captionCount !== figureCount || labelledFigureCount !== figureCount) {
   throw new Error(
     `homepage technical figures must be captioned and labelled (figures ${figureCount}, captions ${captionCount}, labelled ${labelledFigureCount})`,
   );

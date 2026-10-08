@@ -1,22 +1,24 @@
 ---
 title: Worktrees
-description: Parallel agents on parallel branches — a git worktree plus an adopted session, in one command
+metaTitle: Git worktrees for parallel coding agents
+description: "Run parallel agents on parallel branches: tmux-ide worktree creates a git worktree and a ready tmux session in one command, then lists and removes them."
 ---
 
-When you want two agents working two branches at once without stepping on each
-other, `tmux-ide worktree` gives each its own git worktree **and** its own
-adopted session inside it. One command, isolated checkouts, no branch-switching
-churn.
+`tmux-ide worktree` creates a git worktree on a new branch and opens a tmux
+session in it, in one command. Use it to run two agents on two branches at once
+without them touching each other's files.
 
-## Create
+## Create a worktree and session
 
 ```bash
 tmux-ide worktree create fix/login
 ```
 
 This adds a git worktree on a new `fix/login` branch and opens a session inside
-it — already adopted, so the dock and agent detection are on from the first
-keystroke.
+it. If the worktree has a `.tmux-ide/workspace.yml`, that layout launches;
+otherwise you get a plain session. Either way the session is adopted, so it gets
+tmux chrome and is covered by notifications and restore snapshots right away.
+The app shows it like any other tmux session.
 
 Options:
 
@@ -51,9 +53,28 @@ directory next to the repo. Override the base globally in
 ```
 
 An empty value keeps the sibling-directory default; a relative path is resolved
-against the repo. See [Theming & config](/docs/theming).
+against the repo. See [Configuration](/docs/configuration#other-sections).
+
+## Example: one agent per branch
+
+Each worktree gets a session named `<project>@<branch>`, with `/` replaced by
+`-`. The project is the workspace `name`, or the repo folder name. In a repo
+folder named `myapp`:
+
+```bash
+tmux-ide worktree create feat/api   # session myapp@feat-api
+tmux-ide worktree create feat/ui    # session myapp@feat-ui
+```
+
+Start an agent in each session, for example `claude`, then wait for one to
+finish:
+
+```bash
+tmux-ide wait agent-status myapp@feat-api --status done
+```
 
 ## See also
 
-- [Restore & resume](/docs/restore-resume) — worktree sessions are snapshotted too
-- [The dock & keys](/docs/the-dock) — worktree sessions arrive pre-adopted
+- [Restore and resume](/docs/restore-resume) — worktree sessions are snapshotted too
+- [tmux chrome](/docs/the-dock) — worktree sessions arrive pre-adopted
+- [Multi-agent teams](/docs/multi-agent-teams) — dispatch work to each worktree's agent

@@ -1,19 +1,23 @@
 import type { MetadataRoute } from "next";
+import { docLastModified, homeLastModified } from "@/lib/git-dates";
 import { source } from "@/lib/source";
-import { SITE_URL } from "@/lib/site";
+import { absoluteUrl } from "@/lib/site";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const docs = source.getPages().map((page) => ({
-    url: `${SITE_URL}${page.url}`,
-    changeFrequency: "weekly" as const,
-    priority: page.url === "/docs" ? 0.9 : 0.7,
-  }));
+  // noindex pages stay reachable but are not advertised to search engines.
+  // No changefreq/priority: Google ignores both; lastmod is the signal that counts.
+  const docs = source
+    .getPages()
+    .filter((page) => !page.data.noindex)
+    .map((page) => ({
+      url: absoluteUrl(page.url),
+      lastModified: docLastModified(page.path),
+    }));
 
   const routes: MetadataRoute.Sitemap = [
     {
-      url: `${SITE_URL}/`,
-      changeFrequency: "weekly",
-      priority: 1,
+      url: absoluteUrl("/"),
+      lastModified: homeLastModified(),
     },
     ...docs,
   ];

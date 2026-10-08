@@ -1,0 +1,63 @@
+{
+  "width": 504,
+  "height": 254.8,
+  "sprite": "/tui-figures.svg?v=d70b266902",
+  "figures": {
+    "names": {
+      "label": "Renaming an agent's pane so the team can refer to it by name",
+      "cursor": {
+        "kind": "click",
+        "from": [67.5, 89.29],
+        "at": [15.83, 60.71],
+        "to": [20.83, 17.86]
+      }
+    },
+    "status": {
+      "label": "Agent states in the sidebar and in each pane header",
+      "cursor": { "kind": "hover", "from": [67.5, 67.86], "at": [5.83, 25], "to": [10.83, 25] }
+    },
+    "navigate": {
+      "label": "Choosing an agent on Home opens its exact pane",
+      "cursor": {
+        "kind": "click",
+        "from": [67.5, 46.43],
+        "at": [15.83, 82.14],
+        "to": [90.83, 10.71]
+      }
+    },
+    "tmux": {
+      "label": "After the app quits, the same sessions are still running in tmux",
+      "cursor": {
+        "kind": "hover",
+        "from": [67.5, 67.86],
+        "at": [24.17, 10.71],
+        "to": [27.5, 10.71]
+      }
+    },
+    "daemon": {
+      "label": "Daemon-observed agent state across every session on Home",
+      "cursor": { "kind": "hover", "from": [67.5, 89.29], "at": [5.83, 82.14], "to": [9.17, 82.14] }
+    },
+    "opentui": {
+      "label": "The command palette over agent-aware panes",
+      "cursor": { "kind": "click", "from": [50.83, 75], "at": [84.17, 96.43], "to": [20.83, 39.29] }
+    },
+    "window": {
+      "label": "Adding a window from the window strip",
+      "cursor": {
+        "kind": "click",
+        "from": [67.5, 60.71],
+        "at": [97.5, 10.71],
+        "to": [40.83, 10.71]
+      }
+    },
+    "resize": {
+      "label": "Dragging the divider between two panes",
+      "cursor": { "kind": "drag", "from": [50.83, 75], "at": [50.83, 46.43], "to": [67.5, 46.43] }
+    },
+    "focus": {
+      "label": "Moving focus to another pane",
+      "cursor": { "kind": "click", "from": [24.17, 75], "at": [67.5, 46.43], "to": [70.83, 53.57] }
+    }
+  }
+}

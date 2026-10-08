@@ -1,13 +1,15 @@
 ---
-title: Templates
-description: The workspace templates shipped with tmux-ide 2.9.3
+title: Workspace templates
+metaTitle: tmux layout templates for coding agents
+description: The workspace templates shipped with tmux-ide 2.9.5, what each layout contains, and how to start a project from one with tmux-ide init --template.
 ---
 
-`tmux-ide init --template <name>` copies a shipped template into
-`.tmux-ide/workspace.yml`, replaces its example name with the current project
-directory, validates it as WorkspaceConfigV1, and then writes it.
+A template is a ready-made `.tmux-ide/workspace.yml`: a tmux layout with agent
+panes on top and dev server, git changes and shell panes below.
+`tmux-ide init --template <name>` writes one into the current project, names the
+session after the directory, and validates the file before writing it.
 
-## Shipped names
+## Templates in tmux-ide 2.9.5
 
 | Template              | Initial layout                                                                           |
 | --------------------- | ---------------------------------------------------------------------------------------- |
@@ -20,7 +22,7 @@ directory, validates it as WorkspaceConfigV1, and then writes it.
 | `agent-team`          | Lead and two teammate panes; Changes, Dev Server, and Shell below                        |
 | `agent-team-nextjs`   | Lead, Frontend, and Backend agents; Next.js, Changes, and Shell below                    |
 | `agent-team-monorepo` | Lead plus agents rooted in `apps/web` and `apps/api`; matching dev panes and Shell below |
-| `missions`            | Lead, Frontend, and Backend above Validator, Researcher, and Shell                       |
+| `missions`            | Lead, Frontend, and Backend above Validator, Researcher, and Shell (pane layout only)    |
 
 Run, for example:
 
@@ -30,7 +32,7 @@ tmux-ide validate --json
 tmux-ide start
 ```
 
-## Representative generated file
+## What the `default` template generates
 
 The shipped `default` template currently produces this structure (the `name`
 is rewritten for your directory):
@@ -60,10 +62,10 @@ terminal:
           focus: true
 ```
 
-Stable pane `id` values are included so the daemon can preserve semantic
-identity independently of display titles.
+Stable pane `id` values let tmux-ide keep recognizing a pane after you rename
+it.
 
-## Additional team scaffolding
+## Files the agent-team templates add
 
 The `agent-team`, `agent-team-nextjs`, and `agent-team-monorepo` templates also
 copy the bundled skill files and create, when missing:
@@ -77,11 +79,12 @@ The `missions` template creates the same files plus `.tmux-ide/skills/`.
 Existing files are not overwritten.
 
 These templates create agent-ready pane layouts and project context. They do
-not add a legacy `orchestrator` block or automatically dispatch work. See
-[Workspace layouts](/docs/configuration#agent-profiles-and-mission-defaults) for
-the current declarative agent and mission fields.
+not add a legacy `orchestrator` block or automatically dispatch work. To change a
+generated layout, see the [workspace.yml reference](/docs/configuration#panes).
+To send work between agent panes, see [Multi-agent teams](/docs/multi-agent-teams);
+to give each agent its own branch, see [Worktrees](/docs/worktrees).
 
-## Automatic detection
+## Detect a layout from your stack
 
 Without `--template`, `tmux-ide init` detects the stack. Recognized frameworks
 produce a suggested layout; otherwise it falls back to `default`:
@@ -93,3 +96,9 @@ tmux-ide init
 
 Use `tmux-ide detect --write` when you want detection to write directly. Both
 commands refuse to overwrite an existing workspace config.
+
+## See also
+
+- [Configuration](/docs/configuration) — every workspace.yml field
+- [Multi-agent teams](/docs/multi-agent-teams) — coordinate the agents in a layout
+- [Worktrees](/docs/worktrees) — one branch per agent

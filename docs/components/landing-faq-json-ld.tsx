@@ -10,7 +10,10 @@ const landingFaqJsonLd = {
   mainEntity: LANDING_FAQ.map(({ question, answer }) => ({
     "@type": "Question",
     name: question,
-    acceptedAnswer: { "@type": "Answer", text: answer },
+    acceptedAnswer: {
+      "@type": "Answer",
+      text: answer.replace(/\[([^\]]+)\]\([^)]+\)/gu, "$1").replace(/`/gu, ""),
+    },
   })),
 };
 

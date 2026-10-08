@@ -242,6 +242,10 @@ jobs:
         # Coverage instrumentation makes the compact terminal fixtures much
         # heavier. Run them serially so their lifecycle assertions measure the
         # code under test instead of competing instrumented workers.
+        env:
+          # Lets timing-sensitive fixtures widen deadlines under instrumentation
+          # only; the regular unit and release suites keep their strict guards.
+          TMUX_IDE_TEST_COVERAGE: "1"
         run: pnpm exec vitest run --coverage --maxWorkers=1 --testTimeout=60000
 
       - name: Summarize coverage for PR

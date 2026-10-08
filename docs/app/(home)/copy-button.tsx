@@ -24,10 +24,12 @@ function fallbackCopy(text: string): boolean {
 
 export function CopyButton({
   text,
+  label = "Copy install command",
   className,
   children,
 }: {
   text: string;
+  label?: string;
   className?: string;
   children: React.ReactNode;
 }) {
@@ -56,7 +58,7 @@ export function CopyButton({
       type="button"
       onClick={copy}
       className={className}
-      aria-label={status === "copied" ? "Copied to clipboard" : "Copy install command"}
+      aria-label={status === "copied" ? "Copied to clipboard" : label}
     >
       {status === "copied" ? (
         <span className="marketing-feedback-enter inline-flex items-center gap-2">
@@ -73,7 +75,7 @@ export function CopyButton({
           >
             <polyline className="copy-check-path" points="20 6 9 17 4 12" />
           </svg>
-          Copied!
+          Copied
         </span>
       ) : (
         children

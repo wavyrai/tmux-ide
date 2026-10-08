@@ -11,6 +11,8 @@ main() {
   confirmed=false
   version=latest
   prefix=${TMUX_IDE_INSTALL_PREFIX:-"$HOME/.local"}
+  agent_teams=1
+  [ "${TMUX_IDE_NO_CLAUDE_AGENT_TEAMS:-}" != 1 ] || agent_teams=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --version|--prefix)
@@ -19,7 +21,8 @@ main() {
         shift 2 ;;
       --rollback|--uninstall|--prune) [ "$action" = install ] || fail 'Choose one action'; action=${1#--}; shift ;;
       --yes) confirmed=true; shift ;;
-      --help) printf 'Usage: install.sh [--version VERSION|beta|latest] [--prefix ABSOLUTE_PATH] [--rollback|--uninstall|--prune --yes]\nPrune requires all tmux-ide processes and services to be stopped; it keeps current and previous releases.\nRollback needs a previous successful install. Uninstall removes the launcher, preserves sessions and data, and retains runtime files for running processes.\n'; return ;;
+      --no-claude-agent-teams) agent_teams=0; shift ;;
+      --help) printf 'Usage: install.sh [--version VERSION|beta|latest] [--prefix ABSOLUTE_PATH] [--no-claude-agent-teams] [--rollback|--uninstall|--prune --yes]\nInstall enables Claude Code agent teams in ~/.claude/settings.json when Claude Code is present and you have not disabled them; opt out with --no-claude-agent-teams or TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1.\nPrune requires all tmux-ide processes and services to be stopped; it keeps current and previous releases.\nRollback needs a previous successful install. Uninstall removes the launcher, preserves sessions and data, and retains runtime files for running processes.\n'; return ;;
       *) fail "Unknown option: $1" ;;
     esac
   done
@@ -132,7 +135,11 @@ JS
   export PATH="$stage/node/bin:$PATH"
   # Prepare without touching a running daemon. Its supported upgrade runs only
   # after the verified installation has moved to its permanent location.
-  TMUX_IDE_RUNTIME_MODE=development npm install --global --prefix "$stage/npm" "tmux-ide@$version"
+  # Dependency lifecycle scripts are unnecessary here: native modules ship
+  # prebuilt binaries for every supported platform, and tmux-ide's own
+  # postinstall runs explicitly once the release is in place. Skipping them
+  # also avoids running third-party install scripts and npm's allowScripts warning.
+  TMUX_IDE_RUNTIME_MODE=development npm install --global --ignore-scripts --prefix "$stage/npm" "tmux-ide@$version"
   cli="$stage/npm/lib/node_modules/tmux-ide/bin/cli.js"
   installed=$(node --input-type=module -e 'import fs from "node:fs"; console.log(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).version)' "$stage/npm/lib/node_modules/tmux-ide/package.json")
   [ "$(node "$cli" --version)" = "tmux-ide v$installed" ] || fail 'Installed CLI version does not match its package'
@@ -176,11 +183,11 @@ JS
   printf '%s\n' "$native_version"
   node "$cli" update --tui-binary
   rm "$stage/node.tar.gz" "$stage/SHASUMS256.txt"
-  node --input-type=module - "$root" "$prefix" "$stage" <<'JS'
+  node --input-type=module - "$root" "$prefix" "$stage" "$agent_teams" <<'JS'
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-const [root, prefix, stage] = process.argv.slice(2);
+const [root, prefix, stage, agentTeams] = process.argv.slice(2);
 const destination = path.join(root, 'releases', path.basename(stage).replace('.install.', 'install-'));
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
 const launcher = `#!/bin/sh\n# tmux-ide universal installer v1\nroot=${quote(root)}\nexport PATH="$root/current/node/bin:$PATH"\nexport npm_config_prefix="$root/current/npm"\nexec "$root/current/node/bin/node" "$root/current/npm/lib/node_modules/tmux-ide/bin/cli.js" "$@"\n`;
@@ -209,7 +216,8 @@ try {
   const version = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8')).version;
   const env = {...process.env, PATH: `${path.join(destination, 'node/bin')}:${process.env.PATH}`, npm_config_global: 'false', npm_config_prefix: path.join(destination, 'npm')};
   // Complete package setup at its final path before switching the active release.
-  // Global host integration and daemon upgrades are explicit follow-up actions.
+  // Daemon upgrades and other host integrations are explicit follow-up actions;
+  // the one default (opt-out) host step, Claude Code agent teams, runs after activation.
   execFileSync(node, [path.join(pkg, 'scripts/postinstall.js')], {env, stdio: 'inherit', timeout: 60000});
   const actual = execFileSync(node, [path.join(pkg, 'bin/cli.js'), '--version'], {env, encoding: 'utf8', timeout: 30000}).trim();
   if (actual !== `tmux-ide v${version}`) throw new Error('Relocated CLI failed its version check');
@@ -231,6 +239,20 @@ try {
 } finally {
   unlink(temporaryLauncher);
   unlink(next);
+}
+// Best-effort and opt-out: never fails the install, never overrides a user's
+// explicit "0", and skips quietly when Claude Code is not installed.
+if (agentTeams === '1') {
+  try {
+    const out = execFileSync(launcherPath, ['integration', 'agent-teams', 'enable', '--if-not-disabled'], {encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe']});
+    if (out.trim()) console.log(`\n${out.trim()}`);
+  } catch (error) {
+    const detail = String(error.stdout || error.stderr || error.message).trim().split('\n')[0];
+    if (detail.startsWith('Usage: tmux-ide integration <')) console.log('\nThis tmux-ide version cannot configure Claude Code agent teams; skipped.');
+    else console.log(`\nWarning: could not configure Claude Code agent teams (${detail}). Retry: ${quote(launcherPath)} integration agent-teams enable`);
+  }
+} else {
+  console.log('\nSkipped Claude Code agent teams (opted out). Enable later: tmux-ide integration agent-teams enable');
 }
 console.log(`\nInstalled successfully.\n\nStart now:\n  ${quote(launcherPath)} app\n\nUpdate later:\n  ${quote(launcherPath)} update`);
 console.log(`\nTo use the short command in sh, bash or zsh, run:\n  export PATH=${quote(path.join(prefix, 'bin'))}:"$PATH"\nAdd that line to your shell profile to keep it for new terminals.`);

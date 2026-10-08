@@ -28,7 +28,12 @@ function getSocialWordmarkRows(): Array<{ y: number; text: string }> {
   );
 }
 
-/** Shared 1200×630 social artwork for the homepage and every docs page. */
+/**
+ * Shared 1200×630 social artwork for the homepage and every docs page, set in
+ * the site's faces: Plus Jakarta Sans for the title, Inter for text and Geist
+ * Mono (monospace) for the wordmark and figure label. Render with fonts:
+ * OG_FONTS and loadDefaultFonts: true.
+ */
 export function SocialCard({ description, eyebrow, title }: SocialCardProps) {
   const iconSrc = getSocialIconSource();
   const wordmarkRows = getSocialWordmarkRows();
@@ -39,6 +44,7 @@ export function SocialCard({ description, eyebrow, title }: SocialCardProps) {
         background: colors.background,
         color: colors.foreground,
         display: "flex",
+        fontFamily: "Inter",
         height: "100%",
         padding: "0 64px",
         width: "100%",
@@ -117,10 +123,7 @@ export function SocialCard({ description, eyebrow, title }: SocialCardProps) {
             style={{
               color: colors.accent,
               display: "flex",
-              fontFamily: "monospace",
-              fontSize: 19,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
+              fontSize: 20,
             }}
           >
             {eyebrow}
@@ -128,9 +131,10 @@ export function SocialCard({ description, eyebrow, title }: SocialCardProps) {
           <div
             style={{
               display: "flex",
+              fontFamily: "Plus Jakarta Sans",
               fontSize: 60,
-              fontWeight: 350,
-              letterSpacing: "-0.045em",
+              fontWeight: 600,
+              letterSpacing: "-0.03em",
               lineHeight: 1.02,
               marginTop: 22,
               maxWidth: 980,
@@ -143,7 +147,7 @@ export function SocialCard({ description, eyebrow, title }: SocialCardProps) {
               color: colors.muted,
               display: "flex",
               fontSize: 25,
-              lineHeight: 1.35,
+              lineHeight: 1.4,
               marginTop: 24,
               maxWidth: 980,
             }}
@@ -157,12 +161,11 @@ export function SocialCard({ description, eyebrow, title }: SocialCardProps) {
             background: colors.panel,
             borderTop: `1px solid ${colors.line}`,
             display: "flex",
-            fontFamily: "monospace",
             fontSize: 18,
             height: 78,
           }}
         >
-          <SocialCardSignal label="memorable names" marker="●" />
+          <SocialCardSignal label="named agents" marker="●" />
           <SocialCardSignal label="live agent state" marker="◌" />
           <SocialCardSignal label="exact pane navigation" marker="→" last />
         </div>

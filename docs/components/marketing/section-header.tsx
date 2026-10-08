@@ -5,6 +5,8 @@ import { cn } from "@/lib/cn";
 type SectionHeaderProps = {
   eyebrow: ReactNode;
   title: ReactNode;
+  /** A trailing sentence set in the muted tone: hierarchy by tone, not size. */
+  titleMuted?: ReactNode;
   description?: ReactNode;
   align?: "left" | "center";
   className?: string;
@@ -14,27 +16,27 @@ type SectionHeaderProps = {
 export function SectionHeader({
   eyebrow,
   title,
+  titleMuted,
   description,
   align = "left",
   className,
 }: SectionHeaderProps) {
   return (
     <header className={cn("max-w-2xl", align === "center" && "mx-auto text-center", className)}>
-      <div className="marketing-flag marketing-type-caption font-mono text-fd-primary">
-        {eyebrow}
-      </div>
+      <div className="type-subheadline text-fd-muted-foreground">{eyebrow}</div>
       <h2
         className={cn(
-          "marketing-type-title mt-4 max-w-[20ch] text-fd-foreground",
+          "type-display-4 lg:type-display-3 mt-3 max-w-[20ch] text-fd-foreground",
           align === "center" && "mx-auto",
         )}
       >
         {title}
+        {titleMuted ? <span className="block text-fd-muted-foreground">{titleMuted}</span> : null}
       </h2>
       {description ? (
         <p
           className={cn(
-            "marketing-type-body mt-5 max-w-[62ch] text-fd-muted-foreground",
+            "type-marketing-body mt-5 max-w-[62ch] text-fd-muted-foreground",
             align === "center" && "mx-auto",
           )}
         >

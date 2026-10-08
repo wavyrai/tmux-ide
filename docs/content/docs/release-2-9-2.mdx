@@ -1,9 +1,11 @@
 ---
-title: tmux-ide 2.9
-description: A terminal-first workspace for local and remote tmux sessions
+title: tmux-ide 2.9.2
+metaTitle: "What's new in 2.9.2"
+description: "tmux-ide 2.9.2 brings the Home and Terminals app to the stable channel: agents across machines, a calmer workspace, smoother resizing, a simple installer."
 ---
 
-Version `2.9.2` brings the Home and Terminals experience to the stable channel.
+Version `2.9.2`, released on October 2, 2026, brings the Home and Terminals
+experience to the stable channel. It is superseded by [2.9.3](/docs/release-2-9-3) and [2.9.4](/docs/release-2-9-4).
 tmux continues to own your processes, panes, windows, and persistence. Closing
 tmux-ide leaves those sessions running.
 
@@ -36,9 +38,9 @@ Performance varies with the host, terminal emulator, network, and tmux workload.
 curl -fsSL https://tmux-ide.com/install.sh | sh
 ```
 
-The user-owned installer supplies Node.js, bundled tmux, and the exact-version TUI
-for macOS 26+ on ARM64, macOS 15+ on x64, and glibc Linux (Ubuntu 24.04 or newer baseline) platforms on ARM64/x64. Existing tmux servers
-are preserved. See [Getting started](/docs/getting-started) for requirements,
+The user-owned installer supplies Node.js, bundled tmux, and the exact-version app
+runtime for macOS and glibc Linux, and preserves existing tmux servers. See
+[Getting started](/docs/getting-started#requirements) for supported platforms,
 manual npm installation, updates, and removal.
 
 ## Scope and known limits
@@ -58,3 +60,7 @@ were about 55–58 ms against an original 50 ms target. A Spark resource test pa
 its terminal assertions but retained a process-exit observation failure, with
 container cleanup confirmed. These are qualification limits, not claims about
 ordinary typing latency or universal parity with native tmux.
+
+Supported platforms and requirements now live in
+[Getting started](/docs/getting-started#requirements). Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).

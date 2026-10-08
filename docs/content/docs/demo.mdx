@@ -1,29 +1,49 @@
 ---
-title: OpenTUI demo
-description: A reproducible tour rendered by the production tmux-ide OpenTUI components
+title: App demo
+metaTitle: Animated tmux-ide app demo
+description: An animated tour of the tmux-ide app, showing Home, an agent-aware Terminals workspace and Commands, rendered from the production components.
 ---
 
-![Animated tmux-ide OpenTUI tour showing Home, Terminals, and Commands](/tui-demo.svg)
+![Animated tour of the tmux-ide app showing Home, Terminals, and Commands](/tui-demo.svg)
 
-This is not a hand-built browser imitation. The artifact renders the production
-`ApplicationShellView`, pane surfaces, theme tokens, terminal adapter contract,
-and command palette against a deterministic in-memory tmux fixture. It cycles
-through Home, an agent-aware four-pane workspace, and Commands.
+This animated demo shows the tmux-ide 2.9 app cycling through Home, Terminals
+and the Commands palette. Each frame is rendered from the app's production
+components: the machine sidebar, the Home agent list, pane headers with status
+markers, and Commands. Only the terminal contents are invented.
 
-That boundary follows the useful lesson from tmuxy's demo: keep the product UI
-and replace only the external tmux authority with deterministic demo data.
-tmux-ide's release client is a native terminal renderer, so the checked-in demo
-is an animated SVG capture rather than a second DOM implementation.
+The tour cycles through three frames:
 
-Regenerate it from a checkout:
+| Frame     | Shows                                                    |
+| --------- | -------------------------------------------------------- |
+| Home      | Agents across your machines with their status (`F1`)     |
+| Terminals | The live session with named panes and window tabs (`F2`) |
+| Commands  | The `F5` palette over Terminals                          |
+
+tmux-ide's release client is a native terminal renderer, so the demo is an
+animated SVG capture rather than a second browser implementation. Glyphs ship
+inside the SVG as a Geist Mono subset, so it looks the same on every OS.
+
+Try it yourself with [Getting started](/docs/getting-started), or read the
+[app tour](/docs/app-surfaces) for what each view does.
+
+With reduced motion enabled, the SVG shows the Terminals frame without
+animation, and the working spinner shows a steady `●`.
+
+## For contributors: regenerate the demo
+
+From a checkout:
 
 ```bash
 pnpm demo:tui
 ```
 
-The command writes `docs/public/tui-demo.svg`. It requires the same Bun and
-OpenTUI development dependencies used by renderer tests; installed users do
-not need them.
+The command writes `docs/public/tui-demo.svg` and records fingerprints of the
+presentation code it renders. `pnpm docs:build` fails, naming the changed
+files, when the demo is out of date. It requires the same Bun and OpenTUI
+development dependencies used by renderer tests; installed users do not need
+them.
 
-With reduced motion enabled, the SVG shows the Terminals frame without
-animation.
+## See also
+
+- [App tour](/docs/app-surfaces) — what each view does
+- [Getting started](/docs/getting-started) — install and open the app

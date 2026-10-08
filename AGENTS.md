@@ -59,7 +59,7 @@ mission runtime wiring is future work. Do not add legacy `team`, pane
 ```yaml
 panes:
   - title: Explorer
-    type: explorer # explorer | changes | preview | setup | config | sidebar
+    type: explorer # explorer | changes | preview | config | sidebar
     target: src/ # optional target path
 ```
 

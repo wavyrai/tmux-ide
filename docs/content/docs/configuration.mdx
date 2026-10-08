@@ -1,12 +1,20 @@
 ---
-title: Workspace Layouts
-description: The optional .tmux-ide/workspace.yml file for describing tmux layouts that tmux-ide builds and adopts for you
+title: Configuration
+metaTitle: workspace.yml and config.json reference
+description: Reference for the optional .tmux-ide/workspace.yml layout file and the global ~/.tmux-ide/config.json settings file, with every field and default.
 ---
 
-## Overview
+tmux-ide reads two files, both optional:
 
-`.tmux-ide/workspace.yml` is **optional**. The OpenTUI discovers ordinary tmux
-sessions without it. Use a workspace file when you want tmux-ide to build a
+| File                      | Scope       | Purpose                                                    |
+| ------------------------- | ----------- | ---------------------------------------------------------- |
+| `.tmux-ide/workspace.yml` | One project | A repeatable tmux layout: panes, commands, directories     |
+| `~/.tmux-ide/config.json` | Your user   | App, theme, notification, restore and tmux chrome settings |
+
+## Workspace file
+
+`.tmux-ide/workspace.yml` is **optional**. The app and `tmux-ide adopt` work
+with ordinary tmux sessions without it. Use a workspace file when you want tmux-ide to build a
 repeatable layout with named panes, commands, working directories, and
 environment variables.
 
@@ -20,43 +28,45 @@ Scaffold one from your detected stack:
 tmux-ide init          # or: tmux-ide detect --write
 ```
 
-## Minimal example
+Or [start from a template](/docs/templates).
+
+### Example layout
 
 ```yaml
 version: 1
 name: my-app # tmux session name
+before: pnpm install # runs before the layout launches
 
 terminal:
   rows:
     - size: 70% # row height
       panes:
-        - title: Claude
-          command: claude
-          focus: true
-        - title: Shell
+        - { title: Claude, command: claude, focus: true, size: 50% }
+        - { title: Shell }
     - panes:
-        - title: Dev Server
-          command: pnpm dev
-        - title: Tests
-          command: pnpm test
+        - { title: Changes, type: changes }
+        - { title: Dev, command: pnpm dev, dir: apps/web, env: { PORT: "3000" } }
 ```
 
-## Fields
+Launch it with `tmux-ide` or `tmux-ide start` in the project directory; see
+[Open tmux-ide](/docs/commands#open-tmux-ide).
 
-### Top level
+### Fields
 
-| Field       | Required | Notes                                                        |
-| ----------- | -------- | ------------------------------------------------------------ |
-| `version`   | yes      | Must be `1`                                                  |
-| `name`      | no       | tmux session name; falls back to the project directory       |
-| `before`    | no       | Pre-launch shell hook                                        |
-| `terminal`  | no       | Repeatable tmux rows, panes, and per-session colors          |
-| `app`       | no       | Ordered full-panel or composite app views                    |
-| `harnesses` | no       | Named agent adapter, command, and environment profiles       |
-| `agents`    | no       | Named harness, model, and role profiles                      |
-| `missions`  | no       | Validated mission defaults; runtime consumption is not wired |
+#### Top level
 
-### Rows
+| Field       | Required | Notes                                                  |
+| ----------- | -------- | ------------------------------------------------------ |
+| `version`   | yes      | Must be `1`                                            |
+| `name`      | no       | tmux session name; falls back to the project directory |
+| `before`    | no       | Pre-launch shell hook                                  |
+| `terminal`  | no       | Repeatable tmux rows, panes, and per-session colors    |
+| `app`       | no       | App views; validated, not read by the 2.9 app          |
+| `harnesses` | no       | Agent command profiles; validated, not run yet         |
+| `agents`    | no       | Agent role profiles; validated, not run yet            |
+| `missions`  | no       | Mission defaults; validated, not run yet               |
+
+#### Rows
 
 ```yaml
 terminal:
@@ -65,7 +75,7 @@ terminal:
       panes: [...] # at least one pane
 ```
 
-### Panes
+#### Panes
 
 | Field     | Type    | Notes                                         |
 | --------- | ------- | --------------------------------------------- |
@@ -79,9 +89,11 @@ terminal:
 | `type`    | string  | Render a supported widget instead of a shell  |
 | `target`  | string  | Target path for widgets that accept one       |
 
-### Widget panes
+#### Widget panes
 
-Set `type` to render a built-in TUI widget in a pane instead of a shell:
+Set `type` to run a built-in widget program in a pane instead of a shell. The
+widget is an ordinary process inside the tmux pane, so it shows up in Terminals
+like any other program:
 
 ```yaml
 panes:
@@ -92,68 +104,36 @@ panes:
     type: changes
 ```
 
-The launch resolver currently implements `explorer`, `changes`, `preview`,
-`config`, and `sidebar`. The setup wizard is a CLI surface (`tmux-ide setup`),
-not a workspace pane type. Explorer, changes, and config are also available as
-floating panels (`prefix e` / `g` / `v`, or `⌥e` / `⌥g` / `⌥,`) from an
-adopted session — see
-[Home, sidebar & panels](/docs/app-surfaces).
+| Type       | Shows                                       |
+| ---------- | ------------------------------------------- |
+| `explorer` | A file tree (optionally rooted at `target`) |
+| `changes`  | Git changes in the project                  |
+| `preview`  | A preview of the explorer's selection       |
+| `config`   | The workspace config editor                 |
+| `sidebar`  | A fleet navigation column                   |
 
-## App views
+The setup wizard is a CLI surface (`tmux-ide setup`), not a workspace pane type.
+Explorer, changes and config also open as floating panels in
+[tmux chrome](/docs/the-dock#panels) sessions.
 
-`app.views` controls the ordered views shown by the unified app. A simple view
-selects one of `home`, `terminals`, `files`, `diff`, or `missions`:
+### App views
 
-```yaml
-app:
-  views:
-    - id: home
-      title: Home
-      panel: home
-    - id: terminals
-      title: Terminals
-      panel: terminals
-```
+`app.views` is accepted for forward compatibility. The schema lists the panel
+kinds `home`, `terminals`, `files`, `diff` and `missions`, with `panel`, `split`
+and `tabs` layout nodes. **The 2.9 app does not read `app.views`**: it always
+shows Home and Terminals, and the `files`, `diff` and `missions` views are not
+part of this release. Validation still checks the block, so an existing file
+keeps working.
 
-Composite views use a recursive `layout` of `panel`, `split`, and `tabs` nodes.
-Node IDs must be unique within the view. Splits contain two to four children;
-tabs contain one to eight. When supplied, split `weights` must have one entry
-per child and a tab's `active` value must name one of its children.
+### Agent profiles and mission defaults
 
-## Agent profiles and mission defaults
-
-Harness commands may be a shell string or an executable/argv array. Agent roles
-are `manager`, `implementer`, `reviewer`, `researcher`, or `validator`:
-
-```yaml
-harnesses:
-  claude:
-    adapter: claude
-    command: [claude, --dangerously-skip-permissions]
-
-agents:
-  lead:
-    harness: claude
-    role: manager
-  reviewer:
-    harness: claude
-    model: sonnet
-    role: reviewer
-
-missions:
-  manager: lead
-  reviewer: reviewer
-  isolation: worktree
-  max_concurrent_tasks: 3
-```
-
-Agent and mission references are validated. In the current release these blocks
-are declarative defaults only: the app can show its Missions panel, but the CLI
-does not yet launch or dispatch a mission from this workspace data.
+The `harnesses`, `agents` and `missions` blocks are validated, so existing
+files keep working, but nothing in 2.9.4 launches or dispatches them. Start
+agents with **Commands → New agent…** in the app or with a pane `command`.
 
 ### Per-session theme
 
-The `terminal.theme` block sets colors for **this session's** panes:
+The `terminal.theme` block sets tmux colors for **this session's** panes:
 
 ```yaml
 terminal:
@@ -164,40 +144,9 @@ terminal:
     fg: colour248
 ```
 
-For the product-wide palette that colors the dock, chips, panels, and widgets,
-use `~/.tmux-ide/config.json` instead — see [Theming & config](/docs/theming).
+For the app's appearance, see [Appearance](/docs/theming).
 
-## The global config & in-app settings
-
-`.tmux-ide/workspace.yml` describes one project's layout. Product-wide behavior lives in
-`~/.tmux-ide/config.json` (override the path with `TMUX_IDE_CONFIG`) — the same
-file that holds the shared theme. Two things worth knowing for 2.9:
-
-- **`app.frontDoor`** controls the default entry point. Bare `tmux-ide` launches
-  the unified visual app by default (`true`); set it to `false` only when you
-  deliberately need the retained classic entry path.
-- **`app.detachable`** makes plain `tmux-ide app` run hosted: the app lives in
-  a tmux session of its own and your terminal attaches to it, so the cockpit
-  survives the terminal and reattaches from anywhere (`^q` detaches instead of
-  quitting). Default `false` — same as passing `--detachable` every time.
-- **Settings are editable in the app.** Inside `tmux-ide app`, press **F5** and
-  type "settings" for a palette command per setting — no JSON required. Edits
-  write back to `~/.tmux-ide/config.json` atomically:
-
-  | Setting        | Config field                             |
-  | -------------- | ---------------------------------------- |
-  | Accent color   | `theme.accent`                           |
-  | Notifications  | `notifications` (channels & transitions) |
-  | Quiet hours    | `notifications.quietHours`               |
-  | Update cadence | `updater`, `updates`                     |
-  | Crash restore  | `restore`                                |
-
-  Keyboard shortcuts have a read-only viewer, and a guarded "reset to defaults"
-  removes your overrides so the built-in defaults take over.
-
-See [Theming & config](/docs/theming) for the full palette.
-
-## Editing config programmatically
+### Editing the workspace from the CLI
 
 Use the typed `config` subcommands to mutate workspace fields, then validate the result with structured output:
 
@@ -210,12 +159,103 @@ tmux-ide validate --json
 See the [CLI reference](/docs/commands) for the full `config` surface, and
 [Templates](/docs/templates) for ready-made starting points.
 
-## Legacy compatibility
+### Legacy compatibility
 
 The legacy `team`, pane `role`/`task` metadata, `sidebar`, and `orchestrator`
 blocks are not represented in WorkspaceConfigV1. The migration command reports
 those fields as diagnostics instead of silently dropping them.
 
-Use the typed `harnesses`, `agents`, and `missions` fields above for declarative
-profiles. Do not copy the legacy `orchestrator` runtime block into
-`.tmux-ide/workspace.yml`.
+Do not copy the legacy `orchestrator` runtime block into
+`.tmux-ide/workspace.yml`; nothing in 2.9.4 runs agent or mission profiles.
+
+## Global config
+
+`~/.tmux-ide/config.json` holds user-wide settings. Set `TMUX_IDE_CONFIG` to use
+another path. Every field is optional: a missing or mistyped value falls back to
+its default, and a malformed file never stops tmux-ide from starting. The app
+writes changes made in **Appearance…** back to this file.
+
+```json
+{
+  "theme": { "mode": "system", "preset": "tokyo", "automaticContrast": true },
+  "notifications": {
+    "toast": true,
+    "macos": false,
+    "terminal": true,
+    "delaySeconds": 2,
+    "sound": "blocked"
+  },
+  "restore": { "resumeAgents": false },
+  "app": { "detachable": false }
+}
+```
+
+### `app`
+
+| Field         | Default    | Effect                                                                                                        |
+| ------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
+| `frontDoor`   | `true`     | Bare `tmux-ide` (no workspace file here) opens the app                                                        |
+| `detachable`  | `false`    | Run `tmux-ide app` hosted in tmux so it survives the terminal; `Ctrl+Q` detaches (same as `--detachable`)     |
+| `dragSelect`  | `"agents"` | When a left drag selects text locally instead of going to a mouse-enabled pane: `agents`, `always` or `never` |
+| `newAgentCwd` | `"pane"`   | Where **New agent…** starts from Terminals: the focused pane's directory, or `"session"`                      |
+| `kittyKeys`   | `true`     | Ask the host terminal for the kitty keyboard protocol; turn off if your terminal misbehaves                   |
+
+### `theme`
+
+| Field                                       | Default      | Effect                                                            |
+| ------------------------------------------- | ------------ | ----------------------------------------------------------------- |
+| `mode`                                      | `"system"`   | `system` (follow the terminal), `dark` or `light`                 |
+| `preset`                                    | —            | A [theme preset](/docs/theming#theme-presets) id, such as `tokyo` |
+| `automaticContrast`                         | `true`       | Correct low-contrast text across the app and terminal panes       |
+| `accent`, `muted`, `fg`, `status`, `glyphs` | tmux colours | Colors and glyphs for the [tmux chrome](/docs/the-dock)           |
+
+### `notifications`
+
+| Field          | Default     | Effect                                                                         |
+| -------------- | ----------- | ------------------------------------------------------------------------------ |
+| `toast`        | `true`      | In-tmux toast when an agent becomes blocked or done                            |
+| `macos`        | `false`     | Native macOS notification                                                      |
+| `terminal`     | `true`      | Terminal-native banner (OSC 9 / OSC 99) for terminals that support it          |
+| `delaySeconds` | `2`         | Wait before OS-level channels fire, and skip them if the state already changed |
+| `sound`        | `"blocked"` | Play a sound on `blocked` only, on `all` notifications, or `none`              |
+
+See [Notifications and events](/docs/notifications-events).
+
+### Other sections
+
+| Section        | Fields (defaults)                                                                                                                            | Effect                                                                                                      |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `restore`      | `resumeAgents` (`false`)                                                                                                                     | Make [`tmux-ide restore`](/docs/restore-resume) resume agent conversations by default                       |
+| `updater`      | `tickMs` (`2000`), `snapshotEvery` (`15`)                                                                                                    | Background updater cadence and how often it writes restore snapshots                                        |
+| `updates`      | `check` (`true`), `manifests` (`false`)                                                                                                      | Daily update check; also refresh the agent-detection manifest pack                                          |
+| `worktrees`    | `dir` (`""`)                                                                                                                                 | Base directory for [`tmux-ide worktree`](/docs/worktrees); empty means `<repo>-worktrees`                   |
+| `welcome`      | `show` (`true`)                                                                                                                              | Allow the one-time tmux chrome welcome card                                                                 |
+| `integrations` | `offer` (`true`)                                                                                                                             | Allow the one-time offer to install the Claude Code integration                                             |
+| `keys`         | `home` `M-h`, `popup` `M-p`, `cheatsheet` `M-k`, `menu` `M-m`, `sidebar` `M-b`, `panels` (`explorer` `M-e`, `changes` `M-g`, `config` `M-,`) | Key binds for the [tmux chrome](/docs/the-dock#the-keys); each also gets a prefix twin. Not used by the app |
+
+## Common questions
+
+### Do I need a workspace file?
+
+No. The app discovers ordinary tmux sessions, and `tmux-ide adopt` works on any
+session. A workspace file only matters when you want tmux-ide to build a
+repeatable layout.
+
+### Where does the session name come from?
+
+From `name` in `.tmux-ide/workspace.yml`, or the project directory's name when
+`name` is not set.
+
+### How do I check my file?
+
+```bash
+tmux-ide validate --json
+```
+
+Run it after every change to the file.
+
+## See also
+
+- [Workspace templates](/docs/templates) — ready-made layouts to start from
+- [Appearance and themes](/docs/theming) — the app's theme settings
+- [CLI reference](/docs/commands#inspect-and-edit-a-workspace) — `config`, `validate` and `init`
