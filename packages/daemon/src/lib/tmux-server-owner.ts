@@ -19,7 +19,8 @@ import { createNativeTmuxSessionCreator } from "./tmux-server-session-create.ts"
 import type { WorkspacePaneCreateMutationRequest } from "@tmux-ide/contracts";
 import { createTmuxSessionMutationFence } from "./tmux-session-mutation-fence.ts";
 import { createNativeTmuxSessionOpener } from "./tmux-server-session-open.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { WorkspaceIdSchemaZ } from "@tmux-ide/contracts";
 import { mkdirSync } from "node:fs";
 import { z } from "zod";
 import type { WorkspaceMultiplexerBackend } from "../command-center/actions/handlers/workspace-multiplexer.ts";
@@ -59,6 +60,22 @@ export interface NativeTmuxServerOwnerOptions {
   readonly stateDirectory: string;
   readonly webSocketUrl: string;
   readonly nativeServerIdentity?: NativeTmuxServerIdentity;
+}
+
+/** Native display names are not necessarily valid shared-contract record identities. */
+function discoveredWorkspaceName(registry: WorkspaceRegistry, sessionName: string): string {
+  if (WorkspaceIdSchemaZ.safeParse(sessionName).success && !registry.has(sessionName))
+    return sessionName;
+  // Existing intent wins even if it occupies a derived ID. Each candidate is
+  // deterministic; repeated refreshes retain the already-adopted session alias.
+  for (let suffix = 0; suffix <= registry.list().length; suffix += 1) {
+    const digest = createHash("sha256")
+      .update(`tmux-ide.discovered-workspace.v1\0${sessionName}\0${suffix}`)
+      .digest("hex");
+    const name = `session-${digest}`;
+    if (!registry.has(name)) return name;
+  }
+  throw new Error("Unable to allocate discovered workspace identity");
 }
 
 /** Refresh discovered live membership without changing durable workspace intent or aliases. */
@@ -114,11 +131,10 @@ export function createNativeTmuxServerCatalog(
         workspaceRegistry.remove(workspace.name);
     for (const { summary, dir } of rows.values())
       if (
-        !workspaceRegistry.has(summary.sessionName) &&
         !workspaceRegistry.list().some((workspace) => workspace.sessionName === summary.sessionName)
       )
         workspaceRegistry.add({
-          name: summary.sessionName,
+          name: discoveredWorkspaceName(workspaceRegistry, summary.sessionName),
           sessionName: summary.sessionName,
           projectDir: dir,
           persistence: "volatile",
