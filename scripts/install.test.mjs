@@ -38,6 +38,7 @@ case "$url" in *SHASUMS256.txt) printf '%s  node-v24.1.0-${target}.tar.gz\\n' '$
     npm,
     `import fs from 'node:fs'; import path from 'node:path'; import {createHash} from 'node:crypto';
 if (process.env.MOCK_NPM_FAIL) process.exit(1);
+if (!process.argv.includes('--ignore-scripts')) { console.error('installer must run npm with --ignore-scripts'); process.exit(1); }
 const prefix=process.argv[process.argv.indexOf('--prefix')+1];
 const root=path.join(prefix,'lib/node_modules/tmux-ide');
 for (const dir of ['bin','scripts','packages/daemon/dist/native/tmux/${target}']) fs.mkdirSync(path.join(root,dir),{recursive:true});
