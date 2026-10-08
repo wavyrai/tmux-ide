@@ -105,7 +105,7 @@ test("changed private root never grants kill authority", async () => {
 test("identity mismatch, live PID and timeout cannot become cleanup success", async () => {
   for (const mode of ["mismatch", "live", "timeout"]) {
     const f = fixture();
-    f.deps.exec = (args) => ({
+    f.deps.exec = () => ({
       status: mode === "timeout" ? null : 0,
       stdout: mode === "mismatch" ? "identity-mismatch" : "",
       signal: mode === "timeout" ? "SIGTERM" : null,

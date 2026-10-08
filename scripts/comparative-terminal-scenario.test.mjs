@@ -117,9 +117,11 @@ test("producer stream prefixes can match all cells before the final cursor reset
       const rowStart = `\x1b[${cursor.y + 1};1H`;
       const rowOffset = paint.indexOf(rowStart);
       assert.ok(rowOffset >= 0);
-      const style = /^\x1b\[[0-9;]*m/.exec(paint.slice(rowOffset + rowStart.length));
+      const styledRow = paint.slice(rowOffset + rowStart.length);
+      assert.equal(styledRow[0], "\x1b");
+      const style = /^\[[0-9;]*m/.exec(styledRow.slice(1));
       assert.ok(style);
-      const split = rowOffset + rowStart.length + style[0].length + cursor.x;
+      const split = rowOffset + rowStart.length + 1 + style[0].length + cursor.x;
       await screen.write(paint.slice(0, split));
       assert.deepEqual(frame.cells, expectedTypingCells(80, 30, 9, 18));
       assert.deepEqual(frame.cursor, { ...cursor, visible: true });

@@ -251,8 +251,8 @@ try {
         hash(binary) !== record.identity.binarySha256 ||
         hash(bun) !== record.identity.bunSha256
       )
-        throw Error("Source or executable changed during qualification");
-      record.identityUnchanged = true;
+        record.errors.push(String(Error("Source or executable changed during qualification")));
+      else record.identityUnchanged = true;
     } catch (error) {
       record.errors.push(String(error));
     }
