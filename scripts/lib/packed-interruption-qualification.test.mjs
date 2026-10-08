@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assessPackedInterruption } from "./packed-interruption-qualification.mjs";
+import {
+  assessPackedInterruption,
+  verifyPackedArtifactInventory,
+} from "./packed-interruption-qualification.mjs";
 
 function fixture() {
   return {
@@ -97,4 +100,68 @@ test("injected failure is distinct from SIGTERM but still requires exact ready o
   value.proof.interruption.signal = null;
   value.ready.runnerPid++;
   assert.equal(assessPackedInterruption(value).ok, false);
+});
+
+function artifactProof(mode = "bundled") {
+  const names = [
+    "cli-resolution-case.json",
+    "cli-resolution-vitest.json",
+    "tmux-ide-2.9.5.tgz",
+    "tmux-ide-sdk-0.1.0.tgz",
+    "tmux-ide-tui-linux-x64",
+    "tmux-ide-tui-linux-x64.gz",
+    "tmux-ide-tui-linux-x64.gz.sha256",
+    "tmux-ide-cli.js",
+  ];
+  return {
+    version: "2.9.5",
+    platform: "linux-x64",
+    automation: { sdkVersion: "0.1.0" },
+    cliResolution: {
+      passed: 1,
+      nativeMode: mode,
+      case: { nativeMode: mode, bundledCleanPath: { applicable: mode === "bundled" } },
+    },
+    artifacts: names.map((name) => ({ name, bytes: 1, sha256: "a".repeat(64) })),
+  };
+}
+test("interruption requires eight named artifacts including CLI resolution in both modes", () => {
+  for (const mode of ["bundled", "system-fallback"]) {
+    const proof = artifactProof(mode);
+    assert.equal(verifyPackedArtifactInventory(proof).length, 8);
+    for (let i = 0; i < 8; i++) {
+      const missing = structuredClone(proof);
+      missing.artifacts.splice(i, 1);
+      assert.throws(() => verifyPackedArtifactInventory(missing), /artifact-inventory/);
+    }
+  }
+});
+test("artifact inventory rejects duplicates, substitutions, malformed hashes and false mode coverage", () => {
+  for (const mutate of [
+    (p) => {
+      p.artifacts[0] = p.artifacts[1];
+    },
+    (p) => {
+      p.artifacts[0].name = "unrelated.json";
+    },
+    (p) => {
+      p.artifacts[0].sha256 = "wrong";
+    },
+    (p) => {
+      p.artifacts[0].bytes = -1;
+    },
+    (p) => {
+      p.cliResolution.case.bundledCleanPath.applicable = false;
+    },
+    (p) => {
+      p.cliResolution.passed = 0;
+    },
+    (p) => {
+      p.cliResolution.nativeMode = "automatic";
+    },
+  ]) {
+    const proof = artifactProof();
+    mutate(proof);
+    assert.throws(() => verifyPackedArtifactInventory(proof));
+  }
 });

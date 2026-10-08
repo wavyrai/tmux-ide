@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, basename, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -117,4 +117,21 @@ export function readBoundedCliResolutionReceipt(path) {
 export function packedExecutableIdentity(path) {
   const realpath = realpathSync(path);
   return { realpath, sha256: createHash("sha256").update(readFileSync(realpath)).digest("hex") };
+}
+
+/** Explicit contributor fallback cannot silently weaken bundled release coverage. */
+export function packedNativeMode(value) {
+  if (value === undefined) return "bundled";
+  assert(value === "bundled" || value === "system-fallback", "Invalid packed native mode");
+  return value;
+}
+export function packedNativeIdentity(mode, bundledPath, systemPath) {
+  assert(mode === "bundled" || mode === "system-fallback", "Invalid packed native mode");
+  if (mode === "bundled") return packedExecutableIdentity(bundledPath);
+  assert(!existsSync(bundledPath), "System-fallback lane must not contain a bundled native binary");
+  assert(
+    typeof systemPath === "string" && systemPath.startsWith("/"),
+    "System tmux must be absolute",
+  );
+  return packedExecutableIdentity(systemPath);
 }

@@ -95,6 +95,8 @@ jobs:
 
       - name: Install tarball and smoke canonical headless ownership
         if: matrix.node >= 22
+        env:
+          TMUX_IDE_PACK_NATIVE_MODE: system-fallback
         run: pnpm test:pack-installed
 
   opentui_package_qualification:
@@ -171,6 +173,7 @@ jobs:
       - name: Run focused OpenTUI release gate
         env:
           TMUX_IDE_PACK_EVIDENCE_DIR: ${{ runner.temp }}/opentui-package-proof
+          TMUX_IDE_PACK_NATIVE_MODE: system-fallback
         run: pnpm run release:opentui:check
 
       - name: Upload exact OpenTUI package proof

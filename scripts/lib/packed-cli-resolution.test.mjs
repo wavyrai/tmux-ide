@@ -129,3 +129,23 @@ test("a symlinked receipt directory never grants kill authority", async () => {
   await assert.rejects(retirePackedCliResolution(f.expected, f.receipt, f.deps));
   assert.equal(f.calls.length, 0);
 });
+
+test("native selection keeps bundled default strict and fallback explicit", async (t) => {
+  const { mkdtempSync, writeFileSync, rmSync, realpathSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { packedNativeMode, packedNativeIdentity } = await import("./packed-cli-resolution.mjs");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "packed-native-mode-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const bundled = join(root, "bundled");
+  const system = join(root, "system");
+  writeFileSync(system, "system bytes");
+  assert.equal(packedNativeMode(undefined), "bundled");
+  for (const invalid of ["", "auto", "stock", null]) assert.throws(() => packedNativeMode(invalid));
+  assert.throws(() => packedNativeIdentity("bundled", bundled, system), { code: "ENOENT" });
+  assert.equal(packedNativeIdentity("system-fallback", bundled, system).realpath, system);
+  assert.throws(() => packedNativeIdentity("system-fallback", bundled, "relative"));
+  writeFileSync(bundled, "bundled bytes");
+  assert.equal(packedNativeIdentity("bundled", bundled, system).realpath, bundled);
+  assert.throws(() => packedNativeIdentity("system-fallback", bundled, system), /must not contain/);
+});

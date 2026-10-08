@@ -19,11 +19,14 @@ import { resolveBundledTmux } from "../bundled-tmux.ts";
 
 const root = fileURLToPath(new URL("../../../../../", import.meta.url));
 const anchor = process.env.TMUX_IDE_TEST_BUNDLED_CLI_ANCHOR;
+const systemBinary = process.env.TMUX_IDE_TEST_SYSTEM_TMUX;
+if (anchor && systemBinary) throw Error("Select bundled or system tmux, not both");
 const selectedCli = process.env.TMUX_IDE_TEST_CLI_EXECUTABLE;
 const receiptPath = process.env.TMUX_IDE_TEST_CLI_RECEIPT;
 for (const [name, value] of Object.entries({
   TMUX_IDE_TEST_CLI_EXECUTABLE: selectedCli,
   TMUX_IDE_TEST_CLI_RECEIPT: receiptPath,
+  TMUX_IDE_TEST_SYSTEM_TMUX: systemBinary,
 })) {
   if (value !== undefined && !isAbsolute(value)) throw Error(`${name} must be absolute`);
 }
@@ -31,10 +34,10 @@ const cliPath = selectedCli ?? join(root, "bin/cli.js");
 if (selectedCli !== undefined && !statSync(cliPath).isFile())
   throw Error("Selected CLI must be a file");
 
-it.skipIf(!anchor)(
-  "uses bundled tmux without PATH tmux while preserving ordinary and explicit clients",
+it.skipIf(!anchor && !systemBinary)(
+  "resolves selected installed tmux while preserving ordinary and explicit clients",
   async () => {
-    const binary = resolveBundledTmux([anchor!]);
+    const binary = systemBinary ? realpathSync(systemBinary) : resolveBundledTmux([anchor!]);
     expect(binary).not.toBeNull();
     const directory = mkdtempSync(join(tmpdir(), "tmux-cli-resolution-"));
     const socket = join(directory, "owned.sock");
@@ -47,6 +50,10 @@ it.skipIf(!anchor)(
       directory,
       socket,
       bundleAnchor: anchor,
+      nativeMode: systemBinary ? "system-fallback" : "bundled",
+      bundledCleanPath: systemBinary
+        ? { applicable: false, reason: "explicit system-fallback lane" }
+        : { applicable: true },
       cli: {
         path: cliPath,
         realpath: realpathSync(cliPath),
@@ -206,8 +213,10 @@ it.skipIf(!anchor)(
           ).trim(),
         ).toBe(identity);
       };
-      assertStatus();
-      assertStatus();
+      if (!systemBinary) {
+        assertStatus();
+        assertStatus();
+      }
       const path = join(directory, "path");
       mkdirSync(path);
       wrapper(join(path, "tmux"), "ordinary");
@@ -230,11 +239,10 @@ it.skipIf(!anchor)(
       expect(invalid.status).not.toBe(0);
       expect(invalid.stderr).toContain("tmux_executable_unavailable");
       expect(readFileSync(log, "utf8")).toBe("");
-      assertStatus();
+      assertStatus(systemBinary ? { PATH: path } : {});
       receipt.phase = "cases-passed";
       receipt.cases = [
-        "bundle",
-        "bundle-repeat",
+        ...(!systemBinary ? ["bundle", "bundle-repeat"] : []),
         "ordinary-PATH",
         "relative-PATH",
         "empty-PATH",

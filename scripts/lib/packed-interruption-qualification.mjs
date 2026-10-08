@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 /** Verify a deliberately failed journey; never equate it with a completed product journey. */
 export function assessPackedInterruption({
   mode,
@@ -60,4 +61,54 @@ export function assessPackedInterruption({
     recordedPathCount: paths.length,
     presentPathCount: presentPaths.length,
   };
+}
+
+/** Both native modes run CLI resolution and retain its two independently checked reports. */
+export function verifyPackedArtifactInventory(proof) {
+  assert(
+    ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"].includes(proof.platform),
+    "artifact-platform",
+  );
+  assert(
+    typeof proof.version === "string" &&
+      /^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(proof.version),
+    "artifact-version",
+  );
+  const sdkVersion = proof.automation?.sdkVersion;
+  assert(
+    typeof sdkVersion === "string" &&
+      /^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(sdkVersion),
+    "artifact-sdk-version",
+  );
+  const resolution = proof.cliResolution;
+  assert(
+    resolution?.passed === 1 && ["bundled", "system-fallback"].includes(resolution.nativeMode),
+    "artifact-resolution-mode",
+  );
+  assert(resolution.case?.nativeMode === resolution.nativeMode, "artifact-resolution-mode");
+  assert.equal(
+    resolution.case?.bundledCleanPath?.applicable,
+    resolution.nativeMode === "bundled",
+    "artifact-bundled-coverage",
+  );
+  const names = [
+    "cli-resolution-case.json",
+    "cli-resolution-vitest.json",
+    `tmux-ide-${proof.version}.tgz`,
+    `tmux-ide-sdk-${sdkVersion}.tgz`,
+    `tmux-ide-tui-${proof.platform}`,
+    `tmux-ide-tui-${proof.platform}.gz`,
+    `tmux-ide-tui-${proof.platform}.gz.sha256`,
+    "tmux-ide-cli.js",
+  ];
+  assert(Array.isArray(proof.artifacts), "artifact-inventory");
+  assert.deepEqual(proof.artifacts.map((a) => a.name).sort(), names.sort(), "artifact-inventory");
+  for (const artifact of proof.artifacts) {
+    assert(Number.isSafeInteger(artifact.bytes) && artifact.bytes > 0, "artifact-bytes");
+    assert(
+      typeof artifact.sha256 === "string" && /^[a-f0-9]{64}$/.test(artifact.sha256),
+      "artifact-hash",
+    );
+  }
+  return proof.artifacts;
 }

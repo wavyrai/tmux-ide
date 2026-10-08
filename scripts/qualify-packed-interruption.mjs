@@ -4,7 +4,10 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, lstatSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assessPackedInterruption } from "./lib/packed-interruption-qualification.mjs";
+import {
+  assessPackedInterruption,
+  verifyPackedArtifactInventory,
+} from "./lib/packed-interruption-qualification.mjs";
 import { checkedReleaseSourceState } from "./lib/release-source-state.mjs";
 import { spawnSync } from "node:child_process";
 
@@ -152,10 +155,8 @@ try {
       entry.audit = audit;
       entry.cleanup = proof.cleanup;
       entry.artifactsVerified = 0;
-      // Package, SDK, TUI executable/archive/checksum, and installed CLI.
-      if (!Array.isArray(proof.artifacts) || proof.artifacts.length !== 6)
-        throw new Error("artifact-inventory");
-      for (const artifact of proof.artifacts) {
+      // Exact runtime inventory plus CLI resolution receipt and test report.
+      for (const artifact of verifyPackedArtifactInventory(proof)) {
         if (basename(artifact.name) !== artifact.name) throw new Error("artifact-name");
         const artifactBytes = readFileSync(join(evidence, artifact.name));
         if (artifactBytes.length !== artifact.bytes || sha(artifactBytes) !== artifact.sha256)

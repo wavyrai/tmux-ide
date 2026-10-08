@@ -10,6 +10,8 @@ import {
   retirePackedCliResolution,
   readBoundedCliResolutionReceipt,
   packedExecutableIdentity,
+  packedNativeMode,
+  packedNativeIdentity,
 } from "./lib/packed-cli-resolution.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { runPackedAutomationJourney } from "./lib/packed-automation-journey.mjs";
@@ -71,6 +73,7 @@ function boundedSpawnSync(file, args, options = {}) {
 const rendererSelection = packedRendererSelection(
   process.env.TMUX_IDE_PACK_RELEASE_SCROLL_MANIFEST,
 );
+const nativeMode = packedNativeMode(process.env.TMUX_IDE_PACK_NATIVE_MODE);
 const gateEvidenceDir = process.env.TMUX_IDE_PACK_EVIDENCE_DIR;
 const runtimeTraceEnabled = process.env.TMUX_IDE_PACK_RUNTIME_TRACE === "1";
 const topologyInputReproEnabled = process.env.TMUX_IDE_PACK_TOPOLOGY_INPUT === "1";
@@ -2287,7 +2290,8 @@ try {
     generatedSource.packagedSha256,
     "Installed CLI differs from tarball",
   );
-  const selectedNative = packedExecutableIdentity(
+  const selectedNative = packedNativeIdentity(
+    nativeMode,
     join(
       projectDir,
       "node_modules",
@@ -2300,6 +2304,9 @@ try {
       platformTag,
       "tmux",
     ),
+    nativeMode === "system-fallback"
+      ? run("sh", ["-c", "command -v tmux"]).stdout.trim()
+      : undefined,
   );
   const resolutionRoot = realpathSync(mkdtempSync("/tmp/tcr-"));
   cliResolutionExpected = {
@@ -2332,7 +2339,9 @@ try {
       env: {
         TMPDIR: resolutionRoot,
         TMUX_IDE_TEST_CLI_EXECUTABLE: selectedCli.realpath,
-        TMUX_IDE_TEST_BUNDLED_CLI_ANCHOR: selectedCli.realpath,
+        ...(nativeMode === "bundled"
+          ? { TMUX_IDE_TEST_BUNDLED_CLI_ANCHOR: selectedCli.realpath }
+          : { TMUX_IDE_TEST_SYSTEM_TMUX: selectedNative.realpath }),
         TMUX_IDE_TEST_CLI_RECEIPT: cliResolutionReceiptPath,
       },
     },
@@ -2342,6 +2351,7 @@ try {
   ]);
   assert.equal(passed, 1);
   cliResolution = {
+    nativeMode,
     passed,
     selectedCli,
     selectedNative,
