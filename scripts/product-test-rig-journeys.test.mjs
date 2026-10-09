@@ -118,7 +118,7 @@ function failureEvidence(boundary, message) {
 
 function attemptEntry(runId, repetition = 1) {
   return {
-    journey: { id: "runtime-qualification" },
+    journey: { id: "coherent-first-pane" },
     repetition,
     repeat: 2,
     runId,
@@ -161,11 +161,9 @@ test("golden registry enables only accepted direct journey executors", () => {
     "keyboard-pointer-resize",
     "selection-copy-app-mouse",
     "ansi-cursor-alt-screen",
-    "cross-client-handoff",
-    "daemon-restart",
     "session-recreate",
   ];
-  const golden = PRODUCT_JOURNEY_REGISTRY.filter(({ id }) => id !== "runtime-qualification");
+  const golden = PRODUCT_JOURNEY_REGISTRY;
   assert.deepEqual(
     golden.map(({ id }) => id),
     expected,
@@ -509,8 +507,6 @@ test("window lifecycle owner preserves exact create switch rename Web ordering a
     "rename",
     "boundary:window-switch-distribution",
     "switch",
-    "boundary:window-web-correlation",
-    "web",
   ]);
   for (const [method, boundary] of [
     ["createWindowNamespace", "window-namespace-ready"],
@@ -525,7 +521,6 @@ test("window lifecycle owner preserves exact create switch rename Web ordering a
     ["primeCreatedWindow", "window-switch-visible"],
     ["renameWindow", "window-rename-visible"],
     ["driveWarmSwitches", "window-switch-distribution"],
-    ["startWebAfterWindowLifecycle", "window-web-correlation"],
   ]) {
     await assert.rejects(
       runWindowLifecycleOwnerBoot({
@@ -581,8 +576,6 @@ test("resize owner preserves exact keyboard preview release Web ordering and bou
     "previews",
     "boundary:resize-pointer-release-proved",
     "release",
-    "boundary:resize-web-correlation",
-    "web",
   ]);
   for (const [method, boundary] of [
     ["createResizeNamespace", "resize-namespace-ready"],
@@ -596,7 +589,6 @@ test("resize owner preserves exact keyboard preview release Web ordering and bou
     ["driveKeyboardResize", "resize-keyboard-proved"],
     ["drivePointerPreviews", "resize-pointer-preview-distribution"],
     ["drivePointerRelease", "resize-pointer-release-proved"],
-    ["startWebAfterResize", "resize-web-correlation"],
   ]) {
     await assert.rejects(
       runKeyboardPointerResizeOwnerBoot({
@@ -654,8 +646,6 @@ test("selection owner preserves exact local copy app-mouse local-mode Web orderi
     "app-mouse",
     "boundary:selection-local-mode-proved",
     "local-mode",
-    "boundary:selection-web-correlation",
-    "web",
   ]);
 });
 
@@ -697,10 +687,9 @@ test("ANSI owner preserves normal cursor alternate restore workload idle Web ord
       "restore",
       "sustained",
       "idle",
-      "web",
     ],
   );
-  assert.equal(calls.at(-2), "boundary:ansi-web-correlation");
+  assert.equal(calls.at(-2), "boundary:ansi-idle-quiescent");
 });
 
 test("window lifecycle owner preserves the bounded owned-action predicate at rename boundary", async () => {
@@ -816,7 +805,7 @@ test("scratch fleet preserves two-window default and supports exact one-window l
 test("diagnose options select and repeat the executable journey deterministically", () => {
   const options = parseProductDiagnoseOptions([
     "--journey",
-    "runtime-qualification",
+    "coherent-first-pane",
     "--repeat",
     "3",
     "--json",
@@ -825,9 +814,9 @@ test("diagnose options select and repeat the executable journey deterministicall
   assert.deepEqual(
     resolveProductJourneyPlan(options).map(({ journey, repetition }) => [journey.id, repetition]),
     [
-      ["runtime-qualification", 1],
-      ["runtime-qualification", 2],
-      ["runtime-qualification", 3],
+      ["coherent-first-pane", 1],
+      ["coherent-first-pane", 2],
+      ["coherent-first-pane", 3],
     ],
   );
   assert.deepEqual(
@@ -898,7 +887,6 @@ test("coherent-first-pane owner preserves targeted preseed-to-Web ordering", asy
     "cwd",
     "targeted-tui",
     "coherent",
-    "web",
   ]);
   assert.equal(result.namespace.seed, "before-start");
   assert.equal(result.coherent.semanticPaneId, "pane.one");
@@ -1108,7 +1096,6 @@ test("coherent-first-pane owner decorates every raw phase failure with its first
     ["prepareTargetedTuiCwd", "targeted-tui-connect"],
     ["launchTargetedTui", "targeted-tui-connect"],
     ["proveCoherentPublication", "coherent-terminal-publication"],
-    ["startWebAfterCoherentBoundary", "web-started-after-coherent-boundary"],
   ];
   for (const [failedOperation, expectedBoundary] of cases) {
     const operations = Object.fromEntries(
@@ -1307,7 +1294,7 @@ test("first-key-paste expands each repetition into separately isolated key and p
   assert.throws(
     () =>
       resolveProductJourneyPlan(
-        parseProductDiagnoseOptions(["--journey", "runtime-qualification", "--variant", "paste"]),
+        parseProductDiagnoseOptions(["--journey", "coherent-first-pane", "--variant", "paste"]),
       ),
     /only valid with --journey first-key-paste/u,
   );
@@ -1340,7 +1327,6 @@ test("first-key-paste owner preserves direct phase order and named failures", as
     "first-input",
     "rehost",
     "distribution",
-    "web",
   ]);
   for (const [method, boundary] of [
     ["createInputNamespace", "first-input-namespace-ready"],
@@ -1350,7 +1336,6 @@ test("first-key-paste owner preserves direct phase order and named failures", as
     ["driveFirstInput", "first-input-causal-paint"],
     ["rehostDistributionTui", "distribution-lane-fresh"],
     ["driveDistribution", "distribution-samples"],
-    ["startWebAfterInput", "first-input-web-correlation"],
   ]) {
     await assert.rejects(
       runFirstKeyPasteOwnerBoot({
@@ -1412,7 +1397,6 @@ test("focus owner preserves blur before reclaim and names every failure boundary
     "baseline",
     "blur",
     "focus",
-    "web",
   ]);
   for (const [method, boundary] of [
     ["createFocusNamespace", "focus-namespace-ready"],
@@ -1424,7 +1408,6 @@ test("focus owner preserves blur before reclaim and names every failure boundary
     ["proveFocusBaseline", "focus-baseline"],
     ["driveBlur", "focus-blur-proved"],
     ["driveFocus", "focus-reclaim-proved"],
-    ["startWebAfterFocus", "focus-web-correlation"],
   ]) {
     await assert.rejects(
       runFocusOwnerBoot({
@@ -1567,7 +1550,7 @@ test("journey dispatcher invokes the exact registry executor instead of the runt
       calls.push("configless");
       return "direct";
     },
-    "runtime-qualification": async () => {
+    "coherent-first-pane": async () => {
       calls.push("runtime");
       return "monolith";
     },
@@ -1602,7 +1585,6 @@ test("configless owner launches public entry before election/adoption/coherence 
     "ordinary-discovery",
     "public-adoption",
     "coherent-publication",
-    "web-after-cold",
   ]);
   assert.equal(result.publicProcess.pid, 41);
 
@@ -1635,7 +1617,7 @@ test("configless owner launches public entry before election/adoption/coherence 
 
 test("repeat runner drives every planned journey sequentially and stops at the first failure", async () => {
   const plan = resolveProductJourneyPlan(
-    parseProductDiagnoseOptions(["--journey", "runtime-qualification", "--repeat", "3"]),
+    parseProductDiagnoseOptions(["--journey", "coherent-first-pane", "--repeat", "3"]),
   );
   const calls = [];
   const results = await runProductJourneyPlan(plan, async ({ repetition }) => {
@@ -1657,14 +1639,15 @@ test("repeat runner drives every planned journey sequentially and stops at the f
 });
 
 test("implemented Card5, all, unknown, and invalid selections are fail closed", () => {
-  assert.equal(
-    resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "cross-client-handoff"]))[0]
-      .journey.id,
-    "cross-client-handoff",
-  );
+  for (const id of ["cross-client-handoff", "daemon-restart", "runtime-qualification"]) {
+    assert.throws(
+      () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", id])),
+      /retired browser-dependent/u,
+    );
+  }
   assert.equal(
     resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])).length,
-    12,
+    10,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),
@@ -1683,7 +1666,7 @@ test("implemented Card5, all, unknown, and invalid selections are fail closed", 
   assert.throws(
     () =>
       resolveProductJourneyPlan(
-        parseProductDiagnoseOptions(["--journey", "all", "--journey", "runtime-qualification"]),
+        parseProductDiagnoseOptions(["--journey", "all", "--journey", "coherent-first-pane"]),
       ),
     /all cannot be combined/u,
   );
@@ -1692,12 +1675,12 @@ test("implemented Card5, all, unknown, and invalid selections are fail closed", 
 test("run ids are deterministic, bounded, and path safe", () => {
   assert.equal(
     productDiagnosticRunId({
-      journeyId: "runtime-qualification",
+      journeyId: "coherent-first-pane",
       repetition: 2,
       now: "2026-08-17T14:30:12.345Z",
       nonce: "A1-B2_C3",
     }),
-    "20260817143012345-runtime-qualification-r2-a1b2c3",
+    "20260817143012345-coherent-first-pane-r2-a1b2c3",
   );
   assert.equal(
     productDiagnosticRunId({
@@ -1711,7 +1694,7 @@ test("run ids are deterministic, bounded, and path safe", () => {
   );
 });
 
-test("bundle writer creates the exact immutable M59.4 evidence set", () => {
+test("bundle writer creates the exact immutable terminal-only v2 evidence set", () => {
   const temporary = mkdtempSync(join(tmpdir(), "product-rig-bundle-"));
   try {
     const webPngPath = join(temporary, "source.png");
@@ -1773,6 +1756,8 @@ test("bundle writer creates the exact immutable M59.4 evidence set", () => {
       "failed",
     );
     const sealedReport = JSON.parse(readFileSync(join(bundle.runDir, "report.json"), "utf8"));
+    assert.equal(sealedReport.evidenceScope, "terminal-only");
+    assert.equal(sealedReport.browserEvidence.status, "unmeasured");
     assert.equal(sealedReport.distribution.samples.length, 30);
     assert.equal(sealedReport.distribution.samples[29].fenceHealth.failed, false);
     const sealedTimeline = readFileSync(join(bundle.runDir, "timeline.jsonl"), "utf8")
@@ -1823,7 +1808,7 @@ test("bundle writer creates the exact immutable M59.4 evidence set", () => {
   }
 });
 
-test("bundle writer publishes a bounded explicit unavailable Web artifact", () => {
+test("bundle writer records unmeasured browser scope without a fabricated screenshot", () => {
   const temporary = mkdtempSync(join(tmpdir(), "product-rig-placeholder-"));
   try {
     const webPng = Buffer.from(
@@ -1863,7 +1848,11 @@ test("bundle writer publishes a bounded explicit unavailable Web artifact", () =
       readdirSync(bundle.runDir).sort(),
       [...PRODUCT_DIAGNOSTIC_BUNDLE_FILES].sort(),
     );
-    assert.equal(readFileSync(join(bundle.runDir, "web.png")).equals(webPng), true);
+    assert.equal(
+      JSON.parse(readFileSync(join(bundle.runDir, "scope.json"), "utf8")).browserEvidence.status,
+      "unmeasured",
+    );
+    assert.equal(existsSync(join(bundle.runDir, "web.png")), false);
     assert.equal(
       JSON.parse(readFileSync(join(bundle.runDir, "alignment.json"), "utf8")).correlation.complete,
       false,
@@ -1944,8 +1933,8 @@ test("attempt startup failure cleans up before publishing immutable placeholder 
     assert.deepEqual(report.cleanupReceipt.daemon, { status: "not-started" });
     assert.equal(report.failure, cause.message);
     assert.equal(
-      readFileSync(join(caught.bundle.runDir, "web.png")).equals(unavailableWebPng),
-      true,
+      JSON.parse(readFileSync(join(caught.bundle.runDir, "scope.json"), "utf8")).evidenceScope,
+      "terminal-only",
     );
   } finally {
     removeTestTree(temporary);
@@ -2073,6 +2062,20 @@ test("bundle publication embeds and verifies its final immutable report path", (
     const bundle = createProductDiagnosticBundle({ root, runId, evidence: prepared.evidence });
     const expected = join(bundle.runDir, "report.json");
     assert.equal(prepared.reportPath, expected);
+    assert.equal(prepared.report.evidenceScope, "terminal-only");
+    assert.equal(prepared.report.browserEvidence.status, "unmeasured");
+    assert.deepEqual(JSON.parse(readFileSync(expected, "utf8")), prepared.report);
+    assert.throws(
+      () =>
+        prepareProductDiagnosticBundlePublication({
+          root,
+          runId,
+          report: { evidenceScope: "cross-client" },
+          evidence: prepared.evidence,
+          cleanupReceipt: cleanupReceipt(runId),
+        }),
+      /scope conflicts/u,
+    );
     assert.equal(JSON.parse(readFileSync(expected, "utf8")).reportPath, expected);
     assert.equal(JSON.parse(readFileSync(expected, "utf8")).cleanupReceipt.passed, true);
     assert.equal(
@@ -4003,4 +4006,51 @@ test("cleanup consumes a late rejection after its timeout without replacing the 
   assert.deepEqual(failures, [
     { subsystem: "browser", detail: "cleanup step timed out after 5ms" },
   ]);
+});
+
+test("retired executors reject before invoking their resource owner", async () => {
+  let called = false;
+  await assert.rejects(
+    dispatchProductJourneyExecutor(
+      { journey: { id: "daemon-restart", executor: "daemon-restart" } },
+      {
+        "daemon-restart": () => {
+          called = true;
+        },
+      },
+    ),
+    /retired browser-dependent/u,
+  );
+  assert.equal(called, false);
+  assert.deepEqual(parseProductDiagnoseOptions([]).journeyIds, ["coherent-first-pane"]);
+});
+
+test("terminal bundle still refuses absent mandatory terminal evidence", () => {
+  const root = mkdtempSync(join(tmpdir(), "terminal-bundle-required-"));
+  try {
+    const evidence = failureEvidence("startup", "failed");
+    delete evidence.tuiAnsi;
+    assert.throws(
+      () => createProductDiagnosticBundle({ root, runId: "missing-terminal", evidence }),
+      /tuiAnsi must be a string/u,
+    );
+    assert.deepEqual(readdirSync(root), []);
+  } finally {
+    removeTestTree(root);
+  }
+});
+
+test("terminal bundle refuses contradictory legacy scope", () => {
+  const root = mkdtempSync(join(tmpdir(), "terminal-bundle-scope-"));
+  try {
+    const evidence = failureEvidence("startup", "failed");
+    evidence.report.evidenceScope = "cross-client";
+    assert.throws(
+      () => createProductDiagnosticBundle({ root, runId: "legacy-scope", evidence }),
+      /scope conflicts/u,
+    );
+    assert.deepEqual(readdirSync(root), []);
+  } finally {
+    removeTestTree(root);
+  }
 });

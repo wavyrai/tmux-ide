@@ -12,7 +12,7 @@
 - **References**: `docs/product/native-tmux-ide-ux-contract.md`,
   `packages/daemon/src/terminal/PtyAdapter.ts`,
   `packages/daemon/src/terminal/attachments/grouped-tmux.ts`, and
-  `apps/desktop-renderer/src/terminal/native-terminal-transport.ts`.
+  the former desktop renderer transport (retired with the Solid/Electron clients).
 
 ## Context
 

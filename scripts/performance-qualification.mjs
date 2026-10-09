@@ -105,24 +105,6 @@ const suites = [
       "full ANSI, truecolor, and explicit black terminal backgrounds remain protocol-faithful",
     ],
   },
-  {
-    name: "web",
-    workspace: "@tmux-ide/desktop-renderer",
-    files: [
-      "src/runtime/gui-performance-telemetry.test.ts",
-      "src/runtime/gui-performance-hud.test.tsx",
-      "src/experience/workspace-tiled-surface.test.tsx",
-      "src/terminal/workspace-pane-compositor.test.ts",
-      "src/terminal/xterm-renderer.test.ts",
-    ],
-    assertions: [
-      "the HUD remains opt-in and browser-frame work coalesces across panes",
-      "drag, swap, and resize floods produce one preview cadence and durable mutation",
-      "terminal presentation fanout fences stale work and bounds replay and layout candidates",
-      "authenticated pane relationships render without inventing external sources",
-      "explicit ANSI colors remain protocol-faithful across themes",
-    ],
-  },
 ];
 
 const scenarioDefinitions = [
@@ -139,20 +121,13 @@ const scenarioDefinitions = [
       "10,000 same-turn chunks coalesce into one parse and one dirty row",
     ],
   ),
-  scenario(
-    "resize-flood",
-    ["opentui", "web"],
-    [
-      "1,000 OpenTUI pointer moves stay local and submit once",
-      "web pointer floods coalesce to one preview frame and one durable resize",
-    ],
-  ),
+  scenario("resize-flood", ["opentui"], ["1,000 OpenTUI pointer moves stay local and submit once"]),
   scenario(
     "drag-split-and-move",
-    ["daemon-runtime", "web"],
+    ["daemon-runtime"],
     [
       "structural intents share one ordered semantic mutation lane",
-      "web pane dragging commits one canonical swap and adopts tmux confirmation",
+      "semantic mutation receipts retain canonical confirmation",
     ],
   ),
   scenario(
@@ -167,18 +142,20 @@ const scenarioDefinitions = [
   ),
   scenario(
     "drop-socket-crash-and-generation",
-    ["daemon-runtime", "web"],
-    ["NACK reseed, control exit, daemon generation rollover, and web reconnect are bounded"],
+    ["daemon-runtime"],
+    ["NACK reseed, control exit, daemon generation rollover, and reconnect are bounded"],
   ),
   scenario(
     "authenticated-and-external-interactions",
-    ["core", "daemon-runtime", "web"],
+    ["core", "daemon-runtime"],
     ["authenticated sends/reads retain source identity while external tmux traffic does not"],
   ),
   scenario(
     "themes-and-terminal-colors",
-    ["opentui", "web"],
-    ["both adapters preserve the complete ANSI palette, truecolor, and explicit backgrounds"],
+    ["opentui"],
+    [
+      "the OpenTUI adapter preserves the complete ANSI palette, truecolor, and explicit backgrounds",
+    ],
   ),
   scenario(
     "bounded-queues-and-idle-work",
@@ -251,7 +228,7 @@ const scenarioDefinitions = [
       portableEvidence?.measurements.resizeResponsiveness.status === "passed"
         ? "partially-measured-portable"
         : "not-measured",
-    suites: ["opentui", "web"],
+    suites: ["opentui"],
     assertions: ["resize geometry settles within a portable command budget"],
     reason: portableEvidence
       ? `Resize is ${portableEvidence.measurements.resizeResponsiveness.status}; drag is ${portableEvidence.measurements.dragResponsiveness.status}.`

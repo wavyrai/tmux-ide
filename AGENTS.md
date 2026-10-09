@@ -66,8 +66,7 @@ panes:
 ## Architecture
 
 This TypeScript monorepo uses pnpm and Turbo. The terminal CLI/daemon is the
-current npm release surface; web and desktop packages have separate development
-and validation paths. See `ARCHITECTURE.md` for import direction and
+current npm release surface; the former web and desktop applications are retired. See `ARCHITECTURE.md` for import direction and
 `eslint.config.js` for enforced package boundaries.
 
 ### CLI and daemon
@@ -103,8 +102,7 @@ and validation paths. See `ARCHITECTURE.md` for import direction and
   `workspace/` workspace presentation, and `features/` optional feature modules.
 - `packages/daemon/src/widgets/` — explorer, changes, preview, config, setup and
   sidebar widgets; `resolve.ts` resolves entries and `lib/` holds shared helpers.
-- `apps/desktop-renderer/`, `apps/electron-shell/` — separate
-  web/desktop surfaces; not prerequisites for the terminal-only release gate.
+- The former Solid desktop renderer and Electron shell have been retired; a replacement is not yet shipped.
 - Do not add an external or closed-source canvas SDK to the core, TUI or web GUI.
 
 ### Development, native inputs and documentation

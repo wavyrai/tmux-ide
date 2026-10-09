@@ -960,10 +960,13 @@ export function assessSelectionCopyAppMouseBoundaries({ expected, actual }) {
 }
 
 export function assessSelectionCopyAppMouseJourneyBoundaries({
+  evidenceScope,
   timeline,
   assessment,
   correlationComplete,
 }) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const required = [
     "selection-namespace-ready",
     "selection-daemon-ready",
@@ -976,7 +979,7 @@ export function assessSelectionCopyAppMouseJourneyBoundaries({
     "selection-copy-proved",
     "application-mouse-forwarded",
     "selection-local-mode-proved",
-    "selection-web-correlation",
+    ...(evidenceScope === "terminal-only" ? [] : ["selection-web-correlation"]),
   ];
   const phases = new Set(
     Array.isArray(timeline) && timeline.length <= 4_096
@@ -998,6 +1001,12 @@ export function assessSelectionCopyAppMouseJourneyBoundaries({
   );
   const firstBrokenBoundary = boundaries.find(({ status }) => status !== "passed")?.id ?? null;
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     status: firstBrokenBoundary === null ? "passed" : "failed",
     firstBrokenBoundary,
     firstUnmeasuredBoundary: null,
@@ -1031,7 +1040,9 @@ function exactApplicationMouseDistributionSummary(value, recomputed) {
   );
 }
 
-export function assessProductSelectionCopyAppMouse({ evidence, expected }) {
+export function assessProductSelectionCopyAppMouse({ evidence, expected, evidenceScope }) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const selection = evidence?.selection;
   const copy = evidence?.copy;
   const appMouse = evidence?.appMouse;
@@ -1147,17 +1158,21 @@ export function assessProductSelectionCopyAppMouse({ evidence, expected }) {
       evidence.tmux.geometryStable === true &&
       evidence.tmux.applicationMouseMode === "sgr-drag" &&
       evidence.tmux.snapshotExact === true,
-    webExact:
-      evidence?.web?.qualified === true &&
-      evidence.web.stableExactSamples === 2 &&
-      evidence.web.windowGroupCount === 1 &&
-      evidence.web.terminalNodeCount === 1 &&
-      evidence.web.semanticPaneExact === true,
+    ...(evidenceScope === "terminal-only"
+      ? {}
+      : {
+          webExact:
+            evidence?.web?.qualified === true &&
+            evidence.web.stableExactSamples === 2 &&
+            evidence.web.windowGroupCount === 1 &&
+            evidence.web.terminalNodeCount === 1 &&
+            evidence.web.semanticPaneExact === true,
+        }),
     correlationExact:
       evidence?.correlation?.daemon === true &&
       evidence.correlation.workspaceClient === true &&
       evidence.correlation.tui === true &&
-      evidence.correlation.web === true &&
+      (evidenceScope === "terminal-only" || evidence.correlation.web === true) &&
       evidence.correlation.tmux === true,
     zeroIdleWork:
       evidence?.work?.identicalIdleFrames === 0 &&
@@ -1168,6 +1183,12 @@ export function assessProductSelectionCopyAppMouse({ evidence, expected }) {
   const firstFailedPredicate =
     Object.entries(predicates).find(([, qualified]) => !qualified)?.[0] ?? null;
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     qualified: firstFailedPredicate === null,
     firstFailedPredicate,
     predicates,

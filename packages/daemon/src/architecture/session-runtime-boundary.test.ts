@@ -7,7 +7,6 @@ import { loadLocalSourceImportGraph } from "../../test-support/source-import-gra
 
 const REPO = fileURLToPath(new URL("../../../../", import.meta.url));
 const CLIENT_ROOTS = [
-  "apps/desktop-renderer/src",
   "packages/daemon-client/src",
   "packages/sdk/src",
   "packages/daemon/src/tui",

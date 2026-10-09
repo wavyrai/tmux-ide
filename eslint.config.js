@@ -83,35 +83,6 @@ export default [
     },
   },
 
-  {
-    files: ["apps/desktop-renderer/src/**/*.{ts,tsx}"],
-    languageOptions: {
-      globals: {
-        ...globals.browser,
-      },
-    },
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          patterns: [
-            {
-              group: [
-                "electron",
-                "electron/*",
-                "node:*",
-                "@tmux-ide/electron-shell",
-                "**/electron-shell/**",
-              ],
-              message:
-                "the desktop renderer is browser-native; desktop access goes through HostCapabilities",
-            },
-          ],
-        },
-      ],
-    },
-  },
-
   // ===========================================================================
   // Zone boundaries (ARCHITECTURE.md "Import direction").
   //

@@ -94,12 +94,15 @@ export function configlessPublicEnvironment(namespace) {
 }
 
 export function buildProductDiagnosticCorrelation({
+  evidenceScope,
   state,
   tuiAvailable,
   webAvailable,
   web,
   expected = null,
 }) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const committed = state?.convergence?.workspaceClient?.committed ?? null;
   const pending = state?.convergence?.workspaceClient?.pending ?? null;
   const derived = state?.convergence?.workspaceClient?.derived ?? null;
@@ -200,10 +203,16 @@ export function buildProductDiagnosticCorrelation({
     ...(derived === null ? ["workspaceClient.derived"] : []),
     ...(!workspaceClientExact ? ["workspaceClient.correlation"] : []),
     ...(!tuiAvailable ? ["tui.frame"] : []),
-    ...(!webAvailable ? ["web.png"] : []),
-    ...(!webSemanticComplete ? ["web.semantic"] : []),
+    ...(evidenceScope !== "terminal-only" && !webAvailable ? ["web.png"] : []),
+    ...(evidenceScope !== "terminal-only" && !webSemanticComplete ? ["web.semantic"] : []),
   ];
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     complete: missing.length === 0,
     missing: Object.freeze(missing),
     daemonState: {
@@ -619,6 +628,57 @@ export function qualifyPreseededPaneEvidence(sample, { throwOnFailure = false } 
     throw error;
   }
   return passed;
+}
+
+// A stable native probe may observe a later resize. Bind the first seed's
+// fence only to that seed and its exact consumed paint, never to later geometry.
+export function initialSeedFrameFenceExpectation(records, seed, hostFrame) {
+  const keys = [
+    "processId",
+    "clockId",
+    "clockKind",
+    "semanticPaneId",
+    "generation",
+    "incarnation",
+    "revision",
+    "stateHash",
+    "cols",
+    "rows",
+    "sourceEpoch",
+  ];
+  const paints = records.filter(
+    (record) =>
+      record?.type === "performance.terminal-canonical-paint" &&
+      keys.every((key) => record[key] === seed[key]),
+  );
+  if (paints.length !== 1) throw new Error("initial seed requires one exact consumed paint");
+  const paint = paints[0];
+  if (
+    seed.updateType !== "terminal.seed" ||
+    seed.processId !== hostFrame.processId ||
+    seed.clockId !== hostFrame.clockId ||
+    seed.generation !== hostFrame.daemonGeneration ||
+    seed.clockKind !== "performance-now" ||
+    ![seed.cols, seed.rows, paint.viewportCols, paint.viewportRows].every(
+      (value) => Number.isSafeInteger(value) && value > 0,
+    )
+  )
+    throw new Error("initial seed frame identity or geometry is invalid");
+  return Object.freeze({
+    processId: seed.processId,
+    clockId: seed.clockId,
+    daemonGeneration: seed.generation,
+    rendererEpoch: hostFrame.rendererEpoch,
+    semanticPaneId: seed.semanticPaneId,
+    revision: seed.revision,
+    stateHash: seed.stateHash,
+    incarnation: seed.incarnation,
+    sourceEpoch: seed.sourceEpoch,
+    canonicalCols: seed.cols,
+    canonicalRows: seed.rows,
+    viewportCols: paint.viewportCols,
+    viewportRows: paint.viewportRows,
+  });
 }
 
 export async function waitForCanonicalFrameFence(
@@ -1357,12 +1417,15 @@ export async function waitForQualifiedWorkspaceClientState(
 }
 
 export function assessConfiglessJourneyBoundaries({
+  evidenceScope,
   timeline,
   correlationComplete,
   correlationMissing,
   canonicalSeedPaintComplete,
   automaticPromotionCausalityComplete,
 }) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const requiredPhases = [
     "namespace-clean",
     "public-cli-spawn",
@@ -1370,7 +1433,7 @@ export function assessConfiglessJourneyBoundaries({
     "ordinary-session-discovery",
     "canonical-promotion-adoption",
     "coherent-terminal-publication",
-    "web-started-after-cold-boundary",
+    ...(evidenceScope === "terminal-only" ? [] : ["web-started-after-cold-boundary"]),
   ];
   let previous = -1;
   const boundaries = requiredPhases.map((id) => {
@@ -1390,7 +1453,9 @@ export function assessConfiglessJourneyBoundaries({
       id: "diagnostic-correlation",
       status: correlationComplete ? "passed" : "unmeasured",
       detail: correlationComplete
-        ? "daemon, WorkspaceClient, tmux, TUI and Web state correlated"
+        ? evidenceScope === "terminal-only"
+          ? "daemon, tmux and TUI state correlated"
+          : "daemon, WorkspaceClient, tmux, TUI and Web state correlated"
         : `missing ${correlationMissing.join(", ")}`,
     }),
     Object.freeze({
@@ -1412,6 +1477,12 @@ export function assessConfiglessJourneyBoundaries({
   const firstUnmeasuredBoundary =
     boundaries.find(({ status }) => status === "unmeasured")?.id ?? null;
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     boundaries: Object.freeze(boundaries),
     firstBrokenBoundary,
     firstUnmeasuredBoundary,
@@ -1419,7 +1490,13 @@ export function assessConfiglessJourneyBoundaries({
   });
 }
 
-export function assessCoherentFirstPaneBoundaries({ timeline, correlationComplete }) {
+export function assessCoherentFirstPaneBoundaries({
+  evidenceScope,
+  timeline,
+  correlationComplete,
+}) {
+  if (evidenceScope !== undefined && evidenceScope !== "terminal-only")
+    throw new Error("Unsupported journey evidence scope");
   const required = [
     "targeted-namespace-preseeded",
     "targeted-daemon-ready",
@@ -1427,7 +1504,7 @@ export function assessCoherentFirstPaneBoundaries({ timeline, correlationComplet
     "targeted-tui-connect",
     "canonical-seed-paint-correlation",
     "coherent-terminal-publication",
-    "web-started-after-coherent-boundary",
+    ...(evidenceScope === "terminal-only" ? [] : ["web-started-after-coherent-boundary"]),
   ];
   let previousIndex = -1;
   const boundaries = required.map((id) => {
@@ -1451,7 +1528,9 @@ export function assessCoherentFirstPaneBoundaries({ timeline, correlationComplet
       id: "diagnostic-correlation",
       status: correlationComplete ? "passed" : "unmeasured",
       detail: correlationComplete
-        ? "daemon, WorkspaceClient, tmux, TUI and Web state correlated"
+        ? evidenceScope === "terminal-only"
+          ? "daemon, tmux and TUI state correlated"
+          : "daemon, WorkspaceClient, tmux, TUI and Web state correlated"
         : "required cross-client correlation unavailable",
     }),
   );
@@ -1459,6 +1538,12 @@ export function assessCoherentFirstPaneBoundaries({ timeline, correlationComplet
   const firstUnmeasuredBoundary =
     boundaries.find(({ status }) => status === "unmeasured")?.id ?? null;
   return Object.freeze({
+    ...(evidenceScope === "terminal-only"
+      ? {
+          evidenceScope,
+          browserEvidence: { status: "unmeasured", reason: "retired-browser-client" },
+        }
+      : {}),
     boundaries: Object.freeze(boundaries),
     firstBrokenBoundary,
     firstUnmeasuredBoundary,
