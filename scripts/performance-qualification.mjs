@@ -58,11 +58,13 @@ const suites = [
       "src/performance-qualification.test.ts",
       "src/performance-metrics.test.ts",
       "src/interaction-receipts.test.ts",
+      "src/resize-transaction.test.ts",
     ],
     assertions: [
       "the exact 60 Hz budget and deterministic percentiles are enforced",
       "2/4/8-client convergence identities and queue bounds are evaluated",
       "authenticated and external interaction projections remain distinct",
+      "pane-resize floods keep one in-flight mutation and the latest target",
     ],
   },
   {
@@ -93,14 +95,13 @@ const suites = [
       "src/tui/mirror/runtime/performance-hud-optional-feature.test.ts",
       "src/tui/mirror/semantic-pane-render-source.test.ts",
       "src/tui/mirror/frame-coalescer.test.ts",
-      "src/tui/mirror/resize-transaction.test.ts",
       "src/tui/mirror/theme.test.ts",
       "src/tui/mirror/pane-mirror.test.ts",
     ],
     assertions: [
       "the HUD remains demand-loaded and installs no polling loop",
       "terminal delivery metrics publish only after retained state applies",
-      "frame requests coalesce; pane-resize floods keep one in-flight mutation and the latest target",
+      "frame requests coalesce",
       "idle panes do not advance content work",
       "full ANSI, truecolor, and explicit black terminal backgrounds remain protocol-faithful",
     ],
@@ -121,7 +122,11 @@ const scenarioDefinitions = [
       "10,000 same-turn chunks coalesce into one parse and one dirty row",
     ],
   ),
-  scenario("resize-flood", ["opentui"], ["1,000 OpenTUI pointer moves stay local and submit once"]),
+  scenario(
+    "resize-flood",
+    ["core"],
+    ["pane-resize motion keeps one in-flight mutation and only the latest queued target"],
+  ),
   scenario(
     "drag-split-and-move",
     ["daemon-runtime"],

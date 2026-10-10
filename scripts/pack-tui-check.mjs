@@ -80,6 +80,13 @@ if (webAssets.length > 0) {
   throw new Error(`OpenTUI npm package unexpectedly contains ${webAssets.length} Web GUI assets`);
 }
 
+const nativePreviewFiles = [...files].filter((path) => path.startsWith("apps/tmux-gpui/"));
+if (nativePreviewFiles.length > 0) {
+  throw new Error(
+    `OpenTUI npm package leaked native preview files: ${nativePreviewFiles.join(", ")}`,
+  );
+}
+
 const hostBinaries = [...files].filter((path) => /tmux-ide-tui(?:-|$)/u.test(path));
 if (hostBinaries.length > 0) {
   throw new Error(`universal npm package leaked host TUI binaries: ${hostBinaries.join(", ")}`);

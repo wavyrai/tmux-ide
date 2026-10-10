@@ -1,0 +1,5 @@
+# Pinned developer toolchain for mise users. `rust-toolchain.toml` remains the
+# authority for rustup and CI; keep the version here identical to that file's
+# `channel` so both entry points build with the same compiler.
+[tools]
+rust = { components = "clippy,rustfmt", profile = "minimal", version = "1.96.1" }

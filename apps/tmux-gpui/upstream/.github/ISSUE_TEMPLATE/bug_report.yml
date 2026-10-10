@@ -1,0 +1,109 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Herdr GPUI
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us reproduce the problem in the native Herdr GPUI client.
+        Redact secrets, private paths, and confidential terminal content from logs and screenshots.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight checklist
+      options:
+        - label: I have searched [existing issues](https://github.com/penso/herdr-gpui/issues) for duplicates.
+          required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened?
+      description: Include any error shown in the status bar.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide numbered steps, including how you launched the GUI.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Running Herdr GPUI version
+      description: Copy the version shown at the right of the GUI status bar. The Report issue button prefills this field. For source builds, also include the commit if known.
+      placeholder: "20260920.1 (release) or dev (local build)"
+    validations:
+      required: true
+  - type: input
+    id: daemon_version
+    attributes:
+      label: Herdr daemon version
+      description: Include the Herdr version, or say if it is unknown or no daemon is installed.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and hardware
+      placeholder: "macOS version, Apple Silicon or Intel"
+    validations:
+      required: true
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: How do you run the GUI?
+      options:
+        - cargo run / just run
+        - Locally built app bundle
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Connection / discovery
+        - Terminal rendering
+        - Keyboard / mouse / IME
+        - Sidebar / tabs / navigation
+        - Settings / menus
+        - Build / app bundle
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Is this a regression?
+      options:
+        - "Yes, this worked before"
+        - "No, this never worked"
+        - "I don't know"
+    validations:
+      required: true
+  - type: input
+    id: working_version
+    attributes:
+      label: Last working version or commit
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages / logs
+      description: Paste relevant output only, with secrets and private terminal content removed.
+      render: shell
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Redacted screenshots, display scaling, terminal programs involved, or whether this also happens in Herdr's TUI.

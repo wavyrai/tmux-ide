@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <desc>Herdr GPUI social preview. Ram path adapted from Herdr's logo (Apache-2.0).</desc>
+  <defs>
+    <path id="ram" d="M2794 3710 c-129 -33 -299 -135 -359 -214 -21 -28 -26 -42 -21 -63 9 -38 154 -178 199 -192 32 -11 41 -9 104 23 171 86 354 70 475 -43 150 -138 150 -379 0 -511 -107 -95 -278 -94 -386 2 l-46 40 -11 -29 c-16 -40 -14 -122 4 -164 60 -144 264 -222 452 -174 360 92 559 494 430 868 -36 103 -81 173 -175 267 -71 72 -100 93 -180 132 -52 26 -127 54 -167 62 -96 21 -230 20 -319 -4z M2183 3695 c-116 -32 -221 -108 -273 -199 -17 -28 -30 -54 -30 -58 0 -4 20 1 45 12 66 28 220 68 294 76 64 7 65 7 137 83 40 41 71 77 69 79 -2 2 -21 8 -42 13 -55 12 -140 10 -200 -6z M2212 3388 c-159 -22 -390 -122 -559 -241 -299 -210 -585 -600 -609 -828 -12 -118 40 -251 125 -318 96 -76 178 -98 426 -116 110 -8 224 -21 254 -29 125 -34 230 -115 272 -211 11 -24 24 -81 30 -127 20 -170 65 -271 166 -374 34 -35 63 -65 63 -67 0 -1 -10 -27 -22 -57 -29 -76 -37 -259 -14 -350 42 -170 158 -318 311 -397 44 -23 98 -46 120 -52 22 -6 45 -14 51 -18 5 -5 15 -48 22 -96 6 -48 14 -92 17 -97 4 -6 415 -10 1131 -10 l1124 0 0 1584 0 1585 -55 -19 c-84 -29 -143 -68 -232 -154 l-83 -78 -54 49 c-111 102 -233 151 -391 160 -113 6 -199 -10 -298 -54 l-60 -27 -26 34 c-37 51 -120 134 -127 128 -3 -4 0 -34 7 -67 17 -89 7 -268 -21 -356 -103 -328 -377 -545 -688 -545 -161 0 -273 41 -373 137 -37 35 -66 75 -85 116 -79 173 -8 407 124 407 44 0 68 -14 117 -66 74 -78 167 -82 238 -9 60 62 72 147 33 231 -42 90 -120 130 -238 122 -50 -4 -85 -14 -131 -37 -89 -45 -122 -52 -176 -40 -92 20 -262 163 -302 253 -11 25 -21 45 -22 45 -1 -1 -30 -6 -65 -11z m-256 -505 c115 -88 129 -102 132 -131 2 -18 -2 -40 -9 -49 -7 -8 -69 -55 -138 -105 -103 -73 -130 -88 -151 -83 -35 8 -51 34 -48 74 3 31 12 42 83 92 44 31 80 61 82 66 1 4 -30 31 -69 58 -39 28 -77 56 -85 63 -18 19 -16 72 4 94 32 35 63 23 199 -79z m528 -88 c23 -24 28 -52 14 -82 l-13 -28 -141 -3 c-130 -2 -142 -1 -158 17 -23 26 -24 66 -1 91 16 18 32 20 151 20 105 0 136 -3 148 -15z"/>
+    <clipPath id="tile-clip"><rect x="64" y="64" width="896" height="896" rx="192"/></clipPath>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.65" y2="1">
+      <stop offset="0" stop-color="#2b3035"/>
+      <stop offset="1" stop-color="#191c1f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.1" cy="0.08" r="0.65">
+      <stop offset="0" stop-color="#f4f1e9" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="#f4f1e9" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+  <rect width="1280" height="4" fill="#f4f1e9" opacity="0.9"/>
+
+  <!-- app tile icon -->
+  <g transform="translate(81.5,81.5) scale(0.1116)">
+    <rect x="64" y="64" width="896" height="896" rx="192" fill="#f4f1e9"/>
+    <g clip-path="url(#tile-clip)">
+      <use href="#ram" transform="translate(-80 967) scale(.22 -.22)" fill="#303438"/>
+    </g>
+  </g>
+
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+    <text x="88" y="276" font-size="76" font-weight="700" fill="#f4f1e9" letter-spacing="-1.5">Herdr GPUI</text>
+    <rect x="90" y="302" width="66" height="5" rx="2.5" fill="#f4f1e9"/>
+    <text x="88" y="358" font-size="24" fill="#9aa2a9">Native macOS client for the Herdr daemon.</text>
+    <text x="88" y="394" font-size="24" fill="#9aa2a9">Sessions, workspaces, worktrees, agents.</text>
+
+    <g font-size="16" fill="#9aa2a9">
+      <rect x="88" y="438" width="66" height="34" rx="17" fill="#f4f1e9" fill-opacity="0.07" stroke="#4a5158"/>
+      <text x="121" y="460" text-anchor="middle">Rust</text>
+      <rect x="166" y="438" width="70" height="34" rx="17" fill="#f4f1e9" fill-opacity="0.07" stroke="#4a5158"/>
+      <text x="201" y="460" text-anchor="middle">GPUI</text>
+      <rect x="248" y="438" width="110" height="34" rx="17" fill="#f4f1e9" fill-opacity="0.07" stroke="#4a5158"/>
+      <text x="303" y="460" text-anchor="middle">macOS 14+</text>
+    </g>
+  </g>
+
+  <text x="88" y="542" font-family="Menlo, Monaco, monospace" font-size="22" fill="#e8e3d6">github.com/penso/herdr-gpui</text>
+
+  <!-- app window mock -->
+  <g>
+    <rect x="640" y="96" width="568" height="448" rx="14" fill="#15181b" stroke="#3a4046"/>
+    <path d="M640 110a14 14 0 0 1 14-14h540a14 14 0 0 1 14 14v26H640z" fill="#232a30"/>
+    <line x1="640" y1="136" x2="1208" y2="136" stroke="#3a4046"/>
+    <circle cx="664" cy="116" r="5" fill="#4d555c"/>
+    <circle cx="682" cy="116" r="5" fill="#4d555c"/>
+    <circle cx="700" cy="116" r="5" fill="#4d555c"/>
+
+    <rect x="641" y="137" width="149" height="406" fill="#1b1f23"/>
+    <line x1="790" y1="136" x2="790" y2="544" stroke="#3a4046"/>
+    <g font-family="Menlo, Monaco, monospace" font-size="12.5" fill="#8d949b">
+      <text x="658" y="166" font-size="11" fill="#6a717a" letter-spacing="1">SPACES</text>
+      <rect x="647" y="178" width="137" height="22" rx="5" fill="#f4f1e9" fill-opacity="0.09"/>
+      <circle cx="660" cy="189" r="4.5" fill="#e0b95f"/>
+      <text x="672" y="193" fill="#f0ece1">herdr-gpui</text>
+      <circle cx="668" cy="213" r="4.5" fill="#5fc4bb"/>
+      <text x="680" y="217">fix/sidebar</text>
+      <circle cx="668" cy="237" r="4.5" fill="none" stroke="#77b98a" stroke-width="1.8"/>
+      <text x="680" y="241">feat/paint</text>
+      <circle cx="660" cy="261" r="4.5" fill="#e07a70"/>
+      <text x="672" y="265">moltis</text>
+      <circle cx="660" cy="285" r="4.5" fill="none" stroke="#565e66" stroke-width="1.8"/>
+      <text x="672" y="289">arbor</text>
+
+      <text x="658" y="330" font-size="11" fill="#6a717a" letter-spacing="1">AGENTS</text>
+      <circle cx="660" cy="353" r="4.5" fill="#e0b95f"/>
+      <text x="672" y="357">review</text>
+      <circle cx="660" cy="377" r="4.5" fill="#5fc4bb"/>
+      <text x="672" y="381">tests</text>
+      <circle cx="660" cy="401" r="4.5" fill="none" stroke="#77b98a" stroke-width="1.8"/>
+      <text x="672" y="405">docs</text>
+    </g>
+
+    <g font-family="Menlo, Monaco, monospace" font-size="11.5">
+      <rect x="791" y="137" width="417" height="30" fill="#15181b"/>
+      <rect x="791" y="137" width="75" height="30" fill="#272d33"/>
+      <text x="801" y="156" fill="#f0ece1">shell</text>
+      <g stroke="#8d949b" stroke-width="1.4" stroke-linecap="round">
+        <path d="M845 148.5l7 7M852 148.5l-7 7"/>
+        <path d="M919.5 148.5l7 7M926.5 148.5l-7 7"/>
+        <path d="M987 148.5l7 7M994 148.5l-7 7"/>
+      </g>
+      <text x="876" y="156" fill="#7b838b">build</text>
+      <text x="950" y="156" fill="#7b838b">logs</text>
+      <g stroke="#8d949b" stroke-width="1.6" stroke-linecap="round">
+        <path d="M1183 152h14M1190 145v14"/>
+      </g>
+    </g>
+
+    <line x1="1012" y1="167" x2="1012" y2="544" stroke="#3a4046"/>
+    <g font-family="Menlo, Monaco, monospace" font-size="12">
+      <text x="806" y="192" fill="#c8b98a">~/code/herdr-gpui</text>
+      <text x="806" y="210" fill="#d7d2c6">$ just run</text>
+      <text x="806" y="234" fill="#8d949b">Finished `release`</text>
+      <text x="806" y="252" fill="#8d949b">Connected: herdr.sock</text>
+      <text x="806" y="270" fill="#77b98a">gen-1 surface ok</text>
+      <text x="806" y="294" fill="#d7d2c6">$ herdr status</text>
+      <text x="806" y="318" fill="#8d949b">workspaces   5</text>
+      <text x="806" y="336" fill="#8d949b">tabs         3</text>
+      <text x="806" y="354" fill="#8d949b">panes        4</text>
+      <text x="806" y="372" fill="#8d949b">boot 7f2c rev 118</text>
+      <text x="806" y="396" fill="#77b98a">attached</text>
+      <text x="806" y="420" fill="#d7d2c6">$ </text>
+      <rect x="820" y="410" width="8" height="14" fill="#f4f1e9"/>
+
+      <text x="1028" y="192" fill="#c8b98a">~/code/herdr</text>
+      <text x="1028" y="210" fill="#d7d2c6">$ cargo test -q</text>
+      <text x="1028" y="234" fill="#8d949b">running 214 tests</text>
+      <text x="1028" y="252" fill="#77b98a">ok. 214 passed</text>
+      <text x="1028" y="276" fill="#8d949b">watching worktrees</text>
+      <text x="1028" y="294" fill="#e0b95f">agent: review (2m)</text>
+      <text x="1028" y="318" fill="#d7d2c6">$ git worktree list</text>
+      <text x="1028" y="342" fill="#8d949b">main        2712867</text>
+      <text x="1028" y="360" fill="#8d949b">fix/sidebar 4425ce4</text>
+      <text x="1028" y="378" fill="#8d949b">feat/paint  bc76748</text>
+      <text x="1028" y="402" fill="#d7d2c6">$ </text>
+    </g>
+  </g>
+</svg>

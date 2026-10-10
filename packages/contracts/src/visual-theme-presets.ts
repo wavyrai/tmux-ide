@@ -1,4 +1,4 @@
-/** Gloomberb palette adaptation.
+/*! Gloomberb palette adaptation.
  * MIT License
  *
  * Copyright (c) 2026 Gloomberb Contributors

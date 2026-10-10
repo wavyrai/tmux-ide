@@ -1,0 +1,58 @@
+# Reviewed distribution choices; order prefers Apache for dual-licensed crates.
+# Union of packaging targets, including experimental Windows. Build/dev
+# dependencies and all features remain included as a conservative superset.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+accepted = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "bzip2-1.0.6", # libbz2-rs-sys 0.2.5; source license retained in generated notices
+    "0BSD", # doctest-file 1.1.1, recvmsg 1.0.0 (Windows named-pipe transport)
+    "Unicode-3.0",
+    "CC0-1.0",
+    "Apache-2.0 WITH LLVM-exception", # ar_archive_writer 0.5.3
+    # webpki-roots 1.0.9 trust-store data; section 2.1 requires this text with data.
+    "CDLA-Permissive-2.0",
+]
+
+# MPL is file-level copyleft, not a global permissive-license exception. These
+# unmodified dependencies retain MPL and have exact source links in the report.
+# Re-review these exceptions and source availability when Cargo.lock changes.
+# https://crates.io/api/v1/crates/cbindgen/0.28.0/download
+[cbindgen]
+accepted = ["MPL-2.0"] # 0.28.0, build tool
+# https://crates.io/api/v1/crates/option-ext/0.2.0/download
+[option-ext]
+accepted = ["MPL-2.0"] # 0.2.0, runtime dependency
+# Command palette fuzzy matcher, runtime dependency.
+# https://crates.io/api/v1/crates/nucleo-matcher/0.3.1/download
+[nucleo-matcher]
+accepted = ["MPL-2.0"] # 0.3.1, runtime dependency
+# GPUI's DirectWrite bindings, linked only into the Windows executable.
+# https://crates.io/api/v1/crates/dwrote/0.11.5/download
+[dwrote]
+accepted = ["MPL-2.0"] # 0.11.5, Windows runtime dependency
+
+# Unmodified MP3 decoder, runtime dependencies; exact sources in generated notices.
+# https://crates.io/api/v1/crates/symphonia/0.5.5/download
+[symphonia]
+accepted = ["MPL-2.0"]
+# https://crates.io/api/v1/crates/symphonia-bundle-mp3/0.5.5/download
+[symphonia-bundle-mp3]
+accepted = ["MPL-2.0"]
+# https://crates.io/api/v1/crates/symphonia-core/0.5.5/download
+[symphonia-core]
+accepted = ["MPL-2.0"]
+# https://crates.io/api/v1/crates/symphonia-metadata/0.5.5/download
+[symphonia-metadata]
+accepted = ["MPL-2.0"]

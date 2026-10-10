@@ -201,3 +201,15 @@ Keep new work behind the existing ownership boundaries:
 
 Do not create a second application root, terminal replica, workspace authority,
 or browser-only version of the TUI.
+
+## Experimental GPUI client
+
+`apps/tmux-gpui/` contains the pinned Herdr GPUI source baseline and native
+client integration plan. It is part of this repository, outside npm publication
+and the terminal release gate. The native browser reuses the upstream painter
+and the existing TypeScript terminal delivery validator for session/pane
+selection, authenticated input, resize, scroll/copy and explicit Refresh recovery.
+Its theme picker shares the TUI's named preset catalog and palette projection.
+The daemon remains authoritative. This is an experimental native preview;
+physical qualification and signed distribution remain unfinished. See its
+README before running any imported code.

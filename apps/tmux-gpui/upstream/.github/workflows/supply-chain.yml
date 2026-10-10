@@ -1,0 +1,74 @@
+name: Supply chain
+
+on:
+  push:
+    branches: [main]
+    paths: ['**/Cargo.toml', 'Cargo.lock', 'deny.toml', '.github/workflows/supply-chain.yml']
+  pull_request:
+    paths: ['**/Cargo.toml', 'Cargo.lock', 'deny.toml', '.github/workflows/supply-chain.yml']
+  # Advisories are filed against dependencies that are not changing, so this
+  # has to run on a clock to be useful at all.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zizmor:
+    if: >-
+      github.repository == 'penso/herdr-gpui' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'penso' &&
+        github.event.pull_request.head.repo.full_name == 'penso/herdr-gpui') ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+         github.event_name == 'schedule') && github.ref == 'refs/heads/main'))
+    name: Supply Chain Workflow Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
+          online-audits: false
+
+  cargo-deny:
+    if: >-
+      github.repository == 'penso/herdr-gpui' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'penso' &&
+        github.event.pull_request.head.repo.full_name == 'penso/herdr-gpui') ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+         github.event_name == 'schedule') && github.ref == 'refs/heads/main'))
+    name: cargo-deny (${{ matrix.check }})
+    needs: zizmor
+    # Runs on Linux deliberately: cargo-deny reads the lockfile and never
+    # builds, and deny.toml pins graph evaluation to the shipped macOS/Linux targets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Split so an advisory filed upstream does not mask a license or
+        # source regression introduced by the change under review.
+        check: [advisories, bans licenses sources]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check ${{ matrix.check }}

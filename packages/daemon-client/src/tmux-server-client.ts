@@ -3,6 +3,8 @@ import {
   WindowSplitLayoutResourceSchemaZ,
   type WindowLinkTarget,
   TMUX_SERVERS_API_PATH,
+  ApplicationShellProjectionInputV2SchemaZ,
+  WorkspaceCatalogLiveSessionIdSchemaZ,
   PANE_STREAM_REDEEM_PATH,
   TmuxServerIdSchemaZ,
   TmuxServerDescriptorSchemaZ,
@@ -242,6 +244,37 @@ export function createTmuxServerClient(
       const resource = TerminalRuntimeInventoryProjectionV1SchemaZ.parse(raw.resource);
       if (resource.workspaceName !== workspaceName)
         throw new TmuxServerClientError("scope-mismatch");
+      return { version: 1 as const, server: scope, resource };
+    },
+    /** Observe an already registered session without opening it or issuing a pane stream. */
+    async applicationShell(workspaceName: string, liveSessionId: string, signal?: AbortSignal) {
+      if (
+        typeof workspaceName !== "string" ||
+        workspaceName.length < 1 ||
+        workspaceName.length > 160 ||
+        /[\0\r\n]/u.test(workspaceName)
+      )
+        throw new TypeError("Invalid application-shell workspace name");
+      const liveId = WorkspaceCatalogLiveSessionIdSchemaZ.parse(liveSessionId);
+      signal?.throwIfAborted();
+      const raw = await scopedRequest(
+        `application-shell/${encodeURIComponent(workspaceName)}?liveSessionId=${encodeURIComponent(liveId)}`,
+        undefined,
+        undefined,
+        signal,
+      );
+      if (
+        !raw ||
+        typeof raw !== "object" ||
+        !("version" in raw) ||
+        raw.version !== 1 ||
+        !("server" in raw) ||
+        !("resource" in raw) ||
+        Object.keys(raw).length !== 3
+      )
+        throw new TypeError("Invalid scoped application-shell response");
+      assertScope(TmuxServerScopeSchemaZ.parse(raw.server));
+      const resource = ApplicationShellProjectionInputV2SchemaZ.parse(raw.resource);
       return { version: 1 as const, server: scope, resource };
     },
     async createSession(operationId: string, intent: WorkspaceSessionCreateArguments) {

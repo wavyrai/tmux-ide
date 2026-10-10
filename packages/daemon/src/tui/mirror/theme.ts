@@ -15,6 +15,7 @@ import { RGBA } from "@opentui/core";
 export const MODAL_BACKDROP = RGBA.fromInts(0, 0, 0, 150);
 import {
   BUILTIN_VISUAL_THEMES,
+  createVisualTerminalPalette,
   findVisualThemePreset,
   contrastRatio,
   deriveAttentionBlend,
@@ -522,34 +523,29 @@ export function createTerminalPaletteProjection(
   const p = colorToPackedRgb;
   const foreground = p(snapshot.roles.text.primary);
   const background = p(snapshot.roles.surfaces.terminal);
-  const normal = [
-    background,
-    p(snapshot.roles.statusTone.danger),
-    p(snapshot.roles.statusTone.success),
-    p(snapshot.roles.statusTone.warning),
-    p(snapshot.roles.text.link),
-    p(snapshot.colors.accent),
-    p(snapshot.roles.statusTone.info),
-    p(snapshot.roles.text.secondary),
-  ];
-  const brighten = (color: number): number => {
-    const channel = (shift: number) =>
-      Math.round(((color >>> shift) & 255) * 0.8 + ((foreground >>> shift) & 255) * 0.2);
-    return (channel(16) << 16) | (channel(8) << 8) | channel(0);
-  };
-  const ansi = [
-    ...normal,
-    p(snapshot.roles.text.muted),
-    ...normal.slice(1, 7).map(brighten),
-    p(snapshot.roles.text.bright),
-    ...XTERM_PALETTE.slice(16),
-  ];
-  if (snapshot.setting === "system" && hostPalette)
-    for (let index = 0; index < 16; index++) {
-      const detected = parseTerminalHostColor(hostPalette[index]);
-      if (detected) ansi[index] = (detected.red << 16) | (detected.green << 8) | detected.blue;
-    }
-  const indexed = Object.freeze(ansi);
+  const hostColors =
+    snapshot.setting === "system" && hostPalette
+      ? Array.from({ length: 16 }, (_, index) => {
+          const detected = parseTerminalHostColor(hostPalette[index]);
+          return detected ? (detected.red << 16) | (detected.green << 8) | detected.blue : null;
+        })
+      : undefined;
+  const indexed = createVisualTerminalPalette(
+    {
+      foreground,
+      background,
+      danger: p(snapshot.roles.statusTone.danger),
+      success: p(snapshot.roles.statusTone.success),
+      warning: p(snapshot.roles.statusTone.warning),
+      link: p(snapshot.roles.text.link),
+      accent: p(snapshot.colors.accent),
+      info: p(snapshot.roles.statusTone.info),
+      secondary: p(snapshot.roles.text.secondary),
+      muted: p(snapshot.roles.text.muted),
+      bright: p(snapshot.roles.text.bright),
+    },
+    hostColors,
+  );
   return Object.freeze({
     foreground,
     background,

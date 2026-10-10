@@ -1,0 +1,46 @@
+Scope: all 9 workspace projects
+Lockfile is up to date, resolution step is skipped
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Packages: +572
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 572, reused 570, downloaded 0, added 453
+Progress: resolved 572, reused 570, downloaded 0, added 571
+Progress: resolved 572, reused 570, downloaded 0, added 572, done
+
+dependencies:
++ @hono/node-server 2.1.0
++ @hono/zod-validator 0.7.6
++ @modelcontextprotocol/server 2.1.0
++ @parcel/watcher 2.5.6
++ hono 4.12.34
++ ignore 7.0.5
++ js-yaml 4.3.1
++ node-pty 1.2.0-beta.12
++ string-width 7.2.0
++ ws 8.21.0
++ zod 4.3.6
+
+devDependencies:
++ @eslint/js 10.0.1
++ @opentui/core 0.5.1
++ @opentui/solid 0.5.1
++ @tmux-ide/contracts 0.0.1 <- packages/contracts
++ @tsconfig/bun 1.0.10
++ @types/node 25.5.0
++ @types/ws 8.18.1
++ @typescript-eslint/eslint-plugin 8.57.1
++ @typescript-eslint/parser 8.57.1
++ @vitest/coverage-v8 4.1.6
++ esbuild 0.28.2
++ eslint 10.0.3
++ globals 17.4.0
++ prettier 3.8.1
++ solid-js 1.9.12
++ tsx 4.21.0
++ turbo 2.10.12
++ typescript 5.9.3
++ vitest 4.1.6
+
+. postinstall$ node scripts/postinstall.js
+. postinstall: Done
+Done in 3s using pnpm v10.21.0

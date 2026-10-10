@@ -1,0 +1,69 @@
+# git-cliff configuration
+# https://git-cliff.org/docs/configuration
+#
+# The changelog is generated from git history for release artifacts; it is not
+# tracked in git. Release tags are `vYYYYMMDD.COUNTER`, derived by the release
+# workflow from GitHub's own tags, so `--tag` always names the tag being cut.
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to Herdr GPUI, generated from git history at release time.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Release tags follow `vYYYYMMDD.COUNTER`.
+
+"""
+body = """
+{% if version -%}
+## [{{ version }}] - {{ timestamp | date(format=\"%Y-%m-%d\") }}
+{% else -%}
+## [Unreleased]
+{% endif %}
+{% set visible_commits = commits | filter(attribute=\"merge_commit\", value=false) -%}
+{% for group, commits in visible_commits | group_by(attribute=\"group\") -%}
+### {{ group | striptags | trim }}
+{% for commit in commits | unique(attribute=\"message\") -%}
+- {% if commit.breaking %}**BREAKING:** {% endif %}{% if commit.scope %}[{{ commit.scope }}] {% endif %}{{ commit.message | split(pat=\"\\n\") | first | trim | upper_first }}
+{% endfor %}
+{% endfor -%}
+"""
+trim = true
+# A release with nothing but skipped commits still gets a section rather than
+# failing the run that is already publishing it.
+render_always = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+filter_commits = true
+split_commits = false
+protect_breaking_commits = true
+sort_commits = "oldest"
+
+tag_pattern = "v[0-9]{8}\\.[0-9]+"
+
+# First match wins. Every commit in this repository is conventional (AGENTS.md
+# requires it), so these match types rather than guessing at prose. The order
+# matters: a breaking change is user-visible whatever its type, so it must find
+# a group before the rules that hide chores and housekeeping.
+commit_parsers = [
+  { message = "(?i)^merge", skip = true },
+  { message = "^[a-z]+\\(security\\)!?:", group = "<!-- 3 -->Security" },
+  { message = "^feat(\\([^)]*\\))?!?:", group = "<!-- 0 -->Added" },
+  { message = "^fix(\\([^)]*\\))?!?:", group = "<!-- 2 -->Fixed" },
+  { message = "^(perf|refactor|revert)(\\([^)]*\\))?!?:", group = "<!-- 1 -->Changed" },
+  { message = "^docs(\\([^)]*\\))?!?:", group = "<!-- 4 -->Documentation" },
+  # Breaking housekeeping, marked either with `!` or with a footer.
+  # `protect_breaking_commits` keeps these out of the skips below regardless;
+  # without a group here they would land under a bare `chore` heading.
+  { message = "^(chore|ci|build|style|test)(\\([^)]*\\))?!:", group = "<!-- 1 -->Changed" },
+  { footer = "(?m)^BREAKING[ -]CHANGE:", group = "<!-- 1 -->Changed" },
+  { message = "^chore(\\([^)]*\\))?:", skip = true },
+  { message = "^ci(\\([^)]*\\))?:", skip = true },
+  { message = "^build(\\([^)]*\\))?:", skip = true },
+  { message = "^style(\\([^)]*\\))?:", skip = true },
+  { message = "^test(\\([^)]*\\))?:", skip = true },
+  { message = ".*", group = "<!-- 1 -->Changed" },
+]

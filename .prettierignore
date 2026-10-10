@@ -22,3 +22,6 @@ bin/cli.js
 
 # Keep the Icon Composer package byte-for-byte compatible with Apple's editor.
 native/macos/notifier/AppIcon.icon/icon.json
+
+# Preserve the pinned third-party source baseline; Rust uses its own formatter.
+apps/tmux-gpui/upstream/

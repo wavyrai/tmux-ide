@@ -109,4 +109,6 @@ export * from "./native-operation-identity.ts";
 
 export * from "./pane-team.ts";
 
+export * from "./visual-terminal-palette.ts";
+
 export * from "./window-split-layout.ts";

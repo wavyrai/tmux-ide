@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/penso/herdr-gpui#readme
+    about: Read the setup guide, supported controls, and current limitations
+  - name: Herdr daemon issue
+    url: https://github.com/herdrdev/herdr/issues
+    about: Bugs in the daemon, sessions, or terminal processes belong upstream
+  - name: Security vulnerability
+    url: https://github.com/penso/herdr-gpui/security/advisories/new
+    about: Report privately instead of opening a public issue

@@ -1,0 +1,128 @@
+[package]
+default-run = "tmux-ide-gpui"
+edition.workspace      = true
+license.workspace      = true
+name                   = "herdr-gpui"
+publish.workspace      = true
+rust-version.workspace = true
+version.workspace      = true
+
+[lints]
+workspace = true
+
+[dependencies]
+url.workspace = true
+aes.workspace                  = true
+anyhow.workspace               = true
+cbc.workspace                  = true
+base64                         = { optional = true, workspace = true }
+chrono.workspace               = true
+config_loader.workspace        = true
+ed25519-dalek.workspace        = true
+flate2.workspace               = true
+getrandom                      = { optional = true, workspace = true }
+gpui.workspace                 = true
+# Unlike gpui 0.2.2, the platform crate enables nothing by default: without
+# font-kit (macOS) or a Linux backend, text silently goes to a no-op system.
+gpui_platform                  = { features = ["font-kit", "runtime_shaders", "wayland", "x11"], workspace = true }
+herdr-client.workspace         = true
+if-addrs.workspace             = true
+image                          = { features = ["bmp", "tiff"], workspace = true }
+keepawake.workspace            = true
+mdns-sd.workspace              = true
+nucleo-matcher.workspace       = true
+pbkdf2.workspace               = true
+percent-encoding.workspace     = true
+rodio.workspace                = true
+rusqlite.workspace             = true
+secrecy.workspace              = true
+serde.workspace                = true
+serde_ignored.workspace        = true
+serde_json.workspace           = true
+sha1.workspace                 = true
+sha2.workspace                 = true
+skrifa.workspace               = true
+sysinfo.workspace              = true
+syntect.workspace              = true
+tar.workspace                  = true
+tempfile.workspace             = true
+thiserror.workspace            = true
+toml.workspace                 = true
+toml_edit.workspace            = true
+tracing.workspace              = true
+tracing-subscriber.workspace   = true
+unicode-segmentation.workspace = true
+unicode-width.workspace        = true
+ureq.workspace                 = true
+uuid.workspace                 = true
+zeroize.workspace              = true
+
+[dev-dependencies]
+gpui = { features = ["test-support"], workspace = true }
+
+[features]
+default = ["coder", "daytona"]
+# Machines from cloud providers as devices: the shared device list, background
+# jobs, and connector. Turned on by each provider below; not useful alone.
+cloud = ["herdr-client/cloud", "dep:getrandom"]
+# Coder workspaces as devices, with OAuth2 sign-in.
+coder = ["cloud", "herdr-client/coder", "dep:base64"]
+# Daytona sandboxes as devices, with an API key and its SSH gateway.
+daytona = ["cloud", "herdr-client/daytona"]
+qa-menu = []
+# Development only: `--mockup` shows UI variants from HERDR_MOCKUP_FILE side by
+# side in a native window. Never enabled in release builds. GPUI's test support
+# provides `Window::render_to_image`, so `--capture` needs no screen-recording
+# permission.
+mockup = ["gpui_platform/test-support"]
+integration-test = [
+  "objc2-app-kit/NSPasteboardItem",
+  "dep:cocoa",
+  "dep:core-graphics",
+  "dep:foreign-types",
+  "dep:objc",
+  "dep:raw-window-handle",
+]
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
+
+# wry has no working GPUI child-view backend on Linux yet; browser tabs there
+# open in the system browser instead.
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+gpui-wry.workspace = true
+wry.workspace      = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+fontdb.workspace       = true
+futures-lite.workspace = true
+oo7.workspace          = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace                = true
+dispatch2.workspace             = true
+objc2-core-foundation.workspace = true
+objc2-web-kit.workspace         = true
+cocoa                        = { optional = true, workspace = true }
+core-graphics                = { optional = true, workspace = true }
+foreign-types                = { optional = true, workspace = true }
+nix.workspace                = true
+objc                         = { optional = true, workspace = true }
+objc2.workspace              = true
+objc2-app-kit                = { workspace = true, features = ["NSGlassEffectView", "NSColor", "NSAppearance", "NSWorkspace", "NSAccessibility", "NSGraphics", "objc2-core-foundation"] }
+objc2-foundation             = { workspace = true, features = ["NSNotification", "NSOperation", "block2"] }
+raw-window-handle            = { optional = true, workspace = true }
+security-framework.workspace = true
+
+[[test]]
+name              = "live_gui"
+required-features = ["integration-test"]
+
+[[test]]
+name              = "performance_gui"
+required-features = ["integration-test"]
+
+# tmux-ide native entry; keep the upstream binary for reference validation.
+[[bin]]
+name = "tmux-ide-gpui"
+path = "src/tmux_main.rs"

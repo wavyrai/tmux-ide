@@ -1,0 +1,10 @@
+{
+  "scope": "Clean staged source npm dry-run with lifecycle scripts disabled; not full installed-package qualification",
+  "files": 980,
+  "gpuiFiles": [],
+  "sharedSources": {
+    "packages/contracts/src/visual-terminal-palette.ts": true,
+    "packages/core/src/resize-transaction.ts": true,
+    "packages/presentation/src/home-agent-roster.ts": true
+  }
+}

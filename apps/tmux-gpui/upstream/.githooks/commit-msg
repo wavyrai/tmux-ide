@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Installed by `just hooks`. The subject becomes one line of the release
+# changelog, so it is checked before the commit exists rather than after.
+set -euo pipefail
+exec python3 "$(git rev-parse --show-toplevel)/scripts/release/check-commit-messages.py" message "$1"

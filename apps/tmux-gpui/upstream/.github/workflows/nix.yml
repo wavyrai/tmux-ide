@@ -1,0 +1,61 @@
+name: Nix
+
+# The flake builds from source with the pinned toolchain, so it can only break
+# when its inputs, the lockfile, or the toolchain pin change.
+on:
+  pull_request:
+    paths:
+      - flake.nix
+      - flake.lock
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/workflows/nix.yml
+  push:
+    branches: [main]
+    paths:
+      - flake.nix
+      - flake.lock
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/workflows/nix.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: nix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: >-
+      github.repository == 'penso/herdr-gpui' &&
+      github.actor == 'penso' && github.triggering_actor == 'penso' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'penso' &&
+        github.event.pull_request.head.repo.full_name == 'penso/herdr-gpui') ||
+       ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+        github.ref == 'refs/heads/main'))
+    name: Nix flake (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Check the flake and build the package in the Nix sandbox
+        run: |
+          nix flake check --no-build
+          nix build -L --print-out-paths
+      - name: Run the built executable's CLI without a desktop
+        run: |
+          ./result/bin/herdr-gpui --help >/dev/null
+          test -f result/share/applications/so.pen.herdr-gpui.desktop
+          if ldd result/bin/herdr-gpui | grep 'not found'; then exit 1; fi

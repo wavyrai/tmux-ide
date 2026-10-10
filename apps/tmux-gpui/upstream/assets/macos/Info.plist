@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>Herdr</string>
+    <key>CFBundleDisplayName</key><string>Herdr</string>
+    <key>CFBundleIdentifier</key><string>so.pen.herdr-gpui</string>
+    <key>CFBundleExecutable</key><string>Herdr</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleIconFile</key><string>Herdr.icns</string>
+    <key>CFBundleIconName</key><string>Herdr</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSMicrophoneUsageDescription</key><string>Programs running in Herdr terminals are allowed to request access to the microphone.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>Herdr looks for computers on your local network that offer SSH, to suggest them when you add a device.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_ssh._tcp</string>
+    </array>
+</dict>
+</plist>
