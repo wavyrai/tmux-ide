@@ -1,18 +1,33 @@
-// Source bridge, HTTP issuance, WebSocket redemption, owner and patched native tmux.
+// Source or exact packaged bridge, HTTP issuance, WebSocket redemption and native tmux.
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../scripts/lib/product-fixtures/daemon.ts";
 import { listTmuxServers } from "../../../packages/daemon-client/src/tmux-server-client.ts";
 import { spawn, execFileSync } from "node:child_process";
 import { stopFixtureChild } from "./fixture-child.mjs";
 import { writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, join, isAbsolute } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import assert from "node:assert/strict";
 import process from "node:process";
 import console from "node:console";
+if (process.argv.length !== 3 || !isAbsolute(process.argv[2]))
+  throw new Error("Usage: split-gesture-smoke.mjs ABSOLUTE_TMUX_BINARY");
 const binary = resolve(process.argv[2]);
+const app = process.env.TMUX_GPUI_TEST_APP;
+if (app && !isAbsolute(app)) throw new Error("TMUX_GPUI_TEST_APP must be absolute");
+const helperNode = app ? join(app, "Contents/Resources/node") : process.execPath;
+const helperEntry = app
+  ? join(app, "Contents/Resources/bridge/browser.bundle.mjs")
+  : resolve("apps/tmux-gpui/bridge/browser.ts");
+const digest = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
+// Fail before creating fixtures if the selected artifact is missing.
+const helperIdentity = {
+  mode: app ? "packaged-bridge" : "source-bridge",
+  nodeSha256: digest(helperNode),
+  entrySha256: digest(helperEntry),
+};
 for (const key of Object.keys(process.env))
   if (key.startsWith("TMUX") || ["NODE_OPTIONS", "NODE_PATH"].includes(key))
     delete process.env[key];
@@ -39,7 +54,8 @@ const failures = [];
 let fatal = null;
 let cleanupErrors = 0;
 const proof = {
-  binarySha256: createHash("sha256").update(readFileSync(binary)).digest("hex"),
+  binarySha256: digest(binary),
+  helper: helperIdentity,
   cleanup: false,
 };
 const latest = () => events.at(-1);
@@ -90,9 +106,13 @@ try {
     { mode: 0o600 },
   );
   helper = spawn(
-    process.execPath,
-    ["--import", "tsx", resolve("apps/tmux-gpui/bridge/browser.ts"), config],
-    { env: { ...process.env, ...fleet.environment }, stdio: ["pipe", "pipe", "pipe"] },
+    helperNode,
+    app ? [helperEntry, config] : ["--import", "tsx", helperEntry, config],
+    {
+      cwd: app ? fleet.root : process.cwd(),
+      env: { ...process.env, ...fleet.environment },
+      stdio: ["pipe", "pipe", "pipe"],
+    },
   );
   helper.on("error", (error) => {
     fatal = error;
