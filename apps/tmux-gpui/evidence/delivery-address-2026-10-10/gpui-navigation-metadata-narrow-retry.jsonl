@@ -1,0 +1,10 @@
+{"ordinal":1,"direction":"command","type":"other","request":null}
+{"ordinal":2,"direction":"command","type":"presence","request":null,"active":false,"revision":1}
+{"ordinal":3,"direction":"publication","sequence":1,"request":0,"surface":"home","catalogComplete":false,"preferred":null,"session":null,"pane":null,"preferredMember":false,"paneCount":0,"frame":false,"inputReady":false,"presenceRevision":0}
+{"ordinal":4,"direction":"publication","sequence":2,"request":0,"surface":"home","catalogComplete":false,"preferred":null,"session":null,"pane":null,"preferredMember":false,"paneCount":0,"frame":false,"inputReady":false,"presenceRevision":0}
+{"ordinal":5,"direction":"publication","sequence":3,"request":0,"surface":"home","catalogComplete":false,"preferred":null,"session":null,"pane":null,"preferredMember":false,"paneCount":0,"frame":false,"inputReady":false,"presenceRevision":0}
+{"ordinal":6,"direction":"publication","sequence":4,"request":0,"surface":"home","catalogComplete":false,"preferred":null,"session":null,"pane":null,"preferredMember":false,"paneCount":0,"frame":false,"inputReady":false,"presenceRevision":1}
+{"ordinal":7,"direction":"command","type":"presence","request":null,"active":true,"revision":2}
+{"ordinal":8,"direction":"publication","sequence":5,"request":0,"surface":"home","catalogComplete":false,"preferred":null,"session":null,"pane":null,"preferredMember":false,"paneCount":0,"frame":false,"inputReady":false,"presenceRevision":1}
+{"ordinal":9,"direction":"publication","sequence":6,"request":0,"surface":"home","catalogComplete":false,"preferred":null,"session":null,"pane":null,"preferredMember":false,"paneCount":0,"frame":false,"inputReady":false,"presenceRevision":2}
+{"ordinal":10,"direction":"publication","sequence":7,"request":0,"surface":"home","catalogComplete":false,"preferred":null,"session":null,"pane":null,"preferredMember":false,"paneCount":0,"frame":false,"inputReady":false,"presenceRevision":2}
