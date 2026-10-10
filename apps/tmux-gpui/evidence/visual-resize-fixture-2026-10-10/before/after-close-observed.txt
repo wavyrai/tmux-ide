@@ -1,0 +1,17 @@
+GPUI_VISUAL_BEGIN
+ASCII |0123456789|ABCDEFGHIJKLMNOPQRSTUVWXYZ|
+WIDE |界語| END
+COMBINING |é Å| END
+EMOJI |😀 🚀| END
+
+PALETTE  0  1  2  3  4  5  6  7
+RGB | TRUECOLOR | END
+STYLE |BOLD ITALIC UNDERLINE|
+BLANK |        | END
+
+WRAP>wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+wwwwwwwwwwwwWRAP_END
+
+GPUI_VISUAL_END
+
+CURSOR |X| (cursor on X)

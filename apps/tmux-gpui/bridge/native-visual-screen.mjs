@@ -1,3 +1,5 @@
+import process from "node:process";
+import { setInterval } from "node:timers";
 // Synthetic one-screen visual specimen. This does not assess rendered pixels.
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
@@ -59,7 +61,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       process.stdout.write("\x1b[2J\x1b[HVISUAL_SIZE_UNSUPPORTED");
     }
   };
-  process.on("SIGWINCH", draw);
+  // The stream emits resize only after refreshing columns/rows for SIGWINCH.
+  process.stdout.on("resize", draw);
   process.on("SIGTERM", () => process.exit(0));
   draw();
   setInterval(() => {}, 1000); // Keep only this owned producer alive until fleet disposal.
