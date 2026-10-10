@@ -145,6 +145,23 @@ jobs:
           export TMUX_IDE_REQUIRE_NATIVE_CAPABILITIES=1
           export PATH="$bundle:$PATH"
           pnpm test:tmux-boundary 2>&1 | tee "$proof/boundary.log"
+      - name: Qualify native split ownership and bridge gestures
+        timeout-minutes: 15
+        shell: bash
+        env:
+          SPLIT_PROOF: ${{ steps.tmux_boundary.outputs.evidence }}
+        run: |
+          set -euo pipefail
+          test -d "$SPLIT_PROOF"
+          bundle="$PWD/packages/daemon/dist/native/tmux/$(node -p 'process.platform + "-" + process.arch')"
+          test -x "$bundle/tmux"
+          # Every fixture owns a private socket and HOME; never use the default server.
+          python3 --version > "$SPLIT_PROOF/python-version.txt"
+          python3 native/tmux/tests/split-resize.py "$bundle/tmux" 2>&1 | tee "$SPLIT_PROOF/split-native.log"
+          python3 native/tmux/tests/split-membership-regression.py "$bundle/tmux" 2>&1 | tee "$SPLIT_PROOF/split-membership.log"
+          node --import tsx native/tmux/tests/split-guarded-runner.mjs "$bundle/tmux" 2>&1 | tee "$SPLIT_PROOF/split-guarded.log"
+          node --import tsx native/tmux/tests/split-owner-runner.mjs "$bundle/tmux" 2>&1 | tee "$SPLIT_PROOF/split-owner.log"
+          node --import tsx apps/tmux-gpui/bridge/split-gesture-smoke.mjs "$bundle/tmux" 2>&1 | tee "$SPLIT_PROOF/split-bridge.log"
       - name: Retain bundled boundary reports including failures
         if: always()
         uses: actions/upload-artifact@v4

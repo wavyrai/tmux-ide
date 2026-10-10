@@ -1,0 +1,53 @@
+[
+  {
+    "name": "native",
+    "command": [
+      "python3",
+      "native/tmux/tests/split-resize.py",
+      "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+    ],
+    "exitCode": 0
+  },
+  {
+    "name": "membership",
+    "command": [
+      "python3",
+      "native/tmux/tests/split-membership-regression.py",
+      "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+    ],
+    "exitCode": 0
+  },
+  {
+    "name": "guarded",
+    "command": [
+      "node",
+      "--import",
+      "tsx",
+      "native/tmux/tests/split-guarded-runner.mjs",
+      "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+    ],
+    "exitCode": 0
+  },
+  {
+    "name": "owner",
+    "command": [
+      "node",
+      "--import",
+      "tsx",
+      "native/tmux/tests/split-owner-runner.mjs",
+      "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+    ],
+    "exitCode": 0
+  },
+  {
+    "name": "bridge",
+    "command": [
+      "node",
+      "--import",
+      "tsx",
+      "apps/tmux-gpui/bridge/split-gesture-smoke.mjs",
+      "/private/tmp/gpui-split-promoted-eg12r6nf/bundle/tmux"
+    ],
+    "exitCode": 0
+  }
+]
