@@ -1,4 +1,13 @@
-import type { WindowLinkTarget, WindowSplitLayoutResource } from "@tmux-ide/contracts";
+import {
+  WindowSplitResizeTargetSchemaZ,
+  type WindowLinkTarget,
+  type WindowSplitLayoutResource,
+  type WindowSplitResizeTarget,
+} from "@tmux-ide/contracts";
+import type {
+  createGuardedNativeSplitResize,
+  GuardedNativeSplitResizeResult,
+} from "../../lib/guarded-native-split-resize.ts";
 import { WindowSplitAuthority, WindowSplitLayoutUnavailable } from "./window-split-authority.ts";
 import { SharedWindowIndex } from "./shared-window-index.ts";
 import { RegisteredWindowGuard, type RegisteredWindowReader } from "./registered-window-guard.ts";
@@ -381,6 +390,37 @@ export class MirrorService {
       serverEpoch: () => this.opts.splitLayoutEpoch?.() ?? null,
     });
     return entry.splitAuthority.read(target);
+  }
+
+  /** Resolve only issued handles, then revalidate immediately at native dispatch. */
+  async resizeWindowSplit(
+    session: string,
+    target: WindowSplitResizeTarget,
+    operationId: string,
+    authorizeBeforeEffect: () => void,
+    runNative: ReturnType<typeof createGuardedNativeSplitResize>,
+  ): Promise<GuardedNativeSplitResizeResult> {
+    const captured = WindowSplitResizeTargetSchemaZ.parse(target);
+    const entry = this.channels.get(session);
+    const current = () => {
+      if (this.disposed || !entry || entry.retired || this.channels.get(session) !== entry)
+        throw new WindowSplitLayoutUnavailable();
+      if (!entry.splitAuthority) throw new WindowSplitLayoutUnavailable();
+      return entry.splitAuthority;
+    };
+    current();
+    await entry!.started;
+    const resolved = current().resolve(captured);
+    return await runNative(resolved.request, {
+      operationId,
+      serverEpoch: resolved.serverEpoch,
+      session: resolved.session,
+      anchor: resolved.anchor,
+      authorizeBeforeEffect: () => {
+        current().resolve(captured);
+        authorizeBeforeEffect();
+      },
+    });
   }
 
   async executeWindowLinkAction(
