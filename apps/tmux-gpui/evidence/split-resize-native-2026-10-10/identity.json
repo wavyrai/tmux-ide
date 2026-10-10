@@ -1,0 +1,5 @@
+{
+  "native/tmux/split-resize.patch": "675847099a12611f4ccfd8a5d3fee6049fe5479d96f14336be1cb7d8f4e15d91",
+  "native/tmux/split-resize.md": "1b2557f421ed7c836f62f80c21bb0248d819cc48c13aaf4c5b49af7ad37d72e9",
+  "native/tmux/tests/split-resize.py": "e5872f66ac6ba0d2948a4977921cac3c44875ffe43096976da65464952cd99cd"
+}

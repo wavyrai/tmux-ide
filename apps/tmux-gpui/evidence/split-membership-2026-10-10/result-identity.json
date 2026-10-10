@@ -1,0 +1,31 @@
+{
+  "sourceCommit": "e476c1230b958df0cb12977517d24b3dc931375b",
+  "archiveSha256": "7c530752cd0633b980214c3dbaeae6d889feed152d6360e26b8d9661033d7348",
+  "buildExit": 0,
+  "testsPassed": true,
+  "cleanup": true,
+  "sanitizerReports": [],
+  "leakDetection": false,
+  "CFLAGS": "-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer",
+  "LDFLAGS": "-fsanitize=address,undefined",
+  "configureFlags": [
+    "--enable-utf8proc",
+    "--disable-jemalloc"
+  ],
+  "files": {
+    "/private/tmp/tmux-split-membership-san-asfihM/source/tmux": "147ae81ec60e9cf1a4eb37ba2d9d856cd7bf3ff0fd6b4b81089feebfc3150368",
+    "/private/tmp/tmux-split-membership-san-asfihM/source/cmd-tmux-ide-resize-split.c": "6fbad369d8e4f344e968338dc27db04aba7ccf3c0642213fd06b02474223cb2d",
+    "/private/tmp/tmux-split-membership-san-asfihM/build.log": "cca58abb6d27ad422f3e670d8810330ad91692b520a0c27afbbfb28c067b62d0",
+    "/private/tmp/tmux-split-membership-san-asfihM/membership-test.log": "b0a50afc41e152f8bcfcedd46c020c6242ed3855dc200a78bae01ca576f8f225",
+    "/private/tmp/tmux-split-membership-san-asfihM/split-test.log": "8fcec67fb510b4ca4d2a429dc1514d65f3352274a98a783b9a501470cbfd13fe",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/split-resize.patch": "4d010271fb4eb52cf36fd29b66e7b3c52c44f6ba90296b944014d74bf3d4222a",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/split-resize.md": "c0a5000c46d45fbeee740decc28a24d5a6ed645881a41291f265c1aa88cd47b1",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/tests/split-resize.py": "e9b979c760f33a86660fa43a4a381ea6e58f4c0872cec2082da8d0e1ad083fa4",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/tests/split-membership-regression.py": "49985873199d891c511849bf9e5210f405410f1754947d03328432389ef064ce",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon/src/terminal/protocol/native-split-resize.ts": "cfc989c9f42b941a8d0ca785f61f1bc1f8894afed3a67f9a3baa9c66f01c2f6b",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon/src/terminal/protocol/native-split-resize.test.ts": "9c93ea8d13ae64979463132d75a4ffe4b7ce87396608c0be86199223502db86e",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/native-grid.patch": "b0bedabf8e2bd055662f796609b8e8b9a8c8746c6f2a655b0d017872d4827f4f",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/interaction-journal-v1.patch": "fab780c9ca4a8452fbf73d5ed04e0d9420c887c6006c84b9d0c83a89af80aa0d",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/control-output-barriers.patch": "00ce678017ce94fd8ca1374b956d8db5cc4f6cdbe1309eddceed8fddb1adf6a8"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "e476c1230b958df0cb12977517d24b3dc931375b",
+  "archiveSha256": "7c530752cd0633b980214c3dbaeae6d889feed152d6360e26b8d9661033d7348",
+  "buildExit": 0,
+  "testExit": 0,
+  "positiveCases": 4,
+  "cleanup": true,
+  "sanitizerReports": [],
+  "leakDetection": false,
+  "files": {
+    "/private/tmp/tmux-split-sanitized-cqrXCq/source/tmux": "6c38fa0ac965a7036461ea32f42d0fba83799639874ceba381e9e248c2e5b924",
+    "/private/tmp/tmux-split-sanitized-cqrXCq/source/cmd-tmux-ide-resize-split.c": "70e67d15adb8fffad8f468148a7aa78d0a93a1f54e76a22a786e58e9b344de81",
+    "/private/tmp/tmux-split-sanitized-cqrXCq/build.log": "3c4f272322b381fbb566ff81cfba86df28d6b7af015616e99a2881abac032049",
+    "/private/tmp/tmux-split-sanitized-cqrXCq/test.log": "9501dd8f17f6a18c9045d61d8def1993c84f4b032086b5876d9d700644a1e24c",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/split-resize.patch": "675847099a12611f4ccfd8a5d3fee6049fe5479d96f14336be1cb7d8f4e15d91",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/split-resize.md": "1b2557f421ed7c836f62f80c21bb0248d819cc48c13aaf4c5b49af7ad37d72e9",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/tests/split-resize.py": "e5872f66ac6ba0d2948a4977921cac3c44875ffe43096976da65464952cd99cd",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/native-grid.patch": "b0bedabf8e2bd055662f796609b8e8b9a8c8746c6f2a655b0d017872d4827f4f",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/interaction-journal-v1.patch": "fab780c9ca4a8452fbf73d5ed04e0d9420c887c6006c84b9d0c83a89af80aa0d",
+    "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/control-output-barriers.patch": "00ce678017ce94fd8ca1374b956d8db5cc4f6cdbe1309eddceed8fddb1adf6a8"
+  },
+  "CFLAGS": "-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer",
+  "LDFLAGS": "-fsanitize=address,undefined",
+  "configureFlags": [
+    "--enable-utf8proc",
+    "--disable-jemalloc"
+  ]
+}

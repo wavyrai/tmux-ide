@@ -1,0 +1,20 @@
+{
+  "sha256": "713991dc7d0cd85ea61376883caae8d915da3cede6ed80fba408ee6b85685395",
+  "cleanup": true,
+  "before": "a54b,160x80,0,0{80x80,0,0,1,79x80,81,0,2}",
+  "after": "c2eb,160x80,0,0{83x80,0,0,1,76x80,84,0,2}",
+  "commandExit": 0,
+  "sessionAndPaneLifetimesUnchanged": true,
+  "capability": {
+    "schemaVersion": 1,
+    "capability": "split-resize-v1",
+    "maxDepth": 64,
+    "maxLeaves": 512,
+    "maxGrid": 4096
+  }
+}
+Traceback (most recent call last):
+  File "/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/tests/split-membership-regression.py", line 54, in <module>
+    assert result.returncode != 0 and after == layout, "resize escaped its selected session"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: resize escaped its selected session

@@ -1,0 +1,9 @@
+{
+  "packages/daemon/src/terminal/protocol/native-split-resize.ts": "cfc989c9f42b941a8d0ca785f61f1bc1f8894afed3a67f9a3baa9c66f01c2f6b",
+  "packages/daemon/src/terminal/protocol/native-split-resize.test.ts": "9c93ea8d13ae64979463132d75a4ffe4b7ce87396608c0be86199223502db86e",
+  "native/tmux/split-resize.patch": "4d010271fb4eb52cf36fd29b66e7b3c52c44f6ba90296b944014d74bf3d4222a",
+  "native/tmux/split-resize.md": "c0a5000c46d45fbeee740decc28a24d5a6ed645881a41291f265c1aa88cd47b1",
+  "native/tmux/tests/split-resize.py": "e9b979c760f33a86660fa43a4a381ea6e58f4c0872cec2082da8d0e1ad083fa4",
+  "native/tmux/tests/split-membership-regression.py": "49985873199d891c511849bf9e5210f405410f1754947d03328432389ef064ce",
+  "native/tmux/tests/split-resize-adapter.mjs": "6f24c0808c642db808a83960f16f52efa7ddd13beb6041f54bb6935327b87473"
+}

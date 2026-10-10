@@ -1,0 +1,5 @@
+{
+  "packages/daemon/src/terminal/protocol/native-split-resize.ts": "753141f7f99aa379a754fdc532714c55f8a01f975126bf91201bfbecd49afcb0",
+  "packages/daemon/src/terminal/protocol/native-split-resize.test.ts": "ea21b4d592569d3034dd1e1a48d6ae45eb2abae65f608310f6be3435cc6e7df1",
+  "native/tmux/tests/split-resize-adapter.mjs": "6f4127c9a5fbd8520eaebc290d92b9f354b188e90cc3ee34a53500d0740697ea"
+}

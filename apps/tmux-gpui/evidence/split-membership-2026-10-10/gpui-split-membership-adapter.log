@@ -1,0 +1,22 @@
+{
+  "binary": "/private/tmp/tmux-split-membership-ccxveo/source/tmux",
+  "sha256": "6a3aae46a9bfbd8519c78489c35b779b1f20401046188b0ce17964105db0bb73",
+  "cases": [
+    {
+      "kind": "ancestor-moved",
+      "boundary": 83
+    },
+    {
+      "kind": "stale-native-refusal",
+      "result": {
+        "status": "uncertain",
+        "reason": "command-failed"
+      }
+    },
+    {
+      "kind": "clamp-and-repeat",
+      "boundary": 3
+    }
+  ],
+  "cleanup": true
+}
