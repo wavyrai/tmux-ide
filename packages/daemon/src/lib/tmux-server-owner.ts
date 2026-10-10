@@ -20,7 +20,12 @@ import type { WorkspacePaneCreateMutationRequest } from "@tmux-ide/contracts";
 import { createTmuxSessionMutationFence } from "./tmux-session-mutation-fence.ts";
 import { createNativeTmuxSessionOpener } from "./tmux-server-session-open.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { WorkspaceIdSchemaZ } from "@tmux-ide/contracts";
+import {
+  WorkspaceIdSchemaZ,
+  WindowLinkTargetSchemaZ,
+  type WindowLinkTarget,
+} from "@tmux-ide/contracts";
+import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
 import { mkdirSync } from "node:fs";
 import { z } from "zod";
 import type { WorkspaceMultiplexerBackend } from "../command-center/actions/handlers/workspace-multiplexer.ts";
@@ -306,6 +311,7 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
       traceAuthority: { generation, incarnation: null },
     },
     mirror: {
+      splitLayoutEpoch: () => observationSelector.nativeServerEpoch,
       createOwnedViewerAdapter: createOwnedViewerAdapterFactory({
         environmentId: options.environmentId,
         serverScope: { serverId: options.serverId, generation },
@@ -536,6 +542,23 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     serverId: options.serverId,
     generation,
     catalog,
+    readWindowSplitLayout: async (workspaceName: string, input: WindowLinkTarget) => {
+      assertOpen();
+      const target = WindowLinkTargetSchemaZ.parse(input);
+      const sessions = await catalog();
+      assertOpen();
+      const sessionName = workspaceRegistry.get(workspaceName)?.sessionName;
+      if (
+        !sessionName ||
+        !sessions.some(
+          (row) => row.sessionName === sessionName && row.liveSessionId === target.liveSessionId,
+        )
+      )
+        throw new WindowSplitLayoutUnavailable();
+      const resource = await sessionRuntimeRegistry.readWindowSplitLayout(sessionName, target);
+      assertOpen();
+      return resource;
+    },
     openSession,
     createSession: sessionCreator.createSession,
     createSessionPane: async (

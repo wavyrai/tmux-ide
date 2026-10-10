@@ -1,3 +1,4 @@
+import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
 import { streamTmuxInteractions } from "./tmux-server-interaction-events.ts";
 import { mountTmuxServerNativeBackingRoute } from "./tmux-server-native-backing.ts";
 import { Hono, type Context } from "hono";
@@ -6,6 +7,8 @@ import { projectApplicationShellResource } from "./resources/application-shell.t
 import { fleetSessionIdForName } from "./resources/fleet-catalog.ts";
 import { z } from "zod";
 import {
+  WindowLinkTargetSchemaZ,
+  WindowSplitLayoutResourceSchemaZ,
   TMUX_SERVERS_API_PATH,
   PANE_STREAM_ISSUE_PATH,
   TmuxServerIdSchemaZ,
@@ -65,6 +68,8 @@ async function boundedJson(request: Request): Promise<unknown> {
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
 }
 function failure(c: Context, error: unknown): Response {
+  if (error instanceof WindowSplitLayoutUnavailable)
+    return c.json({ error: { code: "split-layout-stale" } }, 409);
   if (error instanceof TmuxServerScopeError)
     return c.json(
       { error: { code: error.code } },
@@ -124,6 +129,25 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
     }),
   );
   const scoped = `${base}/:serverId/:generation`;
+  // Structured read only: this never acquires a channel or changes tmux geometry.
+  app.post(
+    `${scoped}/split-layout/:workspaceName`,
+    route(async (c) => {
+      const server = scope(c);
+      const workspaceName = workspaceSchema.parse(c.req.param("workspaceName"));
+      const target = WindowLinkTargetSchemaZ.parse(await boundedJson(c.req.raw));
+      c.req.raw.signal.throwIfAborted();
+      const resource = await options.owners.withOwner(server, (owner) =>
+        owner.readWindowSplitLayout(workspaceName, target),
+      );
+      c.req.raw.signal.throwIfAborted();
+      return c.json({
+        version: 1,
+        server,
+        resource: WindowSplitLayoutResourceSchemaZ.parse(resource),
+      });
+    }),
+  );
   app.get(
     `${scoped}/interaction-events`,
     route(async (c) => {

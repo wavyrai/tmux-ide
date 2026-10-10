@@ -1,3 +1,5 @@
+import { WindowLinkTargetSchemaZ } from "@tmux-ide/contracts";
+import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
 import { requireSupportedTmuxVersion } from "./tmux-version.ts";
 import { join } from "node:path";
 import { createClaudeTeamMembershipReader } from "../terminal/attachments/claude-team-names.ts";
@@ -1527,6 +1529,7 @@ async function startEmbeddedDaemonGeneration(
           publishResourceChange: (change) => broadcastResourceChanged(change, instanceId),
         },
         mirror: {
+          splitLayoutEpoch: () => observationSelector?.nativeServerEpoch ?? null,
           createOwnedViewerAdapter: () => ownedViewerFactory?.(),
           nativeServerIdentity: initialNativeServerIdentity,
           executable: tmuxAuthority.executablePath,
@@ -1787,6 +1790,24 @@ async function startEmbeddedDaemonGeneration(
           },
           interactionReceipts,
           catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+          readWindowSplitLayout: async (workspaceName, input) => {
+            const target = WindowLinkTargetSchemaZ.parse(input);
+            const sessions = await createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+            )();
+            const sessionName = workspaceRegistry.get(workspaceName)?.sessionName;
+            if (
+              !sessionName ||
+              !sessions.some(
+                (row) =>
+                  row.sessionName === sessionName && row.liveSessionId === target.liveSessionId,
+              )
+            )
+              throw new WindowSplitLayoutUnavailable();
+            if (!sessionRuntimeRegistry) throw new WindowSplitLayoutUnavailable();
+            return sessionRuntimeRegistry.readWindowSplitLayout(sessionName, target);
+          },
           openSession: async (liveSessionId) => {
             await createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner)();
             const result = await defaultSessionOpener.openSession(liveSessionId);

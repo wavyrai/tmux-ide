@@ -635,6 +635,14 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return this.#mirror.paneResizeTransport(session);
   }
 
+  readWindowSplitLayout(
+    session: string,
+    target: Parameters<MirrorService["readWindowSplitLayout"]>[1],
+  ): ReturnType<MirrorService["readWindowSplitLayout"]> {
+    if (this.#disposed) return Promise.reject(new Error("Session runtime disposed"));
+    return this.#mirror.readWindowSplitLayout(session, target);
+  }
+
   executeWindowLinkAction(
     session: string,
     request: Parameters<MirrorService["executeWindowLinkAction"]>[1],

@@ -1,3 +1,4 @@
+import { WindowSplitLayoutUnavailable } from "../terminal/mirror/window-split-authority.ts";
 import * as shellProjection from "./resources/application-shell.ts";
 import { PANE_STREAM_PROTOCOL_VERSION, tmuxServerPaneStreamPath } from "@tmux-ide/contracts";
 import { randomUUID } from "node:crypto";
@@ -11,6 +12,7 @@ const base = "/api/v1/tmux-servers";
 const token = "private-owner-token";
 async function fixture() {
   const ownersCreated: {
+    splitRead: ReturnType<typeof vi.fn>;
     catalog: ReturnType<typeof vi.fn>;
     discover: ReturnType<typeof vi.fn>;
     discoverShell: ReturnType<typeof vi.fn>;
@@ -47,10 +49,20 @@ async function fixture() {
         panes: request.panes,
         effectiveViewerMode: request.viewerMode,
       }));
+      const splitRead = vi.fn(async (_workspace, window) => ({
+        version: 1,
+        window,
+        layoutId: randomUUID(),
+        cols: 80,
+        rows: 24,
+        panes: [{ semanticPaneId: "pane.same", left: 0, top: 0, width: 80, height: 24 }],
+        splits: [],
+      }));
       const discover = vi.fn(async () => null);
       const discoverShell = vi.fn(async () => null);
-      ownersCreated.push({ catalog, mutate, dispose, issue, discover, discoverShell });
+      ownersCreated.push({ splitRead, catalog, mutate, dispose, issue, discover, discoverShell });
       return {
+        readWindowSplitLayout: splitRead,
         catalog,
         terminalInventoryRuntime: {
           discoverTerminalRuntimeSession: discover,
@@ -309,4 +321,45 @@ it("uses enriched agent discovery for scoped shells so fleet statuses match pane
   } finally {
     await f.manager.dispose();
   }
+});
+
+describe("split layout reads", () => {
+  const target = {
+    liveSessionId: `live-session.${"a".repeat(20)}`,
+    linkId: `window-link.${"b".repeat(32)}`,
+    expectedSemanticWindowId: "window.same",
+    linkRevision: 0,
+  };
+  it("requires owner auth and exact generation before reading", async () => {
+    const f = await fixture();
+    const path = f.scope(f.a) + "/split-layout/same";
+    expect((await f.request(path, "POST", target, null)).status).toBe(401);
+    expect(
+      (await f.request(`/${f.a.serverId}/${randomUUID()}/split-layout/same`, "POST", target))
+        .status,
+    ).toBe(409);
+    expect(f.ownersCreated.every((owner) => owner.splitRead.mock.calls.length === 0)).toBe(true);
+  });
+  it("rejects native addresses and exposes a no-store semantic resource", async () => {
+    const f = await fixture();
+    const path = f.scope(f.a) + "/split-layout/same";
+    expect((await f.request(path, "POST", { ...target, nativeWindowId: "@1" })).status).toBe(400);
+    const response = await f.request(path, "POST", target);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({
+      version: 1,
+      server: { serverId: f.a.serverId, generation: f.a.generation },
+      resource: { window: target, panes: [{ semanticPaneId: "pane.same" }] },
+    });
+    expect(f.ownersCreated[0]!.splitRead).toHaveBeenCalledExactlyOnceWith("same", target);
+    expect(f.ownersCreated[1]!.splitRead).not.toHaveBeenCalled();
+  });
+  it("reports retired layouts without leaking internal diagnostics", async () => {
+    const f = await fixture();
+    f.ownersCreated[0]!.splitRead.mockRejectedValueOnce(new WindowSplitLayoutUnavailable());
+    const response = await f.request(f.scope(f.a) + "/split-layout/same", "POST", target);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: { code: "split-layout-stale" } });
+  });
 });
