@@ -6,11 +6,13 @@ import console from "node:console";
 import { setTimeout } from "node:timers";
 import { execFileSync, spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, join, isAbsolute } from "node:path";
 import { createScratchFleet } from "../../../scripts/lib/product-fixtures/scratch-fleet.ts";
 import { startDaemon } from "../../../scripts/lib/product-fixtures/daemon.ts";
 import { listTmuxServers } from "../../../packages/daemon-client/src/tmux-server-client.ts";
 import { stopFixtureChild } from "./fixture-child.mjs";
+const app = process.env.TMUX_GPUI_TEST_APP;
+if (app && !isAbsolute(app)) throw new Error("TMUX_GPUI_TEST_APP must be absolute");
 for (const key of Object.keys(process.env)) {
   if (
     key.startsWith("TMUX_IDE_") ||
@@ -71,9 +73,15 @@ try {
     { mode: 0o600 },
   );
   browser = spawn(
-    process.execPath,
-    ["--import", "tsx", resolve("apps/tmux-gpui/bridge/browser.ts"), config],
-    { env: { ...process.env, ...fleet.environment }, stdio: ["pipe", "pipe", "pipe"] },
+    app ? join(app, "Contents/Resources/node") : process.execPath,
+    app
+      ? [join(app, "Contents/Resources/bridge/browser.bundle.mjs"), config]
+      : ["--import", "tsx", resolve("apps/tmux-gpui/bridge/browser.ts"), config],
+    {
+      env: { ...process.env, ...fleet.environment, ...(app ? { PATH: "/usr/bin:/bin" } : {}) },
+      ...(app ? { cwd: fleet.root } : {}),
+      stdio: ["pipe", "pipe", "pipe"],
+    },
   );
   browser.on("error", (error) => {
     fatal ??= error;
@@ -129,6 +137,9 @@ try {
   assert.equal(latest.inputReady, false);
   result = {
     passed: true,
+    runtime: app ? "packaged-node-and-browser" : "source",
+    isolatedCwd: Boolean(app),
+    minimalPath: Boolean(app),
     currentWindowNotFirst: true,
     metadataOnly: true,
     explicitPaneFollowup: true,
