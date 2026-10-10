@@ -1,0 +1,20 @@
+2026-10-10T17:55:20.4867898Z   File "/home/runner/work/tmux-ide/tmux-ide/apps/tmux-gpui/scripts/preview-release-package.py", line 43, in visit
+2026-10-10T17:55:20.4868810Z     info = path.lstat()
+2026-10-10T17:55:20.4869263Z            ^^^^^^^^^^^^
+2026-10-10T17:55:20.4869955Z   File "/usr/lib/python3.12/pathlib.py", line 849, in lstat
+2026-10-10T17:55:20.4870422Z     return self.stat(follow_symlinks=False)
+2026-10-10T17:55:20.4870790Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-10T17:55:20.4871199Z   File "/usr/lib/python3.12/pathlib.py", line 842, in stat
+2026-10-10T17:55:20.4871680Z     return os.stat(self, follow_symlinks=follow_symlinks)
+2026-10-10T17:55:20.4872105Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-10T17:55:20.4872767Z FileNotFoundError: [Errno 2] No such file or directory: '/tmp/gpui-package-zgCbsU/Input.app/FOO'
+2026-10-10T17:55:20.4919768Z ✖ inventory rejects case aliases independent of filesystem and lower test limits fail safely (149.302831ms)
+2026-10-10T17:55:20.5008803Z ℹ tests 232
+2026-10-10T17:55:20.5009209Z ℹ suites 0
+2026-10-10T17:55:20.5009547Z ℹ pass 227
+2026-10-10T17:55:20.5009794Z ℹ fail 1
+2026-10-10T17:55:20.5010009Z ℹ cancelled 0
+2026-10-10T17:55:20.5010249Z ℹ skipped 4
+2026-10-10T17:55:20.5010692Z ℹ todo 0
+2026-10-10T17:55:20.5010944Z ℹ duration_ms 13561.436567
+2026-10-10T17:55:20.5027086Z

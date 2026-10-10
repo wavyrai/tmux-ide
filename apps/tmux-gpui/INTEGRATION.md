@@ -82,7 +82,6 @@ names and narrow-window behavior side by side. Native GPUI controls can adapt to
 pointer/keyboard conventions; do not redesign the product around the prototype's
 semantic-ID list. This acceptance condition belongs to GP03/GP05/GP08/GP11.
 
-
 ## Upstream integration reuse
 
 The user explicitly approved reusing Herdr GPUI code, including its GitHub and
@@ -91,7 +90,6 @@ adapt daemon assumptions at the boundary, and preserve tmux-ide's TUI hierarchy.
 These integrations are not currently exposed or qualified in the tmux preview;
 bring them over after the usable core client rather than claiming inherited
 source presence as working integration.
-
 
 ## Native shell acceptance
 
@@ -108,7 +106,6 @@ OS lighting and disables glass effects in the catalog. Additional material or
 translucency effects require their own implementation and native verification.
 GitHub and editor actions remain separate unfinished integrations, not benefits
 conferred automatically by importing upstream code.
-
 
 ### Concrete integration paths still to implement
 
@@ -131,7 +128,6 @@ conferred automatically by importing upstream code.
 These are implementation dependencies, not completed features or a full-parity
 checklist. The native shell comes first; each integration needs a real user
 journey and evidence once connected to tmux state.
-
 
 ## Public preview distribution — Herdr audit, 9 October 2026
 
@@ -163,7 +159,6 @@ release authentication can be verified with ephemeral test keys; successful
 Developer ID signing, notarization and clean-machine installation require the
 actual publisher credentials and cannot be inferred from those tests.
 
-
 ### Stable installed native launch entry
 
 New installations retain `versions/<id>/TmuxIDE.app` and expose
@@ -177,7 +172,6 @@ both the stable alias and versioned path after install, update and rollback.
 This does not qualify Finder/LaunchServices launch. That physical check remains
 pending while the user tests the existing native window. Upstream mac_bundle's
 Herdr.app ancestry/symlink assumptions are not a drop-in solution.
-
 
 ### Release metadata must precede signing
 
@@ -211,7 +205,6 @@ existing components where practical:
 
 These paths are within upstream/crates/herdr-gpui. This is an implementation map,
 not completed UI. Existing license/notices remain required for adapted code.
-
 
 ### Native material appearance — user requirement, 9 October 2026
 

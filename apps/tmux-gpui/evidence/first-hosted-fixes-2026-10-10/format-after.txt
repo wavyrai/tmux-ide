@@ -1,0 +1,6 @@
+
+> tmux-ide@2.9.5 format:check /Users/thijs/.codex/worktrees/gpui-package-check/tmux-ide
+> prettier --check .
+
+Checking formatting...
+All matched files use Prettier code style!

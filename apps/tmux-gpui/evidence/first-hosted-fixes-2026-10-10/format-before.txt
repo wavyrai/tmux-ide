@@ -1,0 +1,16 @@
+
+> tmux-ide@2.9.5 format:check /Users/thijs/.codex/worktrees/gpui-package-check/tmux-ide
+> prettier --check .
+
+Checking formatting...
+[warn] apps/tmux-gpui/evidence/native-split-bundle-2026-10-10/bundle-manifest.json
+[warn] apps/tmux-gpui/evidence/source-checkpoint-2026-10-10/rust-results.json
+[warn] apps/tmux-gpui/evidence/split-layout-api-2026-10-10/README.md
+[warn] apps/tmux-gpui/evidence/split-membership-2026-10-10/result-identity.json
+[warn] apps/tmux-gpui/evidence/split-resize-native-2026-10-10/README.md
+[warn] apps/tmux-gpui/evidence/split-resize-native-2026-10-10/sanitized-identity.json
+[warn] apps/tmux-gpui/INTEGRATION.md
+[warn] apps/tmux-gpui/README.md
+[warn] apps/tmux-gpui/VALIDATION.md
+[warn] Code style issues found in 9 files. Run Prettier with --write to fix.
+ ELIFECYCLE  Command failed with exit code 1.

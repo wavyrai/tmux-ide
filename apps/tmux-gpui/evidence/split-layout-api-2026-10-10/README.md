@@ -9,6 +9,7 @@ capability fails closed. Channel retirement/disposal clears its opaque split han
 Both standalone scoped owners and the embedded default owner provide the read.
 
 Validation on 2026-10-10:
+
 - 53 tests: tmux-servers, mirror-service, mirror-service-split-layout.
 - 16 tests: tmux-server-owner, embedded-tmux-server-owners, tmux-server-owners.
 - Daemon TypeScript --noEmit, affected ESLint and formatting pass.

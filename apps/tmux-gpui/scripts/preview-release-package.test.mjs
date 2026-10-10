@@ -126,6 +126,9 @@ test("existing output and source-contained destinations are never overwritten; v
 test("inventory rejects case aliases independent of filesystem and lower test limits fail safely", async () => {
   await fixture(async ({ app, output }) => {
     await writeFile(join(app, "foo"), "x");
+    // Supply both directory entries on case-sensitive hosts; the mocked listing
+    // supplies both spellings on case-insensitive hosts as well.
+    await writeFile(join(app, "FOO"), "x");
     const program = `
 import importlib.util, pathlib, sys
 from unittest.mock import patch
@@ -139,6 +142,9 @@ with patch.object(pathlib.Path,'iterdir',aliases):
     try: m.inventory(app)
     except ValueError as e: assert 'case alias' in str(e)
     else: raise AssertionError('alias accepted')
+# Remove both spellings so alias rejection cannot mask the limit checks.
+for path in [app/'foo',app/'FOO']:
+    path.unlink(missing_ok=True)
 for key,limit in [('ENTRIES',1),('EXPANDED',512),('COMPRESSED',16)]:
     old=getattr(m,key);setattr(m,key,limit)
     try:

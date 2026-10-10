@@ -233,6 +233,7 @@ order, and authority is checked before every chunk. An interruption can leave a
 prefix delivered; there is no rollback or replay. No daemon contract change.
 
 Verified so far:
+
 - Four TypeScript input tests, including Unicode chunk boundaries, both bracket
   modes, rejection before sending and loss of authority mid-paste.
 - Twelve focused Rust adapter tests, including clipboard admission.
@@ -304,7 +305,6 @@ multi-pane layout alignment, native DPI/resize, competing viewers, authority-los
 recovery, redraw and manual-size-lock release still require verification. Broad
 checks and independent source review are in progress.
 
-
 ## Resize increment — 9 October 2026
 
 Local implementation on `codex/tmux-gpui-bootstrap`, based on cleanup commit
@@ -333,7 +333,6 @@ qualification. The final layout must follow TUI Home/session/window/pane structu
 the single-pane prototype is temporary. GP04 also remains open for IME replacement
 ranges and broader CJK/candidate-window checks. No release-readiness claim.
 
-
 ## Partial IME replacement fix — 9 October 2026
 
 Local, uncommitted increment on `codex/tmux-gpui-bootstrap` (base
@@ -354,7 +353,6 @@ candidate-window qualification is claimed. GP04 remains open and nothing release
 Prior resize gates completed: default workspace 2,693 passed / 10 ignored;
 all features 2,727 passed / 17 ignored; both Clippy modes and 13 optimized CLI
 checks passed. Those totals include inherited upstream coverage.
-
 
 ## Presence bridge increment — 9 October 2026
 
@@ -381,7 +379,6 @@ IME replacement follow-up gates completed: default workspace 2694 passed /10
 ignored, all features2728 passed /17 ignored; both Clippy configurations passed.
 Counts include inherited upstream tests. Logs `/tmp/gpui-ime-range-*`.
 
-
 ## Native activation connected — 9 October 2026
 
 The native window activation subscription now feeds the presence bridge. Native
@@ -403,7 +400,6 @@ Full workspace reruns and source review are still pending. Competing-viewer
 qualification, normal app switching, TUI-aligned multi-pane layout and other GP05
 acceptance remain open. Changes stay local/uncommitted/unreleased on
 `codex/tmux-gpui-bootstrap`, based on `fc3b7869c3cd1699fe5c82fcdab09aae18f5141f`.
-
 
 ## Explicit reconnect increment — 9 October 2026
 
@@ -430,7 +426,6 @@ requires the matching acknowledgement. Focused17 tests and source review pass;
 full Rust gates rerun under `/tmp/gpui-presence-revision-*`. Earlier native
 minimize/restore passed before this revision refinement; no repeat physical proof
 claimed yet.
-
 
 ## Window/pane presentation increment — 9 October 2026
 
@@ -461,7 +456,6 @@ User approval to reuse upstream integrations, including GitHub/VS Code, is recor
 in INTEGRATION.md. Source reuse is authorized; those integrations are not yet wired
 or qualified for tmux-ide.
 
-
 ## Multi-pane stream foundation — 9 October 2026
 
 The helper accepts an explicit optional `visiblePaneIds` subscription (1–24 unique
@@ -485,7 +479,6 @@ authoritative tmux layout; do not equate this with TUI layout parity. No card cl
 commit, merge or release. Work remains local on `codex/tmux-gpui-bootstrap`, base
 `fc3b7869c3cd1699fe5c82fcdab09aae18f5141f`.
 
-
 ## Resize/input ordering and remaining startup issue — 9 October 2026
 
 The original browser lost established input readiness during layout/surface resize
@@ -508,14 +501,12 @@ Startup gesture admission remains open and requires its own failure-to-pass proo
 Signing still has zero valid local identities; installer/update and release remain
 unqualified. GP04 and the broader mission stay open.
 
-
 A focused independent asset audit found no concrete missing notice for the dedicated
 terminal entry. The assembler additionally preserves `GITHUB-NOTICE.md`, referenced
 by upstream's root NOTICE, even though the GitHub integration is not enabled here.
 Fresh assembly and both packaged-artifact tests pass; logs are retained alongside
 the resize evidence. This attribution check does not qualify signing, source
 provenance or a release, and the notice-only app uses the prior native binary.
-
 
 ## Input interruption guard — 9 October 2026
 
@@ -539,7 +530,6 @@ qualification. The packaged-artifact tests also pass for the new bundle.
 All work remains uncommitted/unmerged/unreleased. Broader IME, UI, signing and
 installer qualification remain open; this does not close GP04 or the mission.
 
-
 ## Pane selection package verification — 2026-10-09
 
 The selected-pane label and separator accents passed the complete Rust gate
@@ -556,7 +546,6 @@ readiness observation, not a fixed bug or evidence that chrome caused it. A
 payload-free diagnostic bundle is prepared outside the package for investigation.
 Narrow/crowded layouts and full TUI alignment remain unqualified; GP03 stays open.
 All changes remain uncommitted, unmerged and unreleased.
-
 
 ## Activation trace and clearer inactive status — 2026-10-09
 
@@ -583,7 +572,6 @@ pane targets passed, and Cmd-Q preserved sources. See
 `evidence/activation-status-2026-10-09/native-package.log` and native screenshots.
 An attempted corner drag did not resize the window; it does not qualify narrow layout.
 
-
 ## GP10 transaction foundation — 2026-10-09
 
 Implemented internal install-transaction.mjs and ten isolated temporary-prefix
@@ -607,7 +595,6 @@ symlinks are rejected. Injected errors are not abrupt-termination proof. No prod
 installation or process termination was performed. GP09 signing prerequisite remains:
 security find-identity still reports zero valid signing identities on this host.
 
-
 ## Canonical daemon compatibility increment — 2026-10-09
 
 Local discovery now applies the shared wire-protocol compatibility predicate after
@@ -630,7 +617,6 @@ open; the new message has not yet been physically verified in a rebuilt app.
 No automatic daemon update/restart, merge, commit or release occurred. GP10 remains
 open for the full signed install/update entry flow and other stated acceptance.
 
-
 ## Process-interruption qualification increment — 2026-10-09
 
 Added install-interruption.test.mjs with real creation-owned child processes and
@@ -651,7 +637,6 @@ gap between candidate rename and pointer activation. Automatic stale-lock recove
 and the signed public installer remain unfinished. GP10 stays open. No production
 install, commit, merge or release.
 
-
 ## Combined local preview — 2026-10-09
 
 Assembled `/tmp/Tmux IDE Preview.app` with the latest compatibility guard,
@@ -667,7 +652,6 @@ The owned launcher was terminated and the fixture exited 1 through its cleanup.
 This does not qualify native input on the combined package; prior native passes
 remain evidence only for their recorded packages. No production launch, commit,
 merge or release. Distribution/signing/install qualification remains open.
-
 
 ## macOS installer verification component — 2026-10-09
 
@@ -690,7 +674,6 @@ trusted publisher policy, signed candidate, notarization, clean-machine and othe
 GP09/GP10 acceptance remain open. This change does not install or launch an app,
 change production, commit or release.
 
-
 ## Local staged-app installer CLI — 2026-10-09
 
 Added scripts/install-cli.mjs: explicit-prefix install/update, rollback and
@@ -711,7 +694,6 @@ source hashes: apps/tmux-gpui/evidence/install-cli-2026-10-09/.
 GP10 remains open for the public download/bootstrap flow, trusted release policy,
 signed-positive qualification, interruption recovery, owned-helper handling and
 other acceptance. No production mutation, commit, merge or release.
-
 
 ## Native build receipt and fresh package — 2026-10-09
 
@@ -748,7 +730,6 @@ qualified. Physical UI on this fresh package, signed/notarized/clean-machine
 qualification, public install/update and release remain open. All work is still
 uncommitted/unmerged/unreleased; GP09 stays open. Production was untouched.
 
-
 ## Native shell adaptation — 2026-10-09
 
 The browser now reuses Herdr's native titlebar/frame and pure theme/font defaults,
@@ -764,7 +745,6 @@ default/all-feature tests. This evidence binds the recorded first-slice hashes.
 Evidence: `evidence/native-shell-2026-10-09/`. No full Herdr or Liquid Glass
 parity, commit, merge or release is claimed.
 
-
 ### Actual browser narrow-layout regression
 
 The real SnapshotView fixture exposed a failure missed by the synthetic shell
@@ -779,7 +759,6 @@ containment and a five-row usability floor. All 44 focused checks pass, and
 independent review found no source blocker. Final full gates and the receipt-bound optimized build pass;
 physical scrolling and appearance remain unverified. Evidence and final hashes:
 `evidence/native-shell-2026-10-09/narrow-layout-receipt.json`.
-
 
 ### Native shell package check
 
@@ -802,7 +781,6 @@ Evidence: `evidence/native-shell-2026-10-09/native-receipt.json`, native screens
 and logs. This does not qualify full Herdr parity, status scrolling, signing or
 release. All implementation remains uncommitted/unmerged/unreleased.
 
-
 ## Catalog failure diagnostics — 2026-10-09
 
 Session listing/revalidation, opening, inventory and connection validation now
@@ -818,7 +796,6 @@ without loosening inventory validation. Exact hashes/logs and limits:
 `evidence/catalog-diagnostics-2026-10-09/`. Running test app is unchanged and
 does not include these new diagnostics. Uncommitted/unmerged/unreleased.
 
-
 The fresh `/tmp/Tmux IDE Catalog Preview.app` now contains the safe diagnostics.
 Assembly, all three explicit artifact checks and real bundled two-session
 discovery/switching checks pass. The existing real-daemon pane-replacement
@@ -829,22 +806,20 @@ with fresh selection. No duplicate fixture was added. Logs and package hashes:
 Native interaction with this package and physical pane-recreation remain open;
 the human's previous test app was left untouched.
 
-
 ## Remaining preview gates — current checkpoint
 
-| Gate | Current evidence | Still required |
-| --- | --- | --- |
-| Native shell and pane input | Native Shell artifact: left/right routing, selected labels, native close preserves sources | Final-package narrow window, status scroll, paste/IME and physical pane recreation |
-| Recovery | Real source/packaged browser switching, same-browser pane replacement and prior native daemon replacement | Explain intermittent first session-open failure; final-package native recovery |
-| Rendering | Canonical decoding/painter checks and recorded native snapshots | Repeatable current-package Unicode/style/wrap/cursor visual matrix and display scales |
-| CI | Separate workflow authored; local Rust/bridge gates pass | Actual hosted Linux/macOS workflow results |
-| Distribution | Local receipt-bound app, artifact checks, transaction/verifier/CLI tests | Trusted Apple signing identity, signed/notarized artifact, clean-machine install/update/rollback, public download verification |
-| Release | Local branch evidence on Sfora | Current-main integration, reviewed release commit, impacted terminal gates, published preview receipt |
+| Gate                        | Current evidence                                                                                          | Still required                                                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Native shell and pane input | Native Shell artifact: left/right routing, selected labels, native close preserves sources                | Final-package narrow window, status scroll, paste/IME and physical pane recreation                                             |
+| Recovery                    | Real source/packaged browser switching, same-browser pane replacement and prior native daemon replacement | Explain intermittent first session-open failure; final-package native recovery                                                 |
+| Rendering                   | Canonical decoding/painter checks and recorded native snapshots                                           | Repeatable current-package Unicode/style/wrap/cursor visual matrix and display scales                                          |
+| CI                          | Separate workflow authored; local Rust/bridge gates pass                                                  | Actual hosted Linux/macOS workflow results                                                                                     |
+| Distribution                | Local receipt-bound app, artifact checks, transaction/verifier/CLI tests                                  | Trusted Apple signing identity, signed/notarized artifact, clean-machine install/update/rollback, public download verification |
+| Release                     | Local branch evidence on Sfora                                                                            | Current-main integration, reviewed release commit, impacted terminal gates, published preview receipt                          |
 
 The human's Selection Trace app remains open for testing. Its fixture watchdog
 is stopped; see `evidence/selection-trace-2026-10-09/receipt.json` for exact
 owned-process cleanup. Do not treat that session as an automated completion.
-
 
 ## Repeatable visual specimen — 2026-10-09
 
@@ -872,7 +847,6 @@ No GUI was launched for this checkpoint. This is one specimen (minimum64×20
 terminal cells), not full GP08 acceptance; native fonts/pixels, display scales
 and narrower geometry remain unqualified. Work is uncommitted/unreleased.
 
-
 ## Absolute installer destination — 2026-10-09
 
 Reproduced a mismatch with the documented explicit absolute destination: a relative
@@ -886,7 +860,6 @@ on refusal and successful explicit absolute detach. Bridge gate96pass,0fail,
 Uncommitted/unmerged/unreleased on codex/tmux-gpui-bootstrap, base
 fc3b7869c3cd1699fe5c82fcdab09aae18f5141f. This does not qualify signed installs or
 the public bootstrap; GP10 remains open. No user installation or GUI was changed.
-
 
 ## Packaged history journey — 9 October 2026
 
@@ -902,7 +875,6 @@ No GUI launched. This qualifies the packaged helper history path, not native
 clipboard/mouse/rendering or launcher behavior. GP07 remains open for remaining
 physical checks. Uncommitted/unmerged/unreleased, base
 fc3b7869c3cd1699fe5c82fcdab09aae18f5141f on codex/tmux-gpui-bootstrap.
-
 
 ## Preview release authentication — 9 October 2026
 
@@ -922,7 +894,6 @@ and public bootstrap remain unimplemented. Host signing inspection again found
 zero valid identities. Test keys are ephemeral and are not release credentials.
 GP10 remains open. Work is uncommitted/unmerged/unreleased on
 codex/tmux-gpui-bootstrap, base fc3b7869c3cd1699fe5c82fcdab09aae18f5141f.
-
 
 ## Authenticated archive staging — 9 October 2026
 
@@ -944,7 +915,6 @@ app-version binding, Apple verification/transaction wiring and public bootstrap
 remain incomplete. No app/daemon launched or user installation changed. GP10
 remains open; uncommitted/unmerged/unreleased on codex/tmux-gpui-bootstrap, base
 fc3b7869c3cd1699fe5c82fcdab09aae18f5141f.
-
 
 ## Authenticated strict archive extraction — 9 October 2026
 
@@ -971,7 +941,6 @@ transaction wiring and public entry remain incomplete; GP10 stays open. Work is
 uncommitted/unmerged/unreleased on codex/tmux-gpui-bootstrap, base
 fc3b7869c3cd1699fe5c82fcdab09aae18f5141f.
 
-
 ## Composed release installation — 9 October 2026
 
 `preview-release-install.mjs` now connects authenticated download, strict archive
@@ -997,7 +966,6 @@ verifier, and the real negative uses ephemeral manifest trust/fake Apple policy.
 No public HTTPS endpoint, publisher key provisioning or user-facing installer
 entry is supplied here. GP10 remains open. Work is uncommitted/unmerged/unreleased
 on codex/tmux-gpui-bootstrap, base fc3b7869c3cd1699fe5c82fcdab09aae18f5141f.
-
 
 ## One installer command: authenticated release mode — 9 October 2026
 
@@ -1027,7 +995,6 @@ and current symlink presently exist; INTEGRATION.md records the next launch-entr
 work. GP10 remains open. Uncommitted/unmerged/unreleased on
 codex/tmux-gpui-bootstrap, base fc3b7869c3cd1699fe5c82fcdab09aae18f5141f.
 
-
 ## Stable installed application entry — 9 October 2026
 
 New versions retain TmuxIDE.app; the stable prefix/TmuxIDE.app alias points through
@@ -1053,7 +1020,6 @@ control/receipt). Physical Finder/LaunchServices launch, signed positive install
 publisher key/endpoint provisioning and clean-machine acceptance remain pending.
 GP10 stays open. Uncommitted/unmerged/unreleased on codex/tmux-gpui-bootstrap,
 base fc3b7869c3cd1699fe5c82fcdab09aae18f5141f. User testing window untouched.
-
 
 ## Deterministic release archive producer — 9 October 2026
 
@@ -1085,7 +1051,6 @@ endpoint, signing/notarization, clean-machine/native launch and public release
 remain required. Work uncommitted/unmerged/unreleased on codex/tmux-gpui-bootstrap,
 basefc3b7869c3cd1699fe5c82fcdab09aae18f5141f. Human test window untouched.
 
-
 ## Explicit pre-signing bundle metadata — 9 October 2026
 
 Assembler now accepts optional trailing --metadata JSON_FILE with exact bounded
@@ -1110,7 +1075,6 @@ endpoint, clean-machine/physical qualification and public release remain open.
 This only prepares metadata before signing. GP09 remains open; uncommitted,
 unmerged, unreleased on codex/tmux-gpui-bootstrap, base
 fc3b7869c3cd1699fe5c82fcdab09aae18f5141f.
-
 
 ## Herdr-based native switcher — 9 October 2026
 
@@ -1143,7 +1107,6 @@ GP03 stays open. Source work uncommitted/unmerged/unreleased on
 codex/tmux-gpui-bootstrap at basefc3b7869c3cd1699fe5c82fcdab09aae18f5141f.
 This is a reusable native navigation component, not full Herdr parity.
 
-
 # Native switcher physical check — partial, 9 October 2026
 
 Built native74cc44b79c22bf5c4f97d92961e202388cccd462ac53686a171ab859081fbb40
@@ -1153,6 +1116,7 @@ QA identity com.tmux-ide.gpui.switcher-qa/version0.1.0 is test metadata, unsigne
 All3 explicit QA artifact tests pass; notices and native receipt verified.
 
 Actual visible QA app used its own scratch fleet/socket/daemon. Observed via CUA:
+
 - Switch button opened reused native search input.
 - Typed PICKER_SHOULD_NOT_REACH_TERMINAL visibly filtered to no results.
 - Replaced query with switcher, Enter opened the isolated session.
@@ -1175,7 +1139,6 @@ partial evidence; screenshots are in the conversation, not exported files here.
 
 Uncommitted/unmerged/unreleased. No production sessions changed. GP03 remains open.
 
-
 ## Initial switcher shortcut defect reproduced — 9 October 2026
 
 Physical initial CmdK did nothing while button entry worked; CmdK worked after a
@@ -1192,7 +1155,6 @@ Broader workspace checks are currently running; physical initial-screen rerun
 still pending user-interaction conflict clarification. Existing Switcher QA and
 Switcher Preview binaries predate this fix. Do not claim physical recovery or
 release completion. GP03 remains open; no commit/merge/publication.
-
 
 ## Focus fix packaged and workspace-qualified — 9 October 2026
 
@@ -1217,7 +1179,6 @@ c78ff90b6d47a5f94e9996da01153f799b7f98b9 is already contained in branch HEAD
 fc3b7869c3cd1699fe5c82fcdab09aae18f5141f. All new work remains uncommitted,
 unmerged and unreleased.
 
-
 ## Optimized CLI and npm boundary verified — 9 October 2026
 
 The existing release-profile job completed with exit 0: `cargo test --locked
@@ -1234,7 +1195,6 @@ gate. Both logs are retained in this evidence directory.
 Both protected QA windows remain live and their fixture watchdogs remain stopped.
 No UI automation, session cleanup, commit, merge or publication was performed.
 Physical initial-CmdK recovery and signed distribution remain unverified.
-
 
 ## Nested native session hierarchy — 9 October 2026
 
@@ -1269,7 +1229,6 @@ GP03 stays open for actual normal/narrow appearance and remaining acceptance.
 Base HEAD fc3b7869c3cd1699fe5c82fcdab09aae18f5141f, branch
 codex/tmux-gpui-bootstrap; new work remains uncommitted, unmerged and unreleased.
 
-
 ## Sidebar preview packaged — 9 October 2026
 
 Built and assembled `/tmp/Tmux IDE Sidebar Preview.app` with the reviewed sidebar
@@ -1289,7 +1248,6 @@ remain pending; existing human QA windows and their stopped watchdogs remain
 untouched. No signing, notarization, commit, merge or publication claim. GP03
 stays open. Evidence: apps/tmux-gpui/evidence/native-sidebar-hierarchy-2026-10-09/.
 
-
 ## Exact bundled helper lifecycle check — 9 October 2026
 
 The Sidebar Preview's bundled Node and browser.bundle.mjs passed the existing
@@ -1306,7 +1264,6 @@ Log: evidence/native-sidebar-hierarchy-2026-10-09/gpui-sidebar-packaged-browser.
 No source changes after the reviewed build. Physical UI testing awaits the
 user's clarification about the two open QA windows; signing/notarization and
 public distribution remain unqualified. GP03 remains open.
-
 
 # Shared native themes — 9 October 2026
 
@@ -1354,7 +1311,6 @@ these themes. Physical palette appearance, picker behavior and native System
 transitions still need current-package QA. Protected user test windows remain
 untouched. No signing, notarization, commit, merge or publication; GP03 staysopen.
 
-
 ## Theme-enabled local artifact verified — 9 October 2026
 
 Built `/tmp/Tmux IDE Themes Preview.app`. Native SHA256
@@ -1366,7 +1322,6 @@ journey with persisted theme changes, native-system notification and rejected
 unknown theme while preserving selected pane/request/input readiness. New app
 has not been launched. Physical theme colors/picker/System transitions remain
 required; protected QA windows are unchanged. No signed-release claim.
-
 
 ## Home creation and demo — 10 October 2026
 

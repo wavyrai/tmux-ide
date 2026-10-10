@@ -52,7 +52,6 @@ The directory retains build/assembly/test logs and the app. The gate opens no GU
 signs nothing and publishes nothing; hosted CI success and physical acceptance
 are separate requirements.
 
-
 For source validation, with the pinned Rust toolchain installed:
 
 ```sh

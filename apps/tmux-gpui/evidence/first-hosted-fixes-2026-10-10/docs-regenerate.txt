@@ -1,0 +1,5 @@
+
+> tmux-ide@2.9.5 demo:tui /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide
+> bun --preload @opentui/solid/preload docs/scripts/render-tui-demo.tsx
+
+Rendered /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/docs/public/tui-demo.svg and its light twin from 3 production OpenTUI frames and 9 landing figures.

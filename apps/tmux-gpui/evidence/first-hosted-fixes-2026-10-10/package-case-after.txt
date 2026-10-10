@@ -1,0 +1,12 @@
+✔ actual producer is deterministic and authenticated extractor restores bytes and executable mode (78.203292ms)
+✔ links, aliases, unsafe names and special permissions reject without output or source mutation (158.2815ms)
+✔ existing output and source-contained destinations are never overwritten; version/name is exact (97.503041ms)
+✔ inventory rejects case aliases independent of filesystem and lower test limits fail safely (58.121208ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 425.812125
