@@ -1209,6 +1209,7 @@ it("forwards captured trusted context only after validation and authorization, w
       executionId: expect.any(String),
       authoredReceiptAdmissionSequence: 1,
     },
+    expect.any(Function),
   ]);
   expect(execute.mock.calls[0]![3]).not.toBe(captured);
   await executor.dispose();

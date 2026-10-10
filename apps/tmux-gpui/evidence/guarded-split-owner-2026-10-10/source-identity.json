@@ -1,0 +1,11 @@
+{
+  "baseCommit": "ec2a005862de8442e3fac34da53d79c12836158d",
+  "files": {
+    "packages/daemon/src/lib/guarded-native-split-resize.ts": "d9a5d55c0f4c9ff9595d6c323b40452b99325983ef0f984c9452270c5b6a632e",
+    "packages/daemon/src/lib/guarded-native-split-resize.test.ts": "4dfdb5eca2766b09baca86f96e1bcc163a4cf2ec4672c8fb4e729c323557f8ce",
+    "packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts": "b89e66b74c1c2f48852accb8a1ea98187abb8ab5fc082ae7bb17b2e909eb9c6b",
+    "packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.test.ts": "3c7325af8879d440de1c80f86104b6edd9d18e41f9e7f0e6824b6ab1a108197b",
+    "packages/daemon/src/terminal/session-runtime/semantic-mutation-final-authorization.test.ts": "3604c2559926ddcb54102e1efdb3a8e966e2cc90a29c6f89e149467e6e61b4a3",
+    "native/tmux/tests/split-guarded-runner.mjs": "2d82532da4ad6a9a6fb3ccb8528d8a2fa5138d48f8e4ad4b84d769256a579f64"
+  }
+}

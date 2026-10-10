@@ -98,6 +98,8 @@ export interface SessionSemanticMutationExecutorOptions {
       record(operation: string, startedAtMicros: number, endedAtMicros: number): void;
     }>,
     execution?: AuthoredExecutionContext,
+    /** Revalidate immediately before dispatch after any asynchronous preparation. */
+    authorizeBeforeEffect?: () => void,
   ) => SessionRuntimeIntentResult | Promise<SessionRuntimeIntentResult>;
   /** Publishes through the daemon's existing replayable interaction journal. */
   readonly publishReceipt: (receipt: SessionRuntimeReceiptInput) => InteractionReceipt;
@@ -545,11 +547,21 @@ export class SessionSemanticMutationExecutor {
         tmuxStarted = null;
       }
     }
+    let executionActive = true;
     try {
       // Admission can wait behind prior work. Revalidate the opaque principal
       // at the last synchronous boundary before tmux receives any effect.
-      if (interactionContext) this.#options.validateInteractionContext?.(interactionContext);
-      authorizeBeforeEffect?.();
+      const revalidateBeforeEffect = () => {
+        if (this.#disposed || !executionActive) {
+          throw new SessionRuntimeIntentError(
+            "rejected",
+            "Semantic execution authority is no longer active",
+          );
+        }
+        if (interactionContext) this.#options.validateInteractionContext?.(interactionContext);
+        authorizeBeforeEffect?.();
+      };
+      revalidateBeforeEffect();
       result = await this.#options.execute(
         operationId,
         intent,
@@ -557,6 +569,7 @@ export class SessionSemanticMutationExecutor {
         interactionContext
           ? { interactionContext, origin, executionId, authoredReceiptAdmissionSequence }
           : undefined,
+        revalidateBeforeEffect,
       );
     } catch (cause) {
       if (needsTmuxObservation) this.#deletePending(session, operationId);
@@ -568,6 +581,7 @@ export class SessionSemanticMutationExecutor {
       this.#publish(operationId, intent, "rejected", null, undefined, origin, interactionContext);
       throw error;
     } finally {
+      executionActive = false;
       if (tmuxStarted !== null)
         try {
           const tmuxEnded = this.#observability.nowMicros();
