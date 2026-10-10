@@ -1393,3 +1393,17 @@ missing daemon to live Home in the same process after explicit private daemon
 startup and Refresh. No terminal input authority or automatic bootstrap added.
 Independent review approved. Evidence: `evidence/first-launch-guidance-2026-10-10/`.
 Physical native recovery and signed clean-machine installation remain open.
+
+
+## 2026-10-10 — terminal stream identity fixed and verified
+
+Reviewed branch commit `f7db40ca` fixes the public terminal-delivery address at its owner. Each connection captures the trusted validated workspace address before subscription; raw tmux session names remain exact for canonical/native identity. Envelopes and ACK/NACK now use that same address throughout. No schema weakening, trimming, or global aliasing.
+
+The identical real source regression for a Unicode/spaced/trailing-space session failed with Pane unavailable before the fix and passes afterward with a real frame plus input readiness. Packaged Node/browser against the isolated source-built daemon also passes, as does ordinary-name source opening. Exact native name retention and fixture cleanup pass. 162 focused daemon tests, daemon typechecks, scoped lint/format and independent review passed. Evidence: `apps/tmux-gpui/evidence/delivery-address-2026-10-10/`.
+
+A fresh isolated user demo is open with Side by side and Stacked windows; both first-window terminals visibly rendered and keyboard readiness appeared. This is not the missing long-label narrow native marker-routing proof, which remains open. Existing demos were preserved. Local branch only; no merge or release. CI38080028723 remains live in macOS release-executable build; pushes held to avoid cancelling it.
+
+
+Native follow-up: the separately identified Navigation Trace QA app (unchanged native/Node/live bytes; metadata-only browser relay) opened the exact long-label session, automatically selected its pane with active presence revision 2, rendered frames and accepted `echo WINDOW_ONE_OK`, then tab selection plus `echo WINDOW_TWO_OK`. The fixture verified both exact source outputs and no crossed targets. Screenshot and redacted metadata trace are included. No narrow-size checkpoint was written: CUA drag gestures left the screenshot at 2002×1300 pixels. Operator closed QA normally; the fixture correctly exits1 with App closed before narrow observation and runs isolated cleanup. This is positive native stream/input/routing evidence, not full narrow-layout or source-survives-close qualification. The user's three demo controllers were untouched.
+
+Full bridge gate: 263 passed, 0 failed, 5 optional-app skips.
