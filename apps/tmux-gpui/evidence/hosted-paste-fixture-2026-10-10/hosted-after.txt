@@ -1,0 +1,16 @@
+2026-10-10T18:10:41.9897227Z ℹ tests 233
+2026-10-10T18:10:41.9898365Z ℹ pass 228
+2026-10-10T18:10:41.9898608Z ℹ fail 0
+2026-10-10T18:10:41.9899118Z ℹ cancelled 0
+2026-10-10T18:10:41.9899370Z ℹ skipped 5
+2026-10-10T18:10:45.2549472Z {"passed":true,"runtime":"source","receiptIdentityCorrelated":true,"createdExactlyOne":true,"preexistingSourceUnchanged":true,"stayedHomeWithoutInputAuthority":true,"nativeUi":"not exercised"}
+2026-10-10T18:10:53.5236836Z {"passed":true,"sameBrowser":true,"startupRecovery":true,"repeatedRecovery":true,"staleInputRejected":true}
+2026-10-10T18:11:04.4094338Z {"passed":true,"runtime":"source","initialMissingDaemonGuidance":true,"sameBrowserRefreshRecovery":true,"initialHomeSourceUnchangedWithoutInputAuthority":true,"ownedDaemonReplacement":true,"exactInputBeforeAndAfterReplacement":true,"staleRequestInputRejected":true,"nativeUi":"not exercised"}
+2026-10-10T18:11:22.7773196Z {"passed":true,"runtime":"source","producerLines":2000,"producerTicks":200,"intervalMs":50,"publications":258,"maxPublicationBytes":208640,"floodProgressUpdates":200,"finalTextCellsMatchTmux":true,"responsiveInputAfterFlood":true,"disconnectCleared":true,"retainedEvidence":"latest publication and scalar counters only","nativeUi":false,"resourceScope":"publication cap checked under drained output; no forced backpressure, process RSS or native heap bound claimed"}
+2026-10-10T18:11:30.8168420Z {"passed":true,"runtime":"source","beforeReleaseGeometry":true,"burstFinalTarget":true,"presenceCancels":true,"rowsWithStatus":true,"nativeUi":false}
+2026-10-10T18:11:42.4199417Z {"passed":true,"runtime":"source","controllerHandoffReleasesPriorGeometry":true,"backgroundRestoresNatural":true,"staleRequestViewportIgnored":true,"remainingViewerReacquiresAfterClose":true,"distinctConnections":true,"maxPublicationBytes":[345326,345619],"nativeUi":false}
+2026-10-10T18:11:50.5941156Z {"passed":true,"runtime":"source","nativeExternal":false,"sameBrowser":true,"selectedPaneRemoved":true,"replacementIdentityChanged":true,"staleInputRejected":true}
+2026-10-10T18:11:57.3435698Z {"passed":true,"runtime":"source","nativeClipboardQualified":false,"panes":2,"independentUpdate":true,"anchoredHistory":true,"unicodeWrappedHistory":true,"historicalInputBlocked":true,"clearedOnDisconnect":true}
+2026-10-10T18:12:04.9268502Z {"passed":true,"packagedApp":null,"supportedAgentStateFixtures":true,"duplicateNamesDistinct":true,"attentionFirst":true,"exactPaneInput":true,"staleHomeClickRejected":true,"foregroundObservationRenewed":true,"removedPaneNoFallback":true,"nativeUi":false}
+2026-10-10T18:12:18.3633167Z {"passed":true,"duplicateNamesDistinct":true,"attentionFirst":true,"exactPaneInput":true,"addedAfterSelectionAbsentCachedInventory":true,"existingPanesUnchanged":true,"staleSessionRejected":true,"removedTargetNoFallback":true,"backgroundRetired":true,"nativeUi":false}
+2026-10-10T18:12:31.8846166Z {"passed":true,"sessions":2,"switched":true,"requestOrder":true,"unavailable":true}
