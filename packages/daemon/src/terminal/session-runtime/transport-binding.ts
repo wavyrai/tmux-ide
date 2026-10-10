@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  WorkspaceIdSchemaZ,
   TerminalAttachmentSemanticPaneIdSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
   type SessionRuntimeControllerLease,
@@ -310,7 +311,9 @@ export class SessionRuntimeTransportBinding {
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    deliveryWorkspaceName?: string,
   ) {
+    const address = WorkspaceIdSchemaZ.parse(deliveryWorkspaceName ?? this.session);
     this.#assertOpen();
     if (!this.#allowedSourcePaneIds.has(semanticPaneId)) {
       throw new SessionRuntimeControllerLeaseError(
@@ -324,6 +327,7 @@ export class SessionRuntimeTransportBinding {
       semanticPaneId,
       offer,
       onMessage,
+      address,
     );
   }
 

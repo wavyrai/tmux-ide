@@ -1,0 +1,8 @@
+
+> @tmux-ide/daemon@2.9.5 typecheck /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
+> tsc --noEmit && pnpm run typecheck:workbench-dock-opentui
+
+
+> @tmux-ide/daemon@2.9.5 typecheck:workbench-dock-opentui /Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/packages/daemon
+> tsc --noEmit -p tsconfig.workbench-dock-opentui.json
+

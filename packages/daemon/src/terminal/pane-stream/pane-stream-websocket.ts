@@ -284,6 +284,7 @@ export interface SessionRuntimePaneStreamTransportBinding {
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    deliveryWorkspaceName?: string,
   ): Promise<SessionRuntimeTerminalDeliveryConnection>;
   submitIntent(
     operationId: string,
@@ -1465,6 +1466,7 @@ export class PaneStreamLiveConnection {
           if (!ready) pending.push(message);
           else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
         },
+        this.#descriptor.workspaceName,
       );
       return {
         channel,
@@ -1498,7 +1500,7 @@ export class PaneStreamLiveConnection {
       for (const message of pending) {
         if (message.type !== "terminal.delivery") continue;
         if (
-          message.workspaceName !== this.#descriptor.sessionName ||
+          message.workspaceName !== this.#descriptor.workspaceName ||
           message.semanticPaneId !== channel.semanticPaneId ||
           message.generation !== negotiated.generation ||
           message.deliveryNonce !== negotiated.deliveryNonce ||
@@ -1618,9 +1620,8 @@ export class PaneStreamLiveConnection {
       }
       const channel = this.#panes.get(pane);
       if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
-      // SessionRuntime keys canonical replicas by the tmux session, while the
-      // public pane-stream lease is keyed by its workspace identity. Translate
-      // at this boundary so the renderer has one coherent address vocabulary.
+      // The trusted lease address was fixed at delivery admission; preserve the
+      // exact envelope and its observation identity through transmission.
       const detailedDeliveryObservation = this.#observability?.enabled === true;
       const trace =
         message.performanceTraceId && detailedDeliveryObservation
@@ -1648,7 +1649,7 @@ export class PaneStreamLiveConnection {
       this.#sendFrame(pane, {
         type: "terminal-delivery-envelope",
         pane,
-        envelope: { ...message, workspaceName: this.#descriptor.workspaceName },
+        envelope: message,
       });
       if (startedAtMicros !== null) {
         let endedAtMicros: number;
@@ -2264,13 +2265,13 @@ export class PaneStreamLiveConnection {
     if (frame.type === "terminal-delivery-ack") {
       const channel = this.#deliveryChannel(frame.ack);
       if (!channel) return;
-      channel.delivery!.ack({ ...frame.ack, workspaceName: this.#descriptor.sessionName });
+      channel.delivery!.ack(frame.ack);
       return;
     }
     if (frame.type === "terminal-delivery-nack") {
       const channel = this.#deliveryChannel(frame.nack);
       if (!channel) return;
-      channel.delivery!.nack({ ...frame.nack, workspaceName: this.#descriptor.sessionName });
+      channel.delivery!.nack(frame.nack);
       return;
     }
     if (frame.type === "terminal-delivery-visibility") {

@@ -5,6 +5,7 @@ import type {
   TerminalNativeBackingResponse,
 } from "./native-seed-backing.ts";
 import {
+  WorkspaceIdSchemaZ,
   SessionRuntimeClientIdSchemaZ,
   SessionRuntimeAuthorityLeaseSchemaZ,
   SessionRuntimeControllerLeaseSchemaZ,
@@ -276,6 +277,7 @@ export interface SessionRuntimeConsumer {
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    deliveryWorkspaceName?: string,
   ): Promise<TerminalDeliveryConnection>;
   close(): Promise<void>;
 }
@@ -1892,7 +1894,9 @@ class SessionRuntime {
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    deliveryWorkspaceName?: string,
   ): Promise<TerminalDeliveryConnection> {
+    const address = WorkspaceIdSchemaZ.parse(deliveryWorkspaceName ?? this.session);
     await this.whenReady();
     await this.#restartBarrier;
     this.#assertConnected(clientId);
@@ -1907,6 +1911,7 @@ class SessionRuntime {
         laneId: deliverySubscriberId,
         requestId: deliveryRequestId,
       }),
+      address,
     );
   }
 
@@ -2382,7 +2387,9 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    deliveryWorkspaceName?: string,
   ): Promise<TerminalDeliveryConnection> {
+    const address = WorkspaceIdSchemaZ.parse(deliveryWorkspaceName ?? this.session);
     this.#assertOpen();
     const upstream = await this.#runtime.openTerminalDelivery(
       this.clientId,
@@ -2392,6 +2399,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
       semanticPaneId,
       offer,
       onMessage,
+      address,
     );
     if (this.#closed) {
       await upstream.close();

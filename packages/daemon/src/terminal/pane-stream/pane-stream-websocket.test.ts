@@ -541,7 +541,8 @@ function harness(
         assertController: () => undefined,
         openTerminalDelivery:
           options.openTerminalDelivery ??
-          (async (pane, _offer, onMessage) => {
+          (async (pane, _offer, onMessage, deliveryWorkspaceName) => {
+            expect(deliveryWorkspaceName).toBe("workspace.alpha");
             deliveryListeners.set(pane, onMessage as (message: never) => void);
             return {
               negotiation: {
@@ -1507,7 +1508,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(vi.mocked(observability.recordSpan).mock.calls).toHaveLength(recordSpanCallsBeforeInput);
     await h.deliveryListeners.get("pane.shell")?.({
       type: "terminal.delivery",
-      workspaceName: SESSION,
+      workspaceName: "workspace.alpha",
       semanticPaneId: "pane.shell",
       generation: INSTANCE,
       incarnation: `${INSTANCE}:0`,
@@ -1639,7 +1640,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
     const transactionId = "00000000-0000-4000-8000-000000000095";
     await h.deliveryListeners.get("pane.shell")?.({
       type: "terminal.delivery",
-      workspaceName: SESSION,
+      workspaceName: "workspace.alpha",
       semanticPaneId: "pane.shell",
       generation: INSTANCE,
       incarnation: `${INSTANCE}:0`,
@@ -1668,7 +1669,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
         stage: "transport",
         operation: "pane-stream-socket-send",
         terminalDelivery: expect.objectContaining({
-          workspaceName: SESSION,
+          workspaceName: "workspace.alpha",
           semanticPaneId: "pane.shell",
           canonicalGeneration: INSTANCE,
           canonicalIncarnation: `${INSTANCE}:0`,
@@ -1699,7 +1700,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
       },
     });
     expect(h.deliveryAcks).toHaveBeenCalledWith(
-      expect.objectContaining({ workspaceName: SESSION, transactionId }),
+      expect.objectContaining({ workspaceName: "workspace.alpha", transactionId }),
     );
 
     // The server may publish a replacement incarnation before the client has
@@ -1708,7 +1709,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
     // ordered transaction validation instead of tearing down the whole stream.
     const untracedReplacement = {
       type: "terminal.delivery",
-      workspaceName: SESSION,
+      workspaceName: "workspace.alpha",
       semanticPaneId: "pane.shell",
       generation: INSTANCE,
       incarnation: `${INSTANCE}:1`,
@@ -1744,7 +1745,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
         stage: "transport",
         operation: "pane-stream-socket-send",
         terminalDelivery: expect.objectContaining({
-          workspaceName: SESSION,
+          workspaceName: "workspace.alpha",
           semanticPaneId: "pane.shell",
           canonicalGeneration: INSTANCE,
           canonicalIncarnation: `${INSTANCE}:1`,
@@ -2489,7 +2490,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
         if (pane === "pane.hidden-one")
           void onMessage({
             type: "terminal.delivery",
-            workspaceName: SESSION,
+            workspaceName: "workspace.alpha",
             semanticPaneId: pane,
             generation: INSTANCE,
             incarnation: `${INSTANCE}:0`,

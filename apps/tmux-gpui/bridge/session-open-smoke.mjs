@@ -13,6 +13,10 @@ import { listTmuxServers } from "../../../packages/daemon-client/src/tmux-server
 import { stopFixtureChild } from "./fixture-child.mjs";
 const app = process.env.TMUX_GPUI_TEST_APP;
 if (app && !isAbsolute(app)) throw new Error("TMUX_GPUI_TEST_APP must be absolute");
+const longNameMode = process.env.TMUX_GPUI_TEST_LONG_SESSION_NAME;
+if (longNameMode !== undefined && !["0", "1"].includes(longNameMode))
+  throw new Error("TMUX_GPUI_TEST_LONG_SESSION_NAME must be 0 or 1");
+const longSessionName = longNameMode === "1" ? "GPUI workspace 界 with spaces " : null;
 for (const key of Object.keys(process.env)) {
   if (
     key.startsWith("TMUX_IDE_") ||
@@ -53,6 +57,13 @@ try {
   assert.equal(windows.length, 2);
   run("select-window", "-t", windows[1]);
   const activeRuntime = run("display-message", "-p", "-t", windows[1], "#{pane_id}");
+  if (longSessionName) {
+    run("rename-session", "-t", `=${fleet.sessionNames[0]}`, longSessionName);
+    assert.equal(
+      run("display-message", "-p", "-t", activeRuntime, "#{session_name}|end"),
+      `${longSessionName}|end`,
+    );
+  }
   daemon = await startDaemon(fleet);
   const options = {
     baseUrl: daemon.baseUrl + "/",
@@ -135,6 +146,12 @@ try {
   assert.equal(latest.preferredPane, null);
   assert.equal(latest.snapshot, null);
   assert.equal(latest.inputReady, false);
+  if (longSessionName)
+    assert.equal(
+      run("display-message", "-p", "-t", activeRuntime, "#{session_name}|end"),
+      `${longSessionName}|end`,
+      "Streaming must preserve the exact native session name",
+    );
   result = {
     passed: true,
     runtime: app ? "packaged-node-and-browser" : "source",
@@ -144,6 +161,7 @@ try {
     metadataOnly: true,
     explicitPaneFollowup: true,
     staleSessionRetired: true,
+    ...(longSessionName ? { unicodeSpacedSessionStream: true, exactNativeNameRetained: true } : {}),
   };
 } catch (error) {
   failures.push(error);
