@@ -241,7 +241,7 @@ try {
       type: "input",
       request: 6,
       id: second,
-      input: { kind: "paste", data: "#" + "x".repeat(1100) + "\nprintf 'GPUI_PASTE_界🌍\\n'\n" },
+      input: { kind: "paste", data: "#" + "x".repeat(1100) + "\nprintf '\\nGPUI_PASTE_界🌍\\n'\n" },
     });
     await until(() =>
       events.some(
