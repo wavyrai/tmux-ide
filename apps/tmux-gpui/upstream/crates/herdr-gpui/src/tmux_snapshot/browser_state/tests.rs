@@ -38,6 +38,7 @@ fn make_view(
         last_system: None,
         glass: Default::default(),
         last_workspace_session: None,
+        pending_session_open: None,
         frame: Some(frame.clone()),
         browsing: true,
         terminal_focus: focus,
@@ -178,3 +179,5 @@ fn mailbox_old_request_before_and_after_new_ready_cannot_restore_retired_pane(
         });
     });
 }
+
+mod session_open;

@@ -36,6 +36,7 @@ impl SnapshotView {
                 self.browser_state = state;
             }
             None => {
+                self.pending_session_open = None;
                 self.discard_composition(cx);
                 self.selection = None;
                 self.divider = None;

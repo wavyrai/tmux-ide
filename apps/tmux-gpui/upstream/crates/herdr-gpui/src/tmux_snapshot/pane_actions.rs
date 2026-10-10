@@ -68,6 +68,7 @@ impl SnapshotView {
         {
             return;
         }
+        self.pending_session_open = None;
         self.picker = None;
         self.divider = None;
         self.clear_selection(cx);

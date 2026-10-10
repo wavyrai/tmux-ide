@@ -23,6 +23,9 @@ impl Presence {
         self.active = active;
         self.pending_background |= !active;
     }
+    pub(super) fn active(&self) -> bool {
+        self.active
+    }
     pub(super) fn ready(&self) -> bool {
         self.active
             && !self.pending_background

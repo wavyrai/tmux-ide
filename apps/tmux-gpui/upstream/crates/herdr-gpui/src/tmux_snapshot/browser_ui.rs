@@ -394,6 +394,11 @@ impl SnapshotView {
         self.picker = None;
         self.pane_actions = None;
         self.new_session = None;
+        self.pending_session_open = None;
+        let opening_session = match &selection {
+            Selection::Session(id) => Some(id.clone()),
+            _ => None,
+        };
         self.new_session_queued = None;
         self.clear_selection(cx);
         self.wheel = Default::default();
@@ -438,6 +443,7 @@ impl SnapshotView {
             .is_some_and(|s| s.try_send(command).is_ok())
         {
             self.browser_request = request;
+            self.pending_session_open = opening_session.map(|id| (request, id));
             self.frame = None;
             self.browser_state.input_ready = false;
             self.browser_state.status = "Loading selection".into();

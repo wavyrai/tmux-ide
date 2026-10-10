@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { paneChoices, type Layout } from "./topology.ts";
+import { paneChoices, preferredPane, type Layout } from "./topology.ts";
 const layout = (id: string | null, name: string, pane: string, title: string): Layout => ({
   type: "layout",
   semanticWindowId: id,
@@ -49,4 +49,26 @@ test("native label byte limits preserve complete Unicode scalars", () => {
   assert.equal(Buffer.byteLength(choice.label), 510);
   assert.equal(Buffer.byteLength(choice.windowLabel!), 512);
   assert.equal(choice.windowLabel, "🌍".repeat(128));
+});
+
+test("initial preference uses current window active pane rather than inventory order", () => {
+  const old = { ...layout("window-1", "same", "pane-a", "same"), currentWindow: false };
+  const current = layout("window-2", "same", "pane-b", "same");
+  assert.equal(preferredPane(["pane-a", "pane-b"], [old, current]), "pane-b");
+  assert.equal(preferredPane(["pane-a"], [old, current]), null);
+  assert.equal(preferredPane(["pane-a", "pane-b"], [current, current]), null);
+  assert.equal(preferredPane(["pane-a"], [old]), null);
+  assert.equal(preferredPane(["pane-b"], [{ ...current, semanticWindowId: null }]), null);
+  assert.equal(
+    preferredPane(["pane-b"], [{ ...current, panes: [{ ...current.panes[0], active: false }] }]),
+    null,
+  );
+  assert.equal(
+    preferredPane(
+      ["pane-a", "pane-b"],
+      [{ ...current, panes: [...current.panes, { ...old.panes[0], active: true }] }],
+    ),
+    null,
+  );
+  assert.equal(preferredPane(["pane-b"], [current, { ...old, panes: current.panes }]), null);
 });

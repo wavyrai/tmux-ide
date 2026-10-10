@@ -21,6 +21,7 @@ mod pane_chrome;
 mod picker;
 mod presence;
 mod selection;
+mod session_open;
 mod shell;
 mod stream;
 #[cfg(test)]
@@ -144,7 +145,7 @@ fn show(
                     });
                     let browser_task = browser.as_ref().map(|bridge| {
                         let mailbox = bridge.mailbox.clone();
-                        cx.spawn(async move |entity, cx| {
+                        cx.spawn_in(window, async move |entity, cx| {
                             loop {
                                 cx.background_executor()
                                     .timer(std::time::Duration::from_millis(16))
@@ -168,8 +169,9 @@ fn show(
                                 if let Some(state) = update {
                                     let done = state.is_none();
                                     if entity
-                                        .update(cx, |view, cx| {
+                                        .update_in(cx, |view, window, cx| {
                                             view.apply_browser_state(state, cx);
+                                            view.finish_session_open(window, cx);
                                         })
                                         .is_err()
                                         || done
@@ -181,6 +183,9 @@ fn show(
                         })
                     });
                     let activation = cx.observe_window_activation(window, |view, window, cx| {
+                        if !window.is_window_active() {
+                            view.pending_session_open = None;
+                        }
                         view.divider = None;
                         view.pane_actions = None;
                         view.presence.set_active(window.is_window_active());
@@ -204,6 +209,7 @@ fn show(
                         last_system: None,
                         glass: Default::default(),
                         last_workspace_session: None,
+                        pending_session_open: None,
                         painter: Rc::new(RefCell::new(TerminalPainter::default())),
                         _task: task,
                         _browser_task: browser_task,
@@ -257,6 +263,7 @@ struct SnapshotView {
     last_system: Option<appearance::System>,
     glass: glass::Glass,
     last_workspace_session: Option<String>,
+    pending_session_open: Option<(u64, String)>,
     terminal_focus: FocusHandle,
     input_interrupted: bool,
     picker: Option<picker::Picker>,

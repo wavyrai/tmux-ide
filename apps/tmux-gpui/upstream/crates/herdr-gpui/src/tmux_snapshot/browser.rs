@@ -86,6 +86,8 @@ pub(super) struct State {
     pub presence_revision: u64,
     pub sessions: Vec<Choice>,
     pub panes: Vec<Choice>,
+    pub session_catalog_complete: bool,
+    pub preferred_pane: Option<String>,
     pub selected_session: Option<String>,
     pub selected_pane: Option<String>,
     pub status: String,
@@ -121,6 +123,9 @@ struct Publication {
     presence_revision: u64,
     sessions: Vec<Choice>,
     panes: Vec<Choice>,
+    #[serde(default)]
+    session_catalog_complete: bool,
+    preferred_pane: Option<String>,
     selected_session: Option<String>,
     selected_pane: Option<String>,
     status: String,
@@ -296,6 +301,18 @@ impl Reader {
             || p.selected_pane
                 .as_ref()
                 .is_some_and(|id| !p.panes.iter().any(|s| &s.id == id))
+            || p.preferred_pane.as_ref().is_some_and(|id| {
+                !p.session_catalog_complete
+                    || surface != Surface::Workspace
+                    || p.selected_session.is_none()
+                    || p.selected_pane.is_some()
+                    || p.snapshot.is_some()
+                    || p.input_ready
+                    || !p
+                        .panes
+                        .iter()
+                        .any(|pane| &pane.id == id && pane.window_id.is_some())
+            })
             || (p.snapshot.is_some() && p.selected_pane.is_none())
         {
             return Err(Error::Invalid("invalid browser state"));
@@ -349,6 +366,8 @@ impl Reader {
             presence_revision: p.presence_revision,
             sessions: p.sessions,
             panes: p.panes,
+            session_catalog_complete: p.session_catalog_complete,
+            preferred_pane: p.preferred_pane,
             selected_session: p.selected_session,
             selected_pane: p.selected_pane,
             status: p.status,
@@ -428,3 +447,7 @@ mod tests;
 #[cfg(test)]
 #[path = "browser_home_tests.rs"]
 mod home_tests;
+
+#[cfg(test)]
+#[path = "browser_session_tests.rs"]
+mod session_tests;

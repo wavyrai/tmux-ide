@@ -1,0 +1,13 @@
+Packaged app ready: open the session without clicking a window tab; the initial window must be two. Click its ready terminal, type echo WINDOW_TWO_OK and Return; then use the window strip.
+sandbox_extension_issue_file_to_process failed for /var/folders/l_/f191h0m93bxbnhzkwhlgsrgc0000gn/T/gpui-nav-proof-jxycn_sp/Tmux IDE Navigation Proof.app: 1 (Operation not permitted)
+tmux-preview: native sidebar glass true
+file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-window-nav-smoke.mjs:76
+      throw new Error("App closed before input proof");
+            ^
+
+Error: App closed before input proof
+    at file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-window-nav-smoke.mjs:76:13
+    at wait (file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-window-nav-smoke.mjs:24:11)
+    at async file:///Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/apps/tmux-gpui/bridge/native-window-nav-smoke.mjs:74:3
+
+Node.js v24.21.0

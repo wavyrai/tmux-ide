@@ -46,6 +46,7 @@ impl SnapshotView {
         if request != self.browser_request || !self.can_create_session() {
             return;
         }
+        self.pending_session_open = None;
         self.picker = None;
         self.pane_actions = None;
         self.divider = None;

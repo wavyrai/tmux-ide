@@ -39,6 +39,7 @@ jobs:
       - name: Real isolated daemon journeys
         run: |
           node --import tsx apps/tmux-gpui/bridge/session-create-smoke.mjs
+          node --import tsx apps/tmux-gpui/bridge/session-open-smoke.mjs
           node --import tsx apps/tmux-gpui/bridge/startup-recovery-smoke.mjs
           node --import tsx apps/tmux-gpui/bridge/discovery-recovery-smoke.mjs
           node --import tsx apps/tmux-gpui/bridge/sustained-output-smoke.mjs

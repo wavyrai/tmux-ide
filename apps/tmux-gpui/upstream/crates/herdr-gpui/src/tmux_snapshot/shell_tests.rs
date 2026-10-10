@@ -88,6 +88,7 @@ fn browser_fixture(
         last_system: None,
         glass: Default::default(),
         last_workspace_session: None,
+        pending_session_open: None,
         frame: Some(frame.clone()),
         browsing: true,
         terminal_focus: cx.focus_handle(),

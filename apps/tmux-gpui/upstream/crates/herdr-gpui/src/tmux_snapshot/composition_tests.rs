@@ -24,6 +24,7 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             last_system: None,
             glass: Default::default(),
             last_workspace_session: None,
+            pending_session_open: None,
             frame: Some(Arc::new(
                 decode::frame(include_bytes!("../../../../../fixtures/snapshot.json")).unwrap(),
             )),

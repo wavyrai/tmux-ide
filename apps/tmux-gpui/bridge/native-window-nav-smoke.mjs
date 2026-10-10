@@ -7,6 +7,10 @@ import { existsSync } from "node:fs";
 const interruptionSignal = process.env.TMUX_GPUI_INTERRUPTION_SIGNAL;
 if (interruptionSignal && (!isAbsolute(interruptionSignal) || existsSync(interruptionSignal)))
   throw new Error("Interruption signal must be an absent absolute path");
+const initialWindow = process.env.TMUX_GPUI_TEST_INITIAL_WINDOW ?? "one";
+if (!["one", "two"].includes(initialWindow)) throw new Error("Initial window must be one or two");
+const followingWindow = initialWindow === "one" ? "two" : "one";
+const marker = (name) => `WINDOW_${name.toUpperCase()}_OK`;
 const appPath = process.env.TMUX_GPUI_TEST_APP;
 if (!appPath) throw new Error("Set TMUX_GPUI_TEST_APP to the explicit development app");
 const fleet = await createScratchFleet({
@@ -23,6 +27,11 @@ const wait = async (predicate) => {
   }
 };
 try {
+  execFileSync(
+    fleet.environment.TMUX_IDE_TMUX_BIN,
+    ["-S", fleet.socketPath, "select-window", "-t", `=${fleet.sessionNames[0]}:=${initialWindow}`],
+    { env: { ...process.env, ...fleet.environment } },
+  );
   daemon = await startDaemon(fleet);
   app = spawn(join(resolve(appPath), "Contents/MacOS/tmux-ide-launcher"), [], {
     cwd: fleet.root,
@@ -38,9 +47,9 @@ try {
   closed = new Promise((done) => app.once("close", (code, signal) => done({ code, signal })));
   app.once("error", (error) => console.error("App spawn failed", error.code));
   console.log(
-    "Packaged app ready: select session/pane, type echo WINDOW_ONE_OK in window one and Return; then use the window strip",
+    `Packaged app ready: open the session without clicking a window tab; the initial window must be ${initialWindow}. Click its ready terminal, type echo ${marker(initialWindow)} and Return; then use the window strip.`,
   );
-  const capture = (name = "one") =>
+  const capture = (name = initialWindow) =>
     execFileSync(
       fleet.environment.TMUX_IDE_TMUX_BIN,
       ["-S", fleet.socketPath, "capture-pane", "-p", "-t", `=${fleet.sessionNames[0]}:=${name}`],
@@ -49,7 +58,7 @@ try {
   if (interruptionSignal) {
     const untouched = capture().trimEnd();
     console.log(
-      "Interruption proof: click while authority is pending, offer echo WINDOW_ONE_OK and Return, then create the signal file before clicking to rearm.",
+      `Interruption proof: click while authority is pending, offer echo ${marker(initialWindow)} and Return, then create the signal file before clicking to rearm.`,
     );
     await wait(() => {
       if (app.exitCode !== null || app.signalCode !== null)
@@ -67,15 +76,15 @@ try {
       throw new Error("App closed before input proof");
     return capture()
       .split("\n")
-      .some((line) => line.trim() === "WINDOW_ONE_OK");
+      .some((line) => line.trim() === marker(initialWindow));
   });
   console.log(
-    "First window verified. Click window two in the top strip, type echo WINDOW_TWO_OK and Return.",
+    `Initial window verified. Click window ${followingWindow} in the top strip, type echo ${marker(followingWindow)} and Return.`,
   );
   await wait(() =>
-    capture("two")
+    capture(followingWindow)
       .split("\n")
-      .some((line) => line.trim() === "WINDOW_TWO_OK"),
+      .some((line) => line.trim() === marker(followingWindow)),
   );
   if (capture("one").includes("WINDOW_TWO_OK") || capture("two").includes("WINDOW_ONE_OK"))
     throw new Error("Window input crossed targets");
@@ -83,11 +92,13 @@ try {
   await wait(() => app.exitCode !== null || app.signalCode !== null);
   const result = await closed;
   if (result.code !== 0) throw new Error(`App exit failed: ${JSON.stringify(result)}`);
-  if (!capture().includes("WINDOW_ONE_OK")) throw new Error("App close disturbed source session");
+  if (!capture().includes(marker(initialWindow)))
+    throw new Error("App close disturbed source session");
   console.log(
     JSON.stringify({
       passed: true,
       prematureInputUnchanged: interruptionSignal ? true : undefined,
+      initialWindow,
       distinctWindowTargets: true,
       packagedRuntime: true,
       isolatedCwd: true,

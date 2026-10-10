@@ -214,7 +214,10 @@ this canonical discovery check. Discovery requires exactly one
 online server; use the private host configuration described above when there are
 multiple servers. Discovery never starts, repairs, or upgrades a daemon. Start the
 normal tmux-ide CLI first if none is running. The browser opens Home; click a
-session card or sidebar session, then a pane. The selected window displays all its pane feeds in tmux's arrangement.
+session card or sidebar session. The native client opens the daemon's verified active
+pane in its current window, then displays that window's pane feeds in tmux's arrangement.
+If the current window or active pane cannot be identified uniquely, choose a window
+explicitly. Opening a session does not replay input: click the ready terminal before typing.
 Click another pane directly on the canvas to select it and focus keyboard input.
 Clicks in separator gaps are ignored; layout changes must be painted before a
 click can select a pane. Current subscriptions are limited to 24 panes across the
@@ -422,9 +425,13 @@ bundled runtime, display-scale and release/install/update qualification remain
 separate required evidence. A local check does not establish a hosted CI pass.
 
 Session selection briefly opens a read-only canonical layout stream so pane names
-and window tabs appear before the first terminal is opened. The helper retires
-after the complete layout snapshot; input stays disabled until explicit pane or
-window selection. This uses the existing stream protocol and may briefly receive
+and window tabs appear before the first terminal is opened. The completed catalog
+includes an optional verified active-pane preference. Only an explicit native
+session-open action consumes this preference, once, through the existing pane
+selection command. Passive catalog updates and legacy helpers do not open terminals.
+The helper retires
+after the complete layout snapshot; input stays disabled until pane selection and
+the normal authority and focus checks complete. This uses the existing stream protocol and may briefly receive
 terminal deliveries; it is not a metadata-only daemon endpoint.
 
 Bridge payloads include `THIRD_PARTY_NOTICES.txt`, collected from dependency

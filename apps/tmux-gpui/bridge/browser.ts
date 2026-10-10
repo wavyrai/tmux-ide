@@ -33,7 +33,7 @@ import {
 import { scrollSchema } from "./history.ts";
 import { surfacesSchema } from "./window-canvas.ts";
 import { createWindowPresentation } from "./window-presentation.ts";
-import { paneChoices, topologySchema, type Layout } from "./topology.ts";
+import { paneChoices, preferredPane, topologySchema, type Layout } from "./topology.ts";
 import { resizeSchema } from "./geometry.ts";
 import { previewInputSchema, MAX_INPUT_LINE } from "./input.ts";
 import { randomUUID } from "node:crypto";
@@ -130,6 +130,8 @@ let regions: unknown[] = [];
 let layouts: Layout[] = [];
 let inputReady = false;
 let foreground = true;
+let sessionCatalogComplete = false;
+let initialPane: string | null = null;
 let presenceRevision = 0;
 let appliedPresenceRevision = 0;
 let surface: "home" | "workspace" = "home";
@@ -260,6 +262,8 @@ function publish() {
         panes.map((p) => p.semanticPaneId),
         layouts,
       ),
+      sessionCatalogComplete,
+      preferredPane: foreground && sessionCatalogComplete ? initialPane : null,
       selectedSession,
       selectedPane,
       status,
@@ -393,6 +397,8 @@ async function openPane(
       retireAgents();
       snapshot = null;
       inputReady = false;
+      initialPane = null;
+      if (catalogOnly) sessionCatalogComplete = true;
       status = catalogOnly
         ? "Session layout unavailable — refresh, then select the session again"
         : "Pane unavailable — select again or refresh";
@@ -423,6 +429,11 @@ async function openPane(
             if (event.catalogReady !== true) throw new Error("Layout catalog unavailable");
             snapshot = null;
             inputReady = false;
+            sessionCatalogComplete = true;
+            initialPane = preferredPane(
+              panes.map((pane) => pane.semanticPaneId),
+              layouts,
+            );
             status = "Choose a pane or window";
             publish();
             void retire();
@@ -581,6 +592,7 @@ async function command(value: unknown) {
   if (cmd.type === "presence") {
     active?.presentation.update(undefined, [], false);
     foreground = cmd.active;
+    if (!foreground) initialPane = null;
     if (foreground) startAgents();
     else retireAgents();
     presenceRevision = cmd.revision;
@@ -755,6 +767,8 @@ async function command(value: unknown) {
       workspace;
     if (cmd.request <= request) throw new Error("Stale workspace agent command");
     request = cmd.request;
+    sessionCatalogComplete = false;
+    initialPane = null;
     const token = request;
     retireAgents();
     snapshot = null;
@@ -795,6 +809,8 @@ async function command(value: unknown) {
       host;
     if (cmd.request <= request) throw new Error("Stale agent command");
     request = cmd.request;
+    sessionCatalogComplete = false;
+    initialPane = null;
     retireAgents();
     snapshot = null;
     inputReady = false;
@@ -823,6 +839,8 @@ async function command(value: unknown) {
   if (cmd.request <= request) throw new Error("Stale browser command");
   retireAgents();
   request = cmd.request;
+  sessionCatalogComplete = false;
+  initialPane = null;
   const token = request;
   snapshot = null;
   inputReady = false;
@@ -851,6 +869,7 @@ async function command(value: unknown) {
     if (choices.length > 512) throw new Error("Too many panes for preview");
     panes = choices;
     selectedSession = cmd.id;
+    sessionCatalogComplete = panes.length === 0;
     status = panes.length ? "Loading windows" : "No available panes";
     publish();
     if (panes[0]) await openPane(panes[0], token, true);
@@ -889,6 +908,8 @@ try {
       try {
         await command(JSON.parse(line));
       } catch (error) {
+        sessionCatalogComplete = true;
+        initialPane = null;
         snapshot = null;
         inputReady = false;
         if (surface === "home") {

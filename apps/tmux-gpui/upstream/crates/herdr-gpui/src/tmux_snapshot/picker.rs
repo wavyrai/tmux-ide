@@ -104,6 +104,7 @@ impl SnapshotView {
         if self.browser_commands.is_none() {
             return;
         }
+        self.pending_session_open = None;
         self.pane_actions = None;
         self.new_session = None;
         self.divider = None;
