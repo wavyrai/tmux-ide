@@ -30,3 +30,25 @@ The broader preexisting untracked live/browser/Rust preview files remain in the
 working tree, with exact checked hashes recorded. No claim that this checkpoint
 alone forms a self-contained packaged preview. Native physical drag, refreshed
 app package and full preview release acceptance remain. User demo untouched.
+
+## Packaged local preview, 2026-10-10
+
+Release-profile build completed from source digest
+`4a299edd89346c626149de528c7223432ef7eeaa2cf7df087e8ec26ff8a103e3`
+at Git HEAD `68ca149636d5429b149132b52dac3bc7673eb5f3` (includes uncommitted GPUI sources).
+Native binary SHA-256:
+`44eecb7b421614117b8c6f82a35ece84ef8671aba7c761664a66d9f98b7f208e`.
+The maintained assembly script produced `/tmp/Tmux IDE Canonical Resize.app`.
+All five local-app and compatibility-process tests passed; none skipped.
+See `preview-assembly.json` and `packaged-app-tests.txt`. This is a local,
+nonhermetic, unsigned/unnotarized development build, not distribution qualification.
+
+Native UI inspection opened the isolated session and its Side by side window;
+both LEFT and RIGHT terminal shells and scrollback visibly rendered. The Stacked
+window is also available. The demo is reserved for the user: no physical drag
+pass is claimed. Prior demo controller was stopped at the user's request, with
+no prior preview processes remaining. Production sessions were not used.
+
+Shipping gaps remain: split patch is absent from native provenance; native
+observation remains opt-in; split handle issuance needs an exact-server capability
+check before it may advertise the new operation. GP05 remains open.
