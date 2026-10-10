@@ -1,0 +1,80 @@
+{
+  "sha256": "6a3aae46a9bfbd8519c78489c35b779b1f20401046188b0ce17964105db0bb73",
+  "cases": [],
+  "cleanup": true
+}
+/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/tests/split-owner-runner.mjs:111
+if (failures.length) throw new AggregateError(failures, "Owner split fixture failed");
+                           ^
+
+AggregateError: Owner split fixture failed
+    at <anonymous> (/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/tests/split-owner-runner.mjs:111:28)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  [errors]: [
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+    + actual - expected
+
+      {
+        axis: 'cols',
+        boundary: 83,
+        daemonInstanceId: '74862abf-1e9d-4ce2-ac1d-c4c8485115e7',
+        operationId: 'f07d7054-ae06-4997-843e-04d9946f7a32',
+    +   outcome: 'replayed',
+    -   outcome: 'applied',
+        target: {
+          boundary: 83,
+          layoutId: '2218e8dc-d6b3-4ba3-a7aa-bc3cf85b57d1',
+          splitId: '1988a782-5dcb-4677-9728-b29269c49c28',
+          window: {
+
+        at <anonymous> (/Users/thijs/.codex/worktrees/retire-web-desktop/tmux-ide/native/tmux/tests/split-owner-runner.mjs:84:10)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: {
+        operationId: 'f07d7054-ae06-4997-843e-04d9946f7a32',
+        daemonInstanceId: '74862abf-1e9d-4ce2-ac1d-c4c8485115e7',
+        outcome: 'replayed',
+        workspaceName: 'proof',
+        verb: 'workspace.window.split.resize',
+        target: {
+          window: {
+            liveSessionId: 'live-session.e338a70f503555650527',
+            linkId: 'window-link.f9dacdabb0a043fd82edd2a69c8e755c',
+            expectedSemanticWindowId: 'window.promoted.b13a7ca8152b70e5b48a',
+            linkRevision: 1
+          },
+          layoutId: '2218e8dc-d6b3-4ba3-a7aa-bc3cf85b57d1',
+          splitId: '1988a782-5dcb-4677-9728-b29269c49c28',
+          boundary: 83
+        },
+        axis: 'cols',
+        boundary: 83
+      },
+      expected: {
+        operationId: 'f07d7054-ae06-4997-843e-04d9946f7a32',
+        daemonInstanceId: '74862abf-1e9d-4ce2-ac1d-c4c8485115e7',
+        outcome: 'applied',
+        workspaceName: 'proof',
+        verb: 'workspace.window.split.resize',
+        target: {
+          window: {
+            liveSessionId: 'live-session.e338a70f503555650527',
+            linkId: 'window-link.f9dacdabb0a043fd82edd2a69c8e755c',
+            expectedSemanticWindowId: 'window.promoted.b13a7ca8152b70e5b48a',
+            linkRevision: 1
+          },
+          layoutId: '2218e8dc-d6b3-4ba3-a7aa-bc3cf85b57d1',
+          splitId: '1988a782-5dcb-4677-9728-b29269c49c28',
+          boundary: 83
+        },
+        axis: 'cols',
+        boundary: 83
+      },
+      operator: 'deepStrictEqual',
+      diff: 'simple'
+    }
+  ]
+}
+
+Node.js v24.21.0
