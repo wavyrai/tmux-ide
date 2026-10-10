@@ -1,0 +1,6 @@
+Packaged app ready: open the session without clicking a window tab; the initial window must be two. Click its ready terminal, type echo WINDOW_TWO_OK and Return; then use the window strip.
+sandbox_extension_issue_file_to_process failed for /tmp/Tmux IDE Visual Qualification.app: 1 (Operation not permitted)
+tmux-preview: native sidebar glass true
+Initial window verified. Click window one in the top strip, type echo WINDOW_ONE_OK and Return.
+Window-strip routing verified; close with Cmd-Q
+{"passed":true,"initialWindow":"two","distinctWindowTargets":true,"packagedRuntime":true,"isolatedCwd":true,"minimalPath":true,"sourceSurvivesClose":true}
