@@ -103,6 +103,8 @@ try {
   const send = (command) => browser.stdin.write(JSON.stringify(command) + "\n");
   await until(() => latest?.sessions.length === 1);
   const session = latest.sessions[0].id;
+  const sessionLabel = latest.sessions[0].label;
+  assert.equal(latest.sessions[0].paneCount, 1);
   send({ type: "presence", active: true, revision: 1 });
   send({ type: "session", request: 1, id: session });
   await until(() => latest?.request === 1 && latest.sessionCatalogComplete);
@@ -128,6 +130,14 @@ try {
       () => latest?.inputReady && latest.paneActions && latest.regions.length === before.length + 1,
     );
     assert.equal(latest.selectedPane, original);
+    assert.deepEqual(
+      latest.sessions.find((entry) => entry.id === session),
+      {
+        id: session,
+        label: sessionLabel,
+        paneCount: before.length + 1,
+      },
+    );
     const added = latest.regions.filter((region) => !before.includes(region.id));
     assert.equal(added.length, 1);
     assert.notEqual(added[0].id, original);

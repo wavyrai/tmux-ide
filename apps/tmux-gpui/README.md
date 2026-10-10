@@ -785,8 +785,9 @@ original pane remains selected; the new pane becomes selectable after verified
 daemon inventory and layout refresh. A background transition, changed selection,
 or uncertain result cancels the follow-up rather than replaying the split.
 Both split directions were physically qualified on the local macOS preview; see
-`evidence/native-pane-split-2026-10-10/`. The sidebar pane count currently remains
-stale after a split; terminal membership and original selection refresh correctly.
+`evidence/native-pane-split-2026-10-10/`. Session pane counts refresh from canonical
+metadata after splitting; the follow-up qualification is recorded in
+`evidence/split-session-count-2026-10-10/`.
 
 Run the isolated real-tmux path with:
 

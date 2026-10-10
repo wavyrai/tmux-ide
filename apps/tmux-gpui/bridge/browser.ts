@@ -525,7 +525,10 @@ async function openPane(
               createdPane: receipt.result.semanticPaneId,
               retire,
               read: () => host.workspacePanes(session, config.workspaceName),
-              attach: async (original, choices) => {
+              selectedSession: session,
+              readSessions: async () => (await host.sessions()).map(sessionChoice),
+              attach: async (original, choices, freshSessions) => {
+                sessions = freshSessions;
                 panes = choices;
                 await openPane(
                   original,

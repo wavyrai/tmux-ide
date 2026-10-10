@@ -1,0 +1,21 @@
+✔ split refresh cannot attach after background while fresh inventory is pending (0.435083ms)
+✔ split refresh cannot attach after navigation while fresh inventory is pending (0.0475ms)
+✔ split refresh cannot attach after session while fresh inventory is pending (0.039958ms)
+✔ split refresh cannot attach after catalog while fresh inventory is pending (0.037541ms)
+✔ split refresh cannot attach after stop while fresh inventory is pending (0.035417ms)
+✔ split refresh requires both exact receipt-created pane and retained source, without fallback (0.176458ms)
+✔ split metadata cannot commit after background during session read (0.090958ms)
+✔ split metadata cannot commit after navigation during session read (0.040667ms)
+✔ split metadata cannot commit after session during session read (0.049542ms)
+✔ split metadata cannot commit after catalog during session read (0.069416ms)
+✔ split metadata cannot commit after stop during session read (0.046166ms)
+✔ split refresh retains authoritative whole-session count and unknown counts without inference (0.193375ms)
+✔ missing or ambiguous selected session metadata cannot commit a split refresh (0.093167ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 87.24925

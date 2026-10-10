@@ -30,6 +30,8 @@ for (const transition of ["background", "navigation", "session", "catalog", "sto
       current,
       originalPane: "source",
       createdPane: "created",
+      selectedSession: "session",
+      readSessions: async () => [{ id: "session", label: "Session" }],
       retire: async () => {},
       read: () => {
         readStarted();
@@ -65,6 +67,8 @@ test("split refresh requires both exact receipt-created pane and retained source
       current: () => true,
       originalPane: "source",
       createdPane: "created",
+      selectedSession: "session",
+      readSessions: async () => [{ id: "session", label: "Session" }],
       retire: async () => {},
       read: async () => ids.map(connection),
       attach: async (original) => {
@@ -78,5 +82,102 @@ test("split refresh requires both exact receipt-created pane and retained source
       await assert.rejects(pending);
       assert.equal(selected, null);
     }
+  }
+});
+
+for (const transition of ["background", "navigation", "session", "catalog", "stop"] as const)
+  test(`split metadata cannot commit after ${transition} during session read`, async () => {
+    let state: SplitRefreshIdentity = {
+      request: 2,
+      session: "session",
+      catalog: {},
+      presenceRevision: 1,
+      foreground: true,
+      stopped: false,
+    };
+    let finish!: (sessions: { id: string; label: string; paneCount: number }[]) => void;
+    let started!: () => void;
+    const reading = new Promise<void>((done) => {
+      started = done;
+    });
+    let committed = false;
+    const pending = refreshSplitInventory({
+      current: splitRefreshGuard(() => state),
+      originalPane: "source",
+      createdPane: "created",
+      selectedSession: "session",
+      retire: async () => {},
+      read: async () => [connection("source"), connection("created")],
+      readSessions: () => {
+        started();
+        return new Promise((done) => {
+          finish = done;
+        });
+      },
+      attach: async () => {
+        committed = true;
+      },
+    });
+    await reading;
+    if (transition === "background") state = { ...state, presenceRevision: 3 };
+    else if (transition === "navigation") state = { ...state, request: 3 };
+    else if (transition === "session") state = { ...state, session: "replacement" };
+    else if (transition === "catalog") state = { ...state, catalog: {} };
+    else state = { ...state, stopped: true };
+    finish([{ id: "session", label: "Fresh", paneCount: 9 }]);
+    await pending;
+    assert.equal(committed, false);
+  });
+
+test("split refresh retains authoritative whole-session count and unknown counts without inference", async () => {
+  for (const metadata of [
+    [
+      { id: "session", label: "Renamed", paneCount: 9 },
+      { id: "other", label: "Other", paneCount: 4 },
+    ],
+    [{ id: "session", label: "Renamed" }],
+  ]) {
+    let committed: unknown;
+    await refreshSplitInventory({
+      current: () => true,
+      originalPane: "source",
+      createdPane: "created",
+      selectedSession: "session",
+      retire: async () => {},
+      read: async () => [connection("source"), connection("created")],
+      readSessions: async () => metadata,
+      attach: async (_original, _choices, sessions) => {
+        committed = sessions;
+      },
+    });
+    assert.deepEqual(committed, metadata);
+  }
+});
+
+test("missing or ambiguous selected session metadata cannot commit a split refresh", async () => {
+  for (const sessions of [
+    [],
+    [{ id: "replacement", label: "Same name" }],
+    [
+      { id: "session", label: "A" },
+      { id: "session", label: "B" },
+    ],
+  ]) {
+    let committed = false;
+    await assert.rejects(
+      refreshSplitInventory({
+        current: () => true,
+        originalPane: "source",
+        createdPane: "created",
+        selectedSession: "session",
+        retire: async () => {},
+        read: async () => [connection("source"), connection("created")],
+        readSessions: async () => sessions,
+        attach: async () => {
+          committed = true;
+        },
+      }),
+    );
+    assert.equal(committed, false);
   }
 });
